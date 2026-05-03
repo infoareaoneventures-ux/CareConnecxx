@@ -1,0 +1,322 @@
+import { loadStripe, Stripe } from '@stripe/stripe-js';
+import { auth, db } from '../lib/firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+
+const STRIPE_PUBLISHABLE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
+
+if (!STRIPE_PUBLISHABLE_KEY) {
+  console.warn('VITE_STRIPE_PUBLISHABLE_KEY is not configured. Stripe payments will be unavailable.');
+}
+
+let stripePromise: Promise<Stripe | null>;
+
+export const getStripe = () => {
+  if (!stripePromise) {
+    stripePromise = loadStripe(STRIPE_PUBLISHABLE_KEY);
+  }
+  return stripePromise;
+};
+
+// Client monthly membership — $29.95/mo (live price ID)
+export const MEMBERSHIP_PRICE_ID = import.meta.env.VITE_STRIPE_PRICE_ID || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO';
+
+// Caregiver annual membership (background check) — $24.95/yr (live price ID)
+export const CAREGIVER_ANNUAL_PRICE_ID = import.meta.env.VITE_STRIPE_CAREGIVER_ANNUAL || 'price_1TO8L6L7Ss5iuUb7Vrbea2tg';
+
+export interface SubscriptionStatus {
+  status: 'active' | 'canceled' | 'incomplete' | 'past_due' | 'unpaid' | 'trialing' | null;
+  currentPeriodEnd: Date | null;
+  cancelAtPeriodEnd: boolean;
+  priceId: string | null;
+}
+
+// Prevent concurrent checkout session creation
+let isCreatingSession = false;
+
+// Create checkout session for client monthly membership (uses default MEMBERSHIP_PRICE_ID)
+export const createCheckoutSession = async (successUrl: string, cancelUrl: string): Promise<string | null> => {
+  if (isCreatingSession) return null;
+  isCreatingSession = true;
+  try {
+    const user = auth.currentUser;
+    if (!user) throw new Error('User must be logged in');
+
+    const functions = getFunctions();
+    const createCheckoutSessionFn = httpsCallable(functions, 'v1-createCheckoutSession');
+    const result = await createCheckoutSessionFn({
+      priceId: MEMBERSHIP_PRICE_ID,
+      successUrl,
+      cancelUrl,
+    });
+    const { url } = (result.data as { url?: string }) ?? {};
+    return url ?? null;
+  } finally {
+    isCreatingSession = false;
+  }
+};
+
+// Create checkout session for caregiver membership (accepts a specific priceId)
+export const createCaregiverCheckoutSession = async (
+  priceId: string,
+  successUrl: string,
+  cancelUrl: string
+): Promise<string | null> => {
+  const user = auth.currentUser;
+  if (!user) throw new Error('User must be logged in');
+
+  const functions = getFunctions();
+  const createCheckoutSessionFn = httpsCallable(functions, 'v1-createCheckoutSession');
+  const result = await createCheckoutSessionFn({ priceId, successUrl, cancelUrl });
+  const { url } = (result.data as { url?: string }) ?? {};
+  return url ?? null;
+};
+
+/**
+ * Start a Stripe Identity verification. Creates a verification session server-side
+ * and redirects the browser to Stripe's hosted flow. Stripe will return the user
+ * to `returnUrl` (which should include a `next` query param to resume the original
+ * action). The user doc's `identityCheckStatus` is flipped to 'processing' server-side.
+ */
+export const startIdentityVerification = async (returnUrl: string): Promise<void> => {
+  const user = auth.currentUser;
+  if (!user) throw new Error('User must be logged in');
+  const functions = getFunctions();
+  const create = httpsCallable(functions, 'v1-createIdentityVerificationSession');
+  const result = await create({ returnUrl });
+  const { url } = result.data as { url?: string };
+  if (!url) throw new Error('No verification URL returned');
+  window.location.href = url;
+};
+
+// Get user's subscription status from Firestore
+export const getSubscriptionStatus = async (): Promise<SubscriptionStatus> => {
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      return { status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false, priceId: null };
+    }
+
+    const doc = await db.collection('customers').doc(user.uid).collection('subscriptions').limit(1).get();
+    
+    if (doc.empty) {
+      return { status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false, priceId: null };
+    }
+
+    const subscription = doc.docs[0].data();
+    return {
+      status: subscription.status,
+      currentPeriodEnd: subscription.current_period_end ? new Date(subscription.current_period_end.seconds * 1000) : null,
+      cancelAtPeriodEnd: subscription.cancel_at_period_end || false,
+      priceId: subscription.price_id || null
+    };
+  } catch (error) {
+    console.error('Error getting subscription status:', error);
+    return { status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false, priceId: null };
+  }
+};
+
+// Listen to subscription changes in real-time
+export const listenToSubscriptionStatus = (userId: string, callback: (status: SubscriptionStatus) => void) => {
+  return db
+    .collection('customers')
+    .doc(userId)
+    .collection('subscriptions')
+    .where('status', 'in', ['active', 'trialing'])
+    .limit(1)
+    .onSnapshot((snapshot) => {
+      if (snapshot.empty) {
+        callback({ status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false, priceId: null });
+        return;
+      }
+
+      const subscription = snapshot.docs[0].data();
+      callback({
+        status: subscription.status,
+        currentPeriodEnd: subscription.current_period_end ? new Date(subscription.current_period_end.seconds * 1000) : null,
+        cancelAtPeriodEnd: subscription.cancel_at_period_end || false,
+        priceId: subscription.price_id || null
+      });
+    });
+};
+
+// Cancel subscription at period end
+export const cancelSubscription = async (): Promise<void> => {
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      throw new Error('User must be logged in');
+    }
+
+    // Get active subscription
+    const subscriptions = await db
+      .collection('customers')
+      .doc(user.uid)
+      .collection('subscriptions')
+      .where('status', 'in', ['active', 'trialing'])
+      .limit(1)
+      .get();
+
+    if (subscriptions.empty) {
+      throw new Error('No active subscription found');
+    }
+
+    const subscriptionId = subscriptions.docs[0].id;
+
+    // Call cancel function
+    await db.collection('stripeSubscriptions').doc(subscriptionId).update({
+      cancelAtPeriodEnd: true,
+      cancelledAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error canceling subscription:', error);
+    throw error;
+  }
+};
+
+// Reactivate canceled subscription
+export const reactivateSubscription = async (): Promise<void> => {
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      throw new Error('User must be logged in');
+    }
+
+    // Get subscription with cancel_at_period_end
+    const subscriptions = await db
+      .collection('customers')
+      .doc(user.uid)
+      .collection('subscriptions')
+      .where('cancel_at_period_end', '==', true)
+      .limit(1)
+      .get();
+
+    if (subscriptions.empty) {
+      throw new Error('No canceled subscription found');
+    }
+
+    const subscriptionId = subscriptions.docs[0].id;
+
+    // Reactivate
+    await db.collection('stripeSubscriptions').doc(subscriptionId).update({
+      cancelAtPeriodEnd: false,
+      reactivatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error reactivating subscription:', error);
+    throw error;
+  }
+};
+
+// Format price for display
+export const formatPrice = (amount: number, currency: string = 'usd'): string => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+  }).format(amount / 100);
+};
+
+// Check if user has active membership
+export const hasActiveMembership = (status: SubscriptionStatus): boolean => {
+  return status.status === 'active' || status.status === 'trialing';
+};
+
+// Initiate Stripe Connect onboarding for the signed-in caregiver. Returns a
+// Stripe-hosted URL to redirect the user to. If an account already exists we
+// regenerate a fresh account link so returning / incomplete caregivers can
+// resume onboarding.
+export const initiateOnboarding = async (): Promise<{ url: string }> => {
+  const user = auth.currentUser;
+  if (!user) throw new Error('User must be logged in');
+
+  const existing = await db.collection('caregivers').doc(user.uid).get();
+  const existingAccountId = existing.data()?.stripeAccountId as string | undefined;
+
+  const fns = getFunctions();
+  if (existingAccountId) {
+    const fn = httpsCallable(fns, 'v1-getStripeOnboardingLink');
+    const res = await fn({ accountId: existingAccountId });
+    const { url } = (res.data as { url?: string }) ?? {};
+    if (!url) throw new Error('No onboarding URL returned');
+    return { url };
+  }
+
+  const create = httpsCallable(fns, 'v1-createStripeConnectAccount');
+  const res = await create({ email: user.email });
+  const { onboardingUrl } = (res.data as { onboardingUrl?: string }) ?? {};
+  if (!onboardingUrl) throw new Error('No onboarding URL returned');
+  return { url: onboardingUrl };
+};
+
+export interface ConnectAccountStatus {
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+  stripeOnboardingComplete: boolean;
+}
+
+// Force a refresh of Stripe Connect account status on Firestore. Used on
+// return from the Stripe-hosted onboarding flow as a fallback to the webhook.
+export const checkOnboardingStatus = async (accountId: string): Promise<ConnectAccountStatus> => {
+  const user = auth.currentUser;
+  if (!user) throw new Error('User must be logged in');
+  const fns = getFunctions();
+  const fn = httpsCallable(fns, 'v1-checkStripeAccountStatus');
+  const res = await fn({ accountId });
+  return res.data as ConnectAccountStatus;
+};
+
+export interface PayoutResult {
+  success: boolean;
+  amount: number;
+  fee: number;
+  payoutId: string;
+  arrivalDate?: number;
+  message?: string;
+}
+
+export const requestInstantPayout = async (): Promise<PayoutResult> => {
+  const user = auth.currentUser;
+  if (!user) throw new Error('User must be logged in');
+  const fns = getFunctions();
+  const fn = httpsCallable(fns, 'v1-requestInstantPayout');
+  const res = await fn({});
+  return res.data as PayoutResult;
+};
+
+export const requestStandardPayout = async (): Promise<PayoutResult> => {
+  const user = auth.currentUser;
+  if (!user) throw new Error('User must be logged in');
+  const fns = getFunctions();
+  const fn = httpsCallable(fns, 'v1-requestStandardPayout');
+  const res = await fn({});
+  return res.data as PayoutResult;
+};
+
+// Stripe service object for backward compatibility
+export const stripeService = {
+  getStripe,
+  createCheckoutSession,
+  getSubscriptionStatus,
+  listenToSubscriptionStatus,
+  cancelSubscription: async () => {
+    const user = auth.currentUser;
+    if (!user) throw new Error('User not authenticated');
+    const functions = (await import('firebase/functions')).getFunctions();
+    const cancelFn = (await import('firebase/functions')).httpsCallable(functions, 'v1-cancelSubscription');
+    await cancelFn({});
+  },
+  reactivateSubscription: async () => {
+    const user = auth.currentUser;
+    if (!user) throw new Error('User not authenticated');
+    const functions = (await import('firebase/functions')).getFunctions();
+    const reactivateFn = (await import('firebase/functions')).httpsCallable(functions, 'v1-reactivateSubscription');
+    await reactivateFn({});
+  },
+  initiateOnboarding,
+  checkOnboardingStatus,
+  requestInstantPayout,
+  requestStandardPayout,
+  formatPrice,
+  hasActiveMembership,
+  MEMBERSHIP_PRICE_ID,
+};

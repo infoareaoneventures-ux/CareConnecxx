@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CareConnex - Booking Flow Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #0f766e 0%, #1e40af 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            color: rgba(255,255,255,0.8);
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        
+        .demo-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .panel {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        
+        .panel h2 {
+            color: #0f766e;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .panel h2 .icon {
+            font-size: 1.5em;
+        }
+        
+        .form-group {
+            margin-bottom: 16px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 6px;
+            color: #374151;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            font-size: 1em;
+            transition: all 0.2s;
+        }
+        
+        input:focus, select:focus {
+            outline: none;
+            border-color: #0f766e;
+            box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
+        }
+        
+        .duration-options {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .duration-btn {
+            padding: 8px 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+        
+        .duration-btn:hover {
+            border-color: #0f766e;
+        }
+        
+        .duration-btn.active {
+            background: #0f766e;
+            color: white;
+            border-color: #0f766e;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #0f766e 0%, #1e40af 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(15, 118, 110, 0.4);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        /* Caregiver Cards */
+        .caregiver-card {
+            background: #f9fafb;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+        
+        .caregiver-card:hover {
+            border-color: #0f766e;
+            transform: translateX(4px);
+        }
+        
+        .caregiver-card.selected {
+            border-color: #0f766e;
+            background: #f0fdfa;
+        }
+        
+        .caregiver-card.unavailable {
+            opacity: 0.5;
+            background: #fef2f2;
+            border-color: #fecaca;
+        }
+        
+        .caregiver-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 8px;
+        }
+        
+        .caregiver-name {
+            font-weight: 700;
+            font-size: 1.1em;
+            color: #111827;
+        }
+        
+        .match-score {
+            background: linear-gradient(135deg, #0f766e 0%, #1e40af 100%);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-weight: 700;
+            font-size: 0.9em;
+        }
+        
+        .caregiver-details {
+            display: flex;
+            gap: 16px;
+            color: #6b7280;
+            font-size: 0.9em;
+            margin-bottom: 8px;
+        }
+        
+        .caregiver-reasoning {
+            font-size: 0.85em;
+            color: #0f766e;
+            font-style: italic;
+        }
+        
+        .unavailable-badge {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: #dc2626;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75em;
+            font-weight: 700;
+        }
+        
+        /* System Log Panel */
+        .system-log {
+            background: #1f2937;
+            color: #10b981;
+            font-family: 'Consolas', 'Monaco', monospace;
+            padding: 16px;
+            border-radius: 10px;
+            height: 300px;
+            overflow-y: auto;
+            font-size: 0.85em;
+            line-height: 1.6;
+        }
+        
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 4px 0;
+            border-bottom: 1px solid #374151;
+        }
+        
+        .log-time {
+            color: #6b7280;
+            font-size: 0.8em;
+        }
+        
+        .log-success { color: #10b981; }
+        .log-info { color: #60a5fa; }
+        .log-warning { color: #fbbf24; }
+        .log-error { color: #ef4444; }
+        
+        /* Booking Status */
+        .booking-status {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            display: none;
+        }
+        
+        .booking-status.success {
+            display: block;
+            background: #d1fae5;
+            border: 2px solid #10b981;
+        }
+        
+        .booking-status.error {
+            display: block;
+            background: #fee2e2;
+            border: 2px solid #ef4444;
+        }
+        
+        .status-icon {
+            font-size: 3em;
+            margin-bottom: 10px;
+        }
+        
+        .status-title {
+            font-size: 1.3em;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        
+        .status-message {
+            color: #4b5563;
+        }
+        
+        /* Animation */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .checking {
+            animation: pulse 1.5s infinite;
+        }
+        
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Responsive */
+        @media (max-width: 900px) {
+            .demo-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏥 CareConnex Booking Flow Demo</h1>
+        <p class="subtitle">Visual demonstration of double-booking prevention with real-time availability checking</p>
+        
+        <div class="demo-grid">
+            <!-- Left Panel: Booking Form -->
+            <div class="panel">
+                <h2><span class="icon">📅</span> Step 1: Select Date & Time</h2>
+                
+                <div class="form-group">
+                    <label>📆 Select Date</label>
+                    <input type="date" id="dateInput" min="2026-02-09">
+                </div>
+                
+                <div class="form-group">
+                    <label>🕐 Select Time</label>
+                    <input type="time" id="timeInput" value="10:00">
+                </div>
+                
+                <div class="form-group">
+                    <label>⏱️ Duration</label>
+                    <div class="duration-options">
+                        <button class="duration-btn" data-hours="1">1 hour</button>
+                        <button class="duration-btn active" data-hours="2">2 hours</button>
+                        <button class="duration-btn" data-hours="3">3 hours</button>
+                        <button class="duration-btn" data-hours="4">4 hours</button>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>👤 Senior Profile</label>
+                    <select id="seniorProfile">
+                        <option value="mobility">Needs: Mobility Support (Age 75)</option>
+                        <option value="medication">Needs: Medication Reminders (Age 82)</option>
+                        <option value="companion">Needs: Companionship (Age 70)</option>
+                    </select>
+                </div>
+                
+                <button class="btn btn-primary" id="checkAvailabilityBtn" onclick="checkAvailability()">
+                    🔍 Check Availability
+                </button>
+                
+                <div class="booking-status" id="bookingStatus">
+                    <div class="status-icon" id="statusIcon">✅</div>
+                    <div class="status-title" id="statusTitle">Booking Confirmed!</div>
+                    <div class="status-message" id="statusMessage">Your appointment has been scheduled.</div>
+                </div>
+            </div>
+            
+            <!-- Right Panel: Results -->
+            <div class="panel">
+                <h2><span class="icon">👥</span> Step 2: Available Caregivers</h2>
+                
+                <div id="caregiverList">
+                    <p style="text-align: center; color: #9ca3af; padding: 40px 0;">
+                        Select date and time to see available caregivers
+                    </p>
+                </div>
+                
+                <button class="btn btn-primary" id="bookBtn" style="display: none;" onclick="attemptBooking()">
+                    📋 Book Selected Caregiver
+                </button>
+            </div>
+        </div>
+        
+        <!-- System Log -->
+        <div class="panel" style="margin-top: 20px;">
+            <h2><span class="icon">🖥️</span> System Log (What's happening behind the scenes)</h2>
+            <div class="system-log" id="systemLog">
+                <div class="log-entry">
+                    <span class="log-time">[SYSTEM]</span> 
+                    <span class="log-info">Ready. Waiting for user input...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Demo Data
+        const caregivers = [
+            {
+                id: 'cg1',
+                name: 'Sarah Johnson',
+                hourlyRate: 28,
+                verified: true,
+                rating: 4.9,
+                distance: 3.2,
+                matchScore: 95,
+                skills: ['Mobility Support', 'CPR Certified'],
+                reasoning: 'Excellent match! Verified & skilled in Mobility Support',
+                weeklyAvailability: { monday: [{start: '09:00', end: '17:00'}] },
+                existingAppointments: [
+                    { date: '2026-02-09', time: '14:00', duration: 2 } // Booked 2-4PM on Monday
+                ]
+            },
+            {
+                id: 'cg2',
+                name: 'Michael Chen',
+                hourlyRate: 32,
+                verified: true,
+                rating: 4.7,
+                distance: 5.1,
+                matchScore: 88,
+                skills: ['Medication Reminders', 'Driver'],
+                reasoning: 'Great match. Nearby with medication experience',
+                weeklyAvailability: { monday: [{start: '09:00', end: '17:00'}] },
+                existingAppointments: [] // No bookings
+            },
+            {
+                id: 'cg3',
+                name: 'Emily Rodriguez',
+                hourlyRate: 30,
+                verified: false,
+                rating: 4.5,
+                distance: 8.3,
+                matchScore: 72,
+                skills: ['Companionship', 'Meal Prep'],
+                reasoning: 'Fair match. Good for companionship needs',
+                weeklyAvailability: { monday: [{start: '09:00', end: '17:00'}] },
+                existingAppointments: [
+                    { date: '2026-02-09', time: '10:00', duration: 4 } // Booked 10AM-2PM on Monday
+                ]
+            }
+        ];
+        
+        let selectedDuration = 2;
+        let selectedCaregiver = null;
+        let selectedDate = '';
+        let selectedTime = '';
+        
+        // Set minimum date to today
+        document.getElementById('dateInput').min = new Date().toISOString().split('T')[0];
+        document.getElementById('dateInput').value = '2026-02-09';
+        
+        // Duration button handlers
+        document.querySelectorAll('.duration-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.duration-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                selectedDuration = parseInt(btn.dataset.hours);
+            });
+        });
+        
+        function log(message, type = 'info') {
+            const logEl = document.getElementById('systemLog');
+            const time = new Date().toLocaleTimeString();
+            const colorClass = {
+                'info': 'log-info',
+                'success': 'log-success',
+                'warning': 'log-warning',
+                'error': 'log-error'
+            }[type];
+            
+            logEl.innerHTML += `
+                <div class="log-entry">
+                    <span class="log-time">[${time}]</span> 
+                    <span class="${colorClass}">${message}</span>
+                </div>
+            `;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+        
+        async function checkAvailability() {
+            selectedDate = document.getElementById('dateInput').value;
+            selectedTime = document.getElementById('timeInput').value;
+            
+            if (!selectedDate || !selectedTime) {
+                alert('Please select both date and time');
+                return;
+            }
+            
+            const btn = document.getElementById('checkAvailabilityBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Checking availability...';
+            
+            log('═══════════════════════════════════════', 'info');
+            log(`🔍 CHECKING AVAILABILITY`, 'info');
+            log(`   Date: ${selectedDate}`, 'info');
+            log(`   Time: ${selectedTime}`, 'info');
+            log(`   Duration: ${selectedDuration} hours`, 'info');
+            log('═══════════════════════════════════════', 'info');
+            
+            // Simulate async check
+            await new Promise(r => setTimeout(r, 1500));
+            
+            log('📊 Step 1: Loading caregiver profiles...', 'info');
+            await new Promise(r => setTimeout(r, 500));
+            
+            log('📅 Step 2: Checking weekly schedules...', 'info');
+            await new Promise(r => setTimeout(r, 600));
+            
+            log('🔥 Step 3: Querying Firestore for existing appointments...', 'warning');
+            await new Promise(r => setTimeout(r, 800));
+            
+            // Check each caregiver
+            const availableCaregivers = caregivers.map(cg => {
+                const isAvailable = checkCaregiverAvailability(cg, selectedDate, selectedTime, selectedDuration);
+                return { ...cg, isAvailable };
+            });
+            
+            // Show results
+            displayCaregivers(availableCaregivers);
+            
+            const availableCount = availableCaregivers.filter(c => c.isAvailable).length;
+            log(`✅ Availability check complete!`, 'success');
+            log(`   ${availableCount} of ${caregivers.length} caregivers available`, 'success');
+            
+            btn.disabled = false;
+            btn.innerHTML = '🔍 Check Availability';
+        }
+        
+        function checkCaregiverAvailability(cg, date, time, duration) {
+            // Check weekly schedule (Monday 9-5 in this demo)
+            const dayOfWeek = new Date(date).getDay();
+            if (dayOfWeek !== 1) { // Not Monday
+                log(`   ❌ ${cg.name}: Not available on this day`, 'error');
+                return false;
+            }
+            
+            // Check for conflicts with existing appointments
+            const requestedStart = parseTime(time);
+            const requestedEnd = requestedStart + duration;
+            
+            for (const appt of cg.existingAppointments) {
+                if (appt.date !== date) continue;
+                
+                const apptStart = parseTime(appt.time);
+                const apptEnd = apptStart + appt.duration;
+                
+                // Check overlap with 30-min buffer
+                if (requestedStart < apptEnd + 0.5 && requestedEnd + 0.5 > apptStart) {
+                    log(`   ❌ ${cg.name}: CONFLICT with existing appointment (${appt.time}-${formatTime(apptEnd)})`, 'error');
+                    return false;
+                }
+            }
+            
+            log(`   ✅ ${cg.name}: Available!`, 'success');
+            return true;
+        }
+        
+        function parseTime(timeStr) {
+            const [hours, minutes] = timeStr.split(':').map(Number);
+            return hours + minutes / 60;
+        }
+        
+        function formatTime(decimalTime) {
+            const hours = Math.floor(decimalTime);
+            const minutes = Math.round((decimalTime - hours) * 60);
+            return `${hours}:${minutes.toString().padStart(2, '0')}`;
+        }
+        
+        function displayCaregivers(caregiverList) {
+            const listEl = document.getElementById('caregiverList');
+            
+            if (caregiverList.length === 0) {
+                listEl.innerHTML = '<p style="text-align: center; color: #9ca3af;">No caregivers available for this time</p>';
+                return;
+            }
+            
+            listEl.innerHTML = caregiverList.map(cg => `
+                <div class="caregiver-card ${!cg.isAvailable ? 'unavailable' : ''}" 
+                     onclick="selectCaregiver('${cg.id}')"
+                     data-id="${cg.id}">
+                    ${!cg.isAvailable ? '<span class="unavailable-badge">❌ BOOKED</span>' : ''}
+                    <div class="caregiver-header">
+                        <div class="caregiver-name">
+                            ${cg.verified ? '✓ ' : ''}${cg.name}
+                            ${!cg.verified ? '<span style="color: #f59e0b; font-size: 0.8em;"> (Not Verified)</span>' : ''}
+                        </div>
+                        <div class="match-score">${cg.matchScore}% Match</div>
+                    </div>
+                    <div class="caregiver-details">
+                        <span>⭐ ${cg.rating}</span>
+                        <span>💰 $${cg.hourlyRate}/hr</span>
+                        <span>📍 ${cg.distance} mi</span>
+                    </div>
+                    <div class="caregiver-reasoning">${cg.reasoning}</div>
+                    <div style="margin-top: 8px; font-size: 0.85em; color: #6b7280;">
+                        Skills: ${cg.skills.join(', ')}
+                    </div>
+                </div>
+            `).join('');
+            
+            // Show book button if any available
+            const hasAvailable = caregiverList.some(c => c.isAvailable);
+            document.getElementById('bookBtn').style.display = hasAvailable ? 'flex' : 'none';
+        }
+        
+        function selectCaregiver(id) {
+            const caregiver = caregivers.find(c => c.id === id);
+            if (!caregiver) return;
+            
+            // Check if available
+            const isAvailable = checkCaregiverAvailability(caregiver, selectedDate, selectedTime, selectedDuration);
+            
+            if (!isAvailable) {
+                log(`⚠️ Cannot select ${caregiver.name} - already booked!`, 'warning');
+                return;
+            }
+            
+            selectedCaregiver = caregiver;
+            
+            // Update UI
+            document.querySelectorAll('.caregiver-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            document.querySelector(`.caregiver-card[data-id="${id}"]`).classList.add('selected');
+            
+            log(`👤 Selected: ${caregiver.name}`, 'info');
+        }
+        
+        async function attemptBooking() {
+            if (!selectedCaregiver) {
+                alert('Please select a caregiver first');
+                return;
+            }
+            
+            const btn = document.getElementById('bookBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Processing...';
+            
+            log('═══════════════════════════════════════', 'info');
+            log(`📋 ATTEMPTING BOOKING`, 'info');
+            log(`   Caregiver: ${selectedCaregiver.name}`, 'info');
+            log(`   Date: ${selectedDate}`, 'info');
+            log(`   Time: ${selectedTime} (${selectedDuration} hours)`, 'info');
+            log('═══════════════════════════════════════', 'info');
+            
+            // Simulate final availability check (race condition prevention)
+            await new Promise(r => setTimeout(r, 1000));
+            
+            log('🔒 Checking availability one more time...', 'warning');
+            
+            const isAvailable = checkCaregiverAvailability(selectedCaregiver, selectedDate, selectedTime, selectedDuration);
+            
+            const statusEl = document.getElementById('bookingStatus');
+            const iconEl = document.getElementById('statusIcon');
+            const titleEl = document.getElementById('statusTitle');
+            const messageEl = document.getElementById('statusMessage');
+            
+            if (isAvailable) {
+                log('✅ BOOKING SUCCESSFUL!', 'success');
+                
+                // Add to existing appointments (prevents rebooking in this session)
+                selectedCaregiver.existingAppointments.push({
+                    date: selectedDate,
+                    time: selectedTime,
+                    duration: selectedDuration
+                });
+                
+                statusEl.className = 'booking-status success';
+                iconEl.textContent = '✅';
+                titleEl.textContent = 'Booking Confirmed!';
+                titleEl.style.color = '#059669';
+                messageEl.textContent = `Your appointment with ${selectedCaregiver.name} has been scheduled for ${selectedDate} at ${selectedTime}.`;
+                
+                log(`   Appointment saved to Firestore`, 'success');
+                log(`   Confirmation sent to caregiver`, 'success');
+                log(`   Calendar invite sent to client`, 'success');
+            } else {
+                log('❌ BOOKING FAILED!', 'error');
+                log(`   ${selectedCaregiver.name} was just booked by someone else!`, 'error');
+                log(`   This is why we check availability at booking time.`, 'warning');
+                
+                statusEl.className = 'booking-status error';
+                iconEl.textContent = '❌';
+                titleEl.textContent = 'Booking Failed';
+                titleEl.style.color = '#dc2626';
+                messageEl.textContent = `${selectedCaregiver.name} is no longer available at this time. Someone else just booked them! Please select a different time or caregiver.`;
+                
+                // Refresh the list
+                checkAvailability();
+            }
+            
+            btn.disabled = false;
+            btn.innerHTML = '📋 Book Selected Caregiver';
+        }
+        
+        // Initial log
+        log('🚀 CareConnex Booking System initialized', 'success');
+        log('   Double-booking prevention: ENABLED', 'success');
+        log('   Real-time availability checking: ENABLED', 'success');
+        log('   30-minute buffer between appointments: ENABLED', 'success');
+        log('   Firestore conflict detection: ENABLED', 'success');
+    </script>
+</body>
+</html>

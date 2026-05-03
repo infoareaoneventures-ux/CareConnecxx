@@ -1,0 +1,185 @@
+import React, { useEffect, useState } from 'react';
+import { ChevronDown, Lock, CheckCircle2, AlertCircle, ExternalLink } from 'lucide-react';
+import { CaregiverTopNav } from './CaregiverTopNav';
+import { useCareConnex } from '../../context/CareConnexContext';
+import { dbService } from '../../services/api';
+import { checkOnboardingStatus } from '../../services/stripeService';
+import { ConnectBankButton } from '../ui/ConnectBankButton';
+import { PayoutHistory } from './PayoutHistory';
+import type { Caregiver } from '../../types';
+
+const FAQS: Array<{ q: string; a: string }> = [
+  { q: 'Why should I accept credit card payments?', a: 'Families overwhelmingly prefer paying by card. Accepting card payments significantly increases the jobs you see and land.' },
+  { q: 'How long will payout setup take? What will I need?', a: 'Most caregivers finish in under 5 minutes. Have a photo ID and your bank routing info ready.' },
+  { q: 'Are there any fees to accept credit card payments?', a: 'CareConnex covers Stripe processing fees for membership customers. See your plan for details.' },
+  { q: 'How can I pay with my CareConnex balance?', a: 'Funds arrive in your connected bank on a rolling schedule after each credit-card booking is completed.' },
+  { q: 'Can I transfer funds to my own bank account?', a: 'Yes — link any US bank account during onboarding. Instant payout options may apply on eligible accounts.' },
+];
+
+export const CaregiverPayoutPage: React.FC = () => {
+  const { currentUser, addToast } = useCareConnex();
+  const [profile, setProfile] = useState<Caregiver | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [openFaq, setOpenFaq] = useState<number | null>(null);
+
+  const loadProfile = async () => {
+    if (!currentUser?.uid) return;
+    const p = await dbService.getUser(currentUser.uid);
+    if (p) setProfile(p as any);
+  };
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (!currentUser?.uid) return;
+      const p = await dbService.getUser(currentUser.uid);
+      if (active && p) setProfile(p as any);
+    })();
+    return () => { active = false; };
+  }, [currentUser?.uid]);
+
+  // On return from Stripe onboarding, force a status refresh as a fallback
+  // in case the account.updated webhook is lagging.
+  useEffect(() => {
+    if (!profile?.stripeAccountId) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('stripe') !== 'success') return;
+    (async () => {
+      try {
+        await checkOnboardingStatus(profile.stripeAccountId!);
+        await loadProfile();
+        addToast('Payout setup updated', 'success');
+      } catch (err) {
+        console.error('Status refresh failed:', err);
+      } finally {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('stripe');
+        window.history.replaceState({}, '', url.toString());
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.stripeAccountId]);
+
+  const toggleAcceptsCreditCards = async (next: boolean) => {
+    if (!currentUser?.uid || !profile) return;
+    setSaving(true);
+    try {
+      await dbService.updateUser('caregivers', currentUser.uid, { acceptsCreditCards: next } as any);
+      setProfile({ ...profile, acceptsCreditCards: next });
+      addToast(next ? 'Credit card bookings enabled' : 'Credit card bookings disabled', 'success');
+    } catch {
+      addToast('Failed to update', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const hasAccount = !!profile?.stripeAccountId;
+  const fullyEnabled = !!(profile?.payoutsEnabled && profile?.chargesEnabled);
+
+  return (
+    <div className="min-h-screen bg-slate-50 pb-24">
+      <CaregiverTopNav />
+      <div className="max-w-5xl mx-auto px-4 md:px-6 py-6">
+        <h1 className="text-2xl font-bold text-slate-900 mb-6">Payout &amp; Payment</h1>
+
+        <div className="grid md:grid-cols-[1fr_320px] gap-6">
+          <div className="space-y-4">
+            <div className="bg-white border border-slate-200 rounded-2xl p-5">
+              <p className="font-bold text-slate-900 mb-1">Booking payouts</p>
+
+              {fullyEnabled ? (
+                <>
+                  <div className="flex items-center gap-2 mb-2">
+                    <CheckCircle2 className="w-5 h-5 text-green-600" />
+                    <p className="text-sm font-semibold text-green-700">Bank account connected</p>
+                  </div>
+                  <p className="text-sm text-slate-600 mb-4">
+                    You're all set to receive payouts. Standard payouts arrive in 2-3 business days (free).
+                    Instant payouts arrive in 30 minutes (1.5% fee, min $0.50).
+                  </p>
+                  <a
+                    href="https://dashboard.stripe.com/express"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm font-semibold text-primary-700 hover:underline"
+                  >
+                    Manage in Stripe <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </>
+              ) : hasAccount ? (
+                <>
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertCircle className="w-5 h-5 text-amber-600" />
+                    <p className="text-sm font-semibold text-amber-700">Setup incomplete</p>
+                  </div>
+                  <p className="text-sm text-slate-600 mb-4">
+                    You've started setting up payouts but Stripe still needs more information. Finish the
+                    short onboarding flow to start receiving payments.
+                  </p>
+                  <ConnectBankButton onShowToast={addToast} />
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-semibold text-slate-800 mb-2">Activate your payout account to get paid</p>
+                  <p className="text-sm text-slate-600 mb-4">
+                    Set up your account for fast and secure online payments via Stripe Connect.
+                    Get paid quickly to an existing bank account or debit card.
+                  </p>
+                  <ConnectBankButton onShowToast={addToast} />
+                </>
+              )}
+
+              <p className="mt-3 text-xs text-slate-400 flex items-center gap-1"><Lock className="w-3 h-3" /> Secured by Stripe</p>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 flex items-start gap-4">
+              <button
+                onClick={() => toggleAcceptsCreditCards(!profile?.acceptsCreditCards)}
+                disabled={saving}
+                className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${profile?.acceptsCreditCards ? 'bg-primary-500' : 'bg-slate-300'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${profile?.acceptsCreditCards ? 'translate-x-5' : ''}`} />
+              </button>
+              <div>
+                <p className="font-semibold text-slate-900 mb-1">Accept credit card bookings</p>
+                <p className="text-sm text-slate-600">
+                  Turning this feature off means families can only pay you in cash. Since many families prefer paying by card,
+                  your job opportunities will be very limited and your profile will appear less frequently in search results.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-2xl p-5">
+              <p className="font-bold text-slate-900 mb-1">Membership payment method</p>
+              <p className="text-sm text-slate-600 mb-3">Used for purchasing and renewing your membership.</p>
+              <a href="/caregiver/membership" className="inline-flex items-center px-4 py-2 rounded-full border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50">
+                Manage your credit card
+              </a>
+            </div>
+
+            {currentUser?.uid && <PayoutHistory uid={currentUser.uid} />}
+          </div>
+
+          <aside className="bg-white border border-slate-200 rounded-2xl p-5 h-max">
+            <p className="font-bold text-slate-900 mb-3">Credit Card Payout FAQs</p>
+            <div className="divide-y divide-slate-100">
+              {FAQS.map((f, i) => (
+                <div key={i} className="py-2">
+                  <button
+                    onClick={() => setOpenFaq(openFaq === i ? null : i)}
+                    className="w-full flex items-center justify-between text-left text-sm font-medium text-slate-700 hover:text-slate-900"
+                  >
+                    {f.q}
+                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${openFaq === i ? 'rotate-180' : ''}`} />
+                  </button>
+                  {openFaq === i && <p className="mt-2 text-xs text-slate-500">{f.a}</p>}
+                </div>
+              ))}
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  );
+};

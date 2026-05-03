@@ -1,0 +1,575 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.reactivateSubscription = exports.createIdentityVerificationSession = exports.cancelSubscription = exports.getSubscriptionDetails = exports.stripeWebhook = exports.createCheckoutSession = void 0;
+const functions = __importStar(require("firebase-functions"));
+const admin = __importStar(require("firebase-admin"));
+const stripe_1 = __importDefault(require("stripe"));
+// Initialize Stripe with secret key
+const stripe = new stripe_1.default(process.env.STRIPE_SECRET_KEY || '', {
+    apiVersion: '2023-10-16',
+});
+// Webhook secret for verifying Stripe events
+const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+// Price ID for $29.95/month membership (legacy fallback)
+const MEMBERSHIP_PRICE_ID = process.env.STRIPE_MEMBERSHIP_PRICE_ID || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO';
+// Allowed price IDs for all three plans + caregiver membership
+const ALLOWED_PRICE_IDS = [
+    process.env.STRIPE_PRICE_MONTHLY || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO',
+    process.env.STRIPE_PRICE_QUARTERLY || '',
+    process.env.STRIPE_PRICE_ANNUAL || '',
+    process.env.STRIPE_CAREGIVER_ANNUAL || 'price_1TO8L6L7Ss5iuUb7Vrbea2tg',
+    process.env.STRIPE_CAREGIVER_MONTHLY || '',
+    MEMBERSHIP_PRICE_ID,
+].filter(Boolean);
+/**
+ * Create a Stripe Checkout session for membership subscription
+ */
+exports.createCheckoutSession = functions.https.onCall(async (data, context) => {
+    var _a, _b;
+    // Verify authentication
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+    }
+    const { successUrl, cancelUrl, priceId } = data;
+    const userId = context.auth.uid;
+    // Resolve which price to charge — validate against allowed list
+    const resolvedPriceId = (priceId && ALLOWED_PRICE_IDS.includes(priceId))
+        ? priceId
+        : MEMBERSHIP_PRICE_ID;
+    try {
+        // Get or create Stripe customer
+        const userRef = admin.firestore().collection('customers').doc(userId);
+        const userDoc = await userRef.get();
+        let customerId = (_a = userDoc.data()) === null || _a === void 0 ? void 0 : _a.stripeCustomerId;
+        if (!customerId) {
+            // Get user email from Auth
+            const user = await admin.auth().getUser(userId);
+            // Create new Stripe customer
+            const customer = await stripe.customers.create({
+                email: user.email,
+                metadata: {
+                    firebaseUID: userId,
+                },
+            });
+            customerId = customer.id;
+            // Save to Firestore
+            await userRef.set({
+                stripeCustomerId: customerId,
+                email: user.email,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        }
+        // Create checkout session
+        const session = await stripe.checkout.sessions.create({
+            customer: customerId,
+            line_items: [
+                {
+                    price: resolvedPriceId,
+                    quantity: 1,
+                },
+            ],
+            mode: 'subscription',
+            success_url: successUrl,
+            cancel_url: cancelUrl,
+            subscription_data: {
+                metadata: {
+                    firebaseUID: userId,
+                },
+            },
+            metadata: {
+                firebaseUID: userId,
+            },
+        });
+        return { sessionId: session.id, url: session.url };
+    }
+    catch (error) {
+        const stripeMsg = ((_b = error === null || error === void 0 ? void 0 : error.raw) === null || _b === void 0 ? void 0 : _b.message) || (error === null || error === void 0 ? void 0 : error.message) || String(error);
+        console.error('Error creating checkout session:', stripeMsg, error);
+        throw new functions.https.HttpsError('internal', `Failed to create checkout session: ${stripeMsg}`);
+    }
+});
+/**
+ * Stripe webhook handler for subscription events
+ */
+exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
+    const sig = req.headers['stripe-signature'];
+    if (!sig) {
+        res.status(400).send('Missing stripe-signature header');
+        return;
+    }
+    if (!webhookSecret) {
+        console.error('STRIPE_WEBHOOK_SECRET is not configured — refusing to process webhook');
+        res.status(500).send('Webhook secret not configured');
+        return;
+    }
+    let event;
+    try {
+        event = stripe.webhooks.constructEvent(req.rawBody, sig, webhookSecret);
+    }
+    catch (err) {
+        console.error('Webhook signature verification failed:', err.message);
+        res.status(400).send(`Webhook Error: ${err.message}`);
+        return;
+    }
+    // Handle the event
+    try {
+        switch (event.type) {
+            case 'checkout.session.completed': {
+                const session = event.data.object;
+                await handleCheckoutSessionCompleted(session);
+                break;
+            }
+            case 'invoice.payment_succeeded': {
+                const invoice = event.data.object;
+                await handleInvoicePaymentSucceeded(invoice);
+                break;
+            }
+            case 'invoice.payment_failed': {
+                const invoice = event.data.object;
+                await handleInvoicePaymentFailed(invoice);
+                break;
+            }
+            case 'customer.subscription.created': {
+                const subscription = event.data.object;
+                await handleSubscriptionCreated(subscription);
+                break;
+            }
+            case 'customer.subscription.updated': {
+                const subscription = event.data.object;
+                await handleSubscriptionUpdated(subscription);
+                break;
+            }
+            case 'customer.subscription.deleted': {
+                const subscription = event.data.object;
+                await handleSubscriptionDeleted(subscription);
+                break;
+            }
+            case 'identity.verification_session.verified':
+            case 'identity.verification_session.processing':
+            case 'identity.verification_session.requires_input':
+            case 'identity.verification_session.canceled': {
+                const session = event.data.object;
+                await handleIdentityVerificationEvent(session);
+                break;
+            }
+            case 'payment_intent.succeeded': {
+                const intent = event.data.object;
+                await handleShiftPaymentIntentSucceeded(intent);
+                break;
+            }
+            case 'payment_intent.payment_failed': {
+                const intent = event.data.object;
+                await handleShiftPaymentIntentFailed(intent);
+                break;
+            }
+            default:
+                console.log(`Unhandled event type: ${event.type}`);
+        }
+        res.json({ received: true });
+    }
+    catch (error) {
+        console.error('Error handling webhook event:', error);
+        res.status(500).send('Internal server error');
+    }
+});
+/**
+ * Handle checkout.session.completed
+ */
+async function handleCheckoutSessionCompleted(session) {
+    var _a;
+    const userId = (_a = session.metadata) === null || _a === void 0 ? void 0 : _a.firebaseUID;
+    if (!userId)
+        return;
+    // Update user's membership status
+    await admin.firestore().collection('users').doc(userId).update({
+        membershipStatus: 'active',
+        stripeCustomerId: session.customer,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    console.log(`Checkout completed for user: ${userId}`);
+}
+/**
+ * Handle invoice.payment_succeeded
+ */
+async function handleInvoicePaymentSucceeded(invoice) {
+    var _a;
+    const subscriptionId = invoice.subscription;
+    if (!subscriptionId)
+        return;
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    const userId = (_a = subscription.metadata) === null || _a === void 0 ? void 0 : _a.firebaseUID;
+    if (!userId)
+        return;
+    // Record payment
+    await admin.firestore().collection('payments').add({
+        userId,
+        stripeInvoiceId: invoice.id,
+        stripeSubscriptionId: subscriptionId,
+        amount: invoice.amount_paid,
+        currency: invoice.currency,
+        status: 'succeeded',
+        periodStart: new Date(invoice.period_start * 1000),
+        periodEnd: new Date(invoice.period_end * 1000),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    console.log(`Payment succeeded for user: ${userId}`);
+}
+/**
+ * Handle invoice.payment_failed
+ */
+async function handleInvoicePaymentFailed(invoice) {
+    var _a;
+    const subscriptionId = invoice.subscription;
+    if (!subscriptionId)
+        return;
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    const userId = (_a = subscription.metadata) === null || _a === void 0 ? void 0 : _a.firebaseUID;
+    if (!userId)
+        return;
+    // Record failed payment
+    await admin.firestore().collection('payments').add({
+        userId,
+        stripeInvoiceId: invoice.id,
+        stripeSubscriptionId: subscriptionId,
+        amount: invoice.amount_due,
+        currency: invoice.currency,
+        status: 'failed',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    // Update user status
+    await admin.firestore().collection('users').doc(userId).update({
+        membershipStatus: 'payment_failed',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    console.log(`Payment failed for user: ${userId}`);
+}
+/**
+ * Handle customer.subscription.created
+ */
+async function handleSubscriptionCreated(subscription) {
+    var _a, _b;
+    const userId = (_a = subscription.metadata) === null || _a === void 0 ? void 0 : _a.firebaseUID;
+    if (!userId)
+        return;
+    // Save subscription to Firestore
+    await admin.firestore()
+        .collection('customers')
+        .doc(userId)
+        .collection('subscriptions')
+        .doc(subscription.id)
+        .set({
+        id: subscription.id,
+        status: subscription.status,
+        price_id: (_b = subscription.items.data[0]) === null || _b === void 0 ? void 0 : _b.price.id,
+        current_period_start: new Date(subscription.current_period_start * 1000),
+        current_period_end: new Date(subscription.current_period_end * 1000),
+        created: new Date(subscription.created * 1000),
+        cancel_at_period_end: subscription.cancel_at_period_end,
+        metadata: subscription.metadata,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    // Update user document
+    await admin.firestore().collection('users').doc(userId).update({
+        membershipStatus: subscription.status,
+        subscriptionId: subscription.id,
+        subscriptionActive: true,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    console.log(`Subscription created for user: ${userId}`);
+}
+/**
+ * Handle customer.subscription.updated
+ */
+async function handleSubscriptionUpdated(subscription) {
+    var _a;
+    const userId = (_a = subscription.metadata) === null || _a === void 0 ? void 0 : _a.firebaseUID;
+    if (!userId)
+        return;
+    // Update subscription in Firestore
+    await admin.firestore()
+        .collection('customers')
+        .doc(userId)
+        .collection('subscriptions')
+        .doc(subscription.id)
+        .update({
+        status: subscription.status,
+        current_period_start: new Date(subscription.current_period_start * 1000),
+        current_period_end: new Date(subscription.current_period_end * 1000),
+        cancel_at_period_end: subscription.cancel_at_period_end,
+        canceled_at: subscription.canceled_at ? new Date(subscription.canceled_at * 1000) : null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    // Update user document
+    await admin.firestore().collection('users').doc(userId).update({
+        membershipStatus: subscription.status,
+        subscriptionActive: subscription.status === 'active' || subscription.status === 'trialing',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    console.log(`Subscription updated for user: ${userId}`);
+}
+/**
+ * Handle customer.subscription.deleted
+ */
+async function handleSubscriptionDeleted(subscription) {
+    var _a;
+    const userId = (_a = subscription.metadata) === null || _a === void 0 ? void 0 : _a.firebaseUID;
+    if (!userId)
+        return;
+    // Update subscription in Firestore
+    await admin.firestore()
+        .collection('customers')
+        .doc(userId)
+        .collection('subscriptions')
+        .doc(subscription.id)
+        .update({
+        status: 'canceled',
+        canceled_at: new Date(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    // Update user document
+    await admin.firestore().collection('users').doc(userId).update({
+        membershipStatus: 'canceled',
+        subscriptionActive: false,
+        subscriptionId: null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    console.log(`Subscription canceled for user: ${userId}`);
+}
+/**
+ * Get user's subscription details
+ */
+exports.getSubscriptionDetails = functions.https.onCall(async (data, context) => {
+    var _a;
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+    }
+    const userId = context.auth.uid;
+    try {
+        const subscriptions = await admin.firestore()
+            .collection('customers')
+            .doc(userId)
+            .collection('subscriptions')
+            .where('status', 'in', ['active', 'trialing'])
+            .limit(1)
+            .get();
+        if (subscriptions.empty) {
+            return { hasSubscription: false };
+        }
+        const subscription = subscriptions.docs[0].data();
+        return {
+            hasSubscription: true,
+            subscription: {
+                id: subscription.id,
+                status: subscription.status,
+                currentPeriodEnd: (_a = subscription.current_period_end) === null || _a === void 0 ? void 0 : _a.toDate(),
+                cancelAtPeriodEnd: subscription.cancel_at_period_end,
+                priceId: subscription.price_id,
+            },
+        };
+    }
+    catch (error) {
+        console.error('Error getting subscription details:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to get subscription details');
+    }
+});
+/**
+ * Cancel subscription
+ */
+exports.cancelSubscription = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+    }
+    const userId = context.auth.uid;
+    try {
+        // Get active subscription
+        const subscriptions = await admin.firestore()
+            .collection('customers')
+            .doc(userId)
+            .collection('subscriptions')
+            .where('status', 'in', ['active', 'trialing'])
+            .limit(1)
+            .get();
+        if (subscriptions.empty) {
+            throw new functions.https.HttpsError('not-found', 'No active subscription found');
+        }
+        const subscriptionId = subscriptions.docs[0].id;
+        // Cancel in Stripe
+        await stripe.subscriptions.update(subscriptionId, {
+            cancel_at_period_end: true,
+        });
+        return { success: true };
+    }
+    catch (error) {
+        console.error('Error canceling subscription:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to cancel subscription');
+    }
+});
+/**
+ * Create a Stripe Identity verification session and return the hosted URL.
+ * Client should redirect the browser to `url`; Stripe sends the user back to
+ * `returnUrl` once they finish (or abandon) the flow.
+ */
+exports.createIdentityVerificationSession = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+    }
+    const userId = context.auth.uid;
+    const { returnUrl } = data;
+    if (!returnUrl || typeof returnUrl !== 'string') {
+        throw new functions.https.HttpsError('invalid-argument', 'returnUrl is required');
+    }
+    try {
+        const session = await stripe.identity.verificationSessions.create({
+            type: 'id_number',
+            metadata: { firebaseUID: userId },
+            return_url: returnUrl,
+        });
+        await admin.firestore().collection('users').doc(userId).set({
+            identityCheckStatus: 'processing',
+            stripeIdentityVerificationId: session.id,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        return { id: session.id, url: session.url, clientSecret: session.client_secret };
+    }
+    catch (error) {
+        console.error('Error creating identity verification session:', error);
+        throw new functions.https.HttpsError('internal', error.message || 'Failed to create verification session');
+    }
+});
+/**
+ * Handle Stripe Identity webhook events — mirror session status onto the user doc
+ * so the client can unblock gated actions as soon as the webhook lands.
+ */
+async function handleIdentityVerificationEvent(session) {
+    var _a;
+    const userId = (_a = session.metadata) === null || _a === void 0 ? void 0 : _a.firebaseUID;
+    if (!userId) {
+        console.warn('Identity session missing firebaseUID metadata:', session.id);
+        return;
+    }
+    const statusMap = {
+        verified: 'verified',
+        processing: 'processing',
+        requires_input: 'requires_input',
+        canceled: 'canceled',
+    };
+    const status = statusMap[session.status] || session.status;
+    const update = {
+        identityCheckStatus: status,
+        stripeIdentityVerificationId: session.id,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (status === 'verified') {
+        update.identityVerifiedAt = admin.firestore.FieldValue.serverTimestamp();
+    }
+    await admin.firestore().collection('users').doc(userId).set(update, { merge: true });
+    console.log(`Identity verification ${status} for user: ${userId}`);
+}
+/**
+ * Confirm a shift charge actually settled. The inline `processShiftPayment`
+ * call awaits paymentIntents.create with confirm:true, but Stripe can still
+ * return a 'requires_action' / 'processing' status for 3DS or fraud holds.
+ * This webhook is the authoritative signal that the money actually moved.
+ */
+async function handleShiftPaymentIntentSucceeded(intent) {
+    var _a, _b;
+    const appointmentId = ((_a = intent.metadata) === null || _a === void 0 ? void 0 : _a.appointmentId)
+        || ((_b = intent.metadata) === null || _b === void 0 ? void 0 : _b.shiftHoursId);
+    if (!appointmentId)
+        return; // Not a shift charge — ignore.
+    const ref = admin.firestore().collection('shiftHours').doc(appointmentId);
+    const snap = await ref.get();
+    if (!snap.exists)
+        return;
+    await ref.update({
+        chargeConfirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+        stripeChargeStatus: 'succeeded',
+    });
+}
+async function handleShiftPaymentIntentFailed(intent) {
+    var _a, _b, _c;
+    const appointmentId = ((_a = intent.metadata) === null || _a === void 0 ? void 0 : _a.appointmentId)
+        || ((_b = intent.metadata) === null || _b === void 0 ? void 0 : _b.shiftHoursId);
+    if (!appointmentId)
+        return;
+    const ref = admin.firestore().collection('shiftHours').doc(appointmentId);
+    const snap = await ref.get();
+    if (!snap.exists)
+        return;
+    const reason = ((_c = intent.last_payment_error) === null || _c === void 0 ? void 0 : _c.message) || 'payment_intent.payment_failed';
+    await ref.update({
+        status: 'payment_failed',
+        stripeFailureReason: reason,
+        stripeChargeStatus: 'failed',
+        updatedAt: new Date().toISOString(),
+    });
+}
+/**
+ * Reactivate subscription
+ */
+exports.reactivateSubscription = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+    }
+    const userId = context.auth.uid;
+    try {
+        // Get subscription with cancel_at_period_end
+        const subscriptions = await admin.firestore()
+            .collection('customers')
+            .doc(userId)
+            .collection('subscriptions')
+            .where('cancel_at_period_end', '==', true)
+            .limit(1)
+            .get();
+        if (subscriptions.empty) {
+            throw new functions.https.HttpsError('not-found', 'No canceled subscription found');
+        }
+        const subscriptionId = subscriptions.docs[0].id;
+        // Reactivate in Stripe
+        await stripe.subscriptions.update(subscriptionId, {
+            cancel_at_period_end: false,
+        });
+        return { success: true };
+    }
+    catch (error) {
+        console.error('Error reactivating subscription:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to reactivate subscription');
+    }
+});
+//# sourceMappingURL=stripe.js.map

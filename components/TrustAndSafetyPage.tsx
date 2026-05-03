@@ -1,0 +1,287 @@
+import React, { useState } from 'react';
+import { ViewType } from '../types';
+import { 
+  Activity, ShieldCheck, HeartHandshake, CheckCircle, 
+  MessageSquare, Users, Lock, Clock, Award, Star
+} from 'lucide-react';
+import { Button } from './ui/Button';
+import { SEO } from './SEO';
+import { Footer } from './landing/Footer';
+import { LoginModal } from './landing/LoginModal';
+
+interface TrustAndSafetyPageProps {
+   onNavigate: (view: ViewType) => void;
+}
+
+export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNavigate }) => {
+   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+
+   const trustTools = [
+      {
+         icon: <HeartHandshake className="w-8 h-8 text-primary-500" />,
+         title: "Community recommendations",
+         desc: "See caregivers recommended by families from local community centers, senior support groups, and neighborhood networks."
+      },
+      {
+         icon: <Users className="w-8 h-8 text-teal-500" />,
+         title: "Repeat families",
+         desc: "Every caregiver profile shows total bookings completed and how many families have booked them again. A caregiver with many repeat families is a strong sign of trust."
+      },
+      {
+         icon: <Star className="w-8 h-8 text-yellow-500" />,
+         title: "Parent reviews",
+         desc: "Read reviews from families who have hired the caregiver. Reviews can only be written after a completed job, so every review reflects a firsthand experience."
+      }
+   ];
+
+   const badges = [
+      {
+         icon: <ShieldCheck className="w-6 h-6 text-indigo-500" />,
+         title: "Annual background checks",
+         desc: "Every caregiver must complete a background check. Background checks are processed by Checkr annually."
+      },
+      {
+         icon: <Clock className="w-6 h-6 text-blue-500" />,
+         title: "Responds quickly to new families",
+         desc: "Caregivers with this badge typically respond in 24 hours or less to new families."
+      },
+      {
+         icon: <Award className="w-6 h-6 text-green-500" />,
+         title: "Reliability",
+         desc: "Caregivers with this badge completed 90 to 100% of their recent jobs."
+      }
+   ];
+
+   const privacyFeatures = [
+      {
+         icon: <MessageSquare className="w-6 h-6 text-primary-500" />,
+         title: "Safe messaging",
+         desc: "Your contact information is only shared with a caregiver after a booking is confirmed, keeping your personal details private until you are ready."
+      },
+      {
+         icon: <CheckCircle className="w-6 h-6 text-teal-500" />,
+         title: "Member authenticity",
+         desc: "All families go through an authentication process before they can book caregivers."
+      },
+      {
+         icon: <Lock className="w-6 h-6 text-blue-500" />,
+         title: "Payment protection",
+         desc: "All payments are processed securely through our payment partners. Your financial information is never shared with caregivers."
+      },
+      {
+         icon: <ShieldCheck className="w-6 h-6 text-indigo-500" />,
+         title: "Industry-respected trust and safety partners",
+         desc: "CareConnex partners with Checkr for background checks and Stripe for payment processing, two of the most trusted names in their fields."
+      }
+   ];
+
+   const supportFeatures = [
+      {
+         title: "7 days a week",
+         desc: "Our award-winning member services team is available seven days a week to help with booking questions, safety concerns, or anything else you need."
+      },
+      {
+         title: "Upgraded background checks",
+         desc: "Want additional peace of mind? Families can request an upgraded background check or a driving record check package for a caregiver. Contact us for options."
+      },
+      {
+         title: "Booking support",
+         desc: "We provide support for payment, reliability and member concerns for every booking scheduled through CareConnex."
+      }
+   ];
+
+   return (
+      <div className="min-h-screen bg-white font-sans">
+         <SEO
+            title="Trust & Safety | CareConnex"
+            description="Your family's safety is our top priority. Every caregiver on CareConnex is background checked annually. Learn more about our Trust and Safety tools."
+            keywords="trust, safety, background checks, secure payments, safe messaging, CareConnex"
+         />
+
+         {/* Navigation Header */}
+         <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-slate-100">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+               <div className="flex justify-between items-center h-20">
+                  <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
+                     <div className="bg-primary-600 p-2 rounded-xl shadow-lg shadow-primary-200/50">
+                        <Activity className="text-white w-6 h-6" />
+                     </div>
+                     <span className="text-2xl font-bold text-slate-900 tracking-tight">CareConnex</span>
+                  </div>
+
+                  <nav className="hidden md:flex items-center space-x-8">
+                     <button onClick={() => onNavigate('client-signup')} className="text-slate-600 hover:text-primary-600 font-medium transition-colors">Find Care</button>
+                     <button onClick={() => onNavigate('caregiver-signup')} className="text-slate-600 hover:text-accent-500 font-medium transition-colors">Find Jobs</button>
+                  </nav>
+
+                  <div className="flex items-center space-x-4">
+                     <button onClick={() => setIsLoginModalOpen(true)} className="hidden md:block text-slate-600 hover:text-primary-600 font-medium">Log In</button>
+                     <Button onClick={() => onNavigate('client-signup')}>Get Started</Button>
+                  </div>
+               </div>
+            </div>
+         </header>
+
+         <main>
+            {/* Hero Section */}
+            <section className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-primary-900 text-white py-24 lg:py-32">
+               <div className="absolute inset-0 overflow-hidden">
+                  <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-primary-500/10 to-transparent"></div>
+                  <div className="absolute bottom-0 left-0 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl"></div>
+               </div>
+               
+               <div className="relative max-w-4xl mx-auto px-4 text-center">
+                  <div className="inline-flex items-center justify-center p-4 bg-white/10 backdrop-blur-sm rounded-full mb-8 border border-white/20">
+                     <ShieldCheck className="w-12 h-12 text-primary-400" />
+                  </div>
+                  <h1 className="text-4xl md:text-6xl font-bold mb-6 leading-tight">
+                     Your family's safety is our <span className="text-primary-400">top priority.</span>
+                  </h1>
+                  <p className="text-xl text-slate-300 max-w-2xl mx-auto leading-relaxed">
+                     Every caregiver on CareConnex is background checked annually. Each caregiver profile is individually reviewed by our Trust and Safety team. Our aim is to provide members with transparency and information to make informed decisions.
+                  </p>
+               </div>
+            </section>
+
+            {/* Trust Tools Section */}
+            <section className="py-20 bg-slate-50 border-b border-slate-200">
+               <div className="max-w-6xl mx-auto px-4">
+                  <div className="text-center mb-16">
+                     <h2 className="text-3xl font-bold text-slate-900 mb-6">Tools to find care you can trust</h2>
+                     <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+                        From community recommendations and parent reviews to annual background checks and responsive support, CareConnex gives you the tools to find senior care you can trust.
+                     </p>
+                  </div>
+
+                  <div className="grid md:grid-cols-3 gap-8">
+                     {trustTools.map((tool, idx) => (
+                        <div key={idx} className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
+                           <div className="mb-6 p-4 bg-slate-50 rounded-2xl inline-block">
+                              {tool.icon}
+                           </div>
+                           <h3 className="text-xl font-bold text-slate-900 mb-4">{tool.title}</h3>
+                           <p className="text-slate-600 leading-relaxed">{tool.desc}</p>
+                        </div>
+                     ))}
+                  </div>
+               </div>
+            </section>
+
+            {/* Badges Section */}
+            <section className="py-20 bg-white">
+               <div className="max-w-6xl mx-auto px-4">
+                  <div className="grid md:grid-cols-2 gap-16 items-center">
+                     <div>
+                        <h2 className="text-3xl font-bold text-slate-900 mb-8">Caregiver badges of trust</h2>
+                        <div className="space-y-8">
+                           {badges.map((badge, idx) => (
+                              <div key={idx} className="flex items-start gap-4">
+                                 <div className="flex-shrink-0 mt-1 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                    {badge.icon}
+                                 </div>
+                                 <div>
+                                    <h3 className="text-xl font-bold text-slate-900 mb-2">{badge.title}</h3>
+                                    <p className="text-slate-600">{badge.desc}</p>
+                                 </div>
+                              </div>
+                           ))}
+                        </div>
+                     </div>
+                     <div className="bg-gradient-to-br from-primary-50 to-teal-50 p-8 rounded-3xl border border-primary-100 relative">
+                        <div className="bg-white p-6 rounded-2xl shadow-xl flex items-center gap-6 mb-4">
+                           <div className="w-16 h-16 rounded-full bg-slate-200 flex-shrink-0 relative overflow-hidden">
+                              <img src="https://ui-avatars.com/api/?name=Sarah+M&background=random" alt="Caregiver avatar" className="w-full h-full object-cover" />
+                              <div className="absolute bottom-0 right-0 bg-white p-0.5 rounded-full">
+                                 <ShieldCheck className="w-4 h-4 text-primary-600" />
+                              </div>
+                           </div>
+                           <div>
+                              <h4 className="font-bold text-slate-900 text-lg">Sarah M.</h4>
+                              <div className="flex items-center gap-2 text-sm text-slate-500 mt-1">
+                                 <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
+                                 <span>5.0 (24 reviews)</span>
+                                 <span className="text-slate-300">•</span>
+                                 <span>15 repeat families</span>
+                              </div>
+                           </div>
+                        </div>
+                        <div className="bg-white p-4 rounded-xl shadow flex items-center gap-3">
+                           <div className="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center flex-shrink-0">
+                              <Award className="w-5 h-5 text-green-600" />
+                           </div>
+                           <div>
+                              <p className="text-sm font-semibold text-slate-900">Highly Reliable</p>
+                              <p className="text-xs text-slate-500">Completed 100% of recent jobs</p>
+                           </div>
+                        </div>
+                     </div>
+                  </div>
+               </div>
+            </section>
+
+            {/* Privacy Section */}
+            <section className="py-20 bg-slate-900 text-white">
+               <div className="max-w-6xl mx-auto px-4">
+                  <div className="text-center mb-16">
+                     <h2 className="text-3xl font-bold mb-6">How CareConnex protects your privacy</h2>
+                     <p className="text-lg text-slate-400 max-w-2xl mx-auto">
+                        We use industry-leading security practices to keep your personal and financial information safe.
+                     </p>
+                  </div>
+                  
+                  <div className="grid sm:grid-cols-2 gap-8">
+                     {privacyFeatures.map((feature, idx) => (
+                        <div key={idx} className="bg-slate-800 p-8 rounded-3xl border border-slate-700">
+                           <div className="flex items-center gap-4 mb-4">
+                              <div className="p-3 bg-slate-700/50 rounded-xl">
+                                 {feature.icon}
+                              </div>
+                              <h3 className="text-xl font-bold">{feature.title}</h3>
+                           </div>
+                           <p className="text-slate-400 leading-relaxed">{feature.desc}</p>
+                        </div>
+                     ))}
+                  </div>
+               </div>
+            </section>
+
+            {/* Support Section */}
+            <section className="py-20 bg-white">
+               <div className="max-w-4xl mx-auto px-4 text-center">
+                  <h2 className="text-3xl font-bold text-slate-900 mb-12">Support from our Trust & Safety teams</h2>
+                  
+                  <div className="grid md:grid-cols-3 gap-8 text-left">
+                     {supportFeatures.map((feature, idx) => (
+                        <div key={idx} className="flex flex-col">
+                           <h3 className="text-xl font-bold text-slate-900 mb-3">{feature.title}</h3>
+                           <p className="text-slate-600 leading-relaxed flex-grow">{feature.desc}</p>
+                        </div>
+                     ))}
+                  </div>
+               </div>
+            </section>
+            
+            {/* CTA Section */}
+            <section className="py-20 bg-primary-50 border-t border-primary-100">
+               <div className="max-w-3xl mx-auto px-4 text-center">
+                  <h2 className="text-3xl font-bold text-slate-900 mb-6">Ready to find a caregiver you can trust?</h2>
+                  <div className="flex flex-col sm:flex-row justify-center gap-4">
+                     <Button size="lg" onClick={() => onNavigate('client-signup')}>
+                        Sign up free
+                     </Button>
+                     <Button size="lg" variant="secondary" onClick={() => onNavigate('how-it-works')}>
+                        Learn how it works
+                     </Button>
+                  </div>
+               </div>
+            </section>
+
+            <Footer onNavigate={onNavigate} />
+
+            {isLoginModalOpen && (
+               <LoginModal onNavigate={onNavigate} onClose={() => setIsLoginModalOpen(false)} />
+            )}
+         </main>
+      </div>
+   );
+};

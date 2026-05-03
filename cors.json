@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://careconnex-d4c8b.web.app", "http://localhost:5173", "http://localhost:3000"],
+    "method": ["GET", "POST", "PUT", "DELETE", "HEAD"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": ["Content-Type", "Access-Control-Allow-Origin", "Authorization", "x-goog-resumable"]
+  }
+]

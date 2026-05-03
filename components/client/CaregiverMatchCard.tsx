@@ -1,0 +1,164 @@
+import React, { useState } from 'react';
+import { Star, Shield, Clock, Heart, MapPin, MessageSquare, CheckCircle } from 'lucide-react';
+import { Caregiver } from '../../types';
+import { CreditCardBadge } from '../shared/CreditCardBadge';
+
+interface CaregiverMatchCardProps {
+  caregiver: Caregiver;
+  matchScore: number;
+  matchReasons: string[];
+  onBook: (caregiver: Caregiver) => void;
+  onViewProfile: (caregiver: Caregiver) => void;
+  onMessage?: (caregiver: Caregiver) => void;
+  isSaved?: boolean;
+  onToggleSave?: (caregiver: Caregiver) => void;
+}
+
+export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
+  caregiver,
+  matchScore,
+  matchReasons,
+  onBook,
+  onViewProfile,
+  onMessage,
+  isSaved = false,
+  onToggleSave,
+}) => {
+  const [imgErrored, setImgErrored] = useState(false);
+  const photo = caregiver.imageUrl || (caregiver as any).photo || (caregiver as any).photoURL;
+  const initials = caregiver.name.split(' ').map((p: string) => p[0]).slice(0, 2).join('').toUpperCase();
+
+  return (
+    <div className="bg-white rounded-[1.5rem] border border-slate-200 hover:border-slate-300 shadow-sm hover:shadow-md transition-all overflow-hidden flex flex-col relative">
+      {/* Favorite button */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onToggleSave?.(caregiver); }}
+        className="absolute top-4 right-4 p-2 bg-white/80 hover:bg-slate-50 backdrop-blur-sm rounded-full shadow-sm z-10 transition-colors"
+        aria-label={isSaved ? 'Remove from saved' : 'Save caregiver'}
+      >
+        <Heart className={`w-5 h-5 transition-colors ${isSaved ? 'text-red-500 fill-current' : 'text-slate-400 hover:text-red-400'}`} />
+      </button>
+
+      {/* Clickable profile area */}
+      <div
+        className="p-5 flex-1 flex flex-col cursor-pointer group"
+        onClick={() => onViewProfile(caregiver)}
+      >
+        {/* Photo + name + badges */}
+        <div className="flex items-start gap-4 mb-5">
+          <div className="w-20 h-20 rounded-full bg-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0 shadow-inner group-hover:ring-4 ring-primary-50 transition-all">
+            {photo && !imgErrored ? (
+              <img
+                src={photo}
+                alt={caregiver.name}
+                className="w-full h-full object-cover"
+                onError={() => setImgErrored(true)}
+              />
+            ) : (
+              <span className="text-2xl font-bold text-slate-400">{initials}</span>
+            )}
+          </div>
+
+          <div className="flex-1 min-w-0 pt-1 pr-10">
+            <h3 className="text-[22px] font-bold text-slate-900 group-hover:text-primary-600 transition-colors truncate mb-1 leading-tight">
+              {caregiver.name}
+            </h3>
+
+            {/* Stars */}
+            <div className="flex items-center gap-0.5 mb-2.5">
+              {[...Array(5)].map((_, i) => (
+                <Star
+                  key={i}
+                  className={`w-[18px] h-[18px] ${i < Math.floor(caregiver.rating || 0) ? 'text-teal-500 fill-current' : 'text-slate-200'}`}
+                />
+              ))}
+              <span className="text-sm font-medium text-slate-500 ml-1.5">
+                ({(caregiver as any).reviewCount || 0})
+              </span>
+            </div>
+
+            <CreditCardBadge show={!!(caregiver as any).acceptsCreditCards} />
+
+            {/* IDV + BGC badges */}
+            <div className="flex items-center gap-2 mt-1.5">
+              <div className="w-9 h-9 rounded-full bg-teal-500 flex flex-col items-center justify-center text-white pt-1">
+                <Shield className="w-4 h-4 mb-0.5" />
+                <span className="text-[7px] font-bold leading-none tracking-wider uppercase">IDV</span>
+              </div>
+              {(caregiver as any).backgroundCheckStatus === 'clear' ? (
+                <div className="w-9 h-9 rounded-full bg-blue-500 flex flex-col items-center justify-center text-white pt-1" title="Background Check Cleared">
+                  <CheckCircle className="w-4 h-4 mb-0.5" />
+                  <span className="text-[7px] font-bold leading-none tracking-wider uppercase">BGC+</span>
+                </div>
+              ) : (
+                <div className="w-9 h-9 rounded-full bg-yellow-400 flex flex-col items-center justify-center text-white pt-1" title="Background Check Pending">
+                  <Clock className="w-4 h-4 mb-0.5" />
+                  <span className="text-[7px] font-bold leading-none tracking-wider uppercase">BGC</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Experience + distance */}
+        <div className="space-y-3.5 mb-5 mt-1">
+          <div className="flex items-center gap-3.5 text-slate-700">
+            <Heart className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
+            <span className="text-[17px]">{caregiver.experience || 0} years experience</span>
+          </div>
+          <div className="flex items-center gap-3.5 text-slate-700">
+            <MapPin className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
+            <span className="text-[17px]">{caregiver.distance} miles</span>
+          </div>
+        </div>
+
+        {/* Skills pills */}
+        {caregiver.skills && caregiver.skills.length > 0 ? (
+          <div className="flex flex-wrap gap-2 mb-6 mt-1">
+            {caregiver.skills.slice(0, 3).map((skill: string) => (
+              <span key={skill} className="px-3.5 py-1.5 bg-slate-100 border border-slate-200 text-slate-800 text-[13px] font-medium rounded-[1rem]">
+                {skill}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div className="mb-6 mt-1" />
+        )}
+
+        {/* Stats footer */}
+        <div className="border-t border-slate-200 pt-4 pb-2 flex items-center justify-between mt-auto">
+          <div className="flex-1 text-center border-r border-slate-200 pr-2 pb-1">
+            <div className="flex items-center justify-center gap-1.5 text-slate-500 mb-1">
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em]">Responds in</span>
+            </div>
+            <p className="text-[16px] text-slate-900 tracking-tight">30 minutes</p>
+          </div>
+          <div className="flex-1 text-center pl-2 pb-1">
+            <div className="flex items-center justify-center gap-1.5 text-slate-500 mb-1">
+              <Clock className="w-3.5 h-3.5" />
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em]">Last Login</span>
+            </div>
+            <p className="text-[16px] text-slate-900 tracking-tight">Online now</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Action buttons */}
+      <div className="bg-slate-50 border-t border-slate-100 p-3 grid grid-cols-2 gap-2">
+        <button
+          onClick={(e) => { e.stopPropagation(); onMessage?.(caregiver); }}
+          className="flex-1 py-2 text-sm font-bold bg-white border-2 border-slate-200 text-slate-700 rounded-xl hover:bg-slate-50 hover:border-slate-300 transition-colors inline-flex items-center justify-center gap-1.5"
+        >
+          <MessageSquare className="w-4 h-4" /> Message
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onBook(caregiver); }}
+          className="w-full py-2 text-sm font-bold bg-primary-600 border-2 border-primary-600 text-white rounded-xl hover:bg-primary-700 hover:border-primary-700 transition-colors"
+        >
+          Book
+        </button>
+      </div>
+    </div>
+  );
+};

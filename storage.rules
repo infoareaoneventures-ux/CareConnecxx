@@ -1,0 +1,71 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // ==========================================
+    // HELPER FUNCTIONS
+    // ==========================================
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Check if the current user is the owner of the document
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // ==========================================
+    // CARE JOURNAL PHOTOS
+    // ==========================================
+    match /care_journal/{seniorId}/{entryId}/{filename} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() 
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // ==========================================
+    // VERIFICATION DOCUMENTS
+    // ==========================================
+    match /verification/{caregiverId}/{docType}/{filename} {
+      allow read: if isOwner(caregiverId) || isAuthenticated();
+      allow write: if isOwner(caregiverId)
+        && request.resource.size < 10 * 1024 * 1024  // 10MB max
+        && (request.resource.contentType.matches('image/.*') 
+            || request.resource.contentType == 'application/pdf');
+    }
+
+    // ==========================================
+    // CAREGIVER DOCUMENTS
+    // Driver's License, Insurance, Registration
+    // ==========================================
+    match /caregivers/{userId}/documents/{documentId} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId ||  // Owner can read
+        resource.metadata.adminAccess == 'true'  // Admin can read (set via server)
+      );
+      allow write: if isAuthenticated() && request.auth.uid == userId 
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && (request.resource.contentType.matches('image/.*') 
+            || request.resource.contentType == 'application/pdf');
+    }
+
+    // ==========================================
+    // PROFILE PHOTOS
+    // ==========================================
+    match /profile_photos/{userId}/{filename} {
+      allow read: if true;  // Public read for profile photos
+      allow write: if isOwner(userId)
+        && request.resource.size < 2 * 1024 * 1024  // 2MB max
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // ==========================================
+    // DEFAULT DENY
+    // ==========================================
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

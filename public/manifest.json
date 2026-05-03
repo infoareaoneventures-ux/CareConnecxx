@@ -1,0 +1,79 @@
+{
+    "name": "CareConnex - Senior Care Marketplace",
+    "short_name": "CareConnex",
+    "description": "Connect with verified caregivers instantly. AI-powered matching for senior care.",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#0d9488",
+    "orientation": "portrait-primary",
+    "icons": [
+        {
+            "src": "/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ],
+    "categories": [
+        "health",
+        "lifestyle",
+        "medical"
+    ],
+    "screenshots": [
+        {
+            "src": "/screenshot-mobile.png",
+            "sizes": "390x844",
+            "type": "image/png",
+            "form_factor": "narrow"
+        },
+        {
+            "src": "/screenshot-desktop.png",
+            "sizes": "1920x1080",
+            "type": "image/png",
+            "form_factor": "wide"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "Find Caregiver",
+            "short_name": "Search",
+            "description": "Search for caregivers",
+            "url": "/client/dashboard",
+            "icons": [
+                {
+                    "src": "/icon-search.png",
+                    "sizes": "96x96"
+                }
+            ]
+        },
+        {
+            "name": "My Appointments",
+            "short_name": "Appointments",
+            "description": "View your appointments",
+            "url": "/client/dashboard",
+            "icons": [
+                {
+                    "src": "/icon-calendar.png",
+                    "sizes": "96x96"
+                }
+            ]
+        }
+    ],
+    "share_target": {
+        "action": "/share",
+        "method": "POST",
+        "enctype": "multipart/form-data",
+        "params": {
+            "title": "title",
+            "text": "text",
+            "url": "url"
+        }
+    }
+}

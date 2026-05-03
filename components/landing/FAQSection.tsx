@@ -1,0 +1,146 @@
+import React, { useState } from 'react';
+import { ChevronDown, ChevronUp, HelpCircle } from 'lucide-react';
+import { ViewType } from '../../types';
+import { Button } from '../ui/Button';
+
+interface FAQSectionProps {
+    onNavigate: (view: ViewType) => void;
+}
+
+const faqs = [
+    {
+        question: "How do you screen your caregivers?",
+        answer: "Every caregiver undergoes a rigorous 5-step screening process: comprehensive background check (criminal + DMV), identity verification, reference checks from previous employers, skills assessment, and a personal interview. We also require current CPR/First Aid certification and ongoing training.",
+        category: "Safety"
+    },
+    {
+        question: "What if I don't like the caregiver you match me with?",
+        answer: "No problem. Our AI matching is highly accurate (94% first-match success rate), but if you're not completely satisfied, you can request a new match at any time—no questions asked, no fees. We'll even schedule video interviews with up to 3 candidates so you can choose the best fit.",
+        category: "Matching"
+    },
+    {
+        question: "Is my parent's personal information secure?",
+        answer: "Absolutely. We're HIPAA-compliant and use bank-level encryption (AES-256) for all data. Caregivers only see the information they need for care—full medical history and sensitive documents stay private and accessible only to you through your secure dashboard.",
+        category: "Privacy"
+    },
+    {
+        question: "Can I change or cancel care anytime?",
+        answer: "Yes. There are no long-term contracts or cancellation fees. You can modify schedules, change caregivers, or pause service with just 24 hours notice. You're in complete control of your care.",
+        category: "Flexibility"
+    },
+    {
+        question: "How much does it cost compared to traditional agencies?",
+        answer: "In Santa Clara County, traditional agencies typically charge $32-42/hour while paying caregivers only $18-22/hour. With CareConnex, families pay $22-28/hour directly—caregivers earn more (typically $20-26/hour), and families save 30-40%. No agency markup, no hidden fees, no long-term contracts.",
+        category: "Pricing"
+    },
+    {
+        question: "What types of care do you offer?",
+        answer: "We offer comprehensive in-home care: companionship, personal care (bathing, dressing, grooming), meal preparation, medication reminders, transportation, light housekeeping, dementia/Alzheimer's care, respite care for family caregivers, and overnight or 24/7 live-in care.",
+        category: "Services"
+    },
+    {
+        question: "How quickly can I get a caregiver?",
+        answer: "Most families find a match within 24-48 hours. For urgent needs, we have a network of pre-approved caregivers who can often start same-day. The sooner you complete your care profile, the faster we can find your perfect match.",
+        category: "Timing"
+    },
+    {
+        question: "What happens if a caregiver calls in sick?",
+        answer: "We've got you covered. Our platform automatically notifies you and suggests backup caregivers from your area who are available. For recurring care, we recommend having a primary and backup caregiver to ensure continuity.",
+        category: "Reliability"
+    }
+];
+
+export const FAQSection: React.FC<FAQSectionProps> = ({ onNavigate }) => {
+    const [openIndex, setOpenIndex] = useState<number | null>(0);
+
+    return (
+        <section className="py-24 bg-white relative overflow-hidden">
+            {/* Background */}
+            <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-primary-50 rounded-full blur-3xl opacity-50 pointer-events-none translate-x-1/3 -translate-y-1/3"></div>
+            <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-50 rounded-full blur-3xl opacity-50 pointer-events-none -translate-x-1/3 translate-y-1/3"></div>
+
+            <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+                {/* Header */}
+                <div className="text-center mb-16">
+                    <div className="inline-flex items-center px-4 py-1.5 rounded-full bg-primary-50 text-primary-700 text-sm font-medium mb-6">
+                        <HelpCircle className="w-4 h-4 mr-2" />
+                        Common Questions
+                    </div>
+                    <h2 className="text-4xl md:text-5xl font-bold text-slate-900 mb-6 tracking-tight">
+                        Got Questions?<br />
+                        <span className="text-primary-600">We've Got Answers.</span>
+                    </h2>
+                    <p className="text-xl text-slate-600 max-w-2xl mx-auto">
+                        Everything you need to know about finding and managing care with CareConnex.
+                    </p>
+                </div>
+
+                {/* FAQ Items */}
+                <div className="space-y-4">
+                    {faqs.map((faq, index) => (
+                        <div 
+                            key={index}
+                            className="border border-slate-200 rounded-2xl overflow-hidden hover:border-primary-200 transition-colors"
+                        >
+                            <button
+                                onClick={() => setOpenIndex(openIndex === index ? null : index)}
+                                className="w-full flex items-center justify-between p-6 text-left bg-white hover:bg-slate-50 transition-colors"
+                            >
+                                <div className="flex items-start gap-4">
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 mt-1">
+                                        {faq.category}
+                                    </span>
+                                    <span className="font-semibold text-slate-900 text-lg">
+                                        {faq.question}
+                                    </span>
+                                </div>
+                                {openIndex === index ? (
+                                    <ChevronUp className="w-5 h-5 text-primary-600 flex-shrink-0 ml-4" />
+                                ) : (
+                                    <ChevronDown className="w-5 h-5 text-slate-400 flex-shrink-0 ml-4" />
+                                )}
+                            </button>
+                            
+                            {openIndex === index && (
+                                <div className="px-6 pb-6 bg-slate-50/50">
+                                    <div className="pl-[calc(3.5rem+4px)]">
+                                        <p className="text-slate-600 leading-relaxed">
+                                            {faq.answer}
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+
+                {/* CTA */}
+                <div className="mt-16 text-center bg-slate-50 rounded-3xl p-12">
+                    <h3 className="text-2xl font-bold text-slate-900 mb-4">
+                        Still have questions?
+                    </h3>
+                    <p className="text-slate-600 mb-8 max-w-lg mx-auto">
+                        Our care advisors are here to help. Schedule a free 15-minute consultation to discuss your specific needs.
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                        <Button 
+                            size="lg" 
+                            onClick={() => onNavigate('client-signup')}
+                            className="rounded-2xl"
+                        >
+                            Get Started Free
+                        </Button>
+                        <Button 
+                            size="lg" 
+                            variant="secondary"
+                            onClick={() => window.location.href = 'mailto:support@careconnex.com'}
+                            className="rounded-2xl"
+                        >
+                            Contact Support
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
+};

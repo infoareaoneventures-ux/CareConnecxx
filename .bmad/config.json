@@ -1,0 +1,52 @@
+{
+  "version": "6.0.1",
+  "project": {
+    "name": "CareConnex",
+    "type": "healthcare-marketplace",
+    "domain": "senior-care",
+    "scale": "startup-to-growth"
+  },
+  "modules": {
+    "bmm": {
+      "enabled": true,
+      "version": "6.0.1"
+    }
+  },
+  "agents": {
+    "productManager": {
+      "enabled": true,
+      "personality": "strategic-focused"
+    },
+    "architect": {
+      "enabled": true,
+      "personality": "systematic-pragmatic"
+    },
+    "developer": {
+      "enabled": true,
+      "personality": "execution-oriented"
+    },
+    "healthcareCompliance": {
+      "enabled": true,
+      "personality": "detail-oriented-cautious"
+    },
+    "uxDesigner": {
+      "enabled": true,
+      "personality": "empathetic-user-focused"
+    }
+  },
+  "workflows": {
+    "default": "agile-sprint",
+    "custom": [
+      "healthcare-hipaa-compliant",
+      "marketplace-two-sided",
+      "senior-accessibility-first"
+    ]
+  },
+  "integrations": {
+    "firebase": true,
+    "railway": true,
+    "twilio": true,
+    "openai": true,
+    "stripe": true
+  }
+}

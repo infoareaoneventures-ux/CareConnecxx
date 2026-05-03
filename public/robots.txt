@@ -1,0 +1,27 @@
+User-agent: *
+Allow: /
+Allow: /assets/
+Allow: /how-it-works
+Allow: /pricing
+
+# Allow CSS and JS for proper rendering
+Allow: /*.css$
+Allow: /*.js$
+
+# Sitemap location
+Sitemap: https://careconnex-d4c8b.web.app/sitemap.xml
+
+# Crawl-delay for respectful crawling
+Crawl-delay: 1
+
+# Disallow admin and private areas
+Disallow: /admin
+Disallow: /client/dashboard
+Disallow: /caregiver/dashboard
+Disallow: /client/inbox
+Disallow: /caregiver/inbox
+Disallow: /client/profile
+Disallow: /caregiver/profile
+Disallow: /client/care-plan
+Disallow: /stripe/
+Disallow: /payment/

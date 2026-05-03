@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" rx="128" fill="#0d9488"/>
+  
+  <!-- Heart/Shield shape -->
+  <path d="M256 120 
+           C200 120, 140 160, 140 240 
+           C140 320, 256 400, 256 400 
+           C256 400, 372 320, 372 240 
+           C372 160, 312 120, 256 120 Z" 
+        fill="white"/>
+  
+  <!-- Cross in center -->
+  <rect x="232" y="180" width="48" height="120" rx="8" fill="#0d9488"/>
+  <rect x="196" y="216" width="120" height="48" rx="8" fill="#0d9488"/>
+  
+  <!-- Hands/care icon at bottom -->
+  <circle cx="200" cy="340" r="20" fill="white" opacity="0.9"/>
+  <circle cx="256" cy="350" r="20" fill="white" opacity="0.9"/>
+  <circle cx="312" cy="340" r="20" fill="white" opacity="0.9"/>
+</svg>

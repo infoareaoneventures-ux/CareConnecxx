@@ -1,0 +1,733 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ==========================================
+    // HELPER FUNCTIONS
+    // ==========================================
+
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Validate bio length (max 500 characters)
+    function isValidBio(bio) {
+      return bio == null || (bio is string && bio.size() <= 500);
+    }
+    
+    // Check if the current user is the owner of the document
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Check if user has admin role
+    function isAdmin() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'admin';
+    }
+    
+    // Only admins can delete documents
+    function canDelete() {
+      return isAdmin();
+    }
+    
+    // Check if user is a caregiver
+    function isCaregiver() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'caregiver';
+    }
+    
+    // Check if user is a client
+    function isClient() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'client';
+    }
+    
+    // Validate required fields exist (non-empty string check)
+    function hasRequiredFields(data, fields) {
+      return fields.all(field, field in data && data[field] is string && data[field].size() > 0);
+    }
+    
+    // Validate data types
+    function isString(value) {
+      return value is string;
+    }
+    
+    function isNumber(value) {
+      return value is number;
+    }
+    
+    function isBoolean(value) {
+      return value is bool;
+    }
+    
+    function isTimestamp(value) {
+      return value is timestamp;
+    }
+    
+    function isValidISODate(value) {
+      return isString(value) && value.matches('^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}');
+    }
+    
+    // ==========================================
+    // USERS COLLECTION
+    // ==========================================
+    match /users/{userId} {
+      // Users can read their own document; admins can read any user.
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated();
+      // Owners may update most fields, but identity-verification and
+      // subscription fields are webhook-only (Admin SDK bypasses rules) —
+      // a self-serve client cannot flip `identityCheckStatus` to 'verified'
+      // to bypass the Stripe Identity flow.
+      allow update: if isAdmin() || (
+        isOwner(userId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'identityCheckStatus',
+          'stripeIdentityVerificationId',
+          'identityVerifiedAt',
+          'membershipStatus',
+          'subscriptionActive',
+          'subscriptionId',
+          'stripeCustomerId',
+        ])
+      );
+      allow delete: if isAdmin();
+      
+      // Subcollection: notifications
+      match /notifications/{notificationId} {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId) || isAdmin();
+        allow create: if isAuthenticated();
+      }
+
+      // Subcollection: match_history (AI feedback loop signals)
+      match /match_history/{caregiverId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if isOwner(userId);
+        allow delete: if isAdmin();
+      }
+    }
+    
+    // ==========================================
+    // CAREGIVERS COLLECTION
+    // ==========================================
+    match /caregivers/{caregiverId} {
+      // Public read for any authenticated user
+      allow read: if isAuthenticated();
+      
+      // CRITICAL FIX: Allow authenticated users to create their own caregiver profile during signup
+      // This must come before the update rule to ensure create is not blocked
+      allow create: if isAuthenticated() && request.auth.uid == caregiverId;
+      
+      // Allow caregivers to update their own document
+      // Caregivers CAN set verificationStatus to 'submitted' to submit for review
+      // Only admin can change verified/backgroundCheckStatus, or set verificationStatus to approved/rejected.
+      // Stripe-managed fields (account ID, payout flags, onboarding completion) are
+      // webhook-only — Admin SDK in Cloud Functions bypasses rules, so caregivers
+      // cannot self-flip `payoutsEnabled` or spoof `stripeAccountId` to bypass KYC.
+      // BUG FIX: Added bio length validation (max 500 chars)
+      allow update: if (isAuthenticated() && request.auth.uid == caregiverId)
+        && isValidBio(request.resource.data.bio)
+        && (
+          // Allow updates that don't touch restricted fields
+          !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny([
+              'verified',
+              'backgroundCheckStatus',
+              'stripeAccountId',
+              'chargesEnabled',
+              'payoutsEnabled',
+              'detailsSubmitted',
+              'stripeOnboardingComplete',
+              'stripeOnboardingCompletedAt',
+            ])
+          // Allow setting verificationStatus to 'submitted' (caregiver submitting for review)
+          || (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verificationStatus', 'onboardingStep', 'backgroundCheckData'])
+            && request.resource.data.verificationStatus == 'submitted'
+          )
+          // Admin can do anything
+          || isAdmin()
+        );
+      
+      // Admin can delete caregiver profiles
+      allow delete: if isAdmin();
+
+      // Subcollection: payouts — caregiver can read their own payout history.
+      // All writes happen via Cloud Functions with the Admin SDK (which
+      // bypasses rules), so client writes are denied.
+      match /payouts/{payoutId} {
+        allow read: if isOwner(caregiverId) || isAdmin();
+        allow write: if false;
+      }
+    }
+
+    // ==========================================
+    // SENIOR PROFILES COLLECTION
+    // ==========================================
+    match /senior_profiles/{profileId} {
+      // Only the owner (client) or admin can read/write
+      allow read: if isOwner(profileId) || isAdmin();
+      allow write: if isOwner(profileId) || isAdmin();
+      allow create: if isAuthenticated();
+      
+      // Subcollection: care_plans
+      match /care_plans/{planId} {
+        allow read: if isOwner(profileId) || isAdmin();
+        allow write: if isOwner(profileId) || isAdmin();
+      }
+    }
+    
+    // ==========================================
+    // APPOINTMENT LOCKS COLLECTION
+    // ==========================================
+    match /appointment_locks/{lockId} {
+      // Authenticated users can create and read locks for booking transactions
+      allow read, create: if isAuthenticated();
+      // Only the lock creator or admin can update/delete
+      allow update, delete: if isAuthenticated() && (
+        resource.data.createdBy == request.auth.uid || isAdmin()
+      );
+    }
+    
+    // ==========================================
+    // APPOINTMENTS COLLECTION
+    // ==========================================
+    match /appointments/{appointmentId} {
+      // Participants and admin can read
+      allow read: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+      // Any authenticated user can create (booking flow)
+      allow create: if isAuthenticated();
+      // Only involved parties or admin can update
+      allow update: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+      // Only admin can delete
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // THREADS (CHAT) COLLECTION
+    // ==========================================
+    match /threads/{threadId} {
+      // Only participants can read/write
+      allow read: if isAuthenticated() && 
+        request.auth.uid in resource.data.participants;
+      
+      allow update: if isAuthenticated() && 
+        request.auth.uid in resource.data.participants;
+      
+      allow delete: if isAdmin();
+      
+      // Create new thread
+      allow create: if isAuthenticated() && 
+        request.auth.uid in request.resource.data.participants &&
+        request.resource.data.participants is list &&
+        request.resource.data.participants.size() >= 2;
+      
+      // Subcollection: messages
+      match /messages/{messageId} {
+        // Only thread participants can read/write messages
+        allow read: if isAuthenticated() && 
+          request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
+        
+        allow write: if isAuthenticated() && 
+          request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
+        
+        allow create: if isAuthenticated() && 
+          request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants &&
+          request.resource.data.senderId == request.auth.uid;
+      }
+    }
+    
+    // ==========================================
+    // CHAT ROOMS COLLECTION
+    // ==========================================
+    match /chatRooms/{roomId} {
+      // Participants can read their own rooms; admin can read all
+      allow read: if isAuthenticated() && (
+        request.auth.uid in resource.data.participants || isAdmin()
+      );
+
+      // Participants or admin can update (lastMessage, unreadCount, etc.)
+      allow update: if isAuthenticated() && (
+        request.auth.uid in resource.data.participants || isAdmin()
+      );
+
+      // Any authenticated user can create a room they're part of; admin can create any room
+      allow create: if isAuthenticated() && (
+        request.auth.uid in request.resource.data.participants || isAdmin()
+      );
+
+      allow delete: if isAdmin();
+
+      // Subcollection: messages
+      match /messages/{messageId} {
+        // Participants or admin can read messages
+        allow read: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants
+          || isAdmin()
+        );
+
+        // Participants or admin can write messages
+        allow write: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants
+          || isAdmin()
+        );
+      }
+    }
+
+    // ==========================================
+    // REVIEWS COLLECTION
+    // ==========================================
+    match /reviews/{reviewId} {
+      // Public read for everyone
+      allow read: if true;
+      
+      // Only author can update/delete
+      allow update: if isAuthenticated() && 
+        resource.data.clientId == request.auth.uid;
+      
+      allow delete: if isAdmin();
+      
+      // Create new review
+      allow create: if isAuthenticated() && 
+        request.resource.data.clientId == request.auth.uid;
+    }
+    
+    // ==========================================
+    // JOB POSTINGS COLLECTION (wizard-created, one doc per client)
+    // ==========================================
+    match /job_postings/{postId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && request.auth.uid == postId;
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // JOB POSTS COLLECTION
+    // ==========================================
+    match /job_posts/{jobId} {
+      // Public read for open jobs
+      allow read: if true;
+      
+      // Only client who created it or admin can update/delete
+      allow update: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      allow delete: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Create new job post
+      allow create: if isAuthenticated() && 
+        request.resource.data.clientId == request.auth.uid;
+    }
+    
+    // ==========================================
+    // JOB APPLICATIONS COLLECTION
+    // ==========================================
+    match /job_applications/{applicationId} {
+      // Caregiver can read their own applications
+      // Client can read applications for their jobs
+      allow read: if isAuthenticated() && (
+        resource.data.caregiverId == request.auth.uid ||
+        resource.data.clientId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Only caregiver can create application
+      allow create: if isAuthenticated() && 
+        request.resource.data.caregiverId == request.auth.uid;
+      
+      // Client can update status (accept/reject)
+      allow update: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // SUPPORT TICKETS COLLECTION
+    // ==========================================
+    match /support_tickets/{ticketId} {
+      // User can read their own tickets
+      // Admins can read all
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Users can create tickets for themselves
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid;
+      
+      // Only admin can update
+      allow update: if isAdmin();
+      
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // NOTIFICATIONS COLLECTION
+    // ==========================================
+    match /notifications/{notificationId} {
+      // Target user or admin can read
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Server/Admin can create
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      
+      // Target user can update (mark as read)
+      allow update: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid;
+      
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // MATCH FEEDBACK COLLECTION
+    // ==========================================
+    match /match_feedback/{feedbackId} {
+      // Only feedback creator or admin can read
+      allow read: if isAuthenticated() && (
+        resource.data.seniorId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Any authenticated user can create
+      allow create: if isAuthenticated() && 
+        request.resource.data.seniorId == request.auth.uid;
+      
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // EMERGENCY ALERTS COLLECTION
+    // ==========================================
+    match /emergency_alerts/{alertId} {
+      // Only initiator or admin can read
+      allow read: if isAuthenticated() && (
+        resource.data.initiatorId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Authenticated users can create
+      allow create: if isAuthenticated() && 
+        request.resource.data.initiatorId == request.auth.uid;
+      
+      // Only admin can update (resolve)
+      allow update: if isAdmin();
+      
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // APPOINTMENT CARE PLANS COLLECTION
+    // ==========================================
+    match /appointment_care_plans/{planId} {
+      // Client or caregiver associated with appointment can read
+      allow read: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Only client can create
+      allow create: if isAuthenticated() && 
+        request.resource.data.clientId == request.auth.uid;
+      
+      // Client or caregiver can update (mark tasks completed)
+      allow update: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // VIDEO INTERVIEWS COLLECTION
+    // ==========================================
+    match /video_interviews/{interviewId} {
+      // Client and caregiver can read their own interviews
+      allow read: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Client can create
+      allow create: if isAuthenticated() && 
+        request.resource.data.clientId == request.auth.uid;
+      
+      // Both parties can update
+      allow update: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // CARE JOURNAL ENTRIES COLLECTION
+    // ==========================================
+    match /care_journal_entries/{entryId} {
+      // Family members (linked to senior) and caregiver can read
+      allow read: if isAuthenticated() && (
+        resource.data.caregiverId == request.auth.uid ||
+        resource.data.clientId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Caregiver can create
+      allow create: if isAuthenticated() && 
+        request.resource.data.caregiverId == request.auth.uid;
+      
+      // Caregiver can update
+      allow update: if isAuthenticated() && (
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // ADMIN-ONLY CLEANUP OPERATIONS
+    // ==========================================
+    match /caregivers/{docId} {
+      allow list: if isAuthenticated();
+    }
+    match /users/{docId} {
+      allow list: if isAuthenticated();
+    }
+    
+    // ==========================================
+    // CLIENT INTAKES COLLECTION
+    // ==========================================
+    match /clientIntakes/{userId} {
+      // User can read/write their own intake data
+      // Admin can read all
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // PAYROLL SETUPS COLLECTION
+    // ==========================================
+    match /payrollSetups/{setupId} {
+      // Client can read their own payroll setup
+      // Admin can read all
+      allow read: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid || isAdmin()
+      );
+      
+      // Client can create their own payroll setup
+      allow create: if isAuthenticated() && 
+        request.resource.data.clientId == request.auth.uid;
+      
+      // Admin can update status
+      allow update: if isAdmin();
+      
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // SHIFT HOURS COLLECTION (per-appointment)
+    // Doc id === appointmentId for idempotent submits.
+    // All state transitions happen via Cloud Functions (admin SDK).
+    // ==========================================
+    match /shiftHours/{appointmentId} {
+      allow read: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+
+      allow create: if isAuthenticated()
+        && request.resource.data.caregiverId == request.auth.uid
+        && request.resource.data.appointmentId == appointmentId
+        && request.resource.data.status == 'pending_client_review'
+        && request.resource.data.paymentAttemptCount == 0;
+
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // MATCH ASSIGNMENTS (Care Coordinator System)
+    // ==========================================
+    match /match_assignments/{assignmentId} {
+      // Coordinators and admins can create/read/update
+      allow read: if isAuthenticated();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // APPROVED MATCHES (Subcollection under clients)
+    // ==========================================
+    match /users/{userId}/approved_matches/{matchId} {
+      // Client can read their own approved matches
+      // Coordinators and admins can read/write
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // INTERVIEW REQUESTS
+    // ==========================================
+    match /interview_requests/{requestId} {
+      // Client, caregiver, coordinator, and admin can read
+      allow read: if isAuthenticated();
+      // Coordinators and admins can create/update
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // HIRE REQUESTS
+    // ==========================================
+    match /hire_requests/{requestId} {
+      // Client, caregiver, coordinator, and admin can read
+      allow read: if isAuthenticated();
+      // Coordinators and admins can create/update
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // SHIFTS (GPS Clock In/Out)
+    // ==========================================
+    match /shifts/{shiftId} {
+      // Caregiver can create (clock in)
+      allow create: if isAuthenticated() && 
+        request.resource.data.caregiverId == request.auth.uid;
+      
+      // Caregiver can update their own active shift (clock out)
+      // Client can read shifts for their care
+      // Admin can read all
+      allow read: if isAuthenticated() && (
+        resource.data.caregiverId == request.auth.uid ||
+        resource.data.clientId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      allow update: if isAuthenticated() && (
+        (resource.data.caregiverId == request.auth.uid && resource.data.status == 'active') ||
+        isAdmin()
+      );
+      
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // TIMESHEETS (Hours Approval)
+    // ==========================================
+    match /timesheets/{timesheetId} {
+      // Caregiver can create (submit their timesheet)
+      allow create: if isAuthenticated() && 
+        request.resource.data.caregiverId == request.auth.uid;
+      
+      // Client can read timesheets for their caregivers
+      // Caregiver can read their own timesheets
+      // Admin can read all
+      allow read: if isAuthenticated() && (
+        resource.data.caregiverId == request.auth.uid ||
+        resource.data.clientId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Client can approve/dispute
+      // Admin can update any
+      allow update: if isAuthenticated() && (
+        (resource.data.clientId == request.auth.uid && 
+         (request.resource.data.status == 'approved' || 
+          request.resource.data.status == 'disputed' ||
+          request.resource.data.status == 'auto_approved')) ||
+        isAdmin()
+      );
+      
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // STRIPE CUSTOMERS & SUBSCRIPTIONS
+    // ==========================================
+    match /customers/{customerId} {
+      // User can only access their own customer data
+      allow read: if isAuthenticated() && request.auth.uid == customerId;
+      allow write: if false; // Only Stripe webhooks can write
+    }
+    
+    match /customers/{customerId}/subscriptions/{subscriptionId} {
+      // User can read their own subscriptions
+      allow read: if isAuthenticated() && request.auth.uid == customerId;
+      allow write: if false; // Only Stripe webhooks can write
+    }
+    
+    // ==========================================
+    // PAYMENTS
+    // ==========================================
+    match /payments/{paymentId} {
+      // User can read their own payments
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow write: if false; // Only Stripe webhooks can write
+    }
+    
+    // ==========================================
+    // MEMBERSHIPS
+    // ==========================================
+    match /memberships/{userId} {
+      // User can read/update their own membership
+      allow read, update: if isOwner(userId);
+      allow create: if isOwner(userId);
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // CLIENT MATCHES (AI-generated, background)
+    // ==========================================
+    match /clientMatches/{clientId} {
+      // Client can read their own precomputed matches
+      // Admins can read all for coordinator dashboard
+      allow read: if isOwner(clientId) || isAdmin();
+      // Only Cloud Functions (admin SDK) write
+      allow write: if false;
+    }
+
+    // ==========================================
+    // DENY ALL OTHER ACCESS BY DEFAULT
+    // ==========================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

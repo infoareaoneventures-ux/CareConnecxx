@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Phone, FileText, ChevronLeft, Plus, Trash2, Loader2, User,
   Check, X, Pencil, MapPin, ClipboardList, StickyNote, PhoneCall,
+  Heart, ListChecks,
 } from 'lucide-react';
 import { ViewType, AddToastFunction, CarePlan as CarePlanType } from '../types';
 import { dbService, authService } from '../services/api';
@@ -15,21 +16,136 @@ const CARE_TYPES = [
   'Meal Preparation', 'Light Housekeeping',
 ];
 
+const FAV_ACTIVITIES = ['Walk', 'Reading', 'Cooking', 'Gardening', 'Watching TV', 'Socializing', 'Other'];
+const HELP_ACTIVITIES = ['Going outside', 'Exercise', 'Hobbies', 'Transportation', 'Other'];
+const ENTERTAINMENT = ['Music', 'Movies', 'TV Shows', 'Theater', 'Other'];
+const FREQ_OPTIONS = ['Daily', 'Weekly', 'Monthly', 'Occasionally'];
+const PET_TYPES = ['Dog', 'Cat', 'Fish', 'Other'];
+
+const ADLS = ['Ambulation', 'Bathing', 'Dressing Assistance', 'Feeding', 'Toileting', 'Transfer Assist'];
+const MED_REMINDERS = ['Morning', 'Afternoon', 'Evening', 'Bedtime'];
+const MEAL_PREP_OPTS = ['Breakfast', 'Lunch', 'Snack', 'Dinner'];
+const PERSONAL_CARE_OPTS = ['Comb Hair', 'Oral Hygiene', 'Skin Care', 'Physical Activity'];
+const HOUSEHOLD = ['Companionship', 'Light housekeeping', 'Change bed linens', 'Change bath towels', 'Take out trash'];
+const TRANSPORT_OPTS = ['Doctor appointments', 'Grocery shopping', 'Pharmacy visits', 'Hairdresser / barber'];
+
 interface LocationEntry { street: string; city: string; state: string; zipCode: string; }
-interface RecipientPlanData { careNeeds: string[]; locations: LocationEntry[]; notes: string; }
+
+interface LifestyleData {
+  favoriteActivities: string[]; favoriteActivitiesOther: string;
+  helpActivities: string[]; helpActivitiesOther: string;
+  entertainment: string[]; entertainmentOther: string;
+  enjoysConversation: boolean | null; prefersQuiet: boolean | null;
+  familyInArea: boolean | null; familyVisitFreq: string;
+  friendsVisitors: boolean | null; friendsVisitFreq: string;
+  petsInHome: boolean | null; petTypes: string[]; petName: string;
+  hasAppointments: boolean | null; appointmentsDetails: string;
+}
+
+interface TasksData {
+  adls: string[]; medicationReminders: string[]; mealPrep: string[];
+  personalCare: string[]; householdTasks: string[]; transportation: string[];
+}
+
+interface RecipientPlanData {
+  careNeeds: string[]; locations: LocationEntry[]; notes: string;
+  lifestyle: LifestyleData; tasks: TasksData;
+}
+
 interface RecipientEntry { firstName: string; lastName: string; name: string; relationship: string; age?: string; }
 
 const getKey = (firstName: string, lastName: string) =>
   `${firstName.toLowerCase()}_${(lastName || 'noname').toLowerCase()}`.replace(/\s+/g, '_');
 
 const emptyLocation = (): LocationEntry => ({ street: '', city: '', state: '', zipCode: '' });
+
+const emptyLifestyle = (): LifestyleData => ({
+  favoriteActivities: [], favoriteActivitiesOther: '',
+  helpActivities: [], helpActivitiesOther: '',
+  entertainment: [], entertainmentOther: '',
+  enjoysConversation: null, prefersQuiet: null,
+  familyInArea: null, familyVisitFreq: '',
+  friendsVisitors: null, friendsVisitFreq: '',
+  petsInHome: null, petTypes: [], petName: '',
+  hasAppointments: null, appointmentsDetails: '',
+});
+
+const emptyTasks = (): TasksData => ({
+  adls: [], medicationReminders: [], mealPrep: [],
+  personalCare: [], householdTasks: [], transportation: [],
+});
+
 const locLabel = (l: LocationEntry) =>
   [l.street, l.city, [l.state, l.zipCode].filter(Boolean).join(' ')].filter(Boolean).join(', ');
 
 const initials = (name: string) =>
   name.trim().split(/\s+/).map(p => p[0]?.toUpperCase() || '').slice(0, 2).join('');
 
+const toggleArr = (arr: string[], item: string) =>
+  arr.includes(item) ? arr.filter(i => i !== item) : [...arr, item];
+
+const hasLifestyle = (ls: LifestyleData) =>
+  ls.favoriteActivities.length > 0 || ls.helpActivities.length > 0 || ls.entertainment.length > 0 ||
+  ls.enjoysConversation !== null || ls.prefersQuiet !== null || ls.familyInArea !== null ||
+  ls.friendsVisitors !== null || ls.petsInHome !== null || ls.hasAppointments !== null;
+
+const hasTasks = (ts: TasksData) =>
+  ts.adls.length > 0 || ts.medicationReminders.length > 0 || ts.mealPrep.length > 0 ||
+  ts.personalCare.length > 0 || ts.householdTasks.length > 0 || ts.transportation.length > 0;
+
 const inputCls = 'border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary-400 bg-white';
+
+// ── Mini sub-components ───────────────────────────────────
+
+const CheckPill: React.FC<{ label: string; selected: boolean; onClick: () => void }> = ({ label, selected, onClick }) => (
+  <button type="button" onClick={onClick}
+    className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all ${
+      selected ? 'bg-primary-50 border-primary-400 text-primary-700' : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300'
+    }`}>
+    {selected && <Check size={10} className="flex-shrink-0" />}{label}
+  </button>
+);
+
+const YesNo: React.FC<{ value: boolean | null; onChange: (v: boolean) => void; label?: string }> = ({ value, onChange, label }) => (
+  <div className="flex items-center justify-between gap-3">
+    {label && <span className="text-sm text-slate-600">{label}</span>}
+    <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-semibold shrink-0">
+      <button type="button" onClick={() => onChange(true)}
+        className={`px-4 py-1.5 transition-colors ${value === true ? 'bg-primary-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>Yes</button>
+      <button type="button" onClick={() => onChange(false)}
+        className={`px-4 py-1.5 border-l border-slate-200 transition-colors ${value === false ? 'bg-slate-500 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>No</button>
+    </div>
+  </div>
+);
+
+const SubSec: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div className="space-y-2">
+    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{title}</p>
+    {children}
+  </div>
+);
+
+const ReadChips: React.FC<{ label: string; items: string[]; color: string }> = ({ label, items, color }) =>
+  items.length === 0 ? null : (
+    <div>
+      <p className="text-xs text-slate-400 mb-1.5">{label}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {items.map(i => <span key={i} className={`text-xs px-2.5 py-1 rounded-full border font-medium ${color}`}>{i}</span>)}
+      </div>
+    </div>
+  );
+
+const SaveBar: React.FC<{ onSave: () => void; onCancel: () => void; saving: boolean }> = ({ onSave, onCancel, saving }) => (
+  <div className="flex gap-2 mt-5 pt-4 border-t border-slate-100">
+    <button onClick={onSave} disabled={saving}
+      className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg disabled:opacity-60 transition-colors">
+      {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save
+    </button>
+    <button onClick={onCancel} className="text-sm text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg font-medium">Cancel</button>
+  </div>
+);
+
+// ── Main component ────────────────────────────────────────
 
 interface CarePlanProps {
   onNavigate: (view: ViewType) => void;
@@ -45,7 +161,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [locationPool, setLocationPool] = useState<LocationEntry[]>([]);
   const [activeRecipient, setActiveRecipient] = useState(0);
 
-  const [editingSection, setEditingSection] = useState<'careNeeds' | 'locations' | 'notes' | null>(null);
+  const [editingSection, setEditingSection] = useState<'careNeeds' | 'locations' | 'notes' | 'lifestyle' | 'tasks' | null>(null);
   const [savingSection, setSavingSection] = useState(false);
   const [draftPlan, setDraftPlan] = useState<RecipientPlanData | null>(null);
 
@@ -126,11 +242,20 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
   const getPlan = (r: RecipientEntry): RecipientPlanData => {
     const key = getKey(r.firstName, r.lastName);
-    if (recipientPlans[key]) return recipientPlans[key];
-    return { careNeeds: wizardData?.careNeeds || [], locations: wizardLocations.slice(0, 1), notes: wizardData?.jobDescription || '' };
+    const stored = recipientPlans[key];
+    if (stored) {
+      return { lifestyle: emptyLifestyle(), tasks: emptyTasks(), ...stored };
+    }
+    return {
+      careNeeds: wizardData?.careNeeds || [],
+      locations: wizardLocations.slice(0, 1),
+      notes: wizardData?.jobDescription || '',
+      lifestyle: emptyLifestyle(),
+      tasks: emptyTasks(),
+    };
   };
 
-  const startEdit = (section: 'careNeeds' | 'locations' | 'notes') => {
+  const startEdit = (section: typeof editingSection) => {
     if (!recipient) return;
     setDraftPlan({ ...getPlan(recipient) });
     if (section === 'locations') {
@@ -265,12 +390,17 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const rPlan = recipient ? getPlan(recipient) : null;
   const draft = draftPlan;
 
+  // helpers for lifestyle draft updates
+  const setLS = (patch: Partial<LifestyleData>) =>
+    setDraftPlan(prev => prev ? { ...prev, lifestyle: { ...prev.lifestyle, ...patch } } : prev);
+  const setTS = (patch: Partial<TasksData>) =>
+    setDraftPlan(prev => prev ? { ...prev, tasks: { ...prev.tasks, ...patch } } : prev);
+
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
       {!targetUserId && <ClientNavigation />}
       <div className="max-w-3xl mx-auto p-4 md:p-6 animate-slide-in">
 
-        {/* Page header */}
         <div className="flex items-center mb-8">
           <button onClick={() => onNavigate('client')} className="p-2 -ml-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors">
             <ChevronLeft className="w-5 h-5" />
@@ -283,8 +413,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
         {recipients.length > 0 ? (
           <>
-            {/* Recipient tabs */}
-            <div className="flex gap-2 overflow-x-auto pb-1 mb-6 scrollbar-hide">
+            {/* Tabs */}
+            <div className="flex gap-2 overflow-x-auto pb-1 mb-6">
               {recipients.map((r, i) => (
                 <button key={i} onClick={() => handleTabChange(i)}
                   className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap border-2 transition-all ${
@@ -302,7 +432,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
             {recipient && rPlan && (
               <>
-                {/* Recipient info banner */}
+                {/* Recipient banner */}
                 <div className="bg-gradient-to-r from-primary-600 to-primary-500 rounded-2xl px-5 py-4 mb-4 flex items-center gap-4 shadow-sm">
                   <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-lg shrink-0">
                     {initials(recipient.name) || <User className="w-6 h-6" />}
@@ -310,14 +440,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                   <div>
                     <p className="font-bold text-white text-lg leading-tight">{recipient.name}</p>
                     <div className="flex gap-2 flex-wrap mt-1">
-                      {recipient.relationship && (
-                        <span className="text-xs text-white/80 bg-white/20 px-2.5 py-0.5 rounded-full capitalize font-medium">
-                          {recipient.relationship}
-                        </span>
-                      )}
-                      {recipient.age && (
-                        <span className="text-xs text-white/70 font-medium">Age {recipient.age}</span>
-                      )}
+                      {recipient.relationship && <span className="text-xs text-white/80 bg-white/20 px-2.5 py-0.5 rounded-full capitalize font-medium">{recipient.relationship}</span>}
+                      {recipient.age && <span className="text-xs text-white/70 font-medium">Age {recipient.age}</span>}
                     </div>
                   </div>
                 </div>
@@ -325,7 +449,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                 {/* Care details card */}
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 overflow-hidden">
 
-                  {/* Care Needs */}
+                  {/* ── Care Needs ── */}
                   <div className={`px-5 py-5 border-b border-slate-100 ${editingSection === 'careNeeds' ? 'bg-slate-50' : ''}`}>
                     {editingSection === 'careNeeds' && draft ? (
                       <>
@@ -338,7 +462,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             const selected = draft.careNeeds.includes(need);
                             return (
                               <button key={need} type="button"
-                                onClick={() => setDraftPlan(prev => prev ? { ...prev, careNeeds: selected ? prev.careNeeds.filter(n => n !== need) : [...prev.careNeeds, need] } : prev)}
+                                onClick={() => setDraftPlan(prev => prev ? { ...prev, careNeeds: toggleArr(prev.careNeeds, need) } : prev)}
                                 className={`flex items-center justify-between px-3 py-2.5 rounded-xl border-2 text-xs font-medium transition-all text-left ${selected ? 'bg-primary-50 border-primary-500 text-primary-700' : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300'}`}>
                                 <span>{need}</span>
                                 {selected && <Check size={12} className="flex-shrink-0 text-primary-600 ml-1" />}
@@ -346,12 +470,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             );
                           })}
                         </div>
-                        <div className="flex gap-2">
-                          <button onClick={saveSection} disabled={savingSection} className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg disabled:opacity-60 transition-colors">
-                            {savingSection && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save
-                          </button>
-                          <button onClick={cancelEdit} className="text-sm text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg font-medium">Cancel</button>
-                        </div>
+                        <SaveBar onSave={saveSection} onCancel={cancelEdit} saving={savingSection} />
                       </>
                     ) : (
                       <div className="flex items-start justify-between gap-3">
@@ -364,14 +483,10 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             {rPlan.careNeeds.length > 0 ? (
                               <div className="flex flex-wrap gap-1.5">
                                 {rPlan.careNeeds.map(need => (
-                                  <span key={need} className="inline-flex items-center text-xs font-medium bg-primary-50 text-primary-700 border border-primary-100 px-2.5 py-1 rounded-full">
-                                    {need}
-                                  </span>
+                                  <span key={need} className="inline-flex items-center text-xs font-medium bg-primary-50 text-primary-700 border border-primary-100 px-2.5 py-1 rounded-full">{need}</span>
                                 ))}
                               </div>
-                            ) : (
-                              <p className="text-sm text-slate-400 italic">No care needs specified</p>
-                            )}
+                            ) : <p className="text-sm text-slate-400 italic">No care needs specified</p>}
                           </div>
                         </div>
                         {!isReadOnly && (
@@ -383,13 +498,11 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                     )}
                   </div>
 
-                  {/* Care Location */}
+                  {/* ── Care Location ── */}
                   <div className={`px-5 py-5 border-b border-slate-100 ${editingSection === 'locations' ? 'bg-slate-50' : ''}`}>
                     {editingSection === 'locations' && draft ? (() => {
                       const selPoolIdx = draftLocPool.findIndex(wl =>
-                        draft.locations[0]?.street === wl.street &&
-                        draft.locations[0]?.city === wl.city &&
-                        draft.locations[0]?.zipCode === wl.zipCode
+                        draft.locations[0]?.street === wl.street && draft.locations[0]?.city === wl.city && draft.locations[0]?.zipCode === wl.zipCode
                       );
                       const hasCustom = draft.locations.length > 0 && selPoolIdx === -1;
                       const customLoc = hasCustom ? draft.locations[0] : emptyLocation();
@@ -399,7 +512,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             <MapPin className="w-4 h-4 text-primary-500" />
                             <p className="text-sm font-semibold text-slate-700">Care Location</p>
                           </div>
-
                           {draftLocPool.length > 0 && (
                             <div className="mb-3">
                               <p className="text-xs text-slate-500 mb-2">Select a saved location</p>
@@ -438,25 +550,20 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                         {selected && <Check size={14} className="flex-shrink-0 text-primary-600" />}
                                       </button>
                                       <button type="button" onClick={() => { setEditingPoolIdx(i); setEditingPoolDraft({ ...wl }); }}
-                                        className="p-2 text-slate-400 hover:text-primary-600 transition-colors" title="Edit address">
-                                        <Pencil size={13} />
-                                      </button>
+                                        className="p-2 text-slate-400 hover:text-primary-600 transition-colors"><Pencil size={13} /></button>
                                       <button type="button" onClick={() => {
                                         setDraftLocPool(prev => prev.filter((_, idx) => idx !== i));
                                         if (selected) setDraftPlan(prev => prev ? { ...prev, locations: [] } : prev);
-                                      }} className="p-2 pr-3 text-slate-400 hover:text-red-500 transition-colors" title="Delete address">
-                                        <X size={13} />
-                                      </button>
+                                      }} className="p-2 pr-3 text-slate-400 hover:text-red-500 transition-colors"><X size={13} /></button>
                                     </div>
                                   );
                                 })}
                               </div>
                             </div>
                           )}
-
                           {hasCustom && (
                             <div className="p-4 rounded-xl border border-slate-200 bg-white relative mb-2">
-                              <button onClick={() => setDraftPlan(prev => prev ? { ...prev, locations: [] } : prev)} className="absolute top-2 right-2 text-slate-400 hover:text-red-500 transition-colors"><X size={14} /></button>
+                              <button onClick={() => setDraftPlan(prev => prev ? { ...prev, locations: [] } : prev)} className="absolute top-2 right-2 text-slate-400 hover:text-red-500"><X size={14} /></button>
                               <div className="grid grid-cols-2 gap-2">
                                 <input className={`col-span-2 ${inputCls}`} placeholder="Street address" value={customLoc.street} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...customLoc, street: e.target.value }] } : prev)} />
                                 <input className={inputCls} placeholder="City" value={customLoc.city} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...customLoc, city: e.target.value }] } : prev)} />
@@ -465,7 +572,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                               </div>
                             </div>
                           )}
-
                           {!hasCustom && draftLocPool.length < 4 && editingPoolIdx === null && (
                             <button onClick={() => {
                               const newIdx = draftLocPool.length;
@@ -476,13 +582,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                               <Plus className="w-4 h-4" /> Add a different address
                             </button>
                           )}
-
-                          <div className="flex gap-2 mt-4">
-                            <button onClick={saveSection} disabled={savingSection} className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg disabled:opacity-60 transition-colors">
-                              {savingSection && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save
-                            </button>
-                            <button onClick={cancelEdit} className="text-sm text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg font-medium">Cancel</button>
-                          </div>
+                          <SaveBar onSave={saveSection} onCancel={cancelEdit} saving={savingSection} />
                         </>
                       );
                     })() : (
@@ -496,17 +596,13 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             {rPlan.locations.filter(l => l.street || l.city).length > 0 ? (
                               <div className="space-y-1">
                                 {rPlan.locations.filter(l => l.street || l.city).map((loc, i) => (
-                                  <div key={i} className="flex items-start gap-2">
-                                    <div className="flex-1">
-                                      {loc.street && <p className="text-sm font-medium text-slate-800">{loc.street}</p>}
-                                      <p className="text-sm text-slate-500">{[loc.city, [loc.state, loc.zipCode].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</p>
-                                    </div>
+                                  <div key={i}>
+                                    {loc.street && <p className="text-sm font-medium text-slate-800">{loc.street}</p>}
+                                    <p className="text-sm text-slate-500">{[loc.city, [loc.state, loc.zipCode].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</p>
                                   </div>
                                 ))}
                               </div>
-                            ) : (
-                              <p className="text-sm text-slate-400 italic">No location assigned</p>
-                            )}
+                            ) : <p className="text-sm text-slate-400 italic">No location assigned</p>}
                           </div>
                         </div>
                         {!isReadOnly && (
@@ -518,23 +614,18 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                     )}
                   </div>
 
-                  {/* Notes */}
-                  <div className={`px-5 py-5 ${editingSection === 'notes' ? 'bg-slate-50' : ''}`}>
+                  {/* ── Notes ── */}
+                  <div className={`px-5 py-5 border-b border-slate-100 ${editingSection === 'notes' ? 'bg-slate-50' : ''}`}>
                     {editingSection === 'notes' && draft ? (
                       <>
                         <div className="flex items-center gap-2 mb-3">
                           <StickyNote className="w-4 h-4 text-primary-500" />
                           <p className="text-sm font-semibold text-slate-700">Notes</p>
                         </div>
-                        <textarea rows={4} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-primary-400 resize-none mb-3"
+                        <textarea rows={4} className={`w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-primary-400 resize-none mb-1 ${inputCls}`}
                           placeholder="Add notes specific to this care recipient…" value={draft.notes}
                           onChange={e => setDraftPlan(prev => prev ? { ...prev, notes: e.target.value } : prev)} />
-                        <div className="flex gap-2">
-                          <button onClick={saveSection} disabled={savingSection} className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg disabled:opacity-60 transition-colors">
-                            {savingSection && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save
-                          </button>
-                          <button onClick={cancelEdit} className="text-sm text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg font-medium">Cancel</button>
-                        </div>
+                        <SaveBar onSave={saveSection} onCancel={cancelEdit} saving={savingSection} />
                       </>
                     ) : (
                       <div className="flex items-start justify-between gap-3">
@@ -544,11 +635,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Notes</p>
-                            {rPlan.notes ? (
-                              <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{rPlan.notes}</p>
-                            ) : (
-                              <p className="text-sm text-slate-400 italic">No notes added yet</p>
-                            )}
+                            {rPlan.notes
+                              ? <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{rPlan.notes}</p>
+                              : <p className="text-sm text-slate-400 italic">No notes added yet</p>}
                           </div>
                         </div>
                         {!isReadOnly && (
@@ -559,6 +648,279 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                       </div>
                     )}
                   </div>
+
+                  {/* ── Lifestyle & Preferences ── */}
+                  <div className={`px-5 py-5 border-b border-slate-100 ${editingSection === 'lifestyle' ? 'bg-slate-50' : ''}`}>
+                    {editingSection === 'lifestyle' && draft ? (
+                      <>
+                        <div className="flex items-center gap-2 mb-5">
+                          <Heart className="w-4 h-4 text-rose-500" />
+                          <p className="text-sm font-semibold text-slate-700">Lifestyle & Preferences</p>
+                        </div>
+                        <div className="space-y-6">
+
+                          <SubSec title="Favorite Activities (Currently Able to Do)">
+                            <div className="flex flex-wrap gap-2">
+                              {FAV_ACTIVITIES.map(a => (
+                                <CheckPill key={a} label={a} selected={draft.lifestyle.favoriteActivities.includes(a)}
+                                  onClick={() => setLS({ favoriteActivities: toggleArr(draft.lifestyle.favoriteActivities, a) })} />
+                              ))}
+                            </div>
+                            {draft.lifestyle.favoriteActivities.includes('Other') && (
+                              <input className={`mt-2 ${inputCls}`} placeholder="Describe other activity"
+                                value={draft.lifestyle.favoriteActivitiesOther}
+                                onChange={e => setLS({ favoriteActivitiesOther: e.target.value })} />
+                            )}
+                          </SubSec>
+
+                          <SubSec title="Activities They Enjoy but Need Help With">
+                            <div className="flex flex-wrap gap-2">
+                              {HELP_ACTIVITIES.map(a => (
+                                <CheckPill key={a} label={a} selected={draft.lifestyle.helpActivities.includes(a)}
+                                  onClick={() => setLS({ helpActivities: toggleArr(draft.lifestyle.helpActivities, a) })} />
+                              ))}
+                            </div>
+                            {draft.lifestyle.helpActivities.includes('Other') && (
+                              <input className={`mt-2 ${inputCls}`} placeholder="Describe other activity"
+                                value={draft.lifestyle.helpActivitiesOther}
+                                onChange={e => setLS({ helpActivitiesOther: e.target.value })} />
+                            )}
+                          </SubSec>
+
+                          <SubSec title="Entertainment Preferences">
+                            <div className="flex flex-wrap gap-2">
+                              {ENTERTAINMENT.map(a => (
+                                <CheckPill key={a} label={a} selected={draft.lifestyle.entertainment.includes(a)}
+                                  onClick={() => setLS({ entertainment: toggleArr(draft.lifestyle.entertainment, a) })} />
+                              ))}
+                            </div>
+                            {draft.lifestyle.entertainment.includes('Other') && (
+                              <input className={`mt-2 ${inputCls}`} placeholder="Describe other preference"
+                                value={draft.lifestyle.entertainmentOther}
+                                onChange={e => setLS({ entertainmentOther: e.target.value })} />
+                            )}
+                          </SubSec>
+
+                          <SubSec title="Social Preferences">
+                            <div className="space-y-2.5">
+                              <YesNo label="Enjoys conversation" value={draft.lifestyle.enjoysConversation} onChange={v => setLS({ enjoysConversation: v })} />
+                              <YesNo label="Prefers quiet environment" value={draft.lifestyle.prefersQuiet} onChange={v => setLS({ prefersQuiet: v })} />
+                            </div>
+                          </SubSec>
+
+                          <SubSec title="Family in the Area">
+                            <YesNo value={draft.lifestyle.familyInArea}
+                              onChange={v => setLS({ familyInArea: v, familyVisitFreq: v ? draft.lifestyle.familyVisitFreq : '' })} />
+                            {draft.lifestyle.familyInArea && (
+                              <div className="mt-3">
+                                <p className="text-xs text-slate-500 mb-2">Visit frequency</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {FREQ_OPTIONS.map(f => (
+                                    <CheckPill key={f} label={f} selected={draft.lifestyle.familyVisitFreq === f}
+                                      onClick={() => setLS({ familyVisitFreq: draft.lifestyle.familyVisitFreq === f ? '' : f })} />
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </SubSec>
+
+                          <SubSec title="Friends or Visitors">
+                            <YesNo value={draft.lifestyle.friendsVisitors}
+                              onChange={v => setLS({ friendsVisitors: v, friendsVisitFreq: v ? draft.lifestyle.friendsVisitFreq : '' })} />
+                            {draft.lifestyle.friendsVisitors && (
+                              <div className="mt-3">
+                                <p className="text-xs text-slate-500 mb-2">Visit frequency</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {FREQ_OPTIONS.map(f => (
+                                    <CheckPill key={f} label={f} selected={draft.lifestyle.friendsVisitFreq === f}
+                                      onClick={() => setLS({ friendsVisitFreq: draft.lifestyle.friendsVisitFreq === f ? '' : f })} />
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </SubSec>
+
+                          <SubSec title="Pets in the Home">
+                            <YesNo value={draft.lifestyle.petsInHome}
+                              onChange={v => setLS({ petsInHome: v, petTypes: v ? draft.lifestyle.petTypes : [], petName: v ? draft.lifestyle.petName : '' })} />
+                            {draft.lifestyle.petsInHome && (
+                              <div className="mt-3 space-y-2">
+                                <div className="flex flex-wrap gap-2">
+                                  {PET_TYPES.map(t => (
+                                    <CheckPill key={t} label={t} selected={draft.lifestyle.petTypes.includes(t)}
+                                      onClick={() => setLS({ petTypes: toggleArr(draft.lifestyle.petTypes, t) })} />
+                                  ))}
+                                </div>
+                                <input className={inputCls} placeholder="Pet name (optional)"
+                                  value={draft.lifestyle.petName}
+                                  onChange={e => setLS({ petName: e.target.value })} />
+                              </div>
+                            )}
+                          </SubSec>
+
+                          <SubSec title="Schedule / Appointments">
+                            <YesNo value={draft.lifestyle.hasAppointments}
+                              onChange={v => setLS({ hasAppointments: v, appointmentsDetails: v ? draft.lifestyle.appointmentsDetails : '' })} />
+                            {draft.lifestyle.hasAppointments && (
+                              <textarea rows={3} className={`mt-2 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-primary-400 resize-none`}
+                                placeholder="e.g. Doctor every Tuesday, church on Sundays"
+                                value={draft.lifestyle.appointmentsDetails}
+                                onChange={e => setLS({ appointmentsDetails: e.target.value })} />
+                            )}
+                          </SubSec>
+
+                        </div>
+                        <SaveBar onSave={saveSection} onCancel={cancelEdit} saving={savingSection} />
+                      </>
+                    ) : (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 flex-1 min-w-0">
+                          <div className="w-8 h-8 rounded-xl bg-rose-50 flex items-center justify-center shrink-0 mt-0.5">
+                            <Heart className="w-4 h-4 text-rose-500" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Lifestyle & Preferences</p>
+                            {hasLifestyle(rPlan.lifestyle) ? (
+                              <div className="space-y-3">
+                                <ReadChips label="Favorite Activities" items={rPlan.lifestyle.favoriteActivities.map(a => a === 'Other' && rPlan.lifestyle.favoriteActivitiesOther ? rPlan.lifestyle.favoriteActivitiesOther : a)} color="bg-rose-50 border-rose-100 text-rose-700" />
+                                <ReadChips label="Needs Help With" items={rPlan.lifestyle.helpActivities.map(a => a === 'Other' && rPlan.lifestyle.helpActivitiesOther ? rPlan.lifestyle.helpActivitiesOther : a)} color="bg-orange-50 border-orange-100 text-orange-700" />
+                                <ReadChips label="Entertainment" items={rPlan.lifestyle.entertainment.map(a => a === 'Other' && rPlan.lifestyle.entertainmentOther ? rPlan.lifestyle.entertainmentOther : a)} color="bg-purple-50 border-purple-100 text-purple-700" />
+                                <ReadChips label="Social"
+                                  items={[
+                                    rPlan.lifestyle.enjoysConversation === true ? 'Enjoys conversation' : '',
+                                    rPlan.lifestyle.prefersQuiet === true ? 'Prefers quiet' : '',
+                                  ].filter(Boolean)}
+                                  color="bg-blue-50 border-blue-100 text-blue-700" />
+                                {(rPlan.lifestyle.familyInArea === true || rPlan.lifestyle.friendsVisitors === true) && (
+                                  <ReadChips label="Visitors"
+                                    items={[
+                                      rPlan.lifestyle.familyInArea === true ? `Family nearby${rPlan.lifestyle.familyVisitFreq ? ` · ${rPlan.lifestyle.familyVisitFreq}` : ''}` : '',
+                                      rPlan.lifestyle.friendsVisitors === true ? `Friends visit${rPlan.lifestyle.friendsVisitFreq ? ` · ${rPlan.lifestyle.friendsVisitFreq}` : ''}` : '',
+                                    ].filter(Boolean)}
+                                    color="bg-green-50 border-green-100 text-green-700" />
+                                )}
+                                {rPlan.lifestyle.petsInHome === true && (
+                                  <ReadChips label="Pets"
+                                    items={rPlan.lifestyle.petTypes.length > 0
+                                      ? rPlan.lifestyle.petTypes.map(t => rPlan.lifestyle.petName ? `${t} (${rPlan.lifestyle.petName})` : t)
+                                      : rPlan.lifestyle.petName ? [rPlan.lifestyle.petName] : ['Yes']}
+                                    color="bg-amber-50 border-amber-100 text-amber-700" />
+                                )}
+                                {rPlan.lifestyle.hasAppointments === true && (
+                                  <div>
+                                    <p className="text-xs text-slate-400 mb-1.5">Appointments</p>
+                                    <p className="text-sm text-slate-700">{rPlan.lifestyle.appointmentsDetails || 'Has regular appointments'}</p>
+                                  </div>
+                                )}
+                              </div>
+                            ) : <p className="text-sm text-slate-400 italic">Not specified</p>}
+                          </div>
+                        </div>
+                        {!isReadOnly && (
+                          <button onClick={() => startEdit('lifestyle')} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-primary-600 hover:bg-primary-50 transition-colors shrink-0">
+                            <Pencil size={14} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── Tasks & Support ── */}
+                  <div className={`px-5 py-5 ${editingSection === 'tasks' ? 'bg-slate-50' : ''}`}>
+                    {editingSection === 'tasks' && draft ? (
+                      <>
+                        <div className="flex items-center gap-2 mb-5">
+                          <ListChecks className="w-4 h-4 text-indigo-500" />
+                          <p className="text-sm font-semibold text-slate-700">Tasks & Support</p>
+                        </div>
+                        <div className="space-y-6">
+
+                          <SubSec title="Activities of Daily Living (ADLs)">
+                            <div className="flex flex-wrap gap-2">
+                              {ADLS.map(a => (
+                                <CheckPill key={a} label={a} selected={draft.tasks.adls.includes(a)}
+                                  onClick={() => setTS({ adls: toggleArr(draft.tasks.adls, a) })} />
+                              ))}
+                            </div>
+                          </SubSec>
+
+                          <SubSec title="Medication Reminders">
+                            <div className="flex flex-wrap gap-2">
+                              {MED_REMINDERS.map(a => (
+                                <CheckPill key={a} label={a} selected={draft.tasks.medicationReminders.includes(a)}
+                                  onClick={() => setTS({ medicationReminders: toggleArr(draft.tasks.medicationReminders, a) })} />
+                              ))}
+                            </div>
+                          </SubSec>
+
+                          <SubSec title="Meal Preparation">
+                            <div className="flex flex-wrap gap-2">
+                              {MEAL_PREP_OPTS.map(a => (
+                                <CheckPill key={a} label={a} selected={draft.tasks.mealPrep.includes(a)}
+                                  onClick={() => setTS({ mealPrep: toggleArr(draft.tasks.mealPrep, a) })} />
+                              ))}
+                            </div>
+                          </SubSec>
+
+                          <SubSec title="Personal Care">
+                            <div className="flex flex-wrap gap-2">
+                              {PERSONAL_CARE_OPTS.map(a => (
+                                <CheckPill key={a} label={a} selected={draft.tasks.personalCare.includes(a)}
+                                  onClick={() => setTS({ personalCare: toggleArr(draft.tasks.personalCare, a) })} />
+                              ))}
+                            </div>
+                          </SubSec>
+
+                          <SubSec title="Activities & Household Tasks">
+                            <div className="flex flex-wrap gap-2">
+                              {HOUSEHOLD.map(a => (
+                                <CheckPill key={a} label={a} selected={draft.tasks.householdTasks.includes(a)}
+                                  onClick={() => setTS({ householdTasks: toggleArr(draft.tasks.householdTasks, a) })} />
+                              ))}
+                            </div>
+                          </SubSec>
+
+                          <SubSec title="Transportation & Errands">
+                            <div className="flex flex-wrap gap-2">
+                              {TRANSPORT_OPTS.map(a => (
+                                <CheckPill key={a} label={a} selected={draft.tasks.transportation.includes(a)}
+                                  onClick={() => setTS({ transportation: toggleArr(draft.tasks.transportation, a) })} />
+                              ))}
+                            </div>
+                          </SubSec>
+
+                        </div>
+                        <SaveBar onSave={saveSection} onCancel={cancelEdit} saving={savingSection} />
+                      </>
+                    ) : (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 flex-1 min-w-0">
+                          <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center shrink-0 mt-0.5">
+                            <ListChecks className="w-4 h-4 text-indigo-500" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Tasks & Support</p>
+                            {hasTasks(rPlan.tasks) ? (
+                              <div className="space-y-3">
+                                <ReadChips label="Daily Living (ADLs)" items={rPlan.tasks.adls} color="bg-indigo-50 border-indigo-100 text-indigo-700" />
+                                <ReadChips label="Medication Reminders" items={rPlan.tasks.medicationReminders} color="bg-cyan-50 border-cyan-100 text-cyan-700" />
+                                <ReadChips label="Meal Preparation" items={rPlan.tasks.mealPrep} color="bg-orange-50 border-orange-100 text-orange-700" />
+                                <ReadChips label="Personal Care" items={rPlan.tasks.personalCare} color="bg-pink-50 border-pink-100 text-pink-700" />
+                                <ReadChips label="Household" items={rPlan.tasks.householdTasks} color="bg-teal-50 border-teal-100 text-teal-700" />
+                                <ReadChips label="Transportation" items={rPlan.tasks.transportation} color="bg-violet-50 border-violet-100 text-violet-700" />
+                              </div>
+                            ) : <p className="text-sm text-slate-400 italic">Not specified</p>}
+                          </div>
+                        </div>
+                        {!isReadOnly && (
+                          <button onClick={() => startEdit('tasks')} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-primary-600 hover:bg-primary-50 transition-colors shrink-0">
+                            <Pencil size={14} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                 </div>
               </>
             )}
@@ -579,7 +941,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                 )}
               </div>
 
-              {/* Setup contact — editable */}
               {wizardData?.emergencyFirstName && (
                 <div className={`px-5 py-4 border-b border-slate-100 ${editingSetupContact ? 'bg-slate-50' : ''}`}>
                   {editingSetupContact ? (
@@ -611,16 +972,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                           {wizardData.emergencyFirstName}{wizardData.emergencyLastName ? ` ${wizardData.emergencyLastName}` : ''}
                         </p>
                         <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                          {wizardData.emergencyRelationship && (
-                            <span className="text-xs text-slate-500 capitalize">{wizardData.emergencyRelationship}</span>
-                          )}
+                          {wizardData.emergencyRelationship && <span className="text-xs text-slate-500 capitalize">{wizardData.emergencyRelationship}</span>}
                           {wizardData.emergencyPhone && (
-                            <>
-                              {wizardData.emergencyRelationship && <span className="text-slate-300">·</span>}
-                              <span className="text-xs text-slate-500 flex items-center gap-1">
-                                <Phone className="w-3 h-3" />{wizardData.emergencyPhone}
-                              </span>
-                            </>
+                            <><span className="text-slate-300">·</span><span className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" />{wizardData.emergencyPhone}</span></>
                           )}
                         </div>
                       </div>
@@ -634,7 +988,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                 </div>
               )}
 
-              {/* Manually added contacts */}
               {plan.emergencyContacts.map((contact, idx) => (
                 <div key={contact.id} className={`px-5 py-4 border-b border-slate-100 last:border-b-0 ${editingContactIdx === idx ? 'bg-slate-50' : ''}`}>
                   {editingContactIdx === idx ? (
@@ -674,12 +1027,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                         <div className="flex items-center gap-2 flex-wrap mt-0.5">
                           {contact.relation && <span className="text-xs text-slate-500 capitalize">{contact.relation}</span>}
                           {contact.phone && (
-                            <>
-                              {contact.relation && <span className="text-slate-300">·</span>}
-                              <span className="text-xs text-slate-500 flex items-center gap-1">
-                                <Phone className="w-3 h-3" />{contact.phone}
-                              </span>
-                            </>
+                            <><span className="text-slate-300">·</span><span className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" />{contact.phone}</span></>
                           )}
                         </div>
                       </div>

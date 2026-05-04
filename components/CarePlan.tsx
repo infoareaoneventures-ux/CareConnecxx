@@ -524,7 +524,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Care Needs & Tasks</p>
                             {rPlan.careNeeds.length > 0 ? (
-                              <div className="grid grid-cols-2 gap-2">
+                              <div className="space-y-2">
                                 {rPlan.careNeeds.map(need => {
                                   const subs = rPlan.careNeedDetails?.[need] || [];
                                   return (

@@ -98,6 +98,11 @@ const locLabel = (l: LocationEntry) =>
 const initials = (name: string) =>
   name.trim().split(/\s+/).map(p => p[0]?.toUpperCase() || '').slice(0, 2).join('');
 
+const LEGACY_NAMES: Record<string, string> = {
+  'Personal Care (Bathing & Dressing)': 'Personal Care',
+};
+const displayName = (need: string) => LEGACY_NAMES[need] || need;
+
 const toggleArr = (arr: string[], item: string) =>
   arr.includes(item) ? arr.filter(i => i !== item) : [...arr, item];
 
@@ -530,7 +535,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                   return (
                                     <div key={need} className="rounded-xl border-2 border-primary-300 overflow-hidden">
                                       <div className="px-4 py-3" style={{ backgroundColor: '#dbeafe' }}>
-                                        <p className="text-sm font-bold text-primary-700">{need}</p>
+                                        <p className="text-sm font-bold text-primary-700">{displayName(need)}</p>
                                       </div>
                                       {subs.length > 0 && (
                                         <div className="px-4 py-3 flex flex-wrap gap-2" style={{ backgroundColor: '#f5f9ff' }}>

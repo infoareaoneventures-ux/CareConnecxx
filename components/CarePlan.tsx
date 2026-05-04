@@ -483,10 +483,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                     if (!newNeeds.includes(need)) delete newDetails[need];
                                     setDraftPlan(prev => prev ? { ...prev, careNeeds: newNeeds, careNeedDetails: newDetails } : prev);
                                   }}
-                                  className="w-full flex items-center justify-between px-4 py-3 text-left transition-colors"
+                                  className="w-full px-4 py-3 text-left transition-colors"
                                   style={selected ? { backgroundColor: '#dbeafe' } : undefined}>
                                   <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-500'}`}>{need}</span>
-                                  {selected && <Check size={15} className="text-primary-400 flex-shrink-0" />}
                                 </button>
                                 {selected && subs.length > 0 && (
                                   <div className="px-4 pb-4 pt-3 border-t border-primary-200" style={{ backgroundColor: '#eff6ff' }}>
@@ -525,14 +524,13 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Care Needs & Tasks</p>
                             {rPlan.careNeeds.length > 0 ? (
-                              <div className="space-y-2">
+                              <div className="grid grid-cols-2 gap-2">
                                 {rPlan.careNeeds.map(need => {
                                   const subs = rPlan.careNeedDetails?.[need] || [];
                                   return (
                                     <div key={need} className="rounded-xl border-2 border-primary-300 overflow-hidden">
-                                      <div className="flex items-center justify-between px-4 py-3" style={{ backgroundColor: '#dbeafe' }}>
+                                      <div className="px-4 py-3" style={{ backgroundColor: '#dbeafe' }}>
                                         <p className="text-sm font-bold text-primary-700">{need}</p>
-                                        <Check size={15} className="text-primary-400 flex-shrink-0" />
                                       </div>
                                       {subs.length > 0 && (
                                         <div className="px-4 pb-4 pt-3 border-t border-primary-200" style={{ backgroundColor: '#eff6ff' }}>

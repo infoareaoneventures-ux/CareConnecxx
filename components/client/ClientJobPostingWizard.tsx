@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Shield, ChevronLeft, ChevronRight, User, Check,
-  Sparkles, Heart, Clock, MapPin, Calendar, Loader2, Phone
+  Sparkles, Heart, Clock, MapPin, Calendar, Loader2, Phone, Briefcase
 } from 'lucide-react';
 import { AvatarUpload } from '../ui/AvatarUpload';
 import { dbService, createJobPosting } from '../../services/api';
@@ -18,6 +18,8 @@ interface WizardForm {
   state: string;
   neighborhood: string;
   startDate: string;
+  endDate: string;
+  ongoing: boolean;
   daysFlexible: boolean;
   selectedDays: string[];
   timeOfDay: string[];
@@ -32,6 +34,8 @@ interface WizardForm {
   emergencyLastName: string;
   emergencyPhone: string;
   careNeeds: string[];
+  petsInHome: boolean;
+  smokingHousehold: boolean;
   rate: number;
   rateFlexible: boolean;
   paymentMethod: string;
@@ -99,7 +103,9 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     city: '',
     state: '',
     neighborhood: '',
-    startDate: todayISO(),
+    startDate: '',
+    endDate: '',
+    ongoing: false,
     daysFlexible: false,
     selectedDays: [],
     timeOfDay: [],
@@ -114,6 +120,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     emergencyLastName: '',
     emergencyPhone: '',
     careNeeds: [],
+    petsInHome: false,
+    smokingHousehold: false,
     rate: 25,
     rateFlexible: false,
     paymentMethod: '',
@@ -230,7 +238,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     if (step === 3) return customAddressOpen
       ? form.zipCode.trim().length >= 5
       : clientAddress.zipCode.trim().length >= 5;
-    if (step === 5) return form.selectedDays.length > 0 || form.daysFlexible;
+    if (step === 5) return !!form.startDate && (form.selectedDays.length > 0 || form.daysFlexible);
     if (step === 9) return form.careRecipientFirstName.trim().length > 0;
     if (step === 10) return form.emergencyFirstName.trim().length > 0 && form.emergencyPhone.trim().length >= 10;
     if (step === 11) return form.careNeeds.length > 0;
@@ -314,35 +322,36 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
       case 2:
         return (
           <div className="flex flex-col gap-4">
-            <h2 className="text-xl font-bold text-slate-800 text-center">
-              How often do you need this care?
-            </h2>
-            <div className="flex flex-col gap-2 mt-2">
+            <h2 className="text-xl font-bold text-slate-800 text-center">When do you need care?</h2>
+            <p className="text-sm font-semibold text-slate-700 mt-1">How often do you need this care?</p>
+            <div className="flex flex-col gap-2">
               {[
-                { val: 'specific', label: 'Specific date', sub: 'Date night, backup care, one-time needs' },
-                { val: 'part-time', label: 'Part-time', sub: '25 hours or less per week' },
-                { val: 'full-time', label: 'Full-time', sub: 'More than 25 hours per week' },
+                { val: 'specific', label: 'Specific date', sub: 'Date night, backup care, one-time needs', icon: <Calendar className="w-5 h-5 text-indigo-500" /> },
+                { val: 'part-time', label: 'Part-time', sub: '25 hours or less per week', icon: <Clock className="w-5 h-5 text-blue-500" /> },
+                { val: 'full-time', label: 'Full-time', sub: 'More than 25 hours per week', icon: <Briefcase className="w-5 h-5 text-teal-500" /> },
               ].map(opt => (
                 <button
                   key={opt.val}
                   onClick={() => handleFrequency(opt.val)}
-                  className={`w-full border-2 rounded-2xl px-4 py-3 text-left transition-all ${
+                  className={`w-full border-2 rounded-2xl px-4 py-3 text-left transition-all flex items-center gap-3 ${
                     form.careFrequency === opt.val
                       ? 'border-indigo-500 bg-indigo-50'
                       : 'border-slate-200 hover:border-indigo-300'
                   }`}
                 >
-                  <p className="font-semibold text-slate-800 text-sm">{opt.label}</p>
-                  <p className="text-slate-500 text-xs mt-0.5">{opt.sub}</p>
+                  <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center flex-shrink-0">
+                    {opt.icon}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-slate-800 text-sm">{opt.label}</p>
+                    <p className="text-slate-500 text-xs mt-0.5">{opt.sub}</p>
+                  </div>
+                  <div className={`ml-auto w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${form.careFrequency === opt.val ? 'border-indigo-500 bg-indigo-500' : 'border-slate-300'}`}>
+                    {form.careFrequency === opt.val && <div className="w-2 h-2 rounded-full bg-white" />}
+                  </div>
                 </button>
               ))}
             </div>
-            <button
-              onClick={() => handleFrequency('browsing')}
-              className="text-indigo-500 text-sm text-center hover:underline mt-1"
-            >
-              Just browsing
-            </button>
           </div>
         );
 
@@ -367,7 +376,6 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                   <p className={`text-slate-800 text-sm truncate ${clientAddress.street ? 'font-normal' : 'font-semibold'}`}>
                     {clientAddress.city}{clientAddress.city && clientAddress.state ? ', ' : ''}{clientAddress.state} {clientAddress.zipCode}
                   </p>
-                  <p className="text-slate-400 text-xs mt-0.5">From your account</p>
                 </div>
                 <Check size={16} className="text-teal-500 shrink-0" />
               </div>
@@ -470,50 +478,79 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
             <h2 className="text-xl font-bold text-slate-800 text-center">
               Now let's pick the days of the week and time of day.
             </h2>
+
+            {/* Start / End dates */}
             <div>
               <p className="text-slate-600 text-sm font-medium mb-2">When would you like to start?</p>
-              <div className="flex items-center gap-2 text-slate-400 text-xs mb-2">
-                <Calendar size={12} />
-                <span>{new Date(form.startDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Starting</label>
+                  <input
+                    type="date"
+                    value={form.startDate}
+                    min={todayISO()}
+                    onChange={e => update('startDate', e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Ending</label>
+                  <input
+                    type="date"
+                    value={form.endDate}
+                    min={form.startDate || todayISO()}
+                    disabled={form.ongoing}
+                    onChange={e => update('endDate', e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+                  />
+                </div>
               </div>
-              <input
-                type="date"
-                value={form.startDate}
-                min={todayISO()}
-                onChange={e => update('startDate', e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm focus:outline-none focus:border-indigo-500"
-              />
+              <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.ongoing}
+                  onChange={e => update('ongoing', e.target.checked)}
+                  className="w-4 h-4 rounded accent-indigo-600"
+                />
+                <span className="text-sm text-slate-600">Ongoing / no end date</span>
+              </label>
             </div>
+
+            {/* Days */}
             <div>
-              <p className="text-slate-600 text-sm font-medium mb-2">Which days? <span className="text-slate-400 font-normal">(Select all that apply)</span></p>
-              <div className="flex justify-between">
-              {DAYS.map(day => (
-                <button
-                  key={day}
-                  onClick={() => toggleDay(day)}
-                  className={`w-9 h-9 rounded-lg text-xs font-semibold transition-all ${
-                    form.selectedDays.includes(day)
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {day.slice(0, 3)}
-                </button>
-              ))}
+              <p className="text-slate-600 text-sm font-medium mb-2">Which days? <span className="text-slate-400 font-normal">(select all that apply)</span></p>
+              <div className="flex justify-between gap-1">
+                {DAYS.map(day => (
+                  <button
+                    key={day}
+                    onClick={() => toggleDay(day)}
+                    className={`flex-1 py-2 rounded-full text-xs font-semibold border-2 transition-all ${
+                      form.selectedDays.includes(day)
+                        ? 'bg-indigo-600 border-indigo-600 text-white'
+                        : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
+                    }`}
+                  >
+                    {day.charAt(0) + day.slice(1).toLowerCase()}
+                  </button>
+                ))}
               </div>
             </div>
-            <label className="flex items-center gap-3 cursor-pointer mt-1">
-              <span className="text-slate-600 text-sm">My days are flexible</span>
+
+            {/* Flexible toggle */}
+            <label className="flex items-center gap-3 cursor-pointer">
               <div
                 onClick={() => update('daysFlexible', !form.daysFlexible)}
                 className={`relative w-11 h-6 rounded-full transition-colors ${form.daysFlexible ? 'bg-indigo-500' : 'bg-slate-200'}`}
               >
                 <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${form.daysFlexible ? 'left-6' : 'left-1'}`} />
               </div>
+              <span className="text-slate-600 text-sm">My days are flexible</span>
             </label>
-            <div className="flex flex-col gap-2 mt-1">
-              <label className="text-slate-600 text-sm font-medium">What time of day? <span className="text-slate-400 font-normal">(select all that apply)</span></label>
-              <div className="flex flex-wrap gap-2">
+
+            {/* Time of day */}
+            <div>
+              <p className="text-slate-600 text-sm font-medium mb-2">What time of day? <span className="text-slate-400 font-normal">(select all that apply)</span></p>
+              <div className="grid grid-cols-2 gap-2">
                 {TIME_OPTIONS.map(opt => (
                   <button
                     key={opt.value}
@@ -524,10 +561,10 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                         ? f.timeOfDay.filter(v => v !== opt.value)
                         : [...f.timeOfDay, opt.value],
                     }))}
-                    className={`px-3 py-2 rounded-full text-sm font-medium border-2 transition-all ${
+                    className={`py-3 rounded-xl text-sm font-medium border-2 transition-all ${
                       form.timeOfDay.includes(opt.value)
-                        ? 'bg-indigo-600 border-indigo-600 text-white'
-                        : 'border-slate-200 text-slate-600 hover:border-indigo-300'
+                        ? 'bg-indigo-50 border-indigo-500 text-indigo-600'
+                        : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
                     }`}
                   >
                     {opt.label}
@@ -535,6 +572,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 ))}
               </div>
             </div>
+
             <button
               onClick={next}
               disabled={!canAdvance()}
@@ -599,15 +637,6 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 Skip for now
               </button>
             )}
-            <div className="w-full bg-slate-50 rounded-2xl p-3 flex gap-3 items-start">
-              <Shield size={18} className="text-teal-500 mt-0.5 shrink-0" />
-              <div>
-                <p className="text-slate-700 font-semibold text-xs">Building trust</p>
-                <p className="text-slate-500 text-xs mt-0.5">
-                  Caregivers feel safer when families have photos — it builds trust from the start.
-                </p>
-              </div>
-            </div>
             <button
               onClick={next}
               className="w-full bg-slate-200 text-slate-700 font-semibold py-3 rounded-full hover:bg-slate-300 transition-colors"
@@ -667,12 +696,6 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
 
             {/* Primary recipient */}
             <div className="flex flex-col gap-3">
-              {form.relationship === 'myself' && (form.careRecipientFirstName || form.careRecipientLastName) && (
-                <div className="flex items-center gap-2 bg-indigo-50 rounded-xl px-3 py-2">
-                  <Check size={13} className="text-indigo-500 shrink-0" />
-                  <p className="text-indigo-700 text-xs">Auto-filled from your account</p>
-                </div>
-              )}
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -793,7 +816,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               disabled={!canAdvance()}
               className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed mt-2"
             >
-              Confirm
+              Next
             </button>
           </div>
         );
@@ -859,26 +882,60 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               What type of care is needed?
             </h2>
             <p className="text-slate-500 text-sm text-center -mt-2">Select all that apply.</p>
-            <div className="flex flex-wrap gap-2 mt-1 justify-center">
-              {CARE_NEEDS_OPTIONS.map(need => (
-                <button
-                  key={need}
-                  onClick={() => toggleNeed(need)}
-                  className={`px-3 py-2 rounded-2xl text-sm font-medium border-2 transition-all ${
-                    form.careNeeds.includes(need)
-                      ? 'bg-indigo-600 border-indigo-600 text-white'
-                      : 'border-slate-200 text-slate-600 hover:border-indigo-300'
-                  }`}
-                >
-                  {form.careNeeds.includes(need) && <Check size={12} className="inline mr-1" />}
-                  {need}
-                </button>
-              ))}
+
+            {/* Care types */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-2">Care needed</label>
+              <div className="grid grid-cols-2 gap-2">
+                {CARE_NEEDS_OPTIONS.map(need => {
+                  const selected = form.careNeeds.includes(need);
+                  return (
+                    <button
+                      key={need}
+                      onClick={() => toggleNeed(need)}
+                      className={`flex items-center justify-between px-3 py-2.5 rounded-xl border-2 text-xs font-medium transition-all text-left ${
+                        selected
+                          ? 'bg-indigo-50 border-indigo-500 text-indigo-700'
+                          : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
+                      }`}
+                    >
+                      <span>{need}</span>
+                      {selected && <Check size={12} className="flex-shrink-0 text-indigo-600 ml-1" />}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+
+            {/* Household */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-2">Household</label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 border-slate-200 bg-white cursor-pointer hover:border-indigo-300 transition-all">
+                  <input
+                    type="checkbox"
+                    checked={form.petsInHome}
+                    onChange={e => update('petsInHome', e.target.checked)}
+                    className="w-4 h-4 accent-indigo-600"
+                  />
+                  <span className="text-xs font-medium text-slate-700">Pets in the home</span>
+                </label>
+                <label className="flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 border-slate-200 bg-white cursor-pointer hover:border-indigo-300 transition-all">
+                  <input
+                    type="checkbox"
+                    checked={form.smokingHousehold}
+                    onChange={e => update('smokingHousehold', e.target.checked)}
+                    className="w-4 h-4 accent-indigo-600"
+                  />
+                  <span className="text-xs font-medium text-slate-700">Smoking household</span>
+                </label>
+              </div>
+            </div>
+
             <button
               onClick={next}
               disabled={!canAdvance()}
-              className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed mt-2"
+              className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed mt-1"
             >
               Next
             </button>
@@ -889,18 +946,13 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
       case 12:
         return (
           <div className="flex flex-col gap-5">
-            <div className="text-center">
-              <h2 className="text-xl font-bold text-slate-800">Set your rate</h2>
-              <p className="text-slate-500 text-sm mt-1">Posting is free — you only pay the caregiver you hire.</p>
-            </div>
+            <h2 className="text-xl font-bold text-slate-800 text-center">Set your rate</h2>
 
             {/* Slider */}
             <div>
               <div className="flex justify-between items-center mb-2">
                 <span className="text-sm font-semibold text-slate-700">Hourly rate</span>
-                <span className="text-xl font-bold text-indigo-600">
-                  {form.rateFlexible ? 'Flexible' : `$${form.rate}/hr`}
-                </span>
+                <span className="text-xl font-bold text-indigo-600">${form.rate}/hr</span>
               </div>
               <input
                 type="range"
@@ -908,24 +960,14 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 max={75}
                 step={1}
                 value={form.rate}
-                disabled={form.rateFlexible}
                 onChange={e => update('rate', Number(e.target.value))}
-                className="w-full accent-indigo-600 disabled:opacity-40"
+                className="w-full accent-indigo-600"
               />
               <div className="flex justify-between text-xs text-slate-400 mt-1">
                 <span>$18/hr</span>
                 <span>Avg $32/hr</span>
                 <span>$75/hr</span>
               </div>
-              <label className="flex items-center gap-2 mt-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.rateFlexible}
-                  onChange={e => update('rateFlexible', e.target.checked)}
-                  className="w-4 h-4 rounded accent-indigo-600"
-                />
-                <span className="text-sm text-slate-600">Rate depends on experience</span>
-              </label>
             </div>
 
             {/* Payment method */}
@@ -933,32 +975,40 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               <p className="text-sm font-semibold text-slate-700 mb-2">Payment method</p>
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  { value: 'credit_card', label: 'Credit card', sub: 'Charged automatically when hours are approved' },
-                  { value: 'cash', label: 'Cash', sub: 'Pay caregiver directly — cash-only caregivers can apply' },
+                  { value: 'credit_card', label: 'Credit card' },
+                  { value: 'cash', label: 'Cash' },
                 ].map(opt => (
                   <button
                     key={opt.value}
                     onClick={() => update('paymentMethod', opt.value)}
-                    className={`text-left p-4 rounded-2xl border-2 transition-all ${
+                    className={`text-left px-4 py-3 rounded-xl border-2 transition-all ${
                       form.paymentMethod === opt.value
                         ? 'border-indigo-500 bg-indigo-50'
                         : 'border-slate-200 bg-white hover:border-indigo-300'
                     }`}
                   >
                     <p className="font-semibold text-slate-800 text-sm">{opt.label}</p>
-                    <p className="text-xs text-slate-500 mt-0.5 leading-snug">{opt.sub}</p>
                   </button>
                 ))}
               </div>
             </div>
 
-            <button
-              onClick={next}
-              disabled={!canAdvance()}
-              className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Next
-            </button>
+            <div className="flex items-center justify-between mt-1">
+              <button
+                type="button"
+                onClick={back}
+                className="text-sm text-slate-500 hover:text-slate-700 font-medium"
+              >
+                Back
+              </button>
+              <button
+                onClick={next}
+                disabled={!canAdvance()}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-10 py-3 rounded-xl shadow-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Continue
+              </button>
+            </div>
           </div>
         );
 

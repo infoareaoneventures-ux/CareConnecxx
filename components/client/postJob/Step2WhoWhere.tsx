@@ -390,11 +390,13 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
               <button type="button" onClick={addNewLocation} className="w-full bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors">Add & save to care plan</button>
               <button type="button" onClick={() => { setShowLocationForm(false); setNewLocation({ street: '', zipCode: '', city: '', state: '' }); }} className="w-full bg-white border border-slate-200 text-slate-600 text-sm font-medium py-2 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
             </div>
-          ) : (
+          ) : savedLocations.length < 4 ? (
             <button type="button" onClick={() => setShowLocationForm(true)} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-dashed border-slate-300 text-slate-500 hover:border-primary-400 hover:text-primary-600 transition-all text-sm font-medium">
               <Plus className="w-4 h-4" />
               {savedLocations.length === 0 ? 'Add a care location' : 'Add another location'}
             </button>
+          ) : (
+            <p className="text-center text-xs text-slate-400 py-2">Maximum of 4 care locations reached.</p>
           )}
         </div>
 

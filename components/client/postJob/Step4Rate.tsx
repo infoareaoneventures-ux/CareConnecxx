@@ -1,5 +1,4 @@
 import React from 'react';
-import { Star } from 'lucide-react';
 import { StepProps, PAYMENT_OPTIONS } from './types';
 
 const RATE_MIN = 18;
@@ -24,15 +23,6 @@ export const Step4Rate: React.FC<StepProps> = ({ data, onChange, onContinue, onB
   return (
     <div>
       <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 text-center mb-1">Set your rate</h2>
-      <p className="text-center text-slate-500 mb-6">Posting is free — you only pay the caregiver you hire.</p>
-
-      {/* Pro tip */}
-      <div className="flex items-center gap-3 bg-primary-50 border border-primary-200 rounded-xl px-4 py-3 mb-6">
-        <Star className="w-5 h-5 text-primary-600 flex-shrink-0" />
-        <p className="text-sm text-primary-800">
-          <span className="font-semibold">Pro tip:</span> jobs posting at or above the local average of <span className="font-semibold">${AVG_RATE}/hr</span> see more caregiver responses.
-        </p>
-      </div>
 
       <div className="space-y-6">
         {/* Rate */}
@@ -58,15 +48,6 @@ export const Step4Rate: React.FC<StepProps> = ({ data, onChange, onContinue, onB
             <span>${RATE_MAX}/hr</span>
           </div>
 
-          <label className="inline-flex items-center gap-2 mt-3 text-sm text-slate-700 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={data.rateFlexible}
-              onChange={e => onChange({ rateFlexible: e.target.checked })}
-              className="w-4 h-4 accent-teal-600"
-            />
-            Rate depends on experience
-          </label>
         </div>
 
         {/* Payment method */}
@@ -85,7 +66,6 @@ export const Step4Rate: React.FC<StepProps> = ({ data, onChange, onContinue, onB
                 }`}
               >
                 <p className="font-semibold text-slate-800 text-sm">{opt.label}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{opt.description}</p>
               </button>
             ))}
           </div>

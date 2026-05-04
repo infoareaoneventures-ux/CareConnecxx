@@ -1,6 +1,6 @@
 import React from 'react';
 import { Check } from 'lucide-react';
-import { StepProps, CARE_TYPES, CARE_LEVEL_OPTIONS } from './types';
+import { StepProps, CARE_TYPES } from './types';
 
 export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue, onBack, onShowToast }) => {
   const toggleCareType = (ct: string) => {
@@ -16,17 +16,13 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
       onShowToast('Please select at least one type of care', 'error');
       return;
     }
-    if (!data.careLevel) {
-      onShowToast('Please pick a care level', 'error');
-      return;
-    }
     onContinue();
   };
 
   return (
     <div>
-      <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 text-center mb-1">What kind of care is needed?</h2>
-      <p className="text-center text-slate-500 mb-8">Select every type that applies — caregivers filter by these.</p>
+      <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 text-center mb-1">What type of care is needed?</h2>
+      <p className="text-center text-slate-500 mb-8">Select all that apply.</p>
 
       <div className="space-y-6">
         {/* Care types */}
@@ -54,28 +50,6 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
           </div>
         </div>
 
-        {/* Care level */}
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-2">Care intensity</label>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            {CARE_LEVEL_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => onChange({ careLevel: opt.value })}
-                className={`text-left px-4 py-3 rounded-xl border-2 transition-all ${
-                  data.careLevel === opt.value
-                    ? 'bg-primary-50 border-primary-600'
-                    : 'bg-white border-slate-200 hover:border-primary-300'
-                }`}
-              >
-                <p className="font-semibold text-slate-800 text-sm">{opt.label}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{opt.description}</p>
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Household toggles */}
         <div>
           <label className="block text-sm font-semibold text-slate-700 mb-2">Household</label>
@@ -89,7 +63,6 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
               />
               <div>
                 <p className="font-semibold text-slate-800 text-sm">Pets in the home</p>
-                <p className="text-xs text-slate-500">Caregivers can filter by pet-friendly jobs.</p>
               </div>
             </label>
             <label className="flex items-start gap-3 p-4 rounded-xl border-2 border-slate-200 bg-white cursor-pointer hover:border-primary-300 transition-all">
@@ -101,7 +74,6 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
               />
               <div>
                 <p className="font-semibold text-slate-800 text-sm">Smoking household</p>
-                <p className="text-xs text-slate-500">Let non-smoking caregivers know up-front.</p>
               </div>
             </label>
           </div>

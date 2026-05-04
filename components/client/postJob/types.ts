@@ -57,7 +57,7 @@ export const INITIAL_FORM_DATA: JobPostFormData = {
   jobFrequency: '',
 
   careRecipients: [],
-  recipientsCount: 4,
+  recipientsCount: 1,
   streetAddress: '',
   city: '',
   state: 'CA',
@@ -88,14 +88,14 @@ export interface StepProps {
 }
 
 export const CARE_TYPES = [
-  'Dementia Care',
-  'Mobility / Lifting',
-  'Companionship',
-  'Meal Prep',
-  'Housekeeping',
-  'Transportation',
+  'Mobility Assistance',
+  'Dementia / Memory Care',
   'Medication Reminders',
-  'Bathing / Hygiene',
+  'Personal Care (Bathing & Dressing)',
+  'Companionship',
+  'Transportation',
+  'Meal Preparation',
+  'Light Housekeeping',
 ];
 
 export const TIME_OF_DAY_OPTIONS: Array<{ value: JobTimeOfDay; label: string }> = [

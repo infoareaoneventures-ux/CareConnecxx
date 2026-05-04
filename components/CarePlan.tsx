@@ -474,9 +474,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             const selected = draft.careNeeds.includes(need);
                             const subs = CARE_NEED_SUBS[need] || [];
                             const selectedSubs = draft.careNeedDetails?.[need] || [];
-                            const c = CARE_NEED_COLORS[need] || { border: 'border-l-slate-300', chip: 'bg-slate-100 border-slate-200 text-slate-600', title: 'text-slate-700' };
                             return (
-                              <div key={need} className={`rounded-xl border border-l-4 overflow-hidden transition-all shadow-sm ${selected ? `border-slate-200 ${c.border}` : 'border-slate-200 border-l-slate-200'}`}>
+                              <div key={need} className={`rounded-xl border border-l-4 overflow-hidden transition-all shadow-sm ${selected ? 'border-slate-200 border-l-primary-400' : 'border-slate-200 border-l-slate-200'}`}>
                                 <button type="button"
                                   onClick={() => {
                                     const newNeeds = toggleArr(draft.careNeeds, need);
@@ -485,7 +484,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                     setDraftPlan(prev => prev ? { ...prev, careNeeds: newNeeds, careNeedDetails: newDetails } : prev);
                                   }}
                                   className={`w-full px-4 py-3 text-sm font-semibold text-left transition-colors ${
-                                    selected ? `bg-white ${c.title}` : 'bg-white text-slate-500 hover:bg-slate-50'
+                                    selected ? 'bg-white text-primary-700' : 'bg-white text-slate-500 hover:bg-slate-50'
                                   }`}>
                                   {need}
                                 </button>
@@ -501,7 +500,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                               careNeedDetails: { ...prev.careNeedDetails, [need]: toggleArr(selectedSubs, sub) }
                                             } : prev)}
                                             className={`px-3 py-1.5 rounded-full border text-xs font-medium transition-all ${
-                                              subSelected ? c.chip : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+                                              subSelected ? 'bg-primary-50 border-primary-100 text-primary-700' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
                                             }`}>
                                             {sub}
                                           </button>
@@ -528,14 +527,13 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                               <div className="grid grid-cols-2 gap-2">
                                 {rPlan.careNeeds.map(need => {
                                   const subs = rPlan.careNeedDetails?.[need] || [];
-                                  const c = CARE_NEED_COLORS[need] || { border: 'border-l-slate-300', chip: 'bg-slate-100 border-slate-200 text-slate-600', title: 'text-slate-700' };
                                   return (
-                                    <div key={need} className={`rounded-xl border border-slate-200 border-l-4 ${c.border} bg-white shadow-sm px-3 py-3`}>
-                                      <p className={`text-xs font-bold ${c.title} ${subs.length > 0 ? 'mb-2' : ''}`}>{need}</p>
+                                    <div key={need} className="rounded-xl border border-slate-200 border-l-4 border-l-primary-400 bg-white shadow-sm px-3 py-3">
+                                      <p className={`text-xs font-bold text-primary-700 ${subs.length > 0 ? 'mb-2' : ''}`}>{need}</p>
                                       {subs.length > 0 && (
                                         <div className="flex flex-wrap gap-1">
                                           {subs.map(sub => (
-                                            <span key={sub} className={`text-xs border px-2 py-0.5 rounded-full font-medium ${c.chip}`}>{sub}</span>
+                                            <span key={sub} className="text-xs border px-2 py-0.5 rounded-full font-medium bg-primary-50 border-primary-100 text-primary-700">{sub}</span>
                                           ))}
                                         </div>
                                       )}

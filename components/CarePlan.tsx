@@ -497,9 +497,12 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                             ...prev,
                                             careNeedDetails: { ...prev.careNeedDetails, [need]: toggleArr(selectedSubs, sub) }
                                           } : prev)}
-                                          className={`px-3 py-1 rounded-full border text-xs font-medium transition-all ${
-                                            subSelected ? 'border-primary-300 bg-white text-primary-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
-                                          }`}>
+                                          className="px-3 py-1 rounded-full border text-xs font-medium transition-all flex items-center gap-1"
+                                          style={subSelected
+                                            ? { backgroundColor: '#dbeafe', borderColor: '#93c5fd', color: '#1d4ed8' }
+                                            : { backgroundColor: '#ffffff', borderColor: '#e2e8f0', color: '#64748b' }
+                                          }>
+                                          {subSelected && <Check size={10} className="flex-shrink-0" />}
                                           {sub}
                                         </button>
                                       );

@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Phone, FileText, ChevronLeft, Plus, Trash2, Loader2, User,
   Check, X, Pencil, MapPin, ClipboardList, StickyNote, PhoneCall,
-  Heart, ListChecks,
+  Heart,
 } from 'lucide-react';
 import { ViewType, AddToastFunction, CarePlan as CarePlanType } from '../types';
 import { dbService, authService } from '../services/api';
@@ -16,18 +16,33 @@ const CARE_TYPES = [
   'Meal Preparation', 'Light Housekeeping',
 ];
 
+const CARE_NEED_COLORS: Record<string, { border: string; chip: string; title: string }> = {
+  'Mobility Assistance':               { border: 'border-l-blue-400',   chip: 'bg-blue-50 border-blue-100 text-blue-700',     title: 'text-blue-800' },
+  'Dementia / Memory Care':            { border: 'border-l-violet-400', chip: 'bg-violet-50 border-violet-100 text-violet-700', title: 'text-violet-800' },
+  'Medication Reminders':              { border: 'border-l-cyan-400',   chip: 'bg-cyan-50 border-cyan-100 text-cyan-700',     title: 'text-cyan-800' },
+  'Personal Care (Bathing & Dressing)':{ border: 'border-l-pink-400',   chip: 'bg-pink-50 border-pink-100 text-pink-700',     title: 'text-pink-800' },
+  'Companionship':                     { border: 'border-l-rose-400',   chip: 'bg-rose-50 border-rose-100 text-rose-700',     title: 'text-rose-800' },
+  'Transportation':                    { border: 'border-l-orange-400', chip: 'bg-orange-50 border-orange-100 text-orange-700', title: 'text-orange-800' },
+  'Meal Preparation':                  { border: 'border-l-amber-400',  chip: 'bg-amber-50 border-amber-100 text-amber-700',  title: 'text-amber-800' },
+  'Light Housekeeping':                { border: 'border-l-teal-400',   chip: 'bg-teal-50 border-teal-100 text-teal-700',     title: 'text-teal-800' },
+};
+
+const CARE_NEED_SUBS: Record<string, string[]> = {
+  'Mobility Assistance': ['Ambulation', 'Transfer Assist'],
+  'Dementia / Memory Care': ['Supervision / Safety monitoring', 'Memory support', 'Redirection / cueing'],
+  'Medication Reminders': ['Morning', 'Afternoon', 'Evening', 'Bedtime'],
+  'Personal Care (Bathing & Dressing)': ['Bathing', 'Dressing Assistance', 'Toileting', 'Feeding', 'Comb Hair', 'Oral Hygiene', 'Skin Care', 'Physical Activity'],
+  'Companionship': [],
+  'Transportation': ['Doctor appointments', 'Grocery shopping', 'Pharmacy visits', 'Hairdresser / barber'],
+  'Meal Preparation': ['Breakfast', 'Lunch', 'Snack', 'Dinner'],
+  'Light Housekeeping': ['Light housekeeping (dusting, vacuuming, mopping)', 'Change bed linens', 'Change bath towels', 'Take out trash'],
+};
+
 const FAV_ACTIVITIES = ['Walk', 'Reading', 'Cooking', 'Gardening', 'Watching TV', 'Socializing', 'Other'];
 const HELP_ACTIVITIES = ['Going outside', 'Exercise', 'Hobbies', 'Transportation', 'Other'];
 const ENTERTAINMENT = ['Music', 'Movies', 'TV Shows', 'Theater', 'Other'];
 const FREQ_OPTIONS = ['Daily', 'Weekly', 'Monthly', 'Occasionally'];
 const PET_TYPES = ['Dog', 'Cat', 'Fish', 'Other'];
-
-const ADLS = ['Ambulation', 'Bathing', 'Dressing Assistance', 'Feeding', 'Toileting', 'Transfer Assist'];
-const MED_REMINDERS = ['Morning', 'Afternoon', 'Evening', 'Bedtime'];
-const MEAL_PREP_OPTS = ['Breakfast', 'Lunch', 'Snack', 'Dinner'];
-const PERSONAL_CARE_OPTS = ['Comb Hair', 'Oral Hygiene', 'Skin Care', 'Physical Activity'];
-const HOUSEHOLD = ['Companionship', 'Light housekeeping', 'Change bed linens', 'Change bath towels', 'Take out trash'];
-const TRANSPORT_OPTS = ['Doctor appointments', 'Grocery shopping', 'Pharmacy visits', 'Hairdresser / barber'];
 
 interface LocationEntry { street: string; city: string; state: string; zipCode: string; }
 
@@ -48,7 +63,9 @@ interface TasksData {
 }
 
 interface RecipientPlanData {
-  careNeeds: string[]; locations: LocationEntry[]; notes: string;
+  careNeeds: string[];
+  careNeedDetails: Record<string, string[]>;
+  locations: LocationEntry[]; notes: string;
   lifestyle: LifestyleData; tasks: TasksData;
 }
 
@@ -89,9 +106,6 @@ const hasLifestyle = (ls: LifestyleData) =>
   ls.enjoysConversation !== null || ls.prefersQuiet !== null || ls.familyInArea !== null ||
   ls.friendsVisitors !== null || ls.petsInHome !== null || ls.hasAppointments !== null;
 
-const hasTasks = (ts: TasksData) =>
-  ts.adls.length > 0 || ts.medicationReminders.length > 0 || ts.mealPrep.length > 0 ||
-  ts.personalCare.length > 0 || ts.householdTasks.length > 0 || ts.transportation.length > 0;
 
 const inputCls = 'border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary-400 bg-white';
 
@@ -244,10 +258,11 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     const key = getKey(r.firstName, r.lastName);
     const stored = recipientPlans[key];
     if (stored) {
-      return { lifestyle: emptyLifestyle(), tasks: emptyTasks(), ...stored };
+      return { lifestyle: emptyLifestyle(), tasks: emptyTasks(), careNeedDetails: {}, ...stored };
     }
     return {
       careNeeds: wizardData?.careNeeds || [],
+      careNeedDetails: {},
       locations: wizardLocations.slice(0, 1),
       notes: wizardData?.jobDescription || '',
       lifestyle: emptyLifestyle(),
@@ -393,9 +408,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   // helpers for lifestyle draft updates
   const setLS = (patch: Partial<LifestyleData>) =>
     setDraftPlan(prev => prev ? { ...prev, lifestyle: { ...prev.lifestyle, ...patch } } : prev);
-  const setTS = (patch: Partial<TasksData>) =>
-    setDraftPlan(prev => prev ? { ...prev, tasks: { ...prev.tasks, ...patch } } : prev);
-
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
       {!targetUserId && <ClientNavigation />}
@@ -449,24 +461,56 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                 {/* Care details card */}
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 overflow-hidden">
 
-                  {/* ── Care Needs ── */}
+                  {/* ── Care Needs & Tasks ── */}
                   <div className={`px-5 py-5 border-b border-slate-100 ${editingSection === 'careNeeds' ? 'bg-slate-50' : ''}`}>
                     {editingSection === 'careNeeds' && draft ? (
                       <>
                         <div className="flex items-center gap-2 mb-4">
                           <ClipboardList className="w-4 h-4 text-primary-500" />
-                          <p className="text-sm font-semibold text-slate-700">Care Needs</p>
+                          <p className="text-sm font-semibold text-slate-700">Care Needs & Tasks</p>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 mb-4">
+                        <div className="space-y-2 mb-4">
                           {CARE_TYPES.map(need => {
                             const selected = draft.careNeeds.includes(need);
+                            const subs = CARE_NEED_SUBS[need] || [];
+                            const selectedSubs = draft.careNeedDetails?.[need] || [];
+                            const c = CARE_NEED_COLORS[need] || { border: 'border-l-slate-300', chip: 'bg-slate-100 border-slate-200 text-slate-600', title: 'text-slate-700' };
                             return (
-                              <button key={need} type="button"
-                                onClick={() => setDraftPlan(prev => prev ? { ...prev, careNeeds: toggleArr(prev.careNeeds, need) } : prev)}
-                                className={`flex items-center justify-between px-3 py-2.5 rounded-xl border-2 text-xs font-medium transition-all text-left ${selected ? 'bg-primary-50 border-primary-500 text-primary-700' : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300'}`}>
-                                <span>{need}</span>
-                                {selected && <Check size={12} className="flex-shrink-0 text-primary-600 ml-1" />}
-                              </button>
+                              <div key={need} className={`rounded-xl border border-l-4 overflow-hidden transition-all shadow-sm ${selected ? `border-slate-200 ${c.border}` : 'border-slate-200 border-l-slate-200'}`}>
+                                <button type="button"
+                                  onClick={() => {
+                                    const newNeeds = toggleArr(draft.careNeeds, need);
+                                    const newDetails = { ...draft.careNeedDetails };
+                                    if (!newNeeds.includes(need)) delete newDetails[need];
+                                    setDraftPlan(prev => prev ? { ...prev, careNeeds: newNeeds, careNeedDetails: newDetails } : prev);
+                                  }}
+                                  className={`w-full px-4 py-3 text-sm font-semibold text-left transition-colors ${
+                                    selected ? `bg-white ${c.title}` : 'bg-white text-slate-500 hover:bg-slate-50'
+                                  }`}>
+                                  {need}
+                                </button>
+                                {selected && subs.length > 0 && (
+                                  <div className="px-4 pb-4 pt-3 bg-white border-t border-slate-100">
+                                    <div className="flex flex-wrap gap-2">
+                                      {subs.map(sub => {
+                                        const subSelected = selectedSubs.includes(sub);
+                                        return (
+                                          <button key={sub} type="button"
+                                            onClick={() => setDraftPlan(prev => prev ? {
+                                              ...prev,
+                                              careNeedDetails: { ...prev.careNeedDetails, [need]: toggleArr(selectedSubs, sub) }
+                                            } : prev)}
+                                            className={`px-3 py-1.5 rounded-full border text-xs font-medium transition-all ${
+                                              subSelected ? c.chip : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+                                            }`}>
+                                            {sub}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             );
                           })}
                         </div>
@@ -479,12 +523,25 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             <ClipboardList className="w-4 h-4 text-blue-500" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Care Needs</p>
+                            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Care Needs & Tasks</p>
                             {rPlan.careNeeds.length > 0 ? (
-                              <div className="flex flex-wrap gap-1.5">
-                                {rPlan.careNeeds.map(need => (
-                                  <span key={need} className="inline-flex items-center text-xs font-medium bg-primary-50 text-primary-700 border border-primary-100 px-2.5 py-1 rounded-full">{need}</span>
-                                ))}
+                              <div className="grid grid-cols-2 gap-2">
+                                {rPlan.careNeeds.map(need => {
+                                  const subs = rPlan.careNeedDetails?.[need] || [];
+                                  const c = CARE_NEED_COLORS[need] || { border: 'border-l-slate-300', chip: 'bg-slate-100 border-slate-200 text-slate-600', title: 'text-slate-700' };
+                                  return (
+                                    <div key={need} className={`rounded-xl border border-slate-200 border-l-4 ${c.border} bg-white shadow-sm px-3 py-3`}>
+                                      <p className={`text-xs font-bold ${c.title} ${subs.length > 0 ? 'mb-2' : ''}`}>{need}</p>
+                                      {subs.length > 0 && (
+                                        <div className="flex flex-wrap gap-1">
+                                          {subs.map(sub => (
+                                            <span key={sub} className={`text-xs border px-2 py-0.5 rounded-full font-medium ${c.chip}`}>{sub}</span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             ) : <p className="text-sm text-slate-400 italic">No care needs specified</p>}
                           </div>
@@ -825,101 +882,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                     )}
                   </div>
 
-                  {/* ── Tasks & Support ── */}
-                  <div className={`px-5 py-5 ${editingSection === 'tasks' ? 'bg-slate-50' : ''}`}>
-                    {editingSection === 'tasks' && draft ? (
-                      <>
-                        <div className="flex items-center gap-2 mb-5">
-                          <ListChecks className="w-4 h-4 text-indigo-500" />
-                          <p className="text-sm font-semibold text-slate-700">Tasks & Support</p>
-                        </div>
-                        <div className="space-y-6">
-
-                          <SubSec title="Activities of Daily Living (ADLs)">
-                            <div className="flex flex-wrap gap-2">
-                              {ADLS.map(a => (
-                                <CheckPill key={a} label={a} selected={draft.tasks.adls.includes(a)}
-                                  onClick={() => setTS({ adls: toggleArr(draft.tasks.adls, a) })} />
-                              ))}
-                            </div>
-                          </SubSec>
-
-                          <SubSec title="Medication Reminders">
-                            <div className="flex flex-wrap gap-2">
-                              {MED_REMINDERS.map(a => (
-                                <CheckPill key={a} label={a} selected={draft.tasks.medicationReminders.includes(a)}
-                                  onClick={() => setTS({ medicationReminders: toggleArr(draft.tasks.medicationReminders, a) })} />
-                              ))}
-                            </div>
-                          </SubSec>
-
-                          <SubSec title="Meal Preparation">
-                            <div className="flex flex-wrap gap-2">
-                              {MEAL_PREP_OPTS.map(a => (
-                                <CheckPill key={a} label={a} selected={draft.tasks.mealPrep.includes(a)}
-                                  onClick={() => setTS({ mealPrep: toggleArr(draft.tasks.mealPrep, a) })} />
-                              ))}
-                            </div>
-                          </SubSec>
-
-                          <SubSec title="Personal Care">
-                            <div className="flex flex-wrap gap-2">
-                              {PERSONAL_CARE_OPTS.map(a => (
-                                <CheckPill key={a} label={a} selected={draft.tasks.personalCare.includes(a)}
-                                  onClick={() => setTS({ personalCare: toggleArr(draft.tasks.personalCare, a) })} />
-                              ))}
-                            </div>
-                          </SubSec>
-
-                          <SubSec title="Activities & Household Tasks">
-                            <div className="flex flex-wrap gap-2">
-                              {HOUSEHOLD.map(a => (
-                                <CheckPill key={a} label={a} selected={draft.tasks.householdTasks.includes(a)}
-                                  onClick={() => setTS({ householdTasks: toggleArr(draft.tasks.householdTasks, a) })} />
-                              ))}
-                            </div>
-                          </SubSec>
-
-                          <SubSec title="Transportation & Errands">
-                            <div className="flex flex-wrap gap-2">
-                              {TRANSPORT_OPTS.map(a => (
-                                <CheckPill key={a} label={a} selected={draft.tasks.transportation.includes(a)}
-                                  onClick={() => setTS({ transportation: toggleArr(draft.tasks.transportation, a) })} />
-                              ))}
-                            </div>
-                          </SubSec>
-
-                        </div>
-                        <SaveBar onSave={saveSection} onCancel={cancelEdit} saving={savingSection} />
-                      </>
-                    ) : (
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-3 flex-1 min-w-0">
-                          <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center shrink-0 mt-0.5">
-                            <ListChecks className="w-4 h-4 text-indigo-500" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Tasks & Support</p>
-                            {hasTasks(rPlan.tasks) ? (
-                              <div className="space-y-3">
-                                <ReadChips label="Daily Living (ADLs)" items={rPlan.tasks.adls} color="bg-indigo-50 border-indigo-100 text-indigo-700" />
-                                <ReadChips label="Medication Reminders" items={rPlan.tasks.medicationReminders} color="bg-cyan-50 border-cyan-100 text-cyan-700" />
-                                <ReadChips label="Meal Preparation" items={rPlan.tasks.mealPrep} color="bg-orange-50 border-orange-100 text-orange-700" />
-                                <ReadChips label="Personal Care" items={rPlan.tasks.personalCare} color="bg-pink-50 border-pink-100 text-pink-700" />
-                                <ReadChips label="Household" items={rPlan.tasks.householdTasks} color="bg-teal-50 border-teal-100 text-teal-700" />
-                                <ReadChips label="Transportation" items={rPlan.tasks.transportation} color="bg-violet-50 border-violet-100 text-violet-700" />
-                              </div>
-                            ) : <p className="text-sm text-slate-400 italic">Not specified</p>}
-                          </div>
-                        </div>
-                        {!isReadOnly && (
-                          <button onClick={() => startEdit('tasks')} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-primary-600 hover:bg-primary-50 transition-colors shrink-0">
-                            <Pencil size={14} />
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
 
                 </div>
               </>

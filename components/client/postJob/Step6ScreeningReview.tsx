@@ -159,7 +159,7 @@ export const Step6ScreeningReview: React.FC<Step6Props> = ({
               <Loader2 className="w-4 h-4 animate-spin" /> Posting...
             </>
           ) : (
-            'Post Job — Free'
+            'Post Job'
           )}
         </button>
       </div>

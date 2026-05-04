@@ -33,6 +33,7 @@ interface WizardForm {
   emergencyFirstName: string;
   emergencyLastName: string;
   emergencyPhone: string;
+  emergencyRelationship: string;
   careNeeds: string[];
   petsInHome: boolean;
   smokingHousehold: boolean;
@@ -119,6 +120,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     emergencyFirstName: '',
     emergencyLastName: '',
     emergencyPhone: '',
+    emergencyRelationship: '',
     careNeeds: [],
     petsInHome: false,
     smokingHousehold: false,
@@ -861,6 +863,16 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 placeholder="(555) 000-0000"
                 value={form.emergencyPhone}
                 onChange={e => update('emergencyPhone', e.target.value.replace(/[^\d\s\-().+]/g, '').slice(0, 20))}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">Relationship</label>
+              <input
+                type="text"
+                placeholder="e.g. Mother, Sibling, Friend"
+                value={form.emergencyRelationship}
+                onChange={e => update('emergencyRelationship', e.target.value)}
                 className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500"
               />
             </div>

@@ -5,6 +5,8 @@ import { ClientNavigation } from '../ClientNavigation';
 import { StepIndicator } from '../../ui/StepIndicator';
 import { useCareConnex } from '../../../context/CareConnexContext';
 import { dbService } from '../../../services/api';
+import { db } from '../../../lib/firebase';
+import firebase from '../../../lib/firebase';
 import { Step1Schedule } from './Step1Schedule';
 import { Step2WhoWhere } from './Step2WhoWhere';
 import { Step3CareNeeds } from './Step3CareNeeds';
@@ -73,6 +75,67 @@ export const PostJobFlow: React.FC = () => {
       const id = await dbService.createJobPost(payload as any, currentUser.uid);
       setSubmittedPostId(typeof id === 'string' ? id : 'posted');
       addToast('Job posted! Caregivers can now apply.', 'success');
+
+      // Save recipients to job_postings (for care plan recipient tabs) and
+      // save per-recipient care data to carePlans/{uid}.recipientPlans
+      if (db && data.careRecipients.length > 0) {
+        try {
+          const jpRef = db.collection('job_postings').doc(currentUser.uid);
+          const existing = await jpRef.get();
+          const existingData = (existing.data() as any) || {};
+
+          // Only set primary recipient if none exists yet
+          if (!existingData.careRecipientFirstName) {
+            const primary = data.careRecipients[0];
+            await jpRef.set({
+              careRecipientFirstName: primary.firstName,
+              careRecipientLastName: primary.lastName || '',
+              relationship: primary.relationship || '',
+            }, { merge: true });
+          }
+
+          // Add additional recipients via arrayUnion (no overwrite)
+          for (const r of data.careRecipients) {
+            const entry = { firstName: r.firstName, lastName: r.lastName || '', relationship: r.relationship || '', age: '' };
+            if (
+              entry.firstName === existingData.careRecipientFirstName &&
+              entry.lastName === (existingData.careRecipientLastName || '')
+            ) continue;
+            await jpRef.set(
+              { additionalRecipients: firebase.firestore.FieldValue.arrayUnion(entry) },
+              { merge: true }
+            );
+          }
+
+          // Save per-recipient care needs / notes to carePlans.
+          // Location is only set on first save — never overwritten by a new job post.
+          const cpRef = db.collection('carePlans').doc(currentUser.uid);
+          const cpSnap = await cpRef.get();
+          const cpData = (cpSnap.data() as any) || {};
+          const locationEntry = data.streetAddress
+            ? [{ street: data.streetAddress, city: data.city, state: data.state, zipCode: data.zipCode }]
+            : [];
+          for (const r of data.careRecipients) {
+            const key = `${r.firstName.toLowerCase()}_${(r.lastName || 'noname').toLowerCase()}`.replace(/\s+/g, '_');
+            const existingLocs = cpData?.recipientPlans?.[key]?.locations;
+            const updates: Record<string, any> = {
+              [`recipientPlans.${key}.careNeeds`]: data.careTypes,
+              [`recipientPlans.${key}.notes`]: data.description.trim(),
+            };
+            // Only set location if recipient has none saved yet
+            if (!existingLocs?.length) {
+              updates[`recipientPlans.${key}.locations`] = locationEntry;
+            }
+            try {
+              await cpRef.update(updates);
+            } catch (e: any) {
+              if (e.code === 'not-found') {
+                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, notes: data.description.trim(), locations: locationEntry } } });
+              }
+            }
+          }
+        } catch { /* non-critical */ }
+      }
     } catch (err: any) {
       console.error('Failed to post job:', err);
       addToast(err?.message || 'Failed to post job. Please try again.', 'error');

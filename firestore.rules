@@ -724,6 +724,15 @@ service cloud.firestore {
     }
 
     // ==========================================
+    // CARE PLANS COLLECTION
+    // ==========================================
+    match /carePlans/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
     // DENY ALL OTHER ACCESS BY DEFAULT
     // ==========================================
     match /{document=**} {

@@ -150,17 +150,21 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   const addNewPerson = () => {
     if (!newPerson.firstName.trim()) { onShowToast('First name is required', 'error'); return; }
     if (!newPerson.relationship) { onShowToast('Please select a relationship', 'error'); return; }
-    const entry = { firstName: newPerson.firstName.trim(), lastName: newPerson.lastName.trim(), relationship: newPerson.relationship };
-    onChange({ careRecipients: [...data.careRecipients, entry] });
+    if (data.careRecipients.length >= 4) { onShowToast('Maximum 4 care recipients allowed', 'error'); return; }
+    const newId = `new-${Date.now()}`;
+    const entry = { id: newId, firstName: newPerson.firstName.trim(), lastName: newPerson.lastName.trim(), relationship: newPerson.relationship };
+    // Auto-increment count to accommodate the new person
+    const newCount = Math.min(4, data.recipientsCount + 1) as 1 | 2 | 3 | 4;
+    onChange({ careRecipients: [...data.careRecipients, entry], recipientsCount: newCount });
     if (db && currentUser?.uid) {
       db.collection('job_postings').doc(currentUser.uid).set(
-        { additionalRecipients: firebase.firestore.FieldValue.arrayUnion({ ...entry, age: '' }) },
+        { additionalRecipients: firebase.firestore.FieldValue.arrayUnion({ firstName: entry.firstName, lastName: entry.lastName, relationship: entry.relationship, age: '' }) },
         { merge: true }
       ).catch(() => {});
       setSavedPeople(prev => {
         const key = `${entry.firstName.toLowerCase()} ${entry.lastName.toLowerCase()}`.trim();
         if (prev.some(p => `${p.firstName.toLowerCase()} ${p.lastName.toLowerCase()}`.trim() === key)) return prev;
-        return [...prev, { id: `new-${Date.now()}`, ...entry }];
+        return [...prev, { id: newId, firstName: entry.firstName, lastName: entry.lastName, relationship: entry.relationship }];
       });
     }
     setNewPerson({ firstName: '', lastName: '', relationship: '' });
@@ -316,7 +320,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
           ) : null)}
 
           {/* Add new person — hidden once saved pool hits 4 */}
-          {!maxReached && savedPeople.length < 4 && (showNewForm ? (
+          {data.careRecipients.length < 4 && savedPeople.length < 4 && (showNewForm ? (
             <div className="border-2 border-primary-200 bg-primary-50 rounded-xl p-4 flex flex-col gap-3">
               <p className="text-sm font-semibold text-slate-700">Who are they to you?</p>
               <div className="flex flex-wrap gap-2">
@@ -333,7 +337,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
                     <input type="text" placeholder="First name *" value={newPerson.firstName} onChange={e => setNewPerson(p => ({ ...p, firstName: e.target.value }))} className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-100" />
                     <input type="text" placeholder="Last name" value={newPerson.lastName} onChange={e => setNewPerson(p => ({ ...p, lastName: e.target.value }))} className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-100" />
                   </div>
-                  <button type="button" onClick={addNewPerson} className="w-full bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors">Add & save to care plan</button>
+                  <button type="button" onClick={addNewPerson} className="w-full bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors">Add</button>
                 </>
               )}
               <button type="button" onClick={() => { setShowNewForm(false); setNewPerson({ firstName: '', lastName: '', relationship: '' }); }} className="w-full bg-white border border-slate-200 text-slate-600 text-sm font-medium py-2 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
@@ -387,7 +391,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
                 <input type="text" placeholder="City" value={newLocation.city} onChange={e => setNewLocation(l => ({ ...l, city: e.target.value }))} className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-100" />
                 <input type="text" placeholder="State" maxLength={2} value={newLocation.state} onChange={e => setNewLocation(l => ({ ...l, state: e.target.value.toUpperCase() }))} className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-100 uppercase" />
               </div>
-              <button type="button" onClick={addNewLocation} className="w-full bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors">Add & save to care plan</button>
+              <button type="button" onClick={addNewLocation} className="w-full bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors">Add</button>
               <button type="button" onClick={() => { setShowLocationForm(false); setNewLocation({ street: '', zipCode: '', city: '', state: '' }); }} className="w-full bg-white border border-slate-200 text-slate-600 text-sm font-medium py-2 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
             </div>
           ) : savedLocations.length < 4 ? (

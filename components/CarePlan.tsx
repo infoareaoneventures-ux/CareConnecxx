@@ -524,17 +524,23 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Care Needs & Tasks</p>
                             {rPlan.careNeeds.length > 0 ? (
-                              <div className="grid grid-cols-2 gap-2">
+                              <div className="space-y-2">
                                 {rPlan.careNeeds.map(need => {
                                   const subs = rPlan.careNeedDetails?.[need] || [];
                                   return (
-                                    <div key={need} className="rounded-xl border border-slate-200 border-l-4 border-l-primary-400 bg-white shadow-sm px-3 py-3">
-                                      <p className={`text-xs font-bold text-primary-700 ${subs.length > 0 ? 'mb-2' : ''}`}>{need}</p>
+                                    <div key={need} className="rounded-xl border-2 border-primary-300 bg-white px-4 py-3">
+                                      <div className="flex items-center justify-between">
+                                        <p className="text-sm font-bold text-primary-700">{need}</p>
+                                        <Check size={15} className="text-primary-500 flex-shrink-0" />
+                                      </div>
                                       {subs.length > 0 && (
-                                        <div className="flex flex-wrap gap-1">
-                                          {subs.map(sub => (
-                                            <span key={sub} className="text-xs border px-2 py-0.5 rounded-full font-medium bg-primary-50 border-primary-100 text-primary-700">{sub}</span>
-                                          ))}
+                                        <div className="mt-2">
+                                          <p className="text-xs text-slate-400 mb-2">Specific tasks:</p>
+                                          <div className="flex flex-wrap gap-2">
+                                            {subs.map(sub => (
+                                              <span key={sub} className="px-3 py-1 rounded-full border border-slate-200 bg-white text-xs font-medium text-slate-600">{sub}</span>
+                                            ))}
+                                          </div>
                                         </div>
                                       )}
                                     </div>

@@ -475,7 +475,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             const subs = CARE_NEED_SUBS[need] || [];
                             const selectedSubs = draft.careNeedDetails?.[need] || [];
                             return (
-                              <div key={need} className={`rounded-xl overflow-hidden transition-all ${selected ? 'border-2 border-primary-400' : 'border border-slate-200 hover:border-slate-300'}`}>
+                              <div key={need} className={`rounded-xl bg-white transition-all ${selected ? 'border-2 border-primary-300' : 'border border-slate-200 hover:border-slate-300'}`}>
                                 <button type="button"
                                   onClick={() => {
                                     const newNeeds = toggleArr(draft.careNeeds, need);
@@ -483,12 +483,12 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                     if (!newNeeds.includes(need)) delete newDetails[need];
                                     setDraftPlan(prev => prev ? { ...prev, careNeeds: newNeeds, careNeedDetails: newDetails } : prev);
                                   }}
-                                  className="w-full flex items-center justify-between px-4 py-3 text-left bg-white">
-                                  <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-600'}`}>{need}</span>
+                                  className="w-full flex items-center justify-between px-4 py-3 text-left">
+                                  <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-500'}`}>{need}</span>
                                   {selected && <Check size={15} className="text-primary-500 flex-shrink-0" />}
                                 </button>
                                 {selected && subs.length > 0 && (
-                                  <div className="px-4 pb-4 pt-2 bg-white border-t border-slate-100">
+                                  <div className="px-4 pb-4 pt-2 border-t border-slate-100">
                                     <p className="text-xs text-slate-400 mb-2">Specific tasks:</p>
                                     <div className="flex flex-wrap gap-2">
                                       {subs.map(sub => {
@@ -499,8 +499,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                               ...prev,
                                               careNeedDetails: { ...prev.careNeedDetails, [need]: toggleArr(selectedSubs, sub) }
                                             } : prev)}
-                                            className={`px-3 py-1.5 rounded-full border text-xs font-medium transition-all ${
-                                              subSelected ? 'bg-primary-50 border-primary-300 text-primary-700' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                                            className={`px-3 py-1 rounded-full border text-xs font-medium transition-all ${
+                                              subSelected ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
                                             }`}>
                                             {sub}
                                           </button>

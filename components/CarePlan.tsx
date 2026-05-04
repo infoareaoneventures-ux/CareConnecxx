@@ -12,7 +12,7 @@ import { ClientNavigation } from './client/ClientNavigation';
 
 const CARE_TYPES = [
   'Mobility Assistance', 'Dementia / Memory Care', 'Medication Reminders',
-  'Personal Care (Bathing & Dressing)', 'Companionship', 'Transportation',
+  'Personal Care', 'Companionship', 'Transportation',
   'Meal Preparation', 'Light Housekeeping',
 ];
 
@@ -20,7 +20,7 @@ const CARE_NEED_COLORS: Record<string, { border: string; chip: string; title: st
   'Mobility Assistance':               { border: 'border-l-blue-400',   chip: 'bg-blue-50 border-blue-100 text-blue-700',     title: 'text-blue-800' },
   'Dementia / Memory Care':            { border: 'border-l-violet-400', chip: 'bg-violet-50 border-violet-100 text-violet-700', title: 'text-violet-800' },
   'Medication Reminders':              { border: 'border-l-cyan-400',   chip: 'bg-cyan-50 border-cyan-100 text-cyan-700',     title: 'text-cyan-800' },
-  'Personal Care (Bathing & Dressing)':{ border: 'border-l-pink-400',   chip: 'bg-pink-50 border-pink-100 text-pink-700',     title: 'text-pink-800' },
+  'Personal Care':{ border: 'border-l-pink-400',   chip: 'bg-pink-50 border-pink-100 text-pink-700',     title: 'text-pink-800' },
   'Companionship':                     { border: 'border-l-rose-400',   chip: 'bg-rose-50 border-rose-100 text-rose-700',     title: 'text-rose-800' },
   'Transportation':                    { border: 'border-l-orange-400', chip: 'bg-orange-50 border-orange-100 text-orange-700', title: 'text-orange-800' },
   'Meal Preparation':                  { border: 'border-l-amber-400',  chip: 'bg-amber-50 border-amber-100 text-amber-700',  title: 'text-amber-800' },
@@ -31,7 +31,7 @@ const CARE_NEED_SUBS: Record<string, string[]> = {
   'Mobility Assistance': ['Ambulation', 'Transfer Assist'],
   'Dementia / Memory Care': ['Supervision / Safety monitoring', 'Memory support', 'Redirection / cueing'],
   'Medication Reminders': ['Morning', 'Afternoon', 'Evening', 'Bedtime'],
-  'Personal Care (Bathing & Dressing)': ['Bathing', 'Dressing Assistance', 'Toileting', 'Feeding', 'Comb Hair', 'Oral Hygiene', 'Skin Care', 'Physical Activity'],
+  'Personal Care': ['Bathing', 'Dressing Assistance', 'Toileting', 'Feeding', 'Comb Hair', 'Oral Hygiene', 'Skin Care', 'Physical Activity'],
   'Companionship': [],
   'Transportation': ['Doctor appointments', 'Grocery shopping', 'Pharmacy visits', 'Hairdresser / barber'],
   'Meal Preparation': ['Breakfast', 'Lunch', 'Snack', 'Dinner'],

@@ -91,7 +91,7 @@ export const CARE_TYPES = [
   'Mobility Assistance',
   'Dementia / Memory Care',
   'Medication Reminders',
-  'Personal Care (Bathing & Dressing)',
+  'Personal Care',
   'Companionship',
   'Transportation',
   'Meal Preparation',

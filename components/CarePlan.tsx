@@ -475,7 +475,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             const subs = CARE_NEED_SUBS[need] || [];
                             const selectedSubs = draft.careNeedDetails?.[need] || [];
                             return (
-                              <div key={need} className={`rounded-xl bg-white transition-all ${selected ? 'border-2 border-primary-300' : 'border border-slate-200 hover:border-slate-300'}`}>
+                              <div key={need} className={`rounded-xl overflow-hidden transition-all ${selected ? 'border-2 border-primary-300' : 'border border-slate-200 hover:border-slate-300'}`}>
                                 <button type="button"
                                   onClick={() => {
                                     const newNeeds = toggleArr(draft.careNeeds, need);
@@ -483,12 +483,12 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                     if (!newNeeds.includes(need)) delete newDetails[need];
                                     setDraftPlan(prev => prev ? { ...prev, careNeeds: newNeeds, careNeedDetails: newDetails } : prev);
                                   }}
-                                  className="w-full flex items-center justify-between px-4 py-3 text-left">
+                                  className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${selected ? 'bg-primary-50' : 'bg-white hover:bg-slate-50'}`}>
                                   <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-500'}`}>{need}</span>
-                                  {selected && <Check size={15} className="text-primary-500 flex-shrink-0" />}
+                                  {selected && <Check size={15} className="text-primary-400 flex-shrink-0" />}
                                 </button>
                                 {selected && subs.length > 0 && (
-                                  <div className="px-4 pb-4 pt-2 border-t border-slate-100">
+                                  <div className="px-4 pb-4 pt-3 bg-white border-t border-primary-100">
                                     <p className="text-xs text-slate-400 mb-2">Specific tasks:</p>
                                     <div className="flex flex-wrap gap-2">
                                       {subs.map(sub => {
@@ -528,13 +528,13 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                 {rPlan.careNeeds.map(need => {
                                   const subs = rPlan.careNeedDetails?.[need] || [];
                                   return (
-                                    <div key={need} className="rounded-xl border-2 border-primary-300 bg-white px-4 py-3">
-                                      <div className="flex items-center justify-between">
+                                    <div key={need} className="rounded-xl border-2 border-primary-300 overflow-hidden">
+                                      <div className="flex items-center justify-between px-4 py-3 bg-primary-50">
                                         <p className="text-sm font-bold text-primary-700">{need}</p>
-                                        <Check size={15} className="text-primary-500 flex-shrink-0" />
+                                        <Check size={15} className="text-primary-400 flex-shrink-0" />
                                       </div>
                                       {subs.length > 0 && (
-                                        <div className="mt-2">
+                                        <div className="px-4 pb-4 pt-3 bg-white border-t border-primary-100">
                                           <p className="text-xs text-slate-400 mb-2">Specific tasks:</p>
                                           <div className="flex flex-wrap gap-2">
                                             {subs.map(sub => (

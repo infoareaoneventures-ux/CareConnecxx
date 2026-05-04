@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Pill, Phone, Clock, FileText, ChevronLeft, Plus, Trash2, Save, Loader2, AlertCircle, CheckSquare, Square, User, Heart, Home, Calendar, MapPin, DollarSign } from 'lucide-react';
+import { Pill, Phone, Clock, FileText, ChevronLeft, Plus, Trash2, Save, Loader2, AlertCircle, CheckSquare, Square, User, Heart, Home, Calendar, MapPin } from 'lucide-react';
 import { Button } from './ui/Button';
 import { ViewType, AddToastFunction, CarePlan as CarePlanType, Medication, EmergencyContact, RoutineTask, ClientIntakeData } from '../types';
 import { dbService, authService } from '../services/api';
@@ -661,40 +661,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             </div>
                           )}
 
-                          {/* Schedule */}
-                          <div className="bg-white rounded-xl p-4 border border-slate-200">
-                            <div className="flex items-center gap-2 mb-3">
-                              <Clock className="w-5 h-5 text-primary-600" />
-                              <h4 className="font-bold text-slate-900">Schedule</h4>
-                            </div>
-                            <div className="space-y-2 text-sm">
-                              {wizardData.careFrequency && (
-                                <p><span className="text-slate-500">Frequency:</span>{' '}
-                                  <span className="font-medium text-slate-900 capitalize">{wizardData.careFrequency}</span>
-                                </p>
-                              )}
-                              {wizardData.startDate && (
-                                <p><span className="text-slate-500">Start date:</span>{' '}
-                                  <span className="font-medium text-slate-900">{wizardData.startDate}</span>
-                                </p>
-                              )}
-                              {wizardData.daysFlexible ? (
-                                <p><span className="text-slate-500">Days:</span>{' '}
-                                  <span className="font-medium text-slate-900">Flexible</span>
-                                </p>
-                              ) : wizardData.selectedDays?.length > 0 && (
-                                <p><span className="text-slate-500">Days:</span>{' '}
-                                  <span className="font-medium text-slate-900">{wizardData.selectedDays.join(', ')}</span>
-                                </p>
-                              )}
-                              {wizardData.timeOfDay?.length > 0 && (
-                                <p><span className="text-slate-500">Time of day:</span>{' '}
-                                  <span className="font-medium text-slate-900 capitalize">{wizardData.timeOfDay.join(', ')}</span>
-                                </p>
-                              )}
-                            </div>
-                          </div>
-
                           {/* Location */}
                           {(() => {
                             const allLocations: Array<{ street?: string; city?: string; state?: string; zipCode?: string }> = [];
@@ -730,32 +696,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                               </div>
                             );
                           })()}
-
-                          {/* Rate & Payment */}
-                          {(wizardData.rate || wizardData.rateFlexible || wizardData.paymentMethod) && (
-                            <div className="bg-white rounded-xl p-4 border border-slate-200">
-                              <div className="flex items-center gap-2 mb-3">
-                                <DollarSign className="w-5 h-5 text-primary-600" />
-                                <h4 className="font-bold text-slate-900">Rate & Payment</h4>
-                              </div>
-                              <div className="space-y-2 text-sm">
-                                <p>
-                                  <span className="text-slate-500">Hourly rate:</span>{' '}
-                                  <span className="font-medium text-slate-900">
-                                    {wizardData.rateFlexible ? 'Flexible (depends on experience)' : `$${wizardData.rate}/hr`}
-                                  </span>
-                                </p>
-                                {wizardData.paymentMethod && (
-                                  <p>
-                                    <span className="text-slate-500">Payment method:</span>{' '}
-                                    <span className="font-medium text-slate-900 capitalize">
-                                      {wizardData.paymentMethod === 'credit_card' ? 'Credit card' : 'Cash'}
-                                    </span>
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          )}
 
                           {/* Notes */}
                           {wizardData.jobDescription && (

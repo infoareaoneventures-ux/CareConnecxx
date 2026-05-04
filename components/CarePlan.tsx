@@ -488,7 +488,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                   <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-500'}`}>{need}</span>
                                 </button>
                                 {selected && subs.length > 0 && (
-                                  <div className="px-4 py-3 border-t border-primary-200 flex flex-wrap gap-2" style={{ backgroundColor: '#f5f9ff' }}>
+                                  <div className="px-4 py-3 flex flex-wrap gap-2" style={{ backgroundColor: '#1d4ed8' }}>
                                     {subs.map(sub => {
                                       const subSelected = selectedSubs.includes(sub);
                                       return (
@@ -497,9 +497,11 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                             ...prev,
                                             careNeedDetails: { ...prev.careNeedDetails, [need]: toggleArr(selectedSubs, sub) }
                                           } : prev)}
-                                          className={`px-3 py-1 rounded-full border text-xs font-medium transition-all ${
-                                            subSelected ? 'border-primary-300 bg-white text-primary-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
-                                          }`}>
+                                          className="px-3 py-1 rounded-full text-xs font-medium transition-all"
+                                          style={subSelected
+                                            ? { backgroundColor: 'rgba(255,255,255,0.9)', border: '1px solid rgba(255,255,255,0.9)', color: '#1d4ed8' }
+                                            : { backgroundColor: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.35)', color: '#ffffff' }
+                                          }>
                                           {sub}
                                         </button>
                                       );
@@ -530,9 +532,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                         <p className="text-sm font-bold text-primary-700">{need}</p>
                                       </div>
                                       {subs.length > 0 && (
-                                        <div className="px-4 py-3 border-t border-primary-200 flex flex-wrap gap-2" style={{ backgroundColor: '#f5f9ff' }}>
+                                        <div className="px-4 py-3 flex flex-wrap gap-2" style={{ backgroundColor: '#1d4ed8' }}>
                                           {subs.map(sub => (
-                                            <span key={sub} className="px-3 py-1 rounded-full border border-slate-200 bg-white text-xs font-medium text-slate-600">{sub}</span>
+                                            <span key={sub} className="px-3 py-1 rounded-full text-xs font-medium" style={{ backgroundColor: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.35)', color: '#ffffff' }}>{sub}</span>
                                           ))}
                                         </div>
                                       )}

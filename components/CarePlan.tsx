@@ -483,12 +483,13 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                     if (!newNeeds.includes(need)) delete newDetails[need];
                                     setDraftPlan(prev => prev ? { ...prev, careNeeds: newNeeds, careNeedDetails: newDetails } : prev);
                                   }}
-                                  className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${selected ? 'bg-primary-50' : 'bg-white hover:bg-slate-50'}`}>
+                                  className="w-full flex items-center justify-between px-4 py-3 text-left transition-colors"
+                                  style={selected ? { backgroundColor: '#dbeafe' } : undefined}>
                                   <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-500'}`}>{need}</span>
                                   {selected && <Check size={15} className="text-primary-400 flex-shrink-0" />}
                                 </button>
                                 {selected && subs.length > 0 && (
-                                  <div className="px-4 pb-4 pt-3 bg-white border-t border-primary-100">
+                                  <div className="px-4 pb-4 pt-3 border-t border-primary-200" style={{ backgroundColor: '#eff6ff' }}>
                                     <p className="text-xs text-slate-400 mb-2">Specific tasks:</p>
                                     <div className="flex flex-wrap gap-2">
                                       {subs.map(sub => {
@@ -500,7 +501,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                               careNeedDetails: { ...prev.careNeedDetails, [need]: toggleArr(selectedSubs, sub) }
                                             } : prev)}
                                             className={`px-3 py-1 rounded-full border text-xs font-medium transition-all ${
-                                              subSelected ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
+                                              subSelected ? 'border-primary-300 bg-white text-primary-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
                                             }`}>
                                             {sub}
                                           </button>
@@ -529,12 +530,12 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                   const subs = rPlan.careNeedDetails?.[need] || [];
                                   return (
                                     <div key={need} className="rounded-xl border-2 border-primary-300 overflow-hidden">
-                                      <div className="flex items-center justify-between px-4 py-3 bg-primary-50">
+                                      <div className="flex items-center justify-between px-4 py-3" style={{ backgroundColor: '#dbeafe' }}>
                                         <p className="text-sm font-bold text-primary-700">{need}</p>
                                         <Check size={15} className="text-primary-400 flex-shrink-0" />
                                       </div>
                                       {subs.length > 0 && (
-                                        <div className="px-4 pb-4 pt-3 bg-white border-t border-primary-100">
+                                        <div className="px-4 pb-4 pt-3 border-t border-primary-200" style={{ backgroundColor: '#eff6ff' }}>
                                           <p className="text-xs text-slate-400 mb-2">Specific tasks:</p>
                                           <div className="flex flex-wrap gap-2">
                                             {subs.map(sub => (

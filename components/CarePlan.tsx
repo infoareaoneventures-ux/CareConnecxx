@@ -488,25 +488,22 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                   <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-500'}`}>{need}</span>
                                 </button>
                                 {selected && subs.length > 0 && (
-                                  <div className="px-4 pb-4 pt-3 border-t border-primary-200" style={{ backgroundColor: '#eff6ff' }}>
-                                    <p className="text-xs text-slate-400 mb-2">Specific tasks:</p>
-                                    <div className="flex flex-wrap gap-2">
-                                      {subs.map(sub => {
-                                        const subSelected = selectedSubs.includes(sub);
-                                        return (
-                                          <button key={sub} type="button"
-                                            onClick={() => setDraftPlan(prev => prev ? {
-                                              ...prev,
-                                              careNeedDetails: { ...prev.careNeedDetails, [need]: toggleArr(selectedSubs, sub) }
-                                            } : prev)}
-                                            className={`px-3 py-1 rounded-full border text-xs font-medium transition-all ${
-                                              subSelected ? 'border-primary-300 bg-white text-primary-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
-                                            }`}>
-                                            {sub}
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
+                                  <div className="px-4 py-3 border-t border-primary-200 flex flex-wrap gap-2" style={{ backgroundColor: '#f5f9ff' }}>
+                                    {subs.map(sub => {
+                                      const subSelected = selectedSubs.includes(sub);
+                                      return (
+                                        <button key={sub} type="button"
+                                          onClick={() => setDraftPlan(prev => prev ? {
+                                            ...prev,
+                                            careNeedDetails: { ...prev.careNeedDetails, [need]: toggleArr(selectedSubs, sub) }
+                                          } : prev)}
+                                          className={`px-3 py-1 rounded-full border text-xs font-medium transition-all ${
+                                            subSelected ? 'border-primary-300 bg-white text-primary-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
+                                          }`}>
+                                          {sub}
+                                        </button>
+                                      );
+                                    })}
                                   </div>
                                 )}
                               </div>
@@ -533,13 +530,10 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                         <p className="text-sm font-bold text-primary-700">{need}</p>
                                       </div>
                                       {subs.length > 0 && (
-                                        <div className="px-4 pb-4 pt-3 border-t border-primary-200" style={{ backgroundColor: '#eff6ff' }}>
-                                          <p className="text-xs text-slate-400 mb-2">Specific tasks:</p>
-                                          <div className="flex flex-wrap gap-2">
-                                            {subs.map(sub => (
-                                              <span key={sub} className="px-3 py-1 rounded-full border border-slate-200 bg-white text-xs font-medium text-slate-600">{sub}</span>
-                                            ))}
-                                          </div>
+                                        <div className="px-4 py-3 border-t border-primary-200 flex flex-wrap gap-2" style={{ backgroundColor: '#f5f9ff' }}>
+                                          {subs.map(sub => (
+                                            <span key={sub} className="px-3 py-1 rounded-full border border-slate-200 bg-white text-xs font-medium text-slate-600">{sub}</span>
+                                          ))}
                                         </div>
                                       )}
                                     </div>

@@ -61,7 +61,8 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
     Promise.all([
       dbService.getSeniorProfile(currentUser.uid).catch(() => null),
       db ? db.collection('job_postings').doc(currentUser.uid).get().catch(() => null) : Promise.resolve(null),
-    ]).then(([profile, jobSnap]) => {
+      db ? db.collection('carePlans').doc(currentUser.uid).get().catch(() => null) : Promise.resolve(null),
+    ]).then(([profile, jobSnap, carePlanSnap]) => {
       // People from senior_profiles
       if (profile) {
         const pFirst = ((profile as any).firstName || profile.name?.split(' ')[0] || '').trim();
@@ -121,6 +122,27 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
             }
           });
         }
+      }
+
+      // Addresses from carePlans (locationPool + per-recipient locations)
+      if (carePlanSnap && (carePlanSnap as any).exists) {
+        const cp = (carePlanSnap as any).data() as any;
+
+        const addLoc = (loc: any, idPrefix: string, idx: number) => {
+          if (!loc?.street && !loc?.city) return;
+          const addrKey = `${(loc.street || '').toLowerCase()}${loc.zipCode || ''}`;
+          if (!seenAddresses.has(addrKey)) {
+            seenAddresses.add(addrKey);
+            locations.push({ id: `${idPrefix}-${idx}`, street: loc.street || '', city: loc.city || '', state: loc.state || '', zipCode: loc.zipCode || '' });
+          }
+        };
+
+        (cp.locationPool || []).forEach((loc: any, i: number) => addLoc(loc, 'cp-pool', i));
+
+        const plans = cp.recipientPlans || {};
+        Object.values(plans).forEach((plan: any, pi: number) => {
+          (plan?.locations || []).forEach((loc: any, li: number) => addLoc(loc, `cp-rp-${pi}`, li));
+        });
       }
 
       setSavedPeople(people);

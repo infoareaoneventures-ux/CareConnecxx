@@ -423,8 +423,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const saveNewRecipient = async () => {
     if (!newRecipient.firstName.trim()) { onShowToast('First name is required', 'error'); return; }
     if (!newRecipient.relationship) { onShowToast('Please select a relationship', 'error'); return; }
-    const hasLoc = newDraft.locations.some(l => l.street || l.city) || (newCustomLoc && (newDraft.locations[0]?.street || newDraft.locations[0]?.city));
-    if (!hasLoc) { onShowToast('Please select or add a care location', 'error'); return; }
+    const loc = newDraft.locations[0];
+    if (!loc || !loc.street.trim()) { onShowToast('Please select or enter a care location with a street address', 'error'); return; }
     if (!currentPlanId || !db) return;
     setSavingRecipient(true);
     try {

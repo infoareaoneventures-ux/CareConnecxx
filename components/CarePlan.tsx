@@ -431,7 +431,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
         {recipients.length > 0 ? (
           <>
             {/* Tabs */}
-            <div className="flex gap-2 overflow-x-auto pb-1 mb-6">
+            <div className="flex gap-2 overflow-x-auto pb-1 mb-5">
               {recipients.map((r, i) => (
                 <button key={i} onClick={() => handleTabChange(i)}
                   className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap border-2 transition-all ${
@@ -449,16 +449,16 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
             {recipient && rPlan && (
               <>
-                {/* Recipient banner */}
-                <div className="bg-gradient-to-r from-primary-600 to-primary-500 rounded-2xl px-5 py-4 mb-4 flex items-center gap-4 shadow-sm">
-                  <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-lg shrink-0">
-                    {initials(recipient.name) || <User className="w-6 h-6" />}
+                {/* Recipient card */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 px-5 py-4 flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white font-bold text-xl shrink-0 shadow-sm" style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}>
+                    {initials(recipient.name) || <User className="w-7 h-7" />}
                   </div>
-                  <div>
-                    <p className="font-bold text-white text-lg leading-tight">{recipient.name}</p>
-                    <div className="flex gap-2 flex-wrap mt-1">
-                      {recipient.relationship && <span className="text-xs text-white/80 bg-white/20 px-2.5 py-0.5 rounded-full capitalize font-medium">{recipient.relationship}</span>}
-                      {recipient.age && <span className="text-xs text-white/70 font-medium">Age {recipient.age}</span>}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-slate-900 text-lg leading-tight truncate">{recipient.name}</p>
+                    <div className="flex gap-2 flex-wrap mt-1.5">
+                      {recipient.relationship && <span className="text-xs font-semibold text-primary-700 bg-primary-50 px-3 py-0.5 rounded-full capitalize border border-primary-100">{recipient.relationship}</span>}
+                      {recipient.age && <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-0.5 rounded-full border border-slate-200">Age {recipient.age}</span>}
                     </div>
                   </div>
                 </div>

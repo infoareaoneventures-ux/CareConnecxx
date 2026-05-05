@@ -217,9 +217,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [savingRecipient, setSavingRecipient] = useState(false);
   const [confirmDeleteRecipient, setConfirmDeleteRecipient] = useState(false);
   const [confirmDeletePoolIdx, setConfirmDeletePoolIdx] = useState<number | null>(null);
-  const [editingRecipientInfo, setEditingRecipientInfo] = useState(false);
-  const [recipientInfoDraft, setRecipientInfoDraft] = useState({ firstName: '', lastName: '', relationship: '', age: '' });
-  const [savingRecipientInfo, setSavingRecipientInfo] = useState(false);
 
   const currentUser = authService.getCurrentUser();
   const isReadOnly = !!targetUserId && targetUserId !== currentUser?.uid;
@@ -363,8 +360,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     cancelEdit();
     setEditingContactIdx(null);
     setEditingSetupContact(false);
-    setEditingRecipientInfo(false);
-    setConfirmDeleteRecipient(false);
   };
 
   const addContact = () => {
@@ -517,50 +512,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     } catch { onShowToast('Failed to remove recipient', 'error'); }
   };
 
-  const saveRecipientInfo = async () => {
-    if (!recipientInfoDraft.firstName.trim()) { onShowToast('First name is required', 'error'); return; }
-    if (!recipientInfoDraft.relationship) { onShowToast('Please select a relationship', 'error'); return; }
-    if (!currentPlanId || !db) return;
-    setSavingRecipientInfo(true);
-    try {
-      const oldKey = getKey(recipient!.firstName, recipient!.lastName);
-      const newFirstName = recipientInfoDraft.firstName.trim();
-      const newLastName = recipientInfoDraft.lastName.trim();
-      const newKey = getKey(newFirstName, newLastName || 'noname');
-
-      if (activeRecipient === 0) {
-        await db.collection('job_postings').doc(currentPlanId).set({
-          careRecipientFirstName: newFirstName,
-          careRecipientLastName: newLastName,
-          relationship: recipientInfoDraft.relationship,
-          careRecipientAge: recipientInfoDraft.age.trim(),
-        }, { merge: true });
-        setWizardData((prev: any) => ({ ...prev, careRecipientFirstName: newFirstName, careRecipientLastName: newLastName, relationship: recipientInfoDraft.relationship, careRecipientAge: recipientInfoDraft.age.trim() }));
-      } else {
-        const updatedAdditional = (wizardData?.additionalRecipients || []).map((r: any, i: number) =>
-          i === activeRecipient - 1 ? { ...r, firstName: newFirstName, lastName: newLastName, relationship: recipientInfoDraft.relationship, age: recipientInfoDraft.age.trim() } : r
-        );
-        await db.collection('job_postings').doc(currentPlanId).set({ additionalRecipients: updatedAdditional }, { merge: true });
-        setWizardData((prev: any) => ({ ...prev, additionalRecipients: updatedAdditional }));
-      }
-
-      // If name changed, migrate the care plan key
-      if (oldKey !== newKey) {
-        const oldPlan = recipientPlans[oldKey];
-        if (oldPlan) {
-          const cpRef = db.collection('carePlans').doc(currentPlanId);
-          await cpRef.set({ [`recipientPlans.${newKey}`]: oldPlan }, { merge: true });
-          await cpRef.update({ [`recipientPlans.${oldKey}`]: firebase.firestore.FieldValue.delete() });
-          setRecipientPlans(prev => { const u = { ...prev }; u[newKey] = oldPlan; delete u[oldKey]; return u; });
-        }
-      }
-
-      setEditingRecipientInfo(false);
-      onShowToast('Recipient info updated', 'success');
-    } catch { onShowToast('Failed to save', 'error'); }
-    finally { setSavingRecipientInfo(false); }
-  };
-
   const startEditSetup = () => {
     setSetupDraft({
       firstName: wizardData?.emergencyFirstName || '',
@@ -626,22 +577,15 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
             <div className="flex gap-2 overflow-x-auto pb-1 mb-5 items-center">
               {recipients.map((r, i) => (
                 <button key={i} onClick={() => handleTabChange(i)}
-                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-2xl text-sm font-semibold whitespace-nowrap border-2 transition-all ${
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap border-2 transition-all ${
                     activeRecipient === i
                       ? 'bg-primary-600 border-primary-600 text-white shadow-sm'
                       : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300 hover:text-primary-600'
                   }`}>
-                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${activeRecipient === i ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                    {initials(r.name) || <User className="w-3.5 h-3.5" />}
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${activeRecipient === i ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                    {initials(r.name) || <User className="w-3 h-3" />}
                   </div>
-                  <div className="text-left leading-tight">
-                    <p className="text-sm font-semibold">{r.firstName || r.name.split(' ')[0]}</p>
-                    {(r.relationship || r.age) && (
-                      <p className={`text-[10px] font-medium ${activeRecipient === i ? 'text-white/70' : 'text-slate-400'}`}>
-                        {[r.relationship, r.age ? `Age ${r.age}` : ''].filter(Boolean).join(' · ')}
-                      </p>
-                    )}
-                  </div>
+                  {r.name}
                 </button>
               ))}
               {!isReadOnly && recipients.length < 4 && !showAddRecipient && (
@@ -854,68 +798,36 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
             {!showAddRecipient && recipient && rPlan && (
               <>
+                {confirmDeleteRecipient && (
+                  <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-red-700">Remove <span className="font-bold">{recipient.name}</span> from the care plan?</p>
+                    <div className="flex gap-2 shrink-0">
+                      <button onClick={deleteRecipient} className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">Yes, remove</button>
+                      <button onClick={() => setConfirmDeleteRecipient(false)} className="bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">No, keep</button>
+                    </div>
+                  </div>
+                )}
+                {/* Recipient card */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 px-5 py-4 flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white font-bold text-xl shrink-0 shadow-sm" style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}>
+                    {initials(recipient.name) || <User className="w-7 h-7" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-slate-900 text-lg leading-tight truncate">{recipient.name}</p>
+                    <div className="flex gap-2 flex-wrap mt-1.5">
+                      {recipient.relationship && <span className="text-xs font-semibold text-primary-700 bg-primary-50 px-3 py-0.5 rounded-full capitalize border border-primary-100">{recipient.relationship}</span>}
+                      {recipient.age && <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-0.5 rounded-full border border-slate-200">Age {recipient.age}</span>}
+                    </div>
+                  </div>
+                  {!isReadOnly && activeRecipient > 0 && !confirmDeleteRecipient && (
+                    <button onClick={() => setConfirmDeleteRecipient(true)} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0" title="Remove recipient">
+                      <Trash2 size={15} />
+                    </button>
+                  )}
+                </div>
+
                 {/* Care details card */}
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 overflow-hidden">
-
-                  {/* ── Recipient header ── */}
-                  <div className="px-5 py-4 border-b border-slate-100">
-                    {editingRecipientInfo ? (
-                      <div>
-                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Edit Recipient Info</p>
-                        <div className="grid grid-cols-2 gap-2 mb-3">
-                          <input className={inputCls} placeholder="First name *" value={recipientInfoDraft.firstName} onChange={e => setRecipientInfoDraft(p => ({ ...p, firstName: e.target.value }))} />
-                          <input className={inputCls} placeholder="Last name" value={recipientInfoDraft.lastName} onChange={e => setRecipientInfoDraft(p => ({ ...p, lastName: e.target.value }))} />
-                          <select className={`${inputCls} ${!recipientInfoDraft.relationship ? 'text-slate-400' : 'text-slate-700'}`} value={recipientInfoDraft.relationship} onChange={e => setRecipientInfoDraft(p => ({ ...p, relationship: e.target.value }))}>
-                            <option value="">Relationship *</option>
-                            <option value="Myself">Myself</option>
-                            <option value="Parent">Parent</option>
-                            <option value="Spouse or Partner">Spouse or Partner</option>
-                            <option value="Other">Other</option>
-                          </select>
-                          <input className={inputCls} placeholder="Age (optional)" value={recipientInfoDraft.age} onChange={e => setRecipientInfoDraft(p => ({ ...p, age: e.target.value.replace(/\D/g, '') }))} />
-                        </div>
-                        <div className="flex gap-2">
-                          <button onClick={saveRecipientInfo} disabled={savingRecipientInfo} className="flex items-center gap-1 text-sm bg-primary-600 hover:bg-primary-700 text-white font-semibold px-4 py-1.5 rounded-lg disabled:opacity-60 transition-colors">
-                            {savingRecipientInfo && <Loader2 className="w-3 h-3 animate-spin" />} Save
-                          </button>
-                          <button onClick={() => setEditingRecipientInfo(false)} className="text-sm text-slate-500 hover:text-slate-700 px-4 py-1.5 rounded-lg">Cancel</button>
-                        </div>
-                      </div>
-                    ) : confirmDeleteRecipient ? (
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <p className="text-sm font-semibold text-red-700">Remove <span className="font-bold">{recipient.name}</span> from the care plan?</p>
-                        <div className="flex gap-2 shrink-0">
-                          <button onClick={deleteRecipient} className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">Yes, remove</button>
-                          <button onClick={() => setConfirmDeleteRecipient(false)} className="bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">No, keep</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-3">
-                        <div className="w-11 h-11 rounded-xl flex items-center justify-center text-white font-bold text-base shrink-0" style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}>
-                          {initials(recipient.name) || <User className="w-5 h-5" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-slate-900 leading-tight truncate">{recipient.name}</p>
-                          <div className="flex gap-1.5 flex-wrap mt-1">
-                            {recipient.relationship && <span className="text-xs font-semibold text-primary-700 bg-primary-50 px-2.5 py-0.5 rounded-full capitalize border border-primary-100">{recipient.relationship}</span>}
-                            {recipient.age && <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-200">Age {recipient.age}</span>}
-                          </div>
-                        </div>
-                        {!isReadOnly && (
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button onClick={() => { setRecipientInfoDraft({ firstName: recipient.firstName, lastName: recipient.lastName, relationship: recipient.relationship, age: recipient.age || '' }); setEditingRecipientInfo(true); }} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-300 hover:text-primary-500 hover:bg-primary-50 transition-colors" title="Edit info">
-                              <Pencil size={14} />
-                            </button>
-                            {activeRecipient > 0 && (
-                              <button onClick={() => setConfirmDeleteRecipient(true)} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors" title="Remove recipient">
-                                <Trash2 size={14} />
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
 
                   {/* ── Care Needs & Tasks ── */}
                   <div className={`px-5 py-5 border-b border-slate-100 ${editingSection === 'careNeeds' ? 'bg-slate-50' : ''}`}>

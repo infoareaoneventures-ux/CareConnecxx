@@ -884,6 +884,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                         </div>
                                         <div className="flex gap-2">
                                           <button onClick={() => {
+                                            if (!editingPoolDraft!.street.trim() && !editingPoolDraft!.city.trim()) {
+                                              onShowToast('Please enter a street address', 'error'); return;
+                                            }
                                             const newPool = [...draftLocPool]; newPool[i] = editingPoolDraft!;
                                             setDraftLocPool(newPool);
                                             if (selected) setDraftPlan(prev => prev ? { ...prev, locations: [editingPoolDraft!] } : prev);

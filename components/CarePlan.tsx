@@ -376,17 +376,36 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
   const saveNewRecipient = async () => {
     if (!newRecipient.firstName.trim()) { onShowToast('First name is required', 'error'); return; }
+    if (!newRecipient.relationship) { onShowToast('Please select a relationship', 'error'); return; }
     if (!currentPlanId || !db) return;
     setSavingRecipient(true);
     try {
-      const entry = { firstName: newRecipient.firstName.trim(), lastName: newRecipient.lastName.trim(), relationship: newRecipient.relationship.trim(), age: newRecipient.age.trim() };
+      const entry = { firstName: newRecipient.firstName.trim(), lastName: newRecipient.lastName.trim(), relationship: newRecipient.relationship, age: newRecipient.age.trim() };
+
       await db.collection('job_postings').doc(currentPlanId).set(
         { additionalRecipients: firebase.firestore.FieldValue.arrayUnion(entry) },
         { merge: true }
       );
+
+      // Write a blank plan so this recipient never inherits wizard defaults
+      const key = getKey(entry.firstName, entry.lastName);
+      const blankPlan: RecipientPlanData = {
+        careNeeds: [], careNeedDetails: {}, locations: [], notes: '',
+        lifestyle: emptyLifestyle(), tasks: emptyTasks(),
+      };
+      const cpRef = db.collection('carePlans').doc(currentPlanId);
+      try {
+        await cpRef.update({ [`recipientPlans.${key}`]: blankPlan });
+      } catch (e: any) {
+        if (e.code === 'not-found') await cpRef.set({ recipientPlans: { [key]: blankPlan } });
+      }
+
+      const newIndex = recipients.length; // will be the tab index after state update
+      setRecipientPlans(prev => ({ ...prev, [key]: blankPlan }));
       setWizardData((prev: any) => ({ ...prev, additionalRecipients: [...(prev?.additionalRecipients || []), entry] }));
       setNewRecipient({ firstName: '', lastName: '', relationship: '', age: '' });
       setShowAddRecipient(false);
+      setActiveRecipient(newIndex);
       onShowToast('Recipient added', 'success');
     } catch { onShowToast('Failed to add recipient', 'error'); }
     finally { setSavingRecipient(false); }

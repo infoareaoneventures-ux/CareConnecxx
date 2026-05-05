@@ -8,6 +8,7 @@ import {
 import { ViewType, AddToastFunction, CarePlan as CarePlanType } from '../types';
 import { dbService, authService } from '../services/api';
 import { db } from '../lib/firebase';
+import firebase from '../lib/firebase';
 import { ClientNavigation } from './client/ClientNavigation';
 
 const CARE_TYPES = [
@@ -481,7 +482,27 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                 <div className="grid grid-cols-2 gap-2 mb-2">
                   <input className={inputCls} placeholder="First name *" value={newRecipient.firstName} onChange={e => setNewRecipient(p => ({ ...p, firstName: e.target.value }))} />
                   <input className={inputCls} placeholder="Last name" value={newRecipient.lastName} onChange={e => setNewRecipient(p => ({ ...p, lastName: e.target.value }))} />
-                  <input className={inputCls} placeholder="Relationship (e.g. Parent)" value={newRecipient.relationship} onChange={e => setNewRecipient(p => ({ ...p, relationship: e.target.value }))} />
+                  <select
+                    className={`${inputCls} ${!newRecipient.relationship ? 'text-slate-400' : 'text-slate-700'}`}
+                    value={newRecipient.relationship}
+                    onChange={e => {
+                      const rel = e.target.value;
+                      if (rel === 'Myself') {
+                        const displayName = currentUser?.displayName || '';
+                        const parts = displayName.trim().split(/\s+/);
+                        const first = parts[0] || '';
+                        const last = parts.slice(1).join(' ') || '';
+                        setNewRecipient(p => ({ ...p, relationship: rel, firstName: first, lastName: last }));
+                      } else {
+                        setNewRecipient(p => ({ ...p, relationship: rel }));
+                      }
+                    }}>
+                    <option value="" disabled>Relationship *</option>
+                    <option value="Myself">Myself</option>
+                    <option value="Parent">Parent</option>
+                    <option value="Spouse or Partner">Spouse or Partner</option>
+                    <option value="Other">Other</option>
+                  </select>
                   <input className={inputCls} placeholder="Age (optional)" value={newRecipient.age} onChange={e => setNewRecipient(p => ({ ...p, age: e.target.value.replace(/\D/g, '').slice(0, 3) }))} />
                 </div>
                 <div className="flex gap-2 mt-3">

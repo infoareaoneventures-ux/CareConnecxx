@@ -407,12 +407,27 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       // Save the plan the user filled in during add (never inherits wizard defaults)
       const key = getKey(entry.firstName, entry.lastName);
       const blankPlan: RecipientPlanData = { ...newDraft };
-      const cpRef = db.collection('carePlans').doc(currentPlanId);
-      try {
-        await cpRef.update({ [`recipientPlans.${key}`]: blankPlan });
-      } catch (e: any) {
-        if (e.code === 'not-found') await cpRef.set({ recipientPlans: { [key]: blankPlan } });
+
+      // Merge new recipient's address into the shared locationPool
+      const newLoc = newDraft.locations.find(l => l.street || l.city);
+      const currentPool = locationPool.length > 0 ? [...locationPool] : [...wizardLocations];
+      let updatedPool = currentPool;
+      if (newLoc) {
+        const locKey = `${newLoc.street?.toLowerCase()}${newLoc.zipCode}`;
+        const alreadyInPool = currentPool.some(l => `${l.street?.toLowerCase()}${l.zipCode}` === locKey);
+        if (!alreadyInPool) updatedPool = [...currentPool, newLoc];
       }
+
+      const cpRef = db.collection('carePlans').doc(currentPlanId);
+      const cpPayload: Record<string, any> = { [`recipientPlans.${key}`]: blankPlan };
+      if (updatedPool !== currentPool) cpPayload.locationPool = updatedPool;
+      try {
+        await cpRef.update(cpPayload);
+      } catch (e: any) {
+        if (e.code === 'not-found') await cpRef.set({ recipientPlans: { [key]: blankPlan }, ...(updatedPool !== currentPool ? { locationPool: updatedPool } : {}) });
+      }
+
+      if (updatedPool !== currentPool) setLocationPool(updatedPool);
 
       const newIndex = recipients.length; // will be the tab index after state update
       setRecipientPlans(prev => ({ ...prev, [key]: blankPlan }));

@@ -312,6 +312,10 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
   const saveSection = async () => {
     if (!recipient || !draftPlan || !currentPlanId || !db) return;
+    if (editingSection === 'locations') {
+      const hasLocation = draftPlan.locations.some(l => l.street || l.city);
+      if (!hasLocation) { onShowToast('Please select or add a care location', 'error'); return; }
+    }
     setSavingSection(true);
     try {
       const key = getKey(recipient.firstName, recipient.lastName);

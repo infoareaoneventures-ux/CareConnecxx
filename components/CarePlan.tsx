@@ -233,7 +233,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       if (!currentPlanId || !db) return;
       try {
         const snap = await db.collection('job_postings').doc(currentPlanId).get();
-        if (snap.exists) setWizardData(snap.data());
+        setWizardData(snap.exists ? snap.data() : {});
       } catch {}
     };
     load();
@@ -258,7 +258,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   }, [currentPlanId]);
 
   const recipients = useMemo((): RecipientEntry[] => {
-    if (!wizardData) return [];
+    if (!wizardData || !wizardData.careRecipientFirstName) return [];
     const list: RecipientEntry[] = [];
     const pFirst = wizardData.careRecipientFirstName || '';
     const pLast = wizardData.careRecipientLastName || '';
@@ -433,10 +433,20 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     try {
       const entry = { firstName: newRecipient.firstName.trim(), lastName: newRecipient.lastName.trim(), relationship: newRecipient.relationship, age: newRecipient.age.trim() };
 
-      await db.collection('job_postings').doc(currentPlanId).set(
-        { additionalRecipients: firebase.firestore.FieldValue.arrayUnion(entry) },
-        { merge: true }
-      );
+      const isFirstRecipient = !wizardData?.careRecipientFirstName;
+      if (isFirstRecipient) {
+        await db.collection('job_postings').doc(currentPlanId).set({
+          careRecipientFirstName: entry.firstName,
+          careRecipientLastName: entry.lastName,
+          relationship: entry.relationship,
+          careRecipientAge: entry.age,
+        }, { merge: true });
+      } else {
+        await db.collection('job_postings').doc(currentPlanId).set(
+          { additionalRecipients: firebase.firestore.FieldValue.arrayUnion(entry) },
+          { merge: true }
+        );
+      }
 
       // Save the plan the user filled in during add (never inherits wizard defaults)
       const key = getKey(entry.firstName, entry.lastName);
@@ -463,9 +473,13 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
       if (updatedPool !== currentPool) setLocationPool(updatedPool);
 
-      const newIndex = recipients.length; // will be the tab index after state update
+      const newIndex = isFirstRecipient ? 0 : recipients.length;
       setRecipientPlans(prev => ({ ...prev, [key]: blankPlan }));
-      setWizardData((prev: any) => ({ ...prev, additionalRecipients: [...(prev?.additionalRecipients || []), entry] }));
+      if (isFirstRecipient) {
+        setWizardData((prev: any) => ({ ...(prev || {}), careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship, careRecipientAge: entry.age }));
+      } else {
+        setWizardData((prev: any) => ({ ...prev, additionalRecipients: [...(prev?.additionalRecipients || []), entry] }));
+      }
       setNewRecipient({ firstName: '', lastName: '', relationship: '', age: '' });
       setNewDraft({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
       setNewCustomLoc(false);
@@ -571,10 +585,10 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
           </div>
         </div>
 
-        {recipients.length > 0 ? (
+        {recipients.length > 0 || showAddRecipient ? (
           <>
             {/* Tabs */}
-            <div className="flex gap-2 overflow-x-auto pb-1 mb-5 items-center">
+            {recipients.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1 mb-5 items-center">
               {recipients.map((r, i) => (
                 <button key={i} onClick={() => handleTabChange(i)}
                   className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap border-2 transition-all ${
@@ -594,7 +608,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                   <Plus className="w-4 h-4" /> Add
                 </button>
               )}
-            </div>
+            </div>}
 
             {showAddRecipient && (
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 overflow-hidden">
@@ -1313,7 +1327,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
             )}
 
             {/* Emergency Contacts */}
-            {!showAddRecipient && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            {recipients.length > 0 && !showAddRecipient && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/60">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-xl bg-green-50 flex items-center justify-center">
@@ -1442,10 +1456,16 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
         ) : (
           <div className="text-center py-20 bg-white rounded-2xl border border-slate-100">
             <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-4">
-              <FileText className="w-7 h-7 text-slate-400" />
+              <User className="w-7 h-7 text-slate-400" />
             </div>
-            <p className="font-semibold text-slate-700">No care recipients found.</p>
-            <p className="text-sm text-slate-400 mt-1">Complete the care setup wizard to populate this page.</p>
+            <p className="font-semibold text-slate-700">No care recipients yet.</p>
+            <p className="text-sm text-slate-400 mt-1 mb-5">Add your first care recipient to get started.</p>
+            {!isReadOnly && (
+              <button onClick={() => setShowAddRecipient(true)}
+                className="inline-flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl shadow-sm transition-colors">
+                <Plus className="w-4 h-4" /> Add Care Recipient
+              </button>
+            )}
           </div>
         )}
       </div>

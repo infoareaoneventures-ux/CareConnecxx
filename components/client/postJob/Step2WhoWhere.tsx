@@ -132,9 +132,12 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
       // Addresses from carePlans (locationPool + per-recipient locations)
       if (carePlanSnap && (carePlanSnap as any).exists) {
         const cp = (carePlanSnap as any).data() as any;
+        const deletedKeys = new Set<string>((cp.deletedLocKeys || []) as string[]);
 
         const addLoc = (loc: any, idPrefix: string, idx: number, source: SavedLocation['source']) => {
           if (!loc?.street && !loc?.city) return;
+          const blockKey = `${(loc.street || '').toLowerCase().trim()}|${loc.zipCode || ''}`;
+          if (deletedKeys.has(blockKey)) return;
           const addrKey = `${(loc.street || '').toLowerCase()}${loc.zipCode || ''}`;
           if (!seenAddresses.has(addrKey)) {
             seenAddresses.add(addrKey);
@@ -308,14 +311,21 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
     if (selectedLocationId === locId) { setSelectedLocationId(''); onChange({ streetAddress: '', city: '', state: '', zipCode: '' }); }
 
     if (db && currentUser?.uid) {
+      const addrKey = `${loc.street.toLowerCase().trim()}|${loc.zipCode}`;
+      // Blocklist this address so it doesn't re-appear from any Firestore source on reload
+      db.collection('carePlans').doc(currentUser.uid).set(
+        { deletedLocKeys: firebase.firestore.FieldValue.arrayUnion(addrKey) },
+        { merge: true }
+      ).catch(() => {});
+
       if (loc.source === 'job-primary') {
-        db.collection('job_postings').doc(currentUser.uid).update({ street: '', city: '', state: '', zipCode: '' }).catch(() => {});
+        db.collection('job_postings').doc(currentUser.uid).set({ street: '', city: '', state: '', zipCode: '' }, { merge: true }).catch(() => {});
       } else if (loc.source === 'job-saved') {
         const jobSaved = newList.filter(l => l.source === 'job-saved').map(({ street, city, state, zipCode }) => ({ street, city, state, zipCode }));
-        db.collection('job_postings').doc(currentUser.uid).update({ savedLocations: jobSaved }).catch(() => {});
+        db.collection('job_postings').doc(currentUser.uid).set({ savedLocations: jobSaved }, { merge: true }).catch(() => {});
       } else if (loc.source === 'careplan-pool' || loc.source === 'careplan-recipient') {
         const pool = newList.filter(l => l.source === 'careplan-pool' || l.source === 'careplan-recipient').map(({ street, city, state, zipCode }) => ({ street, city, state, zipCode }));
-        db.collection('carePlans').doc(currentUser.uid).update({ locationPool: pool }).catch(() => {});
+        db.collection('carePlans').doc(currentUser.uid).set({ locationPool: pool }, { merge: true }).catch(() => {});
       }
     }
     setConfirmDeleteLocId(null);

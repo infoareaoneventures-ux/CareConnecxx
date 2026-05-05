@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { db } from '../lib/firebase';
 import { dbService } from '../services/api';
 import { chatService } from '../services/chatService';
-import type { CarePlan, ClientIntakeData, Appointment } from '../types';
+import type { Appointment } from '../types';
 
 export type OnboardingStepId =
   | 'identity-check'
@@ -34,36 +34,36 @@ const STEP_ORDER: OnboardingStepId[] = [
 ];
 
 function computeCarePlanProgress(
-  intake: ClientIntakeData | null,
-  plan: CarePlan | null
+  jobPostingsData: any | null,
+  carePlanData: any | null
 ): { percent: number; hint: string } {
+  const recipientPlans: Record<string, any> = carePlanData?.recipientPlans ?? {};
+  const anyHasCareNeeds = Object.values(recipientPlans).some(
+    (p: any) => Array.isArray(p?.careNeeds) && p.careNeeds.length > 0
+  );
+  const anyHasAddress = Object.values(recipientPlans).some(
+    (p: any) => Array.isArray(p?.locations) && p.locations.length > 0 && !!p.locations[0]?.street
+  ) || !!jobPostingsData?.city;
+  const hasEmergencyContact =
+    (Array.isArray(carePlanData?.emergencyContacts) && carePlanData.emergencyContacts.length > 0) ||
+    !!jobPostingsData?.emergencyFirstName;
+
   const checks: { ok: boolean; missingHint: string }[] = [
     {
-      ok: !!intake?.careTypes && intake.careTypes.length > 0,
-      missingHint: 'Pick the types of care needed',
+      ok: !!jobPostingsData?.careRecipientFirstName,
+      missingHint: 'Add a care recipient',
     },
     {
-      ok:
-        (!!intake?.weeklySchedule &&
-          Object.values(intake.weeklySchedule).some(
-            (slots) => Array.isArray(slots) && slots.length > 0
-          )) ||
-        !!intake?.schedule,
-      missingHint: 'Set a weekly schedule',
+      ok: anyHasCareNeeds,
+      missingHint: 'Select the types of care needed',
     },
     {
-      ok: !!intake?.streetAddress && !!intake?.zipCode,
-      missingHint: 'Add the care address',
+      ok: anyHasAddress,
+      missingHint: 'Add a care location',
     },
     {
-      ok: !!intake?.startDate,
-      missingHint: 'Choose a start date',
-    },
-    {
-      ok:
-        (plan?.medications?.length ?? 0) > 0 ||
-        (plan?.emergencyContacts?.length ?? 0) > 0,
-      missingHint: 'Add medications or an emergency contact',
+      ok: hasEmergencyContact,
+      missingHint: 'Add an emergency contact',
     },
   ];
 
@@ -75,8 +75,8 @@ function computeCarePlanProgress(
 }
 
 export function useOnboardingProgress(uid: string | undefined): OnboardingProgress {
-  const [intake, setIntake] = useState<ClientIntakeData | null>(null);
-  const [plan, setPlan] = useState<CarePlan | null>(null);
+  const [jobPostingsData, setJobPostingsData] = useState<any | null>(null);
+  const [carePlanData, setCarePlanData] = useState<any | null>(null);
   const [hasPostedJob, setHasPostedJob] = useState(false);
   const [hasRealMessage, setHasRealMessage] = useState(false);
   const [hasAppointment, setHasAppointment] = useState(false);
@@ -94,16 +94,23 @@ export function useOnboardingProgress(uid: string | undefined): OnboardingProgre
     const unsubs: Array<() => void> = [];
 
     if (db) {
-      const intakeUnsub = db
-        .collection('clientIntakes')
+      const jobPostingsUnsub = db
+        .collection('job_postings')
         .doc(uid)
         .onSnapshot(
-          (doc) => {
-            setIntake(doc.exists ? (doc.data() as ClientIntakeData) : null);
-          },
-          () => setIntake(null)
+          (doc) => setJobPostingsData(doc.exists ? doc.data() : null),
+          () => setJobPostingsData(null)
         );
-      unsubs.push(intakeUnsub);
+      unsubs.push(jobPostingsUnsub);
+
+      const carePlanUnsub = db
+        .collection('carePlans')
+        .doc(uid)
+        .onSnapshot(
+          (doc) => setCarePlanData(doc.exists ? doc.data() : null),
+          () => setCarePlanData(null)
+        );
+      unsubs.push(carePlanUnsub);
 
       const userUnsub = db
         .collection('users')
@@ -136,9 +143,6 @@ export function useOnboardingProgress(uid: string | undefined): OnboardingProgre
         );
       unsubs.push(jobUnsub);
     }
-
-    const planUnsub = dbService.subscribeToCarePlan(uid, (p) => setPlan(p));
-    if (planUnsub) unsubs.push(planUnsub);
 
     const chatUnsub = chatService.subscribeToChatRooms(
       uid,
@@ -178,8 +182,8 @@ export function useOnboardingProgress(uid: string | undefined): OnboardingProgre
   }, [uid]);
 
   const { percent: carePlanPercent, hint: carePlanHint } = computeCarePlanProgress(
-    intake,
-    plan
+    jobPostingsData,
+    carePlanData
   );
 
   const stepDone: Record<OnboardingStepId, boolean> = {

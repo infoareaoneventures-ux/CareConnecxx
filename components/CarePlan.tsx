@@ -212,6 +212,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [newCustomLoc, setNewCustomLoc] = useState(false);
   const [savingRecipient, setSavingRecipient] = useState(false);
   const [confirmDeleteRecipient, setConfirmDeleteRecipient] = useState(false);
+  const [confirmDeletePoolIdx, setConfirmDeletePoolIdx] = useState<number | null>(null);
 
   const currentUser = authService.getCurrentUser();
   const isReadOnly = !!targetUserId && targetUserId !== currentUser?.uid;
@@ -310,6 +311,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     setDraftLocPool([]);
     setEditingPoolIdx(null);
     setEditingPoolDraft(null);
+    setConfirmDeletePoolIdx(null);
   };
 
   const saveSection = async () => {
@@ -895,6 +897,18 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                       </div>
                                     );
                                   }
+                                  if (confirmDeletePoolIdx === i) {
+                                    return (
+                                      <div key={i} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border-2 border-red-200 bg-red-50 px-3 py-2.5">
+                                        <p className="text-sm font-semibold text-red-700">Remove <span className="font-bold">"{locLabel(wl)}"</span>?</p>
+                                        <div className="flex gap-2 shrink-0">
+                                          <button type="button" onClick={() => { setDraftLocPool(prev => prev.filter((_, idx) => idx !== i)); if (selected) setDraftPlan(prev => prev ? { ...prev, locations: [] } : prev); setConfirmDeletePoolIdx(null); }}
+                                            className="text-xs bg-red-600 hover:bg-red-700 text-white font-semibold px-3 py-1.5 rounded-lg">Yes, remove</button>
+                                          <button type="button" onClick={() => setConfirmDeletePoolIdx(null)} className="text-xs bg-white border border-slate-200 text-slate-600 px-3 py-1.5 rounded-lg hover:bg-slate-50">Cancel</button>
+                                        </div>
+                                      </div>
+                                    );
+                                  }
                                   return (
                                     <div key={i} className={`flex items-center gap-1 rounded-xl border-2 text-sm transition-all ${selected ? 'bg-primary-50 border-primary-500' : 'bg-white border-slate-200'}`}>
                                       <button type="button" onClick={() => setDraftPlan(prev => prev ? { ...prev, locations: selected ? [] : [wl] } : prev)}
@@ -902,12 +916,10 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                         <span className={selected ? 'text-primary-700' : 'text-slate-600'}>{locLabel(wl) || 'New address'}</span>
                                         {selected && <Check size={14} className="flex-shrink-0 text-primary-600" />}
                                       </button>
-                                      <button type="button" onClick={() => { setEditingPoolIdx(i); setEditingPoolDraft({ ...wl }); }}
+                                      <button type="button" onClick={() => { setEditingPoolIdx(i); setEditingPoolDraft({ ...wl }); setConfirmDeletePoolIdx(null); }}
                                         className="p-2 text-slate-400 hover:text-primary-600 transition-colors"><Pencil size={13} /></button>
-                                      <button type="button" onClick={() => {
-                                        setDraftLocPool(prev => prev.filter((_, idx) => idx !== i));
-                                        if (selected) setDraftPlan(prev => prev ? { ...prev, locations: [] } : prev);
-                                      }} className="p-2 pr-3 text-slate-400 hover:text-red-500 transition-colors"><X size={13} /></button>
+                                      <button type="button" onClick={() => { setConfirmDeletePoolIdx(i); setEditingPoolIdx(null); setEditingPoolDraft(null); }}
+                                        className="p-2 pr-3 text-slate-400 hover:text-red-500 transition-colors"><X size={13} /></button>
                                     </div>
                                   );
                                 })}

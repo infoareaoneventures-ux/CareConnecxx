@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, UserCircle2, User, X, Plus, Minus, MapPin } from 'lucide-react';
+import { Loader2, UserCircle2, User, X, Plus, Minus, MapPin, Pencil, Trash2 } from 'lucide-react';
 import { StepProps } from './types';
 import { useCareConnex } from '../../../context/CareConnexContext';
 import { dbService } from '../../../services/api';
@@ -22,6 +22,7 @@ interface SavedLocation {
   city: string;
   state: string;
   zipCode: string;
+  source: 'job-primary' | 'job-saved' | 'careplan-pool' | 'careplan-recipient';
 }
 
 export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue, onBack, onShowToast }) => {
@@ -40,6 +41,10 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   const [showLocationForm, setShowLocationForm] = useState(false);
   const [newLocation, setNewLocation] = useState({ street: '', zipCode: '', city: '', state: '' });
   const [locZipLoading, setLocZipLoading] = useState(false);
+  const [editingLocId, setEditingLocId] = useState<string | null>(null);
+  const [editingLocDraft, setEditingLocDraft] = useState<{ street: string; city: string; state: string; zipCode: string } | null>(null);
+  const [editLocZipLoading, setEditLocZipLoading] = useState(false);
+  const [confirmDeleteLocId, setConfirmDeleteLocId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentUser?.uid) {
@@ -106,7 +111,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
           const addrKey = `${jp.street.toLowerCase()}${jp.zipCode}`;
           if (!seenAddresses.has(addrKey)) {
             seenAddresses.add(addrKey);
-            locations.push({ id: 'primary', street: jp.street, city: jp.city || '', state: jp.state || '', zipCode: jp.zipCode });
+            locations.push({ id: 'primary', street: jp.street, city: jp.city || '', state: jp.state || '', zipCode: jp.zipCode, source: 'job-primary' });
           }
         }
 
@@ -117,7 +122,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
               const addrKey = `${loc.street.toLowerCase()}${loc.zipCode}`;
               if (!seenAddresses.has(addrKey)) {
                 seenAddresses.add(addrKey);
-                locations.push({ id: `saved-${i}`, street: loc.street, city: loc.city || '', state: loc.state || '', zipCode: loc.zipCode });
+                locations.push({ id: `saved-${i}`, street: loc.street, city: loc.city || '', state: loc.state || '', zipCode: loc.zipCode, source: 'job-saved' });
               }
             }
           });
@@ -128,20 +133,20 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
       if (carePlanSnap && (carePlanSnap as any).exists) {
         const cp = (carePlanSnap as any).data() as any;
 
-        const addLoc = (loc: any, idPrefix: string, idx: number) => {
+        const addLoc = (loc: any, idPrefix: string, idx: number, source: SavedLocation['source']) => {
           if (!loc?.street && !loc?.city) return;
           const addrKey = `${(loc.street || '').toLowerCase()}${loc.zipCode || ''}`;
           if (!seenAddresses.has(addrKey)) {
             seenAddresses.add(addrKey);
-            locations.push({ id: `${idPrefix}-${idx}`, street: loc.street || '', city: loc.city || '', state: loc.state || '', zipCode: loc.zipCode || '' });
+            locations.push({ id: `${idPrefix}-${idx}`, street: loc.street || '', city: loc.city || '', state: loc.state || '', zipCode: loc.zipCode || '', source });
           }
         };
 
-        (cp.locationPool || []).forEach((loc: any, i: number) => addLoc(loc, 'cp-pool', i));
+        (cp.locationPool || []).forEach((loc: any, i: number) => addLoc(loc, 'cp-pool', i, 'careplan-pool'));
 
         const plans = cp.recipientPlans || {};
         Object.values(plans).forEach((plan: any, pi: number) => {
-          (plan?.locations || []).forEach((loc: any, li: number) => addLoc(loc, `cp-rp-${pi}`, li));
+          (plan?.locations || []).forEach((loc: any, li: number) => addLoc(loc, `cp-rp-${pi}`, li, 'careplan-recipient'));
         });
       }
 
@@ -243,6 +248,77 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
     setSavedLocations(prev => [...prev, loc]);
     setNewLocation({ street: '', zipCode: '', city: '', state: '' });
     setShowLocationForm(false);
+  };
+
+  const startEditLocation = (loc: SavedLocation) => {
+    setEditingLocId(loc.id);
+    setEditingLocDraft({ street: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode });
+    setConfirmDeleteLocId(null);
+  };
+
+  const handleEditLocZipChange = async (zip: string) => {
+    const clean = zip.replace(/\D/g, '').slice(0, 5);
+    setEditingLocDraft(d => d ? { ...d, zipCode: clean } : d);
+    if (clean.length === 5) {
+      setEditLocZipLoading(true);
+      try {
+        const res = await fetch(`https://api.zippopotam.us/us/${clean}`);
+        if (res.ok) {
+          const json = await res.json();
+          const place = json.places?.[0];
+          if (place) setEditingLocDraft(d => d ? { ...d, city: place['place name'], state: place['state abbreviation'] } : d);
+        }
+      } catch { } finally { setEditLocZipLoading(false); }
+    }
+  };
+
+  const saveEditedLocation = async () => {
+    if (!editingLocId || !editingLocDraft) return;
+    if (!editingLocDraft.street.trim()) { onShowToast('Street address is required', 'error'); return; }
+    if (!/^\d{5}$/.test(editingLocDraft.zipCode)) { onShowToast('Zip code must be 5 digits', 'error'); return; }
+    if (!editingLocDraft.city.trim()) { onShowToast('City is required', 'error'); return; }
+
+    const loc = savedLocations.find(l => l.id === editingLocId);
+    if (!loc) return;
+    const updated: SavedLocation = { ...loc, ...editingLocDraft };
+    const newList = savedLocations.map(l => l.id === editingLocId ? updated : l);
+    setSavedLocations(newList);
+    if (selectedLocationId === editingLocId) onChange({ streetAddress: updated.street, city: updated.city, state: updated.state, zipCode: updated.zipCode });
+
+    if (db && currentUser?.uid) {
+      if (loc.source === 'job-primary') {
+        db.collection('job_postings').doc(currentUser.uid).update({ street: updated.street, city: updated.city, state: updated.state, zipCode: updated.zipCode }).catch(() => {});
+      } else if (loc.source === 'job-saved') {
+        const jobSaved = newList.filter(l => l.source === 'job-saved').map(({ street, city, state, zipCode }) => ({ street, city, state, zipCode }));
+        db.collection('job_postings').doc(currentUser.uid).update({ savedLocations: jobSaved }).catch(() => {});
+      } else if (loc.source === 'careplan-pool' || loc.source === 'careplan-recipient') {
+        const pool = newList.filter(l => l.source === 'careplan-pool' || l.source === 'careplan-recipient').map(({ street, city, state, zipCode }) => ({ street, city, state, zipCode }));
+        db.collection('carePlans').doc(currentUser.uid).update({ locationPool: pool }).catch(() => {});
+      }
+    }
+    setEditingLocId(null);
+    setEditingLocDraft(null);
+  };
+
+  const deleteLocation = async (locId: string) => {
+    const loc = savedLocations.find(l => l.id === locId);
+    if (!loc) return;
+    const newList = savedLocations.filter(l => l.id !== locId);
+    setSavedLocations(newList);
+    if (selectedLocationId === locId) { setSelectedLocationId(''); onChange({ streetAddress: '', city: '', state: '', zipCode: '' }); }
+
+    if (db && currentUser?.uid) {
+      if (loc.source === 'job-primary') {
+        db.collection('job_postings').doc(currentUser.uid).update({ street: '', city: '', state: '', zipCode: '' }).catch(() => {});
+      } else if (loc.source === 'job-saved') {
+        const jobSaved = newList.filter(l => l.source === 'job-saved').map(({ street, city, state, zipCode }) => ({ street, city, state, zipCode }));
+        db.collection('job_postings').doc(currentUser.uid).update({ savedLocations: jobSaved }).catch(() => {});
+      } else if (loc.source === 'careplan-pool' || loc.source === 'careplan-recipient') {
+        const pool = newList.filter(l => l.source === 'careplan-pool' || l.source === 'careplan-recipient').map(({ street, city, state, zipCode }) => ({ street, city, state, zipCode }));
+        db.collection('carePlans').doc(currentUser.uid).update({ locationPool: pool }).catch(() => {});
+      }
+    }
+    setConfirmDeleteLocId(null);
   };
 
   const handleContinue = () => {
@@ -381,20 +457,59 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
             <div className="flex flex-col gap-2 mb-3">
               {savedLocations.map(loc => {
                 const selected = selectedLocationId === loc.id;
+                const isEditing = editingLocId === loc.id;
+                const isConfirming = confirmDeleteLocId === loc.id;
+
+                if (isEditing && editingLocDraft) {
+                  return (
+                    <div key={loc.id} className="border-2 border-primary-200 bg-primary-50 rounded-xl p-4 flex flex-col gap-3">
+                      <p className="text-sm font-semibold text-slate-700">Edit location</p>
+                      <input type="text" placeholder="Street address *" value={editingLocDraft.street} onChange={e => setEditingLocDraft(d => d ? { ...d, street: e.target.value } : d)} className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-100" />
+                      <div className="relative w-40">
+                        <input type="text" inputMode="numeric" maxLength={5} placeholder="Zip code *" value={editingLocDraft.zipCode} onChange={e => handleEditLocZipChange(e.target.value)} className="w-full px-3 py-2 pr-8 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-100" />
+                        {editLocZipLoading && <Loader2 className="w-4 h-4 text-primary-500 absolute right-2 top-1/2 -translate-y-1/2 animate-spin" />}
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <input type="text" placeholder="City" value={editingLocDraft.city} onChange={e => setEditingLocDraft(d => d ? { ...d, city: e.target.value } : d)} className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-100" />
+                        <input type="text" placeholder="State" maxLength={2} value={editingLocDraft.state} onChange={e => setEditingLocDraft(d => d ? { ...d, state: e.target.value.toUpperCase() } : d)} className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-100 uppercase" />
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={saveEditedLocation} className="bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">Save</button>
+                        <button type="button" onClick={() => { setEditingLocId(null); setEditingLocDraft(null); }} className="bg-white border border-slate-200 text-slate-600 text-sm font-medium px-4 py-1.5 rounded-lg hover:bg-slate-50">Cancel</button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (isConfirming) {
+                  return (
+                    <div key={loc.id} className="border-2 border-red-200 bg-red-50 rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-red-700">Remove <span className="font-bold">"{loc.street}"</span>?</p>
+                      <div className="flex gap-2 shrink-0">
+                        <button type="button" onClick={() => deleteLocation(loc.id)} className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">Yes, remove</button>
+                        <button type="button" onClick={() => setConfirmDeleteLocId(null)} className="bg-white border border-slate-200 text-slate-600 text-sm font-medium px-4 py-1.5 rounded-lg hover:bg-slate-50">Cancel</button>
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
-                  <button key={loc.id} type="button" onClick={() => selectLocation(loc)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left transition-all ${selected ? 'border-primary-600 bg-primary-50' : 'border-slate-200 bg-white hover:border-primary-300'}`}>
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${selected ? 'bg-primary-100' : 'bg-slate-100'}`}>
-                      <MapPin className={`w-5 h-5 ${selected ? 'text-primary-600' : 'text-slate-400'}`} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-slate-900 text-sm">{loc.street}</p>
-                      <p className="text-xs text-slate-500">{loc.city}{loc.city && loc.state ? ', ' : ''}{loc.state} {loc.zipCode}</p>
-                    </div>
-                    <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${selected ? 'border-primary-600 bg-primary-600' : 'border-slate-300'}`}>
-                      {selected && <div className="w-2 h-2 rounded-full bg-white" />}
-                    </div>
-                  </button>
+                  <div key={loc.id} className={`flex items-center gap-2 rounded-xl border-2 transition-all ${selected ? 'border-primary-600 bg-primary-50' : 'border-slate-200 bg-white hover:border-primary-300'}`}>
+                    <button type="button" onClick={() => selectLocation(loc)} className="flex-1 flex items-center gap-3 px-4 py-3 text-left">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${selected ? 'bg-primary-100' : 'bg-slate-100'}`}>
+                        <MapPin className={`w-5 h-5 ${selected ? 'text-primary-600' : 'text-slate-400'}`} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-slate-900 text-sm">{loc.street}</p>
+                        <p className="text-xs text-slate-500">{loc.city}{loc.city && loc.state ? ', ' : ''}{loc.state} {loc.zipCode}</p>
+                      </div>
+                      <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${selected ? 'border-primary-600 bg-primary-600' : 'border-slate-300'}`}>
+                        {selected && <div className="w-2 h-2 rounded-full bg-white" />}
+                      </div>
+                    </button>
+                    <button type="button" onClick={() => startEditLocation(loc)} className="p-2 text-slate-400 hover:text-primary-600 transition-colors"><Pencil size={14} /></button>
+                    <button type="button" onClick={() => { setConfirmDeleteLocId(loc.id); setEditingLocId(null); setEditingLocDraft(null); }} className="p-2 pr-3 text-slate-400 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
+                  </div>
                 );
               })}
             </div>

@@ -208,6 +208,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
   const [showAddRecipient, setShowAddRecipient] = useState(false);
   const [newRecipient, setNewRecipient] = useState({ firstName: '', lastName: '', relationship: '', age: '' });
+  const [newDraft, setNewDraft] = useState<RecipientPlanData>({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
+  const [newCustomLoc, setNewCustomLoc] = useState(false);
   const [savingRecipient, setSavingRecipient] = useState(false);
   const [confirmDeleteRecipient, setConfirmDeleteRecipient] = useState(false);
 
@@ -402,12 +404,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
         { merge: true }
       );
 
-      // Write a blank plan so this recipient never inherits wizard defaults
+      // Save the plan the user filled in during add (never inherits wizard defaults)
       const key = getKey(entry.firstName, entry.lastName);
-      const blankPlan: RecipientPlanData = {
-        careNeeds: [], careNeedDetails: {}, locations: [], notes: '',
-        lifestyle: emptyLifestyle(), tasks: emptyTasks(),
-      };
+      const blankPlan: RecipientPlanData = { ...newDraft };
       const cpRef = db.collection('carePlans').doc(currentPlanId);
       try {
         await cpRef.update({ [`recipientPlans.${key}`]: blankPlan });
@@ -419,6 +418,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       setRecipientPlans(prev => ({ ...prev, [key]: blankPlan }));
       setWizardData((prev: any) => ({ ...prev, additionalRecipients: [...(prev?.additionalRecipients || []), entry] }));
       setNewRecipient({ firstName: '', lastName: '', relationship: '', age: '' });
+      setNewDraft({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
+      setNewCustomLoc(false);
       setShowAddRecipient(false);
       setActiveRecipient(newIndex);
       onShowToast('Recipient added', 'success');
@@ -531,41 +532,156 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
             </div>
 
             {showAddRecipient && (
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
-                <p className="text-sm font-semibold text-slate-700 mb-3">New Care Recipient</p>
-                <div className="grid grid-cols-2 gap-2 mb-2">
-                  <input className={inputCls} placeholder="First name *" value={newRecipient.firstName} onChange={e => setNewRecipient(p => ({ ...p, firstName: e.target.value }))} />
-                  <input className={inputCls} placeholder="Last name" value={newRecipient.lastName} onChange={e => setNewRecipient(p => ({ ...p, lastName: e.target.value }))} />
-                  <select
-                    className={`${inputCls} ${!newRecipient.relationship ? 'text-slate-400' : 'text-slate-700'}`}
-                    value={newRecipient.relationship}
-                    onChange={e => {
-                      const rel = e.target.value;
-                      if (rel === 'Myself') {
-                        const displayName = currentUser?.displayName || '';
-                        const parts = displayName.trim().split(/\s+/);
-                        const first = parts[0] || '';
-                        const last = parts.slice(1).join(' ') || '';
-                        setNewRecipient(p => ({ ...p, relationship: rel, firstName: first, lastName: last }));
-                      } else {
-                        setNewRecipient(p => ({ ...p, relationship: rel }));
-                      }
-                    }}>
-                    <option value="" disabled>Relationship *</option>
-                    <option value="Myself">Myself</option>
-                    <option value="Parent">Parent</option>
-                    <option value="Spouse or Partner">Spouse or Partner</option>
-                    <option value="Other">Other</option>
-                  </select>
-                  <input className={inputCls} placeholder="Age (optional)" value={newRecipient.age} onChange={e => setNewRecipient(p => ({ ...p, age: e.target.value.replace(/\D/g, '').slice(0, 3) }))} />
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 overflow-hidden">
+                {/* Basic info */}
+                <div className="px-5 pt-5 pb-4 border-b border-slate-100">
+                  <p className="text-sm font-semibold text-slate-700 mb-3">New Care Recipient</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input className={inputCls} placeholder="First name *" value={newRecipient.firstName} onChange={e => setNewRecipient(p => ({ ...p, firstName: e.target.value }))} />
+                    <input className={inputCls} placeholder="Last name" value={newRecipient.lastName} onChange={e => setNewRecipient(p => ({ ...p, lastName: e.target.value }))} />
+                    <select
+                      className={`${inputCls} ${!newRecipient.relationship ? 'text-slate-400' : 'text-slate-700'}`}
+                      value={newRecipient.relationship}
+                      onChange={e => {
+                        const rel = e.target.value;
+                        if (rel === 'Myself') {
+                          const dn = currentUser?.displayName || '';
+                          const parts = dn.trim().split(/\s+/);
+                          setNewRecipient(p => ({ ...p, relationship: rel, firstName: parts[0] || '', lastName: parts.slice(1).join(' ') || '' }));
+                        } else {
+                          setNewRecipient(p => ({ ...p, relationship: rel }));
+                        }
+                      }}>
+                      <option value="" disabled>Relationship *</option>
+                      <option value="Myself">Myself</option>
+                      <option value="Parent">Parent</option>
+                      <option value="Spouse or Partner">Spouse or Partner</option>
+                      <option value="Other">Other</option>
+                    </select>
+                    <input className={inputCls} placeholder="Age (optional)" value={newRecipient.age} onChange={e => setNewRecipient(p => ({ ...p, age: e.target.value.replace(/\D/g, '').slice(0, 3) }))} />
+                  </div>
                 </div>
-                <div className="flex gap-2 mt-3">
+
+                {/* Care Needs */}
+                <div className="px-5 py-4 border-b border-slate-100">
+                  <div className="flex items-center gap-2 mb-3">
+                    <ClipboardList className="w-4 h-4 text-primary-500" />
+                    <p className="text-sm font-semibold text-slate-700">Care Needs & Tasks</p>
+                  </div>
+                  <div className="space-y-2">
+                    {CARE_TYPES.map(need => {
+                      const selected = newDraft.careNeeds.includes(need);
+                      const subs = CARE_NEED_SUBS[need] || [];
+                      const selectedSubs = newDraft.careNeedDetails?.[need] || [];
+                      return (
+                        <div key={need} className={`rounded-xl overflow-hidden transition-all ${selected ? 'border-2 border-primary-300' : 'border border-slate-200 hover:border-slate-300'}`}>
+                          <button type="button"
+                            onClick={() => {
+                              const newNeeds = toggleArr(newDraft.careNeeds, need);
+                              const newDetails = { ...newDraft.careNeedDetails };
+                              if (!newNeeds.includes(need)) delete newDetails[need];
+                              setNewDraft(p => ({ ...p, careNeeds: newNeeds, careNeedDetails: newDetails }));
+                            }}
+                            className="w-full px-4 py-3 text-left transition-colors"
+                            style={selected ? { backgroundColor: '#dbeafe' } : undefined}>
+                            <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-500'}`}>{need}</span>
+                          </button>
+                          {selected && subs.length > 0 && (
+                            <div className="px-4 py-3 flex flex-wrap gap-2" style={{ backgroundColor: '#f5f9ff' }}>
+                              {subs.map(sub => {
+                                const subSel = selectedSubs.includes(sub);
+                                return (
+                                  <button key={sub} type="button"
+                                    onClick={() => setNewDraft(p => ({ ...p, careNeedDetails: { ...p.careNeedDetails, [need]: toggleArr(selectedSubs, sub) } }))}
+                                    className="px-3 py-1 rounded-full border text-xs font-medium transition-all flex items-center gap-1"
+                                    style={subSel ? { backgroundColor: '#dbeafe', borderColor: '#93c5fd', color: '#1d4ed8' } : { backgroundColor: '#ffffff', borderColor: '#e2e8f0', color: '#64748b' }}>
+                                    {subSel && <Check size={10} className="flex-shrink-0" />}{sub}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Care Location */}
+                <div className="px-5 py-4 border-b border-slate-100">
+                  <div className="flex items-center gap-2 mb-3">
+                    <MapPin className="w-4 h-4 text-primary-500" />
+                    <p className="text-sm font-semibold text-slate-700">Care Location</p>
+                  </div>
+                  {effectivePool.length > 0 && (
+                    <div className="space-y-2 mb-2">
+                      {effectivePool.map((wl, i) => {
+                        const sel = newDraft.locations[0]?.street === wl.street && newDraft.locations[0]?.city === wl.city && newDraft.locations[0]?.zipCode === wl.zipCode;
+                        return (
+                          <div key={i} className={`flex items-center gap-2 rounded-xl border-2 text-sm transition-all cursor-pointer px-3 py-2.5 ${sel ? 'bg-primary-50 border-primary-500' : 'bg-white border-slate-200 hover:border-primary-300'}`}
+                            onClick={() => { setNewDraft(p => ({ ...p, locations: sel ? [] : [wl] })); setNewCustomLoc(false); }}>
+                            <span className={`flex-1 ${sel ? 'text-primary-700' : 'text-slate-600'}`}>{locLabel(wl)}</span>
+                            {sel && <Check size={14} className="text-primary-600 flex-shrink-0" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {!newCustomLoc ? (
+                    <button type="button" onClick={() => { setNewCustomLoc(true); setNewDraft(p => ({ ...p, locations: [] })); }}
+                      className="text-sm text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1 mt-1">
+                      <Plus className="w-4 h-4" /> Use a different address
+                    </button>
+                  ) : (
+                    <div className="p-3 rounded-xl border border-slate-200 bg-white mt-1">
+                      <div className="grid grid-cols-2 gap-2">
+                        <input className={`col-span-2 ${inputCls}`} placeholder="Street address" value={newDraft.locations[0]?.street || ''}
+                          onChange={e => setNewDraft(p => ({ ...p, locations: [{ ...(p.locations[0] || emptyLocation()), street: e.target.value }] }))} />
+                        <input className={`col-span-2 ${inputCls}`} placeholder="Zip code"
+                          value={newDraft.locations[0]?.zipCode || ''}
+                          onChange={async e => {
+                            const zip = e.target.value.replace(/\D/g, '').slice(0, 5);
+                            setNewDraft(p => ({ ...p, locations: [{ ...(p.locations[0] || emptyLocation()), zipCode: zip }] }));
+                            if (zip.length === 5) {
+                              const result = await lookupZip(zip);
+                              if (result) setNewDraft(p => ({ ...p, locations: [{ ...(p.locations[0] || emptyLocation()), city: result.city, state: result.state }] }));
+                            }
+                          }} />
+                        <input className={inputCls} placeholder="City" value={newDraft.locations[0]?.city || ''}
+                          onChange={e => setNewDraft(p => ({ ...p, locations: [{ ...(p.locations[0] || emptyLocation()), city: e.target.value }] }))} />
+                        <input className={inputCls} placeholder="State" value={newDraft.locations[0]?.state || ''}
+                          onChange={e => setNewDraft(p => ({ ...p, locations: [{ ...(p.locations[0] || emptyLocation()), state: e.target.value }] }))} />
+                      </div>
+                      <button type="button" onClick={() => { setNewCustomLoc(false); setNewDraft(p => ({ ...p, locations: [] })); }}
+                        className="text-xs text-slate-400 hover:text-slate-600 mt-2">Clear</button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Notes */}
+                <div className="px-5 py-4 border-b border-slate-100">
+                  <div className="flex items-center gap-2 mb-3">
+                    <StickyNote className="w-4 h-4 text-amber-500" />
+                    <p className="text-sm font-semibold text-slate-700">Notes</p>
+                  </div>
+                  <textarea rows={3} className={`w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-primary-400 resize-none`}
+                    placeholder="Any specific care instructions or notes…"
+                    value={newDraft.notes}
+                    onChange={e => setNewDraft(p => ({ ...p, notes: e.target.value }))} />
+                </div>
+
+                {/* Actions */}
+                <div className="px-5 py-4 flex gap-2">
                   <button onClick={saveNewRecipient} disabled={savingRecipient}
-                    className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg disabled:opacity-60 transition-colors">
-                    {savingRecipient && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save
+                    className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-5 py-2 rounded-lg disabled:opacity-60 transition-colors">
+                    {savingRecipient && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save Recipient
                   </button>
-                  <button onClick={() => { setShowAddRecipient(false); setNewRecipient({ firstName: '', lastName: '', relationship: '', age: '' }); }}
-                    className="text-sm text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg font-medium">Cancel</button>
+                  <button onClick={() => {
+                    setShowAddRecipient(false);
+                    setNewRecipient({ firstName: '', lastName: '', relationship: '', age: '' });
+                    setNewDraft({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
+                    setNewCustomLoc(false);
+                  }} className="text-sm text-slate-500 hover:text-slate-700 px-3 py-2 rounded-lg font-medium">Cancel</button>
                 </div>
               </div>
             )}

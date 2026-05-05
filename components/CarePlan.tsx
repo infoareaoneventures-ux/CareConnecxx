@@ -195,6 +195,10 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [setupDraft, setSetupDraft] = useState({ firstName: '', lastName: '', phone: '', relationship: '' });
   const [savingSetup, setSavingSetup] = useState(false);
 
+  const [showAddRecipient, setShowAddRecipient] = useState(false);
+  const [newRecipient, setNewRecipient] = useState({ firstName: '', lastName: '', relationship: '', age: '' });
+  const [savingRecipient, setSavingRecipient] = useState(false);
+
   const currentUser = authService.getCurrentUser();
   const isReadOnly = !!targetUserId && targetUserId !== currentUser?.uid;
   const currentPlanId = targetUserId || currentUser?.uid || null;
@@ -369,6 +373,24 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     finally { setSavingContacts(false); }
   };
 
+  const saveNewRecipient = async () => {
+    if (!newRecipient.firstName.trim()) { onShowToast('First name is required', 'error'); return; }
+    if (!currentPlanId || !db) return;
+    setSavingRecipient(true);
+    try {
+      const entry = { firstName: newRecipient.firstName.trim(), lastName: newRecipient.lastName.trim(), relationship: newRecipient.relationship.trim(), age: newRecipient.age.trim() };
+      await db.collection('job_postings').doc(currentPlanId).set(
+        { additionalRecipients: firebase.firestore.FieldValue.arrayUnion(entry) },
+        { merge: true }
+      );
+      setWizardData((prev: any) => ({ ...prev, additionalRecipients: [...(prev?.additionalRecipients || []), entry] }));
+      setNewRecipient({ firstName: '', lastName: '', relationship: '', age: '' });
+      setShowAddRecipient(false);
+      onShowToast('Recipient added', 'success');
+    } catch { onShowToast('Failed to add recipient', 'error'); }
+    finally { setSavingRecipient(false); }
+  };
+
   const startEditSetup = () => {
     setSetupDraft({
       firstName: wizardData?.emergencyFirstName || '',
@@ -431,7 +453,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
         {recipients.length > 0 ? (
           <>
             {/* Tabs */}
-            <div className="flex gap-2 overflow-x-auto pb-1 mb-5">
+            <div className="flex gap-2 overflow-x-auto pb-1 mb-5 items-center">
               {recipients.map((r, i) => (
                 <button key={i} onClick={() => handleTabChange(i)}
                   className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap border-2 transition-all ${
@@ -445,7 +467,33 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                   {r.name}
                 </button>
               ))}
+              {!isReadOnly && recipients.length < 4 && !showAddRecipient && (
+                <button onClick={() => setShowAddRecipient(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap border-2 border-dashed border-slate-300 text-slate-400 hover:border-primary-400 hover:text-primary-600 transition-all bg-white">
+                  <Plus className="w-4 h-4" /> Add
+                </button>
+              )}
             </div>
+
+            {showAddRecipient && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
+                <p className="text-sm font-semibold text-slate-700 mb-3">New Care Recipient</p>
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <input className={inputCls} placeholder="First name *" value={newRecipient.firstName} onChange={e => setNewRecipient(p => ({ ...p, firstName: e.target.value }))} />
+                  <input className={inputCls} placeholder="Last name" value={newRecipient.lastName} onChange={e => setNewRecipient(p => ({ ...p, lastName: e.target.value }))} />
+                  <input className={inputCls} placeholder="Relationship (e.g. Parent)" value={newRecipient.relationship} onChange={e => setNewRecipient(p => ({ ...p, relationship: e.target.value }))} />
+                  <input className={inputCls} placeholder="Age (optional)" value={newRecipient.age} onChange={e => setNewRecipient(p => ({ ...p, age: e.target.value.replace(/\D/g, '').slice(0, 3) }))} />
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <button onClick={saveNewRecipient} disabled={savingRecipient}
+                    className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg disabled:opacity-60 transition-colors">
+                    {savingRecipient && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save
+                  </button>
+                  <button onClick={() => { setShowAddRecipient(false); setNewRecipient({ firstName: '', lastName: '', relationship: '', age: '' }); }}
+                    className="text-sm text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg font-medium">Cancel</button>
+                </div>
+              </div>
+            )}
 
             {recipient && rPlan && (
               <>

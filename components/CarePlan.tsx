@@ -115,6 +115,16 @@ const hasLifestyle = (ls: LifestyleData) =>
 
 const inputCls = 'border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary-400 bg-white';
 
+const lookupZip = async (zip: string): Promise<{ city: string; state: string } | null> => {
+  try {
+    const res = await fetch(`https://api.zippopotam.us/us/${zip}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const place = data.places?.[0];
+    return place ? { city: place['place name'], state: place['state abbreviation'] } : null;
+  } catch { return null; }
+};
+
 // ── Mini sub-components ───────────────────────────────────
 
 const CheckPill: React.FC<{ label: string; selected: boolean; onClick: () => void }> = ({ label, selected, onClick }) => (
@@ -199,6 +209,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [showAddRecipient, setShowAddRecipient] = useState(false);
   const [newRecipient, setNewRecipient] = useState({ firstName: '', lastName: '', relationship: '', age: '' });
   const [savingRecipient, setSavingRecipient] = useState(false);
+  const [confirmDeleteRecipient, setConfirmDeleteRecipient] = useState(false);
 
   const currentUser = authService.getCurrentUser();
   const isReadOnly = !!targetUserId && targetUserId !== currentUser?.uid;
@@ -411,6 +422,26 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     finally { setSavingRecipient(false); }
   };
 
+  const deleteRecipient = async () => {
+    if (!currentPlanId || !db || activeRecipient === 0) return;
+    const r = recipients[activeRecipient];
+    try {
+      const updatedAdditional = (wizardData?.additionalRecipients || []).filter(
+        (ar: any) => !(ar.firstName === r.firstName && ar.lastName === r.lastName)
+      );
+      const archived = { firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, age: r.age || '', deletedAt: new Date().toISOString() };
+      await db.collection('job_postings').doc(currentPlanId).update({
+        additionalRecipients: updatedAdditional,
+        deletedRecipients: firebase.firestore.FieldValue.arrayUnion(archived),
+      });
+      setWizardData((prev: any) => ({ ...prev, additionalRecipients: updatedAdditional }));
+      setActiveRecipient(Math.max(0, activeRecipient - 1));
+      setConfirmDeleteRecipient(false);
+      cancelEdit();
+      onShowToast('Recipient removed', 'success');
+    } catch { onShowToast('Failed to remove recipient', 'error'); }
+  };
+
   const startEditSetup = () => {
     setSetupDraft({
       firstName: wizardData?.emergencyFirstName || '',
@@ -537,6 +568,15 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
             {recipient && rPlan && (
               <>
+                {confirmDeleteRecipient && (
+                  <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-red-700">Remove <span className="font-bold">{recipient.name}</span> from the care plan?</p>
+                    <div className="flex gap-2 shrink-0">
+                      <button onClick={deleteRecipient} className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">Yes, remove</button>
+                      <button onClick={() => setConfirmDeleteRecipient(false)} className="bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">No, keep</button>
+                    </div>
+                  </div>
+                )}
                 {/* Recipient card */}
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 px-5 py-4 flex items-center gap-4">
                   <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white font-bold text-xl shrink-0 shadow-sm" style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}>
@@ -549,6 +589,11 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                       {recipient.age && <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-0.5 rounded-full border border-slate-200">Age {recipient.age}</span>}
                     </div>
                   </div>
+                  {!isReadOnly && activeRecipient > 0 && !confirmDeleteRecipient && (
+                    <button onClick={() => setConfirmDeleteRecipient(true)} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0" title="Remove recipient">
+                      <Trash2 size={15} />
+                    </button>
+                  )}
                 </div>
 
                 {/* Care details card */}
@@ -673,9 +718,17 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                       <div key={i} className="p-3 rounded-xl border-2 border-primary-300 bg-white">
                                         <div className="grid grid-cols-2 gap-2 mb-2">
                                           <input className={`col-span-2 ${inputCls}`} placeholder="Street address" value={editingPoolDraft.street} onChange={e => setEditingPoolDraft(p => p ? { ...p, street: e.target.value } : p)} />
+                                          <input className={`col-span-2 ${inputCls}`} placeholder="Zip code" value={editingPoolDraft.zipCode}
+                                            onChange={async e => {
+                                              const zip = e.target.value.replace(/\D/g, '').slice(0, 5);
+                                              setEditingPoolDraft(p => p ? { ...p, zipCode: zip } : p);
+                                              if (zip.length === 5) {
+                                                const result = await lookupZip(zip);
+                                                if (result) setEditingPoolDraft(p => p ? { ...p, city: result.city, state: result.state } : p);
+                                              }
+                                            }} />
                                           <input className={inputCls} placeholder="City" value={editingPoolDraft.city} onChange={e => setEditingPoolDraft(p => p ? { ...p, city: e.target.value } : p)} />
                                           <input className={inputCls} placeholder="State" value={editingPoolDraft.state} onChange={e => setEditingPoolDraft(p => p ? { ...p, state: e.target.value } : p)} />
-                                          <input className={inputCls} placeholder="Zip code" value={editingPoolDraft.zipCode} onChange={e => setEditingPoolDraft(p => p ? { ...p, zipCode: e.target.value } : p)} />
                                         </div>
                                         <div className="flex gap-2">
                                           <button onClick={() => {
@@ -715,10 +768,18 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             <div className="p-4 rounded-xl border border-slate-200 bg-white relative mb-2">
                               <button onClick={() => setDraftPlan(prev => prev ? { ...prev, locations: [] } : prev)} className="absolute top-2 right-2 text-slate-400 hover:text-red-500"><X size={14} /></button>
                               <div className="grid grid-cols-2 gap-2">
-                                <input className={`col-span-2 ${inputCls}`} placeholder="Street address" value={customLoc.street} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...customLoc, street: e.target.value }] } : prev)} />
-                                <input className={inputCls} placeholder="City" value={customLoc.city} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...customLoc, city: e.target.value }] } : prev)} />
-                                <input className={inputCls} placeholder="State" value={customLoc.state} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...customLoc, state: e.target.value }] } : prev)} />
-                                <input className={inputCls} placeholder="Zip code" value={customLoc.zipCode} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...customLoc, zipCode: e.target.value }] } : prev)} />
+                                <input className={`col-span-2 ${inputCls}`} placeholder="Street address" value={customLoc.street} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), street: e.target.value }] } : prev)} />
+                                <input className={`col-span-2 ${inputCls}`} placeholder="Zip code" value={customLoc.zipCode}
+                                  onChange={async e => {
+                                    const zip = e.target.value.replace(/\D/g, '').slice(0, 5);
+                                    setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), zipCode: zip }] } : prev);
+                                    if (zip.length === 5) {
+                                      const result = await lookupZip(zip);
+                                      if (result) setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), city: result.city, state: result.state }] } : prev);
+                                    }
+                                  }} />
+                                <input className={inputCls} placeholder="City" value={customLoc.city} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), city: e.target.value }] } : prev)} />
+                                <input className={inputCls} placeholder="State" value={customLoc.state} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), state: e.target.value }] } : prev)} />
                               </div>
                             </div>
                           )}

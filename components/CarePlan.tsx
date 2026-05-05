@@ -218,6 +218,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [confirmDeleteRecipient, setConfirmDeleteRecipient] = useState(false);
   const [confirmDeletePoolIdx, setConfirmDeletePoolIdx] = useState<number | null>(null);
 
+
   const currentUser = authService.getCurrentUser();
   const isReadOnly = !!targetUserId && targetUserId !== currentUser?.uid;
   const currentPlanId = targetUserId || currentUser?.uid || null;
@@ -256,6 +257,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     }, () => {});
     return () => unsub();
   }, [currentPlanId]);
+
+
 
   const recipients = useMemo((): RecipientEntry[] => {
     if (!wizardData || !wizardData.careRecipientFirstName) return [];
@@ -492,12 +495,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   };
 
   const deleteRecipient = async () => {
-    if (!currentPlanId || !db || activeRecipient === 0) return;
+    if (!currentPlanId || !db) return;
     const r = recipients[activeRecipient];
     try {
-      const updatedAdditional = (wizardData?.additionalRecipients || []).filter(
-        (ar: any) => !(ar.firstName === r.firstName && ar.lastName === r.lastName)
-      );
       const archived = { firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, age: r.age || '', deletedAt: new Date().toISOString() };
 
       // Preserve the deleted recipient's locations in the shared pool
@@ -514,17 +514,55 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
         }
       }
 
-      await db.collection('job_postings').doc(currentPlanId).update({
-        additionalRecipients: updatedAdditional,
-        deletedRecipients: firebase.firestore.FieldValue.arrayUnion(archived),
-      });
-      setWizardData((prev: any) => ({ ...prev, additionalRecipients: updatedAdditional }));
+      if (activeRecipient === 0) {
+        // Promote first additional to primary, or clear primary if none
+        const additionals = wizardData?.additionalRecipients || [];
+        const next = additionals[0];
+        const remainingAdditionals = additionals.slice(1);
+        if (next) {
+          await db.collection('job_postings').doc(currentPlanId).update({
+            careRecipientFirstName: next.firstName,
+            careRecipientLastName: next.lastName || '',
+            relationship: next.relationship || '',
+            careRecipientAge: next.age || '',
+            additionalRecipients: remainingAdditionals,
+            deletedRecipients: firebase.firestore.FieldValue.arrayUnion(archived),
+          });
+          setWizardData((prev: any) => ({ ...prev, careRecipientFirstName: next.firstName, careRecipientLastName: next.lastName || '', relationship: next.relationship || '', careRecipientAge: next.age || '', additionalRecipients: remainingAdditionals }));
+        } else {
+          await db.collection('job_postings').doc(currentPlanId).update({
+            careRecipientFirstName: firebase.firestore.FieldValue.delete(),
+            careRecipientLastName: firebase.firestore.FieldValue.delete(),
+            relationship: firebase.firestore.FieldValue.delete(),
+            careRecipientAge: firebase.firestore.FieldValue.delete(),
+            deletedRecipients: firebase.firestore.FieldValue.arrayUnion(archived),
+          });
+          setWizardData((prev: any) => {
+            const u = { ...prev };
+            delete u.careRecipientFirstName; delete u.careRecipientLastName;
+            delete u.relationship; delete u.careRecipientAge;
+            return u;
+          });
+        }
+      } else {
+        const updatedAdditional = (wizardData?.additionalRecipients || []).filter(
+          (ar: any) => !(ar.firstName === r.firstName && ar.lastName === r.lastName)
+        );
+        await db.collection('job_postings').doc(currentPlanId).update({
+          additionalRecipients: updatedAdditional,
+          deletedRecipients: firebase.firestore.FieldValue.arrayUnion(archived),
+        });
+        setWizardData((prev: any) => ({ ...prev, additionalRecipients: updatedAdditional }));
+      }
+
       setActiveRecipient(Math.max(0, activeRecipient - 1));
       setConfirmDeleteRecipient(false);
       cancelEdit();
       onShowToast('Recipient removed', 'success');
     } catch { onShowToast('Failed to remove recipient', 'error'); }
   };
+
+
 
   const startEditSetup = () => {
     setSetupDraft({
@@ -587,28 +625,56 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
         {recipients.length > 0 || showAddRecipient ? (
           <>
-            {/* Tabs */}
-            {recipients.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1 mb-5 items-center">
-              {recipients.map((r, i) => (
-                <button key={i} onClick={() => handleTabChange(i)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap border-2 transition-all ${
-                    activeRecipient === i
-                      ? 'bg-primary-600 border-primary-600 text-white shadow-sm'
-                      : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300 hover:text-primary-600'
-                  }`}>
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${activeRecipient === i ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                    {initials(r.name) || <User className="w-3 h-3" />}
-                  </div>
-                  {r.name}
-                </button>
-              ))}
-              {!isReadOnly && recipients.length < 4 && !showAddRecipient && (
-                <button onClick={() => setShowAddRecipient(true)}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap border-2 border-dashed border-slate-300 text-slate-400 hover:border-primary-400 hover:text-primary-600 transition-all bg-white">
-                  <Plus className="w-4 h-4" /> Add
-                </button>
-              )}
-            </div>}
+            {/* Recipient cards */}
+            {recipients.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto pb-2 mb-4 items-start">
+                {recipients.map((r, i) => {
+                  const active = activeRecipient === i;
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => handleTabChange(i)}
+                      className={`flex items-center gap-3 px-4 py-3 rounded-2xl border-2 cursor-pointer transition-all select-none shrink-0 ${
+                        active
+                          ? 'bg-primary-600 border-primary-600 text-white shadow-sm'
+                          : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300'
+                      }`}>
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                        {initials(r.name) || <User className="w-4 h-4" />}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold whitespace-nowrap">{r.name}</p>
+                          {active && recipients.length > 1 && (
+                            <span className="text-xs font-medium bg-white/20 text-white px-2 py-0.5 rounded-full shrink-0">Selected</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          {r.relationship && <span className={`text-xs capitalize ${active ? 'text-white/75' : 'text-slate-400'}`}>{r.relationship}</span>}
+                          {r.relationship && r.age && <span className={`text-xs ${active ? 'text-white/50' : 'text-slate-300'}`}>·</span>}
+                          {r.age && <span className={`text-xs ${active ? 'text-white/75' : 'text-slate-400'}`}>Age {r.age}</span>}
+                        </div>
+                      </div>
+                      {!isReadOnly && recipients.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); handleTabChange(i); setConfirmDeleteRecipient(true); }}
+                          className={`p-1 rounded-lg transition-colors shrink-0 ${active ? 'text-white/60 hover:text-white hover:bg-white/20' : 'text-slate-300 hover:text-red-500 hover:bg-red-50'}`}
+                          title="Remove recipient">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+                {!isReadOnly && recipients.length < 4 && !showAddRecipient && (
+                  <button onClick={() => setShowAddRecipient(true)}
+                    className="flex items-center gap-1.5 px-4 py-3 rounded-2xl text-sm font-semibold border-2 border-dashed border-slate-300 text-slate-400 hover:border-primary-400 hover:text-primary-600 transition-all bg-white shrink-0 self-stretch">
+                    <Plus className="w-4 h-4" /> Add
+                  </button>
+                )}
+              </div>
+            )}
 
             {showAddRecipient && (
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 overflow-hidden">
@@ -821,24 +887,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                     </div>
                   </div>
                 )}
-                {/* Recipient card */}
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 px-5 py-4 flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white font-bold text-xl shrink-0 shadow-sm" style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}>
-                    {initials(recipient.name) || <User className="w-7 h-7" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-slate-900 text-lg leading-tight truncate">{recipient.name}</p>
-                    <div className="flex gap-2 flex-wrap mt-1.5">
-                      {recipient.relationship && <span className="text-xs font-semibold text-primary-700 bg-primary-50 px-3 py-0.5 rounded-full capitalize border border-primary-100">{recipient.relationship}</span>}
-                      {recipient.age && <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-0.5 rounded-full border border-slate-200">Age {recipient.age}</span>}
-                    </div>
-                  </div>
-                  {!isReadOnly && activeRecipient > 0 && !confirmDeleteRecipient && (
-                    <button onClick={() => setConfirmDeleteRecipient(true)} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0" title="Remove recipient">
-                      <Trash2 size={15} />
-                    </button>
-                  )}
-                </div>
 
                 {/* Care details card */}
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 overflow-hidden">

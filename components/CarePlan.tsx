@@ -317,27 +317,30 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const saveSection = async () => {
     if (!recipient || !draftPlan || !currentPlanId || !db) return;
     if (editingSection === 'locations') {
+      if (editingPoolIdx !== null) { onShowToast('Please save or cancel the address you\'re editing first', 'error'); return; }
       const hasLocation = draftPlan.locations.some(l => l.street || l.city);
       if (!hasLocation) { onShowToast('Please select or add a care location', 'error'); return; }
     }
     setSavingSection(true);
+    // Strip any blank pool entries before saving
+    const cleanPool = draftLocPool.filter(l => l.street.trim() || l.city.trim());
     try {
       const key = getKey(recipient.firstName, recipient.lastName);
       const updated = { ...getPlan(recipient), ...draftPlan };
       const docRef = db.collection('carePlans').doc(currentPlanId);
       const updatePayload: Record<string, any> = { [`recipientPlans.${key}`]: updated };
-      if (editingSection === 'locations') updatePayload.locationPool = draftLocPool;
+      if (editingSection === 'locations') updatePayload.locationPool = cleanPool;
       try {
         await docRef.update(updatePayload);
       } catch (e: any) {
         if (e.code === 'not-found') {
           const payload: Record<string, any> = { recipientPlans: { [key]: updated } };
-          if (editingSection === 'locations') payload.locationPool = draftLocPool;
+          if (editingSection === 'locations') payload.locationPool = cleanPool;
           await docRef.set(payload);
         } else throw e;
       }
       setRecipientPlans(prev => ({ ...prev, [key]: updated }));
-      if (editingSection === 'locations') setLocationPool(draftLocPool);
+      if (editingSection === 'locations') setLocationPool(cleanPool);
       cancelEdit();
       onShowToast('Saved', 'success');
     } catch (err) {

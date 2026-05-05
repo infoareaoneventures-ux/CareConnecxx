@@ -1037,15 +1037,19 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                   <input className={inputCls} placeholder="State" value={customLoc.state} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), state: e.target.value }] } : prev)} />
                                 </div>
                                 <div className="flex gap-2">
+                                  {editingCustomLoc && (
+                                    <button type="button" onClick={() => {
+                                      if (!customLoc.street.trim()) { onShowToast('Street address is required', 'error'); return; }
+                                      setEditingCustomLoc(false);
+                                    }} className="text-xs bg-primary-600 hover:bg-primary-700 text-white font-semibold px-3 py-1.5 rounded-lg">Save</button>
+                                  )}
                                   <button type="button" onClick={() => {
                                     if (editingCustomLoc && customLoc.street) {
                                       setEditingCustomLoc(false);
                                     } else {
                                       setDraftPlan(prev => prev ? { ...prev, locations: [] } : prev);
                                     }
-                                  }} className="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg">
-                                    {editingCustomLoc ? 'Done' : 'Clear'}
-                                  </button>
+                                  }} className="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg">Cancel</button>
                                 </div>
                               </div>
                             )

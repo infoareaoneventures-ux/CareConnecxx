@@ -435,6 +435,21 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
         (ar: any) => !(ar.firstName === r.firstName && ar.lastName === r.lastName)
       );
       const archived = { firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, age: r.age || '', deletedAt: new Date().toISOString() };
+
+      // Preserve the deleted recipient's locations in the shared pool
+      const key = getKey(r.firstName, r.lastName);
+      const recipientLocs = (recipientPlans[key]?.locations || []).filter((l: LocationEntry) => l.street || l.city);
+      if (recipientLocs.length > 0) {
+        const currentPool = locationPool.length > 0 ? [...locationPool] : [...wizardLocations];
+        const seenKeys = new Set(currentPool.map(l => `${l.street?.toLowerCase()}${l.zipCode}`));
+        const toAdd = recipientLocs.filter(l => !seenKeys.has(`${l.street?.toLowerCase()}${l.zipCode}`));
+        if (toAdd.length > 0) {
+          const updatedPool = [...currentPool, ...toAdd];
+          await db.collection('carePlans').doc(currentPlanId).set({ locationPool: updatedPool }, { merge: true });
+          setLocationPool(updatedPool);
+        }
+      }
+
       await db.collection('job_postings').doc(currentPlanId).update({
         additionalRecipients: updatedAdditional,
         deletedRecipients: firebase.firestore.FieldValue.arrayUnion(archived),

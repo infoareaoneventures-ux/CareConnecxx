@@ -217,6 +217,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [savingRecipient, setSavingRecipient] = useState(false);
   const [confirmDeleteRecipient, setConfirmDeleteRecipient] = useState(false);
   const [confirmDeletePoolIdx, setConfirmDeletePoolIdx] = useState<number | null>(null);
+  const [carePlanReviewedAt, setCarePlanReviewedAt] = useState<boolean>(false);
+  const [savingReview, setSavingReview] = useState(false);
 
 
   const currentUser = authService.getCurrentUser();
@@ -254,6 +256,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       });
       if (Object.keys(plans).length > 0) setRecipientPlans(plans);
       if (data.locationPool) setLocationPool(data.locationPool);
+      setCarePlanReviewedAt(!!data.carePlanReviewedAt);
     }, () => {});
     return () => unsub();
   }, [currentPlanId]);
@@ -387,6 +390,23 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
   const handlePhoneInput = (idx: number, value: string) => {
     updateContact(idx, 'phone', value.replace(/[^\d+\-() ]/g, '').slice(0, 16));
+  };
+
+  const handleReview = async () => {
+    if (!currentPlanId || !db || savingReview) return;
+    setSavingReview(true);
+    try {
+      await db.collection('carePlans').doc(currentPlanId).set(
+        { carePlanReviewedAt: firebase.firestore.FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+      setCarePlanReviewedAt(true);
+      onShowToast('Care plan confirmed!', 'success');
+    } catch {
+      onShowToast('Could not save. Please try again.', 'error');
+    } finally {
+      setSavingReview(false);
+    }
   };
 
   const saveContacts = async () => {
@@ -622,6 +642,23 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
             <p className="text-sm text-slate-400 mt-0.5">Manage care details for each recipient</p>
           </div>
         </div>
+
+        {!isReadOnly && !carePlanReviewedAt && recipients.length > 0 && (
+          <div className="mb-6 bg-primary-50 border border-primary-200 rounded-2xl px-5 py-4 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-primary-800">Review your care plan</p>
+              <p className="text-xs text-primary-600 mt-0.5">Look everything over and confirm it looks correct.</p>
+            </div>
+            <button
+              onClick={handleReview}
+              disabled={savingReview}
+              className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-2 rounded-xl shrink-0 disabled:opacity-60 transition-colors"
+            >
+              {savingReview ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+              Looks good
+            </button>
+          </div>
+        )}
 
         {recipients.length > 0 || showAddRecipient ? (
           <>

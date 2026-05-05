@@ -41,13 +41,6 @@ function computeCarePlanProgress(
   const anyHasCareNeeds = Object.values(recipientPlans).some(
     (p: any) => Array.isArray(p?.careNeeds) && p.careNeeds.length > 0
   );
-  const anyHasAddress = Object.values(recipientPlans).some(
-    (p: any) => Array.isArray(p?.locations) && p.locations.length > 0 && !!p.locations[0]?.street
-  ) || !!jobPostingsData?.city;
-  const hasEmergencyContact =
-    (Array.isArray(carePlanData?.emergencyContacts) && carePlanData.emergencyContacts.length > 0) ||
-    !!jobPostingsData?.emergencyFirstName;
-
   const checks: { ok: boolean; missingHint: string }[] = [
     {
       ok: !!jobPostingsData?.careRecipientFirstName,
@@ -58,12 +51,12 @@ function computeCarePlanProgress(
       missingHint: 'Select the types of care needed',
     },
     {
-      ok: anyHasAddress,
+      ok: !!jobPostingsData?.city,
       missingHint: 'Add a care location',
     },
     {
-      ok: hasEmergencyContact,
-      missingHint: 'Add an emergency contact',
+      ok: !!carePlanData?.carePlanReviewedAt,
+      missingHint: 'Review your care plan',
     },
   ];
 

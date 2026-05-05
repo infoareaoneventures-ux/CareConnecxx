@@ -210,6 +210,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [newRecipient, setNewRecipient] = useState({ firstName: '', lastName: '', relationship: '', age: '' });
   const [newDraft, setNewDraft] = useState<RecipientPlanData>({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
   const [newCustomLoc, setNewCustomLoc] = useState(false);
+  const [newLocEditIdx, setNewLocEditIdx] = useState<number | null>(null);
+  const [newLocEditDraft, setNewLocEditDraft] = useState<LocationEntry | null>(null);
+  const [newLocConfirmDeleteIdx, setNewLocConfirmDeleteIdx] = useState<number | null>(null);
   const [savingRecipient, setSavingRecipient] = useState(false);
   const [confirmDeleteRecipient, setConfirmDeleteRecipient] = useState(false);
   const [confirmDeletePoolIdx, setConfirmDeletePoolIdx] = useState<number | null>(null);
@@ -396,9 +399,32 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     finally { setSavingContacts(false); }
   };
 
+  const saveNewLoc = async () => {
+    if (newLocEditIdx === null || !newLocEditDraft || !db || !currentPlanId) return;
+    if (!newLocEditDraft.street.trim()) { onShowToast('Street address is required', 'error'); return; }
+    const base = locationPool.length > 0 ? [...locationPool] : [...wizardLocations];
+    const newPool = base.map((l, i) => i === newLocEditIdx ? newLocEditDraft : l);
+    const wasSelected = newDraft.locations[0]?.street === effectivePool[newLocEditIdx]?.street && newDraft.locations[0]?.zipCode === effectivePool[newLocEditIdx]?.zipCode;
+    if (wasSelected) setNewDraft(p => ({ ...p, locations: [newLocEditDraft] }));
+    try { await db.collection('carePlans').doc(currentPlanId).set({ locationPool: newPool }, { merge: true }); setLocationPool(newPool); } catch {}
+    setNewLocEditIdx(null); setNewLocEditDraft(null);
+  };
+
+  const deleteNewLoc = async (idx: number) => {
+    if (!db || !currentPlanId) return;
+    const base = locationPool.length > 0 ? [...locationPool] : [...wizardLocations];
+    const newPool = base.filter((_, i) => i !== idx);
+    const wasSelected = newDraft.locations[0]?.street === effectivePool[idx]?.street && newDraft.locations[0]?.zipCode === effectivePool[idx]?.zipCode;
+    if (wasSelected) setNewDraft(p => ({ ...p, locations: [] }));
+    try { await db.collection('carePlans').doc(currentPlanId).set({ locationPool: newPool }, { merge: true }); setLocationPool(newPool); } catch {}
+    setNewLocConfirmDeleteIdx(null);
+  };
+
   const saveNewRecipient = async () => {
     if (!newRecipient.firstName.trim()) { onShowToast('First name is required', 'error'); return; }
     if (!newRecipient.relationship) { onShowToast('Please select a relationship', 'error'); return; }
+    const hasLoc = newDraft.locations.some(l => l.street || l.city) || (newCustomLoc && (newDraft.locations[0]?.street || newDraft.locations[0]?.city));
+    if (!hasLoc) { onShowToast('Please select or add a care location', 'error'); return; }
     if (!currentPlanId || !db) return;
     setSavingRecipient(true);
     try {
@@ -440,6 +466,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       setNewRecipient({ firstName: '', lastName: '', relationship: '', age: '' });
       setNewDraft({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
       setNewCustomLoc(false);
+      setNewLocEditIdx(null); setNewLocEditDraft(null); setNewLocConfirmDeleteIdx(null);
       setShowAddRecipient(false);
       setActiveRecipient(newIndex);
       onShowToast('Recipient added', 'success');
@@ -651,26 +678,70 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                   {effectivePool.length > 0 && (
                     <div className="space-y-2 mb-2">
                       {effectivePool.map((wl, i) => {
-                        const sel = newDraft.locations[0]?.street === wl.street && newDraft.locations[0]?.city === wl.city && newDraft.locations[0]?.zipCode === wl.zipCode;
+                        const sel = newDraft.locations[0]?.street === wl.street && newDraft.locations[0]?.zipCode === wl.zipCode;
+
+                        if (newLocConfirmDeleteIdx === i) {
+                          return (
+                            <div key={i} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border-2 border-red-200 bg-red-50 px-3 py-2.5">
+                              <p className="text-sm font-semibold text-red-700">Remove <span className="font-bold">"{locLabel(wl)}"</span>?</p>
+                              <div className="flex gap-2 shrink-0">
+                                <button type="button" onClick={() => deleteNewLoc(i)} className="text-xs bg-red-600 hover:bg-red-700 text-white font-semibold px-3 py-1.5 rounded-lg">Yes, remove</button>
+                                <button type="button" onClick={() => setNewLocConfirmDeleteIdx(null)} className="text-xs bg-white border border-slate-200 text-slate-600 px-3 py-1.5 rounded-lg hover:bg-slate-50">Cancel</button>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        if (newLocEditIdx === i && newLocEditDraft) {
+                          return (
+                            <div key={i} className="p-3 rounded-xl border-2 border-primary-300 bg-white">
+                              <div className="grid grid-cols-2 gap-2 mb-2">
+                                <input className={`col-span-2 ${inputCls}`} placeholder="Street address *" value={newLocEditDraft.street} onChange={e => setNewLocEditDraft(p => p ? { ...p, street: e.target.value } : p)} />
+                                <input className={`col-span-2 ${inputCls}`} placeholder="Zip code" value={newLocEditDraft.zipCode}
+                                  onChange={async e => {
+                                    const zip = e.target.value.replace(/\D/g, '').slice(0, 5);
+                                    setNewLocEditDraft(p => p ? { ...p, zipCode: zip } : p);
+                                    if (zip.length === 5) {
+                                      const result = await lookupZip(zip);
+                                      if (result) setNewLocEditDraft(p => p ? { ...p, city: result.city, state: result.state } : p);
+                                    }
+                                  }} />
+                                <input className={inputCls} placeholder="City" value={newLocEditDraft.city} onChange={e => setNewLocEditDraft(p => p ? { ...p, city: e.target.value } : p)} />
+                                <input className={inputCls} placeholder="State" value={newLocEditDraft.state} onChange={e => setNewLocEditDraft(p => p ? { ...p, state: e.target.value } : p)} />
+                              </div>
+                              <div className="flex gap-2">
+                                <button type="button" onClick={saveNewLoc} className="text-xs bg-primary-600 hover:bg-primary-700 text-white font-semibold px-3 py-1.5 rounded-lg">Save</button>
+                                <button type="button" onClick={() => { setNewLocEditIdx(null); setNewLocEditDraft(null); }} className="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg">Cancel</button>
+                              </div>
+                            </div>
+                          );
+                        }
+
                         return (
-                          <div key={i} className={`flex items-center gap-2 rounded-xl border-2 text-sm transition-all cursor-pointer px-3 py-2.5 ${sel ? 'bg-primary-50 border-primary-500' : 'bg-white border-slate-200 hover:border-primary-300'}`}
-                            onClick={() => { setNewDraft(p => ({ ...p, locations: sel ? [] : [wl] })); setNewCustomLoc(false); }}>
-                            <span className={`flex-1 ${sel ? 'text-primary-700' : 'text-slate-600'}`}>{locLabel(wl)}</span>
-                            {sel && <Check size={14} className="text-primary-600 flex-shrink-0" />}
+                          <div key={i} className={`flex items-center gap-1 rounded-xl border-2 text-sm transition-all ${sel ? 'bg-primary-50 border-primary-500' : 'bg-white border-slate-200'}`}>
+                            <button type="button" onClick={() => { setNewDraft(p => ({ ...p, locations: sel ? [] : [wl] })); setNewCustomLoc(false); }}
+                              className="flex-1 flex items-center justify-between px-3 py-2.5 gap-2 text-left">
+                              <span className={sel ? 'text-primary-700' : 'text-slate-600'}>{locLabel(wl)}</span>
+                              {sel && <Check size={14} className="flex-shrink-0 text-primary-600" />}
+                            </button>
+                            <button type="button" onClick={() => { setNewLocEditIdx(i); setNewLocEditDraft({ ...wl }); setNewLocConfirmDeleteIdx(null); }}
+                              className="p-2 text-slate-400 hover:text-primary-600 transition-colors"><Pencil size={13} /></button>
+                            <button type="button" onClick={() => { setNewLocConfirmDeleteIdx(i); setNewLocEditIdx(null); setNewLocEditDraft(null); }}
+                              className="p-2 pr-3 text-slate-400 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
                           </div>
                         );
                       })}
                     </div>
                   )}
                   {!newCustomLoc ? (
-                    <button type="button" onClick={() => { setNewCustomLoc(true); setNewDraft(p => ({ ...p, locations: [] })); }}
+                    <button type="button" onClick={() => { setNewCustomLoc(true); setNewDraft(p => ({ ...p, locations: [] })); setNewLocEditIdx(null); setNewLocEditDraft(null); setNewLocConfirmDeleteIdx(null); }}
                       className="text-sm text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1 mt-1">
                       <Plus className="w-4 h-4" /> Use a different address
                     </button>
                   ) : (
                     <div className="p-3 rounded-xl border border-slate-200 bg-white mt-1">
                       <div className="grid grid-cols-2 gap-2">
-                        <input className={`col-span-2 ${inputCls}`} placeholder="Street address" value={newDraft.locations[0]?.street || ''}
+                        <input className={`col-span-2 ${inputCls}`} placeholder="Street address *" value={newDraft.locations[0]?.street || ''}
                           onChange={e => setNewDraft(p => ({ ...p, locations: [{ ...(p.locations[0] || emptyLocation()), street: e.target.value }] }))} />
                         <input className={`col-span-2 ${inputCls}`} placeholder="Zip code"
                           value={newDraft.locations[0]?.zipCode || ''}
@@ -716,6 +787,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                     setNewRecipient({ firstName: '', lastName: '', relationship: '', age: '' });
                     setNewDraft({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
                     setNewCustomLoc(false);
+                  setNewLocEditIdx(null); setNewLocEditDraft(null); setNewLocConfirmDeleteIdx(null);
                   }} className="text-sm text-slate-500 hover:text-slate-700 px-3 py-2 rounded-lg font-medium">Cancel</button>
                 </div>
               </div>

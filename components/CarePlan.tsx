@@ -198,6 +198,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [draftLocPool, setDraftLocPool] = useState<LocationEntry[]>([]);
   const [editingPoolIdx, setEditingPoolIdx] = useState<number | null>(null);
   const [editingPoolDraft, setEditingPoolDraft] = useState<LocationEntry | null>(null);
+  const [editingCustomLoc, setEditingCustomLoc] = useState(false);
 
   const [editingContactIdx, setEditingContactIdx] = useState<number | null>(null);
   const [savingContacts, setSavingContacts] = useState(false);
@@ -304,6 +305,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       setDraftLocPool([...effectivePool]);
       setEditingPoolIdx(null);
       setEditingPoolDraft(null);
+      setEditingCustomLoc(false);
     }
     setEditingSection(section);
   };
@@ -315,6 +317,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     setEditingPoolIdx(null);
     setEditingPoolDraft(null);
     setConfirmDeletePoolIdx(null);
+    setEditingCustomLoc(false);
   };
 
   const saveSection = async () => {
@@ -1005,23 +1008,53 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             </div>
                           )}
                           {hasCustom && (
-                            <div className="p-4 rounded-xl border border-slate-200 bg-white relative mb-2">
-                              <button onClick={() => setDraftPlan(prev => prev ? { ...prev, locations: [] } : prev)} className="absolute top-2 right-2 text-slate-400 hover:text-red-500"><X size={14} /></button>
-                              <div className="grid grid-cols-2 gap-2">
-                                <input className={`col-span-2 ${inputCls}`} placeholder="Street address" value={customLoc.street} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), street: e.target.value }] } : prev)} />
-                                <input className={`col-span-2 ${inputCls}`} placeholder="Zip code" value={customLoc.zipCode}
-                                  onChange={async e => {
-                                    const zip = e.target.value.replace(/\D/g, '').slice(0, 5);
-                                    setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), zipCode: zip }] } : prev);
-                                    if (zip.length === 5) {
-                                      const result = await lookupZip(zip);
-                                      if (result) setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), city: result.city, state: result.state }] } : prev);
-                                    }
-                                  }} />
-                                <input className={inputCls} placeholder="City" value={customLoc.city} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), city: e.target.value }] } : prev)} />
-                                <input className={inputCls} placeholder="State" value={customLoc.state} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), state: e.target.value }] } : prev)} />
+                            customLoc.street && !editingCustomLoc ? (
+                              <div className="flex items-center gap-1 rounded-xl border-2 bg-primary-50 border-primary-500 text-sm mb-2">
+                                <div className="flex-1 flex items-center gap-2 px-3 py-2.5">
+                                  <div className="flex-1">
+                                    <p className="text-xs text-primary-500 font-medium mb-0.5">Current address</p>
+                                    <span className="text-primary-700">{locLabel(customLoc)}</span>
+                                  </div>
+                                  <Check size={14} className="flex-shrink-0 text-primary-600" />
+                                </div>
+                                <button type="button" onClick={() => setEditingCustomLoc(true)} className="p-2 text-slate-400 hover:text-primary-600 transition-colors"><Pencil size={13} /></button>
+                                <button type="button" onClick={() => setDraftPlan(prev => prev ? { ...prev, locations: [] } : prev)} className="p-2 pr-3 text-slate-400 hover:text-red-500 transition-colors"><X size={13} /></button>
                               </div>
-                            </div>
+                            ) : (
+                              <div className="p-3 rounded-xl border-2 border-primary-300 bg-white mb-2">
+                                <div className="grid grid-cols-2 gap-2 mb-2">
+                                  <input className={`col-span-2 ${inputCls}`} placeholder="Street address *" value={customLoc.street} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), street: e.target.value }] } : prev)} />
+                                  <input className={`col-span-2 ${inputCls}`} placeholder="Zip code" value={customLoc.zipCode}
+                                    onChange={async e => {
+                                      const zip = e.target.value.replace(/\D/g, '').slice(0, 5);
+                                      setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), zipCode: zip }] } : prev);
+                                      if (zip.length === 5) {
+                                        const result = await lookupZip(zip);
+                                        if (result) setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), city: result.city, state: result.state }] } : prev);
+                                      }
+                                    }} />
+                                  <input className={inputCls} placeholder="City" value={customLoc.city} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), city: e.target.value }] } : prev)} />
+                                  <input className={inputCls} placeholder="State" value={customLoc.state} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), state: e.target.value }] } : prev)} />
+                                </div>
+                                <div className="flex gap-2">
+                                  {editingCustomLoc && (
+                                    <button type="button" onClick={() => {
+                                      if (!customLoc.street.trim()) { onShowToast('Street address is required', 'error'); return; }
+                                      setEditingCustomLoc(false);
+                                    }} className="text-xs bg-primary-600 hover:bg-primary-700 text-white font-semibold px-3 py-1.5 rounded-lg">Done</button>
+                                  )}
+                                  <button type="button" onClick={() => {
+                                    if (editingCustomLoc && customLoc.street) {
+                                      setEditingCustomLoc(false);
+                                    } else {
+                                      setDraftPlan(prev => prev ? { ...prev, locations: [] } : prev);
+                                    }
+                                  }} className="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg">
+                                    {editingCustomLoc && customLoc.street ? 'Cancel' : 'Clear'}
+                                  </button>
+                                </div>
+                              </div>
+                            )
                           )}
                           {!hasCustom && draftLocPool.length < 4 && editingPoolIdx === null && (
                             <button onClick={() => {

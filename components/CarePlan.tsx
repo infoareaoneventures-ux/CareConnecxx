@@ -570,7 +570,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
               </div>
             )}
 
-            {recipient && rPlan && (
+            {!showAddRecipient && recipient && rPlan && (
               <>
                 {confirmDeleteRecipient && (
                   <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1046,7 +1046,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
             )}
 
             {/* Emergency Contacts */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            {!showAddRecipient && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/60">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-xl bg-green-50 flex items-center justify-center">
@@ -1170,7 +1170,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                   <p className="text-xs text-slate-400 mt-1">Add up to 2 contacts for emergencies.</p>
                 </div>
               )}
-            </div>
+            </div>}
           </>
         ) : (
           <div className="text-center py-20 bg-white rounded-2xl border border-slate-100">

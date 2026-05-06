@@ -32,6 +32,17 @@ interface StepDef {
 
 const STEP_DEFS: StepDef[] = [
   {
+    id: 'care-plan',
+    label: 'Care Plan',
+    shortLabel: 'Care Plan',
+    title: 'Tell us about your loved one',
+    description: 'A complete care plan helps us match the right caregiver.',
+    cta: 'Continue Care Plan',
+    icon: Heart,
+    action: 'navigate',
+    path: '/client/care-plan',
+  },
+  {
     id: 'identity-check',
     label: 'Identity',
     shortLabel: 'Identity',
@@ -62,17 +73,6 @@ const STEP_DEFS: StepDef[] = [
     icon: Briefcase,
     action: 'navigate',
     path: '/client/post-job',
-  },
-  {
-    id: 'care-plan',
-    label: 'Care Plan',
-    shortLabel: 'Care Plan',
-    title: 'Tell us about your loved one',
-    description: 'A complete care plan helps us match the right caregiver.',
-    cta: 'Continue Care Plan',
-    icon: Heart,
-    action: 'navigate',
-    path: '/client/care-plan',
   },
   {
     id: 'meet-matches',

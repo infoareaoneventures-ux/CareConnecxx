@@ -34,6 +34,9 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
   const [googleConfirmData, setGoogleConfirmData] = useState<GoogleConfirmData | null>(null);
   const [googleConfirmLoading, setGoogleConfirmLoading] = useState(false);
 
+  const prefillZip = sessionStorage.getItem('careconnex_signup_zip') || '';
+  if (prefillZip) sessionStorage.removeItem('careconnex_signup_zip');
+
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
@@ -41,7 +44,7 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
     password: '',
     phone: '',
     street: '',
-    zipCode: '',
+    zipCode: prefillZip,
     city: '',
     state: '',
   });

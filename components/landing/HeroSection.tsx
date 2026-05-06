@@ -13,6 +13,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onNavigate }) => {
 
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
+        if (zipCode.trim()) sessionStorage.setItem('careconnex_signup_zip', zipCode.trim());
         onNavigate('client-signup');
     };
 

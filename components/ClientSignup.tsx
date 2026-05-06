@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Activity, ArrowLeft, ShieldCheck, Check, Loader2 } from 'lucide-react';
 import { Input } from './ui/Input';
 import { Button } from './ui/Button';
@@ -105,6 +105,10 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
     }, 400),
     []
   );
+
+  useEffect(() => {
+    if (prefillZip.length === 5) lookupZip(prefillZip);
+  }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;

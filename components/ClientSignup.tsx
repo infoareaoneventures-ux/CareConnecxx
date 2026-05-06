@@ -362,9 +362,8 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
               <span className="text-xl font-bold text-slate-900 tracking-tight">CareConnex</span>
             </div>
             <nav className="hidden md:flex items-center gap-8">
-              <button onClick={() => onNavigate('client-signup')} className="text-slate-600 hover:text-primary-600 font-medium transition-colors text-sm">Find Care</button>
               <button onClick={() => onNavigate('caregiver-signup')} className="text-slate-600 hover:text-primary-600 font-medium transition-colors text-sm">Find Jobs</button>
-              <button onClick={() => onNavigate('help')} className="text-slate-600 hover:text-primary-600 font-medium transition-colors text-sm">Help</button>
+              <a href="/help" className="text-slate-600 hover:text-primary-600 font-medium transition-colors text-sm">Help</a>
             </nav>
             <div className="flex items-center gap-3">
               <button onClick={() => onNavigate('client-login')} className="text-sm font-medium text-slate-600 hover:text-primary-600 transition-colors">Log In</button>
@@ -566,6 +565,7 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
       </div>
 
       {legalModal && <LegalDocs type={legalModal} onClose={() => setLegalModal(null)} />}
+      </div>
       </div>
     </div>
   );

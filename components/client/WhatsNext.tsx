@@ -172,7 +172,8 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
     : 'from-primary-600 via-primary-500 to-primary-50';
 
   const segments = STEP_DEFS.length - 1;
-  const fillPct = Math.min(100, (completedCount / segments) * 100);
+  const activeIdx = allDone ? segments : STEP_DEFS.findIndex((s) => s.id === currentStep);
+  const fillPct = Math.min(100, (activeIdx / segments) * 100);
 
   return (
     <section

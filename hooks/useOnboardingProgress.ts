@@ -25,10 +25,10 @@ export interface OnboardingProgress {
 }
 
 const STEP_ORDER: OnboardingStepId[] = [
+  'care-plan',
   'identity-check',
   'pay-membership',
   'post-job',
-  'care-plan',
   'meet-matches',
   'book-care',
 ];

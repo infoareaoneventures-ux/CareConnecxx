@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   CheckCircle, ChevronRight, Briefcase, Calendar, Star,
-  Video, Users, Clock, MapPin, Loader2, AlertCircle
+  Video, Users, Clock, MapPin, Loader2, AlertCircle, XCircle, Info
 } from 'lucide-react';
 import { Caregiver, JobPost, AddToastFunction } from '../../types';
 import { dbService } from '../../services/api';
@@ -116,29 +116,17 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
         <div>
           <p className="text-slate-500 text-sm mb-0.5">👋 Good {getGreeting()}, {getFirstName(profile.name)}</p>
           <h1 className="text-2xl font-bold text-slate-900">
-            {isApproved ? "Let's find your next family." : "Let's get you ready to apply."}
+            {isApproved
+              ? "Let's find your next family."
+              : (profile as any).verificationStatus === 'submitted'
+              ? "Your profile is in review."
+              : "Let's get you ready to apply."}
           </h1>
         </div>
       </div>
 
-      {/* ── Approval / Approved Banner ── */}
-      {!isApproved ? (
-        <div className="bg-primary-50 border border-primary-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
-          <div className="bg-primary-100 p-2.5 rounded-2xl flex-shrink-0">
-            <AlertCircle className="w-5 h-5 text-primary-600" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-primary-950 mb-0.5">Let's get your profile approved.</p>
-            <p className="text-sm text-primary-800 font-medium">Complete the checklist to get approved, then you can apply to jobs.</p>
-          </div>
-          <button
-            onClick={onViewChecklist}
-            className="flex-shrink-0 text-sm font-bold text-primary-700 hover:text-primary-900 underline underline-offset-2 transition-colors mt-1"
-          >
-            Approval checklist →
-          </button>
-        </div>
-      ) : (
+      {/* ── Status Banner ── */}
+      {isApproved ? (
         <div className="bg-primary-50 border border-primary-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
           <div className="bg-primary-100 p-2.5 rounded-2xl flex-shrink-0">
             <CheckCircle className="w-5 h-5 text-primary-600" />
@@ -152,6 +140,64 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
             className="flex-shrink-0 text-sm font-bold text-primary-700 hover:text-primary-900 underline underline-offset-2 transition-colors mt-1"
           >
             Go to Job Board →
+          </button>
+        </div>
+      ) : (profile as any).verificationStatus === 'submitted' ? (
+        <div className="bg-blue-50 border border-blue-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
+          <div className="bg-blue-100 p-2.5 rounded-2xl flex-shrink-0">
+            <Clock className="w-5 h-5 text-blue-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-blue-950 mb-0.5">Your profile is under review.</p>
+            <p className="text-sm text-blue-800 font-medium">We'll notify you within 1–2 business days once your profile has been reviewed.</p>
+          </div>
+        </div>
+      ) : (profile as any).verificationStatus === 'rejected' ? (
+        <div className="bg-red-50 border border-red-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
+          <div className="bg-red-100 p-2.5 rounded-2xl flex-shrink-0">
+            <XCircle className="w-5 h-5 text-red-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-red-950 mb-0.5">Your application wasn't approved.</p>
+            <p className="text-sm text-red-800 font-medium">
+              {(profile as any).rejectionReason
+                ? `Reason: ${(profile as any).rejectionReason}`
+                : 'Please contact support if you have questions about this decision.'}
+            </p>
+          </div>
+        </div>
+      ) : (profile as any).verificationStatus === 'info_requested' ? (
+        <div className="bg-amber-50 border border-amber-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
+          <div className="bg-amber-100 p-2.5 rounded-2xl flex-shrink-0">
+            <Info className="w-5 h-5 text-amber-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-amber-950 mb-0.5">We need a bit more information.</p>
+            <p className="text-sm text-amber-800 font-medium">
+              {(profile as any).infoRequestNotes || 'Please update your profile and resubmit for review.'}
+            </p>
+          </div>
+          <button
+            onClick={onViewChecklist}
+            className="flex-shrink-0 text-sm font-bold text-amber-700 hover:text-amber-900 underline underline-offset-2 transition-colors mt-1"
+          >
+            View checklist →
+          </button>
+        </div>
+      ) : (
+        <div className="bg-primary-50 border border-primary-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
+          <div className="bg-primary-100 p-2.5 rounded-2xl flex-shrink-0">
+            <AlertCircle className="w-5 h-5 text-primary-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-primary-950 mb-0.5">Let's get your profile approved.</p>
+            <p className="text-sm text-primary-800 font-medium">Complete the checklist to submit your profile for review.</p>
+          </div>
+          <button
+            onClick={onViewChecklist}
+            className="flex-shrink-0 text-sm font-bold text-primary-700 hover:text-primary-900 underline underline-offset-2 transition-colors mt-1"
+          >
+            Approval checklist →
           </button>
         </div>
       )}

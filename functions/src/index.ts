@@ -62,3 +62,18 @@ export * from './shiftHours';
 // Export booking payment-method helpers
 export * from './paymentMethods';
 
+// Linq iMessage agent — webhook + user onCreate trigger
+export * from './linq/webhooks';
+export * from './triggers/userCreated';
+
+// Linq Sprint 2 — proactive care alerts + emergency replacement
+export * from './triggers/journalCreated';
+export * from './triggers/appointmentUpdated';
+
+// Linq Sprint 3 — family group thread
+export { createFamilyGroup } from './agents/familyGroupManager';
+
+// Linq Sprint 4 — weekly digest + monthly health trends
+export { sendWeeklyDigests, triggerWeeklyDigestNow } from './scheduled/weeklyDigest';
+export { sendMonthlyHealthTrends, triggerHealthTrendsNow } from './scheduled/healthTrends';
+

@@ -13,8 +13,8 @@ interface ToastProps {
  */
 export const ToastContainer: React.FC<ToastProps> = ({ toasts, removeToast }) => {
   return (
-    <div 
-      className="fixed top-4 left-1/2 transform -translate-x-1/2 z-[500] flex flex-col gap-2 w-full max-w-sm px-4 pointer-events-none"
+    <div
+      className="fixed top-4 left-1/2 transform -translate-x-1/2 z-[9999] flex flex-col gap-2 w-full max-w-sm px-4 pointer-events-none"
       role="region"
       aria-label="Notifications"
       aria-live="polite"

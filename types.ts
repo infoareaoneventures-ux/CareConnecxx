@@ -69,6 +69,7 @@ export interface FamilyMember {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   role: 'admin' | 'viewer';
   status: 'active' | 'pending';
 }
@@ -529,9 +530,11 @@ export interface CareJournalEntry {
     ateWell: boolean;
     tookMeds: boolean;
     wasActive: boolean;
+    sleptWell?: boolean;
     mood: 'great' | 'good' | 'ok' | 'poor';
   };
   activities: string[];
+  updatedAt?: string;
 }
 
 // AI Matching Types

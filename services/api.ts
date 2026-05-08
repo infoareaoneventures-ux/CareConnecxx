@@ -2,6 +2,7 @@ import { stripeService as externalStripeService } from './stripeService';
 import { checkRateLimit, checkSignupRateLimit, RATE_LIMITS } from './rateLimit';
 
 import firebase, { auth, db, functions, isConfigured, googleProvider } from '../lib/firebase';
+import { getStorage, ref as storageRef, deleteObject } from 'firebase/storage';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
 
 // ==========================================
@@ -1707,7 +1708,7 @@ export const dbService = {
     initiateBackgroundCheck: async (data: BackgroundCheckData) => {
         if (isConfigured && functions && auth?.currentUser) {
             try {
-                const initiateFn = functions.httpsCallable('initiateCheckrCandidate');
+                const initiateFn = functions.httpsCallable('v1-initiateCheckrCandidate');
                 await initiateFn(data);
                 return true;
             } catch (error: any) {
@@ -1739,11 +1740,12 @@ export const dbService = {
 
 
 
-    inviteFamilyMember: async (seniorId: string, email: string) => {
+    inviteFamilyMember: async (seniorId: string, email: string, phone?: string) => {
         const newMember: FamilyMember = {
             id: `fam_${Date.now()}`,
             name: email.split('@')[0],
             email,
+            ...(phone && { phone }),
             role: 'viewer',
             status: 'pending'
         };
@@ -2099,6 +2101,48 @@ export const dbService = {
             console.error('Failed to create care journal entry:', error);
             throw new Error('Failed to save care journal entry. Please try again.');
         }
+    },
+
+    getHealthSignalsForEntries: async (entryIds: string[]): Promise<Record<string, { severity: string; signals: string[] }>> => {
+        if (!isConfigured || !db || entryIds.length === 0) return {};
+        try {
+            const snap = await db.collection('health_signals')
+                .where('journalEntryId', 'in', entryIds.slice(0, 10))
+                .get();
+            const result: Record<string, { severity: string; signals: string[] }> = {};
+            snap.docs.forEach(doc => {
+                const d = doc.data();
+                if (d.journalEntryId) {
+                    result[d.journalEntryId] = { severity: d.severity, signals: d.signals ?? [] };
+                }
+            });
+            return result;
+        } catch {
+            return {};
+        }
+    },
+
+    updateCareJournalEntry: async (
+        entryId: string,
+        updates: Partial<Pick<CareJournalEntry, 'notes' | 'wellness' | 'activities'>>
+    ) => {
+        if (!isConfigured || !db) throw new Error("Database not connected");
+        await db.collection('care_journal').doc(entryId).update({
+            ...updates,
+            updatedAt: new Date().toISOString(),
+        });
+    },
+
+    deleteCareJournalEntry: async (entryId: string, photoUrls: string[]) => {
+        if (!isConfigured || !db) throw new Error("Database not connected");
+        // Best-effort photo deletion — don't fail if URLs are not real Storage paths
+        const storage = getStorage();
+        await Promise.allSettled(
+            photoUrls.map(url =>
+                deleteObject(storageRef(storage, url)).catch(() => {})
+            )
+        );
+        await db.collection('care_journal').doc(entryId).delete();
     },
 
     getCareJournalEntries: async (seniorId: string, limit: number = 30) => {

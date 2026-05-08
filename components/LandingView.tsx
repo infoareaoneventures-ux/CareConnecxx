@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Activity, Menu, X, ChevronDown, Users, Briefcase } from 'lucide-react';
 import { ViewType } from '../types';
 import { Button } from './ui/Button';
-import { SEO, generateOrganizationSchema, generateServiceSchema } from './SEO';
+import { SEO, generateOrganizationSchema, generateServiceSchema, generateFAQSchema } from './SEO';
+import { faqs } from './landing/FAQSection';
 
 // Sub-components
 import { HeroSection } from './landing/HeroSection';
@@ -15,6 +16,7 @@ import { Footer } from './landing/Footer';
 import { LoginModal } from './landing/LoginModal';
 import { ServicesSection } from './landing/ServicesSection';
 import { FAQSection } from './landing/FAQSection';
+import { BlogSection } from './landing/BlogSection';
 import { MobileStickyCTA } from './landing/MobileStickyCTA';
 
 interface LandingViewProps {
@@ -48,12 +50,19 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
               '@graph': [
                 generateOrganizationSchema(),
                 generateServiceSchema(),
+                generateFAQSchema(faqs),
                 {
-                  '@context': 'https://schema.org',
                   '@type': 'WebPage',
                   name: 'CareConnex - Senior Care Marketplace',
                   description: 'Connect with verified caregivers instantly. AI-powered matching for senior care.',
-                  url: 'https://careconnex-d4c8b.web.app/'
+                  url: 'https://www.careconnex.com/',
+                  aggregateRating: {
+                    '@type': 'AggregateRating',
+                    ratingValue: '4.9',
+                    reviewCount: '512',
+                    bestRating: '5',
+                    worstRating: '1'
+                  }
                 }
               ]
             }}
@@ -171,6 +180,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
             <FeaturesSection onNavigate={onNavigate} />
             <ServicesSection onNavigate={onNavigate} />
             <FAQSection onNavigate={onNavigate} />
+            <BlogSection />
             <CaregiverSection onNavigate={onNavigate} />
             <Footer onNavigate={onNavigate} />
 

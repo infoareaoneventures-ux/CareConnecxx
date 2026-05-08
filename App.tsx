@@ -58,6 +58,10 @@ const TrustAndSafetyPage = lazy(() => import('./components/TrustAndSafetyPage').
 const FamilyFAQ = lazy(() => import('./components/FamilyFAQ').then(module => ({ default: module.FamilyFAQ })));
 const HelpCenter = lazy(() => import('./components/HelpCenter').then(module => ({ default: module.HelpCenter })));
 const HelpPage = lazy(() => import('./components/HelpPage').then(module => ({ default: module.HelpPage })));
+const BlogPage        = lazy(() => import('./components/pages/BlogPage').then(module => ({ default: module.BlogPage })));
+const CityPage        = lazy(() => import('./components/pages/CityPage').then(module => ({ default: module.CityPage })));
+const QuickConfirmPage = lazy(() => import('./components/pages/QuickConfirmPage'));
+const HealthSummaryPage = lazy(() => import('./components/pages/HealthSummaryPage'));
 
 
 
@@ -267,6 +271,11 @@ const AppContent: React.FC = () => {
           <Route path="/auth/login" element={<Navigate to="/login" replace />} />
           <Route path="/how-it-works" element={<HowItWorks onNavigate={handleNavigation} />} />
           <Route path="/trust" element={<TrustAndSafetyPage onNavigate={handleNavigation} />} />
+          <Route path="/blog" element={<BlogPage onNavigate={handleNavigation} />} />
+          <Route path="/blog/:slug" element={<BlogPage onNavigate={handleNavigation} />} />
+          <Route path="/care/:city" element={<CityPage onNavigate={handleNavigation} />} />
+          <Route path="/confirm/:token" element={<QuickConfirmPage />} />
+          <Route path="/health-summary/:token" element={<HealthSummaryPage />} />
           <Route path="/family-faq" element={<FamilyFAQ onNavigate={handleNavigation} />} />
           <Route path="/help" element={<HelpCenter onNavigate={handleNavigation} />} />
           <Route path="/help/families" element={<HelpPage section="families" onNavigate={handleNavigation} />} />

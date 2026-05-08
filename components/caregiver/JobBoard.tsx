@@ -173,12 +173,15 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         }
     };
 
-    // Filter jobs based on search query
-    const filteredJobs = jobs.filter(job => 
-        job.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        job.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        job.requirements?.some(r => r.toLowerCase().includes(searchQuery.toLowerCase()))
-    );
+    // Filter jobs based on search query — defensive guards for malformed Firestore docs
+    const filteredJobs = jobs.filter(job => {
+        const q = searchQuery.toLowerCase();
+        return (
+            (job.title ?? '').toLowerCase().includes(q) ||
+            (job.location ?? '').toLowerCase().includes(q) ||
+            (Array.isArray(job.requirements) && job.requirements.some(r => r.toLowerCase().includes(q)))
+        );
+    });
 
     return (
         <div className="animate-slide-in">
@@ -451,7 +454,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                 <p className="text-[var(--color-neutral-600)] text-sm leading-relaxed">{viewingJob.description}</p>
                             </div>
 
-                            {viewingJob.requirements && viewingJob.requirements.length > 0 && (
+                            {Array.isArray(viewingJob.requirements) && viewingJob.requirements.length > 0 && (
                                 <div>
                                     <h3 className="font-bold text-[var(--color-neutral-900)] mb-2 text-sm">Requirements</h3>
                                     <div className="flex flex-wrap gap-2">

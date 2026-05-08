@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
-import { Users, Plus, Mail, Check, X } from 'lucide-react';
+import { Users, Plus, Mail, Phone, Check, X } from 'lucide-react';
 import { Input } from './ui/Input';
 import { Button } from './ui/Button';
 import { dbService, authService } from '../services/api';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { AddToastFunction, FamilyMember } from '../types';
 
 interface FamilyManagerProps {
@@ -11,7 +12,8 @@ interface FamilyManagerProps {
 }
 
 export const FamilyManager: React.FC<FamilyManagerProps> = ({ onShowToast }) => {
-  const [email, setEmail] = useState('');
+  const [email,   setEmail]   = useState('');
+  const [phone,   setPhone]   = useState('');
   const [loading, setLoading] = useState(false);
   const [members, setMembers] = useState<FamilyMember[]>([]);
 
@@ -40,22 +42,40 @@ export const FamilyManager: React.FC<FamilyManagerProps> = ({ onShowToast }) => 
   }, []);
 
   const handleInvite = async (e: React.FormEvent) => {
-      e.preventDefault();
-      setLoading(true);
-      const user = authService.getCurrentUser();
-      
-      try {
-          if (user) {
-              const newMember = await dbService.inviteFamilyMember(user.uid, email);
-              setMembers([...members, newMember]);
-              onShowToast(`Invitation sent to ${email}`, 'success');
-              setEmail('');
+    e.preventDefault();
+    setLoading(true);
+    const user = authService.getCurrentUser();
+
+    try {
+      if (user) {
+        const normalizedPhone = phone.replace(/\D/g, '');
+        const e164Phone = normalizedPhone.length === 10
+          ? `+1${normalizedPhone}`
+          : normalizedPhone.length > 10 ? `+${normalizedPhone}` : undefined;
+
+        const newMember = await dbService.inviteFamilyMember(user.uid, email, e164Phone);
+        const updatedMembers = [...members, newMember];
+        setMembers(updatedMembers);
+        onShowToast(`Invitation sent to ${email}`, 'success');
+        setEmail('');
+        setPhone('');
+
+        // If we now have 2+ members with phones, create/update the iMessage group
+        const phonedMembers = updatedMembers.filter(m => m.phone);
+        if (phonedMembers.length >= 2) {
+          try {
+            const fn = httpsCallable(getFunctions(), 'createFamilyGroup');
+            await fn({ seniorId: user.uid });
+          } catch {
+            // Non-blocking — group creation failure shouldn't surface to user
           }
-      } catch (e) {
-          onShowToast("Failed to invite member", 'error');
-      } finally {
-          setLoading(false);
+        }
       }
+    } catch {
+      onShowToast('Failed to invite member', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -67,19 +87,34 @@ export const FamilyManager: React.FC<FamilyManagerProps> = ({ onShowToast }) => 
             Invite family members to view the Care Plan, see updates, or manage billing.
         </p>
 
-        <form onSubmit={handleInvite} className="flex gap-2 mb-8">
+        <form onSubmit={handleInvite} className="space-y-3 mb-8">
+          <div className="flex gap-2">
             <div className="flex-grow">
-                <Input 
-                    label="" 
-                    placeholder="Enter family member's email" 
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="mb-0"
-                />
+              <Input
+                label=""
+                placeholder="Email address"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="mb-0"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <div className="flex-grow">
+              <Input
+                label=""
+                placeholder="Phone number (optional — for iMessage updates)"
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className="mb-0"
+              />
             </div>
             <Button type="submit" disabled={!email || loading} className="h-[50px]">
-                {loading ? 'Sending...' : <><Plus className="w-4 h-4 mr-2" /> Invite</>}
+              {loading ? 'Sending...' : <><Plus className="w-4 h-4 mr-2" /> Invite</>}
             </Button>
+          </div>
         </form>
 
         <div className="space-y-4">
@@ -90,8 +125,15 @@ export const FamilyManager: React.FC<FamilyManagerProps> = ({ onShowToast }) => 
                             <Mail className="w-4 h-4 text-slate-400" />
                         </div>
                         <div>
-                            <p className="font-bold text-sm text-slate-800">{m.email}</p>
+                          <p className="font-bold text-sm text-slate-800">{m.email}</p>
+                          <div className="flex items-center gap-2">
                             <span className="text-xs text-slate-500 capitalize">{m.role}</span>
+                            {m.phone && (
+                              <span className="text-xs text-teal-600 flex items-center gap-0.5">
+                                <Phone className="w-2.5 h-2.5" /> iMessage
+                              </span>
+                            )}
+                          </div>
                         </div>
                     </div>
                     <span className={`text-xs px-2 py-1 rounded-full font-bold uppercase ${

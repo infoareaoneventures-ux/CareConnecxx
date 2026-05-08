@@ -1,5 +1,5 @@
 // Service Worker for PWA offline support
-const CACHE_NAME = 'careconnex-v2';
+const CACHE_NAME = 'careconnex-v3';
 const urlsToCache = [
     '/',
     '/index.html',

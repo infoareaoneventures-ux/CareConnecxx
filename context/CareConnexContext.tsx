@@ -111,30 +111,36 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         let cancelled = false;
 
         const initBackend = async () => {
-            if (isConfigured) {
-                const isConnected = await dbService.verifyConnection();
-                if (cancelled) return;
-                
-                if (isConnected) {
-                    console.log("Database connected");
-                } else {
-                    addToast("Warning: Database connection unstable", "error");
-                }
-            } else {
-                addToast("Backend not configured. Check Firebase setup.", "error");
-            }
-
             try {
-                const { caregivers: fetched } = await dbService.getCaregivers(100);
-                if (cancelled) return;
-                setCaregivers(fetched);
-            } catch (e) {
-                if (cancelled) return;
-                console.error("Failed to fetch caregivers", e);
-            }
+                if (isConfigured) {
+                    try {
+                        const isConnected = await dbService.verifyConnection();
+                        if (cancelled) return;
+                        if (isConnected) {
+                            console.log("Database connected");
+                        } else {
+                            addToast("Warning: Database connection unstable", "error");
+                        }
+                    } catch (connErr) {
+                        if (cancelled) return;
+                        console.error("Database connection check failed:", connErr);
+                    }
+                } else {
+                    addToast("Backend not configured. Check Firebase setup.", "error");
+                }
 
-            if (!cancelled) {
-                setIsLoading(false);
+                try {
+                    const { caregivers: fetched } = await dbService.getCaregivers(100);
+                    if (cancelled) return;
+                    setCaregivers(fetched);
+                } catch (e) {
+                    if (cancelled) return;
+                    console.error("Failed to fetch caregivers", e);
+                }
+            } finally {
+                if (!cancelled) {
+                    setIsLoading(false);
+                }
             }
         };
 

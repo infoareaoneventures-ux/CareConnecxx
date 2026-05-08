@@ -36,7 +36,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendTestSMS = void 0;
+exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.sendTestSMS = void 0;
 const admin = __importStar(require("firebase-admin"));
 // Initialize Admin globally if not already done
 if (!admin.apps.length) {
@@ -81,4 +81,20 @@ __exportStar(require("./triggers/jobApplicationTriggers"), exports);
 __exportStar(require("./shiftHours"), exports);
 // Export booking payment-method helpers
 __exportStar(require("./paymentMethods"), exports);
+// Linq iMessage agent — webhook + user onCreate trigger
+__exportStar(require("./linq/webhooks"), exports);
+__exportStar(require("./triggers/userCreated"), exports);
+// Linq Sprint 2 — proactive care alerts + emergency replacement
+__exportStar(require("./triggers/journalCreated"), exports);
+__exportStar(require("./triggers/appointmentUpdated"), exports);
+// Linq Sprint 3 — family group thread
+var familyGroupManager_1 = require("./agents/familyGroupManager");
+Object.defineProperty(exports, "createFamilyGroup", { enumerable: true, get: function () { return familyGroupManager_1.createFamilyGroup; } });
+// Linq Sprint 4 — weekly digest + monthly health trends
+var weeklyDigest_1 = require("./scheduled/weeklyDigest");
+Object.defineProperty(exports, "sendWeeklyDigests", { enumerable: true, get: function () { return weeklyDigest_1.sendWeeklyDigests; } });
+Object.defineProperty(exports, "triggerWeeklyDigestNow", { enumerable: true, get: function () { return weeklyDigest_1.triggerWeeklyDigestNow; } });
+var healthTrends_1 = require("./scheduled/healthTrends");
+Object.defineProperty(exports, "sendMonthlyHealthTrends", { enumerable: true, get: function () { return healthTrends_1.sendMonthlyHealthTrends; } });
+Object.defineProperty(exports, "triggerHealthTrendsNow", { enumerable: true, get: function () { return healthTrends_1.triggerHealthTrendsNow; } });
 //# sourceMappingURL=index.js.map

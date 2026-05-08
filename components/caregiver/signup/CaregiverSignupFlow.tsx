@@ -111,7 +111,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
         verified: false,
         onboardingStatus: 'incomplete',
         onboardingStep: 1,
-        verificationStatus: 'submitted',
+        verificationStatus: 'incomplete',
       };
       if (formData.phone) additionalData.phone = formData.phone;
       if (formData.dateOfBirth) additionalData.dateOfBirth = formData.dateOfBirth;
@@ -257,10 +257,11 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
     if (!uid) { onShowToast('Session lost. Please refresh and try again.', 'error'); return; }
     setIsLoading(true);
     try {
-      // Note: verificationStatus was set during signup (Bug 2 fix — updateUser strips it)
       await dbService.updateUser('caregivers', uid, cleanData({
         bio: formData.bio,
         onboardingStep: 2,
+        onboardingStatus: 'submitted',
+        verificationStatus: 'submitted',
         submittedAt: new Date().toISOString(),
       }) as any);
 

@@ -41,8 +41,8 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 const db = admin.firestore();
-const CHECKR_BASE_URL = "https://api.checkr.com/v1";
-const CHECKR_PACKAGE = "driver_pro";
+const CHECKR_BASE_URL = process.env.CHECKR_API_URL || "https://api.checkr.com/v1";
+const CHECKR_PACKAGE = process.env.CHECKR_PACKAGE || "driver_pro";
 function basicAuth(apiKey) {
     return "Basic " + Buffer.from(apiKey + ":").toString("base64");
 }
@@ -89,6 +89,18 @@ exports.initiateCheckrCandidate = functions.runWith({ secrets: ["CHECKR_API_KEY"
     const { legalFirstName, legalLastName, zipCode, state, consentGiven } = data || {};
     const email = context.auth.token.email;
     const uid = context.auth.uid;
+    console.log("initiateCheckrCandidate called", {
+        uid,
+        hasEmail: !!email,
+        hasFirst: !!legalFirstName,
+        hasLast: !!legalLastName,
+        hasZip: !!zipCode,
+        hasState: !!state,
+        consent: consentGiven,
+        apiKey: !!(process.env.CHECKR_API_KEY || "").trim(),
+        apiUrl: process.env.CHECKR_API_URL || "(default)",
+        pkg: process.env.CHECKR_PACKAGE || "(default)",
+    });
     if (consentGiven !== true) {
         throw new functions.https.HttpsError("failed-precondition", "Consent is required.");
     }
@@ -166,9 +178,7 @@ exports.initiateCheckrCandidate = functions.runWith({ secrets: ["CHECKR_API_KEY"
     catch (error) {
         if (error instanceof functions.https.HttpsError)
             throw error;
-        if (process.env.NODE_ENV !== "production") {
-            console.error("Checkr initiate error:", error === null || error === void 0 ? void 0 : error.message);
-        }
+        console.error("Checkr initiate error:", error === null || error === void 0 ? void 0 : error.message, error === null || error === void 0 ? void 0 : error.code, JSON.stringify(error));
         throw new functions.https.HttpsError("internal", "Background check initiation failed.");
     }
 });
@@ -218,15 +228,15 @@ exports.checkrWebhook = functions.runWith({ secrets: ["CHECKR_API_KEY"] }).https
         res.status(405).send("Method not allowed");
         return;
     }
-    // Checkr account-level webhooks sign payloads using the API key as the HMAC secret
-    const apiKey = process.env.CHECKR_API_KEY;
-    if (!apiKey) {
-        console.error("CHECKR_API_KEY not configured");
+    // Use dedicated webhook signing secret if configured; fall back to API key for backwards compatibility
+    const webhookSecret = (process.env.CHECKR_WEBHOOK_SECRET || process.env.CHECKR_API_KEY || "").trim();
+    if (!webhookSecret) {
+        console.error("Checkr webhook secret not configured");
         res.status(500).send("Webhook not configured");
         return;
     }
     const signature = req.headers["x-checkr-signature"];
-    if (!verifyCheckrSignature(req.rawBody, signature, apiKey)) {
+    if (!verifyCheckrSignature(req.rawBody, signature, webhookSecret)) {
         res.status(401).send("Invalid signature");
         return;
     }
@@ -306,11 +316,22 @@ exports.checkrWebhook = functions.runWith({ secrets: ["CHECKR_API_KEY"] }).https
             }
         }
         else if (type === "report.canceled") {
-            updates["backgroundCheckData.status"] = "suspended";
+            updates["backgroundCheckData.status"] = "canceled";
             updates["backgroundCheckData.canceledAt"] = new Date().toISOString();
             notificationPayload = {
                 title: "Background check canceled",
                 body: "Your background check was canceled. Please contact support or resubmit.",
+            };
+        }
+        else if (type === "report.resumed") {
+            updates["backgroundCheckData.status"] = "pending";
+        }
+        else if (type === "report.disputed") {
+            updates["backgroundCheckData.status"] = "pending";
+            updates["backgroundCheckData.disputed"] = true;
+            notificationPayload = {
+                title: "Background check under dispute",
+                body: "Your background check result is being reviewed following your dispute. We'll update you when resolved.",
             };
         }
         else if (type === "report.pre_adverse_action") {

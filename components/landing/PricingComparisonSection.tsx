@@ -7,15 +7,16 @@ interface PricingComparisonSectionProps {
 }
 
 const FEATURES = [
-    { label: 'Senior-specific matching (dementia, Parkinson\'s, etc.)', careconnex: true,  urbansitter: false, agency: true  },
-    { label: 'Browse caregivers free',                                  careconnex: true,  urbansitter: true,  agency: false },
-    { label: 'AI match score + plain-English reasons',                  careconnex: true,  urbansitter: false, agency: false },
-    { label: 'Background check (Checkr)',                               careconnex: true,  urbansitter: true,  agency: true  },
-    { label: 'GPS clock-in / clock-out',                                careconnex: true,  urbansitter: false, agency: false },
-    { label: 'Daily care journal sent to family',                       careconnex: true,  urbansitter: false, agency: false },
-    { label: 'Video interview before hiring',                           careconnex: true,  urbansitter: false, agency: true  },
-    { label: 'Direct messaging with caregiver',                         careconnex: true,  urbansitter: true,  agency: false },
-    { label: 'Zero caregiver commission',                               careconnex: true,  urbansitter: true,  agency: false },
+    { label: 'Senior-specific matching (dementia, Parkinson\'s, etc.)', careconnex: true,  competitor: false, agency: true  },
+    { label: 'Browse caregivers free',                                  careconnex: true,  competitor: true,  agency: false },
+    { label: 'AI match score + plain-English reasons',                  careconnex: true,  competitor: false, agency: false },
+    { label: 'Background check included in membership',                 careconnex: true,  competitor: false, agency: true  },
+    { label: 'GPS clock-in / clock-out',                                careconnex: true,  competitor: false, agency: false },
+    { label: 'Daily care journal sent to family',                       careconnex: true,  competitor: false, agency: false },
+    { label: 'Video interview before hiring',                           careconnex: true,  competitor: false, agency: true  },
+    { label: 'Direct messaging with caregiver',                         careconnex: true,  competitor: true,  agency: false },
+    { label: 'Instant same-day caregiver payouts',                      careconnex: true,  competitor: false, agency: false },
+    { label: 'Zero per-booking commission',                             careconnex: true,  competitor: false, agency: false },
 ];
 
 export const PricingComparisonSection: React.FC<PricingComparisonSectionProps> = ({ onNavigate }) => {
@@ -49,14 +50,14 @@ export const PricingComparisonSection: React.FC<PricingComparisonSectionProps> =
                         <div className="h-1 w-16 mx-auto rounded-full bg-slate-200" />
                     </div>
 
-                    {/* UrbanSitter */}
+                    {/* Care.com */}
                     <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center shadow-sm">
-                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">UrbanSitter</p>
+                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Care.com</p>
                         <div className="mb-1">
-                            <span className="text-3xl font-black text-slate-500">$42.95</span>
+                            <span className="text-3xl font-black text-slate-500">$35</span>
                             <span className="text-sm text-slate-400">/mo</span>
                         </div>
-                        <p className="text-xs text-slate-400 mb-4">Built for babysitting, not senior care</p>
+                        <p className="text-xs text-slate-400 mb-4">+$300 background check add-on · 2.9★ app</p>
                         <div className="h-1 w-16 mx-auto rounded-full bg-slate-300" />
                     </div>
 
@@ -88,7 +89,7 @@ export const PricingComparisonSection: React.FC<PricingComparisonSectionProps> =
                     <div className="grid grid-cols-4 bg-slate-50 border-b border-slate-200 px-6 py-3">
                         <div className="col-span-1" />
                         <div className="text-center text-xs font-semibold text-slate-400 uppercase tracking-wide">Agency</div>
-                        <div className="text-center text-xs font-semibold text-slate-400 uppercase tracking-wide">UrbanSitter</div>
+                        <div className="text-center text-xs font-semibold text-slate-400 uppercase tracking-wide">Care.com</div>
                         <div className="text-center text-xs font-bold text-primary-700 uppercase tracking-wide">CareConnex</div>
                     </div>
 
@@ -105,7 +106,7 @@ export const PricingComparisonSection: React.FC<PricingComparisonSectionProps> =
                                 }
                             </div>
                             <div className="flex justify-center">
-                                {f.urbansitter
+                                {f.competitor
                                     ? <Check className="w-4 h-4 text-slate-400" />
                                     : <X className="w-4 h-4 text-slate-200" />
                                 }

@@ -11,8 +11,8 @@ interface SEOProps {
   schema?: object;
 }
 
-const DEFAULT_IMAGE = 'https://careconnex-d4c8b.web.app/icon-512.png';
-const SITE_URL = 'https://careconnex-d4c8b.web.app';
+const DEFAULT_IMAGE = 'https://www.careconnex.com/icon-512.png';
+const SITE_URL = 'https://www.careconnex.com';
 
 export const SEO: React.FC<SEOProps> = ({
   title,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, UserCheck, Lock, Search } from 'lucide-react';
+import { ShieldCheck, UserCheck, Lock, Search, Star } from 'lucide-react';
 import { ViewType } from '../../types';
 
 interface TrustSafetySectionProps {
@@ -7,22 +7,36 @@ interface TrustSafetySectionProps {
 }
 
 const trustPoints = [
-    { icon: <ShieldCheck className="w-6 h-6" strokeWidth={1.5} />, title: 'Buy background checks' },
+    { icon: <ShieldCheck className="w-6 h-6" strokeWidth={1.5} />, title: 'Annual Checkr background checks' },
     { icon: <UserCheck className="w-6 h-6" strokeWidth={1.5} />, title: 'Identity verification' },
     { icon: <Lock className="w-6 h-6" strokeWidth={1.5} />, title: 'Fraud prevention' },
-    { icon: <Search className="w-6 h-6" strokeWidth={1.5} />, title: 'Safety screenings' },
+    { icon: <Search className="w-6 h-6" strokeWidth={1.5} />, title: '5-step safety screenings' },
 ];
 
 const testimonials = [
     {
-        quote: "It's easy and I always find a caregiver!",
+        quote: "It's easy and I always find a caregiver! The AI matching is spot on — found someone perfect for my mom in less than a day.",
         name: "Jennifer R.",
-        memberSince: "2022"
+        location: "San Jose, CA",
+        rating: 5
     },
     {
-        quote: "CareConnex is efficient, trustworthy, and has helped me in a bind many times.",
+        quote: "CareConnex is efficient, trustworthy, and has helped me in a bind many times. Way better than calling agencies.",
         name: "Annika D.",
-        memberSince: "2014"
+        location: "Mountain View, CA",
+        rating: 5
+    },
+    {
+        quote: "The video interview feature was a game-changer. I could meet our caregiver before she ever set foot in our home.",
+        name: "Marcus T.",
+        location: "Palo Alto, CA",
+        rating: 5
+    },
+    {
+        quote: "Saved us $800/month vs. the agency we were using. Same quality of care, better communication.",
+        name: "Linda & Robert K.",
+        location: "Santa Clara, CA",
+        rating: 5
     }
 ];
 
@@ -31,16 +45,22 @@ export const TrustSafetySection: React.FC<TrustSafetySectionProps> = ({ onNaviga
         <section className="bg-[#fafaf9] relative overflow-hidden pt-20 pb-32">
             <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
                 <div className="flex flex-col lg:flex-row items-center lg:items-end justify-between gap-12 lg:gap-8">
-                    
+
                     {/* Left Column: Text & Features */}
                     <div className="w-full lg:w-1/3 pb-8 lg:pb-16 z-10 relative">
                         <h2 className="text-4xl md:text-5xl font-extrabold text-slate-900 leading-[1.1] mb-6 tracking-tight">
                             A proven network of reliable, trustworthy care
                         </h2>
                         <p className="text-slate-600 text-[17px] mb-10 leading-relaxed max-w-md">
-                            Our dedicated team is working hard behind the scenes every day. For more information about our commitment to safety, visit the <a href="#" className="underline font-medium hover:text-primary-600 text-slate-800 transition-colors">Trust and Safety Center.</a>
+                            Our dedicated team is working hard behind the scenes every day. For more information,{' '}
+                            <button
+                                onClick={() => onNavigate('trust')}
+                                className="underline font-medium hover:text-primary-600 text-slate-800 transition-colors"
+                            >
+                                visit our Trust and Safety Center.
+                            </button>
                         </p>
-                        
+
                         <div className="space-y-6">
                             {trustPoints.map((point, i) => (
                                 <div key={i} className="flex items-center gap-5 group">
@@ -55,24 +75,33 @@ export const TrustSafetySection: React.FC<TrustSafetySectionProps> = ({ onNaviga
 
                     {/* Middle Column: Image */}
                     <div className="w-full lg:w-1/3 flex justify-center z-0 relative">
-                        <img 
-                            src="/assets/caregiver-senior-trust.png" 
-                            alt="Caregiver and senior sitting together" 
+                        <img
+                            src="/assets/caregiver-senior-trust.png"
+                            alt="Caregiver and senior sitting together"
                             className="w-full max-w-[400px] lg:max-w-[450px] xl:max-w-[500px] h-auto mix-blend-multiply translate-y-4 lg:translate-y-24"
                         />
                     </div>
 
                     {/* Right Column: Testimonials */}
-                    <div className="w-full lg:w-1/3 z-10 flex flex-col gap-6 pb-8 lg:pb-16 relative">
+                    <div className="w-full lg:w-1/3 z-10 flex flex-col gap-5 pb-8 lg:pb-16 relative">
                         {testimonials.map((test, i) => (
-                            <div key={i} className="bg-white rounded-2xl p-8 shadow-sm border border-slate-200/60 flex flex-col relative transform transition-all hover:shadow-md hover:-translate-y-1">
-                                <div className="text-[#e91e63] text-5xl font-serif font-black absolute top-5 left-6 leading-none">“</div>
-                                <p className="text-slate-800 text-lg md:text-[20px] leading-relaxed mb-10 mt-6 relative z-10 font-medium">
-                                    {test.quote}
+                            <div key={i} className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col transition-all hover:shadow-md hover:-translate-y-1">
+                                <div className="flex items-center gap-0.5 mb-3">
+                                    {[...Array(test.rating)].map((_, s) => (
+                                        <Star key={s} className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" />
+                                    ))}
+                                </div>
+                                <p className="text-slate-800 text-base leading-relaxed mb-4 font-medium">
+                                    &ldquo;{test.quote}&rdquo;
                                 </p>
-                                <div className="mt-auto">
-                                    <p className="text-[#e91e63] text-2xl font-bold mb-1 tracking-tight">{test.name}</p>
-                                    <p className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Verified Family</p>
+                                <div className="mt-auto flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
+                                        <span className="text-primary-700 text-xs font-bold">{test.name.charAt(0)}</span>
+                                    </div>
+                                    <div>
+                                        <p className="text-slate-900 text-sm font-bold">{test.name}</p>
+                                        <p className="text-[11px] text-slate-400">{test.location} &middot; Verified Family</p>
+                                    </div>
                                 </div>
                             </div>
                         ))}
@@ -80,7 +109,7 @@ export const TrustSafetySection: React.FC<TrustSafetySectionProps> = ({ onNaviga
 
                 </div>
             </div>
-            
+
             {/* Curved bottom edge */}
             <div className="absolute bottom-0 left-0 w-full overflow-hidden leading-none z-20">
                 <svg viewBox="0 0 1200 120" preserveAspectRatio="none" className="relative block w-full h-[40px] md:h-[80px]">

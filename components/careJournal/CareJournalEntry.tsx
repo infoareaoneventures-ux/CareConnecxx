@@ -211,6 +211,7 @@ export const CareJournalEntryForm: React.FC<CareJournalEntryProps> = ({
           ateWell: wellness.ateWell,
           tookMeds: wellness.tookMeds,
           wasActive: wellness.wasActive,
+          sleptWell: wellness.sleptWell,
           mood: mood
         },
         activities

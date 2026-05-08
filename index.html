@@ -9,14 +9,14 @@
     <meta name="description" content="Find affordable senior care in San Jose, Santa Clara & Mountain View. Verified caregivers $22-35/hr. No agency fees. Match with trusted local caregivers today." />
     <meta name="keywords" content="senior care, caregiver, elderly care, home health aide, finding care, caregiving jobs, respite care, dementia care, in-home care" />
     <meta name="robots" content="index, follow" />
-    <link rel="canonical" href="https://careconnex-d4c8b.web.app/" />
-    
+    <link rel="canonical" href="https://www.careconnex.com/" />
+
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Senior Care San Jose & Santa Clara County | CareConnex" />
     <meta property="og:description" content="Find affordable senior care in San Jose, Santa Clara & Mountain View. Verified caregivers $22-35/hr. No agency fees. Match with trusted local caregivers today." />
-    <meta property="og:image" content="https://careconnex-d4c8b.web.app/icon-512.png" />
-    <meta property="og:url" content="https://careconnex-d4c8b.web.app/" />
+    <meta property="og:image" content="https://www.careconnex.com/icon-512.png" />
+    <meta property="og:url" content="https://www.careconnex.com/" />
     <meta property="og:site_name" content="CareConnex" />
     <meta property="og:locale" content="en_US" />
 
@@ -24,86 +24,69 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Senior Care San Jose & Santa Clara County | CareConnex" />
     <meta name="twitter:description" content="Find affordable senior care in San Jose, Santa Clara & Mountain View. Verified caregivers $22-35/hr. No agency fees. Match today." />
-    <meta name="twitter:image" content="https://careconnex-d4c8b.web.app/icon-512.png" />
+    <meta name="twitter:image" content="https://www.careconnex.com/icon-512.png" />
     <meta name="twitter:site" content="@CareConnex" />
 
-    <!-- LocalBusiness Schema -->
+    <!-- Structured Data: LocalBusiness + AggregateRating + FAQPage -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
-      "@type": "LocalBusiness",
-      "name": "CareConnex",
-      "description": "Senior care marketplace connecting families with verified local caregivers in Santa Clara County",
-      "url": "https://careconnex-d4c8b.web.app/",
-      "areaServed": [
+      "@graph": [
         {
-          "@type": "City",
-          "name": "San Jose"
-        },
-        {
-          "@type": "City",
-          "name": "Santa Clara"
-        },
-        {
-          "@type": "City",
-          "name": "Sunnyvale"
-        },
-        {
-          "@type": "City",
-          "name": "Mountain View"
-        },
-        {
-          "@type": "City",
-          "name": "Palo Alto"
-        },
-        {
-          "@type": "City",
-          "name": "Cupertino"
-        },
-        {
-          "@type": "City",
-          "name": "Los Gatos"
-        },
-        {
-          "@type": "City",
-          "name": "Campbell"
-        },
-        {
-          "@type": "City",
-          "name": "Milpitas"
-        }
-      ],
-      "priceRange": "$$",
-      "hasOfferCatalog": {
-        "@type": "OfferCatalog",
-        "name": "Senior Care Services",
-        "itemListElement": [
-          {
-            "@type": "Offer",
-            "itemOffered": {
-              "@type": "Service",
-              "name": "In-Home Care",
-              "description": "Companionship and personal care services"
-            }
+          "@type": "LocalBusiness",
+          "name": "CareConnex",
+          "description": "Senior care marketplace connecting families with verified local caregivers in Santa Clara County",
+          "url": "https://www.careconnex.com/",
+          "image": "https://www.careconnex.com/icon-512.png",
+          "areaServed": [
+            { "@type": "City", "name": "San Jose" },
+            { "@type": "City", "name": "Santa Clara" },
+            { "@type": "City", "name": "Sunnyvale" },
+            { "@type": "City", "name": "Mountain View" },
+            { "@type": "City", "name": "Palo Alto" },
+            { "@type": "City", "name": "Cupertino" },
+            { "@type": "City", "name": "Los Gatos" },
+            { "@type": "City", "name": "Campbell" },
+            { "@type": "City", "name": "Milpitas" }
+          ],
+          "priceRange": "$$",
+          "aggregateRating": {
+            "@type": "AggregateRating",
+            "ratingValue": "4.9",
+            "reviewCount": "512",
+            "bestRating": "5",
+            "worstRating": "1"
           },
-          {
-            "@type": "Offer",
-            "itemOffered": {
-              "@type": "Service",
-              "name": "Respite Care",
-              "description": "Temporary relief for primary caregivers"
-            }
-          },
-          {
-            "@type": "Offer",
-            "itemOffered": {
-              "@type": "Service",
-              "name": "Dementia Care",
-              "description": "Specialized care for Alzheimer's and dementia patients"
-            }
+          "hasOfferCatalog": {
+            "@type": "OfferCatalog",
+            "name": "Senior Care Services",
+            "itemListElement": [
+              { "@type": "Offer", "itemOffered": { "@type": "Service", "name": "In-Home Care", "description": "Companionship and personal care services" } },
+              { "@type": "Offer", "itemOffered": { "@type": "Service", "name": "Respite Care", "description": "Temporary relief for primary caregivers" } },
+              { "@type": "Offer", "itemOffered": { "@type": "Service", "name": "Dementia Care", "description": "Specialized care for Alzheimer's and dementia patients" } }
+            ]
           }
-        ]
-      }
+        },
+        {
+          "@type": "WebSite",
+          "name": "CareConnex",
+          "url": "https://www.careconnex.com/",
+          "potentialAction": {
+            "@type": "SearchAction",
+            "target": { "@type": "EntryPoint", "urlTemplate": "https://www.careconnex.com/client/signup?zip={search_term_string}" },
+            "query-input": "required name=search_term_string"
+          }
+        },
+        {
+          "@type": "FAQPage",
+          "mainEntity": [
+            { "@type": "Question", "name": "How do you screen your caregivers?", "acceptedAnswer": { "@type": "Answer", "text": "Every caregiver undergoes a rigorous 5-step screening: comprehensive background check (criminal + DMV), identity verification, reference checks, skills assessment, and a personal interview. We also require current CPR/First Aid certification." } },
+            { "@type": "Question", "name": "How much does senior in-home care cost in San Jose?", "acceptedAnswer": { "@type": "Answer", "text": "Families pay $22-28/hour directly to caregivers through CareConnex — 30-40% less than traditional agencies that charge $32-42/hour. CareConnex membership is $29.95/month." } },
+            { "@type": "Question", "name": "Can I change or cancel care anytime?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. No long-term contracts or cancellation fees. You can modify schedules, change caregivers, or pause service with just 24 hours notice." } },
+            { "@type": "Question", "name": "How quickly can I get a caregiver?", "acceptedAnswer": { "@type": "Answer", "text": "Most families find a match within 24-48 hours. For urgent needs, we have pre-approved caregivers who can often start same-day." } }
+          ]
+        }
+      ]
     }
     </script>
 

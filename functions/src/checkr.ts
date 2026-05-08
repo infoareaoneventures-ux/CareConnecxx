@@ -7,10 +7,10 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-const CHECKR_BASE_URL = "https://api.checkr.com/v1";
-const CHECKR_PACKAGE = "driver_pro";
+const CHECKR_BASE_URL = process.env.CHECKR_API_URL || "https://api.checkr.com/v1";
+const CHECKR_PACKAGE = process.env.CHECKR_PACKAGE || "driver_pro";
 
-type CheckrStatus = "pending" | "clear" | "consider" | "suspended";
+type CheckrStatus = "pending" | "clear" | "consider" | "suspended" | "canceled";
 
 function basicAuth(apiKey: string): string {
   return "Basic " + Buffer.from(apiKey + ":").toString("base64");
@@ -58,6 +58,19 @@ export const initiateCheckrCandidate = functions.runWith({ secrets: ["CHECKR_API
   const { legalFirstName, legalLastName, zipCode, state, consentGiven } = data || {};
   const email = context.auth.token.email;
   const uid = context.auth.uid;
+
+  console.log("initiateCheckrCandidate called", {
+    uid,
+    hasEmail: !!email,
+    hasFirst: !!legalFirstName,
+    hasLast: !!legalLastName,
+    hasZip: !!zipCode,
+    hasState: !!state,
+    consent: consentGiven,
+    apiKey: !!(process.env.CHECKR_API_KEY || "").trim(),
+    apiUrl: process.env.CHECKR_API_URL || "(default)",
+    pkg: process.env.CHECKR_PACKAGE || "(default)",
+  });
 
   if (consentGiven !== true) {
     throw new functions.https.HttpsError("failed-precondition", "Consent is required.");
@@ -142,9 +155,7 @@ export const initiateCheckrCandidate = functions.runWith({ secrets: ["CHECKR_API
     return { success: true, candidateId };
   } catch (error: any) {
     if (error instanceof functions.https.HttpsError) throw error;
-    if (process.env.NODE_ENV !== "production") {
-      console.error("Checkr initiate error:", error?.message);
-    }
+    console.error("Checkr initiate error:", error?.message, error?.code, JSON.stringify(error));
     throw new functions.https.HttpsError("internal", "Background check initiation failed.");
   }
 });
@@ -192,16 +203,16 @@ export const checkrWebhook = functions.runWith({ secrets: ["CHECKR_API_KEY"] }).
     res.status(405).send("Method not allowed");
     return;
   }
-  // Checkr account-level webhooks sign payloads using the API key as the HMAC secret
-  const apiKey = process.env.CHECKR_API_KEY;
-  if (!apiKey) {
-    console.error("CHECKR_API_KEY not configured");
+  // Use dedicated webhook signing secret if configured; fall back to API key for backwards compatibility
+  const webhookSecret = (process.env.CHECKR_WEBHOOK_SECRET || process.env.CHECKR_API_KEY || "").trim();
+  if (!webhookSecret) {
+    console.error("Checkr webhook secret not configured");
     res.status(500).send("Webhook not configured");
     return;
   }
 
   const signature = req.headers["x-checkr-signature"];
-  if (!verifyCheckrSignature(req.rawBody, signature, apiKey)) {
+  if (!verifyCheckrSignature(req.rawBody, signature, webhookSecret)) {
     res.status(401).send("Invalid signature");
     return;
   }
@@ -288,11 +299,22 @@ export const checkrWebhook = functions.runWith({ secrets: ["CHECKR_API_KEY"] }).
       }
 
     } else if (type === "report.canceled") {
-      updates["backgroundCheckData.status"] = "suspended";
+      updates["backgroundCheckData.status"] = "canceled";
       updates["backgroundCheckData.canceledAt"] = new Date().toISOString();
       notificationPayload = {
         title: "Background check canceled",
         body: "Your background check was canceled. Please contact support or resubmit.",
+      };
+
+    } else if (type === "report.resumed") {
+      updates["backgroundCheckData.status"] = "pending";
+
+    } else if (type === "report.disputed") {
+      updates["backgroundCheckData.status"] = "pending";
+      updates["backgroundCheckData.disputed"] = true;
+      notificationPayload = {
+        title: "Background check under dispute",
+        body: "Your background check result is being reviewed following your dispute. We'll update you when resolved.",
       };
 
     } else if (type === "report.pre_adverse_action") {

@@ -4,7 +4,7 @@ import {
   ChevronLeft, AlertCircle, MessageSquare, Search,
   FileText, TrendingUp, UserCheck, X, HeartHandshake,
   Heart, Users, Phone, Filter, Download, Shield,
-  Star, ClipboardList,
+  Star, ClipboardList, BookOpen,
 } from 'lucide-react';
 import { SupportTicket, AdminUser, JobPost, Caregiver, ClientIntakeData } from '../types';
 import { dbService } from '../services/api';
@@ -18,15 +18,18 @@ import { AdminClientManager } from './admin/AdminClientManager';
 import { AdminCaregiverManager } from './admin/AdminCaregiverManager';
 import { AdminAppointments } from './admin/AdminAppointments';
 import { AdminReviews } from './admin/AdminReviews';
+import { CaregiverVerificationDashboard } from './admin/CaregiverVerificationDashboard';
+import { CoordinatorManagement } from './admin/CoordinatorManagement';
+import { AdminBlogManager } from './admin/AdminBlogManager';
 
 interface AdminViewProps {
   onBack: () => void;
 }
 
 type TabId =
-  | 'overview' | 'clients' | 'caregivers' | 'appointments' | 'reviews'
-  | 'intakes' | 'matching' | 'assignments' | 'finance' | 'disputes'
-  | 'tickets' | 'messages';
+  | 'overview' | 'clients' | 'caregivers' | 'verification' | 'coordinators'
+  | 'appointments' | 'reviews' | 'intakes' | 'matching' | 'assignments'
+  | 'finance' | 'disputes' | 'tickets' | 'messages' | 'blog';
 
 const StatCard = ({ icon: Icon, label, value, trend, color, onClick }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -157,13 +160,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
         { id: 'messages' as TabId, label: 'Messages', icon: MessageSquare },
       ],
     },
+    {
+      label: 'Content',
+      items: [
+        { id: 'blog' as TabId, label: 'Blog Manager', icon: BookOpen },
+      ],
+    },
   ];
 
   const allNavItems = [{ id: 'overview' as TabId, label: 'Overview', icon: LayoutDashboard }, ...navGroups.flatMap(g => g.items)];
   const currentLabel = allNavItems.find(n => n.id === activeTab)?.label ?? '';
 
   // Tabs that fill the full content area without internal padding
-  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages'];
+  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog'];
   const isFullBleed = fullBleedTabs.includes(activeTab);
 
   return (
@@ -247,14 +256,17 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
         {/* Tab content */}
         {isFullBleed ? (
           <div className="flex-1 overflow-hidden">
-            {activeTab === 'clients'     && <AdminClientManager />}
-            {activeTab === 'caregivers'  && <AdminCaregiverManager />}
-            {activeTab === 'appointments'&& <AdminAppointments />}
-            {activeTab === 'reviews'     && <AdminReviews />}
-            {activeTab === 'matching'    && <MatchingDashboard coordinatorId="admin" />}
-            {activeTab === 'assignments' && <AssignmentManager />}
-            {activeTab === 'disputes'    && <AdminShiftHoursMediation />}
-            {activeTab === 'messages'    && <AdminMessages />}
+            {activeTab === 'clients'      && <AdminClientManager />}
+            {activeTab === 'caregivers'   && <AdminCaregiverManager />}
+            {activeTab === 'verification' && <CaregiverVerificationDashboard onShowToast={(msg, type) => showToast(msg)} />}
+            {activeTab === 'coordinators' && <CoordinatorManagement onShowToast={(msg, type) => showToast(msg)} />}
+            {activeTab === 'appointments' && <AdminAppointments />}
+            {activeTab === 'reviews'      && <AdminReviews />}
+            {activeTab === 'matching'     && <MatchingDashboard coordinatorId="admin" />}
+            {activeTab === 'assignments'  && <AssignmentManager />}
+            {activeTab === 'disputes'     && <AdminShiftHoursMediation />}
+            {activeTab === 'messages'     && <AdminMessages />}
+            {activeTab === 'blog'         && <AdminBlogManager />}
           </div>
         ) : (
           <div className="flex-1 overflow-auto p-6 space-y-6">

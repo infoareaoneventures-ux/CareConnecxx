@@ -44,19 +44,21 @@ export function useAccessGates() {
     return () => unsub();
   }, []);
 
-  const identityVerified = identityStatus === 'verified';
+  const bypass = import.meta.env.VITE_BYPASS_ONBOARDING === 'true';
+  const identityVerified = bypass || identityStatus === 'verified';
+  const membershipActiveGated = bypass || membershipActive;
 
   const gate = useCallback((action: GateAction, caregiverName: string | undefined, onPass: () => void) => {
     if (!identityVerified) {
       setPending({ action, caregiverName, onPass });
       return;
     }
-    if (!membershipActive) {
+    if (!membershipActiveGated) {
       setPending({ action, caregiverName, onPass });
       return;
     }
     onPass();
-  }, [identityVerified, membershipActive]);
+  }, [identityVerified, membershipActiveGated]);
 
   const dismiss = () => setPending(null);
 
@@ -72,7 +74,7 @@ export function useAccessGates() {
   };
 
   const Modals: React.FC = () => {
-    if (!pending) return null;
+    if (!pending || bypass) return null;
 
     if (!identityVerified) {
       return (

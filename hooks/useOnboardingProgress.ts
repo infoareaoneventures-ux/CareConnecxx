@@ -187,9 +187,11 @@ export function useOnboardingProgress(uid: string | undefined): OnboardingProgre
     carePlanData
   );
 
+  const bypass = import.meta.env.VITE_BYPASS_ONBOARDING === 'true';
+
   const stepDone: Record<OnboardingStepId, boolean> = {
-    'identity-check': identityVerified,
-    'pay-membership': membershipActive,
+    'identity-check': bypass || identityVerified,
+    'pay-membership': bypass || membershipActive,
     'post-job': hasPostedJob,
     'care-plan': carePlanPercent === 100,
     'meet-matches': hasRealMessage,

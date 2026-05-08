@@ -138,8 +138,10 @@ export const MyCareTeam: React.FC = () => {
     return () => { isMounted = false; };
   }, []);
 
+  const bypass = import.meta.env.VITE_BYPASS_ONBOARDING === 'true';
+
   const handleMessage = async (caregiverId: string, caregiverName: string) => {
-    if (identityStatus !== 'verified') {
+    if (!bypass && identityStatus !== 'verified') {
       setPendingMessageTarget({ id: caregiverId, name: caregiverName });
       setShowIdentityGate(true);
       return;

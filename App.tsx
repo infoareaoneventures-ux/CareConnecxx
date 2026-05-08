@@ -95,31 +95,32 @@ import { useAppointmentForCallout } from './hooks/useCaregiverCallout';
 // If App is wrapped by Provider, we can use hooks inside AppContent.
 // But App itself returns the Provider. So we need a split.
 
+const PublicOnlyRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
+  const { authResolved, currentUser } = useCareConnex();
+  if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
+  if (currentUser?.userType === 'client') return <Navigate to="/client/dashboard" replace />;
+  if (currentUser?.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
+  return element;
+};
+
+const ClientRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
+  const { currentUser } = useCareConnex();
+  if (!currentUser) return <Navigate to="/client/login" replace />;
+  if (currentUser.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
+  return element;
+};
+
+const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
+  const { currentUser } = useCareConnex();
+  if (!currentUser) return <Navigate to="/caregiver/login" replace />;
+  if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
+  return element;
+};
+
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isLoading, authResolved, toasts, removeToast, addToast, currentUser } = useCareConnex();
-
-  const PublicOnlyRoute = ({ element }: { element: React.ReactElement }) => {
-    if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
-    if (currentUser?.userType === 'client') return <Navigate to="/client/dashboard" replace />;
-    if (currentUser?.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
-    return element;
-  };
-
-  const ClientRoute = ({ element }: { element: React.ReactElement }) => {
-    if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
-    if (!currentUser) return <Navigate to="/client/login" replace />;
-    if (currentUser.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
-    return element;
-  };
-
-  const CaregiverRoute = ({ element }: { element: React.ReactElement }) => {
-    if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
-    if (!currentUser) return <Navigate to="/caregiver/login" replace />;
-    if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
-    return element;
-  };
+  const { isLoading, toasts, removeToast, addToast, currentUser } = useCareConnex();
 
   // Caregiver Callout Handling
   const { activeCallout, dismissCallout } = useCaregiverCallout(currentUser?.uid || null);

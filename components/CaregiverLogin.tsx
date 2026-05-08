@@ -54,8 +54,8 @@ export const CaregiverLogin: React.FC<CaregiverLoginProps> = ({ onNavigate, onSh
       if (user && 'uid' in user && user.uid) {
           const userDoc = await dbService.getUser(user.uid);
           if (userDoc && userDoc.userType === 'client') {
-              onShowToast("Redirecting to Family Dashboard...", 'info');
-              onNavigate('client');
+              await authService.logout();
+              onShowToast("This account is registered as a family. Please use the Family login.", 'error');
           } else {
               onShowToast("Welcome back! Dashboard updated.", 'success');
               onNavigate('caregiver');

@@ -25,6 +25,7 @@ interface CareConnexContextType {
     appointments: Appointment[];
     caregivers: Caregiver[];
     isLoading: boolean;
+    authResolved: boolean;
     toasts: ToastMessage[];
     addToast: (message: string, type: ToastType) => void;
     removeToast: (id: string) => void;
@@ -40,6 +41,7 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
     const [appointments, setAppointments] = useState<Appointment[]>([]);
     const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [authResolved, setAuthResolved] = useState(false);
     const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
     // Auth Listener - fetches user profile from Firestore to get userType
@@ -85,9 +87,9 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             } else {
                 setCurrentUser(null);
                 setSentryUser(null);
-                // Remove push token on logout
                 pushNotificationService.removeToken('').catch(() => {});
             }
+            setAuthResolved(true);
         });
 
         return () => {
@@ -216,6 +218,7 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             appointments,
             caregivers,
             isLoading,
+            authResolved,
             toasts,
             addToast,
             removeToast,

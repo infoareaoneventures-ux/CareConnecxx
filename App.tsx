@@ -98,7 +98,28 @@ import { useAppointmentForCallout } from './hooks/useCaregiverCallout';
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isLoading, toasts, removeToast, addToast, currentUser } = useCareConnex();
+  const { isLoading, authResolved, toasts, removeToast, addToast, currentUser } = useCareConnex();
+
+  const PublicOnlyRoute = ({ element }: { element: React.ReactElement }) => {
+    if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
+    if (currentUser?.userType === 'client') return <Navigate to="/client/dashboard" replace />;
+    if (currentUser?.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
+    return element;
+  };
+
+  const ClientRoute = ({ element }: { element: React.ReactElement }) => {
+    if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
+    if (!currentUser) return <Navigate to="/client/login" replace />;
+    if (currentUser.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
+    return element;
+  };
+
+  const CaregiverRoute = ({ element }: { element: React.ReactElement }) => {
+    if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
+    if (!currentUser) return <Navigate to="/caregiver/login" replace />;
+    if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
+    return element;
+  };
 
   // Caregiver Callout Handling
   const { activeCallout, dismissCallout } = useCaregiverCallout(currentUser?.uid || null);
@@ -240,8 +261,8 @@ const AppContent: React.FC = () => {
 
       <Suspense fallback={<PageLoader fullScreen message="Loading page..." />}>
         <Routes>
-          <Route path="/" element={<LandingView onNavigate={handleNavigation} />} />
-          <Route path="/login" element={<LoginPage onNavigate={handleNavigation} />} />
+          <Route path="/" element={<PublicOnlyRoute element={<LandingView onNavigate={handleNavigation} />} />} />
+          <Route path="/login" element={<PublicOnlyRoute element={<LoginPage onNavigate={handleNavigation} />} />} />
           <Route path="/auth/login" element={<Navigate to="/login" replace />} />
           <Route path="/how-it-works" element={<HowItWorks onNavigate={handleNavigation} />} />
           <Route path="/trust" element={<TrustAndSafetyPage onNavigate={handleNavigation} />} />
@@ -252,44 +273,39 @@ const AppContent: React.FC = () => {
           <Route path="/help/general" element={<HelpPage section="general" onNavigate={handleNavigation} />} />
           <Route path="/pricing" element={<Subscription onNavigate={handleNavigation} />} />
           <Route path="/client/signup" element={<ClientSignup onNavigate={handleNavigation} onShowToast={addToast} />} />
-          <Route path="/client/login" element={<ClientLogin onNavigate={handleNavigation} onShowToast={addToast} />} />
+          <Route path="/client/login" element={<PublicOnlyRoute element={<ClientLogin onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/client/intake" element={<Navigate to="/client/dashboard" replace />} />
           <Route path="/client/profile" element={<ClientProfileDashboard />} />
           <Route path="/client/forgot-password" element={<ForgotPassword userType="client" onNavigate={handleNavigation} onShowToast={addToast} />} />
 
           <Route path="/caregiver/signup" element={<CaregiverSignup onNavigate={handleNavigation} onShowToast={addToast} />} />
-          <Route path="/caregiver/login" element={<CaregiverLogin onNavigate={handleNavigation} onShowToast={addToast} />} />
+          <Route path="/caregiver/login" element={<PublicOnlyRoute element={<CaregiverLogin onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/caregiver/forgot-password" element={<ForgotPassword userType="caregiver" onNavigate={handleNavigation} onShowToast={addToast} />} />
 
-          <Route path="/client/dashboard" element={
-            <ClientDashboard
-              onNavigate={handleNavigation}
-            />
-          } />
-          <Route path="/client/account" element={<AccountSettings />} />
-          <Route path="/client/payments" element={<Payments />} />
-          <Route path="/client/my-care-team" element={<MyCareTeam />} />
-          <Route path="/client/browse-caregivers" element={<BrowseCaregivers />} />
-          <Route path="/client/find-caregivers" element={<FindCaregivers />} />
-          <Route path="/client/post-job" element={<PostJobFlow />} />
-          <Route path="/client/posts" element={<PostsPage />} />
-          <Route path="/client/membership" element={<Membership />} />
-          <Route path="/client/schedule" element={<Schedule />} />
-          <Route path="/client/interviews" element={<Interviews />} />
-          <Route path="/client/hire/:caregiverId" element={<HireDecision />} />
-          <Route path="/client/caregiver/:caregiverId" element={<ClientCaregiverProfile />} />
-          <Route path="/client/identity-callback" element={<IdentityCallback />} />
-          <Route path="/client/book/:caregiverId" element={<BookingFlow />} />
-          <Route path="/client/review/:visitId" element={<ReviewSystem />} />
-          <Route path="/client/weekly-summary" element={<WeeklySummary />} />
-          <Route path="/client/interview-outcome/:interviewId" element={<InterviewOutcome />} />
-          <Route path="/client/profile-old" element={<ClientProfile onNavigate={handleNavigation} onShowToast={addToast} />} />
-          <Route path="/client/inbox" element={<InboxView 
-            userType="client" 
-            onNavigate={handleNavigation} 
+          <Route path="/client/dashboard" element={<ClientRoute element={<ClientDashboard onNavigate={handleNavigation} />} />} />
+          <Route path="/client/account" element={<ClientRoute element={<AccountSettings />} />} />
+          <Route path="/client/payments" element={<ClientRoute element={<Payments />} />} />
+          <Route path="/client/my-care-team" element={<ClientRoute element={<MyCareTeam />} />} />
+          <Route path="/client/browse-caregivers" element={<ClientRoute element={<BrowseCaregivers />} />} />
+          <Route path="/client/find-caregivers" element={<ClientRoute element={<FindCaregivers />} />} />
+          <Route path="/client/post-job" element={<ClientRoute element={<PostJobFlow />} />} />
+          <Route path="/client/posts" element={<ClientRoute element={<PostsPage />} />} />
+          <Route path="/client/membership" element={<ClientRoute element={<Membership />} />} />
+          <Route path="/client/schedule" element={<ClientRoute element={<Schedule />} />} />
+          <Route path="/client/interviews" element={<ClientRoute element={<Interviews />} />} />
+          <Route path="/client/hire/:caregiverId" element={<ClientRoute element={<HireDecision />} />} />
+          <Route path="/client/caregiver/:caregiverId" element={<ClientRoute element={<ClientCaregiverProfile />} />} />
+          <Route path="/client/identity-callback" element={<ClientRoute element={<IdentityCallback />} />} />
+          <Route path="/client/book/:caregiverId" element={<ClientRoute element={<BookingFlow />} />} />
+          <Route path="/client/review/:visitId" element={<ClientRoute element={<ReviewSystem />} />} />
+          <Route path="/client/weekly-summary" element={<ClientRoute element={<WeeklySummary />} />} />
+          <Route path="/client/interview-outcome/:interviewId" element={<ClientRoute element={<InterviewOutcome />} />} />
+          <Route path="/client/profile-old" element={<ClientRoute element={<ClientProfile onNavigate={handleNavigation} onShowToast={addToast} />} />} />
+          <Route path="/client/inbox" element={<ClientRoute element={<InboxView
+            userType="client"
+            onNavigate={handleNavigation}
             onShowToast={addToast}
             onScheduleVideoCall={(caregiverId, caregiverName) => {
-              // Find caregiver in list or create minimal object
               setScheduleInterviewCaregiver({
                 id: caregiverId,
                 uid: caregiverId,
@@ -301,22 +317,22 @@ const AppContent: React.FC = () => {
             onViewProfile={(caregiverId) => {
               navigate(`/client/caregiver/${caregiverId}`);
             }}
-          />} />
+          />} />} />
 
-          <Route path="/caregiver/dashboard" element={<CaregiverDashboard onNavigate={handleNavigation} />} />
+          <Route path="/caregiver/dashboard" element={<CaregiverRoute element={<CaregiverDashboard onNavigate={handleNavigation} />} />} />
           <Route path="/caregiver/profile" element={<CaregiverProfile onNavigate={handleNavigation} onShowToast={addToast} />} />
           <Route path="/caregiver/inbox" element={<InboxView userType="caregiver" onNavigate={handleNavigation} onShowToast={addToast} />} />
-          <Route path="/caregiver/calendar" element={<CaregiverCalendarPage onNavigate={handleNavigation} />} />
-          <Route path="/caregiver/membership" element={<CaregiverMembership onNavigate={handleNavigation} onShowToast={addToast} />} />
-          <Route path="/caregiver/bookings" element={<CaregiverBookingsPage />} />
-          <Route path="/caregiver/jobs" element={<CaregiverJobBoardPage />} />
-          <Route path="/caregiver/video" element={<CaregiverIntroVideo />} />
-          <Route path="/caregiver/families" element={<CaregiverFamiliesPage />} />
-          <Route path="/caregiver/settings" element={<CaregiverAccountSettings />} />
-          <Route path="/caregiver/transactions" element={<CaregiverTransactionsPage />} />
-          {/* Public shareable caregiver profile — must come AFTER all /caregiver/* static routes in the file so rank ties fall to the specific ones first */}
+          <Route path="/caregiver/calendar" element={<CaregiverRoute element={<CaregiverCalendarPage onNavigate={handleNavigation} />} />} />
+          <Route path="/caregiver/membership" element={<CaregiverRoute element={<CaregiverMembership onNavigate={handleNavigation} onShowToast={addToast} />} />} />
+          <Route path="/caregiver/bookings" element={<CaregiverRoute element={<CaregiverBookingsPage />} />} />
+          <Route path="/caregiver/jobs" element={<CaregiverRoute element={<CaregiverJobBoardPage />} />} />
+          <Route path="/caregiver/video" element={<CaregiverRoute element={<CaregiverIntroVideo />} />} />
+          <Route path="/caregiver/families" element={<CaregiverRoute element={<CaregiverFamiliesPage />} />} />
+          <Route path="/caregiver/settings" element={<CaregiverRoute element={<CaregiverAccountSettings />} />} />
+          <Route path="/caregiver/transactions" element={<CaregiverRoute element={<CaregiverTransactionsPage />} />} />
+          <Route path="/caregiver/payout" element={<CaregiverRoute element={<CaregiverPayoutPage />} />} />
+          {/* Public shareable caregiver profile */}
           <Route path="/caregiver/:id" element={<PublicCaregiverProfile />} />
-          <Route path="/caregiver/payout" element={<CaregiverPayoutPage />} />
 
           <Route path="/client/care-plan" element={
             <CarePlan

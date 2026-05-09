@@ -1198,24 +1198,30 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Care Location</p>
                             {rPlan.locations.filter(l => l.street || l.city).length > 0 ? (
                               <div className="space-y-2.5">
-                                {rPlan.locations.filter(l => l.street || l.city).map((loc, i) => (
-                                  <div key={i}>
-                                    {loc.street && <p className="text-sm font-medium text-slate-800">{loc.street}</p>}
-                                    <p className="text-sm text-slate-500">{[loc.city, [loc.state, loc.zipCode].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</p>
-                                    {(loc.petsInHome || loc.smokingHousehold) && (
-                                      <div className="flex flex-wrap gap-1.5 mt-1">
-                                        {loc.petsInHome && (
-                                          <span className="text-xs px-2.5 py-1 rounded-full border bg-amber-50 border-amber-100 text-amber-700 font-medium">
-                                            {loc.petTypes?.length ? loc.petTypes.join(', ') : 'Pets in home'}{loc.petName ? ` · ${loc.petName}` : ''}
-                                          </span>
-                                        )}
-                                        {loc.smokingHousehold && (
-                                          <span className="text-xs px-2.5 py-1 rounded-full border bg-slate-100 border-slate-200 text-slate-600 font-medium">Smoking household</span>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
+                                {rPlan.locations.filter(l => l.street || l.city).map((loc, i) => {
+                                  const poolEntry = effectivePool.find(p =>
+                                    p.street?.toLowerCase() === loc.street?.toLowerCase() && p.zipCode === loc.zipCode
+                                  );
+                                  const enriched = { ...loc, ...(poolEntry || {}) };
+                                  return (
+                                    <div key={i}>
+                                      {enriched.street && <p className="text-sm font-medium text-slate-800">{enriched.street}</p>}
+                                      <p className="text-sm text-slate-500">{[enriched.city, [enriched.state, enriched.zipCode].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</p>
+                                      {(enriched.petsInHome || enriched.smokingHousehold) && (
+                                        <div className="flex flex-wrap gap-1.5 mt-1">
+                                          {enriched.petsInHome && (
+                                            <span className="text-xs px-2.5 py-1 rounded-full border bg-amber-50 border-amber-100 text-amber-700 font-medium">
+                                              {enriched.petTypes?.length ? enriched.petTypes.join(', ') : 'Pets in home'}{enriched.petName ? ` · ${enriched.petName}` : ''}
+                                            </span>
+                                          )}
+                                          {enriched.smokingHousehold && (
+                                            <span className="text-xs px-2.5 py-1 rounded-full border bg-slate-100 border-slate-200 text-slate-600 font-medium">Smoking household</span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             ) : <p className="text-sm text-slate-400 italic">No location assigned</p>}
                           </div>

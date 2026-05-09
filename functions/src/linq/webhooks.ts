@@ -75,6 +75,63 @@ async function handleOptIn(phone: string, chatId: string, session: AgentSession)
   await shareContactCard(chatId).catch(() => {/* non-critical */});
 }
 
+// ── Typing indicator — pre-fetch context so Claude responds faster ────────────
+
+async function handleTypingStarted(event: any): Promise<void> {
+  const phone  = event.data?.sender_handle?.value as string | undefined;
+  const chatId = event.data?.chat?.id as string | undefined;
+  if (!phone || !chatId) return;
+
+  const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
+  if (!sessionSnap.exists) return;
+
+  const session = sessionSnap.data() as AgentSession;
+  if (session.optedOut || session.optedIn === false) return;
+
+  const seniorId = session.seniorId ?? session.userId ?? "";
+  const userId   = session.userId ?? "";
+
+  // Pre-fetch in parallel — same reads qaAgent will need
+  const now = new Date().toISOString();
+
+  const [seniorSnap, journalSnap, apptSnap, historySnap] = await Promise.all([
+    db.collection("senior_profiles").doc(seniorId).get(),
+    db.collection("care_journal")
+      .where("seniorId", "==", seniorId)
+      .orderBy("timestamp", "desc")
+      .limit(3)
+      .get(),
+    db.collection("appointments")
+      .where("clientId", "==", userId)
+      .where("isoDate", ">=", now.slice(0, 10))
+      .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
+      .orderBy("isoDate", "asc")
+      .limit(1)
+      .get(),
+    db.collection("agent_conversations")
+      .doc(phone)
+      .collection("messages")
+      .orderBy("timestamp", "desc")
+      .limit(10)
+      .get(),
+  ]).catch(() => [null, null, null, null]);
+
+  if (!seniorSnap) return;
+
+  const prefetch = {
+    seniorProfile:       seniorSnap.exists ? seniorSnap.data() : null,
+    recentJournal:       journalSnap ? journalSnap.docs.map(d => d.data()) : [],
+    nextAppointment:     apptSnap && !apptSnap.empty ? apptSnap.docs[0].data() : null,
+    conversationHistory: historySnap
+      ? historySnap.docs.map(d => d.data()).reverse()
+      : [],
+    cachedAt:  now,
+    expiresAt: new Date(Date.now() + 60 * 1000).toISOString(), // 60s TTL
+  };
+
+  await db.collection("agent_prefetch").doc(phone).set(prefetch);
+}
+
 // ── Inbound message handler ───────────────────────────────────────────────────
 
 async function handleInbound(event: any): Promise<void> {
@@ -203,6 +260,12 @@ export const linqWebhook = functions.https.onRequest(async (req, res) => {
         phone:     event.data?.sender_handle?.value,
         reactedAt: new Date().toISOString(),
       }).catch(() => {/* non-critical */});
+      break;
+
+    case "chat.typing_indicator.started":
+      await handleTypingStarted(event).catch((err) =>
+        console.error("linqWebhook handleTypingStarted:", err)
+      );
       break;
 
     default:

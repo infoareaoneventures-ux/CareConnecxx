@@ -91,6 +91,58 @@ async function handleOptIn(phone, chatId, session) {
     // Share CareConnecxx as a saved contact now that they've opted in
     await (0, client_1.shareContactCard)(chatId).catch(() => { });
 }
+// ── Typing indicator — pre-fetch context so Claude responds faster ────────────
+async function handleTypingStarted(event) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const phone = (_b = (_a = event.data) === null || _a === void 0 ? void 0 : _a.sender_handle) === null || _b === void 0 ? void 0 : _b.value;
+    const chatId = (_d = (_c = event.data) === null || _c === void 0 ? void 0 : _c.chat) === null || _d === void 0 ? void 0 : _d.id;
+    if (!phone || !chatId)
+        return;
+    const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
+    if (!sessionSnap.exists)
+        return;
+    const session = sessionSnap.data();
+    if (session.optedOut || session.optedIn === false)
+        return;
+    const seniorId = (_f = (_e = session.seniorId) !== null && _e !== void 0 ? _e : session.userId) !== null && _f !== void 0 ? _f : "";
+    const userId = (_g = session.userId) !== null && _g !== void 0 ? _g : "";
+    // Pre-fetch in parallel — same reads qaAgent will need
+    const now = new Date().toISOString();
+    const [seniorSnap, journalSnap, apptSnap, historySnap] = await Promise.all([
+        db.collection("senior_profiles").doc(seniorId).get(),
+        db.collection("care_journal")
+            .where("seniorId", "==", seniorId)
+            .orderBy("timestamp", "desc")
+            .limit(3)
+            .get(),
+        db.collection("appointments")
+            .where("clientId", "==", userId)
+            .where("isoDate", ">=", now.slice(0, 10))
+            .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
+            .orderBy("isoDate", "asc")
+            .limit(1)
+            .get(),
+        db.collection("agent_conversations")
+            .doc(phone)
+            .collection("messages")
+            .orderBy("timestamp", "desc")
+            .limit(10)
+            .get(),
+    ]).catch(() => [null, null, null, null]);
+    if (!seniorSnap)
+        return;
+    const prefetch = {
+        seniorProfile: seniorSnap.exists ? seniorSnap.data() : null,
+        recentJournal: journalSnap ? journalSnap.docs.map(d => d.data()) : [],
+        nextAppointment: apptSnap && !apptSnap.empty ? apptSnap.docs[0].data() : null,
+        conversationHistory: historySnap
+            ? historySnap.docs.map(d => d.data()).reverse()
+            : [],
+        cachedAt: now,
+        expiresAt: new Date(Date.now() + 60 * 1000).toISOString(), // 60s TTL
+    };
+    await db.collection("agent_prefetch").doc(phone).set(prefetch);
+}
 // ── Inbound message handler ───────────────────────────────────────────────────
 async function handleInbound(event) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
@@ -200,6 +252,9 @@ exports.linqWebhook = functions.https.onRequest(async (req, res) => {
                 phone: (_o = (_m = event.data) === null || _m === void 0 ? void 0 : _m.sender_handle) === null || _o === void 0 ? void 0 : _o.value,
                 reactedAt: new Date().toISOString(),
             }).catch(() => { });
+            break;
+        case "chat.typing_indicator.started":
+            await handleTypingStarted(event).catch((err) => console.error("linqWebhook handleTypingStarted:", err));
             break;
         default:
             break;

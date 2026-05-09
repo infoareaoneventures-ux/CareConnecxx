@@ -121,6 +121,37 @@ function buildSystemPrompt(
   ].join("\n");
 }
 
+// ── Prefetch cache — populated by typing indicator handler ───────────────────
+
+async function getPrefetchedContext(phone: string): Promise<{
+  seniorProfile:       any;
+  recentJournal:       any[];
+  nextAppointment:     any | null;
+  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
+} | null> {
+  const snap = await db.collection("agent_prefetch").doc(phone).get();
+  if (!snap.exists) return null;
+
+  const data = snap.data()!;
+  if (new Date(data.expiresAt) < new Date()) {
+    // Expired — delete and return null so fresh reads happen
+    await snap.ref.delete().catch(() => {});
+    return null;
+  }
+
+  // Use and immediately delete so it won't be reused
+  await snap.ref.delete().catch(() => {});
+  return {
+    seniorProfile:       data.seniorProfile,
+    recentJournal:       data.recentJournal ?? [],
+    nextAppointment:     data.nextAppointment ?? null,
+    conversationHistory: (data.conversationHistory ?? []).map((m: any) => ({
+      role:    m.role as "user" | "assistant",
+      content: m.content as string,
+    })),
+  };
+}
+
 // ── Main QA function ──────────────────────────────────────────────────────────
 
 export async function runQaAgent(params: {
@@ -131,12 +162,22 @@ export async function runQaAgent(params: {
 }): Promise<string> {
   const { text, phone, userId, seniorId } = params;
 
-  const [senior, journal, nextAppt, history] = await Promise.all([
-    getSeniorProfile(seniorId),
-    getRecentJournalEntries(seniorId, 3),
-    getNextAppointment(userId),
-    getConversationHistory(phone),
-  ]);
+  // Use pre-fetched data if typing indicator fired ahead of this message
+  const prefetched = await getPrefetchedContext(phone);
+
+  const [senior, journal, nextAppt, history] = prefetched
+    ? [
+        prefetched.seniorProfile,
+        prefetched.recentJournal,
+        prefetched.nextAppointment,
+        prefetched.conversationHistory,
+      ]
+    : await Promise.all([
+        getSeniorProfile(seniorId),
+        getRecentJournalEntries(seniorId, 3),
+        getNextAppointment(userId),
+        getConversationHistory(phone),
+      ]);
 
   const systemPrompt = buildSystemPrompt(senior, journal, nextAppt);
 

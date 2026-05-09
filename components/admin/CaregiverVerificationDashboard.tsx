@@ -18,7 +18,9 @@ interface VerificationQueueItem extends Caregiver {
     zip: string;
     consentGiven: boolean;
     submittedAt: string;
-    documents?: string[]; // Uploaded document URLs
+    documents?: string[];
+    status?: 'pending' | 'clear' | 'consider' | 'suspended';
+    checkrReportId?: string;
   };
 }
 

@@ -438,6 +438,8 @@ export const dbService = {
                 callback(user);
             });
         }
+        // Firebase not configured — immediately resolve as unauthenticated
+        callback(null);
         return () => { };
     },
 

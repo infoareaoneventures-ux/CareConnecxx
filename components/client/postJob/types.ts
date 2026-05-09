@@ -5,6 +5,7 @@ export interface CareRecipientEntry {
   firstName: string;
   lastName: string;
   relationship: string;
+  isSelf?: boolean;
 }
 
 export interface JobPostFormData {

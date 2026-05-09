@@ -251,6 +251,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
       zipCode: newLocation.zipCode,
       petsInHome: newLocation.petsInHome,
       smokingHousehold: newLocation.smokingHousehold,
+      source: 'job-primary',
     };
 
     // Select it immediately

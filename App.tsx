@@ -108,14 +108,16 @@ const PublicOnlyRoute: React.FC<{ element: React.ReactElement }> = ({ element })
 };
 
 const ClientRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
-  const { currentUser } = useCareConnex();
+  const { currentUser, authResolved } = useCareConnex();
+  if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/client/login" replace />;
   if (currentUser.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
   return element;
 };
 
 const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
-  const { currentUser } = useCareConnex();
+  const { currentUser, authResolved } = useCareConnex();
+  if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/caregiver/login" replace />;
   if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
   return element;
@@ -124,7 +126,7 @@ const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) 
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isLoading, toasts, removeToast, addToast, currentUser } = useCareConnex();
+  const { isLoading, authResolved, toasts, removeToast, addToast, currentUser } = useCareConnex();
 
   // Caregiver Callout Handling
   const { activeCallout, dismissCallout } = useCaregiverCallout(currentUser?.uid || null);
@@ -251,7 +253,7 @@ const AppContent: React.FC = () => {
   const showBottomNav = isCaregiverFlow && !authPaths.includes(path);
   const activeColor = isClientFlow ? 'text-teal-600' : 'text-orange-500';
 
-  if (isLoading) {
+  if (!authResolved) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-[var(--color-neutral-50)]">
         <Loader2 className="w-10 h-10 text-[var(--color-primary-600)] animate-spin mb-4" />

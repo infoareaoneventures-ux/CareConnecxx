@@ -3543,17 +3543,24 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
     if (clean.careRecipientAge) profileUpdate.age = parseInt(clean.careRecipientAge, 10) || undefined;
     if (clean.relationship) profileUpdate.relationship = clean.relationship;
 
-    const primaryKey = `${clean.careRecipientFirstName.toLowerCase()}_${(clean.careRecipientLastName || 'noname').toLowerCase()}`.replace(/\s+/g, '_');
-    const lifestyleUpdates: Record<string, any> = {
-        [`recipientPlans.${primaryKey}.lifestyle.petsInHome`]: clean.petsInHome ?? false,
-        [`recipientPlans.${primaryKey}.lifestyle.smokingHousehold`]: clean.smokingHousehold ?? false,
+    // Sync pets/smoking to locationPool entry for the primary address
+    const locationPoolUpdate = async () => {
+        if (!clean.street) return;
+        const cpRef = db!.collection('carePlans').doc(uid);
+        const cpSnap = await cpRef.get();
+        const pool: any[] = (cpSnap.data() as any)?.locationPool || [];
+        const poolIdx = pool.findIndex((l: any) => l.street?.toLowerCase() === clean.street.toLowerCase() && l.zipCode === clean.zipCode);
+        if (poolIdx >= 0) {
+            pool[poolIdx] = { ...pool[poolIdx], petsInHome: clean.petsInHome ?? false, smokingHousehold: clean.smokingHousehold ?? false };
+        } else {
+            pool.push({ street: clean.street, city: clean.city, state: clean.state, zipCode: clean.zipCode, petsInHome: clean.petsInHome ?? false, smokingHousehold: clean.smokingHousehold ?? false });
+        }
+        await cpRef.set({ locationPool: pool }, { merge: true });
     };
 
     await Promise.allSettled([
         db.collection('senior_profiles').doc(uid).set(profileUpdate, { merge: true }),
         db.collection('users').doc(uid).set({ jobPostingCompleted: true }, { merge: true }),
-        db.collection('carePlans').doc(uid).set({}, { merge: true }).then(() =>
-            db!.collection('carePlans').doc(uid).update(lifestyleUpdates)
-        ),
+        locationPoolUpdate(),
     ]);
 }

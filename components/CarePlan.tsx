@@ -45,7 +45,7 @@ const ENTERTAINMENT = ['Music', 'Movies', 'TV Shows', 'Theater', 'Other'];
 const FREQ_OPTIONS = ['Daily', 'Weekly', 'Monthly', 'Occasionally'];
 const PET_TYPES = ['Dog', 'Cat', 'Fish', 'Other'];
 
-interface LocationEntry { street: string; city: string; state: string; zipCode: string; }
+interface LocationEntry { street: string; city: string; state: string; zipCode: string; petsInHome?: boolean; petTypes?: string[]; petName?: string; smokingHousehold?: boolean; }
 
 interface LifestyleData {
   favoriteActivities: string[]; favoriteActivitiesOther: string;
@@ -54,8 +54,6 @@ interface LifestyleData {
   enjoysConversation: boolean | null; prefersQuiet: boolean | null;
   familyInArea: boolean | null; familyVisitFreq: string;
   friendsVisitors: boolean | null; friendsVisitFreq: string;
-  petsInHome: boolean | null; petTypes: string[]; petName: string;
-  smokingHousehold: boolean | null;
   hasAppointments: boolean | null; appointmentsDetails: string;
 }
 
@@ -85,8 +83,6 @@ const emptyLifestyle = (): LifestyleData => ({
   enjoysConversation: null, prefersQuiet: null,
   familyInArea: null, familyVisitFreq: '',
   friendsVisitors: null, friendsVisitFreq: '',
-  petsInHome: null, petTypes: [], petName: '',
-  smokingHousehold: null,
   hasAppointments: null, appointmentsDetails: '',
 });
 
@@ -112,7 +108,7 @@ const toggleArr = (arr: string[], item: string) =>
 const hasLifestyle = (ls: LifestyleData) =>
   ls.favoriteActivities.length > 0 || ls.helpActivities.length > 0 || ls.entertainment.length > 0 ||
   ls.enjoysConversation !== null || ls.prefersQuiet !== null || ls.familyInArea !== null ||
-  ls.friendsVisitors !== null || ls.petsInHome !== null || ls.hasAppointments !== null;
+  ls.friendsVisitors !== null || ls.hasAppointments !== null;
 
 
 const inputCls = 'border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary-400 bg-white';
@@ -1066,6 +1062,25 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                           <input className={inputCls} placeholder="City" value={editingPoolDraft.city} onChange={e => setEditingPoolDraft(p => p ? { ...p, city: e.target.value } : p)} />
                                           <input className={inputCls} placeholder="State" value={editingPoolDraft.state} onChange={e => setEditingPoolDraft(p => p ? { ...p, state: e.target.value } : p)} />
                                         </div>
+                                        <div className="grid grid-cols-2 gap-2 mb-2 pt-2 border-t border-slate-100">
+                                          <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all text-xs font-medium ${editingPoolDraft.petsInHome ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-primary-300'}`}>
+                                            <input type="checkbox" checked={!!editingPoolDraft.petsInHome} onChange={e => setEditingPoolDraft(p => p ? { ...p, petsInHome: e.target.checked, petTypes: e.target.checked ? p.petTypes : [], petName: e.target.checked ? p.petName : '' } : p)} className="w-3.5 h-3.5 accent-primary-600" />
+                                            Pets in the home
+                                          </label>
+                                          <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all text-xs font-medium ${editingPoolDraft.smokingHousehold ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-primary-300'}`}>
+                                            <input type="checkbox" checked={!!editingPoolDraft.smokingHousehold} onChange={e => setEditingPoolDraft(p => p ? { ...p, smokingHousehold: e.target.checked } : p)} className="w-3.5 h-3.5 accent-primary-600" />
+                                            Smoking household
+                                          </label>
+                                          {editingPoolDraft.petsInHome && (
+                                            <div className="col-span-2 flex flex-wrap gap-1.5">
+                                              {PET_TYPES.map(t => (
+                                                <CheckPill key={t} label={t} selected={(editingPoolDraft.petTypes || []).includes(t)}
+                                                  onClick={() => setEditingPoolDraft(p => p ? { ...p, petTypes: toggleArr(p.petTypes || [], t) } : p)} />
+                                              ))}
+                                              <input className={`w-full mt-1 ${inputCls}`} placeholder="Pet name (optional)" value={editingPoolDraft.petName || ''} onChange={e => setEditingPoolDraft(p => p ? { ...p, petName: e.target.value } : p)} />
+                                            </div>
+                                          )}
+                                        </div>
                                         <div className="flex gap-2">
                                           <button onClick={() => {
                                             if (!editingPoolDraft!.street.trim()) {
@@ -1182,11 +1197,23 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Care Location</p>
                             {rPlan.locations.filter(l => l.street || l.city).length > 0 ? (
-                              <div className="space-y-1">
+                              <div className="space-y-2.5">
                                 {rPlan.locations.filter(l => l.street || l.city).map((loc, i) => (
                                   <div key={i}>
                                     {loc.street && <p className="text-sm font-medium text-slate-800">{loc.street}</p>}
                                     <p className="text-sm text-slate-500">{[loc.city, [loc.state, loc.zipCode].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</p>
+                                    {(loc.petsInHome || loc.smokingHousehold) && (
+                                      <div className="flex flex-wrap gap-1.5 mt-1">
+                                        {loc.petsInHome && (
+                                          <span className="text-xs px-2.5 py-1 rounded-full border bg-amber-50 border-amber-100 text-amber-700 font-medium">
+                                            {loc.petTypes?.length ? loc.petTypes.join(', ') : 'Pets in home'}{loc.petName ? ` · ${loc.petName}` : ''}
+                                          </span>
+                                        )}
+                                        {loc.smokingHousehold && (
+                                          <span className="text-xs px-2.5 py-1 rounded-full border bg-slate-100 border-slate-200 text-slate-600 font-medium">Smoking household</span>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -1328,29 +1355,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             )}
                           </SubSec>
 
-                          <SubSec title="Pets in the Home">
-                            <YesNo value={draft.lifestyle.petsInHome}
-                              onChange={v => setLS({ petsInHome: v, petTypes: v ? draft.lifestyle.petTypes : [], petName: v ? draft.lifestyle.petName : '' })} />
-                            {draft.lifestyle.petsInHome && (
-                              <div className="mt-3 space-y-2">
-                                <div className="flex flex-wrap gap-2">
-                                  {PET_TYPES.map(t => (
-                                    <CheckPill key={t} label={t} selected={draft.lifestyle.petTypes.includes(t)}
-                                      onClick={() => setLS({ petTypes: toggleArr(draft.lifestyle.petTypes, t) })} />
-                                  ))}
-                                </div>
-                                <input className={inputCls} placeholder="Pet name (optional)"
-                                  value={draft.lifestyle.petName}
-                                  onChange={e => setLS({ petName: e.target.value })} />
-                              </div>
-                            )}
-                          </SubSec>
-
-                          <SubSec title="Smoking Household">
-                            <YesNo value={draft.lifestyle.smokingHousehold}
-                              onChange={v => setLS({ smokingHousehold: v })} />
-                          </SubSec>
-
                           <SubSec title="Schedule / Appointments">
                             <YesNo value={draft.lifestyle.hasAppointments}
                               onChange={v => setLS({ hasAppointments: v, appointmentsDetails: v ? draft.lifestyle.appointmentsDetails : '' })} />
@@ -1391,16 +1395,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                       rPlan.lifestyle.friendsVisitors === true ? `Friends visit${rPlan.lifestyle.friendsVisitFreq ? ` · ${rPlan.lifestyle.friendsVisitFreq}` : ''}` : '',
                                     ].filter(Boolean)}
                                     color="bg-green-50 border-green-100 text-green-700" />
-                                )}
-                                {rPlan.lifestyle.petsInHome === true && (
-                                  <ReadChips label="Pets"
-                                    items={rPlan.lifestyle.petTypes.length > 0
-                                      ? rPlan.lifestyle.petTypes.map(t => rPlan.lifestyle.petName ? `${t} (${rPlan.lifestyle.petName})` : t)
-                                      : rPlan.lifestyle.petName ? [rPlan.lifestyle.petName] : ['Yes']}
-                                    color="bg-amber-50 border-amber-100 text-amber-700" />
-                                )}
-                                {rPlan.lifestyle.smokingHousehold === true && (
-                                  <ReadChips label="Home Environment" items={['Smoking household']} color="bg-slate-100 border-slate-200 text-slate-600" />
                                 )}
                                 {rPlan.lifestyle.hasAppointments === true && (
                                   <div>

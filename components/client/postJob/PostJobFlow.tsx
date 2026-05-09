@@ -107,22 +107,33 @@ export const PostJobFlow: React.FC = () => {
             );
           }
 
-          // Save per-recipient care needs, lifestyle, and notes to carePlans.
-          // Location is only set on first save — never overwritten by a new job post.
+          // Save per-recipient care needs and notes to carePlans.
+          // Location (with pets/smoking) is synced to locationPool — only set on recipient if none exists yet.
           const cpRef = db.collection('carePlans').doc(currentUser.uid);
           const cpSnap = await cpRef.get();
           const cpData = (cpSnap.data() as any) || {};
           const locationEntry = data.streetAddress
-            ? [{ street: data.streetAddress, city: data.city, state: data.state, zipCode: data.zipCode }]
+            ? [{ street: data.streetAddress, city: data.city, state: data.state, zipCode: data.zipCode, petsInHome: data.petsInHome ?? false, smokingHousehold: data.smokingHousehold ?? false }]
             : [];
+
+          // Sync pets/smoking to the matching locationPool entry
+          if (data.streetAddress) {
+            const pool: any[] = cpData.locationPool || [];
+            const poolIdx = pool.findIndex((l: any) => l.street?.toLowerCase() === data.streetAddress.toLowerCase() && l.zipCode === data.zipCode);
+            if (poolIdx >= 0) {
+              pool[poolIdx] = { ...pool[poolIdx], petsInHome: data.petsInHome ?? false, smokingHousehold: data.smokingHousehold ?? false };
+            } else {
+              pool.push({ street: data.streetAddress, city: data.city, state: data.state, zipCode: data.zipCode, petsInHome: data.petsInHome ?? false, smokingHousehold: data.smokingHousehold ?? false });
+            }
+            try { await cpRef.set({ locationPool: pool }, { merge: true }); } catch { /* non-critical */ }
+          }
+
           for (const r of data.careRecipients) {
             const key = `${r.firstName.toLowerCase()}_${(r.lastName || 'noname').toLowerCase()}`.replace(/\s+/g, '_');
             const existingLocs = cpData?.recipientPlans?.[key]?.locations;
             const updates: Record<string, any> = {
               [`recipientPlans.${key}.careNeeds`]: data.careTypes,
               [`recipientPlans.${key}.notes`]: data.description.trim(),
-              [`recipientPlans.${key}.lifestyle.petsInHome`]: data.petsInHome ?? false,
-              [`recipientPlans.${key}.lifestyle.smokingHousehold`]: data.smokingHousehold ?? false,
             };
             // Only set location if recipient has none saved yet
             if (!existingLocs?.length) {
@@ -132,7 +143,7 @@ export const PostJobFlow: React.FC = () => {
               await cpRef.update(updates);
             } catch (e: any) {
               if (e.code === 'not-found') {
-                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, notes: data.description.trim(), locations: locationEntry, lifestyle: { petsInHome: data.petsInHome ?? false, smokingHousehold: data.smokingHousehold ?? false } } } });
+                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, notes: data.description.trim(), locations: locationEntry } } });
               }
             }
           }

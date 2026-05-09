@@ -23,6 +23,8 @@ interface SavedLocation {
   state: string;
   zipCode: string;
   source: 'job-primary' | 'job-saved' | 'careplan-pool' | 'careplan-recipient';
+  petsInHome?: boolean;
+  smokingHousehold?: boolean;
 }
 
 export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue, onBack, onShowToast }) => {
@@ -145,7 +147,16 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
           }
         };
 
-        (cp.locationPool || []).forEach((loc: any, i: number) => addLoc(loc, 'cp-pool', i, 'careplan-pool'));
+        (cp.locationPool || []).forEach((loc: any, i: number) => {
+          if (!loc?.street && !loc?.city) return;
+          const blockKey = `${(loc.street || '').toLowerCase().trim()}|${loc.zipCode || ''}`;
+          if (deletedKeys.has(blockKey)) return;
+          const addrKey = `${(loc.street || '').toLowerCase()}${loc.zipCode || ''}`;
+          if (!seenAddresses.has(addrKey)) {
+            seenAddresses.add(addrKey);
+            locations.push({ id: `cp-pool-${i}`, street: loc.street || '', city: loc.city || '', state: loc.state || '', zipCode: loc.zipCode || '', source: 'careplan-pool', petsInHome: loc.petsInHome, smokingHousehold: loc.smokingHousehold });
+          }
+        });
 
         const plans = cp.recipientPlans || {};
         Object.values(plans).forEach((plan: any, pi: number) => {
@@ -204,7 +215,11 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   // --- Location logic ---
   const selectLocation = (loc: SavedLocation) => {
     setSelectedLocationId(loc.id);
-    onChange({ streetAddress: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode });
+    onChange({
+      streetAddress: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode,
+      petsInHome: loc.petsInHome ?? false,
+      smokingHousehold: loc.smokingHousehold ?? false,
+    });
   };
 
   const handleLocZipChange = async (zip: string) => {
@@ -329,6 +344,29 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
       }
     }
     setConfirmDeleteLocId(null);
+  };
+
+  const saveHomeEnv = (patch: { petsInHome?: boolean; smokingHousehold?: boolean }) => {
+    onChange(patch);
+    if (!db || !currentUser?.uid || !selectedLocationId) return;
+    const loc = savedLocations.find(l => l.id === selectedLocationId);
+    if (!loc || loc.source === 'job-primary') return;
+    const updatedLoc = {
+      ...loc,
+      petsInHome: patch.petsInHome !== undefined ? patch.petsInHome : data.petsInHome,
+      smokingHousehold: patch.smokingHousehold !== undefined ? patch.smokingHousehold : data.smokingHousehold,
+    };
+    setSavedLocations(prev => prev.map(l => l.id === selectedLocationId ? updatedLoc : l));
+    if (loc.source === 'careplan-pool' || loc.source === 'careplan-recipient') {
+      db.collection('carePlans').doc(currentUser.uid).get().then(snap => {
+        const pool: any[] = (snap.data() as any)?.locationPool || [];
+        const idx = pool.findIndex((p: any) => p.street?.toLowerCase() === loc.street.toLowerCase() && p.zipCode === loc.zipCode);
+        if (idx >= 0) {
+          pool[idx] = { ...pool[idx], petsInHome: updatedLoc.petsInHome, smokingHousehold: updatedLoc.smokingHousehold };
+          db!.collection('carePlans').doc(currentUser!.uid).set({ locationPool: pool }, { merge: true }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
   };
 
   const handleContinue = () => {
@@ -552,6 +590,24 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
         </div>
 
       </div>
+
+      {/* Home environment — shown once an address is selected */}
+      {data.streetAddress && (
+        <div className="mt-6 pt-6 border-t border-slate-100 space-y-3">
+          <label className="block text-sm font-semibold text-slate-700">Home environment</label>
+          <p className="text-xs text-slate-400 -mt-1">Caregivers need to know what to expect at this address.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 cursor-pointer transition-all ${data.petsInHome ? 'border-primary-600 bg-primary-50' : 'border-slate-200 bg-white hover:border-primary-300'}`}>
+              <input type="checkbox" checked={data.petsInHome} onChange={e => saveHomeEnv({ petsInHome: e.target.checked })} className="w-4 h-4 accent-primary-600" />
+              <span className="text-sm font-medium text-slate-700">Pets in the home</span>
+            </label>
+            <label className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 cursor-pointer transition-all ${data.smokingHousehold ? 'border-primary-600 bg-primary-50' : 'border-slate-200 bg-white hover:border-primary-300'}`}>
+              <input type="checkbox" checked={data.smokingHousehold} onChange={e => saveHomeEnv({ smokingHousehold: e.target.checked })} className="w-4 h-4 accent-primary-600" />
+              <span className="text-sm font-medium text-slate-700">Smoking household</span>
+            </label>
+          </div>
+        </div>
+      )}
 
       <div className="mt-8 flex items-center justify-between">
         <button type="button" onClick={onBack} className="text-sm text-slate-500 hover:text-slate-700 font-medium">Back</button>

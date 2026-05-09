@@ -27,11 +27,13 @@ export interface JobPostFormData {
   zipCode: string;
   neighborhood: string;
 
+  // Step 2: Who & Where (home environment — tied to address)
+  petsInHome: boolean;
+  smokingHousehold: boolean;
+
   // Step 3: Care Needs
   careTypes: string[];
   careLevel: JobCareLevel | '';
-  petsInHome: boolean;
-  smokingHousehold: boolean;
 
   // Step 4: Rate & Payment
   rate: number;

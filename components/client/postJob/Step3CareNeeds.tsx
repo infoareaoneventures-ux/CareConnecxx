@@ -50,34 +50,6 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
           </div>
         </div>
 
-        {/* Household toggles */}
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-2">Household</label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="flex items-start gap-3 p-4 rounded-xl border-2 border-slate-200 bg-white cursor-pointer hover:border-primary-300 transition-all">
-              <input
-                type="checkbox"
-                checked={data.petsInHome}
-                onChange={e => onChange({ petsInHome: e.target.checked })}
-                className="w-5 h-5 mt-0.5 accent-teal-600"
-              />
-              <div>
-                <p className="font-semibold text-slate-800 text-sm">Pets in the home</p>
-              </div>
-            </label>
-            <label className="flex items-start gap-3 p-4 rounded-xl border-2 border-slate-200 bg-white cursor-pointer hover:border-primary-300 transition-all">
-              <input
-                type="checkbox"
-                checked={data.smokingHousehold}
-                onChange={e => onChange({ smokingHousehold: e.target.checked })}
-                className="w-5 h-5 mt-0.5 accent-teal-600"
-              />
-              <div>
-                <p className="font-semibold text-slate-800 text-sm">Smoking household</p>
-              </div>
-            </label>
-          </div>
-        </div>
       </div>
 
       <div className="mt-8 flex items-center justify-between">

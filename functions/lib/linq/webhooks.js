@@ -45,13 +45,24 @@ const sms_1 = require("../sms");
 const db = admin.firestore();
 // ── Signature verification ────────────────────────────────────────────────────
 function verifySignature(rawBody, timestamp, signature, secret) {
-    const payload = `${timestamp}.${rawBody}`;
-    const expected = crypto
-        .createHmac("sha256", secret)
-        .update(payload)
-        .digest("hex");
+    // Secret is base64url-encoded — decode to raw bytes for HMAC key
+    const secretKey = Buffer.from(secret, "base64");
+    const payload = Buffer.concat([
+        Buffer.from(`${timestamp}.`),
+        rawBody,
+    ]);
+    const hmac = crypto.createHmac("sha256", secretKey).update(payload);
+    // Try base64 comparison first, then hex fallback
+    const expectedB64 = hmac.digest("base64");
+    const expectedHex = crypto.createHmac("sha256", secretKey).update(payload).digest("hex");
     try {
-        return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"));
+        if (signature.length === expectedB64.length) {
+            return crypto.timingSafeEqual(Buffer.from(expectedB64), Buffer.from(signature));
+        }
+        if (signature.length === expectedHex.length) {
+            return crypto.timingSafeEqual(Buffer.from(expectedHex), Buffer.from(signature));
+        }
+        return false;
     }
     catch (_a) {
         return false;
@@ -213,7 +224,7 @@ async function handleInbound(event) {
 }
 // ── Webhook HTTPS function ────────────────────────────────────────────────────
 exports.linqWebhook = functions.https.onRequest(async (req, res) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
     // Always return 200 immediately — Linq expects a fast ack
     res.status(200).send("ok");
     if (req.method !== "POST")
@@ -223,7 +234,7 @@ exports.linqWebhook = functions.https.onRequest(async (req, res) => {
     if (webhookSecret) {
         const timestamp = (_a = req.headers["x-webhook-timestamp"]) !== null && _a !== void 0 ? _a : "";
         const signature = (_b = req.headers["x-webhook-signature"]) !== null && _b !== void 0 ? _b : "";
-        const rawBody = JSON.stringify(req.body);
+        const rawBody = (_c = req.rawBody) !== null && _c !== void 0 ? _c : Buffer.from(JSON.stringify(req.body));
         if (!verifySignature(rawBody, timestamp, signature, webhookSecret)) {
             console.warn("linqWebhook: invalid signature — ignoring");
             return;
@@ -238,18 +249,18 @@ exports.linqWebhook = functions.https.onRequest(async (req, res) => {
         case "message.read":
             // Log read receipts for engagement tracking (Sprint 4)
             await db.collection("agent_read_receipts").add({
-                chatId: (_d = (_c = event.data) === null || _c === void 0 ? void 0 : _c.chat) === null || _d === void 0 ? void 0 : _d.id,
-                messageId: (_e = event.data) === null || _e === void 0 ? void 0 : _e.message_id,
-                phone: (_g = (_f = event.data) === null || _f === void 0 ? void 0 : _f.sender_handle) === null || _g === void 0 ? void 0 : _g.value,
+                chatId: (_e = (_d = event.data) === null || _d === void 0 ? void 0 : _d.chat) === null || _e === void 0 ? void 0 : _e.id,
+                messageId: (_f = event.data) === null || _f === void 0 ? void 0 : _f.message_id,
+                phone: (_h = (_g = event.data) === null || _g === void 0 ? void 0 : _g.sender_handle) === null || _h === void 0 ? void 0 : _h.value,
                 readAt: new Date().toISOString(),
             }).catch(() => { });
             break;
         case "reaction.added":
             await db.collection("agent_reactions").add({
-                chatId: (_j = (_h = event.data) === null || _h === void 0 ? void 0 : _h.chat) === null || _j === void 0 ? void 0 : _j.id,
-                messageId: (_k = event.data) === null || _k === void 0 ? void 0 : _k.message_id,
-                reaction: (_l = event.data) === null || _l === void 0 ? void 0 : _l.reaction,
-                phone: (_o = (_m = event.data) === null || _m === void 0 ? void 0 : _m.sender_handle) === null || _o === void 0 ? void 0 : _o.value,
+                chatId: (_k = (_j = event.data) === null || _j === void 0 ? void 0 : _j.chat) === null || _k === void 0 ? void 0 : _k.id,
+                messageId: (_l = event.data) === null || _l === void 0 ? void 0 : _l.message_id,
+                reaction: (_m = event.data) === null || _m === void 0 ? void 0 : _m.reaction,
+                phone: (_p = (_o = event.data) === null || _o === void 0 ? void 0 : _o.sender_handle) === null || _p === void 0 ? void 0 : _p.value,
                 reactedAt: new Date().toISOString(),
             }).catch(() => { });
             break;

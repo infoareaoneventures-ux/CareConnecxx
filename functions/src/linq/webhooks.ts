@@ -12,21 +12,31 @@ const db = admin.firestore();
 // ── Signature verification ────────────────────────────────────────────────────
 
 function verifySignature(
-  rawBody: string,
+  rawBody: Buffer,
   timestamp: string,
   signature: string,
   secret: string
 ): boolean {
-  const payload  = `${timestamp}.${rawBody}`;
-  const expected = crypto
-    .createHmac("sha256", secret)
-    .update(payload)
-    .digest("hex");
+  // Secret is base64url-encoded — decode to raw bytes for HMAC key
+  const secretKey = Buffer.from(secret, "base64");
+  const payload   = Buffer.concat([
+    Buffer.from(`${timestamp}.`),
+    rawBody,
+  ]);
+  const hmac = crypto.createHmac("sha256", secretKey).update(payload);
+
+  // Try base64 comparison first, then hex fallback
+  const expectedB64 = hmac.digest("base64");
+  const expectedHex = crypto.createHmac("sha256", secretKey).update(payload).digest("hex");
+
   try {
-    return crypto.timingSafeEqual(
-      Buffer.from(expected, "hex"),
-      Buffer.from(signature, "hex")
-    );
+    if (signature.length === expectedB64.length) {
+      return crypto.timingSafeEqual(Buffer.from(expectedB64), Buffer.from(signature));
+    }
+    if (signature.length === expectedHex.length) {
+      return crypto.timingSafeEqual(Buffer.from(expectedHex), Buffer.from(signature));
+    }
+    return false;
   } catch {
     return false;
   }
@@ -224,7 +234,7 @@ export const linqWebhook = functions.https.onRequest(async (req, res) => {
   if (webhookSecret) {
     const timestamp = req.headers["x-webhook-timestamp"] as string ?? "";
     const signature = req.headers["x-webhook-signature"] as string ?? "";
-    const rawBody   = JSON.stringify(req.body);
+    const rawBody   = (req as any).rawBody as Buffer ?? Buffer.from(JSON.stringify(req.body));
 
     if (!verifySignature(rawBody, timestamp, signature, webhookSecret)) {
       console.warn("linqWebhook: invalid signature — ignoring");

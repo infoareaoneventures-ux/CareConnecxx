@@ -3,8 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Home, Search, Calendar, MessageSquare, Heart,
   ChevronDown, LogOut, Settings, CreditCard, Crown,
-  Users, FileText, Clock, BookOpen, User,
-  Briefcase, Plus, X, MoreHorizontal,
+  Users, FileText, Clock, BookOpen, Bell,
+  Briefcase, X, MoreHorizontal,
 } from 'lucide-react';
 import { authService, dbService } from '../../services/api';
 
@@ -13,7 +13,6 @@ const MY_CARE_ROUTES = [
   '/client/care-journal',
   '/client/my-care-team',
   '/client/interviews',
-  '/client/weekly-summary',
 ];
 
 const ACCOUNT_ROUTES = ['/client/account', '/client/payments', '/client/membership'];
@@ -100,24 +99,24 @@ export const ClientNavigation: React.FC = () => {
               <Home className="w-4 h-4" /><span>Home</span>
             </button>
 
-            {/* Search */}
+            {/* Find Care */}
             <button onClick={() => navigate('/client/find-caregivers')} className={navBtn(isActive('/client/find-caregivers') || isActive('/client/browse-caregivers'))}>
-              <Search className="w-4 h-4" /><span>Search</span>
+              <Search className="w-4 h-4" /><span>Find Care</span>
             </button>
 
-            {/* Bookings */}
+            {/* Care Requests */}
+            <button onClick={() => navigate('/client/posts')} className={navBtn(isActive('/client/posts') || isActive('/client/post-job'))}>
+              <Briefcase className="w-4 h-4" /><span>Care Requests</span>
+            </button>
+
+            {/* Schedule */}
             <button onClick={() => navigate('/client/schedule')} className={navBtn(isActive('/client/schedule'))}>
-              <Calendar className="w-4 h-4" /><span>Bookings</span>
+              <Calendar className="w-4 h-4" /><span>Schedule</span>
             </button>
 
             {/* Messages */}
             <button onClick={() => navigate('/client/inbox')} className={navBtn(isActive('/client/inbox'))}>
               <MessageSquare className="w-4 h-4" /><span>Messages</span>
-            </button>
-
-            {/* Posts */}
-            <button onClick={() => navigate('/client/posts')} className={navBtn(isActive('/client/posts') || isActive('/client/post-job'))}>
-              <Briefcase className="w-4 h-4" /><span>Posts</span>
             </button>
 
             {/* My Care dropdown */}
@@ -133,10 +132,9 @@ export const ClientNavigation: React.FC = () => {
                 <div className="absolute left-0 mt-2 w-52 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
                   {[
                     { icon: <FileText className="w-4 h-4" />, label: 'Care Plan', path: '/client/care-plan' },
-                    { icon: <BookOpen className="w-4 h-4" />, label: 'Care Journal', path: '/client/care-journal' },
-                    { icon: <Users className="w-4 h-4" />, label: 'My Care Team', path: '/client/my-care-team' },
+                    { icon: <BookOpen className="w-4 h-4" />, label: 'Visits', path: '/client/care-journal' },
+                    { icon: <Users className="w-4 h-4" />, label: 'Care Team', path: '/client/my-care-team' },
                     { icon: <Clock className="w-4 h-4" />, label: 'Interviews', path: '/client/interviews' },
-                    { icon: <FileText className="w-4 h-4" />, label: 'Weekly Summary', path: '/client/weekly-summary' },
                   ].map(item => (
                     <button key={item.path} onClick={() => go(item.path)}
                       className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm transition-colors ${
@@ -150,13 +148,9 @@ export const ClientNavigation: React.FC = () => {
             </div>
           </div>
 
-          {/* Post a Job CTA (desktop) */}
-          <button
-            onClick={() => navigate('/client/post-job')}
-            className="hidden md:inline-flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-sm transition-colors ml-2"
-          >
-            <Plus className="w-4 h-4" />
-            Post a Job
+          {/* Notifications bell */}
+          <button className="hidden md:flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors ml-2 relative">
+            <Bell className="w-5 h-5" />
           </button>
 
           {/* Avatar dropdown (right) */}
@@ -212,8 +206,8 @@ export const ClientNavigation: React.FC = () => {
         <div className="flex justify-around py-1">
           {[
             { icon: <Home className="w-5 h-5" />, label: 'Home', path: '/client/dashboard', exact: true },
-            { icon: <Search className="w-5 h-5" />, label: 'Search', path: '/client/find-caregivers', exact: false },
-            { icon: <Calendar className="w-5 h-5" />, label: 'Bookings', path: '/client/schedule', exact: false },
+            { icon: <Search className="w-5 h-5" />, label: 'Find Care', path: '/client/find-caregivers', exact: false },
+            { icon: <Calendar className="w-5 h-5" />, label: 'Schedule', path: '/client/schedule', exact: false },
             { icon: <MessageSquare className="w-5 h-5" />, label: 'Messages', path: '/client/inbox', exact: false },
           ].map(item => (
             <button key={item.path} onClick={() => { setMoreOpen(false); navigate(item.path); }}
@@ -258,39 +252,28 @@ export const ClientNavigation: React.FC = () => {
               </button>
             </div>
 
-            {/* Post a Job CTA */}
+            {/* Care Requests CTA */}
             <div className="px-4 pb-3">
               <button
-                onClick={() => { setMoreOpen(false); navigate('/client/post-job'); }}
+                onClick={() => { setMoreOpen(false); navigate('/client/posts'); }}
                 className="w-full flex items-center justify-center gap-2 bg-primary-600 text-white text-sm font-semibold py-3 rounded-xl shadow-sm"
               >
-                <Plus className="w-4 h-4" />
-                Post a Job
+                <Briefcase className="w-4 h-4" />
+                Care Requests
               </button>
             </div>
 
             <div className="border-t border-gray-100 mx-4" />
 
-            {/* Posts */}
-            <div className="px-4 pt-3 pb-1">
-              <button
-                onClick={() => { setMoreOpen(false); navigate('/client/posts'); }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                  isActive('/client/posts') ? 'text-primary-600 bg-primary-50' : 'text-gray-700 hover:bg-gray-50'
-                }`}>
-                <Briefcase className="w-4 h-4" /><span>My Posts</span>
-              </button>
-            </div>
 
             {/* My Care section */}
             <div className="px-4 pt-1 pb-1">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide px-3 py-1.5">My Care</p>
               {[
                 { icon: <FileText className="w-4 h-4" />, label: 'Care Plan', path: '/client/care-plan' },
-                { icon: <BookOpen className="w-4 h-4" />, label: 'Care Journal', path: '/client/care-journal' },
-                { icon: <Users className="w-4 h-4" />, label: 'My Care Team', path: '/client/my-care-team' },
+                { icon: <BookOpen className="w-4 h-4" />, label: 'Visits', path: '/client/care-journal' },
+                { icon: <Users className="w-4 h-4" />, label: 'Care Team', path: '/client/my-care-team' },
                 { icon: <Clock className="w-4 h-4" />, label: 'Interviews', path: '/client/interviews' },
-                { icon: <FileText className="w-4 h-4" />, label: 'Weekly Summary', path: '/client/weekly-summary' },
               ].map(item => (
                 <button key={item.path}
                   onClick={() => { setMoreOpen(false); navigate(item.path); }}

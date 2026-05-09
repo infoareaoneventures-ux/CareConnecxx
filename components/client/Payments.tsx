@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CreditCard, FileText, Crown, Check, X, Clock, DollarSign, Calendar, AlertCircle, Loader2, Download } from 'lucide-react';
+import { FileText, Check, X, Clock, DollarSign, CreditCard, Download } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { ClientNavigation } from './ClientNavigation';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -8,7 +8,7 @@ import { auth, db } from '../../lib/firebase';
 import firebase from 'firebase/compat/app';
 import { dbService } from '../../services/api';
 
-type TabType = 'invoices' | 'timesheets' | 'membership' | 'payment-method' | 'financial-activity';
+type TabType = 'weekly-summary' | 'invoices' | 'timesheets' | 'payment-method' | 'financial-activity';
 
 interface TimesheetEntry {
   id: string;
@@ -49,7 +49,7 @@ interface BankAccount {
 export const Payments: React.FC = () => {
   const navigate = useNavigate();
   const { addToast } = useCareConnex();
-  const [activeTab, setActiveTab] = useState<TabType>('invoices');
+  const [activeTab, setActiveTab] = useState<TabType>('weekly-summary');
   const [loadingData, setLoadingData] = useState(true);
 
   const [timesheets, setTimesheets] = useState<TimesheetEntry[]>([]);
@@ -191,9 +191,9 @@ export const Payments: React.FC = () => {
         <div className="bg-slate-50 rounded-t-2xl border border-slate-200 border-b-0 p-2">
           <div className="flex overflow-x-auto scrollbar-hide gap-1">
             {[
+              { id: 'weekly-summary', label: 'Weekly Summary', icon: FileText },
               { id: 'invoices', label: 'Invoices', icon: FileText },
               { id: 'timesheets', label: 'Timesheets', icon: Clock },
-              { id: 'membership', label: 'Membership', icon: Crown },
               { id: 'payment-method', label: 'Payment', icon: CreditCard },
               { id: 'financial-activity', label: 'Activity', icon: DollarSign }
             ].map(({ id, label, icon: Icon }) => (
@@ -216,6 +216,18 @@ export const Payments: React.FC = () => {
         {/* Tab Content */}
         <div className="bg-white rounded-b-2xl border border-slate-200 border-t-0 shadow-sm min-h-[400px]">
           
+          {/* Weekly Summary Tab */}
+          {activeTab === 'weekly-summary' && (
+            <div className="p-4 sm:p-6">
+              <h2 className="text-xl font-bold text-[var(--color-neutral-900)] mb-6">Weekly Summary</h2>
+              <div className="text-center py-12">
+                <DollarSign className="w-12 h-12 text-[var(--color-neutral-400)] mx-auto mb-4" />
+                <p className="text-[var(--color-neutral-600)] mb-2">No weekly summary yet</p>
+                <p className="text-sm text-[var(--color-neutral-500)]">Your weekly care spending will appear here</p>
+              </div>
+            </div>
+          )}
+
           {/* Invoices Tab */}
           {activeTab === 'invoices' && (
             <div className="p-4 sm:p-6">
@@ -289,89 +301,15 @@ export const Payments: React.FC = () => {
             </div>
           )}
 
-          {/* Membership/Billing Tab */}
-          {activeTab === 'membership' && (
-            <div>
-              <div className="bg-gradient-to-r from-[var(--color-accent-50)] to-transparent rounded-xl p-6 mb-6">
-                <div className="flex items-center space-x-4">
-                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[var(--color-accent-500)] to-[var(--color-accent-600)] flex items-center justify-center">
-                    <Crown className="w-8 h-8 text-white" />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-bold text-[var(--color-neutral-900)]">Free Plan</h2>
-                    <p className="text-[var(--color-neutral-600)]">Upgrade to unlock premium features</p>
-                  </div>
-                  <Button variant="accent" className="ml-auto" onClick={() => navigate('/pricing')}>
-                    Upgrade Now
-                  </Button>
-                </div>
-              </div>
-
-              <h3 className="text-lg font-bold text-[var(--color-neutral-900)] mb-4">Billing History</h3>
-              {billingHistory.length === 0 ? (
-                <div className="text-center py-12">
-                  <DollarSign className="w-12 h-12 text-[var(--color-neutral-400)] mx-auto mb-4" />
-                  <p className="text-[var(--color-neutral-600)]">No billing history</p>
-                </div>
-              ) : (
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-[var(--color-neutral-200)]">
-                      <th className="text-left py-3 px-4 font-semibold text-[var(--color-neutral-700)]">Date</th>
-                      <th className="text-left py-3 px-4 font-semibold text-[var(--color-neutral-700)]">Description</th>
-                      <th className="text-left py-3 px-4 font-semibold text-[var(--color-neutral-700)]">Amount</th>
-                      <th className="text-left py-3 px-4 font-semibold text-[var(--color-neutral-700)]">Status</th>
-                      <th className="text-left py-3 px-4 font-semibold text-[var(--color-neutral-700)]"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {billingHistory.map(entry => (
-                      <tr key={entry.id} className="border-b border-[var(--color-neutral-100)]">
-                        <td className="py-4 px-4 text-[var(--color-neutral-900)]">{entry.date}</td>
-                        <td className="py-4 px-4 text-[var(--color-neutral-900)]">{entry.description}</td>
-                        <td className="py-4 px-4 font-medium text-[var(--color-neutral-900)]">${entry.amount.toFixed(2)}</td>
-                        <td className="py-4 px-4">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusBadge(entry.status)}`}>
-                            {entry.status.charAt(0).toUpperCase() + entry.status.slice(1)}
-                          </span>
-                        </td>
-                        <td className="py-4 px-4">
-                          <button className="text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] flex items-center">
-                            <Download className="w-4 h-4 mr-1" />Invoice
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
 
           {/* Payment Method Tab */}
           {activeTab === 'payment-method' && (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-xl font-bold text-[var(--color-neutral-900)]">Your credit card</h2>
-                <p className="text-sm text-[var(--color-neutral-600)] mt-1">
-                  Your saved card is used for membership billing only. Caregiver services are paid directly off-platform (Venmo, Zelle, or cash).
-                </p>
-              </div>
-
-              <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl flex items-start gap-4">
-                <CreditCard className="w-8 h-8 text-primary-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-slate-800 mb-1">Card managed through Stripe</p>
-                  <p className="text-sm text-slate-600 mb-3">
-                    When you subscribe to a membership plan, your card is securely saved by Stripe. To update your payment method, cancel your current plan and resubscribe with the new card.
-                  </p>
-                  <button
-                    onClick={() => navigate('/client/membership')}
-                    className="px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-xl hover:bg-primary-700 transition-colors"
-                  >
-                    Manage Membership
-                  </button>
-                </div>
+            <div className="p-4 sm:p-6">
+              <h2 className="text-xl font-bold text-[var(--color-neutral-900)] mb-6">Payment</h2>
+              <div className="text-center py-12">
+                <DollarSign className="w-12 h-12 text-[var(--color-neutral-400)] mx-auto mb-4" />
+                <p className="text-[var(--color-neutral-600)] mb-2">No payment methods yet</p>
+                <p className="text-sm text-[var(--color-neutral-500)]">Payment methods will appear here</p>
               </div>
             </div>
           )}

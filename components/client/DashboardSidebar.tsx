@@ -101,13 +101,13 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
           <h3 className="font-semibold text-slate-900 text-sm flex items-center gap-2">
             <Briefcase className="w-4 h-4 text-primary-600" />
-            My Job Posts
+            Care Requests
           </h3>
           <button
             onClick={() => navigate('/client/post-job')}
             className="flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 font-medium"
           >
-            <Plus className="w-3 h-3" />Post
+            <Plus className="w-3 h-3" />New
           </button>
         </div>
         <div className="p-3">
@@ -135,18 +135,18 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
                 onClick={() => navigate('/client/posts')}
                 className="w-full mt-1 text-xs text-slate-400 hover:text-primary-600 text-center py-1 transition-colors"
               >
-                View all posts →
+                View all →
               </button>
             </div>
           ) : (
             <div className="text-center py-3">
               <Briefcase className="w-6 h-6 text-slate-200 mx-auto mb-1.5" />
-              <p className="text-xs text-slate-400 leading-snug">Post a job so caregivers can apply to you</p>
+              <p className="text-xs text-slate-400 leading-snug">Create a care request so caregivers can apply to you</p>
               <button
                 onClick={() => navigate('/client/post-job')}
                 className="mt-2 text-xs text-primary-600 font-medium hover:underline"
               >
-                Post a job →
+                New Request →
               </button>
             </div>
           )}

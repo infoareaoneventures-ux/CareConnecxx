@@ -152,16 +152,16 @@ export const PostJobFlow: React.FC = () => {
           <div className="w-20 h-20 bg-primary-100 rounded-full flex items-center justify-center mx-auto mb-6">
             <CheckCircle2 className="w-10 h-10 text-primary-600" />
           </div>
-          <h1 className="text-3xl font-bold text-slate-900 mb-2">Job posted!</h1>
+          <h1 className="text-3xl font-bold text-slate-900 mb-2">Care Request Submitted!</h1>
           <p className="text-slate-500 mb-8">
-            Qualified caregivers near {data.city || 'your location'} can now see and apply to your job. We'll notify you when someone applies.
+            Qualified caregivers near {data.city || 'your location'} can now see and apply to your care request. We'll notify you when someone applies.
           </p>
           <div className="flex flex-col sm:flex-row justify-center gap-3">
             <button
               onClick={() => navigate('/client/posts')}
               className="bg-primary-600 hover:bg-primary-700 text-white font-semibold px-6 py-3 rounded-xl shadow-md transition-colors"
             >
-              View my posts
+              View Care Requests
             </button>
             <button
               onClick={() => navigate('/client/dashboard')}

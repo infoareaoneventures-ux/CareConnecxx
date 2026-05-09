@@ -156,10 +156,10 @@ export const Step6ScreeningReview: React.FC<Step6Props> = ({
         >
           {isSubmitting ? (
             <>
-              <Loader2 className="w-4 h-4 animate-spin" /> Posting...
+              <Loader2 className="w-4 h-4 animate-spin" /> Submitting...
             </>
           ) : (
-            'Post Job'
+            'Submit Request'
           )}
         </button>
       </div>

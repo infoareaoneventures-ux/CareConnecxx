@@ -98,8 +98,14 @@ export const PostsPage: React.FC = () => {
 
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Job posts</h1>
-          <p className="text-sm text-slate-500 hidden sm:block">Get interested caregivers within minutes on job posts.</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Care Requests</h1>
+          <button
+            onClick={() => navigate('/client/post-job')}
+            className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-sm transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            New Request
+          </button>
         </div>
 
         {/* Tabs */}
@@ -112,7 +118,7 @@ export const PostsPage: React.FC = () => {
                 : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300'
             }`}
           >
-            Open Jobs ({openPosts.length})
+            Open ({openPosts.length})
           </button>
           <button
             onClick={() => setTab('closed')}
@@ -122,7 +128,7 @@ export const PostsPage: React.FC = () => {
                 : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300'
             }`}
           >
-            Closed Jobs ({closedPosts.length})
+            Closed ({closedPosts.length})
           </button>
         </div>
 
@@ -143,7 +149,7 @@ export const PostsPage: React.FC = () => {
                 <p className="text-sm text-slate-500 mb-1">Post for a specific date</p>
                 <p className="text-sm text-slate-500 mb-4">or post for recurring needs</p>
                 <span className="inline-flex items-center gap-1.5 text-primary-600 font-semibold">
-                  <Plus className="w-4 h-4" /> Post a New Job
+                  <Plus className="w-4 h-4" /> New Request
                 </span>
               </button>
             )}

@@ -33,7 +33,7 @@ const CLIENT_STEP_META: Record<string, { label: string; description: string; pat
     path: '/client/membership',
   },
   'post-job': {
-    label: 'Post a job',
+    label: 'Care Request',
     description: 'Tell caregivers what kind of help you need',
     path: '/client/post-job',
   },

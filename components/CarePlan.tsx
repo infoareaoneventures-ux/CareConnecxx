@@ -634,10 +634,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       <div className="max-w-3xl mx-auto p-4 md:p-6 animate-slide-in">
 
         <div className="flex items-center mb-8">
-          <button onClick={() => onNavigate('client')} className="p-2 -ml-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors">
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-          <div className="ml-2">
+          <div>
             <h1 className="text-2xl font-bold text-slate-900 leading-tight">Care Plan</h1>
             <p className="text-sm text-slate-400 mt-0.5">Manage care details for each recipient</p>
           </div>

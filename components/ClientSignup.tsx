@@ -135,12 +135,19 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
     }
 
     if (name === 'phone') {
-      const digits = value.replace(/\D/g, '');
+      const digits = value.replace(/\D/g, '').slice(0, 10);
+      let formatted = digits;
+      if (digits.length > 6) formatted = `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+      else if (digits.length > 3) formatted = `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+      else if (digits.length > 0) formatted = `(${digits}`;
+      setFormData(prev => ({ ...prev, phone: formatted }));
       if (digits.length > 0 && digits.length < 10) {
         errors.phone = 'Phone number must be 10 digits';
       } else {
         delete errors.phone;
       }
+      setFieldErrors(errors);
+      return;
     }
 
     if (name === 'zipCode') {

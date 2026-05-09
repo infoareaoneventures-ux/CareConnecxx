@@ -217,12 +217,14 @@ export const PostsPage: React.FC = () => {
                       <span className="font-semibold">{count}</span>
                       {count === 1 ? 'interested caregiver' : 'interested caregivers'}
                     </span>
-                    <button
-                      onClick={() => navigate('/client/inbox')}
-                      className="text-sm font-semibold text-primary-600 hover:text-primary-700"
-                    >
-                      {count > 0 ? 'View' : 'Share post →'}
-                    </button>
+                    {post.status === 'open' && (
+                      <button
+                        onClick={() => navigate('/client/inbox')}
+                        className="text-sm font-semibold text-primary-600 hover:text-primary-700"
+                      >
+                        {count > 0 ? 'View' : 'Share post →'}
+                      </button>
+                    )}
                   </div>
                 </div>
               );

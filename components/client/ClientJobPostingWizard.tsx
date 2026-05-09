@@ -862,7 +862,14 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 type="tel"
                 placeholder="(555) 000-0000"
                 value={form.emergencyPhone}
-                onChange={e => update('emergencyPhone', e.target.value.replace(/[^\d\s\-().+]/g, '').slice(0, 20))}
+                onChange={e => {
+                  const d = e.target.value.replace(/\D/g, '').slice(0, 10);
+                  let f = d;
+                  if (d.length > 6) f = `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+                  else if (d.length > 3) f = `(${d.slice(0,3)}) ${d.slice(3)}`;
+                  else if (d.length > 0) f = `(${d}`;
+                  update('emergencyPhone', f);
+                }}
                 className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500"
               />
             </div>

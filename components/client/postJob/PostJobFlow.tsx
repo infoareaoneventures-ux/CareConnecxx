@@ -107,7 +107,7 @@ export const PostJobFlow: React.FC = () => {
             );
           }
 
-          // Save per-recipient care needs / notes to carePlans.
+          // Save per-recipient care needs, lifestyle, and notes to carePlans.
           // Location is only set on first save — never overwritten by a new job post.
           const cpRef = db.collection('carePlans').doc(currentUser.uid);
           const cpSnap = await cpRef.get();
@@ -121,6 +121,8 @@ export const PostJobFlow: React.FC = () => {
             const updates: Record<string, any> = {
               [`recipientPlans.${key}.careNeeds`]: data.careTypes,
               [`recipientPlans.${key}.notes`]: data.description.trim(),
+              [`recipientPlans.${key}.lifestyle.petsInHome`]: data.petsInHome ?? false,
+              [`recipientPlans.${key}.lifestyle.smokingHousehold`]: data.smokingHousehold ?? false,
             };
             // Only set location if recipient has none saved yet
             if (!existingLocs?.length) {
@@ -130,7 +132,7 @@ export const PostJobFlow: React.FC = () => {
               await cpRef.update(updates);
             } catch (e: any) {
               if (e.code === 'not-found') {
-                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, notes: data.description.trim(), locations: locationEntry } } });
+                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, notes: data.description.trim(), locations: locationEntry, lifestyle: { petsInHome: data.petsInHome ?? false, smokingHousehold: data.smokingHousehold ?? false } } } });
               }
             }
           }

@@ -55,6 +55,7 @@ interface LifestyleData {
   familyInArea: boolean | null; familyVisitFreq: string;
   friendsVisitors: boolean | null; friendsVisitFreq: string;
   petsInHome: boolean | null; petTypes: string[]; petName: string;
+  smokingHousehold: boolean | null;
   hasAppointments: boolean | null; appointmentsDetails: string;
 }
 
@@ -85,6 +86,7 @@ const emptyLifestyle = (): LifestyleData => ({
   familyInArea: null, familyVisitFreq: '',
   friendsVisitors: null, friendsVisitFreq: '',
   petsInHome: null, petTypes: [], petName: '',
+  smokingHousehold: null,
   hasAppointments: null, appointmentsDetails: '',
 });
 
@@ -1336,6 +1338,11 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             )}
                           </SubSec>
 
+                          <SubSec title="Smoking Household">
+                            <YesNo value={draft.lifestyle.smokingHousehold}
+                              onChange={v => setLS({ smokingHousehold: v })} />
+                          </SubSec>
+
                           <SubSec title="Schedule / Appointments">
                             <YesNo value={draft.lifestyle.hasAppointments}
                               onChange={v => setLS({ hasAppointments: v, appointmentsDetails: v ? draft.lifestyle.appointmentsDetails : '' })} />
@@ -1383,6 +1390,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                       ? rPlan.lifestyle.petTypes.map(t => rPlan.lifestyle.petName ? `${t} (${rPlan.lifestyle.petName})` : t)
                                       : rPlan.lifestyle.petName ? [rPlan.lifestyle.petName] : ['Yes']}
                                     color="bg-amber-50 border-amber-100 text-amber-700" />
+                                )}
+                                {rPlan.lifestyle.smokingHousehold === true && (
+                                  <ReadChips label="Home Environment" items={['Smoking household']} color="bg-slate-100 border-slate-200 text-slate-600" />
                                 )}
                                 {rPlan.lifestyle.hasAppointments === true && (
                                   <div>
@@ -1534,6 +1544,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                 </div>
               )}
             </div>}
+
           </>
         ) : (
           <div className="text-center py-20 bg-white rounded-2xl border border-slate-100">

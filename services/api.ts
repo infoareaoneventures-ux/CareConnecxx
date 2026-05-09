@@ -3543,8 +3543,17 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
     if (clean.careRecipientAge) profileUpdate.age = parseInt(clean.careRecipientAge, 10) || undefined;
     if (clean.relationship) profileUpdate.relationship = clean.relationship;
 
+    const primaryKey = `${clean.careRecipientFirstName.toLowerCase()}_${(clean.careRecipientLastName || 'noname').toLowerCase()}`.replace(/\s+/g, '_');
+    const lifestyleUpdates: Record<string, any> = {
+        [`recipientPlans.${primaryKey}.lifestyle.petsInHome`]: clean.petsInHome ?? false,
+        [`recipientPlans.${primaryKey}.lifestyle.smokingHousehold`]: clean.smokingHousehold ?? false,
+    };
+
     await Promise.allSettled([
         db.collection('senior_profiles').doc(uid).set(profileUpdate, { merge: true }),
         db.collection('users').doc(uid).set({ jobPostingCompleted: true }, { merge: true }),
+        db.collection('carePlans').doc(uid).set({}, { merge: true }).then(() =>
+            db!.collection('carePlans').doc(uid).update(lifestyleUpdates)
+        ),
     ]);
 }

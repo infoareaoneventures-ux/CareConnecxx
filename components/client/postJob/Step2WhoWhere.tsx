@@ -41,10 +41,10 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   const [loadingLocations, setLoadingLocations] = useState(true);
   const [selectedLocationId, setSelectedLocationId] = useState('');
   const [showLocationForm, setShowLocationForm] = useState(false);
-  const [newLocation, setNewLocation] = useState({ street: '', zipCode: '', city: '', state: '' });
+  const [newLocation, setNewLocation] = useState({ street: '', zipCode: '', city: '', state: '', petsInHome: false, smokingHousehold: false });
   const [locZipLoading, setLocZipLoading] = useState(false);
   const [editingLocId, setEditingLocId] = useState<string | null>(null);
-  const [editingLocDraft, setEditingLocDraft] = useState<{ street: string; city: string; state: string; zipCode: string } | null>(null);
+  const [editingLocDraft, setEditingLocDraft] = useState<{ street: string; city: string; state: string; zipCode: string; petsInHome?: boolean; smokingHousehold?: boolean } | null>(null);
   const [editLocZipLoading, setEditLocZipLoading] = useState(false);
   const [confirmDeleteLocId, setConfirmDeleteLocId] = useState<string | null>(null);
 
@@ -249,11 +249,13 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
       city: newLocation.city.trim(),
       state: newLocation.state.trim(),
       zipCode: newLocation.zipCode,
+      petsInHome: newLocation.petsInHome,
+      smokingHousehold: newLocation.smokingHousehold,
     };
 
     // Select it immediately
     setSelectedLocationId(loc.id);
-    onChange({ streetAddress: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode });
+    onChange({ streetAddress: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode, petsInHome: loc.petsInHome ?? false, smokingHousehold: loc.smokingHousehold ?? false });
 
     // Save to care plan
     if (db && currentUser?.uid) {
@@ -264,13 +266,13 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
     }
 
     setSavedLocations(prev => [...prev, loc]);
-    setNewLocation({ street: '', zipCode: '', city: '', state: '' });
+    setNewLocation({ street: '', zipCode: '', city: '', state: '', petsInHome: false, smokingHousehold: false });
     setShowLocationForm(false);
   };
 
   const startEditLocation = (loc: SavedLocation) => {
     setEditingLocId(loc.id);
-    setEditingLocDraft({ street: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode });
+    setEditingLocDraft({ street: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode, petsInHome: loc.petsInHome, smokingHousehold: loc.smokingHousehold });
     setConfirmDeleteLocId(null);
   };
 
@@ -298,7 +300,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
 
     const loc = savedLocations.find(l => l.id === editingLocId);
     if (!loc) return;
-    const updated: SavedLocation = { ...loc, ...editingLocDraft };
+    const updated: SavedLocation = { ...loc, ...editingLocDraft, petsInHome: editingLocDraft.petsInHome, smokingHousehold: editingLocDraft.smokingHousehold };
     const newList = savedLocations.map(l => l.id === editingLocId ? updated : l);
     setSavedLocations(newList);
     if (selectedLocationId === editingLocId) onChange({ streetAddress: updated.street, city: updated.city, state: updated.state, zipCode: updated.zipCode });
@@ -521,6 +523,16 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
                         <input type="text" placeholder="City" value={editingLocDraft.city} onChange={e => setEditingLocDraft(d => d ? { ...d, city: e.target.value } : d)} className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-100" />
                         <input type="text" placeholder="State" maxLength={2} value={editingLocDraft.state} onChange={e => setEditingLocDraft(d => d ? { ...d, state: e.target.value.toUpperCase() } : d)} className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-100 uppercase" />
                       </div>
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+                        <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-all ${editingLocDraft.petsInHome ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-primary-300'}`}>
+                          <input type="checkbox" checked={!!editingLocDraft.petsInHome} onChange={e => setEditingLocDraft(d => d ? { ...d, petsInHome: e.target.checked } : d)} className="w-3.5 h-3.5 accent-primary-600" />
+                          Pets in the home
+                        </label>
+                        <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-all ${editingLocDraft.smokingHousehold ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-primary-300'}`}>
+                          <input type="checkbox" checked={!!editingLocDraft.smokingHousehold} onChange={e => setEditingLocDraft(d => d ? { ...d, smokingHousehold: e.target.checked } : d)} className="w-3.5 h-3.5 accent-primary-600" />
+                          Smoking household
+                        </label>
+                      </div>
                       <div className="flex gap-2">
                         <button type="button" onClick={saveEditedLocation} className="bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">Save</button>
                         <button type="button" onClick={() => { setEditingLocId(null); setEditingLocDraft(null); }} className="bg-white border border-slate-200 text-slate-600 text-sm font-medium px-4 py-1.5 rounded-lg hover:bg-slate-50">Cancel</button>
@@ -576,8 +588,18 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
                 <input type="text" placeholder="City" value={newLocation.city} onChange={e => setNewLocation(l => ({ ...l, city: e.target.value }))} className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-100" />
                 <input type="text" placeholder="State" maxLength={2} value={newLocation.state} onChange={e => setNewLocation(l => ({ ...l, state: e.target.value.toUpperCase() }))} className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-100 uppercase" />
               </div>
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100">
+                <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-all ${newLocation.petsInHome ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-primary-300'}`}>
+                  <input type="checkbox" checked={newLocation.petsInHome} onChange={e => setNewLocation(l => ({ ...l, petsInHome: e.target.checked }))} className="w-3.5 h-3.5 accent-primary-600" />
+                  Pets in the home
+                </label>
+                <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-all ${newLocation.smokingHousehold ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-primary-300'}`}>
+                  <input type="checkbox" checked={newLocation.smokingHousehold} onChange={e => setNewLocation(l => ({ ...l, smokingHousehold: e.target.checked }))} className="w-3.5 h-3.5 accent-primary-600" />
+                  Smoking household
+                </label>
+              </div>
               <button type="button" onClick={addNewLocation} className="w-full bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors">Add</button>
-              <button type="button" onClick={() => { setShowLocationForm(false); setNewLocation({ street: '', zipCode: '', city: '', state: '' }); }} className="w-full bg-white border border-slate-200 text-slate-600 text-sm font-medium py-2 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
+              <button type="button" onClick={() => { setShowLocationForm(false); setNewLocation({ street: '', zipCode: '', city: '', state: '', petsInHome: false, smokingHousehold: false }); }} className="w-full bg-white border border-slate-200 text-slate-600 text-sm font-medium py-2 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
             </div>
           ) : savedLocations.length < 4 ? (
             <button type="button" onClick={() => setShowLocationForm(true)} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-dashed border-slate-300 text-slate-500 hover:border-primary-400 hover:text-primary-600 transition-all text-sm font-medium">
@@ -590,24 +612,6 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
         </div>
 
       </div>
-
-      {/* Home environment — shown once an address is selected */}
-      {data.streetAddress && (
-        <div className="mt-6 pt-6 border-t border-slate-100 space-y-3">
-          <label className="block text-sm font-semibold text-slate-700">Home environment</label>
-          <p className="text-xs text-slate-400 -mt-1">Caregivers need to know what to expect at this address.</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 cursor-pointer transition-all ${data.petsInHome ? 'border-primary-600 bg-primary-50' : 'border-slate-200 bg-white hover:border-primary-300'}`}>
-              <input type="checkbox" checked={data.petsInHome} onChange={e => saveHomeEnv({ petsInHome: e.target.checked })} className="w-4 h-4 accent-primary-600" />
-              <span className="text-sm font-medium text-slate-700">Pets in the home</span>
-            </label>
-            <label className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 cursor-pointer transition-all ${data.smokingHousehold ? 'border-primary-600 bg-primary-50' : 'border-slate-200 bg-white hover:border-primary-300'}`}>
-              <input type="checkbox" checked={data.smokingHousehold} onChange={e => saveHomeEnv({ smokingHousehold: e.target.checked })} className="w-4 h-4 accent-primary-600" />
-              <span className="text-sm font-medium text-slate-700">Smoking household</span>
-            </label>
-          </div>
-        </div>
-      )}
 
       <div className="mt-8 flex items-center justify-between">
         <button type="button" onClick={onBack} className="text-sm text-slate-500 hover:text-slate-700 font-medium">Back</button>

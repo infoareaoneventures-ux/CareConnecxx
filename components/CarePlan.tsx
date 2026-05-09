@@ -832,6 +832,16 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                 <input className={inputCls} placeholder="City" value={newLocEditDraft.city} onChange={e => setNewLocEditDraft(p => p ? { ...p, city: e.target.value } : p)} />
                                 <input className={inputCls} placeholder="State" value={newLocEditDraft.state} onChange={e => setNewLocEditDraft(p => p ? { ...p, state: e.target.value } : p)} />
                               </div>
+                              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+                                <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-all ${newLocEditDraft.petsInHome ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-primary-300'}`}>
+                                  <input type="checkbox" checked={!!newLocEditDraft.petsInHome} onChange={e => setNewLocEditDraft(p => p ? { ...p, petsInHome: e.target.checked } : p)} className="w-3.5 h-3.5 accent-primary-600" />
+                                  Pets in the home
+                                </label>
+                                <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-all ${newLocEditDraft.smokingHousehold ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-primary-300'}`}>
+                                  <input type="checkbox" checked={!!newLocEditDraft.smokingHousehold} onChange={e => setNewLocEditDraft(p => p ? { ...p, smokingHousehold: e.target.checked } : p)} className="w-3.5 h-3.5 accent-primary-600" />
+                                  Smoking household
+                                </label>
+                              </div>
                               <div className="flex gap-2">
                                 <button type="button" onClick={saveNewLoc} className="text-xs bg-primary-600 hover:bg-primary-700 text-white font-semibold px-3 py-1.5 rounded-lg">Save</button>
                                 <button type="button" onClick={() => { setNewLocEditIdx(null); setNewLocEditDraft(null); }} className="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg">Cancel</button>
@@ -880,6 +890,16 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                           onChange={e => setNewDraft(p => ({ ...p, locations: [{ ...(p.locations[0] || emptyLocation()), city: e.target.value }] }))} />
                         <input className={inputCls} placeholder="State" value={newDraft.locations[0]?.state || ''}
                           onChange={e => setNewDraft(p => ({ ...p, locations: [{ ...(p.locations[0] || emptyLocation()), state: e.target.value }] }))} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+                        <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-all ${newDraft.locations[0]?.petsInHome ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-primary-300'}`}>
+                          <input type="checkbox" checked={!!newDraft.locations[0]?.petsInHome} onChange={e => setNewDraft(p => ({ ...p, locations: [{ ...(p.locations[0] || emptyLocation()), petsInHome: e.target.checked }] }))} className="w-3.5 h-3.5 accent-primary-600" />
+                          Pets in the home
+                        </label>
+                        <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-all ${newDraft.locations[0]?.smokingHousehold ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-primary-300'}`}>
+                          <input type="checkbox" checked={!!newDraft.locations[0]?.smokingHousehold} onChange={e => setNewDraft(p => ({ ...p, locations: [{ ...(p.locations[0] || emptyLocation()), smokingHousehold: e.target.checked }] }))} className="w-3.5 h-3.5 accent-primary-600" />
+                          Smoking household
+                        </label>
                       </div>
                       <button type="button" onClick={() => { setNewCustomLoc(false); setNewDraft(p => ({ ...p, locations: [] })); }}
                         className="text-xs text-slate-400 hover:text-slate-600 mt-2">Clear</button>
@@ -1156,6 +1176,16 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                     }} />
                                   <input className={inputCls} placeholder="City" value={customLoc.city} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), city: e.target.value }] } : prev)} />
                                   <input className={inputCls} placeholder="State" value={customLoc.state} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), state: e.target.value }] } : prev)} />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 mt-1 pt-2 border-t border-slate-100">
+                                  <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-all ${customLoc.petsInHome ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-primary-300'}`}>
+                                    <input type="checkbox" checked={!!customLoc.petsInHome} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), petsInHome: e.target.checked }] } : prev)} className="w-3.5 h-3.5 accent-primary-600" />
+                                    Pets in the home
+                                  </label>
+                                  <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-all ${customLoc.smokingHousehold ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-primary-300'}`}>
+                                    <input type="checkbox" checked={!!customLoc.smokingHousehold} onChange={e => setDraftPlan(prev => prev ? { ...prev, locations: [{ ...(prev.locations[0] || emptyLocation()), smokingHousehold: e.target.checked }] } : prev)} className="w-3.5 h-3.5 accent-primary-600" />
+                                    Smoking household
+                                  </label>
                                 </div>
                                 <div className="flex gap-2">
                                   {editingCustomLoc && (

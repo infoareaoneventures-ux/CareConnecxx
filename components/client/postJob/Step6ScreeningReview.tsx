@@ -122,16 +122,24 @@ export const Step6ScreeningReview: React.FC<Step6Props> = ({
         <div className="bg-white rounded-2xl border border-slate-200 px-4 sm:px-6 py-1">
           <Row label="Title" value={data.title || '—'} onEdit={() => onEditStep(4)} />
           <Row label="Schedule" value={scheduleSummary} onEdit={() => onEditStep(0)} />
-          <Row label="Location" value={locationSummary || '—'} onEdit={() => onEditStep(1)} />
           <Row
-            label="Care needs"
+            label="Location"
             value={
               <>
-                {data.careTypes.join(', ') || '—'} · <span className="text-slate-500">{careLevelLabel}</span>
-                <br />
-                <span className="text-xs text-slate-500">Household: {householdSummary}</span>
+                {locationSummary || '—'}
+                {householdBits.length > 0 && (
+                  <>
+                    <br />
+                    <span className="text-xs text-slate-500">{householdBits.map(b => b.charAt(0).toUpperCase() + b.slice(1)).join(' · ')}</span>
+                  </>
+                )}
               </>
             }
+            onEdit={() => onEditStep(1)}
+          />
+          <Row
+            label="Care needs"
+            value={<>{data.careTypes.join(', ') || '—'} · <span className="text-slate-500">{careLevelLabel}</span></>}
             onEdit={() => onEditStep(2)}
           />
           <Row label="Rate & payment" value={`${rateSummary} · ${paymentLabel}`} onEdit={() => onEditStep(3)} />

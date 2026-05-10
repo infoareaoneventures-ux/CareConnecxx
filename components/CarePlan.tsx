@@ -340,11 +340,19 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       if (!hasLocation) { onShowToast('Please select or add a care location', 'error'); return; }
     }
     setSavingSection(true);
-    // Strip any blank pool entries before saving
-    const cleanPool = draftLocPool.filter(l => l.street.trim() || l.city.trim());
+    // Strip blank entries and undefined fields — Firestore rejects undefined values
+    const cleanPool = draftLocPool.filter(l => l.street.trim() || l.city.trim()).map(l => {
+      const entry: Record<string, any> = { street: l.street, city: l.city, state: l.state, zipCode: l.zipCode };
+      if (l.petsInHome !== undefined) entry.petsInHome = l.petsInHome;
+      if (l.smokingHousehold !== undefined) entry.smokingHousehold = l.smokingHousehold;
+      if (l.petTypes?.length) entry.petTypes = l.petTypes;
+      if (l.petName) entry.petName = l.petName;
+      return entry;
+    });
     try {
       const key = getKey(recipient.firstName, recipient.lastName);
-      const updated = { ...getPlan(recipient), ...draftPlan };
+      // JSON round-trip strips any remaining undefined values before writing to Firestore
+      const updated = JSON.parse(JSON.stringify({ ...getPlan(recipient), ...draftPlan }));
       const docRef = db.collection('carePlans').doc(currentPlanId);
       const updatePayload: Record<string, any> = { [`recipientPlans.${key}`]: updated };
       if (editingSection === 'locations') updatePayload.locationPool = cleanPool;
@@ -455,6 +463,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const saveNewRecipient = async () => {
     if (!newRecipient.firstName.trim()) { onShowToast('First name is required', 'error'); return; }
     if (!newRecipient.relationship) { onShowToast('Please select a relationship', 'error'); return; }
+    if (newRecipient.relationship.toLowerCase() === 'myself' && recipients.some(r => r.relationship?.toLowerCase() === 'myself')) {
+      onShowToast('You can only add yourself once', 'error'); return;
+    }
     const loc = newDraft.locations[0];
     if (!loc || !loc.street.trim()) { onShowToast('Please select or enter a care location with a street address', 'error'); return; }
     if (!currentPlanId || !db) return;
@@ -738,7 +749,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                         }
                       }}>
                       <option value="" disabled>Relationship *</option>
-                      <option value="Myself">Myself</option>
+                      {!recipients.some(r => r.relationship?.toLowerCase() === 'myself') && <option value="Myself">Myself</option>}
                       <option value="Parent">Parent</option>
                       <option value="Spouse or Partner">Spouse or Partner</option>
                       <option value="Other">Other</option>

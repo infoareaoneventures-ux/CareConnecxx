@@ -33,8 +33,8 @@ interface WizardForm {
   jobTypes: string[];
   weeklyAvailability: Record<string, string[]>;
   neverAvailable: string[];
-  primaryServices: Array<{ name: string; yearsExperience: string }>;
-  additionalServices: string[];
+  selectedServices: string[];
+  yearsExperience: string;
   certifications: string[];
   hourlyRate: string;
   rateFor2Seniors: string;
@@ -63,8 +63,8 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       thursday: [], friday: [], saturday: [],
     },
     neverAvailable: [],
-    primaryServices: [],
-    additionalServices: [],
+    selectedServices: [],
+    yearsExperience: '',
     certifications: [],
     hourlyRate: '',
     rateFor2Seniors: '',
@@ -105,17 +105,19 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   };
 
   const handleSaveServices = async () => {
-    if (form.primaryServices.length === 0 && form.additionalServices.length === 0) {
+    if (form.selectedServices.length === 0) {
       onShowToast('Please select at least one service you offer', 'error'); return;
     }
-    const missingExp = form.primaryServices.find(s => !s.yearsExperience);
-    if (missingExp) { onShowToast(`Please select experience level for "${missingExp.name}"`, 'error'); return; }
+    if (!form.yearsExperience) {
+      onShowToast('Please select your years of experience', 'error'); return;
+    }
     setIsLoading(true);
     try {
       await dbService.updateUser('caregivers', uid, cleanData({
-        primaryServices: form.primaryServices,
-        skills: [...form.primaryServices.map(s => s.name), ...form.additionalServices],
+        primaryServices: form.selectedServices.map(name => ({ name, yearsExperience: form.yearsExperience })),
+        skills: form.selectedServices,
         certifications: form.certifications,
+        yearsExperience: form.yearsExperience,
       }) as any);
       next();
     } catch { onShowToast('Failed to save services. Please try again.', 'error'); }
@@ -176,22 +178,10 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
                 <Heart size={18} className="text-teal-300 absolute -bottom-1 -right-2" fill="currentColor" />
               </div>
             </div>
-            <div className="w-full space-y-2">
-              {[
-                ['📷', 'Profile photo', 'Make a great first impression'],
-                ['📅', 'Availability', 'When you are free to work'],
-                ['🩺', 'Services & skills', 'What you offer families'],
-                ['💰', 'Your rate', 'How much you charge per hour'],
-                ['✍️', 'About you', 'Tell families your story'],
-              ].map(([icon, label, sub]) => (
-                <div key={label} className="w-full bg-white/15 rounded-2xl px-4 py-2.5 flex items-center gap-3 text-left">
-                  <span className="text-lg w-7 text-center">{icon}</span>
-                  <div>
-                    <p className="text-white font-semibold text-sm">{label}</p>
-                    <p className="text-indigo-200 text-xs">{sub}</p>
-                  </div>
-                </div>
-              ))}
+            <div className="w-full bg-white/15 rounded-2xl px-4 py-4">
+              <p className="text-indigo-200 text-sm leading-relaxed">
+                This takes about 3 minutes. A complete profile helps families find and book you faster.
+              </p>
             </div>
             <button
               onClick={next}
@@ -223,7 +213,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       // ── Step 4: Services ─────────────────────────────────────────────────
       case 4:
         return <ServicesStep
-          primaryServices={form.primaryServices} additionalServices={form.additionalServices}
+          selectedServices={form.selectedServices} yearsExperience={form.yearsExperience}
           certifications={form.certifications} onChange={updateField}
           onNext={handleSaveServices} isLoading={isLoading} onShowToast={onShowToast}
         />;
@@ -381,6 +371,20 @@ const PhotoStep: React.FC<{
 
 // ─── Availability Step ─────────────────────────────────────────────────────────
 
+const AVAIL_DAYS = [
+  { id: 'monday', label: 'Mon' }, { id: 'tuesday', label: 'Tue' },
+  { id: 'wednesday', label: 'Wed' }, { id: 'thursday', label: 'Thu' },
+  { id: 'friday', label: 'Fri' }, { id: 'saturday', label: 'Sat' },
+  { id: 'sunday', label: 'Sun' },
+];
+const AVAIL_TIMES = [
+  { id: 'early',     label: 'Early morning', sub: '5 – 8am' },
+  { id: 'morning',   label: 'Morning',       sub: '8am – 12pm' },
+  { id: 'afternoon', label: 'Afternoon',     sub: '12 – 5pm' },
+  { id: 'evening',   label: 'Evening',       sub: '5 – 11pm' },
+  { id: 'overnight', label: 'Overnight',     sub: '11pm – 5am' },
+];
+
 const AvailabilityStep: React.FC<{
   jobTypes: string[];
   weeklyAvailability: Record<string, string[]>;
@@ -390,99 +394,96 @@ const AvailabilityStep: React.FC<{
   isLoading: boolean;
   onShowToast: AddToastFunction;
 }> = ({ jobTypes, weeklyAvailability, neverAvailable, onChange, onNext, isLoading, onShowToast }) => {
-  const toggleJobType = (id: string) => {
+  const [activeDays, setActiveDays] = useState<string[]>([]);
+  const [activeTimes, setActiveTimes] = useState<string[]>([]);
+
+  const toggleJobType = (id: string) =>
     onChange('jobTypes', jobTypes.includes(id) ? jobTypes.filter(t => t !== id) : [...jobTypes, id]);
+
+  const toggleDay = (dayId: string) => {
+    const isOn = activeDays.includes(dayId);
+    const newDays = isOn ? activeDays.filter(d => d !== dayId) : [...activeDays, dayId];
+    setActiveDays(newDays);
+    const newAvail = { ...weeklyAvailability };
+    AVAIL_DAYS.forEach(({ id }) => { newAvail[id] = newDays.includes(id) ? [...activeTimes] : []; });
+    onChange('weeklyAvailability', newAvail);
+    onChange('neverAvailable', AVAIL_DAYS.map(d => d.id).filter(id => !newDays.includes(id)));
   };
-  const toggleSlot = (day: string, block: string) => {
-    if (neverAvailable.includes(day)) onChange('neverAvailable', neverAvailable.filter(d => d !== day));
-    const daySlots = weeklyAvailability[day] || [];
-    onChange('weeklyAvailability', {
-      ...weeklyAvailability,
-      [day]: daySlots.includes(block) ? daySlots.filter(s => s !== block) : [...daySlots, block],
-    });
+
+  const toggleTime = (timeId: string) => {
+    const isOn = activeTimes.includes(timeId);
+    const newTimes = isOn ? activeTimes.filter(t => t !== timeId) : [...activeTimes, timeId];
+    setActiveTimes(newTimes);
+    const newAvail = { ...weeklyAvailability };
+    activeDays.forEach(d => { newAvail[d] = [...newTimes]; });
+    onChange('weeklyAvailability', newAvail);
   };
-  const toggleNever = (day: string) => {
-    if (neverAvailable.includes(day)) {
-      onChange('neverAvailable', neverAvailable.filter(d => d !== day));
-    } else {
-      onChange('neverAvailable', [...neverAvailable, day]);
-      onChange('weeklyAvailability', { ...weeklyAvailability, [day]: [] });
-    }
-  };
+
   const handleNext = () => {
     if (jobTypes.length === 0) { onShowToast('Please select at least one job type', 'error'); return; }
     onNext();
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <h2 className="text-xl font-bold text-slate-800 text-center">What jobs are you looking for?</h2>
+    <div className="flex flex-col gap-5">
+      <h2 className="text-xl font-bold text-slate-800 text-center">Your availability</h2>
 
-      <div className="flex flex-col gap-2">
-        {JOB_TYPES.map(jt => (
-          <button key={jt.id} onClick={() => toggleJobType(jt.id)}
-            className={`w-full border-2 rounded-2xl px-4 py-3 text-left transition-all flex items-center gap-3 ${
-              jobTypes.includes(jt.id) ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-indigo-300'
-            }`}>
-            <div className="flex-1">
-              <p className="font-semibold text-slate-800 text-sm">{jt.label}</p>
-              <p className="text-slate-500 text-xs mt-0.5">{jt.subtitle}</p>
-            </div>
-            <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${jobTypes.includes(jt.id) ? 'border-indigo-500 bg-indigo-500' : 'border-slate-300'}`}>
-              {jobTypes.includes(jt.id) && <div className="w-2 h-2 rounded-full bg-white" />}
-            </div>
-          </button>
-        ))}
+      <div>
+        <p className="text-sm font-semibold text-slate-700 mb-2">What jobs are you looking for?</p>
+        <div className="flex flex-col gap-2">
+          {JOB_TYPES.map(jt => (
+            <button key={jt.id} onClick={() => toggleJobType(jt.id)}
+              className={`w-full border-2 rounded-2xl px-4 py-3 text-left transition-all flex items-center gap-3 ${
+                jobTypes.includes(jt.id) ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-indigo-300'
+              }`}>
+              <div className="flex-1">
+                <p className="font-semibold text-slate-800 text-sm">{jt.label}</p>
+                <p className="text-slate-500 text-xs mt-0.5">{jt.subtitle}</p>
+              </div>
+              <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
+                jobTypes.includes(jt.id) ? 'border-indigo-500 bg-indigo-500' : 'border-slate-300'
+              }`}>
+                {jobTypes.includes(jt.id) && <div className="w-2 h-2 rounded-full bg-white" />}
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
 
       <div>
-        <p className="text-sm font-semibold text-slate-700 mb-1">When are you generally available?</p>
-        <p className="text-xs text-slate-400 mb-3">You can adjust your calendar in more detail later.</p>
-        <div className="overflow-x-auto">
-          <div className="min-w-[360px]">
-            {TIME_BLOCKS.map(block => (
-              <div key={block.id} className="mb-2.5">
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <span className="text-sm">{block.icon}</span>
-                  <span className="text-xs font-semibold text-slate-700">{block.label} <span className="font-normal text-slate-400">({block.time})</span></span>
-                </div>
-                <div className="flex gap-1.5">
-                  {DAYS.map((day, i) => {
-                    const isActive = (weeklyAvailability[day.id] || []).includes(block.id);
-                    const isNever = neverAvailable.includes(day.id);
-                    return (
-                      <button key={`${block.id}-${day.id}-${i}`}
-                        onClick={() => !isNever && toggleSlot(day.id, block.id)}
-                        disabled={isNever}
-                        className={`w-9 h-9 rounded-full text-xs font-semibold transition-all ${
-                          isNever ? 'bg-slate-100 text-slate-300 cursor-not-allowed'
-                            : isActive ? 'bg-indigo-500 text-white shadow-sm'
-                            : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                        }`}>
-                        {day.short}
-                      </button>
-                    );
-                  })}
-                </div>
+        <p className="text-sm font-semibold text-slate-700 mb-2">Which days are you available?</p>
+        <div className="flex gap-2 flex-wrap">
+          {AVAIL_DAYS.map(({ id, label }) => (
+            <button key={id} onClick={() => toggleDay(id)}
+              className={`px-4 py-2 rounded-full border-2 text-sm font-medium transition-all ${
+                activeDays.includes(id) ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
+              }`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <p className="text-sm font-semibold text-slate-700 mb-1">What times of day?</p>
+        <p className="text-xs text-slate-400 mb-2">Select all that apply — you can fine-tune later.</p>
+        <div className="flex flex-col gap-2">
+          {AVAIL_TIMES.map(({ id, label, sub }) => (
+            <button key={id} onClick={() => toggleTime(id)}
+              className={`w-full border-2 rounded-2xl px-4 py-2.5 text-left transition-all flex items-center justify-between ${
+                activeTimes.includes(id) ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-indigo-300'
+              }`}>
+              <div>
+                <p className={`text-sm font-semibold ${activeTimes.includes(id) ? 'text-indigo-700' : 'text-slate-700'}`}>{label}</p>
+                <p className="text-xs text-slate-400">{sub}</p>
               </div>
-            ))}
-            <div className="mb-2.5">
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <span className="text-sm">⏱</span>
-                <span className="text-xs font-semibold text-slate-700">Never available</span>
+              <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
+                activeTimes.includes(id) ? 'border-indigo-500 bg-indigo-500' : 'border-slate-300'
+              }`}>
+                {activeTimes.includes(id) && <div className="w-2 h-2 rounded-full bg-white" />}
               </div>
-              <div className="flex gap-1.5">
-                {DAYS.map((day, i) => (
-                  <button key={`never-${day.id}-${i}`} onClick={() => toggleNever(day.id)}
-                    className={`w-9 h-9 rounded-full text-xs font-semibold transition-all ${
-                      neverAvailable.includes(day.id) ? 'bg-slate-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                    }`}>
-                    {day.short}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -497,35 +498,24 @@ const AvailabilityStep: React.FC<{
 // ─── Services Step ─────────────────────────────────────────────────────────────
 
 const ServicesStep: React.FC<{
-  primaryServices: Array<{ name: string; yearsExperience: string }>;
-  additionalServices: string[];
+  selectedServices: string[];
+  yearsExperience: string;
   certifications: string[];
   onChange: (field: string, value: any) => void;
   onNext: () => void;
   isLoading: boolean;
   onShowToast: AddToastFunction;
-}> = ({ primaryServices, additionalServices, certifications, onChange, onNext, isLoading, onShowToast }) => {
-  const togglePrimary = (name: string) => {
-    const exists = primaryServices.find(s => s.name === name);
-    onChange('primaryServices', exists
-      ? primaryServices.filter(s => s.name !== name)
-      : [...primaryServices, { name, yearsExperience: '' }]);
-  };
-  const updateExp = (name: string, yearsExperience: string) =>
-    onChange('primaryServices', primaryServices.map(s => s.name === name ? { ...s, yearsExperience } : s));
-  const toggleAdditional = (service: string) =>
-    onChange('additionalServices', additionalServices.includes(service)
-      ? additionalServices.filter(s => s !== service) : [...additionalServices, service]);
+}> = ({ selectedServices, yearsExperience, certifications, onChange, onNext, isLoading, onShowToast }) => {
+  const toggleService = (name: string) =>
+    onChange('selectedServices', selectedServices.includes(name)
+      ? selectedServices.filter(s => s !== name) : [...selectedServices, name]);
   const toggleCert = (cert: string) =>
     onChange('certifications', certifications.includes(cert)
       ? certifications.filter(c => c !== cert) : [...certifications, cert]);
 
   const handleNext = () => {
-    if (primaryServices.length === 0 && additionalServices.length === 0) {
-      onShowToast('Please select at least one service', 'error'); return;
-    }
-    const missingExp = primaryServices.find(s => !s.yearsExperience);
-    if (missingExp) { onShowToast(`Please select experience level for "${missingExp.name}"`, 'error'); return; }
+    if (selectedServices.length === 0) { onShowToast('Please select at least one service', 'error'); return; }
+    if (!yearsExperience) { onShowToast('Please select your years of experience', 'error'); return; }
     onNext();
   };
 
@@ -534,40 +524,45 @@ const ServicesStep: React.FC<{
       <h2 className="text-xl font-bold text-slate-800 text-center">What services do you offer?</h2>
 
       <div>
-        <p className="text-sm font-semibold text-slate-700 mb-2">Senior Care</p>
-        <div className="space-y-2">
+        <p className="text-sm font-semibold text-slate-700 mb-2">Senior Care — select all that apply</p>
+        <div className="flex flex-col gap-2">
           {PRIMARY_SERVICES.map(service => {
-            const selected = primaryServices.find(s => s.name === service);
+            const isOn = selectedServices.includes(service);
             return (
-              <div key={service}>
-                <button onClick={() => togglePrimary(service)}
-                  className={`w-full text-left px-4 py-2.5 rounded-xl border-2 transition-all ${
-                    selected ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-slate-300'
-                  }`}>
-                  <span className={`text-sm font-medium ${selected ? 'text-indigo-700' : 'text-slate-600'}`}>
-                    {selected && '✓ '}{service}
-                  </span>
-                </button>
-                {selected && (
-                  <select value={selected.yearsExperience} onChange={e => updateExp(service, e.target.value)}
-                    className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 bg-white focus:outline-none focus:border-indigo-500">
-                    <option value="">Select experience</option>
-                    {EXPERIENCE_LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
-                  </select>
-                )}
-              </div>
+              <button key={service} onClick={() => toggleService(service)}
+                className={`w-full text-left px-4 py-2.5 rounded-xl border-2 transition-all flex items-center justify-between ${
+                  isOn ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-slate-300'
+                }`}>
+                <span className={`text-sm font-medium ${isOn ? 'text-indigo-700' : 'text-slate-600'}`}>
+                  {isOn && '✓ '}{service}
+                </span>
+                <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
+                  isOn ? 'border-indigo-500 bg-indigo-500' : 'border-slate-300'
+                }`}>
+                  {isOn && <div className="w-2 h-2 rounded-full bg-white" />}
+                </div>
+              </button>
             );
           })}
         </div>
       </div>
 
       <div>
-        <p className="text-sm font-semibold text-slate-700 mb-2">More services</p>
+        <p className="text-sm font-semibold text-slate-700 mb-1">Years of caregiving experience</p>
+        <select value={yearsExperience} onChange={e => onChange('yearsExperience', e.target.value)}
+          className="w-full px-4 py-3 rounded-2xl border-2 border-slate-200 bg-white text-sm text-slate-800 focus:outline-none focus:border-indigo-500">
+          <option value="">Select your experience level</option>
+          {EXPERIENCE_LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+      </div>
+
+      <div>
+        <p className="text-sm font-semibold text-slate-700 mb-2">Additional services</p>
         <div className="grid grid-cols-2 gap-x-4 gap-y-2">
           {ADDITIONAL_SERVICES.map(service => (
             <label key={service} className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={additionalServices.includes(service)}
-                onChange={() => toggleAdditional(service)}
+              <input type="checkbox" checked={selectedServices.includes(service)}
+                onChange={() => toggleService(service)}
                 className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
               <span className="text-xs text-slate-600">{service}</span>
             </label>

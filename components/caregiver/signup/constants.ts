@@ -1,17 +1,17 @@
-// Primary senior care services with experience selection
+// Primary senior care services
 export const PRIMARY_SERVICES = [
-  'Companionship',
-  'Personal Care (bathing, grooming)',
-  'Dementia / Alzheimer\'s Care',
   'Mobility Assistance',
+  'Dementia / Memory Care',
   'Medication Reminders',
+  'Personal Care',
+  'Companionship',
+  'Transportation',
   'Meal Preparation',
+  'Light Housekeeping',
 ] as const;
 
-// Additional service checkboxes
+// Additional service checkboxes (no duplicates with PRIMARY_SERVICES)
 export const ADDITIONAL_SERVICES = [
-  'Light Housekeeping',
-  'Transportation / Errands',
   'Hospice Care',
   'Post-Surgery Recovery',
   'Incontinence Care',

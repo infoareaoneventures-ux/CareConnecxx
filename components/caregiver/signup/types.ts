@@ -85,4 +85,4 @@ export const INITIAL_FORM_DATA: SignupFormData = {
   bio: '',
 };
 
-export const TOTAL_STEPS = 8;
+export const TOTAL_STEPS = 6;

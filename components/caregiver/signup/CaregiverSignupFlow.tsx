@@ -5,9 +5,7 @@ import { authService, dbService } from '../../../services/api';
 import { documentUploadService } from '../../../services/documentUpload';
 import { SignupLayout } from './SignupLayout';
 import { SignupFormData, INITIAL_FORM_DATA, TOTAL_STEPS } from './types';
-import { Step1GetStarted } from './steps/Step1GetStarted';
-import { Step2AccountInfo } from './steps/Step2AccountInfo';
-import { Step3Location } from './steps/Step3Location';
+import { Step1PersonalInfo } from './steps/Step1PersonalInfo';
 import { Step4ProfilePhoto, Step4SideContent } from './steps/Step4ProfilePhoto';
 import { Step5Availability } from './steps/Step5Availability';
 import { Step6Services } from './steps/Step6Services';
@@ -99,13 +97,11 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
     navigate('/');
   }, [navigate]);
 
-  // Step 2 → Create account
-  const handleCreateAccount = useCallback(async () => {
-    if (isLoading) return; // Prevent double-click
+  // Step 1 → Create account + save location
+  const handleStep1 = useCallback(async () => {
+    if (isLoading) return;
     setIsLoading(true);
     try {
-      // Include phone, DOB, gender, and verificationStatus directly in signup
-      // (authService.signup filters undefined/empty values and writes without security stripping)
       const additionalData: Record<string, any> = {
         hourlyRate: 25,
         verified: false,
@@ -115,7 +111,6 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
       };
       if (formData.phone) additionalData.phone = formData.phone;
       if (formData.dateOfBirth) additionalData.dateOfBirth = formData.dateOfBirth;
-      if (formData.gender) additionalData.gender = formData.gender;
 
       const result = await authService.signup(
         formData.email,
@@ -125,47 +120,30 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
         additionalData as any
       );
 
-      if (result?.uid) {
-        setCreatedUserId(result.uid);
+      const uid = result?.uid || authService.getCurrentUser()?.uid;
+      if (uid) {
+        setCreatedUserId(uid);
+        const locationString = [formData.street, formData.city, formData.state, formData.zipCode]
+          .filter(Boolean).join(', ');
+        await dbService.updateUser('caregivers', uid, cleanData({
+          location: locationString,
+          street: formData.street,
+          city: formData.city,
+          state: formData.state,
+          zipCode: formData.zipCode,
+          latitude: formData.latitude || null,
+          longitude: formData.longitude || null,
+        }) as any);
       }
 
-      setStep(3);
+      setStep(2);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to create account';
       onShowToast(errorMessage, 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [formData, onShowToast]);
-
-  // Step 3 → Save location
-  const handleSaveLocation = useCallback(async () => {
-    const uid = getUid();
-    if (!uid) { onShowToast('Session lost. Please refresh and try again.', 'error'); return; }
-    setIsLoading(true);
-    try {
-      const locationString = [formData.street, formData.city, formData.state, formData.zipCode]
-        .filter(Boolean)
-        .join(', ');
-
-      await dbService.updateUser('caregivers', uid, cleanData({
-        location: locationString,
-        street: formData.street,
-        city: formData.city,
-        state: formData.state,
-        zipCode: formData.zipCode,
-        neighborhood: formData.neighborhood,
-        latitude: formData.latitude || null,
-        longitude: formData.longitude || null,
-      }) as any);
-
-      setStep(4);
-    } catch (error) {
-      onShowToast('Failed to save location. Please try again.', 'error');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [getUid, formData, onShowToast]);
+  }, [formData, isLoading, onShowToast]);
 
   // Step 4 → Upload profile photo
   const handleSavePhoto = useCallback(async () => {
@@ -179,7 +157,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
         formData.profilePhoto.file,
         'profilePhoto'
       );
-      setStep(5);
+      setStep(3);
     } catch (error) {
       onShowToast('Failed to upload photo. Please try again.', 'error');
     } finally {
@@ -197,7 +175,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
         weeklyAvailability: formData.weeklyAvailability,
         jobTypes: formData.jobTypes,
       }) as any);
-      setStep(6);
+      setStep(4);
     } catch (error) {
       onShowToast('Failed to save availability. Please try again.', 'error');
     } finally {
@@ -221,7 +199,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
         skills: allSkills,
         certifications: formData.certifications,
       }) as any);
-      setStep(7);
+      setStep(5);
     } catch (error) {
       onShowToast('Failed to save services. Please try again.', 'error');
     } finally {
@@ -243,7 +221,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
       if (formData.maxClients) rateData.maxClients = parseInt(formData.maxClients);
 
       await dbService.updateUser('caregivers', uid, rateData as any);
-      setStep(8);
+      setStep(6);
     } catch (error) {
       onShowToast('Failed to save rates. Please try again.', 'error');
     } finally {
@@ -276,7 +254,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
 
   // Side content for specific steps
   const getSideContent = () => {
-    if (step === 4) {
+    if (step === 2) {
       return (
         <Step4SideContent
           profilePhoto={formData.profilePhoto}
@@ -293,49 +271,27 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
     switch (step) {
       case 1:
         return (
-          <Step1GetStarted
+          <Step1PersonalInfo
+            firstName={formData.firstName}
+            lastName={formData.lastName}
             dateOfBirth={formData.dateOfBirth}
+            email={formData.email}
+            password={formData.password}
+            phone={formData.phone}
             termsAccepted={formData.termsAccepted}
+            street={formData.street}
+            apt={formData.apt}
+            zipCode={formData.zipCode}
+            city={formData.city}
+            state={formData.state}
             onChange={updateField}
-            onNext={() => setStep(2)}
+            onNext={handleStep1}
             onShowToast={onShowToast}
             onGoogleSignup={handleGoogleSignup}
             isLoading={isLoading}
           />
         );
       case 2:
-        return (
-          <Step2AccountInfo
-            email={formData.email}
-            password={formData.password}
-            confirmPassword={formData.confirmPassword}
-            firstName={formData.firstName}
-            lastName={formData.lastName}
-            phone={formData.phone}
-            onChange={updateField}
-            onNext={handleCreateAccount}
-            onBack={goBack}
-            onShowToast={onShowToast}
-            isLoading={isLoading}
-          />
-        );
-      case 3:
-        return (
-          <Step3Location
-            street={formData.street}
-            apt={formData.apt}
-            zipCode={formData.zipCode}
-            city={formData.city}
-            state={formData.state}
-            neighborhood={formData.neighborhood}
-            onChange={updateField}
-            onNext={handleSaveLocation}
-            onBack={goBack}
-            onShowToast={onShowToast}
-            isLoading={isLoading}
-          />
-        );
-      case 4:
         return (
           <Step4ProfilePhoto
             profilePhoto={formData.profilePhoto}
@@ -349,7 +305,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
             isLoading={isLoading}
           />
         );
-      case 5:
+      case 3:
         return (
           <Step5Availability
             jobTypes={formData.jobTypes}
@@ -362,7 +318,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
             isLoading={isLoading}
           />
         );
-      case 6:
+      case 4:
         return (
           <Step6Services
             primaryServices={formData.primaryServices}
@@ -375,7 +331,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
             isLoading={isLoading}
           />
         );
-      case 7:
+      case 5:
         return (
           <Step7Rates
             hourlyRate={formData.hourlyRate}
@@ -389,7 +345,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
             isLoading={isLoading}
           />
         );
-      case 8:
+      case 6:
         return (
           <Step8AboutMe
             bio={formData.bio}

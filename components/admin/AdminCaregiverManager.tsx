@@ -65,6 +65,10 @@ export const AdminCaregiverManager: React.FC = () => {
     try {
       const all = await adminService.getAllCaregivers();
       setCaregivers(all);
+      if (all.length === 0) console.warn('[AdminCaregiverManager] getAllCaregivers returned 0 results');
+    } catch (err) {
+      console.error('[AdminCaregiverManager] Failed to load caregivers:', err);
+      showToast('Failed to load caregivers', 'error');
     } finally {
       setLoading(false);
     }

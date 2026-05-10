@@ -174,11 +174,14 @@ function useCaregiverSteps(uid: string): OnboardingStepsResult {
     };
   }
 
+  const bypass = import.meta.env.VITE_BYPASS_ONBOARDING === 'true';
+  const BYPASS_STEPS = new Set(['purchase-membership', 'background-check']);
+
   const steps: OnboardingStep[] = CAREGIVER_STEP_DEFS.map((def) => ({
     id: def.id,
     label: def.label,
     description: def.description,
-    done: def.isDone(profile),
+    done: (bypass && BYPASS_STEPS.has(def.id)) || def.isDone(profile),
     path: def.path,
   }));
 

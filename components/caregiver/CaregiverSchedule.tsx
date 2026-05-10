@@ -285,6 +285,7 @@ export const CaregiverSchedule: React.FC<CaregiverScheduleProps> = ({
                                  // Merge consecutive slots into contiguous ranges
                                  const mergedRanges: Array<{ start: number; end: number; labels: string[] }> = [];
                                  slots.forEach(slot => {
+                                    if (typeof slot !== 'string') return;
                                     const range = SLOT_RANGES[slot.toLowerCase()];
                                     if (!range) return;
                                     const last = mergedRanges[mergedRanges.length - 1];

@@ -51,12 +51,14 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
   const checklist = [
     {
       label: 'Purchase membership',
-      done: !!(profile as any).membershipStatus && (profile as any).membershipStatus !== 'none' && (profile as any).membershipStatus !== 'inactive',
+      done: import.meta.env.VITE_BYPASS_ONBOARDING === 'true' ||
+            (!!(profile as any).membershipStatus && (profile as any).membershipStatus !== 'none' && (profile as any).membershipStatus !== 'inactive'),
       onClick: () => onNavigate('caregiver-membership'),
     },
     {
       label: 'Submit background check',
-      done: !!profile.backgroundCheckData?.checkrCandidateId ||
+      done: import.meta.env.VITE_BYPASS_ONBOARDING === 'true' ||
+            !!profile.backgroundCheckData?.checkrCandidateId ||
             (!!profile.backgroundCheckStatus && profile.backgroundCheckStatus !== 'none'),
       onClick: onStartBackgroundCheck,
     },

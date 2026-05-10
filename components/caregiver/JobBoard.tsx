@@ -294,12 +294,12 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                 </span>
                                             );
                                         })()}
-                                        {job.timeOfDay?.some(t => t === 'morning' || t === 'afternoon') && (
+                                        {(Array.isArray(job.timeOfDay) ? job.timeOfDay : []).some(t => t === 'morning' || t === 'afternoon') && (
                                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-primary-50 text-primary-700 text-[11px] font-medium">
                                                 <Sun className="w-3 h-3" /> Day
                                             </span>
                                         )}
-                                        {job.timeOfDay?.some(t => t === 'evening' || t === 'overnight') && (
+                                        {(Array.isArray(job.timeOfDay) ? job.timeOfDay : []).some(t => t === 'evening' || t === 'overnight') && (
                                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-medium">
                                                 <Moon className="w-3 h-3" /> Night
                                             </span>

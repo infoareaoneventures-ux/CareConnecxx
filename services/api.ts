@@ -2346,11 +2346,13 @@ export const dbService = {
             let query: firebase.firestore.Query = db.collection('caregivers');
 
             if (status !== 'all') {
-                query = query.where('verificationStatus', '==', status);
+                // 'pending' in the UI maps to 'submitted' in Firestore (set when caregiver finishes signup)
+                const firestoreStatus = status === 'pending' ? 'submitted' : status;
+                query = query.where('verificationStatus', '==', firestoreStatus);
             }
 
             const snapshot = await query
-                .orderBy('backgroundCheckData.submittedAt', 'desc')
+                .orderBy('submittedAt', 'desc')
                 .limit(100)
                 .get();
 
@@ -3458,10 +3460,8 @@ export const adminService = {
 
     getAllCaregivers: async (): Promise<import('../types').Caregiver[]> => {
         if (!isConfigured || !db) return [];
-        try {
-            const snap = await db.collection('caregivers').limit(500).get();
-            return snap.docs.map(d => ({ ...d.data(), uid: d.id } as import('../types').Caregiver));
-        } catch { return []; }
+        const snap = await db.collection('caregivers').limit(500).get();
+        return snap.docs.map(d => ({ ...d.data(), uid: d.id } as import('../types').Caregiver));
     },
 
 };

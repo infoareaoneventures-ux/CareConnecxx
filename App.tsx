@@ -104,6 +104,7 @@ const PublicOnlyRoute: React.FC<{ element: React.ReactElement }> = ({ element })
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (currentUser?.userType === 'client') return <Navigate to="/client/dashboard" replace />;
   if (currentUser?.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
+  if (currentUser?.userType === 'admin') return <Navigate to="/admin" replace />;
   return element;
 };
 
@@ -118,6 +119,14 @@ const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) 
   const { currentUser } = useCareConnex();
   if (!currentUser) return <Navigate to="/caregiver/login" replace />;
   if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
+  return element;
+};
+
+const AdminRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
+  const { authResolved, currentUser } = useCareConnex();
+  if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
+  if (!currentUser) return <Navigate to="/client/login" replace />;
+  if (currentUser.userType !== 'admin') return <Navigate to="/" replace />;
   return element;
 };
 
@@ -365,7 +374,7 @@ const AppContent: React.FC = () => {
           />
         } />
 
-          <Route path="/admin" element={<AdminView onBack={() => navigate('/')} />} />
+          <Route path="/admin" element={<AdminRoute element={<AdminView onBack={() => navigate('/')} />} />} />
           <Route path="/stripe/callback" element={<StripeCallback onNavigate={handleNavigation} />} />
           <Route path="/payment/success" element={<PaymentSuccess onNavigate={handleNavigation} onPaymentComplete={(id) => { /* handled in context now but PaymentSuccess might need update */ }} />} />
           <Route path="/payment/cancel" element={<PaymentCancel onNavigate={handleNavigation} />} />

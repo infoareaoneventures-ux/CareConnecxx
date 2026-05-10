@@ -3430,6 +3430,14 @@ export const adminService = {
         await db.collection('users').doc(uid).update(data as any);
     },
 
+    getUserEmail: async (uid: string): Promise<string | null> => {
+        if (!isConfigured || !db) return null;
+        try {
+            const doc = await db.collection('users').doc(uid).get();
+            return doc.exists ? (doc.data()?.email ?? null) : null;
+        } catch { return null; }
+    },
+
     updateCaregiver: async (uid: string, data: Partial<import('../types').Caregiver>): Promise<void> => {
         if (!isConfigured || !db) throw new Error("Database not connected");
         await db.collection('caregivers').doc(uid).update(data as any);

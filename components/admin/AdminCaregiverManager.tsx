@@ -74,7 +74,7 @@ export const AdminCaregiverManager: React.FC = () => {
     }
   };
 
-  const openCaregiver = (c: Caregiver) => {
+  const openCaregiver = async (c: Caregiver) => {
     setSelected(c);
     setForm({
       name: c.name, email: c.email, phone: c.phone, bio: c.bio,
@@ -91,6 +91,14 @@ export const AdminCaregiverManager: React.FC = () => {
     setNotifyMessage('');
     setSuspendReason('');
     setSuspendDays(7);
+
+    if (!c.email && c.uid) {
+      const email = await adminService.getUserEmail(c.uid);
+      if (email) {
+        setSelected(prev => prev ? { ...prev, email } : prev);
+        setForm(prev => ({ ...prev, email }));
+      }
+    }
   };
 
   const loadAppointments = async (cid: string) => {
@@ -134,15 +142,18 @@ export const AdminCaregiverManager: React.FC = () => {
       await adminService.updateCaregiver(selected.uid, updates);
       setCaregivers(prev => prev.map(c => c.uid === selected.uid ? { ...c, ...updates } as Caregiver : c));
       setSelected(prev => prev ? { ...prev, ...updates } as Caregiver : prev);
-      await dbService.sendNotification(selected.uid, {
+      showToast(`Caregiver ${status}`, 'success');
+      dbService.sendNotification(selected.uid, {
         type: `verification_${status}` as any,
         title: status === 'approved' ? "You're Verified!" : status === 'rejected' ? 'Verification Update' : 'Additional Info Needed',
         body: status === 'approved' ? 'Your background check has been approved.' : status === 'rejected' ? `Not approved. Reason: ${rejectReason}` : 'We need more information to complete your verification.',
         message: '',
         userId: selected.uid,
         isRead: false,
+      }).catch((err) => {
+        console.error('[AdminCaregiverManager] Failed to send notification:', err);
+        showToast('Notification to caregiver failed', 'error');
       });
-      showToast(`Caregiver ${status}`, 'success');
     } catch {
       showToast('Failed to update verification', 'error');
     }
@@ -258,7 +269,7 @@ export const AdminCaregiverManager: React.FC = () => {
 
   const filtered = caregivers.filter(c => {
     const matchSearch = !search || c.name?.toLowerCase().includes(search.toLowerCase()) || c.email?.toLowerCase().includes(search.toLowerCase());
-    const matchVer = verFilter === 'all' || c.verificationStatus === verFilter || (verFilter === 'pending' && !c.verificationStatus);
+    const matchVer = verFilter === 'all' || c.verificationStatus === verFilter || (verFilter === 'pending' && (!c.verificationStatus || c.verificationStatus === 'incomplete' || c.verificationStatus === 'info_requested'));
     return matchSearch && matchVer;
   });
 

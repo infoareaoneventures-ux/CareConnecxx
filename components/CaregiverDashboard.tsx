@@ -7,6 +7,7 @@ import { useCareConnex } from '../context/CareConnexContext';
 import { CaregiverHeader } from './caregiver/CaregiverHeader';
 import { OnboardingChecklist } from './caregiver/OnboardingChecklist';
 import { CaregiverOnboardingDashboard } from './caregiver/CaregiverOnboardingDashboard';
+import { CaregiverOnboardingWizard } from './caregiver/CaregiverOnboardingWizard';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 import { BackgroundCheckModal } from './BackgroundCheckModal';
 
@@ -20,6 +21,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
    const [profile, setProfile] = useState<Caregiver | null>(null);
    const [showFullChecklist, setShowFullChecklist] = useState(false);
    const [showBgModal, setShowBgModal] = useState(false);
+   const [showWizard, setShowWizard] = useState(false);
 
    useEffect(() => {
       let isMounted = true;
@@ -29,6 +31,14 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
             const userDoc = await dbService.getUser(currentUser.uid);
             if (isMounted && userDoc) {
                setProfile(userDoc as any);
+               // Show wizard for new signups (sessionStorage flag) or incomplete onboarding
+               const fromSignup = sessionStorage.getItem('careconnex_show_caregiver_wizard') === 'true';
+               if (fromSignup) {
+                  sessionStorage.removeItem('careconnex_show_caregiver_wizard');
+                  setShowWizard(true);
+               } else if ((userDoc as any)?.onboardingStatus === 'incomplete') {
+                  setShowWizard(true);
+               }
             }
          } catch (error) {
             console.error('Error fetching profile:', error);
@@ -59,6 +69,17 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
    return (
       <div className="min-h-screen bg-slate-50 pb-24">
          <CaregiverTopNav />
+
+         {showWizard && currentUser?.uid && profile && (
+            <CaregiverOnboardingWizard
+               uid={currentUser.uid}
+               firstName={(profile as any).firstName || currentUser.displayName?.split(' ')[0] || ''}
+               city={(profile as any).city || ''}
+               state={(profile as any).state || ''}
+               onComplete={() => { setShowWizard(false); refreshProfile(); }}
+               onShowToast={onShowToast}
+            />
+         )}
 
          {showBgModal && !showFullChecklist && (
             <BackgroundCheckModal

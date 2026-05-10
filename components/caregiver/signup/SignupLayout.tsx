@@ -1,5 +1,6 @@
 import React from 'react';
 import { Heart, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { TOTAL_STEPS } from './types';
 
 interface SignupLayoutProps {
@@ -20,14 +21,18 @@ export const SignupLayout: React.FC<SignupLayoutProps> = ({
   sideImage,
   imageLeft = false,
 }) => {
+  const navigate = useNavigate();
   const formPanel = (
     <div className="flex-1 flex flex-col min-h-screen lg:min-h-0">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-        <div className="flex items-center gap-2">
+        <button
+          onClick={() => navigate('/')}
+          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+        >
           <Heart className="w-7 h-7 text-primary-600" fill="currentColor" />
           <span className="text-xl font-bold text-slate-800">CareConnecxx</span>
-        </div>
+        </button>
         <button
           onClick={onCancel}
           className="text-slate-500 hover:text-slate-700 text-sm font-medium flex items-center gap-1 transition-colors"

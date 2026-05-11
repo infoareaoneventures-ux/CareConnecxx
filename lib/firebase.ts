@@ -42,8 +42,12 @@ try {
   auth = firebase.auth();
   db = firebase.firestore();
   functions = firebase.functions();
-  storage = firebase.storage();
   isConfigured = true;
+  try {
+    storage = firebase.storage();
+  } catch (storageError) {
+    console.warn('Firebase Storage unavailable:', storageError);
+  }
   console.log("🔥 Google Cloud Backend Connected: " + firebaseConfig.projectId);
 } catch (error) {
   console.error("Error connecting to Google Cloud:", error);

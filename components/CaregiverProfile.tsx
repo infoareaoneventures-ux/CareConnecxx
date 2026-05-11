@@ -11,7 +11,6 @@ import { AvatarUpload } from './ui/AvatarUpload';
 import { DocumentUpload } from './ui/DocumentUpload';
 import { ViewType, AddToastFunction, Review, Caregiver, CaregiverDocument } from '../types';
 import { dbService, authService } from '../services/api';
-import { BackgroundCheckModal } from './BackgroundCheckModal';
 import { documentUploadService, DocumentType } from '../services/documentUpload';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 import { ProfileApprovalBanner } from './caregiver/ProfileApprovalBanner';
@@ -61,7 +60,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   const [editAvailability, setEditAvailability] = useState<Record<string, string[]>>({});
 
   // Modal state
-  const [showCheckModal, setShowCheckModal] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<CaregiverDocument | null>(null);
 
   // Security state
@@ -95,9 +93,9 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
 
           // Seed editable fields
           setEditBio(fetchedProfile.bio || '');
-          setEditRate(fetchedProfile.hourlyRate || 25);
-          setEditRateTwo((fetchedProfile as any).rateForTwo || (fetchedProfile.hourlyRate || 25) + 5);
-          setEditRateThree((fetchedProfile as any).rateForThree || (fetchedProfile.hourlyRate || 25) + 10);
+          setEditRate(fetchedProfile.hourlyRate || 0);
+          setEditRateTwo((fetchedProfile as any).rateForTwo || (fetchedProfile as any).rateFor2Seniors || 0);
+          setEditRateThree((fetchedProfile as any).rateForThree || (fetchedProfile as any).rateFor3PlusSeniors || 0);
           setEditServices((fetchedProfile as any).services || []);
           setEditCerts((fetchedProfile as any).certifications || []);
           setEditLocation((fetchedProfile as any).location || '');
@@ -271,22 +269,12 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
         <div className="bg-gradient-to-r from-primary-500 to-primary-600 h-24" />
         <div className="px-6 pb-5">
           <div className="flex items-end justify-between -mt-10 mb-4">
-            <div className="w-20 h-20 rounded-full border-4 border-white bg-white overflow-hidden shadow-md flex-shrink-0">
-              <AvatarUpload
-                currentUrl={profile.photo || profile.imageUrl}
-                onImageSelected={handleImageUpdate}
-                userId={currentUser?.uid}
-                storageFolder="caregivers"
-              />
-            </div>
-            {!profile.verified && (
-              <button
-                onClick={() => setActiveTab('documents')}
-                className="mb-1 text-xs bg-accent-100 text-accent-700 px-3 py-1.5 rounded-full font-medium hover:bg-accent-200 transition-colors"
-              >
-                Get Approved
-              </button>
-            )}
+            <AvatarUpload
+              currentUrl={profile.photo || profile.imageUrl}
+              onImageSelected={handleImageUpdate}
+              userId={currentUser?.uid}
+              storageFolder="caregivers"
+            />
           </div>
           <div className="flex items-start justify-between">
             <div>
@@ -318,24 +306,32 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl mb-6">
-        {(['summary', 'reviews', 'documents', 'security'] as const).map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize transition-all relative ${
-              activeTab === tab ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            {tab}
-            {tab === 'documents' && docSummary.pending > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-accent-500 text-white text-xs rounded-full flex items-center justify-center">
-                {docSummary.pending}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+      {(() => {
+        const isTransportation = displayServices.includes('Transportation');
+        const tabs = isTransportation
+          ? (['summary', 'reviews', 'documents', 'security'] as const)
+          : (['summary', 'reviews', 'security'] as const);
+        return (
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-xl mb-6">
+            {tabs.map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab as typeof activeTab)}
+                className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize transition-all relative ${
+                  activeTab === tab ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {tab}
+                {tab === 'documents' && docSummary.pending > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-accent-500 text-white text-xs rounded-full flex items-center justify-center">
+                    {docSummary.pending}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* ── SUMMARY TAB ── */}
       {activeTab === 'summary' && (
@@ -346,18 +342,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
 
             <LookingForSection profile={profile as any} />
 
-            <div className="bg-white border border-slate-200 rounded-2xl p-5 flex items-center justify-between">
-              <div>
-                <p className="font-bold text-slate-900">Intro video</p>
-                <p className="text-xs text-slate-500">Say hello in 30 seconds — caregivers with videos get more than twice as many jobs.</p>
-              </div>
-              <button
-                onClick={() => onNavigate('caregiver-video')}
-                className="text-sm font-semibold text-accent-600 hover:text-accent-700"
-              >
-                {(profile as any).introVideoUrl ? 'Replace video →' : 'Add a new video →'}
-              </button>
-            </div>
 
             {/* Availability */}
             <div className="bg-white border border-slate-200 rounded-2xl p-5">
@@ -553,9 +537,9 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 ) : (
                   <button
                     onClick={() => {
-                      setEditRate(profile.hourlyRate || 25);
-                      setEditRateTwo((profile as any).rateForTwo || (profile.hourlyRate || 25) + 5);
-                      setEditRateThree((profile as any).rateForThree || (profile.hourlyRate || 25) + 10);
+                      setEditRate(profile.hourlyRate || 0);
+                      setEditRateTwo((profile as any).rateForTwo || (profile as any).rateFor2Seniors || 0);
+                      setEditRateThree((profile as any).rateForThree || (profile as any).rateFor3PlusSeniors || 0);
                       setEditingSection('experience');
                     }}
                     className="text-xs text-primary-600 font-semibold hover:text-primary-700"
@@ -592,9 +576,9 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 <div className="space-y-0 divide-y divide-slate-100">
                   {[
                     { label: '1 Senior', rate: profile.hourlyRate || editRate },
-                    { label: '2 Seniors', rate: (profile as any).rateForTwo || editRateTwo },
-                    { label: '3+ Seniors', rate: (profile as any).rateForThree || editRateThree },
-                  ].map(({ label, rate }) => (
+                    { label: '2 Seniors', rate: (profile as any).rateForTwo || (profile as any).rateFor2Seniors || editRateTwo },
+                    { label: '3+ Seniors', rate: (profile as any).rateForThree || (profile as any).rateFor3PlusSeniors || editRateThree },
+                  ].filter(({ rate }) => rate > 0).map(({ label, rate }) => (
                     <div key={label} className="flex items-center justify-between py-2.5">
                       <span className="text-sm text-slate-600">{label}</span>
                       <span className="text-sm font-bold text-slate-900">${rate}/hr</span>
@@ -855,28 +839,31 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
             <div className={`p-4 rounded-xl flex items-start gap-4 ${
               profile.verificationStatus === 'submitted' || profile.backgroundCheckStatus === 'pending'
                 ? 'bg-blue-50 border border-blue-200'
-                : 'bg-slate-50 border border-slate-200'
+                : 'bg-amber-50 border border-amber-200'
             }`}>
-              <div className={`p-2 rounded-full ${
+              <div className={`p-2 rounded-full flex-shrink-0 ${
                 profile.verificationStatus === 'submitted' || profile.backgroundCheckStatus === 'pending'
-                  ? 'bg-blue-100' : 'bg-slate-200'
+                  ? 'bg-blue-100' : 'bg-amber-100'
               }`}>
-                <AlertTriangle className="w-6 h-6 text-slate-500" />
+                <AlertTriangle className={`w-5 h-5 ${
+                  profile.verificationStatus === 'submitted' || profile.backgroundCheckStatus === 'pending'
+                    ? 'text-blue-600' : 'text-amber-600'
+                }`} />
               </div>
               <div className="flex-grow">
                 <h4 className="font-bold text-slate-900">
                   {profile.verificationStatus === 'submitted' || profile.backgroundCheckStatus === 'pending'
-                    ? 'Pending Admin Approval'
-                    : 'Verification Required'}
+                    ? 'Under review'
+                    : 'Registration required'}
                 </h4>
                 <p className="text-sm text-slate-600 mt-1">
                   {profile.verificationStatus === 'submitted' || profile.backgroundCheckStatus === 'pending'
                     ? 'Your account is under review. Documents below show current status.'
-                    : 'Complete verification to start accepting jobs.'}
+                    : 'Complete your $24.95 annual registration to activate transportation services.'}
                 </p>
                 {profile.verificationStatus !== 'submitted' && profile.backgroundCheckStatus !== 'pending' && (
-                  <Button size="sm" onClick={() => setShowCheckModal(true)} className="mt-3 bg-slate-900 text-white">
-                    Start Verification
+                  <Button size="sm" onClick={() => onNavigate('caregiver-membership')} className="mt-3 bg-indigo-600 hover:bg-indigo-700 text-white border-none">
+                    Complete Registration
                   </Button>
                 )}
               </div>
@@ -914,7 +901,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
           <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-slate-900 flex items-center">
-                <FileText className="w-5 h-5 mr-2 text-primary-500" /> Required Documents
+                <FileText className="w-5 h-5 mr-2 text-primary-500" /> Transportation Documents
               </h3>
               <span className="text-xs text-slate-500">Upload clear images or PDFs</span>
             </div>
@@ -922,8 +909,16 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
               <DocumentUpload
                 type="driversLicense"
                 label="Driver's License (Front)"
-                description="Required for all caregivers who provide transportation"
+                description="Valid government-issued driver's license"
                 existingDocument={profile.documents?.driversLicense}
+                onUpload={handleDocumentUpload}
+                onDelete={handleDocumentDelete}
+              />
+              <DocumentUpload
+                type="insurance"
+                label="Vehicle Insurance"
+                description="Current auto insurance showing active coverage"
+                existingDocument={(profile.documents as any)?.insurance}
                 onUpload={handleDocumentUpload}
                 onDelete={handleDocumentDelete}
               />
@@ -941,7 +936,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
           <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
             <h4 className="text-sm font-bold text-blue-900 mb-1">Why we need these documents</h4>
             <p className="text-xs text-blue-700">
-              These documents help us ensure the safety of our clients and verify that you meet our transportation requirements.
+              Since you offer transportation, we verify your license, insurance, and registration to keep clients safe.
               All documents are securely stored and only accessible to authorized administrators.
             </p>
           </div>
@@ -990,10 +985,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
           Log Out
         </button>
       </div>
-
-      {showCheckModal && (
-        <BackgroundCheckModal onClose={() => setShowCheckModal(false)} onShowToast={onShowToast} />
-      )}
 
       </div>
 

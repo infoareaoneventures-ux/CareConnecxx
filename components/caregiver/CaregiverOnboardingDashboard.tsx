@@ -1,19 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import {
   CheckCircle, ChevronRight, Briefcase, Calendar, Star,
-  Video, Users, Clock, MapPin, Loader2, AlertCircle, XCircle, Info
+  Users, MapPin, Loader2, ArrowRight, Clock, Lock,
 } from 'lucide-react';
 import { Caregiver, JobPost, AddToastFunction } from '../../types';
 import { dbService } from '../../services/api';
 import { CaregiverBookingRequests } from './CaregiverBookingRequests';
 import { CaregiverInterviewManager } from './CaregiverInterviewManager';
+import { ProfileApprovalBanner } from './ProfileApprovalBanner';
 
 interface CaregiverOnboardingDashboardProps {
   profile: Caregiver;
   onNavigate: (view: any) => void;
   onShowToast?: AddToastFunction;
   onViewChecklist: () => void;
-  onStartBackgroundCheck: () => void;
 }
 
 function getGreeting(): string {
@@ -27,18 +27,140 @@ function getFirstName(name: string): string {
   return name?.split(' ')[0] || name || 'there';
 }
 
+// ── Progress Card ─────────────────────────────────────────────────────────────
+
+const CaregiverProgressCard: React.FC<{
+  profile: Caregiver;
+  onNavigate: (view: any) => void;
+}> = ({ profile, onNavigate }) => {
+  const p = profile as any;
+  const isApproved = p.verificationStatus === 'approved' || profile.verified === true;
+  const profileComplete = p.onboardingStatus === 'profile_complete' || p.onboardingStatus === 'submitted' || isApproved;
+  const hasPaid = !!(p.membershipStatus && p.membershipStatus !== 'none' && p.membershipStatus !== 'inactive');
+  const checkrInitiated = !!p.backgroundCheckData?.checkrCandidateId;
+  const underReview = p.verificationStatus === 'submitted';
+  const rejected = p.verificationStatus === 'rejected';
+  const infoRequested = p.verificationStatus === 'info_requested';
+  const bgInProgress = (hasPaid || checkrInitiated || underReview) && !isApproved;
+
+  if (isApproved) return null;
+
+  const activeStep = !profileComplete ? 1 : !isApproved ? 2 : 3;
+
+  // CTA card content
+  let cardTitle = '';
+  let cardDesc = '';
+  let cardCta: { label: string; onClick: () => void } | undefined;
+  let cardVariant: 'default' | 'info' | 'warning' = 'default';
+
+  if (activeStep === 1) {
+    cardTitle = 'Complete your profile';
+    cardDesc = 'Add your photo, availability, services, and bio.';
+    cardCta = { label: 'Complete profile', onClick: () => onNavigate('caregiver-profile') };
+  } else {
+    if (rejected) {
+      cardTitle = 'Application not approved';
+      cardDesc = p.rejectionReason || 'Contact support for details.';
+      cardVariant = 'warning';
+    } else if (infoRequested) {
+      cardTitle = 'Additional information needed';
+      cardDesc = p.infoRequestNotes || 'Please update your profile and resubmit.';
+      cardCta = { label: 'Update profile', onClick: () => onNavigate('caregiver-profile') };
+      cardVariant = 'warning';
+    } else if (bgInProgress) {
+      cardTitle = underReview ? 'Profile under review' : 'Background check in progress';
+      cardDesc = underReview
+        ? 'Our team is reviewing your profile. This takes 1–2 business days.'
+        : 'Your background check is underway. We\'ll notify you when complete.';
+      cardVariant = 'info';
+    } else {
+      cardTitle = 'Complete your registration';
+      cardDesc = '$24.95 annual membership — covers your background check and platform access.';
+      cardCta = { label: 'Complete registration · $24.95', onClick: () => onNavigate('caregiver-membership') };
+    }
+  }
+
+  const steps = [
+    { label: 'Account', done: true, inProgress: false },
+    { label: 'Profile', done: profileComplete, inProgress: !profileComplete },
+    { label: 'Verification', done: isApproved, inProgress: bgInProgress },
+    { label: 'Apply', done: isApproved, inProgress: false },
+  ];
+
+  return (
+    <div className="bg-white border border-slate-100 rounded-[2rem] p-6 mb-8 shadow-sm">
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-5">Your progress</p>
+
+      {/* Horizontal stepper */}
+      <div className="flex items-start mb-5">
+        {steps.map((step, i) => (
+          <React.Fragment key={i}>
+            <div className="flex flex-col items-center flex-1 min-w-0">
+              <div className={`w-9 h-9 rounded-full flex items-center justify-center mb-2 flex-shrink-0 ${
+                step.done ? 'bg-teal-500 shadow-sm' : step.inProgress ? 'bg-indigo-600 shadow-sm' : 'bg-slate-100'
+              }`}>
+                {step.done
+                  ? <CheckCircle className="w-5 h-5 text-white" />
+                  : step.inProgress
+                  ? <Clock className="w-4 h-4 text-white" />
+                  : <Lock className="w-4 h-4 text-slate-400" />
+                }
+              </div>
+              <span className={`text-xs font-semibold text-center px-1 leading-tight ${
+                step.done ? 'text-teal-600' : step.inProgress ? 'text-indigo-700' : 'text-slate-400'
+              }`}>{step.label}</span>
+            </div>
+            {i < steps.length - 1 && (
+              <div className={`h-0.5 flex-1 mt-[18px] mx-1 ${step.done ? 'bg-teal-200' : 'bg-slate-100'}`} />
+            )}
+          </React.Fragment>
+        ))}
+      </div>
+
+      {/* Active step CTA card */}
+      <div className={`rounded-2xl p-4 ${
+        cardVariant === 'warning' ? 'bg-red-50 border border-red-100'
+        : cardVariant === 'info' ? 'bg-blue-50 border border-blue-100'
+        : 'bg-indigo-50 border border-indigo-100'
+      }`}>
+        <p className={`text-sm font-semibold mb-1 ${
+          cardVariant === 'warning' ? 'text-red-900' : cardVariant === 'info' ? 'text-blue-900' : 'text-indigo-900'
+        }`}>{cardTitle}</p>
+        <p className={`text-xs leading-relaxed ${
+          cardVariant === 'warning' ? 'text-red-700' : cardVariant === 'info' ? 'text-blue-700' : 'text-indigo-600'
+        } ${cardCta ? 'mb-3' : 'mb-0'}`}>{cardDesc}</p>
+        {cardCta && (
+          <button
+            onClick={cardCta.onClick}
+            className="flex items-center gap-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-full transition-colors"
+          >
+            {cardCta.label} <ArrowRight className="w-3 h-3" />
+          </button>
+        )}
+        {cardVariant === 'info' && !cardCta && (
+          <div className="flex items-center gap-1.5 text-xs font-medium text-blue-600 mt-1">
+            <Clock className="w-3 h-3" /> In progress
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ── Main Dashboard ────────────────────────────────────────────────────────────
+
 export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboardProps> = ({
   profile,
   onNavigate,
   onShowToast,
   onViewChecklist,
-  onStartBackgroundCheck,
 }) => {
   const [jobs, setJobs] = useState<JobPost[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
-  const isApproved = profile.verificationStatus === 'approved' || profile.verified === true;
-  const [approvalOpen, setApprovalOpen] = useState(!isApproved);
-  const [successOpen, setSuccessOpen] = useState(isApproved);
+  const [successOpen, setSuccessOpen] = useState(false);
+  const isApproved = (profile.verificationStatus === 'approved' || profile.verified === true)
+    && profile.verificationStatus !== 'info_requested'
+    && profile.verificationStatus !== 'rejected';
 
   useEffect(() => {
     dbService.getOpenJobs()
@@ -47,45 +169,10 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
       .finally(() => setLoadingJobs(false));
   }, []);
 
-  // Approval checklist items — derived from real profile fields
-  const checklist = [
-    {
-      label: 'Purchase membership',
-      done: import.meta.env.VITE_BYPASS_ONBOARDING === 'true' ||
-            (!!(profile as any).membershipStatus && (profile as any).membershipStatus !== 'none' && (profile as any).membershipStatus !== 'inactive'),
-      onClick: () => onNavigate('caregiver-membership'),
-    },
-    {
-      label: 'Submit background check',
-      done: import.meta.env.VITE_BYPASS_ONBOARDING === 'true' ||
-            !!profile.backgroundCheckData?.checkrCandidateId ||
-            (!!profile.backgroundCheckStatus && profile.backgroundCheckStatus !== 'none'),
-      onClick: onStartBackgroundCheck,
-    },
-    {
-      label: 'Tell families more about you',
-      done: (profile.bio?.length ?? 0) >= 50,
-      onClick: onViewChecklist,
-    },
-    {
-      label: 'Upload a photo',
-      done: !!(profile.photo || profile.imageUrl || (profile as any).photoURL),
-      onClick: onViewChecklist,
-    },
-    {
-      label: 'Set your rates',
-      done: (profile.hourlyRate ?? 0) > 0,
-      onClick: onViewChecklist,
-    },
-  ];
-
-  const doneCount = checklist.filter(c => c.done).length;
-
-  // Success guide items
   const successItems = [
     {
       label: 'Record a 30-second intro video',
-      done: !!profile.introVideoUrl,
+      done: !!(profile as any).introVideoUrl,
       onClick: () => onNavigate('caregiver-video'),
     },
     {
@@ -100,127 +187,66 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
     },
   ];
 
-  // Progress tracker
-  const progressSteps = [
-    { label: 'Welcome!', done: true },
-    { label: 'Complete checklist', done: doneCount >= 3 },
-    { label: 'Profile approved', done: profile.verificationStatus === 'approved' },
-    { label: 'Start applying!', done: profile.verificationStatus === 'approved' },
-  ];
-
-  const currentProgressStep = progressSteps.findIndex(s => !s.done);
+  const greeting = isApproved
+    ? "Let's find your next family."
+    : profile.verificationStatus === 'info_requested'
+    ? 'We need more information.'
+    : profile.verificationStatus === 'rejected'
+    ? 'Your application was not approved.'
+    : profile.verificationStatus === 'submitted'
+    ? 'Your profile is under review.'
+    : 'Let\'s get you ready to apply.';
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 pb-24">
 
       {/* ── Greeting ── */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <p className="text-slate-500 text-sm mb-0.5">👋 Good {getGreeting()}, {getFirstName(profile.name)}</p>
-          <h1 className="text-2xl font-bold text-slate-900">
-            {isApproved
-              ? "Let's find your next family."
-              : (profile as any).verificationStatus === 'submitted'
-              ? "Your profile is in review."
-              : "Let's get you ready to apply."}
-          </h1>
-        </div>
+      <div className="mb-6">
+        <p className="text-slate-500 text-sm mb-0.5">👋 Good {getGreeting()}, {getFirstName(profile.name)}</p>
+        <h1 className="text-2xl font-bold text-slate-900">{greeting}</h1>
       </div>
 
-      {/* ── Status Banner ── */}
-      {isApproved ? (
-        <div className="bg-primary-50 border border-primary-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
-          <div className="bg-primary-100 p-2.5 rounded-2xl flex-shrink-0">
-            <CheckCircle className="w-5 h-5 text-primary-600" />
+      {/* ── Progress Card ── */}
+      <CaregiverProgressCard
+        profile={profile}
+        onNavigate={onNavigate}
+      />
+
+      {/* ── Info requested / Rejected Banner ── */}
+      {(profile.verificationStatus === 'info_requested' || profile.verificationStatus === 'rejected') && (
+        <ProfileApprovalBanner profile={profile} />
+      )}
+
+      {/* ── Approved Banner ── */}
+      {isApproved && (
+        <div className="bg-teal-50 border border-teal-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
+          <div className="bg-teal-100 p-2.5 rounded-2xl flex-shrink-0">
+            <CheckCircle className="w-5 h-5 text-teal-600" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-bold text-primary-950 mb-0.5">You're approved — start applying!</p>
-            <p className="text-sm text-primary-800 font-medium">Browse open jobs on the Job Board and send your first application.</p>
+            <p className="font-bold text-teal-950 mb-0.5">You're approved — start applying!</p>
+            <p className="text-sm text-teal-800 font-medium">Browse open jobs and send your first application.</p>
           </div>
           <button
             onClick={() => onNavigate('caregiver-jobs')}
-            className="flex-shrink-0 text-sm font-bold text-primary-700 hover:text-primary-900 underline underline-offset-2 transition-colors mt-1"
+            className="flex-shrink-0 text-sm font-bold text-teal-700 hover:text-teal-900 underline underline-offset-2 transition-colors mt-1"
           >
-            Go to Job Board →
-          </button>
-        </div>
-      ) : (profile as any).verificationStatus === 'submitted' ? (
-        <div className="bg-blue-50 border border-blue-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
-          <div className="bg-blue-100 p-2.5 rounded-2xl flex-shrink-0">
-            <Clock className="w-5 h-5 text-blue-600" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-blue-950 mb-0.5">Your profile is under review.</p>
-            <p className="text-sm text-blue-800 font-medium">We'll notify you within 1–2 business days once your profile has been reviewed.</p>
-          </div>
-        </div>
-      ) : (profile as any).verificationStatus === 'rejected' ? (
-        <div className="bg-red-50 border border-red-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
-          <div className="bg-red-100 p-2.5 rounded-2xl flex-shrink-0">
-            <XCircle className="w-5 h-5 text-red-600" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-red-950 mb-0.5">Your application wasn't approved.</p>
-            <p className="text-sm text-red-800 font-medium">
-              {(profile as any).rejectionReason
-                ? `Reason: ${(profile as any).rejectionReason}`
-                : 'Please contact support if you have questions about this decision.'}
-            </p>
-          </div>
-        </div>
-      ) : (profile as any).verificationStatus === 'info_requested' ? (
-        <div className="bg-amber-50 border border-amber-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
-          <div className="bg-amber-100 p-2.5 rounded-2xl flex-shrink-0">
-            <Info className="w-5 h-5 text-amber-600" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-amber-950 mb-0.5">We need a bit more information.</p>
-            <p className="text-sm text-amber-800 font-medium">
-              {(profile as any).infoRequestNotes || 'Please update your profile and resubmit for review.'}
-            </p>
-          </div>
-          <button
-            onClick={onViewChecklist}
-            className="flex-shrink-0 text-sm font-bold text-amber-700 hover:text-amber-900 underline underline-offset-2 transition-colors mt-1"
-          >
-            View checklist →
-          </button>
-        </div>
-      ) : (
-        <div className="bg-primary-50 border border-primary-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
-          <div className="bg-primary-100 p-2.5 rounded-2xl flex-shrink-0">
-            <AlertCircle className="w-5 h-5 text-primary-600" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-primary-950 mb-0.5">Let's get your profile approved.</p>
-            <p className="text-sm text-primary-800 font-medium">Complete the checklist to submit your profile for review.</p>
-          </div>
-          <button
-            onClick={onViewChecklist}
-            className="flex-shrink-0 text-sm font-bold text-primary-700 hover:text-primary-900 underline underline-offset-2 transition-colors mt-1"
-          >
-            Approval checklist →
+            Job Board →
           </button>
         </div>
       )}
 
-      {/* ── Incoming Booking Requests ── */}
+      {/* ── Booking Requests ── */}
       {profile.uid && (
         <div className="mb-8">
-          <CaregiverBookingRequests
-            caregiverId={profile.uid}
-            onShowToast={onShowToast || (() => {})}
-          />
+          <CaregiverBookingRequests caregiverId={profile.uid} onShowToast={onShowToast || (() => {})} />
         </div>
       )}
 
       {/* ── Interview Requests ── */}
       {profile.uid && (
         <div className="mb-8">
-          <CaregiverInterviewManager
-            caregiverId={profile.uid}
-            onShowToast={onShowToast || (() => {})}
-          />
+          <CaregiverInterviewManager caregiverId={profile.uid} onShowToast={onShowToast || (() => {})} />
         </div>
       )}
 
@@ -228,14 +254,10 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-slate-900">Job Board</h2>
-          <button
-            onClick={() => onNavigate('caregiver-jobs')}
-            className="text-sm text-primary-600 hover:text-primary-700 font-bold"
-          >
+          <button onClick={() => onNavigate('caregiver-jobs')} className="text-sm text-primary-600 hover:text-primary-700 font-bold">
             See all posts →
           </button>
         </div>
-
         {loadingJobs ? (
           <div className="flex justify-center py-8">
             <Loader2 className="w-6 h-6 text-slate-300 animate-spin" />
@@ -248,10 +270,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
         ) : (
           <div className="grid sm:grid-cols-2 gap-4">
             {jobs.map(job => (
-              <div
-                key={job.id}
-                className="bg-white border border-slate-100 rounded-[1.5rem] p-6 hover:border-primary-300 hover:shadow-lg shadow-sm transition-all duration-300"
-              >
+              <div key={job.id} className="bg-white border border-slate-100 rounded-[1.5rem] p-6 hover:border-primary-300 hover:shadow-lg shadow-sm transition-all duration-300">
                 <div className="flex items-start gap-4 mb-4">
                   <div className="w-12 h-12 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-base flex-shrink-0 shadow-inner">
                     {(job.clientName || 'F').charAt(0).toUpperCase()}
@@ -269,10 +288,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                     <MapPin className="w-4 h-4 text-slate-400" />
                     {job.location || job.zipCode || 'Location TBD'}
                   </div>
-                  <button
-                    onClick={() => onNavigate('caregiver-jobs')}
-                    className="text-sm font-bold text-primary-600 hover:text-primary-700 bg-primary-50 px-3 py-1.5 rounded-full"
-                  >
+                  <button onClick={() => onNavigate('caregiver-jobs')} className="text-sm font-bold text-primary-600 hover:text-primary-700 bg-primary-50 px-3 py-1.5 rounded-full">
                     View
                   </button>
                 </div>
@@ -282,99 +298,27 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
         )}
       </div>
 
-      {/* ── Getting Started Progress ── */}
-      <div className="bg-white border border-slate-100 rounded-[2rem] p-6 mb-8 shadow-sm">
-        <h2 className="text-base font-bold text-slate-900 mb-5">Getting started</h2>
-        <div className="relative flex items-center justify-between">
-          {/* connector line */}
-          <div className="absolute left-5 right-5 top-5 h-0.5 bg-slate-100 -z-0" />
-          <div
-            className="absolute left-5 top-5 h-0.5 bg-primary-500 -z-0 transition-all duration-500"
-            style={{ width: `${Math.min((currentProgressStep < 0 ? 4 : currentProgressStep) / 3, 1) * 100}%` }}
-          />
-          {progressSteps.map((ps, i) => (
-            <div key={i} className="flex flex-col items-center gap-2 z-10 w-[70px]">
-              <div className={`w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all ${
-                ps.done ? 'bg-primary-500 border-primary-500 shadow-md shadow-primary-500/20' : i === currentProgressStep ? 'bg-white border-primary-400' : 'bg-white border-slate-200'
-              }`}>
-                {ps.done
-                  ? <CheckCircle className="w-5 h-5 text-white" />
-                  : <div className={`w-3 h-3 rounded-full ${i === currentProgressStep ? 'bg-primary-400' : 'bg-slate-200'}`} />
-                }
-              </div>
-              <p className={`text-[11px] text-center leading-tight ${ps.done ? 'text-primary-700 font-bold' : i === currentProgressStep ? 'text-slate-800 font-semibold' : 'text-slate-400 font-medium'}`}>
-                {ps.label}
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Approval Checklist (accordion) ── */}
-      <div className="bg-white border border-slate-100 rounded-[2rem] overflow-hidden mb-6 shadow-sm">
-        <button
-          onClick={() => setApprovalOpen(o => !o)}
-          className="w-full px-6 py-5 flex items-center justify-between text-left hover:bg-slate-50 transition-colors"
-        >
-          <div className="flex items-center gap-3">
-            <span className="font-bold text-slate-900">Approval Checklist</span>
-            <span className={`text-[11px] px-2.5 py-1 rounded-full font-bold shadow-sm ${doneCount === checklist.length ? 'bg-green-100 text-green-800' : 'bg-primary-100 text-primary-800'}`}>
-              {doneCount}/{checklist.length}
-            </span>
-          </div>
-          <ChevronRight className={`w-5 h-5 text-slate-400 transition-transform ${approvalOpen ? 'rotate-90' : ''}`} />
-        </button>
-        {approvalOpen && (
-          <div className="border-t border-slate-50 divide-y divide-slate-50">
-            {checklist.map((item, i) => (
-              <button
-                key={i}
-                onClick={item.done ? undefined : item.onClick}
-                className={`w-full px-6 py-4 flex items-center gap-4 text-left transition-colors ${item.done ? 'cursor-default' : 'hover:bg-slate-50'}`}
-              >
-                <div className={`w-6 h-6 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
-                  item.done ? 'bg-primary-500 border-primary-500 shadow-sm' : 'border-slate-200'
-                }`}>
-                  {item.done && <CheckCircle className="w-4 h-4 text-white" />}
-                </div>
-                <span className={`text-sm font-medium flex-1 ${item.done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                  {item.label}
-                </span>
-                {!item.done && <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ── Success Guide (accordion) ── */}
-      <div id="success-guide" className="bg-white border border-slate-100 rounded-[2rem] overflow-hidden mb-8 shadow-sm scroll-mt-20">
+      {/* ── Success Guide ── */}
+      <div className="bg-white border border-slate-100 rounded-[2rem] overflow-hidden mb-8 shadow-sm">
         <button
           onClick={() => setSuccessOpen(o => !o)}
           className="w-full px-6 py-5 flex items-center justify-between text-left hover:bg-slate-50 transition-colors"
         >
           <div>
             <span className="font-bold text-slate-900">Success Guide</span>
-            <span className="text-slate-500 font-medium text-sm ml-2 hidden sm:inline">Book jobs faster! Follow our guide below to stand out.</span>
+            <span className="text-slate-500 font-medium text-sm ml-2 hidden sm:inline">Book jobs faster — follow our guide to stand out.</span>
           </div>
           <ChevronRight className={`w-5 h-5 text-slate-400 transition-transform flex-shrink-0 ${successOpen ? 'rotate-90' : ''}`} />
         </button>
         {successOpen && (
           <div className="border-t border-slate-50 divide-y divide-slate-50">
             {successItems.map((item, i) => (
-              <button
-                key={i}
-                onClick={item.done ? undefined : item.onClick}
-                className={`w-full px-6 py-4 flex items-center gap-4 text-left transition-colors ${item.done ? 'cursor-default' : 'hover:bg-slate-50'}`}
-              >
-                <div className={`w-6 h-6 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
-                  item.done ? 'bg-primary-500 border-primary-500 shadow-sm' : 'border-slate-200'
-                }`}>
+              <button key={i} onClick={item.done ? undefined : item.onClick}
+                className={`w-full px-6 py-4 flex items-center gap-4 text-left transition-colors ${item.done ? 'cursor-default' : 'hover:bg-slate-50'}`}>
+                <div className={`w-6 h-6 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${item.done ? 'bg-primary-500 border-primary-500 shadow-sm' : 'border-slate-200'}`}>
                   {item.done && <CheckCircle className="w-4 h-4 text-white" />}
                 </div>
-                <span className={`text-sm font-medium flex-1 ${item.done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                  {item.label}
-                </span>
+                <span className={`text-sm font-medium flex-1 ${item.done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{item.label}</span>
                 {!item.done && <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />}
               </button>
             ))}

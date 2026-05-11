@@ -4,7 +4,7 @@ import {
   User, Heart, ChevronDown, ChevronUp, Lightbulb, FileText, X,
 } from 'lucide-react';
 import { dbService } from '../../services/api';
-import { documentUploadService } from '../../services/documentUpload';
+import { documentUploadService, DocumentType } from '../../services/documentUpload';
 import { AddToastFunction } from '../../types';
 import {
   PRIMARY_SERVICES,
@@ -40,10 +40,9 @@ interface WizardForm {
   rateFor2Seniors: string;
   rateFor3PlusSeniors: string;
   maxClients: string;
+  serviceRadius: string;
   bio: string;
 }
-
-const TOTAL_STEPS = 7;
 
 const cleanData = (data: Record<string, any>): Record<string, any> =>
   Object.fromEntries(Object.entries(data).filter(([_, v]) => v !== undefined && v !== ''));
@@ -70,6 +69,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     rateFor2Seniors: '',
     rateFor3PlusSeniors: '',
     maxClients: '',
+    serviceRadius: '10',
     bio: '',
   });
 
@@ -78,17 +78,29 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     if (field === 'profilePhoto' && value.preview) blobUrlsRef.current.add(value.preview);
   };
 
-  const next = () => setStep(s => Math.min(s + 1, TOTAL_STEPS));
+  const hasTransportation = form.selectedServices.includes('Transportation');
+  const stepsArr = [
+    'welcome', 'photo', 'availability', 'services',
+    ...(hasTransportation ? ['transport-docs'] : []),
+    'rates', 'bio', 'done',
+  ];
+  const totalSteps = stepsArr.length;
+  const currentStepId = stepsArr[step - 1] ?? 'welcome';
+
+  const next = () => setStep(s => Math.min(s + 1, totalSteps));
   const back = () => setStep(s => Math.max(s - 1, 1));
 
   const handleSavePhoto = async () => {
     if (!form.profilePhoto.file) { onShowToast('Please upload a profile photo', 'error'); return; }
     setIsLoading(true);
     try {
-      await documentUploadService.uploadDocument(uid, form.profilePhoto.file, 'profilePhoto');
+      const doc = await documentUploadService.uploadDocument(uid, form.profilePhoto.file, 'profilePhoto');
+      await dbService.updateUser('caregivers', uid, { photo: doc.url } as any);
       next();
-    } catch { onShowToast('Failed to upload photo. Please try again.', 'error'); }
-    finally { setIsLoading(false); }
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to upload photo. Please try again.';
+      onShowToast(msg, 'error');
+    } finally { setIsLoading(false); }
   };
 
   const handleSaveAvailability = async () => {
@@ -116,8 +128,10 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       await dbService.updateUser('caregivers', uid, cleanData({
         primaryServices: form.selectedServices.map(name => ({ name, yearsExperience: form.yearsExperience })),
         skills: form.selectedServices,
+        services: form.selectedServices,
         certifications: form.certifications,
         yearsExperience: form.yearsExperience,
+        experience: form.yearsExperience,
       }) as any);
       next();
     } catch { onShowToast('Failed to save services. Please try again.', 'error'); }
@@ -130,9 +144,12 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     if (rate < 15 || rate > 200) { onShowToast('Hourly rate must be between $15 and $200', 'error'); return; }
     setIsLoading(true);
     try {
-      const rateData: Record<string, any> = { hourlyRate: rate };
-      if (form.rateFor2Seniors) rateData.rateFor2Seniors = parseInt(form.rateFor2Seniors);
-      if (form.rateFor3PlusSeniors) rateData.rateFor3PlusSeniors = parseInt(form.rateFor3PlusSeniors);
+      const rateData: Record<string, any> = {
+        hourlyRate: rate,
+        serviceRadius: parseInt(form.serviceRadius) || 10,
+      };
+      if (form.rateFor2Seniors) rateData.rateForTwo = parseInt(form.rateFor2Seniors);
+      if (form.rateFor3PlusSeniors) rateData.rateForThree = parseInt(form.rateFor3PlusSeniors);
       if (form.maxClients) rateData.maxClients = parseInt(form.maxClients);
       await dbService.updateUser('caregivers', uid, rateData as any);
       next();
@@ -149,23 +166,22 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       await dbService.updateUser('caregivers', uid, cleanData({
         bio: form.bio,
         onboardingStep: 2,
-        onboardingStatus: 'submitted',
-        verificationStatus: 'submitted',
-        submittedAt: new Date().toISOString(),
+        onboardingStatus: 'profile_complete',
+        location: [city, state].filter(Boolean).join(', ') || undefined,
       }) as any);
       next();
     } catch { onShowToast('Failed to save bio. Please try again.', 'error'); }
     finally { setIsLoading(false); }
   };
 
-  const progressPct = Math.round(((step - 1) / (TOTAL_STEPS - 1)) * 100);
-  const isColoredStep = [1, 7].includes(step);
+  const progressPct = Math.round(((step - 1) / (totalSteps - 1)) * 100);
+  const isColoredStep = step === 1 || step === totalSteps;
   const cardBg = isColoredStep ? 'bg-indigo-600' : 'bg-white';
 
   const renderStep = () => {
-    switch (step) {
-      // ── Step 1: Welcome ──────────────────────────────────────────────────
-      case 1:
+    switch (currentStepId) {
+      // ── Welcome ──────────────────────────────────────────────────────────
+      case 'welcome':
         return (
           <div className="flex flex-col items-center text-center gap-5 py-2">
             <h2 className="text-2xl font-bold text-white leading-snug">
@@ -195,46 +211,51 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
           </div>
         );
 
-      // ── Step 2: Photo ────────────────────────────────────────────────────
-      case 2:
+      // ── Photo ────────────────────────────────────────────────────────────
+      case 'photo':
         return <PhotoStep
           profilePhoto={form.profilePhoto} onChange={updateField}
           onNext={handleSavePhoto} isLoading={isLoading} onShowToast={onShowToast}
         />;
 
-      // ── Step 3: Availability ─────────────────────────────────────────────
-      case 3:
+      // ── Availability ─────────────────────────────────────────────────────
+      case 'availability':
         return <AvailabilityStep
           jobTypes={form.jobTypes} weeklyAvailability={form.weeklyAvailability}
           neverAvailable={form.neverAvailable} onChange={updateField}
           onNext={handleSaveAvailability} isLoading={isLoading} onShowToast={onShowToast}
         />;
 
-      // ── Step 4: Services ─────────────────────────────────────────────────
-      case 4:
+      // ── Services ─────────────────────────────────────────────────────────
+      case 'services':
         return <ServicesStep
           selectedServices={form.selectedServices} yearsExperience={form.yearsExperience}
           certifications={form.certifications} onChange={updateField}
           onNext={handleSaveServices} isLoading={isLoading} onShowToast={onShowToast}
         />;
 
-      // ── Step 5: Rates ────────────────────────────────────────────────────
-      case 5:
+      // ── Transportation Documents (conditional) ───────────────────────────
+      case 'transport-docs':
+        return <TransportDocStep uid={uid} onNext={next} onShowToast={onShowToast} />;
+
+      // ── Rates ────────────────────────────────────────────────────────────
+      case 'rates':
         return <RatesStep
           hourlyRate={form.hourlyRate} rateFor2Seniors={form.rateFor2Seniors}
           rateFor3PlusSeniors={form.rateFor3PlusSeniors} maxClients={form.maxClients}
+          serviceRadius={form.serviceRadius}
           onChange={updateField} onNext={handleSaveRates} isLoading={isLoading} onShowToast={onShowToast}
         />;
 
-      // ── Step 6: Bio ──────────────────────────────────────────────────────
-      case 6:
+      // ── Bio ──────────────────────────────────────────────────────────────
+      case 'bio':
         return <BioStep
           bio={form.bio} onChange={updateField}
           onNext={handleSaveBio} isLoading={isLoading} onShowToast={onShowToast}
         />;
 
-      // ── Step 7: Done ─────────────────────────────────────────────────────
-      case 7:
+      // ── Done ─────────────────────────────────────────────────────────────
+      case 'done':
         return (
           <div className="flex flex-col items-center text-center gap-5 py-4">
             <div className="w-16 h-16 rounded-full bg-teal-400/20 flex items-center justify-center">
@@ -286,7 +307,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
                 style={{ width: `${progressPct}%` }}
               />
             </div>
-            {step < TOTAL_STEPS && (
+            {step < totalSteps && (
               <button
                 onClick={onComplete}
                 className={`text-xs shrink-0 ${isColoredStep ? 'text-indigo-300 hover:text-indigo-100' : 'text-slate-400 hover:text-slate-600'}`}
@@ -421,6 +442,8 @@ const AvailabilityStep: React.FC<{
 
   const handleNext = () => {
     if (jobTypes.length === 0) { onShowToast('Please select at least one job type', 'error'); return; }
+    if (activeDays.length === 0) { onShowToast('Please select at least one day you are available', 'error'); return; }
+    if (activeTimes.length === 0) { onShowToast('Please select at least one time of day', 'error'); return; }
     onNext();
   };
 
@@ -452,10 +475,10 @@ const AvailabilityStep: React.FC<{
 
       <div>
         <p className="text-sm font-semibold text-slate-700 mb-2">Which days are you available?</p>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-1.5">
           {AVAIL_DAYS.map(({ id, label }) => (
             <button key={id} onClick={() => toggleDay(id)}
-              className={`px-4 py-2 rounded-full border-2 text-sm font-medium transition-all ${
+              className={`flex-1 py-2.5 rounded-full border-2 text-xs font-semibold transition-all ${
                 activeDays.includes(id) ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
               }`}>
               {label}
@@ -466,7 +489,7 @@ const AvailabilityStep: React.FC<{
 
       <div>
         <p className="text-sm font-semibold text-slate-700 mb-1">What times of day?</p>
-        <p className="text-xs text-slate-400 mb-2">Select all that apply — you can fine-tune later.</p>
+        <p className="text-xs text-slate-400 mb-2">Select all that apply — you can change later.</p>
         <div className="flex flex-col gap-2">
           {AVAIL_TIMES.map(({ id, label, sub }) => (
             <button key={id} onClick={() => toggleTime(id)}
@@ -594,16 +617,25 @@ const ServicesStep: React.FC<{
 
 // ─── Rates Step ────────────────────────────────────────────────────────────────
 
+const TRAVEL_OPTIONS = [
+  { value: '5', label: '5 miles' },
+  { value: '10', label: '10 miles' },
+  { value: '15', label: '15 miles' },
+  { value: '25', label: '25 miles' },
+  { value: '50', label: '50 miles' },
+];
+
 const RatesStep: React.FC<{
   hourlyRate: string;
   rateFor2Seniors: string;
   rateFor3PlusSeniors: string;
   maxClients: string;
+  serviceRadius: string;
   onChange: (field: string, value: any) => void;
   onNext: () => void;
   isLoading: boolean;
   onShowToast: AddToastFunction;
-}> = ({ hourlyRate, rateFor2Seniors, rateFor3PlusSeniors, maxClients, onChange, onNext, isLoading, onShowToast }) => {
+}> = ({ hourlyRate, rateFor2Seniors, rateFor3PlusSeniors, maxClients, serviceRadius, onChange, onNext, isLoading, onShowToast }) => {
   const [showDetailed, setShowDetailed] = useState(false);
   const numOnly = (v: string) => v.replace(/\D/g, '');
 
@@ -616,10 +648,7 @@ const RatesStep: React.FC<{
 
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="text-xl font-bold text-slate-800 text-center">What is your minimum rate?</h2>
-      <p className="text-sm text-slate-500 text-center">
-        Caregivers in your area charge <span className="font-semibold text-slate-700">$24/hr</span> on average
-      </p>
+      <h2 className="text-xl font-bold text-slate-800 text-center">Rate & travel distance</h2>
 
       <div>
         <label className="block text-sm font-semibold text-slate-800 mb-1.5">Minimum hourly rate</label>
@@ -628,6 +657,26 @@ const RatesStep: React.FC<{
           <input type="text" inputMode="numeric" placeholder="e.g. 25" value={hourlyRate}
             onChange={e => onChange('hourlyRate', numOnly(e.target.value))}
             className="flex-1 px-4 py-3 border-2 border-slate-200 rounded-r-xl text-lg text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" />
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-semibold text-slate-800 mb-2">How far are you willing to travel?</label>
+        <div className="flex gap-2 flex-wrap">
+          {TRAVEL_OPTIONS.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => onChange('serviceRadius', value)}
+              className={`flex-1 min-w-[70px] py-2.5 rounded-full border-2 text-sm font-semibold transition-all ${
+                serviceRadius === value
+                  ? 'bg-indigo-600 border-indigo-600 text-white'
+                  : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -667,6 +716,107 @@ const RatesStep: React.FC<{
         className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
         {isLoading ? <><Loader2 size={16} className="animate-spin" />Saving…</> : 'Continue'}
       </button>
+    </div>
+  );
+};
+
+// ─── Transportation Documents Step ────────────────────────────────────────────
+
+const TRANSPORT_DOCS: { type: DocumentType; label: string; desc: string }[] = [
+  { type: 'driversLicense', label: "Driver's License", desc: "Front of your valid driver's license" },
+  { type: 'insurance', label: 'Vehicle Insurance', desc: 'Current auto insurance showing active coverage' },
+  { type: 'registration', label: 'Vehicle Registration', desc: 'Current vehicle registration document' },
+];
+
+const TransportDocStep: React.FC<{
+  uid: string;
+  onNext: () => void;
+  onShowToast: AddToastFunction;
+}> = ({ uid, onNext, onShowToast }) => {
+  const [status, setStatus] = useState<Record<string, 'idle' | 'uploading' | 'done' | 'error'>>({
+    driversLicense: 'idle', insurance: 'idle', registration: 'idle',
+  });
+  const fileRefs: Record<string, React.RefObject<HTMLInputElement>> = {
+    driversLicense: useRef<HTMLInputElement>(null),
+    insurance: useRef<HTMLInputElement>(null),
+    registration: useRef<HTMLInputElement>(null),
+  };
+
+  const handleUpload = async (type: DocumentType, file: File) => {
+    if (file.size > 5 * 1024 * 1024) { onShowToast('File must be under 5MB', 'error'); return; }
+    setStatus(prev => ({ ...prev, [type]: 'uploading' }));
+    try {
+      await documentUploadService.uploadDocument(uid, file, type);
+      setStatus(prev => ({ ...prev, [type]: 'done' }));
+    } catch {
+      setStatus(prev => ({ ...prev, [type]: 'error' }));
+      onShowToast('Upload failed. Please try again.', 'error');
+    }
+  };
+
+  const uploadedCount = TRANSPORT_DOCS.filter(d => status[d.type] === 'done').length;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="text-center">
+        <h2 className="text-xl font-bold text-slate-800">Transportation documents</h2>
+        <p className="text-sm text-slate-500 mt-1">Required to activate your transportation badge</p>
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+        <p className="text-xs text-amber-800">
+          Our team reviews these before approving your transportation services. Upload all three to avoid delays.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        {TRANSPORT_DOCS.map(({ type, label, desc }) => (
+          <div key={type} className={`border-2 rounded-xl p-3 flex items-center gap-3 transition-all ${
+            status[type] === 'done' ? 'border-teal-300 bg-teal-50' : 'border-slate-200'
+          }`}>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-slate-800">{label}</p>
+              <p className="text-xs text-slate-500">{desc}</p>
+            </div>
+            {status[type] === 'done' ? (
+              <span className="flex items-center gap-1 text-teal-600 text-xs font-medium shrink-0">
+                <CheckCircle size={15} /> Uploaded
+              </span>
+            ) : status[type] === 'uploading' ? (
+              <Loader2 size={16} className="animate-spin text-indigo-500 shrink-0" />
+            ) : (
+              <button
+                onClick={() => fileRefs[type].current?.click()}
+                className={`shrink-0 text-xs font-semibold border px-3 py-1.5 rounded-lg transition-colors ${
+                  status[type] === 'error'
+                    ? 'border-red-300 text-red-600 hover:bg-red-50'
+                    : 'border-indigo-200 text-indigo-600 hover:bg-indigo-50'
+                }`}
+              >
+                {status[type] === 'error' ? 'Retry' : 'Upload'}
+              </button>
+            )}
+            <input
+              ref={fileRefs[type]}
+              type="file"
+              accept="image/*,application/pdf"
+              className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(type, f); }}
+            />
+          </div>
+        ))}
+      </div>
+
+      <button onClick={onNext} disabled={uploadedCount < 3}
+        className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        Continue
+      </button>
+
+      {uploadedCount < 3 && (
+        <p className="text-center text-xs text-amber-600 font-medium">
+          All three documents are required to continue.
+        </p>
+      )}
     </div>
   );
 };

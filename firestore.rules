@@ -10,9 +10,9 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Validate bio length (max 500 characters)
+    // Validate bio length (max 2500 characters, matching UI limit)
     function isValidBio(bio) {
-      return bio == null || (bio is string && bio.size() <= 500);
+      return bio == null || (bio is string && bio.size() <= 2500);
     }
     
     // Check if the current user is the owner of the document
@@ -20,10 +20,12 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
     
-    // Check if user has admin role
+    // Check if user has admin role (userType == 'admin' OR isAdmin == true)
     function isAdmin() {
-      return isAuthenticated() && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'admin';
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+      );
     }
     
     // Only admins can delete documents
@@ -129,7 +131,10 @@ service cloud.firestore {
       // BUG FIX: Added bio length validation (max 500 chars)
       allow update: if isAdmin() || (
           isAuthenticated() && request.auth.uid == caregiverId
-          && isValidBio(request.resource.data.bio)
+          && (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['bio'])
+            || isValidBio(request.resource.data.bio)
+          )
           && (
             !request.resource.data.diff(resource.data).affectedKeys()
               .hasAny([

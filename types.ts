@@ -102,14 +102,17 @@ export interface CaregiverDocument {
   notes?: string;
   fileName?: string;
   fileType?: string;
-  expirationDate?: string;  // YYYY-MM-DD format
-  documentName?: string;    // Custom name for the document
+  expirationDate?: string;
+  documentName?: string;
+  _pendingFile?: File;
 }
 
 export interface CaregiverDocuments {
   driversLicense?: CaregiverDocument;
   driversLicenseBack?: CaregiverDocument;
   registration?: CaregiverDocument;
+  insurance?: CaregiverDocument;
+  profilePhoto?: CaregiverDocument;
 }
 
 export interface Caregiver {
@@ -124,7 +127,9 @@ export interface Caregiver {
   hourlyRate: number;
   verified: boolean;
   onboardingStep?: number;
-  verificationStatus?: 'pending' | 'submitted' | 'approved' | 'rejected' | 'info_requested';
+  verificationStatus?: 'pending' | 'submitted' | 'profile_complete' | 'checkr_clear' | 'approved' | 'rejected' | 'info_requested' | 'pre_adverse_action';
+  membershipPaid?: boolean;
+  transportationBadge?: boolean;
   approvedAt?: string;
   approvedBy?: string;
   rejectedAt?: string;

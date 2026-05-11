@@ -85,4 +85,4 @@ What I love most about caregiving is building genuine connections with the peopl
 I have my own transportation and am flexible with scheduling. In my free time, I enjoy cooking healthy meals and taking walks — activities I love sharing with the seniors in my care.`;
 
 // Max clients dropdown options
-export const MAX_CLIENTS_OPTIONS = ['1', '2', '3', '4'] as const;
+export const MAX_CLIENTS_OPTIONS = ['1', '2', '3+'] as const;

@@ -8,6 +8,7 @@ interface Step1Props {
   firstName: string;
   lastName: string;
   dateOfBirth: string;
+  gender: string;
   email: string;
   password: string;
   phone: string;
@@ -30,8 +31,10 @@ const formatPhone = (value: string): string => {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
 };
 
+const GENDER_OPTIONS = ['Male', 'Female', 'Non-binary', 'Prefer not to say'];
+
 export const Step1PersonalInfo: React.FC<Step1Props> = ({
-  firstName, lastName, dateOfBirth, email, password, phone, termsAccepted,
+  firstName, lastName, dateOfBirth, gender, email, password, phone, termsAccepted,
   street, zipCode, city, state,
   onChange, onNext, onShowToast, onGoogleSignup, isLoading,
 }) => {
@@ -154,6 +157,23 @@ export const Step1PersonalInfo: React.FC<Step1Props> = ({
             className={`w-28 px-4 py-3 rounded-xl border-2 text-center text-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100 ${errors.dob ? 'border-red-400' : 'border-slate-300'}`} />
         </div>
         {errors.dob && <p className="mt-2 text-sm text-red-600 font-medium">{errors.dob}</p>}
+      </div>
+
+      {/* Gender (optional) */}
+      <div className="mb-4">
+        <label className="block text-base font-semibold text-slate-800 mb-2">
+          Gender <span className="text-slate-400 font-normal text-sm">(optional)</span>
+        </label>
+        <div className="flex flex-wrap gap-2">
+          {GENDER_OPTIONS.map(opt => (
+            <button key={opt} type="button" onClick={() => onChange('gender', gender === opt ? '' : opt)}
+              className={`px-4 py-2 rounded-full border-2 text-sm font-medium transition-all ${
+                gender === opt ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300'
+              }`}>
+              {opt}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Email */}

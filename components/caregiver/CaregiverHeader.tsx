@@ -8,14 +8,12 @@ interface CaregiverHeaderProps {
     currentUser: any; // Using 'any' briefly to match authService return, ideally typed stronger
     profile: Caregiver | null;
     onNavigate: (view: ViewType) => void;
-    onStartBackgroundCheck: () => void;
 }
 
 export const CaregiverHeader: React.FC<CaregiverHeaderProps> = ({
     currentUser,
     profile,
     onNavigate,
-    onStartBackgroundCheck
 }) => {
     return (
         <>
@@ -68,8 +66,8 @@ export const CaregiverHeader: React.FC<CaregiverHeaderProps> = ({
                                 <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Review in Progress
                             </div>
                         ) : (
-                            <Button size="sm" onClick={onStartBackgroundCheck} className="bg-red-600 hover:bg-red-700 text-white border-none shadow-lg shadow-red-500/30 rounded-xl px-6">
-                                Start Background Check <ArrowUpRight className="w-4 h-4 ml-2" />
+                            <Button size="sm" onClick={() => onNavigate('caregiver-membership')} className="bg-red-600 hover:bg-red-700 text-white border-none shadow-lg shadow-red-500/30 rounded-xl px-6">
+                                Complete Registration <ArrowUpRight className="w-4 h-4 ml-2" />
                             </Button>
                         )}
                     </div>

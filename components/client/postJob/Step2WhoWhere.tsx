@@ -249,6 +249,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
       city: newLocation.city.trim(),
       state: newLocation.state.trim(),
       zipCode: newLocation.zipCode,
+      source: 'job-saved',
       petsInHome: newLocation.petsInHome,
       smokingHousehold: newLocation.smokingHousehold,
     };

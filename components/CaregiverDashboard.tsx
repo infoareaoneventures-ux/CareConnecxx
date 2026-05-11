@@ -9,7 +9,6 @@ import { OnboardingChecklist } from './caregiver/OnboardingChecklist';
 import { CaregiverOnboardingDashboard } from './caregiver/CaregiverOnboardingDashboard';
 import { CaregiverOnboardingWizard } from './caregiver/CaregiverOnboardingWizard';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
-import { BackgroundCheckModal } from './BackgroundCheckModal';
 
 interface CaregiverDashboardProps {
    onNavigate: (view: ViewType, data?: any) => void;
@@ -20,7 +19,6 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
 
    const [profile, setProfile] = useState<Caregiver | null>(null);
    const [showFullChecklist, setShowFullChecklist] = useState(false);
-   const [showBgModal, setShowBgModal] = useState(false);
    const [showWizard, setShowWizard] = useState(false);
 
    useEffect(() => {
@@ -64,8 +62,6 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
       );
    }
 
-   const handleStartBackgroundCheck = () => setShowBgModal(true);
-
    return (
       <div className="min-h-screen bg-slate-50 pb-24">
          <CaregiverTopNav />
@@ -81,24 +77,12 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
             />
          )}
 
-         {showBgModal && !showFullChecklist && (
-            <BackgroundCheckModal
-               onClose={() => setShowBgModal(false)}
-               onShowToast={onShowToast}
-               onSuccess={() => {
-                  setShowBgModal(false);
-                  refreshProfile();
-               }}
-            />
-         )}
-
          {/* Mobile-only header with hamburger/avatar */}
          <div className="md:hidden">
             <CaregiverHeader
                currentUser={currentUser}
                profile={profile}
                onNavigate={onNavigate}
-               onStartBackgroundCheck={handleStartBackgroundCheck}
             />
          </div>
 
@@ -115,7 +99,6 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
                onNavigate={onNavigate}
                onShowToast={onShowToast}
                onViewChecklist={() => setShowFullChecklist(true)}
-               onStartBackgroundCheck={handleStartBackgroundCheck}
             />
          )}
       </div>

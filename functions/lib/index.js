@@ -36,7 +36,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.sendTestSMS = void 0;
+exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.sendTestSMS = void 0;
 const admin = __importStar(require("firebase-admin"));
 // Initialize Admin globally if not already done
 if (!admin.apps.length) {
@@ -97,4 +97,8 @@ Object.defineProperty(exports, "triggerWeeklyDigestNow", { enumerable: true, get
 var healthTrends_1 = require("./scheduled/healthTrends");
 Object.defineProperty(exports, "sendMonthlyHealthTrends", { enumerable: true, get: function () { return healthTrends_1.sendMonthlyHealthTrends; } });
 Object.defineProperty(exports, "triggerHealthTrendsNow", { enumerable: true, get: function () { return healthTrends_1.triggerHealthTrendsNow; } });
+// Transportation badge evaluation (daily) + on-demand refresh
+var transportBadge_1 = require("./scheduled/transportBadge");
+Object.defineProperty(exports, "evaluateTransportBadges", { enumerable: true, get: function () { return transportBadge_1.evaluateTransportBadges; } });
+Object.defineProperty(exports, "refreshTransportBadge", { enumerable: true, get: function () { return transportBadge_1.refreshTransportBadge; } });
 //# sourceMappingURL=index.js.map

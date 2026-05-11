@@ -77,6 +77,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
       };
       if (formData.phone) additionalData.phone = formData.phone;
       if (formData.dateOfBirth) additionalData.dateOfBirth = formData.dateOfBirth;
+      if (formData.gender) additionalData.gender = formData.gender;
 
       const result = await authService.signup(
         formData.email,
@@ -118,6 +119,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
         firstName={formData.firstName}
         lastName={formData.lastName}
         dateOfBirth={formData.dateOfBirth}
+        gender={formData.gender}
         email={formData.email}
         password={formData.password}
         phone={formData.phone}

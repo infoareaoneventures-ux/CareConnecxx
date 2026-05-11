@@ -32,11 +32,12 @@ function getFirstName(name: string): string {
 const CaregiverProgressCard: React.FC<{
   profile: Caregiver;
   onNavigate: (view: any) => void;
-}> = ({ profile, onNavigate }) => {
+  onViewChecklist: () => void;
+}> = ({ profile, onNavigate, onViewChecklist }) => {
   const p = profile as any;
   const isApproved = p.verificationStatus === 'approved' || profile.verified === true;
   const profileComplete = p.onboardingStatus === 'profile_complete' || p.onboardingStatus === 'submitted' || isApproved;
-  const hasPaid = !!(p.membershipStatus && p.membershipStatus !== 'none' && p.membershipStatus !== 'inactive');
+  const hasPaid = !!(p.membershipPaid === true || (p.membershipStatus && p.membershipStatus !== 'none' && p.membershipStatus !== 'inactive'));
   const checkrInitiated = !!p.backgroundCheckData?.checkrCandidateId;
   const underReview = p.verificationStatus === 'submitted';
   const rejected = p.verificationStatus === 'rejected';
@@ -74,9 +75,18 @@ const CaregiverProgressCard: React.FC<{
         : 'Your background check is underway. We\'ll notify you when complete.';
       cardVariant = 'info';
     } else {
-      cardTitle = 'Complete your registration';
-      cardDesc = '$24.95 annual membership — covers your background check and platform access.';
-      cardCta = { label: 'Complete registration · $24.95', onClick: () => onNavigate('caregiver-membership') };
+      cardTitle = 'Start your background check';
+      cardDesc = 'The last step before you can apply to families.';
+      cardCta = {
+        label: 'Start background check',
+        onClick: async () => {
+          await dbService.updateUser('caregivers', (profile as any).uid, {
+            membershipPaid: true,
+            membershipStatus: 'active',
+          });
+          onViewChecklist();
+        },
+      };
     }
   }
 
@@ -210,6 +220,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
       <CaregiverProgressCard
         profile={profile}
         onNavigate={onNavigate}
+        onViewChecklist={onViewChecklist}
       />
 
       {/* ── Info requested / Rejected Banner ── */}

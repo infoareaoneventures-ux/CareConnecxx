@@ -46,13 +46,23 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
 
     // Auth Listener - fetches user profile from Firestore to get userType
     useEffect(() => {
+        const fetchProfileWithRetry = async (uid: string, attempts = 4, delayMs = 700) => {
+            for (let i = 0; i < attempts; i++) {
+                const profile = await dbService.getUser(uid);
+                if (profile) return profile;
+                if (i < attempts - 1) await new Promise(r => setTimeout(r, delayMs));
+            }
+            return null;
+        };
+
         const unsubscribe = authService.onAuthStateChanged(async (firebaseUser) => {
             if (firebaseUser) {
-                // Fetch user profile from Firestore to get userType
+                // Fetch user profile from Firestore to get userType.
+                // Retry because onAuthStateChanged fires before signup Firestore writes complete.
                 try {
-                    const profile = await dbService.getUser(firebaseUser.uid);
+                    const profile = await fetchProfileWithRetry(firebaseUser.uid);
                     const validUserTypes = ['client', 'caregiver', 'admin'] as const;
-                    const userType = validUserTypes.includes(profile?.userType)
+                    const userType = profile?.userType && validUserTypes.includes(profile.userType)
                         ? profile.userType
                         : 'client';
                     const authenticatedUser: AuthenticatedUser = {
@@ -75,13 +85,12 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
                     }
                 } catch (error) {
                     console.error('Failed to fetch user profile:', error);
-                    // Fallback to basic user without type
                     setCurrentUser({
                         uid: firebaseUser.uid,
                         email: firebaseUser.email,
                         displayName: firebaseUser.displayName,
                         photoURL: firebaseUser.photoURL,
-                        userType: 'client' // Default fallback
+                        userType: 'client'
                     });
                 }
             } else {

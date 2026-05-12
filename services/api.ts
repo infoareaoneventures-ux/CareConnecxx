@@ -479,11 +479,11 @@ export const dbService = {
                     }
                 }
 
-                // Check users collection for clients
+                // Check users collection for clients and caregivers
                 const doc = await db.collection('users').doc(uid).get();
                 if (doc.exists) {
                     const data = doc.data();
-                    if (data && data.uid && data.name) {
+                    if (data && data.uid) {
                         // For clients, also check senior_profiles for additional data
                         if (data.userType === 'client') {
                             const snDoc = await db.collection('senior_profiles').doc(uid).get();

@@ -8,12 +8,12 @@ import { dbService } from '../../services/api';
 import { CaregiverBookingRequests } from './CaregiverBookingRequests';
 import { CaregiverInterviewManager } from './CaregiverInterviewManager';
 import { ProfileApprovalBanner } from './ProfileApprovalBanner';
+import { BackgroundCheckModal } from '../BackgroundCheckModal';
 
 interface CaregiverOnboardingDashboardProps {
   profile: Caregiver;
   onNavigate: (view: any) => void;
   onShowToast?: AddToastFunction;
-  onViewChecklist: () => void;
 }
 
 function getGreeting(): string {
@@ -32,8 +32,9 @@ function getFirstName(name: string): string {
 const CaregiverProgressCard: React.FC<{
   profile: Caregiver;
   onNavigate: (view: any) => void;
-  onViewChecklist: () => void;
-}> = ({ profile, onNavigate, onViewChecklist }) => {
+  onShowToast?: AddToastFunction;
+}> = ({ profile, onNavigate, onShowToast }) => {
+  const [showBgModal, setShowBgModal] = useState(false);
   const p = profile as any;
   const isApproved = p.verificationStatus === 'approved' || profile.verified === true;
   const profileComplete = p.onboardingStatus === 'profile_complete' || p.onboardingStatus === 'submitted' || isApproved;
@@ -42,11 +43,16 @@ const CaregiverProgressCard: React.FC<{
   const underReview = p.verificationStatus === 'submitted';
   const rejected = p.verificationStatus === 'rejected';
   const infoRequested = p.verificationStatus === 'info_requested';
-  const bgInProgress = (hasPaid || checkrInitiated || underReview) && !isApproved;
+  const bgCheckDone = underReview || isApproved;
+  const bgCheckInProgress = checkrInitiated && !underReview && !isApproved;
 
   if (isApproved) return null;
 
-  const activeStep = !profileComplete ? 1 : !isApproved ? 2 : 3;
+  const activeStep = !profileComplete ? 1
+    : !hasPaid ? 2
+    : !checkrInitiated ? 3
+    : !isApproved ? 4
+    : 5;
 
   // CTA card content
   let cardTitle = '';
@@ -54,50 +60,65 @@ const CaregiverProgressCard: React.FC<{
   let cardCta: { label: string; onClick: () => void } | undefined;
   let cardVariant: 'default' | 'info' | 'warning' = 'default';
 
-  if (activeStep === 1) {
+  if (rejected) {
+    cardTitle = 'Application not approved';
+    cardDesc = p.rejectionReason || 'Contact support for details.';
+    cardVariant = 'warning';
+  } else if (infoRequested) {
+    cardTitle = 'Additional information needed';
+    cardDesc = p.infoRequestNotes || 'Please update your profile and resubmit.';
+    cardCta = { label: 'Update profile', onClick: () => onNavigate('caregiver-profile') };
+    cardVariant = 'warning';
+  } else if (activeStep === 1) {
     cardTitle = 'Complete your profile';
     cardDesc = 'Add your photo, availability, services, and bio.';
     cardCta = { label: 'Complete profile', onClick: () => onNavigate('caregiver-profile') };
-  } else {
-    if (rejected) {
-      cardTitle = 'Application not approved';
-      cardDesc = p.rejectionReason || 'Contact support for details.';
-      cardVariant = 'warning';
-    } else if (infoRequested) {
-      cardTitle = 'Additional information needed';
-      cardDesc = p.infoRequestNotes || 'Please update your profile and resubmit.';
-      cardCta = { label: 'Update profile', onClick: () => onNavigate('caregiver-profile') };
-      cardVariant = 'warning';
-    } else if (bgInProgress) {
-      cardTitle = underReview ? 'Profile under review' : 'Background check in progress';
-      cardDesc = underReview
-        ? 'Our team is reviewing your profile. This takes 1–2 business days.'
-        : 'Your background check is underway. We\'ll notify you when complete.';
-      cardVariant = 'info';
-    } else {
-      cardTitle = 'Start your background check';
-      cardDesc = 'The last step before you can apply to families.';
-      cardCta = {
-        label: 'Start background check',
-        onClick: async () => {
-          await dbService.updateUser('caregivers', (profile as any).uid, {
-            membershipPaid: true,
-            membershipStatus: 'active',
-          });
-          onViewChecklist();
-        },
-      };
-    }
+  } else if (activeStep === 2) {
+    cardTitle = 'Activate your membership';
+    cardDesc = 'Unlock full access to jobs, messaging, and your caregiver profile.';
+    cardCta = {
+      label: 'Activate membership',
+      onClick: async () => {
+        await dbService.updateUser('caregivers', (profile as any).uid, {
+          membershipPaid: true,
+          membershipStatus: 'active',
+        } as any);
+        window.location.reload();
+      },
+    };
+  } else if (activeStep === 3) {
+    cardTitle = 'Start your background check';
+    cardDesc = 'Required before you can apply to families.';
+    cardCta = {
+      label: 'Start background check',
+      onClick: () => setShowBgModal(true),
+    };
+  } else if (activeStep === 4) {
+    cardTitle = underReview ? 'Profile under review' : 'Background check in progress';
+    cardDesc = underReview
+      ? 'Our team is reviewing your profile.'
+      : 'Your background check is underway. We\'ll notify you when complete.';
+    cardVariant = 'info';
   }
 
   const steps = [
     { label: 'Account', done: true, inProgress: false },
     { label: 'Profile', done: profileComplete, inProgress: !profileComplete },
-    { label: 'Verification', done: isApproved, inProgress: bgInProgress },
+    { label: 'Membership', done: hasPaid, inProgress: !hasPaid && profileComplete },
+    { label: 'Background Check', done: bgCheckDone, inProgress: bgCheckInProgress },
+    { label: 'Under Review', done: isApproved, inProgress: underReview },
     { label: 'Apply', done: isApproved, inProgress: false },
   ];
 
   return (
+    <>
+      {showBgModal && (
+        <BackgroundCheckModal
+          onClose={() => setShowBgModal(false)}
+          onShowToast={onShowToast || (() => {})}
+          onSuccess={() => setShowBgModal(false)}
+        />
+      )}
     <div className="bg-white border border-slate-100 rounded-[2rem] p-6 mb-8 shadow-sm">
       <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-5">Your progress</p>
 
@@ -154,6 +175,7 @@ const CaregiverProgressCard: React.FC<{
         )}
       </div>
     </div>
+    </>
   );
 };
 
@@ -163,7 +185,6 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
   profile,
   onNavigate,
   onShowToast,
-  onViewChecklist,
 }) => {
   const [jobs, setJobs] = useState<JobPost[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
@@ -220,7 +241,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
       <CaregiverProgressCard
         profile={profile}
         onNavigate={onNavigate}
-        onViewChecklist={onViewChecklist}
+        onShowToast={onShowToast}
       />
 
       {/* ── Info requested / Rejected Banner ── */}

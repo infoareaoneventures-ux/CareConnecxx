@@ -4,8 +4,6 @@ import { Caregiver, ViewType } from '../types';
 import { dbService } from '../services/api';
 import { useCareConnex } from '../context/CareConnexContext';
 
-import { CaregiverHeader } from './caregiver/CaregiverHeader';
-import { OnboardingChecklist } from './caregiver/OnboardingChecklist';
 import { CaregiverOnboardingDashboard } from './caregiver/CaregiverOnboardingDashboard';
 import { CaregiverOnboardingWizard } from './caregiver/CaregiverOnboardingWizard';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
@@ -18,7 +16,6 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
    const { currentUser, addToast: onShowToast } = useCareConnex();
 
    const [profile, setProfile] = useState<Caregiver | null>(null);
-   const [showFullChecklist, setShowFullChecklist] = useState(false);
    const [showWizard, setShowWizard] = useState(false);
 
    useEffect(() => {
@@ -47,10 +44,9 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
    }, [currentUser]);
 
    const refreshProfile = async () => {
-      if (currentUser) {
-         const allCaregivers = await dbService.getCaregivers(100);
-         const p = allCaregivers.caregivers.find(c => c.uid === currentUser?.uid);
-         if (p) setProfile(p);
+      if (currentUser?.uid) {
+         const p = await dbService.getUser(currentUser.uid);
+         if (p) setProfile(p as any);
       }
    };
 
@@ -77,30 +73,11 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
             />
          )}
 
-         {/* Mobile-only header with hamburger/avatar */}
-         <div className="md:hidden">
-            <CaregiverHeader
-               currentUser={currentUser}
-               profile={profile}
-               onNavigate={onNavigate}
-            />
-         </div>
-
-         {showFullChecklist ? (
-            <OnboardingChecklist
-               profile={profile}
-               onUpdate={refreshProfile}
-               onNavigate={onNavigate}
-               onShowToast={onShowToast}
-            />
-         ) : (
-            <CaregiverOnboardingDashboard
-               profile={profile}
-               onNavigate={onNavigate}
-               onShowToast={onShowToast}
-               onViewChecklist={() => setShowFullChecklist(true)}
-            />
-         )}
+         <CaregiverOnboardingDashboard
+            profile={profile}
+            onNavigate={onNavigate}
+            onShowToast={onShowToast}
+         />
       </div>
    );
 };

@@ -91,7 +91,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   const back = () => setStep(s => Math.max(s - 1, 1));
 
   const handleSavePhoto = async () => {
-    if (!form.profilePhoto.file) { onShowToast('Please upload a profile photo', 'error'); return; }
+    if (!form.profilePhoto.file) { next(); return; }
     setIsLoading(true);
     try {
       const doc = await documentUploadService.uploadDocument(uid, form.profilePhoto.file, 'profilePhoto');
@@ -577,20 +577,6 @@ const ServicesStep: React.FC<{
           <option value="">Select your experience level</option>
           {EXPERIENCE_LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
         </select>
-      </div>
-
-      <div>
-        <p className="text-sm font-semibold text-slate-700 mb-2">Additional services</p>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-          {ADDITIONAL_SERVICES.map(service => (
-            <label key={service} className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={selectedServices.includes(service)}
-                onChange={() => toggleService(service)}
-                className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-              <span className="text-xs text-slate-600">{service}</span>
-            </label>
-          ))}
-        </div>
       </div>
 
       <div>

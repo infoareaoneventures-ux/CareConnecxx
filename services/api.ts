@@ -331,8 +331,12 @@ export const dbService = {
         }
     },
 
-    updateUserPassword: async (newPass: string) => {
+    updateUserPassword: async (newPass: string, currentPass?: string) => {
         if (isConfigured && auth && auth.currentUser) {
+            if (currentPass && auth.currentUser.email) {
+                const credential = firebase.auth.EmailAuthProvider.credential(auth.currentUser.email, currentPass);
+                await auth.currentUser.reauthenticateWithCredential(credential);
+            }
             await auth.currentUser.updatePassword(newPass);
             return true;
         }

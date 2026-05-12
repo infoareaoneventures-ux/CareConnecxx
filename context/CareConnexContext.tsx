@@ -46,7 +46,7 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
 
     // Auth Listener - fetches user profile from Firestore to get userType
     useEffect(() => {
-        const fetchProfileWithRetry = async (uid: string, attempts = 4, delayMs = 700) => {
+        const fetchProfileWithRetry = async (uid: string, attempts = 3, delayMs = 400) => {
             for (let i = 0; i < attempts; i++) {
                 const profile = await dbService.getUser(uid);
                 if (profile) return profile;
@@ -138,14 +138,6 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
                     addToast("Backend not configured. Check Firebase setup.", "error");
                 }
 
-                try {
-                    const { caregivers: fetched } = await dbService.getCaregivers(100);
-                    if (cancelled) return;
-                    setCaregivers(fetched);
-                } catch (e) {
-                    if (cancelled) return;
-                    console.error("Failed to fetch caregivers", e);
-                }
             } finally {
                 if (!cancelled) {
                     setIsLoading(false);
@@ -166,6 +158,14 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             notificationService.stopSimulation();
         };
     }, []); // Only run once on mount
+
+    // Fetch caregiver list only for client/admin users
+    useEffect(() => {
+        if (!currentUser || currentUser.userType === 'caregiver') return;
+        dbService.getCaregivers(100)
+            .then(({ caregivers: fetched }) => setCaregivers(fetched))
+            .catch(e => console.error("Failed to fetch caregivers", e));
+    }, [currentUser?.uid, currentUser?.userType]);
 
     // BUG FIX: Separate useEffect for appointment subscription
     // This prevents memory leaks and ensures proper cleanup

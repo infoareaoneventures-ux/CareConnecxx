@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
-import { Caregiver, ViewType } from '../types';
-import { dbService } from '../services/api';
+import { ViewType } from '../types';
 import { useCareConnex } from '../context/CareConnexContext';
 
 import { CaregiverOnboardingDashboard } from './caregiver/CaregiverOnboardingDashboard';
@@ -13,44 +12,21 @@ interface CaregiverDashboardProps {
 }
 
 export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNavigate }) => {
-   const { currentUser, addToast: onShowToast } = useCareConnex();
-
-   const [profile, setProfile] = useState<Caregiver | null>(null);
+   const { currentUser, caregiverProfile, refreshCaregiverProfile, addToast: onShowToast } = useCareConnex();
    const [showWizard, setShowWizard] = useState(false);
 
    useEffect(() => {
-      let isMounted = true;
-      const fetchProfile = async () => {
-         if (!currentUser?.uid) return;
-         try {
-            const userDoc = await dbService.getUser(currentUser.uid);
-            if (isMounted && userDoc) {
-               setProfile(userDoc as any);
-               // Show wizard for new signups (sessionStorage flag) or incomplete onboarding
-               const fromSignup = sessionStorage.getItem('careconnex_show_caregiver_wizard') === 'true';
-               if (fromSignup) {
-                  sessionStorage.removeItem('careconnex_show_caregiver_wizard');
-                  setShowWizard(true);
-               } else if ((userDoc as any)?.onboardingStatus === 'incomplete') {
-                  setShowWizard(true);
-               }
-            }
-         } catch (error) {
-            console.error('Error fetching profile:', error);
-         }
-      };
-      if (currentUser) fetchProfile();
-      return () => { isMounted = false; };
-   }, [currentUser]);
-
-   const refreshProfile = async () => {
-      if (currentUser?.uid) {
-         const p = await dbService.getUser(currentUser.uid);
-         if (p) setProfile(p as any);
+      if (!caregiverProfile) return;
+      const fromSignup = sessionStorage.getItem('careconnex_show_caregiver_wizard') === 'true';
+      if (fromSignup) {
+         sessionStorage.removeItem('careconnex_show_caregiver_wizard');
+         setShowWizard(true);
+      } else if ((caregiverProfile as any)?.onboardingStatus === 'incomplete') {
+         setShowWizard(true);
       }
-   };
+   }, [caregiverProfile]);
 
-   if (!profile) {
+   if (!caregiverProfile) {
       return (
          <div className="min-h-screen flex items-center justify-center bg-slate-50">
             <Loader2 className="w-8 h-8 text-accent-500 animate-spin" />
@@ -62,19 +38,19 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
       <div className="min-h-screen bg-slate-50 pb-24">
          <CaregiverTopNav />
 
-         {showWizard && currentUser?.uid && profile && (
+         {showWizard && currentUser?.uid && (
             <CaregiverOnboardingWizard
                uid={currentUser.uid}
-               firstName={(profile as any).firstName || currentUser.displayName?.split(' ')[0] || ''}
-               city={(profile as any).city || ''}
-               state={(profile as any).state || ''}
-               onComplete={() => { setShowWizard(false); refreshProfile(); }}
+               firstName={(caregiverProfile as any).firstName || currentUser.displayName?.split(' ')[0] || ''}
+               city={(caregiverProfile as any).city || ''}
+               state={(caregiverProfile as any).state || ''}
+               onComplete={() => { setShowWizard(false); refreshCaregiverProfile(); }}
                onShowToast={onShowToast}
             />
          )}
 
          <CaregiverOnboardingDashboard
-            profile={profile}
+            profile={caregiverProfile}
             onNavigate={onNavigate}
             onShowToast={onShowToast}
          />

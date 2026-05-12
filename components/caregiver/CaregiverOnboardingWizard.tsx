@@ -129,6 +129,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
         primaryServices: form.selectedServices.map(name => ({ name, yearsExperience: form.yearsExperience })),
         skills: form.selectedServices,
         services: form.selectedServices,
+        hasTransportation: form.selectedServices.includes('Transportation'),
         certifications: form.certifications,
         yearsExperience: form.yearsExperience,
         experience: form.yearsExperience,

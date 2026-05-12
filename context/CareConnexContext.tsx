@@ -22,6 +22,8 @@ export interface AuthenticatedUser {
 
 interface CareConnexContextType {
     currentUser: AuthenticatedUser | null;
+    caregiverProfile: Caregiver | null;
+    refreshCaregiverProfile: () => Promise<void>;
     appointments: Appointment[];
     caregivers: Caregiver[];
     isLoading: boolean;
@@ -38,6 +40,7 @@ const CareConnexContext = createContext<CareConnexContextType | undefined>(undef
 
 export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null);
+    const [caregiverProfile, setCaregiverProfile] = useState<Caregiver | null>(null);
     const [appointments, setAppointments] = useState<Appointment[]>([]);
     const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -75,6 +78,7 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
                         phone: profile?.phone
                     };
                     setCurrentUser(authenticatedUser);
+                    if (userType === 'caregiver' && profile) setCaregiverProfile(profile as any);
                     setSentryUser({ uid: authenticatedUser.uid, email: authenticatedUser.email });
 
                     // Initialize push notifications for logged in user
@@ -95,6 +99,7 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
                 }
             } else {
                 setCurrentUser(null);
+                setCaregiverProfile(null);
                 setSentryUser(null);
                 pushNotificationService.removeToken('').catch(() => {});
             }
@@ -105,6 +110,13 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             if (unsubscribe) unsubscribe();
         };
     }, []);
+
+    const refreshCaregiverProfile = async () => {
+        if (currentUser?.uid) {
+            const p = await dbService.getUser(currentUser.uid);
+            if (p) setCaregiverProfile(p as any);
+        }
+    };
 
     const addToast = (message: string, type: ToastType) => {
         const id = Math.random().toString(36).substr(2, 9);
@@ -230,6 +242,8 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
     return (
         <CareConnexContext.Provider value={{
             currentUser,
+            caregiverProfile,
+            refreshCaregiverProfile,
             appointments,
             caregivers,
             isLoading,

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell, MessageSquare, Home, Calendar, Briefcase,
@@ -6,9 +6,8 @@ import {
   Users, CreditCard, Receipt,
 } from 'lucide-react';
 import { useCareConnex } from '../../context/CareConnexContext';
-import { dbService, authService } from '../../services/api';
+import { authService } from '../../services/api';
 import { CaregiverUserMenu } from './CaregiverUserMenu';
-import type { Caregiver } from '../../types';
 
 const NAV_LINKS = [
   { label: 'Dashboard', path: '/caregiver/dashboard' },
@@ -27,23 +26,8 @@ const AUTH_PATHS = [
 export const CaregiverTopNav: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { currentUser } = useCareConnex();
-  const [profile, setProfile] = useState<Caregiver | null>(null);
+  const { caregiverProfile: profile } = useCareConnex();
   const [moreOpen, setMoreOpen] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      if (!currentUser?.uid) return;
-      try {
-        const user = await dbService.getUser(currentUser.uid);
-        if (active && user) setProfile(user as any);
-      } catch {
-        /* non-fatal */
-      }
-    })();
-    return () => { active = false; };
-  }, [currentUser?.uid]);
 
   const path = location.pathname;
 
@@ -62,7 +46,7 @@ export const CaregiverTopNav: React.FC = () => {
   // Don't show mobile bottom nav on auth pages
   if (AUTH_PATHS.includes(path)) {
     return (
-      <header className="hidden md:block sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
         <DesktopNav profile={profile} isActive={isActive} navigate={navigate} />
       </header>
     );
@@ -70,8 +54,8 @@ export const CaregiverTopNav: React.FC = () => {
 
   return (
     <>
-      {/* Desktop top nav */}
-      <header className="hidden md:block sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
+      {/* Top nav — logo always visible, desktop links hidden on mobile */}
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
         <DesktopNav profile={profile} isActive={isActive} navigate={navigate} />
       </header>
 
@@ -111,53 +95,55 @@ export const CaregiverTopNav: React.FC = () => {
 
       {/* Mobile More drawer */}
       {moreOpen && (
-        <div className="md:hidden fixed inset-0 z-40" onClick={() => setMoreOpen(false)}>
+        <div className="md:hidden fixed inset-0 z-[60]" onClick={() => setMoreOpen(false)}>
           <div className="absolute inset-0 bg-black/30" />
           <div
-            className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl shadow-xl pb-safe"
+            className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl shadow-xl max-h-[80vh] flex flex-col"
             onClick={e => e.stopPropagation()}
           >
             {/* Handle */}
-            <div className="flex justify-center pt-3 pb-1">
+            <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
               <div className="w-10 h-1 rounded-full bg-slate-300" />
             </div>
-            <div className="flex items-center justify-between px-4 pb-2 pt-1">
+            <div className="flex items-center justify-between px-4 pb-2 pt-1 flex-shrink-0">
               <span className="text-base font-semibold text-slate-900">More</span>
               <button onClick={() => setMoreOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100">
                 <X className="w-4 h-4 text-slate-500" />
               </button>
             </div>
 
-            <div className="px-4 pb-3 space-y-1">
-              {[
-                { icon: <BookOpen className="w-4 h-4" />, label: 'Bookings', path: '/caregiver/bookings' },
-                { icon: <User className="w-4 h-4" />, label: 'Profile', path: '/caregiver/profile' },
-                { icon: <Settings className="w-4 h-4" />, label: 'Settings', path: '/caregiver/settings' },
-                { icon: <Users className="w-4 h-4" />, label: 'Your families', path: '/caregiver/families' },
-                { icon: <CreditCard className="w-4 h-4" />, label: 'Payout and payment', path: '/caregiver/payout' },
-                { icon: <Receipt className="w-4 h-4" />, label: 'Transactions', path: '/caregiver/transactions' },
-              ].map(item => (
+            <div className="overflow-y-auto flex-1">
+              <div className="px-4 pb-3 space-y-1">
+                {[
+                  { icon: <BookOpen className="w-4 h-4" />, label: 'Bookings', path: '/caregiver/bookings' },
+                  { icon: <User className="w-4 h-4" />, label: 'Profile', path: '/caregiver/profile' },
+                  { icon: <Settings className="w-4 h-4" />, label: 'Settings', path: '/caregiver/settings' },
+                  { icon: <Users className="w-4 h-4" />, label: 'Your families', path: '/caregiver/families' },
+                  { icon: <CreditCard className="w-4 h-4" />, label: 'Payout and payment', path: '/caregiver/payout' },
+                  { icon: <Receipt className="w-4 h-4" />, label: 'Transactions', path: '/caregiver/transactions' },
+                ].map(item => (
+                  <button
+                    key={item.path}
+                    onClick={() => { setMoreOpen(false); navigate(item.path); }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                      isActive(item.path) ? 'text-primary-600 bg-primary-50' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    {item.icon}<span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="border-t border-slate-100 mx-4" />
+
+              <div className="px-4 pt-2 pb-8">
                 <button
-                  key={item.path}
-                  onClick={() => { setMoreOpen(false); navigate(item.path); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                    isActive(item.path) ? 'text-primary-600 bg-primary-50' : 'text-slate-700 hover:bg-slate-50'
-                  }`}
+                  onClick={async () => { setMoreOpen(false); await handleLogout(); }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
                 >
-                  {item.icon}<span>{item.label}</span>
+                  <LogOut className="w-4 h-4" /><span>Sign Out</span>
                 </button>
-              ))}
-            </div>
-
-            <div className="border-t border-slate-100 mx-4" />
-
-            <div className="px-4 pt-2 pb-8">
-              <button
-                onClick={async () => { setMoreOpen(false); await handleLogout(); }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
-              >
-                <LogOut className="w-4 h-4" /><span>Sign Out</span>
-              </button>
+              </div>
             </div>
           </div>
         </div>
@@ -179,7 +165,7 @@ const DesktopNav: React.FC<{
       <span className="font-bold text-slate-900 tracking-tight">CareConnex</span>
     </Link>
 
-    <nav className="flex items-center gap-1">
+    <nav className="hidden md:flex items-center gap-1">
       {[
         { label: 'Dashboard', path: '/caregiver/dashboard' },
         { label: 'Calendar', path: '/caregiver/calendar' },
@@ -201,7 +187,7 @@ const DesktopNav: React.FC<{
       ))}
     </nav>
 
-    <div className="flex items-center gap-2">
+    <div className="hidden md:flex items-center gap-2">
       <button
         onClick={() => navigate('/caregiver/inbox')}
         aria-label="Messages"

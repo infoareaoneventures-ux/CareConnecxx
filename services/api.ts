@@ -467,46 +467,37 @@ export const dbService = {
     getUser: async (uid: string): Promise<AdminUser | null> => {
         if (isConfigured && db) {
             try {
-                // For caregivers, prioritize the caregivers collection for detailed profile data
-                const cgDoc = await db.collection('caregivers').doc(uid).get();
-                if (cgDoc.exists) {
-                    const cgData = cgDoc.data();
-                    if (cgData) {
-                        // Also get user data for email and other common fields
-                        const userDoc = await db.collection('users').doc(uid).get();
-                        const userData = userDoc.exists ? userDoc.data() : {};
-                        return { 
-                            ...userData,  // Base user data (email, etc.)
-                            ...cgData,    // Caregiver-specific data (skills, bio, etc.)
-                            userType: 'caregiver' 
-                        } as AdminUser;
-                    }
+                // Fetch caregivers + users in parallel to avoid sequential round-trips
+                const [cgDoc, userDoc] = await Promise.all([
+                    db.collection('caregivers').doc(uid).get(),
+                    db.collection('users').doc(uid).get(),
+                ]);
+
+                if (cgDoc.exists && cgDoc.data()) {
+                    return {
+                        ...(userDoc.exists ? userDoc.data() : {}),
+                        ...cgDoc.data(),
+                        userType: 'caregiver',
+                    } as AdminUser;
                 }
 
-                // Check users collection for clients and caregivers
-                const doc = await db.collection('users').doc(uid).get();
-                if (doc.exists) {
-                    const data = doc.data();
+                if (userDoc.exists) {
+                    const data = userDoc.data();
                     if (data && data.uid) {
-                        // For clients, also check senior_profiles for additional data
                         if (data.userType === 'client') {
                             const snDoc = await db.collection('senior_profiles').doc(uid).get();
-                            if (snDoc.exists) {
-                                const snData = snDoc.data();
-                                return { ...data, ...snData, userType: 'client' } as AdminUser;
+                            if (snDoc.exists && snDoc.data()) {
+                                return { ...data, ...snDoc.data(), userType: 'client' } as AdminUser;
                             }
                         }
                         return data as AdminUser;
                     }
                 }
 
-                // Check Seniors as fallback
+                // Fallback for legacy client profiles with no users doc
                 const snDoc = await db.collection('senior_profiles').doc(uid).get();
-                if (snDoc.exists) {
-                    const data = snDoc.data();
-                    if (data) {
-                        return { ...data, userType: 'client' } as AdminUser;
-                    }
+                if (snDoc.exists && snDoc.data()) {
+                    return { ...snDoc.data(), userType: 'client' } as AdminUser;
                 }
 
             } catch (e: unknown) {

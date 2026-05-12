@@ -85,7 +85,7 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
   };
 
   return (
-    <div className="min-h-screen flex flex-col lg:flex-row overflow-hidden">
+    <div className="min-h-screen flex flex-col lg:flex-row">
 
       {/* ── Left: Hero / Benefits ── */}
       <div className="lg:w-[55%] bg-gradient-to-br from-primary-500 to-blue-700 text-white px-8 py-10 lg:py-16 flex flex-col">

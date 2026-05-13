@@ -74,6 +74,9 @@ export { createFamilyGroup } from './agents/familyGroupManager';
 export { sendWeeklyDigests, triggerWeeklyDigestNow } from './scheduled/weeklyDigest';
 export { sendMonthlyHealthTrends, triggerHealthTrendsNow } from './scheduled/healthTrends';
 
+// Transportation badge evaluation (daily) + on-demand refresh
+export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/transportBadge';
+
 // Cara iMessage pivot — onboarding callables
 export { markTaskComplete } from './agents/onboardingAgent';
 

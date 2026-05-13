@@ -34,13 +34,12 @@ export const OnboardingChecklist: React.FC<OnboardingChecklistProps> = ({ profil
 
     const currentStep = profile.onboardingStep || 1;
 
-    const bypass = import.meta.env.VITE_BYPASS_ONBOARDING === 'true';
     const bgCandidateId = profile.backgroundCheckData?.checkrCandidateId;
     const bgStatus = profile.backgroundCheckData?.status;
     const bgInvitationStatus = profile.backgroundCheckData?.invitationStatus;
-    const bgApproved = bypass || bgStatus === 'clear' || profile.verificationStatus === 'approved';
-    const bgSubmitted = bypass || !!bgCandidateId;
-    const bgExpired = !bypass && bgSubmitted && bgInvitationStatus === 'expired';
+    const bgApproved = bgStatus === 'clear' || profile.verificationStatus === 'approved';
+    const bgSubmitted = !!bgCandidateId;
+    const bgExpired = bgSubmitted && bgInvitationStatus === 'expired';
 
     const onShowToastSafe = (msg: string, type: 'success' | 'error' | 'info') =>
         onShowToast?.(msg, type);

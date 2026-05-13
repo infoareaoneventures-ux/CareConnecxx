@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, X, FileText, CheckCircle, AlertCircle, Loader2, Eye } from 'lucide-react';
+import { Upload, X, FileText, CheckCircle, AlertCircle, Loader2, Eye, Clock } from 'lucide-react';
 import { Button } from './Button';
 import type { CaregiverDocument } from '../../types';
 import type { DocumentType } from '../../services/documentUpload';
@@ -32,6 +32,7 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [showReplace, setShowReplace] = useState(false);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -116,7 +117,7 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
         return <AlertCircle className="w-5 h-5 text-red-500" />;
       case 'pending':
       default:
-        return <Loader2 className="w-5 h-5 text-accent-500 animate-spin" />;
+        return <Clock className="w-5 h-5 text-accent-500" />;
     }
   };
 
@@ -186,16 +187,6 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
                 <Eye className="w-5 h-5" />
               </button>
             )}
-            {onDelete && canUpdate && (
-              <button
-                onClick={handleDelete}
-                className="p-3 hover:bg-white/50 rounded-lg transition-colors min-w-[48px] min-h-[48px] flex items-center justify-center"
-                title={existingDocument.status === 'approved' ? 'Replace expired document' : 'Remove'}
-                aria-label="Remove document"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            )}
             {existingDocument.status === 'approved' && !isExpired && (
               <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded-full">
                 Approved
@@ -205,7 +196,57 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
         </div>
         {existingDocument.notes && existingDocument.status === 'rejected' && (
           <div className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">
-            <strong>Note:</strong> {existingDocument.notes}
+            <strong>Reason:</strong> {existingDocument.notes}
+          </div>
+        )}
+        {(existingDocument.status === 'rejected' || (existingDocument.status === 'approved' && isExpired)) && (
+          <div className="mt-3">
+            {!showReplace ? (
+              <button
+                onClick={() => setShowReplace(true)}
+                className={`w-full text-sm font-medium border bg-white rounded-lg px-4 py-2 transition-colors flex items-center justify-center gap-2 ${
+                  isExpired
+                    ? 'text-orange-700 border-orange-300 hover:bg-orange-50'
+                    : 'text-red-700 border-red-300 hover:bg-red-50'
+                }`}
+              >
+                <Upload className="w-4 h-4" />
+                {isExpired ? 'Upload renewed document' : 'Replace document'}
+              </button>
+            ) : (
+              <div>
+                <div
+                  onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+                  onDragLeave={e => { e.preventDefault(); setIsDragging(false); }}
+                  onDrop={e => { e.preventDefault(); setIsDragging(false); const f = e.dataTransfer.files[0]; if (f) handleFileSelect(f); }}
+                  className={`border-2 border-dashed rounded-xl p-4 text-center transition-colors cursor-pointer ${
+                    isDragging
+                      ? isExpired ? 'border-orange-400 bg-orange-50' : 'border-red-400 bg-red-50'
+                      : isExpired ? 'border-orange-200 hover:border-orange-400 bg-orange-50/50' : 'border-red-200 hover:border-red-400 bg-red-50/50'
+                  }`}
+                >
+                  <input type="file" accept={acceptedTypes} onChange={handleInputChange} className="hidden" id={`replace-${type}`} />
+                  <label htmlFor={`replace-${type}`} className="cursor-pointer block">
+                    {isUploading ? (
+                      <div className="flex items-center justify-center gap-2">
+                        <Loader2 className={`w-4 h-4 animate-spin ${isExpired ? 'text-orange-500' : 'text-red-500'}`} />
+                        <span className={`text-sm ${isExpired ? 'text-orange-600' : 'text-red-600'}`}>Uploading…</span>
+                      </div>
+                    ) : (
+                      <>
+                        <Upload className={`w-6 h-6 mx-auto mb-1 ${isExpired ? 'text-orange-400' : 'text-red-400'}`} />
+                        <p className={`text-sm font-medium ${isExpired ? 'text-orange-600' : 'text-red-600'}`}>Click to select file</p>
+                        <p className={`text-xs mt-0.5 ${isExpired ? 'text-orange-400' : 'text-red-400'}`}>Images or PDF, max {maxSizeMB}MB</p>
+                      </>
+                    )}
+                  </label>
+                </div>
+                {!isUploading && (
+                  <button onClick={() => setShowReplace(false)} className="mt-2 text-xs text-slate-500 hover:text-slate-700 underline">Cancel</button>
+                )}
+                {error && <p className="text-xs text-red-500 mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" />{error}</p>}
+              </div>
+            )}
           </div>
         )}
       </div>

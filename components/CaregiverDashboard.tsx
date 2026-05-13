@@ -4,11 +4,9 @@ import { Caregiver, ViewType } from '../types';
 import { dbService } from '../services/api';
 import { useCareConnex } from '../context/CareConnexContext';
 
-import { CaregiverHeader } from './caregiver/CaregiverHeader';
-import { OnboardingChecklist } from './caregiver/OnboardingChecklist';
 import { CaregiverOnboardingDashboard } from './caregiver/CaregiverOnboardingDashboard';
+import { CaregiverOnboardingWizard } from './caregiver/CaregiverOnboardingWizard';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
-import { BackgroundCheckModal } from './BackgroundCheckModal';
 
 interface CaregiverDashboardProps {
    onNavigate: (view: ViewType, data?: any) => void;
@@ -18,8 +16,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
    const { currentUser, addToast: onShowToast } = useCareConnex();
 
    const [profile, setProfile] = useState<Caregiver | null>(null);
-   const [showFullChecklist, setShowFullChecklist] = useState(false);
-   const [showBgModal, setShowBgModal] = useState(false);
+   const [showWizard, setShowWizard] = useState(false);
 
    useEffect(() => {
       let isMounted = true;
@@ -29,6 +26,14 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
             const userDoc = await dbService.getUser(currentUser.uid);
             if (isMounted && userDoc) {
                setProfile(userDoc as any);
+               // Show wizard for new signups (sessionStorage flag) or incomplete onboarding
+               const fromSignup = sessionStorage.getItem('careconnex_show_caregiver_wizard') === 'true';
+               if (fromSignup) {
+                  sessionStorage.removeItem('careconnex_show_caregiver_wizard');
+                  setShowWizard(true);
+               } else if ((userDoc as any)?.onboardingStatus === 'incomplete') {
+                  setShowWizard(true);
+               }
             }
          } catch (error) {
             console.error('Error fetching profile:', error);
@@ -39,10 +44,9 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
    }, [currentUser]);
 
    const refreshProfile = async () => {
-      if (currentUser) {
-         const allCaregivers = await dbService.getCaregivers(100);
-         const p = allCaregivers.caregivers.find(c => c.uid === currentUser?.uid);
-         if (p) setProfile(p);
+      if (currentUser?.uid) {
+         const p = await dbService.getUser(currentUser.uid);
+         if (p) setProfile(p as any);
       }
    };
 
@@ -54,49 +58,26 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
       );
    }
 
-   const handleStartBackgroundCheck = () => setShowBgModal(true);
-
    return (
       <div className="min-h-screen bg-slate-50 pb-24">
          <CaregiverTopNav />
 
-         {showBgModal && !showFullChecklist && (
-            <BackgroundCheckModal
-               onClose={() => setShowBgModal(false)}
+         {showWizard && currentUser?.uid && profile && (
+            <CaregiverOnboardingWizard
+               uid={currentUser.uid}
+               firstName={(profile as any).firstName || currentUser.displayName?.split(' ')[0] || ''}
+               city={(profile as any).city || ''}
+               state={(profile as any).state || ''}
+               onComplete={() => { setShowWizard(false); refreshProfile(); }}
                onShowToast={onShowToast}
-               onSuccess={() => {
-                  setShowBgModal(false);
-                  refreshProfile();
-               }}
             />
          )}
 
-         {/* Mobile-only header with hamburger/avatar */}
-         <div className="md:hidden">
-            <CaregiverHeader
-               currentUser={currentUser}
-               profile={profile}
-               onNavigate={onNavigate}
-               onStartBackgroundCheck={handleStartBackgroundCheck}
-            />
-         </div>
-
-         {showFullChecklist ? (
-            <OnboardingChecklist
-               profile={profile}
-               onUpdate={refreshProfile}
-               onNavigate={onNavigate}
-               onShowToast={onShowToast}
-            />
-         ) : (
-            <CaregiverOnboardingDashboard
-               profile={profile}
-               onNavigate={onNavigate}
-               onShowToast={onShowToast}
-               onViewChecklist={() => setShowFullChecklist(true)}
-               onStartBackgroundCheck={handleStartBackgroundCheck}
-            />
-         )}
+         <CaregiverOnboardingDashboard
+            profile={profile}
+            onNavigate={onNavigate}
+            onShowToast={onShowToast}
+         />
       </div>
    );
 };

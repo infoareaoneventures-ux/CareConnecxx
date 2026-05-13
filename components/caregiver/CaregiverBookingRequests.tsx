@@ -104,6 +104,10 @@ export const CaregiverBookingRequests: React.FC<Props> = ({ caregiverId, onShowT
   };
 
   const handleAccept = async (group: GroupedRequest) => {
+    if (!(currentUser as any)?.verified) {
+      onShowToast('Your account must be fully approved before you can accept bookings.', 'error');
+      return;
+    }
     setProcessingId(group.groupId);
     try {
       if (group.isRecurring && group.appointments[0].recurringGroupId) {
@@ -140,6 +144,10 @@ export const CaregiverBookingRequests: React.FC<Props> = ({ caregiverId, onShowT
   };
 
   const handleDecline = async (group: GroupedRequest) => {
+    if (!(currentUser as any)?.verified) {
+      onShowToast('Your account must be fully approved before you can respond to bookings.', 'error');
+      return;
+    }
     setProcessingId(group.groupId);
     try {
       if (group.isRecurring && group.appointments[0].recurringGroupId) {

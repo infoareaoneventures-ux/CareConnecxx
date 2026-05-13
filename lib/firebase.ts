@@ -3,6 +3,7 @@ import firebase from 'firebase/compat/app';
 import 'firebase/compat/auth';
 import 'firebase/compat/firestore';
 import 'firebase/compat/functions';
+import 'firebase/compat/storage';
 
 // Configuration from Environment Variables
 const firebaseConfig = {
@@ -19,6 +20,7 @@ let app;
 let auth: firebase.auth.Auth | undefined;
 let db: firebase.firestore.Firestore | undefined;
 let functions: firebase.functions.Functions | undefined;
+let storage: firebase.storage.Storage | undefined;
 let isConfigured = false;
 
 let googleProvider: firebase.auth.GoogleAuthProvider;
@@ -41,6 +43,11 @@ try {
   db = firebase.firestore();
   functions = firebase.functions();
   isConfigured = true;
+  try {
+    storage = firebase.storage();
+  } catch (storageError) {
+    console.warn('Firebase Storage unavailable:', storageError);
+  }
   console.log("🔥 Google Cloud Backend Connected: " + firebaseConfig.projectId);
 } catch (error) {
   console.error("Error connecting to Google Cloud:", error);
@@ -48,5 +55,5 @@ try {
   isConfigured = false;
 }
 
-export { app, auth, db, functions, isConfigured, googleProvider };
+export { app, auth, db, functions, storage, isConfigured, googleProvider };
 export default firebase;

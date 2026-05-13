@@ -1,4 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
+
+// Mock Firebase before importing anything that depends on it.
+// vi.mock is hoisted to the top of the file by Vitest so this runs first.
+vi.mock('../lib/firebase', () => {
+  const callable = vi.fn(async ({ ssn }: { ssn: string }) => {
+    if (!ssn) return { data: { hash: '' } };
+    const normalized = ssn.replace(/[\s-]/g, '');
+    let h = 0;
+    for (const c of normalized) { h = (h * 31 + c.charCodeAt(0)) >>> 0; }
+    return { data: { hash: `hash_${h.toString(16)}` } };
+  });
+  return {
+    functions: { httpsCallable: () => callable },
+    isConfigured: true,
+    default: {},
+  };
+});
+
 import {
   hashSSN,
   maskSSN,
@@ -9,10 +27,6 @@ import {
 } from '../utils/encryption';
 
 describe('Encryption Utilities', () => {
-  // Note: encryptPII/decryptPII and prepareCaregiverForWrite require 
-  // VITE_ENCRYPTION_KEY to be set. We test the functions that don't 
-  // require the key here.
-
   describe('hashSSN', () => {
     it('should produce consistent hashes for same SSN', async () => {
       const ssn = '123456789';
@@ -23,22 +37,22 @@ describe('Encryption Utilities', () => {
       expect(hash1.length).toBeGreaterThan(0);
     });
 
-    it('should produce different hashes for different SSNs', () => {
-      const hash1 = hashSSN('123456789');
-      const hash2 = hashSSN('987654321');
-      
+    it('should produce different hashes for different SSNs', async () => {
+      const hash1 = await hashSSN('123456789');
+      const hash2 = await hashSSN('987654321');
+
       expect(hash1).not.toBe(hash2);
     });
 
-    it('should normalize SSNs (remove dashes)', () => {
-      const hash1 = hashSSN('123-45-6789');
-      const hash2 = hashSSN('123456789');
-      
+    it('should normalize SSNs (remove dashes)', async () => {
+      const hash1 = await hashSSN('123-45-6789');
+      const hash2 = await hashSSN('123456789');
+
       expect(hash1).toBe(hash2);
     });
 
-    it('should return empty string for empty input', () => {
-      expect(hashSSN('')).toBe('');
+    it('should return empty string for empty input', async () => {
+      expect(await hashSSN('')).toBe('');
     });
   });
 
@@ -115,14 +129,14 @@ describe('Encryption Utilities', () => {
   });
 
   describe('logPIIAccess', () => {
-    it('should log access without errors', () => {
+    it('should log access without errors', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      
-      logPIIAccess('user123', 'read', 'ssn', 'target456');
-      
+
+      await logPIIAccess('user123', 'read', 'ssn', 'target456');
+
       expect(consoleSpy).toHaveBeenCalled();
       expect(consoleSpy).toHaveBeenCalledWith(
-        '[AUDIT] PII Access:',
+        '[AUDIT] PII Access logged server-side:',
         expect.objectContaining({
           userId: 'user123',
           action: 'read',
@@ -130,7 +144,7 @@ describe('Encryption Utilities', () => {
           targetUserId: 'target456'
         })
       );
-      
+
       consoleSpy.mockRestore();
     });
   });

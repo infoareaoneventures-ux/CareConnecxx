@@ -199,6 +199,7 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
 
 /**
  * Handle checkout.session.completed
+ * For caregiver payments: auto-initiate Checkr background check + set verificationStatus submitted
  */
 async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
   // Cara iMessage onboarding — advance step when client finishes payment setup
@@ -215,14 +216,134 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
   const userId = session.metadata?.firebaseUID;
   if (!userId) return;
 
-  // Update user's membership status
-  await admin.firestore().collection('users').doc(userId).update({
+  await admin.firestore().collection('users').doc(userId).set({
     membershipStatus: 'active',
     stripeCustomerId: session.customer,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  }, { merge: true });
 
-  console.log(`Checkout completed for user: ${userId}`);
+  // Only continue for caregivers
+  const caregiverSnap = await admin.firestore().collection('caregivers').doc(userId).get();
+  if (!caregiverSnap.exists) {
+    console.log(`Checkout completed for client user: ${userId}`);
+    return;
+  }
+
+  const caregiverData = caregiverSnap.data() || {};
+
+  // Idempotency: skip if Checkr already initiated and invitation not expired
+  const bgData = caregiverData.backgroundCheckData || {};
+  if (bgData.checkrCandidateId && bgData.invitationStatus !== 'expired' && bgData.invitationStatus !== 'canceled') {
+    await admin.firestore().collection('caregivers').doc(userId).set({
+      membershipPaid: true,
+      verificationStatus: 'submitted',
+    }, { merge: true });
+    console.log(`Checkr already initiated for caregiver: ${userId}`);
+    return;
+  }
+
+  // Gather caregiver info for Checkr candidate
+  let email: string | undefined;
+  try {
+    const authUser = await admin.auth().getUser(userId);
+    email = authUser.email;
+  } catch (e) {
+    console.error(`Could not get auth user for ${userId}`, e);
+  }
+  if (!email) {
+    console.error(`Caregiver ${userId} has no email — cannot initiate Checkr`);
+    return;
+  }
+
+  const nameParts = (caregiverData.name || '').trim().split(/\s+/);
+  const firstName = caregiverData.firstName || nameParts[0] || '';
+  const lastName = caregiverData.lastName || nameParts.slice(1).join(' ') || '';
+  const zipCode = (caregiverData.zipCode || caregiverData.zip || '').trim();
+  const state = (caregiverData.state || '').trim();
+
+  if (!firstName || !lastName || !zipCode) {
+    console.warn(`Caregiver ${userId} missing profile fields — marking paid, deferring Checkr`);
+    await admin.firestore().collection('caregivers').doc(userId).set({
+      membershipPaid: true,
+      checkrInitPending: true,
+    }, { merge: true });
+    return;
+  }
+
+  const apiKey = (process.env.CHECKR_API_KEY || '').trim();
+  if (!apiKey) {
+    console.error('CHECKR_API_KEY not configured — marking paid, skipping Checkr');
+    await admin.firestore().collection('caregivers').doc(userId).set({ membershipPaid: true }, { merge: true });
+    return;
+  }
+
+  try {
+    const CHECKR_BASE = process.env.CHECKR_API_URL || 'https://api.checkr.com/v1';
+    const CHECKR_PKG = process.env.CHECKR_PACKAGE || 'driver_pro';
+    const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
+    const dateKey = new Date().toISOString().slice(0, 10);
+    const workLocations = state ? [{ country: 'US', state: state.toUpperCase() }] : [];
+
+    const candidateBody: Record<string, unknown> = {
+      first_name: firstName, last_name: lastName, email,
+      zipcode: zipCode, custom_id: userId,
+    };
+    if (workLocations.length) candidateBody.work_locations = workLocations;
+
+    const candidateRes = await fetch(`${CHECKR_BASE}/candidates`, {
+      method: 'POST',
+      headers: { Authorization: authHeader, 'Content-Type': 'application/json', 'Idempotency-Key': `${userId}-candidate-${dateKey}` },
+      body: JSON.stringify(candidateBody),
+    });
+
+    if (!candidateRes.ok) {
+      const errText = await candidateRes.text().catch(() => '');
+      console.error(`Checkr candidate failed for ${userId}: ${candidateRes.status} ${errText}`);
+      await admin.firestore().collection('caregivers').doc(userId).set({ membershipPaid: true }, { merge: true });
+      return;
+    }
+    const candidate = await candidateRes.json();
+    const candidateId: string = candidate.id;
+
+    const invBody: Record<string, unknown> = { candidate_id: candidateId, package: CHECKR_PKG };
+    if (workLocations.length) invBody.work_locations = workLocations;
+
+    const invRes = await fetch(`${CHECKR_BASE}/invitations`, {
+      method: 'POST',
+      headers: { Authorization: authHeader, 'Content-Type': 'application/json', 'Idempotency-Key': `${userId}-invitation-${dateKey}` },
+      body: JSON.stringify(invBody),
+    });
+
+    const invOk = invRes.ok;
+    if (!invOk) {
+      const errText = await invRes.text().catch(() => '');
+      console.error(`Checkr invitation failed for ${userId}: ${invRes.status} ${errText}`);
+    }
+
+    await admin.firestore().collection('caregivers').doc(userId).set({
+      membershipPaid: true,
+      verificationStatus: 'submitted',
+      backgroundCheckData: {
+        checkrCandidateId: candidateId,
+        legalFirstName: firstName,
+        legalLastName: lastName,
+        zip: zipCode,
+        submittedAt: new Date().toISOString(),
+        status: 'pending',
+        invitationStatus: invOk ? 'sent' : 'error',
+        initiatedVia: 'stripe_webhook',
+      },
+    }, { merge: true });
+
+    await admin.firestore().collection('users').doc(userId).set({
+      verificationStatus: 'submitted',
+    }, { merge: true });
+
+    console.log(`Checkr initiated for caregiver: ${userId}, candidate: ${candidateId}`);
+  } catch (err: any) {
+    console.error(`Checkr auto-initiation error for ${userId}:`, err?.message);
+    await admin.firestore().collection('caregivers').doc(userId).set({ membershipPaid: true }, { merge: true });
+  }
 }
 
 /**

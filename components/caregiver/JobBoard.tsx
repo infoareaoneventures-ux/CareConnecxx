@@ -1,11 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { Search, List, Loader2, Briefcase, MapPin, Calendar, Clock, Lock, X, FileText, CheckCircle, XCircle, Clock4, Sun, Moon, Users, CreditCard, Banknote, EyeOff } from 'lucide-react';
+import { Search, List, Loader2, Briefcase, MapPin, Calendar, Clock, Lock, X, FileText, CheckCircle, XCircle, Clock4, Sun, Moon, Users, CreditCard, Banknote, EyeOff, Car } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { JobPost, Caregiver, AddToastFunction } from '../../types';
 import { dbService } from '../../services/api';
 import { db } from '../../lib/firebase';
 import { jobApplicationService, useMyApplications } from '../../hooks/useJobApplications';
 import { Skeleton } from '../ui/Skeleton';
+
+function hasValidTransportDocs(profile: Caregiver | null): boolean {
+    if (!profile) return false;
+    if (profile.transportationBadge === true) return true;
+    const docs = (profile as any).documents;
+    if (!docs) return false;
+    const today = new Date();
+    const isValid = (doc: any) => doc?.status === 'approved' && (!doc.expirationDate || new Date(doc.expirationDate) >= today);
+    return isValid(docs.driversLicense) && isValid(docs.insurance) && isValid(docs.registration);
+}
 
 interface JobBoardProps {
     onShowToast: AddToastFunction;
@@ -126,6 +136,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             return;
         }
         if (!applyingJob) return;
+            const requiresTransport = applyingJob.careTypes?.includes('Transportation') || applyingJob.requirements?.includes('Driving');
+        if (requiresTransport && !hasValidTransportDocs(profile)) {
+            onShowToast("This job requires transportation. Your transportation documents are not verified or have expired. Update your documents to apply.", 'error');
+            return;
+        }
 
         setAcceptingGigId(applyingJob.id);
 
@@ -314,6 +329,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                 ★ Less than 10 applicants
                                             </span>
                                         )}
+                                        {(job.careTypes?.includes('Transportation') || job.requirements?.includes('Driving')) && (
+                                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[11px] font-medium">
+                                                <Car className="w-3 h-3" /> Transportation
+                                            </span>
+                                        )}
                                     </div>
 
                                     <div className="bg-[var(--color-neutral-50)] p-3 rounded-xl mb-4 text-sm text-[var(--color-neutral-600)]">
@@ -328,24 +348,24 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                     </div>
 
                                     <div className="flex gap-2">
-                                        {profile?.verified ? (
-                                            <Button
-                                                fullWidth
-                                                size="sm"
-                                                onClick={() => { setApplyingJob(job); setProposedRate(job.rate); }}
-                                            >
-                                                Apply Now
-                                            </Button>
-                                        ) : (
-                                            <Button
-                                                fullWidth
-                                                size="sm"
-                                                disabled
-                                                className="bg-[var(--color-neutral-100)] text-[var(--color-neutral-400)] cursor-not-allowed border-[var(--color-neutral-200)]"
-                                            >
-                                                <Lock className="w-3 h-3 mr-2" /> Verification Pending
-                                            </Button>
-                                        )}
+                                        {(() => {
+                                            const jobRequiresTransport = job.careTypes?.includes('Transportation') || job.requirements?.includes('Driving');
+                                            if (!profile?.verified) return (
+                                                <Button fullWidth size="sm" disabled className="bg-[var(--color-neutral-100)] text-[var(--color-neutral-400)] cursor-not-allowed border-[var(--color-neutral-200)]">
+                                                    <Lock className="w-3 h-3 mr-2" /> Verification Pending
+                                                </Button>
+                                            );
+                                            if (jobRequiresTransport && !hasValidTransportDocs(profile)) return (
+                                                <Button fullWidth size="sm" disabled className="bg-orange-50 text-orange-500 cursor-not-allowed border border-orange-200">
+                                                    <Car className="w-3 h-3 mr-2" /> Transport Docs Required
+                                                </Button>
+                                            );
+                                            return (
+                                                <Button fullWidth size="sm" onClick={() => { setApplyingJob(job); setProposedRate(job.rate); }}>
+                                                    Apply Now
+                                                </Button>
+                                            );
+                                        })()}
                                         <Button variant="secondary" size="sm" onClick={() => setViewingJob(job)}>Details</Button>
                                         <button
                                             onClick={(e) => {

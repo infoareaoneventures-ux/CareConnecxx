@@ -2,9 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Search, Star, Shield, Edit2, Save, X, Ban, CheckCircle, Clock,
   Bell, RefreshCw, AlertCircle, Calendar, Tag, ChevronDown, ChevronUp,
-  Users,
+  Users, FileText, ExternalLink, Car,
 } from 'lucide-react';
 import { adminService, dbService } from '../../services/api';
+import { documentUploadService, DocumentType } from '../../services/documentUpload';
+import { functions } from '../../lib/firebase';
 import { Caregiver, Appointment } from '../../types';
 
 type Panel = 'profile' | 'appointments' | 'verification';
@@ -42,6 +44,11 @@ export const AdminCaregiverManager: React.FC = () => {
 
   // Verification
   const [rejectReason, setRejectReason] = useState('');
+  const [docExpiry, setDocExpiry] = useState<Record<string, string>>({});
+  const [docProcessing, setDocProcessing] = useState<Record<string, boolean>>({});
+  const [docRejectNote, setDocRejectNote] = useState<Record<string, string>>({});
+  const [docRejectOpen, setDocRejectOpen] = useState<Record<string, boolean>>({});
+  const [docReviseOpen, setDocReviseOpen] = useState<Record<string, boolean>>({});
 
   // Skills dropdown
   const [showSkillsDropdown, setShowSkillsDropdown] = useState(false);
@@ -74,7 +81,7 @@ export const AdminCaregiverManager: React.FC = () => {
     }
   };
 
-  const openCaregiver = (c: Caregiver) => {
+  const openCaregiver = async (c: Caregiver) => {
     setSelected(c);
     setForm({
       name: c.name, email: c.email, phone: c.phone, bio: c.bio,
@@ -91,6 +98,14 @@ export const AdminCaregiverManager: React.FC = () => {
     setNotifyMessage('');
     setSuspendReason('');
     setSuspendDays(7);
+
+    if (!c.email && c.uid) {
+      const email = await adminService.getUserEmail(c.uid);
+      if (email) {
+        setSelected(prev => prev ? { ...prev, email } : prev);
+        setForm(prev => ({ ...prev, email }));
+      }
+    }
   };
 
   const loadAppointments = async (cid: string) => {
@@ -130,19 +145,23 @@ export const AdminCaregiverManager: React.FC = () => {
     try {
       const updates: Partial<Caregiver> = { verificationStatus: status };
       if (status === 'approved') { updates.verified = true; updates.approvedAt = new Date().toISOString(); }
-      if (status === 'rejected') { (updates as any).rejectionReason = rejectReason; }
+      if (status === 'rejected') { updates.verified = false; (updates as any).rejectionReason = rejectReason; }
+      if (status === 'info_requested') { updates.verified = false; }
       await adminService.updateCaregiver(selected.uid, updates);
       setCaregivers(prev => prev.map(c => c.uid === selected.uid ? { ...c, ...updates } as Caregiver : c));
       setSelected(prev => prev ? { ...prev, ...updates } as Caregiver : prev);
-      await dbService.sendNotification(selected.uid, {
+      showToast(`Caregiver ${status}`, 'success');
+      dbService.sendNotification(selected.uid, {
         type: `verification_${status}` as any,
         title: status === 'approved' ? "You're Verified!" : status === 'rejected' ? 'Verification Update' : 'Additional Info Needed',
         body: status === 'approved' ? 'Your background check has been approved.' : status === 'rejected' ? `Not approved. Reason: ${rejectReason}` : 'We need more information to complete your verification.',
         message: '',
         userId: selected.uid,
         isRead: false,
+      }).catch((err) => {
+        console.error('[AdminCaregiverManager] Failed to send notification:', err);
+        showToast('Notification to caregiver failed', 'error');
       });
-      showToast(`Caregiver ${status}`, 'success');
     } catch {
       showToast('Failed to update verification', 'error');
     }
@@ -243,6 +262,37 @@ export const AdminCaregiverManager: React.FC = () => {
     });
   };
 
+  const handleDocAction = async (docType: DocumentType, action: 'approved' | 'rejected') => {
+    if (!selected) return;
+    const note = docRejectNote[docType] || undefined;
+    setDocProcessing(prev => ({ ...prev, [docType]: true }));
+    try {
+      await documentUploadService.updateDocumentStatus(
+        selected.uid, docType, action, note, 'admin', docExpiry[docType] || undefined,
+      );
+      setDocRejectOpen(prev => ({ ...prev, [docType]: false }));
+      setDocRejectNote(prev => ({ ...prev, [docType]: '' }));
+      setDocReviseOpen(prev => ({ ...prev, [docType]: false }));
+      setSelected(prev => {
+        if (!prev) return prev;
+        const docs = { ...(prev.documents || {}), [docType]: { ...(prev.documents as any)?.[docType], status: action } };
+        return { ...prev, documents: docs } as Caregiver;
+      });
+      showToast(`${docType} ${action}`, 'success');
+      // Immediately recalculate transportation badge
+      try {
+        const refreshBadge = functions?.httpsCallable('v1-refreshTransportBadge');
+        if (refreshBadge) await refreshBadge({ uid: selected.uid });
+      } catch (err) {
+        console.warn('Could not refresh transport badge:', err);
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to update document', 'error');
+    } finally {
+      setDocProcessing(prev => ({ ...prev, [docType]: false }));
+    }
+  };
+
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
@@ -258,7 +308,7 @@ export const AdminCaregiverManager: React.FC = () => {
 
   const filtered = caregivers.filter(c => {
     const matchSearch = !search || c.name?.toLowerCase().includes(search.toLowerCase()) || c.email?.toLowerCase().includes(search.toLowerCase());
-    const matchVer = verFilter === 'all' || c.verificationStatus === verFilter || (verFilter === 'pending' && !c.verificationStatus);
+    const matchVer = verFilter === 'all' || c.verificationStatus === verFilter || (verFilter === 'pending' && (!c.verificationStatus || c.verificationStatus === 'info_requested'));
     return matchSearch && matchVer;
   });
 
@@ -620,6 +670,178 @@ export const AdminCaregiverManager: React.FC = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Checkr Background Check Result */}
+                {selected.backgroundCheckData && (
+                  <div className="bg-slate-50 rounded-xl p-5">
+                    <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                      <Shield className="w-4 h-4 text-primary-600" /> Background Check Result
+                    </h3>
+                    {(!(selected.backgroundCheckData as any).status || (selected.backgroundCheckData as any).status === 'pending') ? (
+                      <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                        <Clock className="w-4 h-4 shrink-0" />
+                        <span>Awaiting result from Checkr.</span>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-3 mb-3 flex-wrap">
+                          <span className={`text-sm font-bold px-3 py-1.5 rounded-full uppercase tracking-wide ${
+                            (selected.backgroundCheckData as any).status === 'clear' ? 'bg-green-100 text-green-700' :
+                            (selected.backgroundCheckData as any).status === 'consider' ? 'bg-orange-100 text-orange-700' :
+                            (selected.backgroundCheckData as any).status === 'suspended' ? 'bg-red-100 text-red-700' :
+                            (selected.backgroundCheckData as any).status === 'canceled' ? 'bg-slate-100 text-slate-500' :
+                            'bg-yellow-100 text-yellow-700'
+                          }`}>
+                            {(selected.backgroundCheckData as any).status}
+                          </span>
+                          {(selected.backgroundCheckData as any).disputed && (
+                            <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-purple-100 text-purple-700">Disputed</span>
+                          )}
+                          {(selected.backgroundCheckData as any).completedAt && (
+                            <span className="text-xs text-slate-500">
+                              Completed {new Date((selected.backgroundCheckData as any).completedAt).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 bg-white rounded-xl p-4 text-sm">
+                          {[
+                            ...(selected.backgroundCheckData.legalFirstName ? [{ label: 'Legal Name', value: `${selected.backgroundCheckData.legalFirstName} ${selected.backgroundCheckData.legalLastName}` }] : []),
+                            ...(selected.backgroundCheckData.dob ? [{ label: 'Date of Birth', value: selected.backgroundCheckData.dob }] : []),
+                            ...(selected.backgroundCheckData.ssnLastFour ? [{ label: 'SSN Last 4', value: `***-**-${selected.backgroundCheckData.ssnLastFour}` }] : []),
+                            ...(selected.backgroundCheckData.checkrCandidateId ? [{ label: 'Candidate ID', value: selected.backgroundCheckData.checkrCandidateId }] : []),
+                            ...((selected.backgroundCheckData as any).checkrReportId ? [{ label: 'Report ID', value: (selected.backgroundCheckData as any).checkrReportId }] : []),
+                            ...(selected.backgroundCheckData.invitationStatus ? [{ label: 'Invitation', value: selected.backgroundCheckData.invitationStatus }] : []),
+                          ].map(({ label, value }) => (
+                            <div key={label}>
+                              <span className="text-xs text-slate-500 block mb-0.5">{label}</span>
+                              <p className="font-medium text-slate-900 text-sm break-all">{value}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Uploaded Documents */}
+                {(() => {
+                  const docs = selected.documents as any;
+                  const REQUIRES_EXPIRY: DocumentType[] = ['driversLicense', 'driversLicenseBack', 'insurance', 'registration'];
+                  const docList: { key: DocumentType; label: string }[] = (
+                    [
+                      { key: 'driversLicense' as DocumentType, label: "Driver's License (Front)" },
+                      { key: 'driversLicenseBack' as DocumentType, label: "Driver's License (Back)" },
+                      { key: 'insurance' as DocumentType, label: 'Vehicle Insurance' },
+                      { key: 'registration' as DocumentType, label: 'Vehicle Registration' },
+                    ] as { key: DocumentType; label: string }[]
+                  ).filter(d => docs?.[d.key]);
+                  if (!docList.length) return null;
+                  return (
+                    <div className="bg-slate-50 rounded-xl p-5 space-y-3">
+                      <h3 className="font-semibold text-slate-900 flex items-center gap-2"><Car className="w-4 h-4 text-primary-600" /> Uploaded Documents</h3>
+                      {docList.map(({ key, label }) => {
+                        const doc = docs[key];
+                        const processing = docProcessing[key];
+                        const isExpired = doc.expirationDate && new Date(doc.expirationDate) < new Date();
+                        const isPending = !doc.status || doc.status === 'pending' || (doc.status === 'approved' && isExpired);
+                        return (
+                          <div key={key} className="bg-white border border-slate-200 rounded-xl p-3 space-y-2">
+                            <div className="flex items-center gap-3">
+                              <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                              <span className="flex-1 text-sm font-medium text-slate-700">{label}</span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                doc.status === 'approved' && isExpired ? 'bg-orange-100 text-orange-700'
+                                : doc.status === 'approved' ? 'bg-teal-100 text-teal-700'
+                                : doc.status === 'rejected' ? 'bg-red-100 text-red-700'
+                                : 'bg-amber-100 text-amber-700'
+                              }`}>{doc.status === 'approved' && isExpired ? 'expired' : (doc.status || 'pending')}</span>
+                              <a href={doc.url} target="_blank" rel="noopener noreferrer"
+                                className="text-xs text-primary-600 hover:underline flex items-center gap-0.5">
+                                View <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </div>
+                            {(isPending || docReviseOpen[key]) && (() => {
+                              const needsExpiry = REQUIRES_EXPIRY.includes(key);
+                              const hasExpiry = !!docExpiry[key];
+                              const canApprove = !needsExpiry || hasExpiry;
+                              const rejectOpen = docRejectOpen[key];
+                              return (
+                                <div className="flex flex-col gap-2 pl-7">
+                                  {needsExpiry && (
+                                    <div className="flex items-center gap-2">
+                                      <label className="text-xs text-slate-500 whitespace-nowrap">
+                                        Expiry date <span className="text-red-500">*</span>
+                                      </label>
+                                      <input type="date" value={docExpiry[key] || ''}
+                                        onChange={e => setDocExpiry(prev => ({ ...prev, [key]: e.target.value }))}
+                                        className="flex-1 text-xs px-2 py-1 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-400" />
+                                    </div>
+                                  )}
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => handleDocAction(key, 'approved')}
+                                      disabled={processing || !canApprove}
+                                      title={!canApprove ? 'Enter expiry date before approving' : ''}
+                                      className="flex-1 flex items-center justify-center gap-1 text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 px-3 py-1.5 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed">
+                                      <CheckCircle className="w-3 h-3" /> Approve
+                                    </button>
+                                    <button
+                                      onClick={() => setDocRejectOpen(prev => ({ ...prev, [key]: !rejectOpen }))}
+                                      disabled={processing}
+                                      className="flex-1 flex items-center justify-center gap-1 text-xs font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 px-3 py-1.5 rounded-lg disabled:opacity-50">
+                                      <X className="w-3 h-3" /> Reject
+                                    </button>
+                                  </div>
+                                  {rejectOpen && (
+                                    <div className="flex flex-col gap-1.5">
+                                      <textarea
+                                        value={docRejectNote[key] || ''}
+                                        onChange={e => setDocRejectNote(prev => ({ ...prev, [key]: e.target.value }))}
+                                        placeholder="Reason for rejection (shown to caregiver)…"
+                                        rows={2}
+                                        className="w-full text-xs px-2 py-1.5 border border-red-200 rounded-lg focus:outline-none focus:border-red-400 resize-none"
+                                      />
+                                      <button
+                                        onClick={() => handleDocAction(key, 'rejected')}
+                                        disabled={processing || !docRejectNote[key]?.trim()}
+                                        className="flex items-center justify-center gap-1 text-xs font-semibold bg-red-600 text-white px-3 py-1.5 rounded-lg disabled:opacity-50">
+                                        Confirm Reject
+                                      </button>
+                                    </div>
+                                  )}
+                                  {docReviseOpen[key] && !isPending && (
+                                    <button
+                                      onClick={() => { setDocReviseOpen(prev => ({ ...prev, [key]: false })); setDocRejectOpen(prev => ({ ...prev, [key]: false })); }}
+                                      className="text-xs text-slate-400 hover:text-slate-600 underline text-left"
+                                    >
+                                      Cancel
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                            {doc.status === 'approved' && !isExpired && !docReviseOpen[key] && (
+                              <div className="pl-7">
+                                <button
+                                  onClick={() => setDocReviseOpen(prev => ({ ...prev, [key]: true }))}
+                                  className="text-xs text-slate-400 hover:text-primary-600 underline font-medium"
+                                >
+                                  Revise decision
+                                </button>
+                              </div>
+                            )}
+                            {doc.expirationDate && (
+                              <p className={`pl-7 text-xs font-medium ${isExpired ? 'text-orange-600' : 'text-slate-500'}`}>
+                                {isExpired ? 'Expired: ' : 'Expires: '}{new Date(doc.expirationDate).toLocaleDateString()}
+                                {isExpired && ' — re-enter expiry date to renew'}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
 
                 <div className="bg-slate-50 rounded-xl p-5 space-y-4">
                   <h3 className="font-semibold text-slate-900">Review Decision</h3>

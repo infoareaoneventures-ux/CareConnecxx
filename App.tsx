@@ -107,6 +107,7 @@ const PublicOnlyRoute: React.FC<{ element: React.ReactElement }> = ({ element })
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (currentUser?.userType === 'client') return <Navigate to="/client/dashboard" replace />;
   if (currentUser?.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
+  if (currentUser?.userType === 'admin') return <Navigate to="/admin" replace />;
   return element;
 };
 
@@ -123,6 +124,14 @@ const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) 
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/caregiver/login" replace />;
   if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
+  return element;
+};
+
+const AdminRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
+  const { authResolved, currentUser } = useCareConnex();
+  if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
+  if (!currentUser) return <Navigate to="/client/login" replace />;
+  if (currentUser.userType !== 'admin') return <Navigate to="/" replace />;
   return element;
 };
 
@@ -241,16 +250,6 @@ const AppContent: React.FC = () => {
     (path.includes('care-plan') && isCaregiverContext)
   );
 
-  const authPaths = [
-    '/client/login',
-    '/client/signup',
-    '/client/forgot-password',
-    '/caregiver/login',
-    '/caregiver/signup',
-    '/caregiver/forgot-password'
-  ];
-
-  const showBottomNav = isCaregiverFlow && !authPaths.includes(path);
   const activeColor = isClientFlow ? 'text-teal-600' : 'text-orange-500';
 
   if (!authResolved) {
@@ -362,7 +361,7 @@ const AppContent: React.FC = () => {
           />
         } />
 
-          <Route path="/admin" element={<AdminView onBack={() => navigate('/')} />} />
+          <Route path="/admin" element={<AdminRoute element={<AdminView onBack={() => navigate('/')} />} />} />
           <Route path="/stripe/callback" element={<StripeCallback onNavigate={handleNavigation} />} />
           <Route path="/payment/success" element={<PaymentSuccess onNavigate={handleNavigation} onPaymentComplete={(id) => { /* handled in context now but PaymentSuccess might need update */ }} />} />
           <Route path="/payment/cancel" element={<PaymentCancel onNavigate={handleNavigation} />} />
@@ -382,61 +381,6 @@ const AppContent: React.FC = () => {
       {/* Floating onboarding helper — visible on all authenticated pages */}
       {currentUser && currentUser.userType !== 'admin' && (
         <FloatingOnboardingHelper />
-      )}
-
-      {showBottomNav && (
-        <div className="fixed bottom-4 sm:bottom-6 left-1/2 transform -translate-x-1/2 bg-white/95 backdrop-blur-md border border-[var(--color-neutral-200)] rounded-full shadow-2xl px-3 sm:px-6 py-2 sm:py-3 flex space-x-2 sm:space-x-6 z-50 safe-area-bottom md:hidden">
-          <button
-            onClick={() => handleNavigation(isClientFlow ? 'client' : 'caregiver')}
-            className={`flex flex-col items-center justify-center transition-colors min-w-[48px] min-h-[48px] rounded-lg active:scale-95 ${path.endsWith('dashboard') || path === '/client' || path === '/caregiver' ? activeColor : 'text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-600)]'
-              }`}
-          >
-            <Home className="w-5 sm:w-6 h-5 sm:h-6" />
-            <span className="text-[10px] font-medium mt-0.5">Home</span>
-          </button>
-
-          <div className="w-px bg-[var(--color-neutral-200)] h-8 self-center hidden sm:block"></div>
-
-          {/* Care Plan Tab (Client Only) */}
-          {isClientFlow && (
-            <>
-              <button
-                onClick={() => handleNavigation('care-plan')}
-                className={`flex flex-col items-center justify-center transition-colors min-w-[48px] min-h-[48px] rounded-lg active:scale-95 ${path.includes('care-plan') ? activeColor : 'text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-600)]'
-                  }`}
-              >
-                <ClipboardList className="w-5 sm:w-6 h-5 sm:h-6" />
-                <span className="text-[10px] font-medium mt-0.5">Binder</span>
-              </button>
-              <div className="w-px bg-[var(--color-neutral-200)] h-8 self-center hidden sm:block"></div>
-            </>
-          )}
-
-          <button
-            onClick={() => handleNavigation(isClientFlow ? 'client-inbox' : 'caregiver-inbox')}
-            className={`flex flex-col items-center justify-center transition-colors min-w-[48px] min-h-[48px] rounded-lg active:scale-95 ${path.includes('inbox') ? activeColor : 'text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-600)]'
-              }`}
-          >
-            <div className="relative">
-              <MessageSquare className="w-5 sm:w-6 h-5 sm:h-6" />
-              {/* Badge could be dynamic */}
-            </div>
-            <span className="text-[var(--color-neutral-400)] text-[10px] font-medium mt-0.5">Chat</span>
-          </button>
-
-          <div className="w-px bg-[var(--color-neutral-200)] h-8 self-center hidden sm:block"></div>
-
-          <button
-            onClick={() => handleNavigation(isClientFlow ? 'client-profile' : 'caregiver-profile')}
-            className={`flex flex-col items-center justify-center transition-colors min-w-[48px] min-h-[48px] rounded-lg active:scale-95 ${path.includes('profile')
-              ? activeColor
-              : 'text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-600)]'
-              }`}
-          >
-            <Settings className="w-5 sm:w-6 h-5 sm:h-6" />
-            <span className="text-[10px] font-medium mt-0.5">Profile</span>
-          </button>
-        </div>
       )}
 
       {/* PWA Install Prompt */}

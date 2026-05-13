@@ -1,18 +1,15 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  ChevronLeft, ShieldCheck, Star, Home, Loader2, FileText,
-  Lock, Trash2, CheckCircle, AlertTriangle, X, MapPin, Link,
-  Copy, LogOut
+  ChevronLeft, ShieldCheck, Star, Loader2, FileText,
+  Lock, Trash2, CheckCircle, X, MapPin, Link,
+  Copy
 } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Badge } from './ui/Badge';
 import { AvatarUpload } from './ui/AvatarUpload';
-import { DocumentUpload } from './ui/DocumentUpload';
-import { ViewType, AddToastFunction, Review, Caregiver, CaregiverDocument } from '../types';
+import { ViewType, AddToastFunction, Review, Caregiver } from '../types';
 import { dbService, authService } from '../services/api';
-import { BackgroundCheckModal } from './BackgroundCheckModal';
-import { documentUploadService, DocumentType } from '../services/documentUpload';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 import { ProfileApprovalBanner } from './caregiver/ProfileApprovalBanner';
 import { LookingForSection } from './caregiver/LookingForSection';
@@ -34,7 +31,7 @@ const PERIODS = ['Morning', 'Afternoon', 'Evening'];
 const LANGUAGES = ['English', 'Spanish', 'French', 'Mandarin', 'Vietnamese', 'Tagalog'];
 
 export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, onShowToast }) => {
-  const [activeTab, setActiveTab] = useState<'summary' | 'reviews' | 'documents' | 'security'>('summary');
+  const [activeTab, setActiveTab] = useState<'summary' | 'reviews'>('summary');
   const [loading, setLoading] = useState(true);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [profile, setProfile] = useState<Partial<Caregiver> & { bio?: string; experience?: number }>({
@@ -59,10 +56,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   const [editRadius, setEditRadius] = useState(10);
   const [editLanguages, setEditLanguages] = useState<string[]>(['English']);
   const [editAvailability, setEditAvailability] = useState<Record<string, string[]>>({});
-
-  // Modal state
-  const [showCheckModal, setShowCheckModal] = useState(false);
-  const [previewDocument, setPreviewDocument] = useState<CaregiverDocument | null>(null);
 
   // Security state
   const [newPassword, setNewPassword] = useState('');
@@ -95,9 +88,9 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
 
           // Seed editable fields
           setEditBio(fetchedProfile.bio || '');
-          setEditRate(fetchedProfile.hourlyRate || 25);
-          setEditRateTwo((fetchedProfile as any).rateForTwo || (fetchedProfile.hourlyRate || 25) + 5);
-          setEditRateThree((fetchedProfile as any).rateForThree || (fetchedProfile.hourlyRate || 25) + 10);
+          setEditRate(fetchedProfile.hourlyRate || 0);
+          setEditRateTwo((fetchedProfile as any).rateForTwo || (fetchedProfile as any).rateFor2Seniors || 0);
+          setEditRateThree((fetchedProfile as any).rateForThree || (fetchedProfile as any).rateFor3PlusSeniors || 0);
           setEditServices((fetchedProfile as any).services || []);
           setEditCerts((fetchedProfile as any).certifications || []);
           setEditLocation((fetchedProfile as any).location || '');
@@ -130,10 +123,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
       : '5.0'
   , [reviews]);
 
-  const docSummary = useMemo(() =>
-    documentUploadService.getDocumentStatusSummary(profile.documents)
-  , [profile.documents]);
-
   // Save helper — writes to Firestore and merges into local state
   const saveSection = useCallback(async (data: Record<string, any>) => {
     if (currentUser) {
@@ -151,31 +140,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
     }
     setEditingSection(null);
   }, [currentUser, onShowToast]);
-
-  const handleDocumentUpload = useCallback(async (file: File, type: DocumentType) => {
-    const userId = currentUser?.uid;
-    if (!userId) { onShowToast('Please log in to upload documents', 'error'); return; }
-    try {
-      const doc = await documentUploadService.uploadDocument(userId, file, type);
-      setProfile(prev => ({ ...prev, documents: { ...prev.documents, [type]: doc } }));
-      onShowToast(`${documentUploadService.getDocumentTypeName(type)} uploaded successfully`, 'success');
-    } catch (error) {
-      onShowToast(error instanceof Error ? error.message : 'Upload failed', 'error');
-      throw error;
-    }
-  }, [currentUser, onShowToast]);
-
-  const handleDocumentDelete = useCallback(async (type: DocumentType) => {
-    const userId = currentUser?.uid;
-    if (!userId) return;
-    const doc = profile.documents?.[type];
-    if (!doc?.path) return;
-    try {
-      await documentUploadService.deleteDocument(userId, type, doc.path);
-      setProfile(prev => ({ ...prev, documents: { ...prev.documents, [type]: undefined } }));
-      onShowToast('Document removed', 'info');
-    } catch { onShowToast('Failed to remove document', 'error'); }
-  }, [currentUser, profile.documents, onShowToast]);
 
   const handleImageUpdate = useCallback(async (url: string) => {
     setProfile(prev => ({ ...prev, photo: url, imageUrl: url }));
@@ -231,7 +195,14 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   // Derived display values
   const displayServices: string[] = (profile as any).services ?? editServices;
   const displayCerts: string[] = (profile as any).certifications ?? editCerts;
-  const displayLocation: string = (profile as any).location ?? editLocation;
+  const rawLocation: string = (profile as any).location ?? editLocation;
+  const displayLocation: string = (() => {
+    const city = (profile as any).city;
+    const state = (profile as any).state;
+    if (city && state) return `${city}, ${state}`;
+    if (city) return city;
+    return rawLocation;
+  })();
   const displayRadius: number = (profile as any).serviceRadius ?? editRadius;
   const displayAvailability: Record<string, string[]> = (profile as any).weeklyAvailability ?? editAvailability;
   const displayLanguages: string[] = (profile as any).languages ?? editLanguages;
@@ -261,32 +232,19 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
           </div>
         </div>
 
-        <ProfileApprovalBanner
-          profile={profile as any}
-          onViewChecklist={() => setActiveTab('documents')}
-        />
+        <ProfileApprovalBanner profile={profile as any} />
 
       {/* Profile hero card */}
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-6">
         <div className="bg-gradient-to-r from-primary-500 to-primary-600 h-24" />
         <div className="px-6 pb-5">
           <div className="flex items-end justify-between -mt-10 mb-4">
-            <div className="w-20 h-20 rounded-full border-4 border-white bg-white overflow-hidden shadow-md flex-shrink-0">
-              <AvatarUpload
-                currentUrl={profile.photo || profile.imageUrl}
-                onImageSelected={handleImageUpdate}
-                userId={currentUser?.uid}
-                storageFolder="caregivers"
-              />
-            </div>
-            {!profile.verified && (
-              <button
-                onClick={() => setActiveTab('documents')}
-                className="mb-1 text-xs bg-accent-100 text-accent-700 px-3 py-1.5 rounded-full font-medium hover:bg-accent-200 transition-colors"
-              >
-                Get Approved
-              </button>
-            )}
+            <AvatarUpload
+              currentUrl={profile.photo || profile.imageUrl}
+              onImageSelected={handleImageUpdate}
+              userId={currentUser?.uid}
+              storageFolder="caregivers"
+            />
           </div>
           <div className="flex items-start justify-between">
             <div>
@@ -319,20 +277,15 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
 
       {/* Tabs */}
       <div className="flex gap-1 bg-slate-100 p-1 rounded-xl mb-6">
-        {(['summary', 'reviews', 'documents', 'security'] as const).map(tab => (
+        {(['summary', 'reviews'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize transition-all relative ${
+            className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize transition-all ${
               activeTab === tab ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
             }`}
           >
             {tab}
-            {tab === 'documents' && docSummary.pending > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-accent-500 text-white text-xs rounded-full flex items-center justify-center">
-                {docSummary.pending}
-              </span>
-            )}
           </button>
         ))}
       </div>
@@ -346,18 +299,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
 
             <LookingForSection profile={profile as any} />
 
-            <div className="bg-white border border-slate-200 rounded-2xl p-5 flex items-center justify-between">
-              <div>
-                <p className="font-bold text-slate-900">Intro video</p>
-                <p className="text-xs text-slate-500">Say hello in 30 seconds — caregivers with videos get more than twice as many jobs.</p>
-              </div>
-              <button
-                onClick={() => onNavigate('caregiver-video')}
-                className="text-sm font-semibold text-accent-600 hover:text-accent-700"
-              >
-                {(profile as any).introVideoUrl ? 'Replace video →' : 'Add a new video →'}
-              </button>
-            </div>
 
             {/* Availability */}
             <div className="bg-white border border-slate-200 rounded-2xl p-5">
@@ -553,9 +494,9 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 ) : (
                   <button
                     onClick={() => {
-                      setEditRate(profile.hourlyRate || 25);
-                      setEditRateTwo((profile as any).rateForTwo || (profile.hourlyRate || 25) + 5);
-                      setEditRateThree((profile as any).rateForThree || (profile.hourlyRate || 25) + 10);
+                      setEditRate(profile.hourlyRate || 0);
+                      setEditRateTwo((profile as any).rateForTwo || (profile as any).rateFor2Seniors || 0);
+                      setEditRateThree((profile as any).rateForThree || (profile as any).rateFor3PlusSeniors || 0);
                       setEditingSection('experience');
                     }}
                     className="text-xs text-primary-600 font-semibold hover:text-primary-700"
@@ -592,9 +533,9 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 <div className="space-y-0 divide-y divide-slate-100">
                   {[
                     { label: '1 Senior', rate: profile.hourlyRate || editRate },
-                    { label: '2 Seniors', rate: (profile as any).rateForTwo || editRateTwo },
-                    { label: '3+ Seniors', rate: (profile as any).rateForThree || editRateThree },
-                  ].map(({ label, rate }) => (
+                    { label: '2 Seniors', rate: (profile as any).rateForTwo || (profile as any).rateFor2Seniors || editRateTwo },
+                    { label: '3+ Seniors', rate: (profile as any).rateForThree || (profile as any).rateFor3PlusSeniors || editRateThree },
+                  ].filter(({ rate }) => rate > 0).map(({ label, rate }) => (
                     <div key={label} className="flex items-center justify-between py-2.5">
                       <span className="text-sm text-slate-600">{label}</span>
                       <span className="text-sm font-bold text-slate-900">${rate}/hr</span>
@@ -848,192 +789,8 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
         </div>
       )}
 
-      {/* ── DOCUMENTS TAB ── */}
-      {activeTab === 'documents' && (
-        <div className="space-y-6">
-          {!profile.verified && (
-            <div className={`p-4 rounded-xl flex items-start gap-4 ${
-              profile.verificationStatus === 'submitted' || profile.backgroundCheckStatus === 'pending'
-                ? 'bg-blue-50 border border-blue-200'
-                : 'bg-slate-50 border border-slate-200'
-            }`}>
-              <div className={`p-2 rounded-full ${
-                profile.verificationStatus === 'submitted' || profile.backgroundCheckStatus === 'pending'
-                  ? 'bg-blue-100' : 'bg-slate-200'
-              }`}>
-                <AlertTriangle className="w-6 h-6 text-slate-500" />
-              </div>
-              <div className="flex-grow">
-                <h4 className="font-bold text-slate-900">
-                  {profile.verificationStatus === 'submitted' || profile.backgroundCheckStatus === 'pending'
-                    ? 'Pending Admin Approval'
-                    : 'Verification Required'}
-                </h4>
-                <p className="text-sm text-slate-600 mt-1">
-                  {profile.verificationStatus === 'submitted' || profile.backgroundCheckStatus === 'pending'
-                    ? 'Your account is under review. Documents below show current status.'
-                    : 'Complete verification to start accepting jobs.'}
-                </p>
-                {profile.verificationStatus !== 'submitted' && profile.backgroundCheckStatus !== 'pending' && (
-                  <Button size="sm" onClick={() => setShowCheckModal(true)} className="mt-3 bg-slate-900 text-white">
-                    Start Verification
-                  </Button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {docSummary.total > 0 && (
-            <div className="bg-white rounded-xl border border-slate-200 p-4">
-              <h4 className="font-bold text-slate-900 mb-3">Document Status</h4>
-              <div className="flex flex-wrap gap-3">
-                {docSummary.approved > 0 && (
-                  <span className="text-green-600 flex items-center gap-1 text-sm bg-green-50 px-3 py-1 rounded-full">
-                    <CheckCircle className="w-4 h-4" />{docSummary.approved} Approved
-                  </span>
-                )}
-                {docSummary.pending > 0 && (
-                  <span className="text-accent-600 flex items-center gap-1 text-sm bg-accent-50 px-3 py-1 rounded-full">
-                    <Loader2 className="w-4 h-4 animate-spin" />{docSummary.pending} Pending Review
-                  </span>
-                )}
-                {docSummary.rejected > 0 && (
-                  <span className="text-red-600 flex items-center gap-1 text-sm bg-red-50 px-3 py-1 rounded-full">
-                    <AlertTriangle className="w-4 h-4" />{docSummary.rejected} Rejected
-                  </span>
-                )}
-              </div>
-              {docSummary.rejected > 0 && (
-                <p className="text-xs text-red-600 mt-2">
-                  Rejected documents can be re-uploaded below. Check the notes for correction instructions.
-                </p>
-              )}
-            </div>
-          )}
-
-          <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-slate-900 flex items-center">
-                <FileText className="w-5 h-5 mr-2 text-primary-500" /> Required Documents
-              </h3>
-              <span className="text-xs text-slate-500">Upload clear images or PDFs</span>
-            </div>
-            <div className="space-y-4">
-              <DocumentUpload
-                type="driversLicense"
-                label="Driver's License (Front)"
-                description="Required for all caregivers who provide transportation"
-                existingDocument={profile.documents?.driversLicense}
-                onUpload={handleDocumentUpload}
-                onDelete={handleDocumentDelete}
-              />
-              <DocumentUpload
-                type="registration"
-                label="Vehicle Registration"
-                description="Current vehicle registration document"
-                existingDocument={profile.documents?.registration}
-                onUpload={handleDocumentUpload}
-                onDelete={handleDocumentDelete}
-              />
-            </div>
-          </div>
-
-          <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
-            <h4 className="text-sm font-bold text-blue-900 mb-1">Why we need these documents</h4>
-            <p className="text-xs text-blue-700">
-              These documents help us ensure the safety of our clients and verify that you meet our transportation requirements.
-              All documents are securely stored and only accessible to authorized administrators.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* ── SECURITY TAB ── */}
-      {activeTab === 'security' && (
-        <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 mb-6">
-          <h3 className="font-bold text-slate-900 mb-4 flex items-center">
-            <Lock className="w-5 h-5 mr-2 text-primary-500" /> Security Settings
-          </h3>
-          <div className="space-y-4 mb-8 border-b border-slate-100 pb-8">
-            <h4 className="text-sm font-bold text-slate-700">Change Password</h4>
-            <Input label="New Password" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
-            <Input label="Confirm Password" type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
-            <Button variant="accent" onClick={handlePasswordChange} disabled={!newPassword}>Update Password</Button>
-          </div>
-          <div>
-            <h4 className="text-sm font-bold text-red-600 mb-2">Danger Zone</h4>
-            <p className="text-sm text-slate-500 mb-4">Deleting your account is permanent.</p>
-            <button
-              onClick={handleDeleteAccount}
-              className="flex items-center text-red-500 hover:text-red-700 font-medium border border-red-200 hover:bg-red-50 px-4 py-2 rounded-xl transition-all"
-            >
-              <Trash2 className="w-4 h-4 mr-2" /> Delete Account
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Nav footer */}
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden mt-6">
-        <button
-          onClick={() => onNavigate('caregiver')}
-          className="w-full p-4 text-left flex items-center text-slate-700 hover:bg-slate-50 transition-colors font-medium border-b border-slate-100"
-        >
-          <Home className="w-5 h-5 mr-3 text-slate-400" />
-          Return to Dashboard
-        </button>
-        <button
-          onClick={handleLogout}
-          className="w-full p-4 text-left flex items-center text-red-500 hover:bg-red-50 transition-colors font-medium"
-        >
-          <LogOut className="w-5 h-5 mr-3" />
-          Log Out
-        </button>
       </div>
 
-      {showCheckModal && (
-        <BackgroundCheckModal onClose={() => setShowCheckModal(false)} onShowToast={onShowToast} />
-      )}
-
-      </div>
-
-      {previewDocument && (
-        <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-          onClick={() => setPreviewDocument(null)}
-        >
-          <div
-            className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="font-bold text-slate-900">Document Preview</h3>
-              <button onClick={() => setPreviewDocument(null)} className="p-2 hover:bg-slate-100 rounded-lg">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-4 flex justify-center bg-slate-50">
-              {previewDocument.fileType?.startsWith('image/') ? (
-                <img src={previewDocument.url} alt="Document" className="max-h-[60vh] rounded-lg shadow-lg" />
-              ) : (
-                <div className="text-center py-12">
-                  <FileText className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-                  <p className="text-slate-600">PDF Document</p>
-                  <a href={previewDocument.url} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline text-sm mt-2 inline-block">
-                    Open in new tab
-                  </a>
-                </div>
-              )}
-            </div>
-            <div className="p-4 border-t bg-slate-50">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-600">Status: <span className="font-medium capitalize">{previewDocument.status}</span></span>
-                <span className="text-slate-500">Uploaded: {new Date(previewDocument.uploadedAt).toLocaleDateString()}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

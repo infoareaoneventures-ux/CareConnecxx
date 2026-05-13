@@ -1,5 +1,5 @@
 import firebase from 'firebase/compat/app';
-import 'firebase/compat/storage';
+import { storage as firebaseStorage } from '../lib/firebase';
 import { dbService } from './api';
 import type { CaregiverDocument, CaregiverDocuments } from '../types';
 
@@ -10,9 +10,9 @@ import type { CaregiverDocument, CaregiverDocuments } from '../types';
  */
 
 const MAX_FILE_SIZE_MB = 5;
-const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'image/gif', 'image/bmp', 'image/tiff', 'application/pdf'];
 
-export type DocumentType = 'driversLicense' | 'driversLicenseBack' | 'registration' | 'profilePhoto';
+export type DocumentType = 'driversLicense' | 'driversLicenseBack' | 'registration' | 'insurance' | 'profilePhoto';
 
 interface UploadProgressCallback {
   (progress: number): void;
@@ -22,8 +22,10 @@ interface UploadProgressCallback {
  * Validate file before upload
  */
 function validateFile(file: File): void {
-  if (!ALLOWED_TYPES.includes(file.type)) {
-    throw new Error('Invalid file type. Only JPEG, PNG, WebP, and PDF files are allowed.');
+  const isImage = file.type.startsWith('image/');
+  const isPdf = file.type === 'application/pdf';
+  if (!isImage && !isPdf) {
+    throw new Error('Invalid file type. Please upload an image (JPG, PNG, HEIC, etc.) or PDF.');
   }
 
   if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
@@ -39,6 +41,7 @@ export function getDocumentTypeName(type: DocumentType): string {
     driversLicense: "Driver's License (Front)",
     driversLicenseBack: "Driver's License (Back)",
     registration: "Vehicle Registration",
+    insurance: "Vehicle Insurance",
     profilePhoto: "Profile Photo"
   };
   return names[type];
@@ -57,14 +60,15 @@ export async function uploadDocument(
   // Validate file
   validateFile(file);
 
+  if (!firebaseStorage) throw new Error('Storage not initialized. Please refresh and try again.');
+
   try {
     // Create storage reference
-    const storage = firebase.storage();
     const timestamp = Date.now();
     const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
     const filename = `${timestamp}_${sanitizedName}`;
     const path = `caregivers/${caregiverId}/documents/${type}_${filename}`;
-    const storageRef = storage.ref().child(path);
+    const storageRef = firebaseStorage.ref().child(path);
 
     // Upload with metadata
     const metadata = {
@@ -113,9 +117,13 @@ export async function uploadDocument(
 
     console.log('📄 Document uploaded:', path, 'Type:', type);
     return documentData;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to upload document:', error);
-    throw new Error('Document upload failed. Please try again.');
+    const code = error?.code || '';
+    if (code === 'storage/unauthorized') throw new Error('Upload permission denied. Please make sure you are logged in.');
+    if (code === 'storage/quota-exceeded') throw new Error('Storage quota exceeded. Please contact support.');
+    if (code === 'storage/invalid-checksum' || code === 'storage/canceled') throw new Error('Upload interrupted. Please try again.');
+    throw new Error(error?.message || 'Document upload failed. Please try again.');
   }
 }
 
@@ -127,17 +135,30 @@ export async function updateDocumentMetadata(
   type: DocumentType,
   documentData: CaregiverDocument
 ): Promise<void> {
+  const db = firebase.firestore();
+  const ref = db.collection('caregivers').doc(caregiverId);
   try {
-    const updateData: Partial<CaregiverDocuments> = {
-      [type]: documentData
-    };
-
-    await dbService.updateUser('caregivers', caregiverId, {
-      documents: updateData
-    });
-  } catch (error) {
+    await ref.update({ [`documents.${type}`]: documentData });
+  } catch (error: any) {
+    if (error?.code === 'not-found') {
+      // Document doesn't exist yet — create it with just this field
+      try {
+        await ref.set(
+          { documents: { [type]: documentData } },
+          { mergeFields: [new firebase.firestore.FieldPath('documents', type)] }
+        );
+        return;
+      } catch (setError: any) {
+        console.error('Failed to create document metadata:', setError);
+        const code = setError?.code || '';
+        if (code === 'permission-denied') throw new Error('Permission denied saving photo. Please log out and back in.');
+        throw new Error(setError?.message || 'Failed to save document information');
+      }
+    }
     console.error('Failed to update document metadata:', error);
-    throw new Error('Failed to save document information');
+    const code = error?.code || '';
+    if (code === 'permission-denied') throw new Error('Permission denied saving photo. Please log out and back in.');
+    throw new Error(error?.message || 'Failed to save document information');
   }
 }
 
@@ -146,9 +167,9 @@ export async function updateDocumentMetadata(
  * (Refreshes token if needed)
  */
 export async function getDocumentUrl(path: string): Promise<string> {
+  if (!firebaseStorage) throw new Error('Storage not initialized.');
   try {
-    const storage = firebase.storage();
-    const storageRef = storage.ref().child(path);
+    const storageRef = firebaseStorage.ref().child(path);
     return await storageRef.getDownloadURL();
   } catch (error) {
     console.error('Failed to get document URL:', error);
@@ -164,10 +185,10 @@ export async function deleteDocument(
   type: DocumentType,
   path: string
 ): Promise<void> {
+  if (!firebaseStorage) throw new Error('Storage not initialized.');
   try {
     // Delete from Storage
-    const storage = firebase.storage();
-    const storageRef = storage.ref().child(path);
+    const storageRef = firebaseStorage.ref().child(path);
     await storageRef.delete();
 
     // Remove from Firestore
@@ -192,31 +213,37 @@ export async function updateDocumentStatus(
   type: DocumentType,
   status: 'pending' | 'approved' | 'rejected',
   notes?: string,
-  adminId?: string
+  adminId?: string,
+  expirationDate?: string
 ): Promise<void> {
   try {
-    const updateData: Partial<CaregiverDocument> = {
-      status,
-      reviewedAt: new Date().toISOString(),
-      reviewedBy: adminId,
-      notes
-    };
-
-    // Update Firestore
     const db = firebase.firestore();
     const caregiverRef = db.collection('caregivers').doc(caregiverId);
-    
-    await caregiverRef.update({
+
+    const update: Record<string, any> = {
       [`documents.${type}.status`]: status,
-      [`documents.${type}.reviewedAt`]: updateData.reviewedAt,
-      [`documents.${type}.reviewedBy`]: adminId,
-      [`documents.${type}.notes`]: notes
-    });
+      [`documents.${type}.reviewedAt`]: new Date().toISOString(),
+    };
+    if (adminId !== undefined) update[`documents.${type}.reviewedBy`] = adminId;
+    if (notes !== undefined) update[`documents.${type}.notes`] = notes;
+    if (expirationDate) update[`documents.${type}.expirationDate`] = expirationDate;
+
+    // When profile photo is approved, promote its URL to the top-level photo field
+    // so the profile page displays it immediately
+    if (type === 'profilePhoto' && status === 'approved') {
+      const snap = await caregiverRef.get();
+      const photoUrl = (snap.data() as any)?.documents?.profilePhoto?.url;
+      if (photoUrl) update['photo'] = photoUrl;
+    }
+
+    await caregiverRef.update(update);
 
     console.log('✓ Document status updated:', caregiverId, type, status);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to update document status:', error);
-    throw new Error('Failed to update document status');
+    const code = error?.code || '';
+    if (code === 'permission-denied') throw new Error('Permission denied. Make sure your admin account has userType: admin or isAdmin: true in Firestore.');
+    throw new Error(error?.message || 'Failed to update document status');
   }
 }
 
@@ -242,9 +269,10 @@ export function hasAllRequiredDocuments(
   documents?: CaregiverDocuments | null
 ): boolean {
   if (!documents) return false;
-  
+
   return !!(
     documents.driversLicense &&
+    documents.insurance &&
     documents.registration
   );
 }
@@ -262,16 +290,18 @@ export function getDocumentStatusSummary(
   rejected: number;
 } {
   if (!documents) {
-    return { total: 2, uploaded: 0, approved: 0, pending: 0, rejected: 0 };
+    return { total: 3, uploaded: 0, approved: 0, pending: 0, rejected: 0 };
   }
 
   const docs = [
     documents.driversLicense,
-    documents.registration
+    documents.driversLicenseBack,
+    documents.insurance,
+    documents.registration,
   ].filter(Boolean);
 
   return {
-    total: 2,
+    total: docs.length,
     uploaded: docs.length,
     approved: docs.filter(d => d?.status === 'approved').length,
     pending: docs.filter(d => d?.status === 'pending').length,

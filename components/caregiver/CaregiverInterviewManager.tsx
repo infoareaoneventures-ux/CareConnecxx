@@ -10,6 +10,7 @@ import { InterviewRequest, CareNeed } from '../../types';
 import { dbService } from '../../services/api';
 import { AddToastFunction } from '../../types';
 import { db } from '../../lib/firebase';
+import { useCareConnex } from '../../context/CareConnexContext';
 
 interface CaregiverInterviewManagerProps {
   caregiverId: string;
@@ -20,6 +21,7 @@ export const CaregiverInterviewManager: React.FC<CaregiverInterviewManagerProps>
   caregiverId,
   onShowToast
 }) => {
+  const { currentUser } = useCareConnex();
   const [interviews, setInterviews] = useState<InterviewRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedInterview, setSelectedInterview] = useState<InterviewRequest | null>(null);
@@ -88,6 +90,11 @@ export const CaregiverInterviewManager: React.FC<CaregiverInterviewManagerProps>
 
   const handleRespond = async () => {
     if (!selectedInterview || !responseType) return;
+
+    if (!(currentUser as any)?.verified) {
+      onShowToast('Your account must be fully approved before you can respond to interview requests.', 'error');
+      return;
+    }
 
     try {
       const updates: any = {

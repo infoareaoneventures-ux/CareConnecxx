@@ -331,8 +331,12 @@ export const dbService = {
         }
     },
 
-    updateUserPassword: async (newPass: string) => {
+    updateUserPassword: async (newPass: string, currentPass?: string) => {
         if (isConfigured && auth && auth.currentUser) {
+            if (currentPass && auth.currentUser.email) {
+                const credential = firebase.auth.EmailAuthProvider.credential(auth.currentUser.email, currentPass);
+                await auth.currentUser.reauthenticateWithCredential(credential);
+            }
             await auth.currentUser.updatePassword(newPass);
             return true;
         }
@@ -481,11 +485,11 @@ export const dbService = {
                     }
                 }
 
-                // Check users collection for clients
+                // Check users collection for clients and caregivers
                 const doc = await db.collection('users').doc(uid).get();
                 if (doc.exists) {
                     const data = doc.data();
-                    if (data && data.uid && data.name) {
+                    if (data && data.uid) {
                         // For clients, also check senior_profiles for additional data
                         if (data.userType === 'client') {
                             const snDoc = await db.collection('senior_profiles').doc(uid).get();
@@ -3430,6 +3434,14 @@ export const adminService = {
     updateClient: async (uid: string, data: Partial<import('../types').AdminUser>): Promise<void> => {
         if (!isConfigured || !db) throw new Error("Database not connected");
         await db.collection('users').doc(uid).update(data as any);
+    },
+
+    getUserEmail: async (uid: string): Promise<string | null> => {
+        if (!isConfigured || !db) return null;
+        try {
+            const doc = await db.collection('users').doc(uid).get();
+            return doc.exists ? (doc.data()?.email ?? null) : null;
+        } catch { return null; }
     },
 
     updateCaregiver: async (uid: string, data: Partial<import('../types').Caregiver>): Promise<void> => {

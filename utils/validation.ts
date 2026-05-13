@@ -407,6 +407,7 @@ export function getSafeErrorMessage(error: unknown): string {
     switch (error.code) {
       case 'auth/user-not-found':
       case 'auth/wrong-password':
+      case 'auth/invalid-credential':
         return 'Invalid email or password';
       case 'auth/email-already-in-use':
         return 'Email already registered';

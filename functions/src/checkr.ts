@@ -280,12 +280,12 @@ export const checkrWebhook = functions.runWith({ secrets: ["CHECKR_API_KEY"] }).
       }
 
       if (status === "clear") {
-        updates["verified"] = true;
-        updates["verificationStatus"] = "approved";
-        updates["status"] = "active";
+        // Admin manually approves everyone — do not auto-set verified: true
+        updates["verificationStatus"] = "checkr_clear";
+        updates["backgroundCheckData.checkrClearedAt"] = new Date().toISOString();
         notificationPayload = {
           title: "Background check complete",
-          body: "Great news — your background check came back clear. You're now verified on Cara.",
+          body: "Your background check came back clear. Our team will complete the final review shortly.",
         };
 
         // Advance Cara onboarding if caregiver has an iMessage session

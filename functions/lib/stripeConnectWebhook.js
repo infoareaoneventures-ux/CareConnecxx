@@ -89,6 +89,19 @@ exports.stripeConnectWebhook = functions
                     update.stripeOnboardingCompletedAt = admin.firestore.FieldValue.serverTimestamp();
                 }
                 await snap.docs[0].ref.update(update);
+                // Advance Cara onboarding if caregiver has an iMessage session
+                if (complete) {
+                    try {
+                        const cgPhone = snap.docs[0].data().phone;
+                        if (cgPhone) {
+                            const { advanceOnboardingStep } = await Promise.resolve().then(() => __importStar(require("./agents/onboardingConversation")));
+                            await advanceOnboardingStep(cgPhone, "stripe_connect", "");
+                        }
+                    }
+                    catch (err) {
+                        console.error("advanceOnboardingStep(stripe_connect) error:", err);
+                    }
+                }
             }
         }
         else {

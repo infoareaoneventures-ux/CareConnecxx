@@ -1,5 +1,4 @@
 import * as admin from "firebase-admin";
-import { google } from "googleapis";
 
 // ── FaceTime Link ──────────────────────────────────────────────────────────────
 
@@ -17,19 +16,16 @@ export async function generateFaceTimeLink(): Promise<string> {
 
 // ── Google Meet Link ───────────────────────────────────────────────────────────
 
-function getGoogleAuth() {
-  return new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET
-  );
-}
-
 export async function generateGoogleMeetLink(params: {
   startTime: string;
   durationMinutes: number;
   title: string;
 }): Promise<string> {
-  const auth = getGoogleAuth();
+  const { google } = await import("googleapis");
+  const auth = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET
+  );
   auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
 
   const calendar = google.calendar({ version: "v3", auth });

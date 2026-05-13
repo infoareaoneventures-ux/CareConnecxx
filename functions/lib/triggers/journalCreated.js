@@ -39,11 +39,12 @@ const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
 const healthSignalDetector_1 = require("../agents/healthSignalDetector");
 const voiceSummary_1 = require("../agents/voiceSummary");
+const permissionsConversation_1 = require("../agents/permissionsConversation");
 const db = admin.firestore();
 exports.onJournalCreated = functions.firestore
     .document("care_journal/{journalId}")
     .onCreate(async (snap) => {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j;
     try {
         const journal = snap.data();
         const { seniorId, caregiverId, notes, photos, wellness, activities, timestamp } = journal;
@@ -64,22 +65,72 @@ exports.onJournalCreated = functions.firestore
         const session = sessionSnap.data();
         if (session.optedOut || session.optedIn === false)
             return;
+        // Check permission before sending health alerts
+        const perms = await (0, permissionsConversation_1.getPermissions)((_b = session.userId) !== null && _b !== void 0 ? _b : seniorId).catch(() => null);
+        if (perms !== null && perms.canSendHealthAlerts === false)
+            return;
         // Run health signal detection
         const { signals, severity, summary } = await (0, healthSignalDetector_1.detectHealthSignals)(notes !== null && notes !== void 0 ? notes : "", wellness !== null && wellness !== void 0 ? wellness : {}, activities !== null && activities !== void 0 ? activities : []);
-        // Save signals for trend tracking
+        const nowIso = new Date().toISOString();
+        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        // Save signals and check for duplicates + trends
         if (signals.length > 0) {
+            for (const signalType of signals) {
+                // De-dup: skip if same signal was already sent in past 24h
+                const recentAlert = await db.collection("agent_alerts_log")
+                    .where("seniorId", "==", seniorId)
+                    .where("signalType", "==", signalType)
+                    .where("sentAt", ">=", oneDayAgo)
+                    .limit(1)
+                    .get();
+                if (!recentAlert.empty)
+                    continue;
+                // Log this signal
+                const sigRef = await db.collection("health_signals").add({
+                    seniorId,
+                    signalType,
+                    severity,
+                    journalEntryId: snap.id,
+                    detectedAt: nowIso,
+                    trendAlertSent: false,
+                });
+                // Trend check: 3+ of same signal in the past 7 days → escalate
+                const recentSignals = await db.collection("health_signals")
+                    .where("seniorId", "==", seniorId)
+                    .where("signalType", "==", signalType)
+                    .where("detectedAt", ">=", sevenDaysAgo)
+                    .orderBy("detectedAt", "desc")
+                    .get();
+                if (recentSignals.size >= 3 && !recentSignals.docs[0].data().trendAlertSent) {
+                    const seniorDoc = await db.collection("users").doc(seniorId).get();
+                    const seniorName = ((_f = (_d = (_c = seniorDoc.data()) === null || _c === void 0 ? void 0 : _c.seniorName) !== null && _d !== void 0 ? _d : (_e = seniorDoc.data()) === null || _e === void 0 ? void 0 : _e.displayName) !== null && _f !== void 0 ? _f : "your loved one");
+                    await (0, client_1.sendMessage)(session.chatId, `📊 Heads up — I've noticed "${signalType}" has come up ${recentSignals.size} times this week for ${seniorName}.\n\n` +
+                        `This might be worth a conversation with their doctor or care team. 💙`);
+                    await sigRef.update({ trendAlertSent: true });
+                    await db.collection("agent_alerts_log").add({
+                        type: "health_trend",
+                        seniorId,
+                        clientId: seniorId,
+                        phone,
+                        signalType,
+                        count: recentSignals.size,
+                        sentAt: nowIso,
+                    });
+                }
+            }
             await db.collection("health_signals").add({
                 seniorId,
                 signals,
                 severity,
                 journalEntryId: snap.id,
-                detectedAt: new Date().toISOString(),
+                detectedAt: nowIso,
             });
         }
         // Lookup caregiver name
         const caregiverDoc = await db.collection("caregivers").doc(caregiverId).get();
-        const caregiverName = (_c = (_b = caregiverDoc.data()) === null || _b === void 0 ? void 0 : _b.name) !== null && _c !== void 0 ? _c : "Your caregiver";
-        const visitDate = (_d = timestamp === null || timestamp === void 0 ? void 0 : timestamp.slice(0, 10)) !== null && _d !== void 0 ? _d : "today";
+        const caregiverName = (_h = (_g = caregiverDoc.data()) === null || _g === void 0 ? void 0 : _g.name) !== null && _h !== void 0 ? _h : "Your caregiver";
+        const visitDate = (_j = timestamp === null || timestamp === void 0 ? void 0 : timestamp.slice(0, 10)) !== null && _j !== void 0 ? _j : "today";
         const baseMessage = `${caregiverName} finished today's visit (${visitDate}).\n${summary}`;
         // Send photo inline if available (renders natively in iMessage)
         if ((photos === null || photos === void 0 ? void 0 : photos.length) > 0) {
@@ -105,9 +156,10 @@ exports.onJournalCreated = functions.firestore
         await db.collection("agent_alerts_log").add({
             type: "journal_summary",
             clientId: seniorId,
+            seniorId,
             phone,
             severity,
-            sentAt: new Date().toISOString(),
+            sentAt: nowIso,
         });
     }
     catch (err) {

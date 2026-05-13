@@ -43,12 +43,16 @@ exports.startTyping = startTyping;
 exports.stopTyping = stopTyping;
 exports.sendVoiceMemo = sendVoiceMemo;
 exports.shareContactCard = shareContactCard;
+exports.setContactCard = setContactCard;
 exports.updateChatName = updateChatName;
 exports.addParticipant = addParticipant;
 exports.getOrCreateSession = getOrCreateSession;
+exports.safeSend = safeSend;
 exports.sendToPhone = sendToPhone;
 const axios_1 = __importDefault(require("axios"));
 const admin = __importStar(require("firebase-admin"));
+const supervisor_1 = require("../safety/supervisor");
+const auditLog_1 = require("../observability/auditLog");
 const db = admin.firestore();
 // ── Config ────────────────────────────────────────────────────────────────────
 function cfg() {
@@ -105,6 +109,11 @@ async function shareContactCard(chatId) {
         .post(`${cfg().baseUrl}/chats/${chatId}/share_contact_card`, {}, { headers: headers() })
         .catch(() => { });
 }
+async function setContactCard(params) {
+    await axios_1.default
+        .post(`${cfg().baseUrl}/contact_card`, params, { headers: headers() })
+        .catch(() => { });
+}
 async function updateChatName(chatId, displayName) {
     await axios_1.default
         .put(`${cfg().baseUrl}/chats/${chatId}`, { display_name: displayName }, { headers: headers() })
@@ -124,11 +133,39 @@ async function getOrCreateSession(phone, meta) {
     const service = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
     // First message is a silent thread-opener; real content comes from the caller
     const { chat_id } = await createChat(phone, {
-        parts: [{ type: "text", value: "CareConnecxx care assistant is here whenever you need us." }],
+        parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
     });
     const session = Object.assign({ chatId: chat_id, service, optedOut: false, createdAt: new Date().toISOString() }, meta);
     await ref.set(session);
     return session;
+}
+// ── safeSend — lints + supervises then sends ─────────────────────────────────
+async function safeSend(chatId, message, context) {
+    var _a;
+    let finalText = "";
+    if (typeof message === "string") {
+        const safe = await (0, supervisor_1.supervise)(message, context).catch(() => message);
+        finalText = safe;
+        await sendMessage(chatId, safe);
+    }
+    else {
+        // For structured messages (media, links), only lint text parts
+        const parts = (_a = message.parts) !== null && _a !== void 0 ? _a : [];
+        const safeParts = await Promise.all(parts.map(async (p) => {
+            if (p.type === "text" && p.value) {
+                const safe = await (0, supervisor_1.supervise)(p.value, context).catch(() => { var _a; return (_a = p.value) !== null && _a !== void 0 ? _a : ""; });
+                if (!finalText)
+                    finalText = safe;
+                return Object.assign(Object.assign({}, p), { value: safe });
+            }
+            return p;
+        }));
+        await sendMessage(chatId, Object.assign(Object.assign({}, message), { parts: safeParts }));
+    }
+    // Append-only audit log entry for every outbound message (non-blocking)
+    if (context.phone) {
+        (0, auditLog_1.logMessageSent)(context.phone, context.phone, chatId, finalText || "[structured message]").catch(() => { });
+    }
 }
 // ── High-level helper: send to a phone number ────────────────────────────────
 async function sendToPhone(phone, textOrMessage) {

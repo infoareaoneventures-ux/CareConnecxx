@@ -32,25 +32,19 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-var _a, _b, _c, _d;
+var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.onCaregiverAcceptsHire = exports.onHireRequestApproved = exports.onIntakeCompleted = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const resend_1 = require("resend");
-const twilio_1 = __importDefault(require("twilio"));
 // Initialize email service
 const resendApiKey = process.env.RESEND_API_KEY || ((_a = functions.config().resend) === null || _a === void 0 ? void 0 : _a.api_key);
 const resend = resendApiKey ? new resend_1.Resend(resendApiKey) : null;
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@careconnex.com";
-// Initialize Twilio for SMS
-const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID || ((_b = functions.config().twilio) === null || _b === void 0 ? void 0 : _b.account_sid);
-const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN || ((_c = functions.config().twilio) === null || _c === void 0 ? void 0 : _c.auth_token);
-const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER || ((_d = functions.config().twilio) === null || _d === void 0 ? void 0 : _d.phone_number);
-const twilioClient = (twilioAccountSid && twilioAuthToken) ? (0, twilio_1.default)(twilioAccountSid, twilioAuthToken) : null;
+// SMS via Twilio removed (V5 — all messaging via Linq iMessage)
+const twilioClient = null;
+const twilioPhoneNumber = undefined;
 /**
  * Cloud Function: Create Match Assignment on Intake Completion
  *
@@ -426,19 +420,8 @@ async function sendHireOfferSMS(caregiverId, hireRequestData) {
             console.log('[sendHireOfferSMS] Caregiver has no phone number');
             return;
         }
-        const message = `🎉 Great news! You've been selected by a client on CareConnex! 
-
-A family wants to hire you as their caregiver. 
-
-Schedule: ${hireRequestData.proposedSchedule.days.join(', ')} ${hireRequestData.proposedSchedule.startTime}-${hireRequestData.proposedSchedule.endTime}
-Start Date: ${hireRequestData.proposedStartDate}
-
-Log in to accept or decline: https://careconnex-d4c8b.web.app/caregiver`;
-        await twilioClient.messages.create({
-            body: message,
-            from: twilioPhoneNumber,
-            to: phone
-        });
+        // SMS via Twilio removed in V5 — messaging handled by Linq agent
+        console.log(`[sendHireOfferSMS] SMS skipped (Linq handles messaging): ${phone}`);
         console.log(`[sendHireOfferSMS] Sent to caregiver ${caregiverId}`);
     }
     catch (error) {

@@ -39,7 +39,7 @@ const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
 const db = admin.firestore();
 exports.onUserCreated = functions.auth.user().onCreate(async (user) => {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     try {
         // Load user profile — clients write to 'users', caregivers to 'caregivers'
         const userDoc = await db.collection("users").doc(user.uid).get();
@@ -60,13 +60,19 @@ exports.onUserCreated = functions.auth.user().onCreate(async (user) => {
                 : "SMS";
         const firstName = (_c = (_a = data.firstName) !== null && _a !== void 0 ? _a : (_b = data.name) === null || _b === void 0 ? void 0 : _b.split(" ")[0]) !== null && _c !== void 0 ? _c : "there";
         // TCPA: first message must request consent — no care data sent until user replies YES
-        const optInText = `Hi ${firstName}! 👋 This is CareConnecxx, your care assistant.\n\n` +
+        const optInText = `Hi ${firstName}! 👋 I'm Cara, your AI care assistant.\n\n` +
             `Reply YES to receive real-time care updates — visit summaries, wellness alerts, ` +
             `and health signals for your loved one.\n\n` +
             `Reply STOP anytime to opt out. Msg & data rates may apply.`;
         const chat = await (0, client_1.createChat)(phone, {
             parts: [{ type: "text", value: optInText }],
         });
+        // Register Cara as a named contact so users see "Cara" not a raw number
+        await (0, client_1.setContactCard)({
+            phone_number: (_d = process.env.LINQ_PHONE_NUMBER) !== null && _d !== void 0 ? _d : "",
+            display_name: "Cara",
+        });
+        await (0, client_1.shareContactCard)(chat.chat_id).catch(() => { });
         const session = {
             chatId: chat.chat_id,
             userId: user.uid,

@@ -36,7 +36,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.sendTestSMS = void 0;
+exports.runTriggerEngine = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.sendTestSMS = void 0;
 const admin = __importStar(require("firebase-admin"));
 // Initialize Admin globally if not already done
 if (!admin.apps.length) {
@@ -52,8 +52,8 @@ __exportStar(require("./notifications"), exports);
 __exportStar(require("./email"), exports);
 // Export Push Notification Functions
 __exportStar(require("./pushNotifications"), exports);
-// CAREGIVER CALLOUT - TEMPORARILY DISABLED (requires Stripe)
-// export * from './caregiverCallout';
+// CAREGIVER CALLOUT - emergency replacement when caregiver cancels
+__exportStar(require("./caregiverCallout"), exports);
 // Export SMS Functions
 var sms_1 = require("./sms");
 Object.defineProperty(exports, "sendTestSMS", { enumerable: true, get: function () { return sms_1.sendTestSMS; } });
@@ -67,8 +67,6 @@ __exportStar(require("./stripeConnect"), exports);
 __exportStar(require("./stripeConnectWebhook"), exports);
 // Appointment lifecycle: mark `completed` when scheduled end passes
 __exportStar(require("./appointmentCompletion"), exports);
-// Export Twilio Video Functions
-__exportStar(require("./twilio"), exports);
 // Export Care Coordinator Matching Functions
 __exportStar(require("./matching"), exports);
 // Export AI Matching Function
@@ -101,4 +99,17 @@ Object.defineProperty(exports, "triggerHealthTrendsNow", { enumerable: true, get
 var transportBadge_1 = require("./scheduled/transportBadge");
 Object.defineProperty(exports, "evaluateTransportBadges", { enumerable: true, get: function () { return transportBadge_1.evaluateTransportBadges; } });
 Object.defineProperty(exports, "refreshTransportBadge", { enumerable: true, get: function () { return transportBadge_1.refreshTransportBadge; } });
+// Cara iMessage pivot — onboarding callables
+var onboardingAgent_1 = require("./agents/onboardingAgent");
+Object.defineProperty(exports, "markTaskComplete", { enumerable: true, get: function () { return onboardingAgent_1.markTaskComplete; } });
+// Cara scheduled jobs
+var morningBriefing_1 = require("./scheduled/morningBriefing");
+Object.defineProperty(exports, "sendMorningBriefings", { enumerable: true, get: function () { return morningBriefing_1.sendMorningBriefings; } });
+var staleSessionNudge_1 = require("./scheduled/staleSessionNudge");
+Object.defineProperty(exports, "sendStaleSessionNudges", { enumerable: true, get: function () { return staleSessionNudge_1.sendStaleSessionNudges; } });
+var nightlyMemory_1 = require("./scheduled/nightlyMemory");
+Object.defineProperty(exports, "consolidateMemoryNightly", { enumerable: true, get: function () { return nightlyMemory_1.consolidateMemoryNightly; } });
+// Proactive trigger engine (runs every 5 min)
+var triggerEngine_1 = require("./triggers/triggerEngine");
+Object.defineProperty(exports, "runTriggerEngine", { enumerable: true, get: function () { return triggerEngine_1.runTriggerEngine; } });
 //# sourceMappingURL=index.js.map

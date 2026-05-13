@@ -213,8 +213,19 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
  * For caregiver payments: auto-initiate Checkr background check + set verificationStatus submitted
  */
 async function handleCheckoutSessionCompleted(session) {
-    var _a;
-    const userId = (_a = session.metadata) === null || _a === void 0 ? void 0 : _a.firebaseUID;
+    var _a, _b, _c;
+    // Cara iMessage onboarding — advance step when client finishes payment setup
+    if (((_a = session.metadata) === null || _a === void 0 ? void 0 : _a.task) === 'client_payment_setup' && ((_b = session.metadata) === null || _b === void 0 ? void 0 : _b.phone)) {
+        try {
+            const { advanceOnboardingStep } = await Promise.resolve().then(() => __importStar(require('./agents/onboardingConversation')));
+            await advanceOnboardingStep(session.metadata.phone, 'payment', '');
+        }
+        catch (err) {
+            console.error('advanceOnboardingStep(payment) error:', err);
+        }
+        return;
+    }
+    const userId = (_c = session.metadata) === null || _c === void 0 ? void 0 : _c.firebaseUID;
     if (!userId)
         return;
     await admin.firestore().collection('users').doc(userId).set({
@@ -586,7 +597,7 @@ exports.createIdentityVerificationSession = functions.https.onCall(async (data, 
  * so the client can unblock gated actions as soon as the webhook lands.
  */
 async function handleIdentityVerificationEvent(session) {
-    var _a;
+    var _a, _b;
     const userId = (_a = session.metadata) === null || _a === void 0 ? void 0 : _a.firebaseUID;
     if (!userId) {
         console.warn('Identity session missing firebaseUID metadata:', session.id);
@@ -606,6 +617,16 @@ async function handleIdentityVerificationEvent(session) {
     };
     if (status === 'verified') {
         update.identityVerifiedAt = admin.firestore.FieldValue.serverTimestamp();
+        // Advance Cara onboarding if phone is in metadata (iMessage flow)
+        if ((_b = session.metadata) === null || _b === void 0 ? void 0 : _b.phone) {
+            try {
+                const { advanceOnboardingStep } = await Promise.resolve().then(() => __importStar(require('./agents/onboardingConversation')));
+                await advanceOnboardingStep(session.metadata.phone, 'identity', '');
+            }
+            catch (err) {
+                console.error('advanceOnboardingStep(identity) error:', err);
+            }
+        }
     }
     await admin.firestore().collection('users').doc(userId).set(update, { merge: true });
     console.log(`Identity verification ${status} for user: ${userId}`);

@@ -41,6 +41,7 @@ const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
 const client_1 = require("../linq/client");
+const permissionsConversation_1 = require("../agents/permissionsConversation");
 const db = admin.firestore();
 let _client = null;
 function getClient() {
@@ -152,6 +153,10 @@ async function runWeeklyDigests() {
             continue;
         try {
             const phone = sessionDoc.id;
+            // Check permission before sending
+            const perms = await (0, permissionsConversation_1.getPermissions)(session.userId).catch(() => null);
+            if (perms !== null && perms.canSendWeeklyDigest === false)
+                continue;
             const seniorId = (_a = session.seniorId) !== null && _a !== void 0 ? _a : session.userId;
             const data = await getWeekData(seniorId, session.userId);
             const digest = await generateDigest(data);

@@ -102,7 +102,7 @@ async function buildOrUpdateFamilyGroup(seniorId) {
     const groupChat = await (0, client_1.createChat)(firstPhone, {
         parts: [{
                 type: "text",
-                value: `Hi everyone! 👋 This is the CareConnecxx group for ${seniorName}'s care.\n\n` +
+                value: `Hi everyone! 👋 I'm Cara, the AI care assistant for ${seniorName}'s care.\n\n` +
                     `I'll send care updates here so everyone stays in the loop. ` +
                     `Anyone can text me questions anytime.`,
             }],
@@ -114,7 +114,7 @@ async function buildOrUpdateFamilyGroup(seniorId) {
         await (0, client_1.addParticipant)(chatId, phone).catch(() => { });
     }
     // Name the group
-    await (0, client_1.updateChatName)(chatId, `${seniorName.split(" ")[0]}'s Care · CareConnecxx`);
+    await (0, client_1.updateChatName)(chatId, `${seniorName.split(" ")[0]}'s Care · Cara`);
     // Persist group record
     await db.collection("family_groups").add({
         seniorId,

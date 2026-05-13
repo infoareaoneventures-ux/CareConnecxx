@@ -20,8 +20,8 @@ export * from './email';
 // Export Push Notification Functions
 export * from './pushNotifications';
 
-// CAREGIVER CALLOUT - TEMPORARILY DISABLED (requires Stripe)
-// export * from './caregiverCallout';
+// CAREGIVER CALLOUT - emergency replacement when caregiver cancels
+export * from './caregiverCallout';
 
 // Export SMS Functions
 export { sendTestSMS } from './sms';
@@ -40,9 +40,6 @@ export * from './stripeConnectWebhook';
 
 // Appointment lifecycle: mark `completed` when scheduled end passes
 export * from './appointmentCompletion';
-
-// Export Twilio Video Functions
-export * from './twilio';
 
 // Export Care Coordinator Matching Functions
 export * from './matching';
@@ -76,4 +73,15 @@ export { createFamilyGroup } from './agents/familyGroupManager';
 // Linq Sprint 4 — weekly digest + monthly health trends
 export { sendWeeklyDigests, triggerWeeklyDigestNow } from './scheduled/weeklyDigest';
 export { sendMonthlyHealthTrends, triggerHealthTrendsNow } from './scheduled/healthTrends';
+
+// Cara iMessage pivot — onboarding callables
+export { markTaskComplete } from './agents/onboardingAgent';
+
+// Cara scheduled jobs
+export { sendMorningBriefings } from './scheduled/morningBriefing';
+export { sendStaleSessionNudges } from './scheduled/staleSessionNudge';
+export { consolidateMemoryNightly } from './scheduled/nightlyMemory';
+
+// Proactive trigger engine (runs every 5 min)
+export { runTriggerEngine } from './triggers/triggerEngine';
 

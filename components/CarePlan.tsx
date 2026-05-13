@@ -342,7 +342,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     setSavingSection(true);
     // Strip blank entries and undefined fields — Firestore rejects undefined values
     const cleanPool = draftLocPool.filter(l => l.street.trim() || l.city.trim()).map(l => {
-      const entry: Record<string, any> = { street: l.street, city: l.city, state: l.state, zipCode: l.zipCode };
+      const entry: LocationEntry = { street: l.street, city: l.city, state: l.state, zipCode: l.zipCode };
       if (l.petsInHome !== undefined) entry.petsInHome = l.petsInHome;
       if (l.smokingHousehold !== undefined) entry.smokingHousehold = l.smokingHousehold;
       if (l.petTypes?.length) entry.petTypes = l.petTypes;

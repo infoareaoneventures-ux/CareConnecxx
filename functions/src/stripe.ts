@@ -201,6 +201,17 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
  * Handle checkout.session.completed
  */
 async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
+  // Cara iMessage onboarding — advance step when client finishes payment setup
+  if (session.metadata?.task === 'client_payment_setup' && session.metadata?.phone) {
+    try {
+      const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
+      await advanceOnboardingStep(session.metadata.phone, 'payment', '');
+    } catch (err) {
+      console.error('advanceOnboardingStep(payment) error:', err);
+    }
+    return;
+  }
+
   const userId = session.metadata?.firebaseUID;
   if (!userId) return;
 
@@ -514,6 +525,16 @@ async function handleIdentityVerificationEvent(session: Stripe.Identity.Verifica
   };
   if (status === 'verified') {
     update.identityVerifiedAt = admin.firestore.FieldValue.serverTimestamp();
+
+    // Advance Cara onboarding if phone is in metadata (iMessage flow)
+    if (session.metadata?.phone) {
+      try {
+        const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
+        await advanceOnboardingStep(session.metadata.phone, 'identity', '');
+      } catch (err) {
+        console.error('advanceOnboardingStep(identity) error:', err);
+      }
+    }
   }
 
   await admin.firestore().collection('users').doc(userId).set(update, { merge: true });

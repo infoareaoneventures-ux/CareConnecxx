@@ -82,7 +82,7 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
     parts: [{
       type:  "text",
       value:
-        `Hi everyone! 👋 This is the CareConnecxx group for ${seniorName}'s care.\n\n` +
+        `Hi everyone! 👋 I'm Cara, the AI care assistant for ${seniorName}'s care.\n\n` +
         `I'll send care updates here so everyone stays in the loop. ` +
         `Anyone can text me questions anytime.`,
     }],
@@ -97,7 +97,7 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
   }
 
   // Name the group
-  await updateChatName(chatId, `${seniorName.split(" ")[0]}'s Care · CareConnecxx`);
+  await updateChatName(chatId, `${seniorName.split(" ")[0]}'s Care · Cara`);
 
   // Persist group record
   await db.collection("family_groups").add({

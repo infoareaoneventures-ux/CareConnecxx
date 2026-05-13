@@ -3498,6 +3498,8 @@ export interface WizardJobPostingData {
     rateFlexible: boolean;
     paymentMethod: string;
     jobDescription: string;
+    petsInHome?: boolean;
+    smokingHousehold?: boolean;
 }
 
 export async function createJobPosting(uid: string, data: WizardJobPostingData): Promise<void> {

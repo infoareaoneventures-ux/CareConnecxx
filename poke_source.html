@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+
+if command -v npx &> /dev/null; then
+  exec npx poke@latest "$@"
+elif command -v bunx &> /dev/null; then
+  exec bunx poke@latest "$@"
+else
+  echo "Installing bun..."
+  curl -fsSL https://bun.sh/install | bash
+  export BUN_INSTALL="$HOME/.bun"
+  export PATH="$BUN_INSTALL/bin:$PATH"
+  exec bunx poke@latest "$@"
+fi

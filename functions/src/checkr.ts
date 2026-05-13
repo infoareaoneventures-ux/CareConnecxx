@@ -282,20 +282,68 @@ export const checkrWebhook = functions.runWith({ secrets: ["CHECKR_API_KEY"] }).
       if (status === "clear") {
         updates["verified"] = true;
         updates["verificationStatus"] = "approved";
+        updates["status"] = "active";
         notificationPayload = {
           title: "Background check complete",
-          body: "Great news — your background check came back clear. You're now verified on CareConnecxx.",
+          body: "Great news — your background check came back clear. You're now verified on Cara.",
         };
+
+        // Advance Cara onboarding if caregiver has an iMessage session
+        try {
+          const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+          const cgPhone = cgSnap.data()?.phone as string | undefined;
+          if (cgPhone) {
+            const { advanceOnboardingStep } = await import("./agents/onboardingConversation");
+            await advanceOnboardingStep(cgPhone, "background_check", "");
+          }
+        } catch (err) {
+          console.error("advanceOnboardingStep(background_check) error:", err);
+        }
       } else if (status === "consider") {
         notificationPayload = {
           title: "Background check needs review",
           body: "Your background check is under review. Our team will follow up shortly.",
         };
+
+        // Write admin alert for manual review
+        try {
+          const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+          await db.collection("admin_alerts").add({
+            type:        "background_check_review",
+            caregiverId: caregiverUid,
+            name:        cgSnap.data()?.name ?? "",
+            phone:       cgSnap.data()?.phone ?? "",
+            status:      "consider",
+            checkrReportId: payload.id ?? "",
+            createdAt:   new Date().toISOString(),
+            resolved:    false,
+            severity:    "high",
+          });
+        } catch (err) {
+          console.error("admin_alerts write error (consider):", err);
+        }
       } else if (status === "suspended") {
         notificationPayload = {
           title: "Background check update",
           body: "Your background check could not be completed. Please contact support.",
         };
+
+        // Write admin alert
+        try {
+          const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+          await db.collection("admin_alerts").add({
+            type:        "background_check_suspended",
+            caregiverId: caregiverUid,
+            name:        cgSnap.data()?.name ?? "",
+            phone:       cgSnap.data()?.phone ?? "",
+            status:      "suspended",
+            createdAt:   new Date().toISOString(),
+            resolved:    false,
+            severity:    "high",
+          });
+        } catch (err) {
+          console.error("admin_alerts write error (suspended):", err);
+        }
       }
 
     } else if (type === "report.canceled") {

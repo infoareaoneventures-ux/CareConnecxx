@@ -60,15 +60,18 @@ const HelpCenter = lazy(() => import('./components/HelpCenter').then(module => (
 const HelpPage = lazy(() => import('./components/HelpPage').then(module => ({ default: module.HelpPage })));
 const BlogPage        = lazy(() => import('./components/pages/BlogPage').then(module => ({ default: module.BlogPage })));
 const CityPage        = lazy(() => import('./components/pages/CityPage').then(module => ({ default: module.CityPage })));
-const QuickConfirmPage = lazy(() => import('./components/pages/QuickConfirmPage'));
-const HealthSummaryPage = lazy(() => import('./components/pages/HealthSummaryPage'));
+const QuickConfirmPage    = lazy(() => import('./components/pages/QuickConfirmPage'));
+const HealthSummaryPage   = lazy(() => import('./components/pages/HealthSummaryPage'));
+const IMessageSignupPage  = lazy(() => import('./components/landing/IMessageSignupPage'));
+const PhoneSignupPage     = lazy(() => import('./components/auth/PhoneSignupPage'));
+const AuthLoginPage       = lazy(() => import('./components/auth/LoginPage'));
+const UploadPage          = lazy(() => import('./components/pages/UploadPage'));
+const GenericSuccessPage  = lazy(() => import('./components/pages/GenericSuccessPage'));
 
 
 
-// Video Interview & Profile Modals
-const ScheduleInterviewModal = lazy(() => import('./components/ScheduleInterviewModal').then(module => ({ default: module.ScheduleInterviewModal })));
+// Profile Modal
 const CaregiverProfileModal = lazy(() => import('./components/CaregiverProfileModal').then(module => ({ default: module.CaregiverProfileModal })));
-const VideoInterviewRoom = lazy(() => import('./components/VideoInterviewRoom').then(module => ({ default: module.VideoInterviewRoom })));
 
 // Wrapper for landing view
 const LandingView = (props: any) => <LandingViewComponent {...props} />;
@@ -134,10 +137,7 @@ const AppContent: React.FC = () => {
     activeCallout?.data?.appointmentId || null
   );
 
-  // Video Interview State
-  const [scheduleInterviewCaregiver, setScheduleInterviewCaregiver] = useState<any>(null);
   const [viewingCaregiver, setViewingCaregiver] = useState<any>(null);
-  const [activeInterview, setActiveInterview] = useState<any>(null);
 
   // Handle caregiver selection from callout modal
   const handleBackupCaregiverSelected = (caregiverId: string, caregiverName: string) => {
@@ -269,14 +269,17 @@ const AppContent: React.FC = () => {
       <Suspense fallback={<PageLoader fullScreen message="Loading page..." />}>
         <Routes>
           <Route path="/" element={<PublicOnlyRoute element={<LandingView onNavigate={handleNavigation} />} />} />
-          <Route path="/login" element={<PublicOnlyRoute element={<LoginPage onNavigate={handleNavigation} />} />} />
+          <Route path="/login" element={<PublicOnlyRoute element={<AuthLoginPage />} />} />
           <Route path="/auth/login" element={<Navigate to="/login" replace />} />
           <Route path="/how-it-works" element={<HowItWorks onNavigate={handleNavigation} />} />
           <Route path="/trust" element={<TrustAndSafetyPage onNavigate={handleNavigation} />} />
           <Route path="/blog" element={<BlogPage onNavigate={handleNavigation} />} />
           <Route path="/blog/:slug" element={<BlogPage onNavigate={handleNavigation} />} />
           <Route path="/care/:city" element={<CityPage onNavigate={handleNavigation} />} />
-          <Route path="/confirm/:token" element={<QuickConfirmPage />} />
+          <Route path="/start"              element={<PhoneSignupPage />} />
+          <Route path="/upload/:type"        element={<UploadPage />} />
+          <Route path="/done"               element={<GenericSuccessPage />} />
+          <Route path="/confirm/:token"     element={<QuickConfirmPage />} />
           <Route path="/health-summary/:token" element={<HealthSummaryPage />} />
           <Route path="/family-faq" element={<FamilyFAQ onNavigate={handleNavigation} />} />
           <Route path="/help" element={<HelpCenter onNavigate={handleNavigation} />} />
@@ -317,15 +320,7 @@ const AppContent: React.FC = () => {
             userType="client"
             onNavigate={handleNavigation}
             onShowToast={addToast}
-            onScheduleVideoCall={(caregiverId, caregiverName) => {
-              setScheduleInterviewCaregiver({
-                id: caregiverId,
-                uid: caregiverId,
-                name: caregiverName,
-                hourlyRate: 25,
-                imageUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(caregiverName)}&background=random`
-              });
-            }}
+            onScheduleVideoCall={() => { /* V5: interviews scheduled via Cara iMessage */ }}
             onViewProfile={(caregiverId) => {
               navigate(`/client/caregiver/${caregiverId}`);
             }}
@@ -460,35 +455,6 @@ const AppContent: React.FC = () => {
         />
       )}
 
-      {/* Video Interview Modals */}
-      <Suspense fallback={null}>
-        {scheduleInterviewCaregiver && (
-          <ScheduleInterviewModal
-            caregiver={scheduleInterviewCaregiver}
-            onClose={() => setScheduleInterviewCaregiver(null)}
-            onSuccess={(message) => {
-              addToast(message, 'success');
-              setScheduleInterviewCaregiver(null);
-            }}
-            onShowToast={addToast}
-          />
-        )}
-      </Suspense>
-
-      <Suspense fallback={null}>
-        {activeInterview && (
-          <VideoInterviewRoom
-            interview={activeInterview}
-            userId={currentUser?.uid || ''}
-            userName={currentUser?.displayName || 'User'}
-            onEnd={() => {
-              setActiveInterview(null);
-              addToast('Interview ended', 'info');
-            }}
-            onShowToast={addToast}
-          />
-        )}
-      </Suspense>
     </div>
   );
 };

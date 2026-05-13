@@ -3,26 +3,16 @@ import { VideoInterview, VideoInterviewStatus } from '../types';
 
 
 /**
- * Generate a Twilio access token for video room access
- * Calls the secure Cloud Function to generate tokens server-side
+ * @deprecated V5: in-app Twilio Video replaced by FaceTime/Google Meet links delivered via Cara iMessage.
+ * This function is intentionally stubbed — calling it will throw.
  */
 export const generateAccessToken = async (
-    identity: string,
-    roomName: string
+    _identity: string,
+    _roomName: string
 ): Promise<string> => {
-    try {
-        if (!functions) {
-            throw new Error('Firebase Functions not initialized');
-        }
-        
-        const generateTokenFn = functions.httpsCallable('generateTwilioToken');
-        const result = await generateTokenFn({ identity, roomName });
-        
-        return result.data.token;
-    } catch (error) {
-        console.error('Error generating access token:', error);
-        throw error;
-    }
+    throw new Error(
+        "Twilio Video removed in V5. Interviews are conducted via FaceTime/Google Meet links sent by Cara."
+    );
 };
 
 export const videoService = {

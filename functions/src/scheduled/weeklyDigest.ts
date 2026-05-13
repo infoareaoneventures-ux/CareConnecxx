@@ -2,6 +2,7 @@ import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import Anthropic from "@anthropic-ai/sdk";
 import { sendMessage, sendToPhone, AgentSession } from "../linq/client";
+import { getPermissions } from "../agents/permissionsConversation";
 
 const db = admin.firestore();
 
@@ -129,6 +130,11 @@ async function runWeeklyDigests(): Promise<number> {
 
     try {
       const phone    = sessionDoc.id;
+
+      // Check permission before sending
+      const perms = await getPermissions(session.userId).catch(() => null);
+      if (perms !== null && perms.canSendWeeklyDigest === false) continue;
+
       const seniorId = session.seniorId ?? session.userId;
       const data     = await getWeekData(seniorId, session.userId);
       const digest   = await generateDigest(data);

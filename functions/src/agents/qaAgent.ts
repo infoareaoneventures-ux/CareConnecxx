@@ -1,5 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import * as admin from "firebase-admin";
+import { startTyping, sendMessage } from "../linq/client";
+import { getPreferences, isInDND } from "../memory/preferences";
+import { getRelevantFacts, extractAndStoreFacts } from "../memory/learnedFacts";
+import { MCP_TOOLS, handleToolCall } from "../mcp/server";
 
 const db = admin.firestore();
 
@@ -14,7 +18,7 @@ function getClient(): Anthropic {
 // ── Context loaders ───────────────────────────────────────────────────────────
 
 async function getSeniorProfile(seniorId: string) {
-  const snap = await db.collection("senior_profiles").doc(seniorId).get();
+  const snap = await db.collection("seniors").doc(seniorId).get();
   return snap.data() ?? null;
 }
 
@@ -29,13 +33,36 @@ async function getRecentJournalEntries(seniorId: string, limit = 3) {
 }
 
 async function getNextAppointment(userId: string) {
-  const now = new Date().toISOString();
+  const today = new Date().toISOString().slice(0, 10);
   const snap = await db
     .collection("appointments")
     .where("clientId", "==", userId)
     .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
-    .where("isoDate", ">=", now)
-    .orderBy("isoDate", "asc")
+    .where("date", ">=", today)
+    .orderBy("date", "asc")
+    .limit(1)
+    .get();
+  return snap.empty ? null : snap.docs[0].data();
+}
+
+async function getAgentPermissions(userId: string) {
+  const snap = await db.collection("agent_permissions").doc(userId).get();
+  return snap.data() ?? null;
+}
+
+async function getCaregiverProfile(caregiverId: string) {
+  const snap = await db.collection("caregivers").doc(caregiverId).get();
+  return snap.data() ?? null;
+}
+
+async function getCaregiverTodayAppointment(caregiverId: string) {
+  const today = new Date().toISOString().slice(0, 10);
+  const snap = await db
+    .collection("appointments")
+    .where("caregiverId", "==", caregiverId)
+    .where("date", "==", today)
+    .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
+    .orderBy("startTime", "asc")
     .limit(1)
     .get();
   return snap.empty ? null : snap.docs[0].data();
@@ -59,7 +86,7 @@ async function getConversationHistory(
       role:    d.data().role as "user" | "assistant",
       content: d.data().content as string,
     }))
-    .reverse(); // chronological order for Claude
+    .reverse();
 }
 
 async function saveConversationTurn(
@@ -75,12 +102,14 @@ async function saveConversationTurn(
   await batch.commit().catch((err) => console.error("saveConversationTurn error:", err));
 }
 
-// ── System prompt builder ─────────────────────────────────────────────────────
+// ── System prompt builders ────────────────────────────────────────────────────
 
-function buildSystemPrompt(
+function buildClientSystemPrompt(
   senior: any,
   journal: any[],
-  nextAppt: any | null
+  nextAppt: any | null,
+  permissions: any | null,
+  learnedFactsText?: string
 ): string {
   const seniorName = senior?.name ?? "your loved one";
   const needs: string[] = senior?.needs ?? [];
@@ -98,26 +127,65 @@ function buildSystemPrompt(
     : "No recent journal entries.";
 
   const apptLine = nextAppt
-    ? `Next scheduled visit: ${nextAppt.date} at ${nextAppt.time} with ${nextAppt.caregiverName}.`
+    ? `Next visit: ${nextAppt.date} ${nextAppt.startTime ? `at ${nextAppt.startTime}` : ""} with ${nextAppt.caregiverName ?? "your caregiver"}.`
     : "No upcoming visits currently scheduled.";
 
+  const autoBook = permissions?.canBookAutomatically
+    ? "You have permission to book automatically."
+    : permissions?.canBookWithConfirmation
+    ? "Bookings require family confirmation."
+    : "";
+
+  const factsSection = learnedFactsText
+    ? `\nWhat I know about this family:\n${learnedFactsText}\n`
+    : "";
+
   return [
-    `You are a warm, concise care assistant for CareConnecxx.`,
-    `You are answering a family member texting about ${seniorName}.`,
+    `You are Cara — an AI care assistant texting with a family member caring for ${seniorName}.`,
+    `You act; you don't describe what you could do. When you can do something, do it and report back.`,
     ``,
     `Care needs: ${needs.join(", ") || "none recorded"}.`,
-    ``,
+    factsSection,
     `Recent care journal:`,
     journalSummary,
     ``,
     apptLine,
+    autoBook ? `\n${autoBook}` : "",
     ``,
     `Rules:`,
-    `- Answer in 1–2 sentences maximum.`,
+    `- Keep answers to 1–3 sentences maximum (you are in an iMessage thread).`,
     `- Never diagnose or give medical advice.`,
-    `- If there's any emergency or urgent concern, say: "Please call 911 immediately."`,
-    `- Be warm, human, and reassuring.`,
-    `- If you don't know something, say so honestly.`,
+    `- For any emergency: "Please call 911 immediately."`,
+    `- Be warm and direct — like a knowledgeable friend who gets things done, not a customer service bot.`,
+    `- Mirror the emotional tone of the person you're talking with. If they're worried, acknowledge it.`,
+    `- Sign off with 💙 occasionally. Never use jargon or bullet points in replies.`,
+  ].join("\n");
+}
+
+function buildCaregiverSystemPrompt(
+  caregiver: any,
+  todayAppt: any | null
+): string {
+  const name = caregiver?.name ?? "there";
+  const rate = caregiver?.hourlyRate ?? 22;
+
+  const apptLine = todayAppt
+    ? `Today's visit: ${todayAppt.date} at ${todayAppt.startTime ?? "TBD"} for client ${todayAppt.clientId ?? ""}. Address: ${todayAppt.address ?? todayAppt.location ?? "check your schedule"}.`
+    : "No visits scheduled for today.";
+
+  return [
+    `You are Cara — an AI care assistant texting with ${name}, one of our caregivers.`,
+    `You act; you don't describe what you could do. When you can do something, do it and report back.`,
+    ``,
+    apptLine,
+    ``,
+    `The caregiver earns $${rate}/hr. Payments are processed automatically after each visit.`,
+    ``,
+    `Rules:`,
+    `- Keep answers to 1–3 sentences maximum.`,
+    `- Be supportive and practical — they are doing important work.`,
+    `- For medical emergencies at a client's home: "Call 911 immediately."`,
+    `- Never promise specific payment dates.`,
   ].join("\n");
 }
 
@@ -134,12 +202,10 @@ async function getPrefetchedContext(phone: string): Promise<{
 
   const data = snap.data()!;
   if (new Date(data.expiresAt) < new Date()) {
-    // Expired — delete and return null so fresh reads happen
     await snap.ref.delete().catch(() => {});
     return null;
   }
 
-  // Use and immediately delete so it won't be reused
   await snap.ref.delete().catch(() => {});
   return {
     seniorProfile:       data.seniorProfile,
@@ -152,57 +218,150 @@ async function getPrefetchedContext(phone: string): Promise<{
   };
 }
 
+// ── Message splitter (≤300 chars per chunk, 1s delay) ────────────────────────
+
+async function sendSplit(chatId: string, text: string): Promise<void> {
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 300) {
+    const slice  = remaining.slice(0, 300);
+    const cut    = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("!\n"), slice.lastIndexOf("?\n"));
+    const splitAt = cut > 100 ? cut + 1 : 300;
+    chunks.push(remaining.slice(0, splitAt).trim());
+    remaining = remaining.slice(splitAt).trim();
+  }
+  if (remaining) chunks.push(remaining);
+
+  for (let i = 0; i < chunks.length; i++) {
+    if (i > 0) await new Promise<void>((r) => setTimeout(r, 1000));
+    await sendMessage(chatId, chunks[i]);
+  }
+}
+
 // ── Main QA function ──────────────────────────────────────────────────────────
 
 export async function runQaAgent(params: {
-  text:     string;
-  phone:    string;
-  userId:   string;
-  seniorId: string;
+  text:        string;
+  phone:       string;
+  chatId:      string;
+  userId:      string;
+  seniorId:    string;
+  userType?:   "client" | "caregiver";
+  caregiverId?: string;
 }): Promise<string> {
-  const { text, phone, userId, seniorId } = params;
+  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId } = params;
 
-  // Use pre-fetched data if typing indicator fired ahead of this message
-  const prefetched = await getPrefetchedContext(phone);
+  // DND check — skip if user has quiet hours enabled
+  const prefs = await getPreferences(userId).catch(() => null);
+  if (prefs && isInDND(prefs)) {
+    // Queue for later — silently return so the webhook doesn't send anything
+    return "";
+  }
 
-  const [senior, journal, nextAppt, history] = prefetched
-    ? [
-        prefetched.seniorProfile,
-        prefetched.recentJournal,
-        prefetched.nextAppointment,
-        prefetched.conversationHistory,
-      ]
-    : await Promise.all([
+  let systemPrompt: string;
+  let history: Array<{ role: "user" | "assistant"; content: string }>;
+
+  if (userType === "caregiver" && caregiverId) {
+    const [caregiver, todayAppt, hist] = await Promise.all([
+      getCaregiverProfile(caregiverId),
+      getCaregiverTodayAppointment(caregiverId),
+      getConversationHistory(phone),
+    ]);
+    systemPrompt = buildCaregiverSystemPrompt(caregiver, todayAppt);
+    history = hist;
+  } else {
+    const prefetched = await getPrefetchedContext(phone);
+
+    let senior: any, journal: any[], nextAppt: any | null, permissions: any | null;
+
+    if (prefetched) {
+      senior      = prefetched.seniorProfile;
+      journal     = prefetched.recentJournal;
+      nextAppt    = prefetched.nextAppointment;
+      history     = prefetched.conversationHistory;
+      permissions = null;
+    } else {
+      [senior, journal, nextAppt, permissions, history] = await Promise.all([
         getSeniorProfile(seniorId),
         getRecentJournalEntries(seniorId, 3),
         getNextAppointment(userId),
+        getAgentPermissions(userId),
         getConversationHistory(phone),
       ]);
+    }
 
-  const systemPrompt = buildSystemPrompt(senior, journal, nextAppt);
+    // Load learned facts for richer context (non-blocking on failure)
+    const facts = await getRelevantFacts(userId).catch(() => []);
+    const factsText = facts.length
+      ? facts.map((f) => `- ${f.fact} (${f.category})`).join("\n")
+      : undefined;
+
+    systemPrompt = buildClientSystemPrompt(senior, journal, nextAppt, permissions, factsText);
+  }
 
   try {
-    const response = await getClient().messages.create({
-      model:      "claude-sonnet-4-6",
-      max_tokens: 150,
-      system:     systemPrompt,
-      messages:   [
-        ...history,
-        { role: "user", content: text },
-      ],
-    });
+    await startTyping(chatId).catch(() => {});
 
-    const reply = ((response.content[0] as { text: string }).text ?? "").trim();
+    // Tool-use loop: Claude can call MCP tools up to 3 times before producing a final reply
+    const messages: Anthropic.MessageParam[] = [
+      ...history,
+      { role: "user", content: text },
+    ];
 
-    // Persist this exchange for future context
+    let reply = "";
+    for (let iteration = 0; iteration < 3; iteration++) {
+      const response = await getClient().messages.create({
+        model:       "claude-sonnet-4-6",
+        max_tokens:  400,
+        system:      systemPrompt,
+        tools:       MCP_TOOLS as any,
+        tool_choice: { type: "auto" },
+        messages,
+      });
+
+      if (response.stop_reason === "tool_use") {
+        // Execute all tool calls in this turn
+        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        for (const block of response.content) {
+          if (block.type === "tool_use") {
+            const result = await handleToolCall(block.name, block.input as Record<string, unknown>)
+              .catch((err) => ({ error: String(err) }));
+            toolResults.push({
+              type:        "tool_result",
+              tool_use_id: block.id,
+              content:     JSON.stringify(result),
+            });
+          }
+        }
+        // Append assistant's tool call + our results to message history
+        messages.push({ role: "assistant", content: response.content });
+        messages.push({ role: "user",      content: toolResults });
+      } else {
+        // Final text response
+        reply = response.content
+          .filter((b) => b.type === "text")
+          .map((b) => (b as { type: "text"; text: string }).text)
+          .join("")
+          .trim();
+        break;
+      }
+    }
+
+    if (!reply) reply = "I'll look into that and get back to you shortly. 💙";
+
     await saveConversationTurn(phone, text, reply);
+    await sendSplit(chatId, reply);
+
+    // Extract and store facts from the conversation in the background
+    extractAndStoreFacts(userId, text).catch(() => {});
 
     return reply;
   } catch (err) {
     console.error("qaAgent error:", err);
-    return (
+    const errMsg =
       "I'm having a little trouble right now. For urgent questions, contact your caregiver directly " +
-      "or reach our support team through the CareConnecxx app. For emergencies, call 911."
-    );
+      "or reach our support team. For emergencies, call 911.";
+    await sendMessage(chatId, errMsg).catch(() => {});
+    return errMsg;
   }
 }

@@ -1,5 +1,7 @@
 import axios, { AxiosError } from "axios";
 import * as admin from "firebase-admin";
+import { supervise, SuperviseContext } from "../safety/supervisor";
+import { logMessageSent } from "../observability/auditLog";
 
 const db = admin.firestore();
 
@@ -41,16 +43,21 @@ export interface LinqMessage {
 }
 
 export interface AgentSession {
-  chatId:       string;
-  userId?:      string;
-  seniorId?:    string;
-  caregiverId?: string;
-  groupChatId?: string;
-  service:      LinqService;
-  optedOut:     boolean;
+  chatId:           string;
+  userId?:          string;
+  seniorId?:        string;
+  caregiverId?:     string;
+  groupChatId?:     string;
+  service:          LinqService;
+  optedOut:         boolean;
   // TCPA: undefined = transactional (no opt-in required); false = pending confirmation; true = confirmed
-  optedIn?:     boolean;
-  createdAt:    string;
+  optedIn?:         boolean;
+  createdAt:        string;
+  phone?:           string;
+  // Onboarding state machine
+  onboardingStep?:  string;
+  userType?:        "client" | "caregiver";
+  onboardingData?:  Record<string, unknown>;
 }
 
 // ── Capability check ──────────────────────────────────────────────────────────
@@ -125,6 +132,16 @@ export async function shareContactCard(chatId: string): Promise<void> {
     .catch(() => {/* non-critical */});
 }
 
+export async function setContactCard(params: {
+  phone_number:       string;
+  display_name:       string;
+  profile_photo_url?: string;
+}): Promise<void> {
+  await axios
+    .post(`${cfg().baseUrl}/contact_card`, params, { headers: headers() })
+    .catch(() => {/* non-critical */});
+}
+
 export async function updateChatName(chatId: string, displayName: string): Promise<void> {
   await axios
     .put(`${cfg().baseUrl}/chats/${chatId}`, { display_name: displayName }, { headers: headers() })
@@ -157,7 +174,7 @@ export async function getOrCreateSession(
 
   // First message is a silent thread-opener; real content comes from the caller
   const { chat_id } = await createChat(phone, {
-    parts: [{ type: "text", value: "CareConnecxx care assistant is here whenever you need us." }],
+    parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
   });
 
   const session: AgentSession = {
@@ -170,6 +187,41 @@ export async function getOrCreateSession(
 
   await ref.set(session);
   return session;
+}
+
+// ── safeSend — lints + supervises then sends ─────────────────────────────────
+
+export async function safeSend(
+  chatId: string,
+  message: string | LinqMessage,
+  context: SuperviseContext
+): Promise<void> {
+  let finalText = "";
+
+  if (typeof message === "string") {
+    const safe = await supervise(message, context).catch(() => message);
+    finalText  = safe;
+    await sendMessage(chatId, safe);
+  } else {
+    // For structured messages (media, links), only lint text parts
+    const parts = message.parts ?? [];
+    const safeParts = await Promise.all(
+      parts.map(async (p) => {
+        if (p.type === "text" && p.value) {
+          const safe = await supervise(p.value, context).catch(() => p.value ?? "");
+          if (!finalText) finalText = safe;
+          return { ...p, value: safe };
+        }
+        return p;
+      })
+    );
+    await sendMessage(chatId, { ...message, parts: safeParts });
+  }
+
+  // Append-only audit log entry for every outbound message (non-blocking)
+  if (context.phone) {
+    logMessageSent(context.phone, context.phone, chatId, finalText || "[structured message]").catch(() => {});
+  }
 }
 
 // ── High-level helper: send to a phone number ────────────────────────────────

@@ -7,8 +7,8 @@ interface CaregiverSectionProps {
 
 export const CaregiverSection: React.FC<CaregiverSectionProps> = ({ onNavigate }) => {
     return (
-        <section className="bg-primary-50 py-16 md:py-24">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <section className="bg-[#f0ece6] py-16 md:py-24">
+            <div className="max-w-6xl mx-auto px-6 lg:px-8">
                 <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-16">
                     
                     {/* Left Column: Image with Testimonial Badge */}
@@ -40,17 +40,18 @@ export const CaregiverSection: React.FC<CaregiverSectionProps> = ({ onNavigate }
                         </h2>
                         
                         <div className="flex flex-col sm:flex-row gap-4">
-                            <button
-                                onClick={() => onNavigate('client-signup')}
-                                className="px-8 py-4 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded shadow-md transition-colors text-center text-[15px] tracking-wide uppercase"
-                            >
-                                Find Care
-                            </button>
-                            <button
+                            <button 
                                 onClick={() => onNavigate('caregiver-signup')}
-                                className="px-8 py-4 bg-white hover:bg-slate-50 text-primary-600 font-bold rounded shadow-md border border-slate-200 transition-colors text-center text-[15px] tracking-wide uppercase"
+                                className="btn-depth-primary px-8 py-4 rounded-2xl font-semibold text-center text-[15px]"
                             >
-                                I'm a Caregiver
+                                Apply Now
+                            </button>
+                            
+                            <button 
+                                onClick={() => onNavigate('caregiver-login')}
+                                className="btn-depth-secondary px-8 py-4 rounded-2xl font-semibold text-center text-[15px]"
+                            >
+                                Log In
                             </button>
                         </div>
                     </div>

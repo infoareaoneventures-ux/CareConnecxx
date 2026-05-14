@@ -102,7 +102,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onNavigate }) => {
 
                     {/* Phone frame */}
                     <div
-                        className="relative bg-white flex-shrink-0"
+                        className="relative bg-white flex-shrink-0 overflow-hidden"
                         style={{
                             width: 340,
                             height: 700,

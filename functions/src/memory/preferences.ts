@@ -9,6 +9,7 @@ export interface CaraPreferences {
   activeHours: { start: string; end: string };
   preferredSummaryTime: string;   // "18:00"
   preferSMS: boolean;
+  timezone: string;       // IANA tz, e.g. "America/Los_Angeles"
 }
 
 const DEFAULTS: CaraPreferences = {
@@ -18,6 +19,7 @@ const DEFAULTS: CaraPreferences = {
   activeHours:          { start: "08:00", end: "21:00" },
   preferredSummaryTime: "18:00",
   preferSMS:            false,
+  timezone:             "America/Los_Angeles",
 };
 
 export async function getPreferences(userId: string): Promise<CaraPreferences> {
@@ -33,18 +35,27 @@ export async function updatePreferences(
   await db.collection("user_preferences").doc(userId).set(patch, { merge: true });
 }
 
-export function isInDND(prefs: CaraPreferences, nowUtc?: Date): boolean {
+export function isInDND(prefs: CaraPreferences, now?: Date): boolean {
   if (!prefs.dndEnabled) return false;
-  const now = nowUtc ?? new Date();
-  // Compare as HH:MM strings against UTC hour:minute (caller adjusts tz if needed)
-  const hhmm = now.toISOString().slice(11, 16); // "HH:MM" in UTC
-  const { dndStart, dndEnd } = prefs;
+  const d  = now ?? new Date();
+  const tz = prefs.timezone || "America/Los_Angeles";
 
+  // Get HH:MM in the user's local timezone (avoids UTC-vs-local comparison bug)
+  const parts = new Intl.DateTimeFormat("en-US", {
+    hour:     "2-digit",
+    minute:   "2-digit",
+    hour12:   false,
+    timeZone: tz,
+  }).formatToParts(d);
+  const h    = parts.find(p => p.type === "hour")?.value   ?? "00";
+  const m    = parts.find(p => p.type === "minute")?.value ?? "00";
+  const hhmm = `${h.padStart(2, "0")}:${m.padStart(2, "0")}`;
+
+  const { dndStart, dndEnd } = prefs;
   if (dndStart <= dndEnd) {
-    // Same-day window: 22:00–23:59 would not wrap; e.g. 08:00–18:00
     return hhmm >= dndStart && hhmm < dndEnd;
   } else {
-    // Overnight window: e.g. 22:00–08:00 wraps midnight
+    // Overnight window e.g. 22:00–08:00
     return hhmm >= dndStart || hhmm < dndEnd;
   }
 }

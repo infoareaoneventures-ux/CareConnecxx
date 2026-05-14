@@ -29,6 +29,8 @@ const CaregiverSignup = lazy(() => import('./components/caregiver/signup/Caregiv
 const CaregiverLogin = lazy(() => import('./components/CaregiverLogin').then(module => ({ default: module.CaregiverLogin })));
 const ForgotPassword = lazy(() => import('./components/ForgotPassword').then(module => ({ default: module.ForgotPassword })));
 const AdminView = lazy(() => import('./components/AdminView').then(module => ({ default: module.AdminView })));
+const AuditDashboard = lazy(() => import('./components/admin/AuditDashboard').then(module => ({ default: module.AuditDashboard })));
+const JoinFamilyPage = lazy(() => import('./components/pages/JoinFamilyPage'));
 const ClientProfile = lazy(() => import('./components/ClientProfile').then(module => ({ default: module.ClientProfile })));
 const ClientProfileDashboard = lazy(() => import('./components/ClientProfileDashboard'));
 const CaregiverProfile = lazy(() => import('./components/CaregiverProfile').then(module => ({ default: module.CaregiverProfile })));
@@ -362,6 +364,8 @@ const AppContent: React.FC = () => {
         } />
 
           <Route path="/admin" element={<AdminRoute element={<AdminView onBack={() => navigate('/')} />} />} />
+          <Route path="/admin/audit" element={<AdminRoute element={<AuditDashboard />} />} />
+          <Route path="/join" element={<JoinFamilyPage />} />
           <Route path="/stripe/callback" element={<StripeCallback onNavigate={handleNavigation} />} />
           <Route path="/payment/success" element={<PaymentSuccess onNavigate={handleNavigation} onPaymentComplete={(id) => { /* handled in context now but PaymentSuccess might need update */ }} />} />
           <Route path="/payment/cancel" element={<PaymentCancel onNavigate={handleNavigation} />} />

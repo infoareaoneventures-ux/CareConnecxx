@@ -1,6 +1,6 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import { sendMessage } from "../linq/client";
+import { sendViaInteractionAgent } from "../agents/caraAgent";
 
 const db = admin.firestore();
 
@@ -58,7 +58,12 @@ export const sendStaleSessionNudges = functions.pubsub
             `Whenever you're ready — just reply here to pick up where you left off. 💙`;
         }
 
-        await sendMessage(session.chatId, message);
+        await sendViaInteractionAgent(doc.id, {
+          content:     message,
+          urgency:     "low",
+          sourceAgent: "stale_nudge",
+          canDrop:     true,
+        });
         await doc.ref.update({
           nudgeSentAt: new Date().toISOString(),
           nudgeCount:  admin.firestore.FieldValue.increment(1),

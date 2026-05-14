@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { sendMessage, sendToPhone, AgentSession } from "../linq/client";
+import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { detectHealthSignals } from "../agents/healthSignalDetector";
 import { sendVoiceSummary } from "../agents/voiceSummary";
 import { getPermissions } from "../agents/permissionsConversation";
@@ -80,10 +81,14 @@ export const onJournalCreated = functions.firestore
           if (recentSignals.size >= 3 && !recentSignals.docs[0].data().trendAlertSent) {
             const seniorDoc  = await db.collection("users").doc(seniorId).get();
             const seniorName = (seniorDoc.data()?.seniorName ?? seniorDoc.data()?.displayName ?? "your loved one") as string;
-            await sendMessage(session.chatId,
-              `📊 Heads up — I've noticed "${signalType}" has come up ${recentSignals.size} times this week for ${seniorName}.\n\n` +
-              `This might be worth a conversation with their doctor or care team. 💙`
-            );
+            await sendViaInteractionAgent(phone, {
+              content:
+                `📊 Heads up — I've noticed "${signalType}" has come up ${recentSignals.size} times this week for ${seniorName}.\n\n` +
+                `This might be worth a conversation with their doctor or care team. 💙`,
+              urgency:     "standard",
+              sourceAgent: "health_watch",
+              canDrop:     true,
+            });
             await sigRef.update({ trendAlertSent: true });
             await db.collection("agent_alerts_log").add({
               type:       "health_trend",
@@ -115,6 +120,7 @@ export const onJournalCreated = functions.firestore
 
       // Send photo inline if available (renders natively in iMessage)
       if (photos?.length > 0) {
+        // Structured message — send directly (supervisor handles text part separately)
         await sendMessage(session.chatId, {
           parts: [
             { type: "text",  value: baseMessage },
@@ -122,15 +128,22 @@ export const onJournalCreated = functions.firestore
           ],
         });
       } else {
-        await sendMessage(session.chatId, baseMessage);
+        await sendViaInteractionAgent(phone, {
+          content:     baseMessage,
+          urgency:     "standard",
+          sourceAgent: "visit_summary",
+          canDrop:     true,
+        });
       }
 
       // Follow-up for flagged health signals
       if (severity === "flag" && signals.length > 0) {
-        await sendMessage(
-          session.chatId,
-          `⚠️ Worth noting: ${signals.join(", ")}. Might be worth mentioning to the doctor at the next visit.`
-        );
+        await sendViaInteractionAgent(phone, {
+          content:     `⚠️ Worth noting: ${signals.join(", ")}. Might be worth mentioning to the doctor at the next visit.`,
+          urgency:     "standard",
+          sourceAgent: "health_watch",
+          canDrop:     true,
+        });
       }
 
       // Send voice memo on iMessage — family taps play to hear the update

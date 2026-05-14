@@ -25,6 +25,7 @@ import { detectCrisis, MEDICAL_RESPONSE, EMOTIONAL_RESPONSE } from "../safety/cr
 import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
 import { logCrisisDetected } from "../observability/auditLog";
 import { isBereavementTrigger, activateBereavementMode } from "../agents/bereavement";
+import { sendViaInteractionAgent } from "../agents/caraAgent";
 
 const db = admin.firestore();
 
@@ -267,6 +268,22 @@ async function handleCareNotes(
   const durationHours = apptSnap?.data()?.durationHours ?? 4;
   const pay = (hourlyRate * durationHours).toFixed(2);
 
+  // Fire visit billing (fire-and-forget so it doesn't block caregiver confirmation)
+  if (apptId && clientId) {
+    const { createVisitPayment } = await import("../billing/visitBilling");
+    createVisitPayment({
+      appointmentId:  apptId,
+      clientId,
+      clientPhone:    "", // Family phone looked up inside createVisitPayment if needed
+      caregiverId,
+      caregiverName:  cgSnap.data()?.name ?? "Your caregiver",
+      caregiverPhone: phone,
+      durationHours,
+      hourlyRate,
+      date:           new Date().toISOString().slice(0, 10),
+    }).catch((err) => console.error("createVisitPayment error:", err));
+  }
+
   // Find next appointment for this caregiver
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
@@ -302,6 +319,40 @@ async function handleInbound(event: unknown): Promise<void> {
 
   // ── New user — texted first (MO consent) ────────────────────────────────────
   if (!sessionSnap.exists) {
+    // Check if this phone belongs to a secondary family group member
+    const groupSnap = await db.collection("agent_sessions")
+      .where("groupMembers", "array-contains", phone)
+      .limit(1)
+      .get();
+
+    if (!groupSnap.empty) {
+      // Route as secondary family member using primary's session context
+      const primarySession = groupSnap.docs[0].data() as AgentSession;
+      const primaryPhone   = groupSnap.docs[0].id;
+
+      // Create a lightweight session for this member pointing to the primary
+      await db.collection("agent_sessions").doc(phone).set({
+        chatId,
+        phone,
+        service:        "iMessage",
+        userType:       "client",
+        onboardingStep: "complete",
+        optedIn:        true,
+        optedOut:       false,
+        userId:         primarySession.userId,
+        seniorId:       primarySession.seniorId,
+        primaryPhone,
+        isSecondaryMember: true,
+        createdAt:      new Date().toISOString(),
+      });
+
+      await sendMessage(chatId,
+        `Hi! 💙 I'm Cara, the care assistant for ${(primarySession as any).onboardingData?.seniorName ?? "your family's loved one"}. ` +
+        `I've added you to the care group — you'll receive updates and can ask me anything!`
+      );
+      return;
+    }
+
     const capability = await checkCapability(phone);
     const service: LinqService = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
     const linqPhone = process.env.LINQ_PHONE_NUMBER ?? "";
@@ -442,6 +493,33 @@ async function handleInbound(event: unknown): Promise<void> {
       await startTyping(chatId).catch(() => {/* non-critical */});
       try { await KEYWORDS[norm](); } finally { await stopTyping(chatId).catch(() => {}); }
       return;
+    }
+
+    // YES / NO to replacement candidate request
+    if (norm === "YES" || norm === "NO") {
+      const candidateSnap = await db.collection("replacement_candidates")
+        .where("phone",  "==", phone)
+        .where("status", "==", "contacted")
+        .orderBy("contactedAt", "desc")
+        .limit(1)
+        .get();
+
+      if (!candidateSnap.empty) {
+        const candidate = candidateSnap.docs[0].data();
+        const taskSnap  = await db.collection("agent_tasks").doc(candidate.taskId).get();
+        const task      = taskSnap.data();
+
+        if (task && task.status === "awaiting_approval") {
+          if (norm === "YES") {
+            await candidateSnap.docs[0].ref.update({ status: "available", respondedAt: new Date().toISOString() });
+            await sendMessage(chatId, "Great — we'll confirm with the family and follow up shortly. 💙");
+          } else {
+            await candidateSnap.docs[0].ref.update({ status: "declined", respondedAt: new Date().toISOString() });
+            await sendMessage(chatId, "No worries — thanks for letting us know!");
+          }
+          return;
+        }
+      }
     }
 
     // Awaiting care notes after DONE
@@ -739,6 +817,60 @@ async function handleInbound(event: unknown): Promise<void> {
       const userId   = session.userId ?? session.caregiverId ?? phone;
       const userType = session.userType ?? "client";
       await updatePermissionFromText(userId, userType, phone, chatId, text);
+      return;
+    }
+
+    if (intent === "MEMORY_QUERY") {
+      const { handleMemoryQuery } = await import("../memory/memoryFiles");
+      const userId = session.userId ?? session.caregiverId ?? phone;
+      await handleMemoryQuery(userId, chatId, sendMessage);
+      return;
+    }
+
+    if (intent === "ADD_FAMILY_MEMBER") {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+      const extraction = await claude.messages.create({
+        model:      "claude-haiku-4-5-20251001",
+        max_tokens: 80,
+        system:     "Extract the name and phone number from this message. Reply with JSON only: {\"name\": \"...\", \"phone\": \"+1...\"}. If no phone found, phone = null.",
+        messages:   [{ role: "user", content: text }],
+      });
+
+      let memberName: string | null = null;
+      let memberPhone: string | null = null;
+      try {
+        const parsed = JSON.parse((extraction.content[0] as { text: string }).text ?? "{}");
+        memberName  = parsed.name  ?? null;
+        memberPhone = parsed.phone ?? null;
+      } catch { /* */ }
+
+      if (!memberPhone) {
+        await sendMessage(chatId, "I didn't catch a phone number — please include it (e.g. 'add my sister Sarah at +1 555 000 1234').");
+        return;
+      }
+
+      // Add to groupMembers array in session
+      await db.collection("agent_sessions").doc(phone).update({
+        groupMembers: admin.firestore.FieldValue.arrayUnion(memberPhone),
+      });
+
+      // Add to family_group_members collection
+      await db.collection("family_group_members").add({
+        primaryPhone:  phone,
+        memberPhone,
+        memberName:    memberName ?? "Family member",
+        userId:        session.userId ?? phone,
+        addedAt:       new Date().toISOString(),
+      });
+
+      await sendViaInteractionAgent(phone, {
+        content:     `Done! I've added ${memberName ?? memberPhone} to your care group. They'll receive the same updates you do. 💙`,
+        urgency:     "standard",
+        sourceAgent: "family_group",
+        canDrop:     false,
+      });
       return;
     }
 

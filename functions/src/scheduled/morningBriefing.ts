@@ -1,6 +1,6 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import { sendMessage } from "../linq/client";
+import { sendViaInteractionAgent } from "../agents/caraAgent";
 
 const db = admin.firestore();
 
@@ -53,16 +53,20 @@ export const sendMorningBriefings = functions.pubsub
 
         const mapsUrl = `https://maps.google.com/?q=${encodeURIComponent(address)}`;
 
-        await sendMessage(cgSession.data()!.chatId,
-          `Good morning ${name}! Here's your day:\n\n` +
-          `👤 ${seniorName}\n` +
-          `📍 ${address}\n` +
-          `   ${mapsUrl}\n` +
-          `⏰ ${appt.startTime ?? ""}–${appt.endTime ?? ""}\n\n` +
-          `Care plan highlights:\n` +
-          highlights.join("\n") +
-          `\n\nReply ARRIVED when you get there. 💙`
-        );
+        await sendViaInteractionAgent(caregiver.phone as string, {
+          content:
+            `Good morning ${name}! Here's your day:\n\n` +
+            `👤 ${seniorName}\n` +
+            `📍 ${address}\n` +
+            `   ${mapsUrl}\n` +
+            `⏰ ${appt.startTime ?? ""}–${appt.endTime ?? ""}\n\n` +
+            `Care plan highlights:\n` +
+            highlights.join("\n") +
+            `\n\nReply ARRIVED when you get there. 💙`,
+          urgency:     "standard",
+          sourceAgent: "morning_briefing",
+          canDrop:     true,
+        });
       } catch (err) {
         console.error("morningBriefing error for appt", doc.id, err);
       }

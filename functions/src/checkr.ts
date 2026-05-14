@@ -300,10 +300,11 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
       if (status === "clear") {
         updates["verified"] = true;
         updates["verificationStatus"] = "approved";
+        updates["status"] = "active";
         updates["backgroundCheckData.checkrClearedAt"] = new Date().toISOString();
         notificationPayload = {
-          title: "Background check approved",
-          body: "Your background check came back clear and you're approved. You can now be matched with families!",
+          title: "Background check approved! 🎉",
+          body: "Great news — your background check came back clear. You're approved and families can now book you!",
         };
 
         // Advance Cara onboarding if caregiver has an iMessage session
@@ -317,6 +318,38 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
         } catch (err) {
           console.error("advanceOnboardingStep(background_check) error:", err);
         }
+
+        // Notify families who expressed interest while bg check was pending
+        try {
+          const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+          const cgName = cgSnap.data()?.name ?? "Your caregiver";
+
+          const interestSnap = await db.collection("agent_tasks")
+            .where("type",        "==", "caregiver_interest")
+            .where("caregiverId", "==", caregiverUid)
+            .where("status",      "==", "pending_bg_clear")
+            .get();
+
+          for (const taskDoc of interestSnap.docs) {
+            const task = taskDoc.data();
+            try {
+              const { sendViaInteractionAgent } = await import("./agents/caraAgent");
+              await sendViaInteractionAgent(task.clientPhone, {
+                content:
+                  `Good news! ${cgName}'s background check just cleared. ` +
+                  `You can now book them — just say the word and I'll take care of it! 💙`,
+                urgency:     "standard",
+                sourceAgent: "bg_check_clear",
+                canDrop:     true,
+              });
+              await taskDoc.ref.update({ status: "notified", notifiedAt: new Date().toISOString() });
+            } catch (notifyErr) {
+              console.error("bg clear family notify error:", notifyErr);
+            }
+          }
+        } catch (err) {
+          console.error("caregiver_interest notify error:", err);
+        }
       } else if (status === "consider") {
         notificationPayload = {
           title: "Background check needs review",
@@ -326,17 +359,31 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
         // Write admin alert for manual review
         try {
           const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+          const cgData = cgSnap.data() ?? {};
           await db.collection("admin_alerts").add({
             type:        "background_check_review",
             caregiverId: caregiverUid,
-            name:        cgSnap.data()?.name ?? "",
-            phone:       cgSnap.data()?.phone ?? "",
+            name:        cgData.name ?? "",
+            phone:       cgData.phone ?? "",
             status:      "consider",
             checkrReportId: payload.id ?? "",
             createdAt:   new Date().toISOString(),
             resolved:    false,
             severity:    "high",
           });
+
+          if (cgData.phone) {
+            const { sendViaInteractionAgent } = await import("./agents/caraAgent");
+            await sendViaInteractionAgent(cgData.phone, {
+              content:
+                `Hi ${(cgData.name as string | undefined)?.split(" ")[0] ?? "there"} — ` +
+                `your background check is under review. This is normal and usually takes a few business days. ` +
+                `Our team will reach out if anything is needed. Hang tight! 💙`,
+              urgency:     "standard",
+              sourceAgent: "checkr_status",
+              canDrop:     true,
+            });
+          }
         } catch (err) {
           console.error("admin_alerts write error (consider):", err);
         }
@@ -349,16 +396,31 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
         // Write admin alert (medium severity — normal Checkr flow, not a failure)
         try {
           const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+          const cgData = cgSnap.data() ?? {};
           await db.collection("admin_alerts").add({
             type:        "background_check_suspended",
             caregiverId: caregiverUid,
-            name:        cgSnap.data()?.name ?? "",
-            phone:       cgSnap.data()?.phone ?? "",
+            name:        cgData.name ?? "",
+            phone:       cgData.phone ?? "",
             status:      "suspended",
             createdAt:   new Date().toISOString(),
             resolved:    false,
             severity:    "medium",
           });
+
+          if (cgData.phone) {
+            const { sendViaInteractionAgent } = await import("./agents/caraAgent");
+            await sendViaInteractionAgent(cgData.phone, {
+              content:
+                `Hi ${(cgData.name as string | undefined)?.split(" ")[0] ?? "there"} — ` +
+                `Checkr put your background check on hold while they gather more information. ` +
+                `Please check the email from Checkr and follow any instructions there. ` +
+                `Reach out if you need anything — we're here to help! 💙`,
+              urgency:     "standard",
+              sourceAgent: "checkr_status",
+              canDrop:     true,
+            });
+          }
         } catch (err) {
           console.error("admin_alerts write error (suspended):", err);
         }

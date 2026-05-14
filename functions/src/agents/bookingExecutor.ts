@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage, getOrCreateSession } from "../linq/client";
 import { notifyAdminBookingConfirmed } from "../notifications";
+import { logBookingCreated } from "../observability/auditLog";
 
 async function hasConflict(
   caregiverId: string,
@@ -118,6 +119,12 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
   batch.update(taskRef, { status: "approved", humanApproved: true, approvedAt: now });
   await batch.commit();
 
+  logBookingCreated(
+    task.clientId,
+    task.caregiverId,
+    task.appointments.map((a) => a.date)
+  ).catch(() => {});
+
   notifyAdminBookingConfirmed({
     taskId:           taskId,
     caregiverName:    task.caregiverName,
@@ -171,6 +178,26 @@ export async function createBookingTask(params: {
   appointments:  BookingAppointment[];
   hourlyRate:    number;
 }): Promise<string> {
+  // Block booking if caregiver's background check is still pending
+  const cgSnap = await db.collection("caregivers").doc(params.caregiverId).get();
+  const cgStatus = cgSnap.data()?.status as string | undefined;
+  if (cgStatus === "pending_review") {
+    const submittedAt = cgSnap.data()?.backgroundCheckData?.submittedAt as string | undefined;
+    const daysInReview = submittedAt
+      ? Math.ceil((Date.now() - new Date(submittedAt).getTime()) / (1000 * 60 * 60 * 24))
+      : 0;
+    const sessionSnap = await db.collection("agent_sessions").doc(params.clientPhone).get();
+    const chatId      = sessionSnap.data()?.chatId as string | undefined;
+    if (chatId) {
+      await sendMessage(chatId,
+        `${params.caregiverName}'s background check is still in progress ` +
+        `(${daysInReview > 0 ? `${daysInReview} day${daysInReview !== 1 ? "s" : ""} in review` : "just submitted"}).\n\n` +
+        `I'll notify you the moment it clears so you can book. Want me to find another available caregiver in the meantime?`
+      );
+    }
+    return ""; // Early return — no booking written
+  }
+
   const totalCost = params.appointments.reduce(
     (sum, a) => sum + params.hourlyRate * a.durationHours, 0
   );

@@ -66,6 +66,49 @@ export async function getMemoryContext(userId: string): Promise<string> {
   return combined.slice(0, 12000) + "\n\n[Memory truncated for length]";
 }
 
+export interface InitialMemoryData {
+  seniorName?:   string;
+  seniorAge?:    string | number;
+  conditions?:   string | string[];
+  careNeeds?:    string | string[];
+  city?:         string;
+  clientName?:   string;
+  relationship?: string;
+}
+
+export async function initializeMemoryFiles(
+  userId: string,
+  data:   InitialMemoryData
+): Promise<void> {
+  const seniorName   = data.seniorName   ?? "your loved one";
+  const clientName   = data.clientName   ?? "";
+  const relationship = data.relationship ?? "family member";
+  const conditions   = Array.isArray(data.conditions)
+    ? data.conditions.join(", ")
+    : (data.conditions ?? "none noted");
+  const careNeeds = Array.isArray(data.careNeeds)
+    ? data.careNeeds.join(", ")
+    : (data.careNeeds ?? "general support");
+
+  const profileMd =
+    `# Profile\n\n` +
+    `**Senior:** ${seniorName}${data.seniorAge ? `, age ${data.seniorAge}` : ""}\n` +
+    `**Primary contact:** ${clientName} (${relationship})\n` +
+    `**Location:** ${data.city ?? "unknown"}\n` +
+    `**Care needs:** ${careNeeds}\n`;
+
+  const healthMd =
+    `# Health\n\n` +
+    `**Conditions:** ${conditions}\n` +
+    `**Medications:** unknown\n` +
+    `**Allergies:** unknown\n`;
+
+  await Promise.all([
+    writeMemoryFile(userId, "profile", profileMd),
+    writeMemoryFile(userId, "health", healthMd),
+  ]);
+}
+
 // Triggered when user asks "what do you know about mom?" (or similar)
 export async function handleMemoryQuery(
   userId: string,

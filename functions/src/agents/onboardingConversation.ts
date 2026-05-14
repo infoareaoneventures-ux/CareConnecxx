@@ -5,6 +5,7 @@ import Stripe from "stripe";
 import { sendMessage, AgentSession } from "../linq/client";
 import { generateToken } from "./tokenService";
 import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../notifications";
+import { initializeMemoryFiles } from "../memory/memoryFiles";
 
 const db = admin.firestore();
 
@@ -148,6 +149,7 @@ export async function handleOnboardingStep(
     case "client_ask_needs":      return handleClientAskNeeds(phone, chatId, text, session);
     case "client_ask_location":   return handleClientAskLocation(phone, chatId, text, session);
     case "client_ask_schedule":   return handleClientAskSchedule(phone, chatId, text, session);
+    case "client_ask_plan":       return handleClientPlanReply(phone, chatId, text, session);
     case "client_send_payment":   return handleClientSendPayment(phone, chatId, session);
     case "client_awaiting_payment":
       await sendMessage(chatId, "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳");
@@ -317,6 +319,46 @@ async function handleClientAskSchedule(phone: string, chatId: string, text: stri
   } catch { /* keep defaults */ }
 
   await mergeOnboardingData(phone, { daysPerWeek, timeOfDay, hoursPerDay });
+  await updateSession(phone, { onboardingStep: "client_ask_plan" });
+  await handleClientAskPlan(phone, chatId);
+}
+
+async function handleClientAskPlan(phone: string, chatId: string): Promise<void> {
+  await sendMessage(chatId,
+    `Almost done! Choose your plan:\n\n` +
+    `1️⃣ Basic — $49/mo\n` +
+    `   · AI care assistant (Cara)\n` +
+    `   · Weekly care summaries\n\n` +
+    `2️⃣ Family — $99/mo\n` +
+    `   · Everything in Basic\n` +
+    `   · Group family updates\n` +
+    `   · Priority matching\n\n` +
+    `3️⃣ Premium — $199/mo\n` +
+    `   · Everything in Family\n` +
+    `   · 24/7 urgent response\n` +
+    `   · Dedicated care coordinator\n\n` +
+    `Reply 1, 2, or 3.`
+  );
+}
+
+async function handleClientPlanReply(
+  phone: string,
+  chatId: string,
+  text:   string,
+  session: AgentSession
+): Promise<void> {
+  const norm  = text.trim();
+  const plans: Record<string, { name: string; priceId: string }> = {
+    "1": { name: "Basic",   priceId: process.env.STRIPE_PLAN_BASIC_PRICE_ID   ?? "" },
+    "2": { name: "Family",  priceId: process.env.STRIPE_PLAN_FAMILY_PRICE_ID  ?? "" },
+    "3": { name: "Premium", priceId: process.env.STRIPE_PLAN_PREMIUM_PRICE_ID ?? "" },
+  };
+  const plan = plans[norm];
+  if (!plan) {
+    await sendMessage(chatId, "Just reply 1, 2, or 3 to choose your plan! 😊");
+    return;
+  }
+  await mergeOnboardingData(phone, { selectedPlan: plan.name, selectedPlanPriceId: plan.priceId });
   await updateSession(phone, { onboardingStep: "client_send_payment" });
   await handleClientSendPayment(phone, chatId, session);
 }
@@ -584,6 +626,17 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
 
       // Silently create Firebase Auth account so web dashboard login works later
       await createFirebaseAuthAccount(phone, (d.firstName ?? "") as string);
+
+      // Initialize memory files with onboarding data
+      initializeMemoryFiles(session.userId ?? phone, {
+        seniorName:   d.seniorName   as string | undefined,
+        seniorAge:    d.age          as string | undefined,
+        conditions:   d.conditions   as string | string[] | undefined,
+        careNeeds:    d.careNeeds    as string | string[] | undefined,
+        city:         d.city         as string | undefined,
+        clientName:   d.firstName    as string | undefined,
+        relationship: d.relationship as string | undefined,
+      }).catch((err) => console.error("initializeMemoryFiles error:", err));
 
       // Import and start permissions conversation
       const { sendClientPermissionsFlow } = await import("./permissionsConversation");

@@ -1,5 +1,7 @@
 import * as admin from "firebase-admin";
 import { runMatchingForClient } from "../agents/matchingAgent";
+import { logHealthDataAccessed, logBookingCreated } from "../observability/auditLog";
+import { readMemoryFile, writeMemoryFile, MemoryFile } from "../memory/memoryFiles";
 
 const db = admin.firestore();
 
@@ -138,6 +140,31 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["seniorId", "signalType", "description"],
     },
   },
+  {
+    name: "read_memory_file",
+    description: "Read one of Cara's long-term memory files for a user (profile, health, family, recent_episodes, procedural).",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId: { type: "string", description: "The user's ID" },
+        file:   { type: "string", description: "One of: profile, health, family, recent_episodes, procedural" },
+      },
+      required: ["userId", "file"],
+    },
+  },
+  {
+    name: "update_memory_file",
+    description: "Append new information to one of Cara's long-term memory files for a user.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:  { type: "string", description: "The user's ID" },
+        file:    { type: "string", description: "One of: profile, health, family, recent_episodes, procedural" },
+        content: { type: "string", description: "Markdown content to append to the file" },
+      },
+      required: ["userId", "file", "content"],
+    },
+  },
 ];
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
@@ -151,11 +178,13 @@ export async function handleToolCall(
 
   switch (name) {
     case "get_senior_profile": {
+      logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:get_senior_profile").catch(() => {});
       const snap = await db.collection("seniors").doc(input.seniorId as string).get();
       return snap.data() ?? { error: "Senior not found" };
     }
 
     case "get_care_journal": {
+      logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:get_care_journal").catch(() => {});
       const limit = (input.limit as number) ?? 5;
       const snap = await db
         .collection("care_journal")
@@ -185,6 +214,7 @@ export async function handleToolCall(
     }
 
     case "get_health_signals": {
+      logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:get_health_signals").catch(() => {});
       const snap = await db
         .collection("health_signals")
         .where("seniorId", "==", input.seniorId)
@@ -213,11 +243,13 @@ export async function handleToolCall(
     case "find_replacement_caregivers": {
       const sessionSnap = await db.collection("agent_sessions").doc(input.phone as string).get();
       const session = sessionSnap.data() ?? {};
+      const clientSnap = await db.collection("users").doc(input.clientId as string).get();
+      const clientProfile = clientSnap.data() ?? {};
       await runMatchingForClient(
         input.phone as string,
         input.chatId as string,
         session,
-        session
+        clientProfile
       );
       return { triggered: true };
     }
@@ -233,6 +265,7 @@ export async function handleToolCall(
         source:      "qa_agent",
         createdAt:   nowIso,
       });
+      logBookingCreated(input.clientId as string, input.caregiverId as string, input.dates as string[]).catch(() => {});
       return { taskId: ref.id };
     }
 
@@ -243,6 +276,7 @@ export async function handleToolCall(
     }
 
     case "log_health_flag": {
+      logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:log_health_flag").catch(() => {});
       await db.collection("health_signals").add({
         seniorId:    input.seniorId,
         signalType:  input.signalType,
@@ -252,6 +286,21 @@ export async function handleToolCall(
         detectedAt:  nowIso,
       });
       return { logged: true };
+    }
+
+    case "read_memory_file": {
+      logHealthDataAccessed(input.userId as string, input.userId as string, "mcp:read_memory_file").catch(() => {});
+      const content = await readMemoryFile(input.userId as string, input.file as MemoryFile);
+      return { content: content || "" };
+    }
+
+    case "update_memory_file": {
+      const existing = await readMemoryFile(input.userId as string, input.file as MemoryFile);
+      const updated  = existing
+        ? `${existing.trimEnd()}\n\n${input.content}`
+        : input.content as string;
+      await writeMemoryFile(input.userId as string, input.file as MemoryFile, updated);
+      return { updated: true };
     }
 
     default:

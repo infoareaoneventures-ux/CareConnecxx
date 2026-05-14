@@ -37,14 +37,16 @@ exports.onJournalCreated = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
+const caraAgent_1 = require("../agents/caraAgent");
 const healthSignalDetector_1 = require("../agents/healthSignalDetector");
 const voiceSummary_1 = require("../agents/voiceSummary");
 const permissionsConversation_1 = require("../agents/permissionsConversation");
+const zepClient_1 = require("../memory/zepClient");
 const db = admin.firestore();
 exports.onJournalCreated = functions.firestore
     .document("care_journal/{journalId}")
     .onCreate(async (snap) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
     try {
         const journal = snap.data();
         const { seniorId, caregiverId, notes, photos, wellness, activities, timestamp } = journal;
@@ -105,8 +107,13 @@ exports.onJournalCreated = functions.firestore
                 if (recentSignals.size >= 3 && !recentSignals.docs[0].data().trendAlertSent) {
                     const seniorDoc = await db.collection("users").doc(seniorId).get();
                     const seniorName = ((_f = (_d = (_c = seniorDoc.data()) === null || _c === void 0 ? void 0 : _c.seniorName) !== null && _d !== void 0 ? _d : (_e = seniorDoc.data()) === null || _e === void 0 ? void 0 : _e.displayName) !== null && _f !== void 0 ? _f : "your loved one");
-                    await (0, client_1.sendMessage)(session.chatId, `📊 Heads up — I've noticed "${signalType}" has come up ${recentSignals.size} times this week for ${seniorName}.\n\n` +
-                        `This might be worth a conversation with their doctor or care team. 💙`);
+                    await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+                        content: `📊 Heads up — I've noticed "${signalType}" has come up ${recentSignals.size} times this week for ${seniorName}.\n\n` +
+                            `This might be worth a conversation with their doctor or care team. 💙`,
+                        urgency: "standard",
+                        sourceAgent: "health_watch",
+                        canDrop: true,
+                    });
                     await sigRef.update({ trendAlertSent: true });
                     await db.collection("agent_alerts_log").add({
                         type: "health_trend",
@@ -134,6 +141,7 @@ exports.onJournalCreated = functions.firestore
         const baseMessage = `${caregiverName} finished today's visit (${visitDate}).\n${summary}`;
         // Send photo inline if available (renders natively in iMessage)
         if ((photos === null || photos === void 0 ? void 0 : photos.length) > 0) {
+            // Structured message — send directly (supervisor handles text part separately)
             await (0, client_1.sendMessage)(session.chatId, {
                 parts: [
                     { type: "text", value: baseMessage },
@@ -142,11 +150,21 @@ exports.onJournalCreated = functions.firestore
             });
         }
         else {
-            await (0, client_1.sendMessage)(session.chatId, baseMessage);
+            await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+                content: baseMessage,
+                urgency: "standard",
+                sourceAgent: "visit_summary",
+                canDrop: true,
+            });
         }
         // Follow-up for flagged health signals
         if (severity === "flag" && signals.length > 0) {
-            await (0, client_1.sendMessage)(session.chatId, `⚠️ Worth noting: ${signals.join(", ")}. Might be worth mentioning to the doctor at the next visit.`);
+            await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+                content: `⚠️ Worth noting: ${signals.join(", ")}. Might be worth mentioning to the doctor at the next visit.`,
+                urgency: "standard",
+                sourceAgent: "health_watch",
+                canDrop: true,
+            });
         }
         // Send voice memo on iMessage — family taps play to hear the update
         if (session.service === "iMessage") {
@@ -161,6 +179,20 @@ exports.onJournalCreated = functions.firestore
             severity,
             sentAt: nowIso,
         });
+        // Send care journal to Zep so health facts are extracted and dated
+        const userId = (_k = session.userId) !== null && _k !== void 0 ? _k : seniorId;
+        const seniorNameForZep = ((_p = (_m = (_l = clientDoc.data()) === null || _l === void 0 ? void 0 : _l.seniorName) !== null && _m !== void 0 ? _m : (_o = clientDoc.data()) === null || _o === void 0 ? void 0 : _o.displayName) !== null && _p !== void 0 ? _p : "Senior");
+        (0, zepClient_1.sendCareJournalToZep)({
+            userId,
+            seniorName: seniorNameForZep,
+            caregiverName,
+            date: visitDate,
+            mood: wellness === null || wellness === void 0 ? void 0 : wellness.mood,
+            ateWell: wellness === null || wellness === void 0 ? void 0 : wellness.ateWell,
+            medicationsTaken: wellness === null || wellness === void 0 ? void 0 : wellness.tookMeds,
+            healthObservations: signals.length > 0 ? signals : undefined,
+            notes: notes,
+        }).catch((err) => console.error("sendCareJournalToZep error:", err));
     }
     catch (err) {
         console.error("onJournalCreated error:", err);

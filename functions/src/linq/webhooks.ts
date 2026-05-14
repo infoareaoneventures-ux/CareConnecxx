@@ -26,6 +26,11 @@ import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
 import { logCrisisDetected } from "../observability/auditLog";
 import { isBereavementTrigger, activateBereavementMode } from "../agents/bereavement";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import {
+  addUserMessageToZep,
+  addAssistantMessageToZep,
+  searchZepMemory,
+} from "../memory/zepClient";
 
 const db = admin.firestore();
 
@@ -821,9 +826,20 @@ async function handleInbound(event: unknown): Promise<void> {
     }
 
     if (intent === "MEMORY_QUERY") {
-      const { handleMemoryQuery } = await import("../memory/memoryFiles");
       const userId = session.userId ?? session.caregiverId ?? phone;
-      await handleMemoryQuery(userId, chatId, sendMessage);
+      const zepThreadIdForQuery = (session as any).zepThreadId as string | undefined;
+      const zepFacts = zepThreadIdForQuery
+        ? await searchZepMemory(userId, text).catch(() => "")
+        : "";
+
+      if (zepFacts) {
+        await sendMessage(chatId,
+          `Here's what I know about ${(session as any).seniorName ?? "your loved one"}:\n\n` + zepFacts
+        );
+      } else {
+        const { handleMemoryQuery } = await import("../memory/memoryFiles");
+        await handleMemoryQuery(userId, chatId, sendMessage);
+      }
       return;
     }
 
@@ -1120,7 +1136,18 @@ async function handleInbound(event: unknown): Promise<void> {
     }
 
     // ── Default: QA agent ─────────────────────────────────────────────────────
-    await runQaAgent({
+    const zepThreadId = (session as any).zepThreadId as string | undefined;
+
+    if (zepThreadId) {
+      addUserMessageToZep({
+        threadId: zepThreadId,
+        content:  text,
+        userName: (session as any).firstName ?? "Family",
+        sentAt:   new Date(),
+      }).catch(console.error);
+    }
+
+    const qaReply = await runQaAgent({
       text,
       phone,
       chatId,
@@ -1128,7 +1155,15 @@ async function handleInbound(event: unknown): Promise<void> {
       seniorId:    session.seniorId ?? session.userId ?? "",
       userType:    session.userType ?? "client",
       caregiverId: session.caregiverId,
+      zepThreadId,
     });
+
+    if (zepThreadId && qaReply) {
+      addAssistantMessageToZep({
+        threadId: zepThreadId,
+        content:  qaReply,
+      }).catch(console.error);
+    }
   } catch (err) {
     console.error("handleInbound error:", err);
     await stopTyping(chatId).catch(() => {});

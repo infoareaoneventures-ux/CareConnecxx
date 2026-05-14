@@ -5,7 +5,8 @@ import Stripe from "stripe";
 import { sendMessage, AgentSession } from "../linq/client";
 import { generateToken } from "./tokenService";
 import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../notifications";
-import { initializeMemoryFiles } from "../memory/memoryFiles";
+import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
+import { initializeZepForClient } from "../memory/zepClient";
 
 const db = admin.firestore();
 
@@ -637,6 +638,27 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         clientName:   d.firstName    as string | undefined,
         relationship: d.relationship as string | undefined,
       }).catch((err) => console.error("initializeMemoryFiles error:", err));
+
+      // Initialize empty memory files not covered by initializeMemoryFiles
+      Promise.all([
+        writeMemoryFile(session.userId ?? phone, "recent_episodes", `# Recent Episodes\n`),
+        writeMemoryFile(session.userId ?? phone, "procedural", `# Procedural Notes\n`),
+      ]).catch((err) => console.error("initializeExtraMemoryFiles error:", err));
+
+      // Initialize Zep — creates user, thread, sends onboarding data to knowledge graph
+      initializeZepForClient({
+        userId:      session.userId ?? phone,
+        phone,
+        firstName:   (d.firstName    ?? "") as string,
+        seniorName:  (d.seniorName   ?? "") as string,
+        seniorAge:   d.age ? Number(d.age) : undefined,
+        conditions:  Array.isArray(d.conditions) ? d.conditions as string[] : undefined,
+        careNeeds:   Array.isArray(d.careNeeds)  ? d.careNeeds  as string[] : undefined,
+        city:        d.city         as string | undefined,
+        relationship: d.relationship as string | undefined,
+        daysPerWeek: d.daysPerWeek  ? Number(d.daysPerWeek) : undefined,
+        timeOfDay:   d.timeOfDay    as string | undefined,
+      }).catch((err) => console.error("initializeZepForClient error:", err));
 
       // Import and start permissions conversation
       const { sendClientPermissionsFlow } = await import("./permissionsConversation");

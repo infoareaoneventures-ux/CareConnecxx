@@ -2,7 +2,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import * as admin from "firebase-admin";
 import { startTyping, sendMessage } from "../linq/client";
 import { getPreferences, isInDND } from "../memory/preferences";
-import { getRelevantFacts, extractAndStoreFacts } from "../memory/learnedFacts";
+import { getRelevantFacts } from "../memory/learnedFacts";
+import { getZepContext } from "../memory/zepClient";
+import { getMemoryContext } from "../memory/memoryFiles";
 import { MCP_TOOLS, handleToolCall } from "../mcp/server";
 
 const db = admin.firestore();
@@ -109,7 +111,9 @@ function buildClientSystemPrompt(
   journal: any[],
   nextAppt: any | null,
   permissions: any | null,
-  learnedFactsText?: string
+  learnedFactsText?: string,
+  zepContext?: string,
+  memoryContext?: string
 ): string {
   const seniorName = senior?.name ?? "your loved one";
   const needs: string[] = senior?.needs ?? [];
@@ -136,6 +140,12 @@ function buildClientSystemPrompt(
     ? "Bookings require family confirmation."
     : "";
 
+  const zepSection = zepContext
+    ? `\n${zepContext}\n`
+    : memoryContext
+    ? `\nWhat Cara knows about this family:\n${memoryContext}\n`
+    : "";
+
   const factsSection = learnedFactsText
     ? `\nWhat I know about this family:\n${learnedFactsText}\n`
     : "";
@@ -145,6 +155,7 @@ function buildClientSystemPrompt(
     `You act; you don't describe what you could do. When you can do something, do it and report back.`,
     ``,
     `Care needs: ${needs.join(", ") || "none recorded"}.`,
+    zepSection,
     factsSection,
     `Recent care journal:`,
     journalSummary,
@@ -248,15 +259,16 @@ async function sendSplit(chatId: string, text: string): Promise<void> {
 // ── Main QA function ──────────────────────────────────────────────────────────
 
 export async function runQaAgent(params: {
-  text:        string;
-  phone:       string;
-  chatId:      string;
-  userId:      string;
-  seniorId:    string;
-  userType?:   "client" | "caregiver";
-  caregiverId?: string;
+  text:          string;
+  phone:         string;
+  chatId:        string;
+  userId:        string;
+  seniorId:      string;
+  userType?:     "client" | "caregiver";
+  caregiverId?:  string;
+  zepThreadId?:  string;
 }): Promise<string> {
-  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId } = params;
+  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId } = params;
 
   // DND check — skip if user has quiet hours enabled
   const prefs = await getPreferences(userId).catch(() => null);
@@ -297,13 +309,21 @@ export async function runQaAgent(params: {
       ]);
     }
 
-    // Load learned facts for richer context (non-blocking on failure)
-    const facts = await getRelevantFacts(userId).catch(() => []);
+    // Load Zep context, memory files, and learned facts in parallel (non-blocking on failure)
+    const [zepContext, memoryContext, facts] = await Promise.all([
+      zepThreadId ? getZepContext(zepThreadId).catch(() => "") : Promise.resolve(""),
+      getMemoryContext(userId).catch(() => ""),
+      getRelevantFacts(userId).catch(() => []),
+    ]);
     const factsText = facts.length
       ? facts.map((f) => `- ${f.fact} (${f.category})`).join("\n")
       : undefined;
 
-    systemPrompt = buildClientSystemPrompt(senior, journal, nextAppt, permissions, factsText);
+    systemPrompt = buildClientSystemPrompt(
+      senior, journal, nextAppt, permissions, factsText,
+      zepContext || undefined,
+      memoryContext || undefined
+    );
   }
 
   try {
@@ -368,9 +388,6 @@ export async function runQaAgent(params: {
 
     await saveConversationTurn(phone, text, reply);
     await sendSplit(chatId, reply);
-
-    // Extract and store facts from the conversation in the background
-    extractAndStoreFacts(userId, text).catch(() => {});
 
     return reply;
   } catch (err) {

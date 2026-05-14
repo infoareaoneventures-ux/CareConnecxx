@@ -46,6 +46,8 @@ const stripe_1 = __importDefault(require("stripe"));
 const client_1 = require("../linq/client");
 const tokenService_1 = require("./tokenService");
 const notifications_1 = require("../notifications");
+const memoryFiles_1 = require("../memory/memoryFiles");
+const zepClient_1 = require("../memory/zepClient");
 const db = admin.firestore();
 let _claude = null;
 function getClaude() {
@@ -169,6 +171,7 @@ async function handleOnboardingStep(phone, chatId, text, session) {
         case "client_ask_needs": return handleClientAskNeeds(phone, chatId, text, session);
         case "client_ask_location": return handleClientAskLocation(phone, chatId, text, session);
         case "client_ask_schedule": return handleClientAskSchedule(phone, chatId, text, session);
+        case "client_ask_plan": return handleClientPlanReply(phone, chatId, text, session);
         case "client_send_payment": return handleClientSendPayment(phone, chatId, session);
         case "client_awaiting_payment":
             await (0, client_1.sendMessage)(chatId, "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳");
@@ -309,6 +312,38 @@ async function handleClientAskSchedule(phone, chatId, text, session) {
     }
     catch ( /* keep defaults */_d) { /* keep defaults */ }
     await mergeOnboardingData(phone, { daysPerWeek, timeOfDay, hoursPerDay });
+    await updateSession(phone, { onboardingStep: "client_ask_plan" });
+    await handleClientAskPlan(phone, chatId);
+}
+async function handleClientAskPlan(phone, chatId) {
+    await (0, client_1.sendMessage)(chatId, `Almost done! Choose your plan:\n\n` +
+        `1️⃣ Basic — $49/mo\n` +
+        `   · AI care assistant (Cara)\n` +
+        `   · Weekly care summaries\n\n` +
+        `2️⃣ Family — $99/mo\n` +
+        `   · Everything in Basic\n` +
+        `   · Group family updates\n` +
+        `   · Priority matching\n\n` +
+        `3️⃣ Premium — $199/mo\n` +
+        `   · Everything in Family\n` +
+        `   · 24/7 urgent response\n` +
+        `   · Dedicated care coordinator\n\n` +
+        `Reply 1, 2, or 3.`);
+}
+async function handleClientPlanReply(phone, chatId, text, session) {
+    var _a, _b, _c;
+    const norm = text.trim();
+    const plans = {
+        "1": { name: "Basic", priceId: (_a = process.env.STRIPE_PLAN_BASIC_PRICE_ID) !== null && _a !== void 0 ? _a : "" },
+        "2": { name: "Family", priceId: (_b = process.env.STRIPE_PLAN_FAMILY_PRICE_ID) !== null && _b !== void 0 ? _b : "" },
+        "3": { name: "Premium", priceId: (_c = process.env.STRIPE_PLAN_PREMIUM_PRICE_ID) !== null && _c !== void 0 ? _c : "" },
+    };
+    const plan = plans[norm];
+    if (!plan) {
+        await (0, client_1.sendMessage)(chatId, "Just reply 1, 2, or 3 to choose your plan! 😊");
+        return;
+    }
+    await mergeOnboardingData(phone, { selectedPlan: plan.name, selectedPlanPriceId: plan.priceId });
     await updateSession(phone, { onboardingStep: "client_send_payment" });
     await handleClientSendPayment(phone, chatId, session);
 }
@@ -503,7 +538,7 @@ async function handleCaregiverSendStripeConnect(phone, chatId, session) {
 // ── Webhook-triggered step advancement ───────────────────────────────────────
 // Called from stripe.ts and checkr.ts when webhooks fire
 async function advanceOnboardingStep(phone, task, taskData) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
     const snap = await db.collection("agent_sessions").doc(phone).get();
     if (!snap.exists)
         return;
@@ -541,6 +576,35 @@ async function advanceOnboardingStep(phone, task, taskData) {
             }).catch((err) => console.error("notifyAdminNewClientSignup error:", err));
             // Silently create Firebase Auth account so web dashboard login works later
             await createFirebaseAuthAccount(phone, ((_f = d.firstName) !== null && _f !== void 0 ? _f : ""));
+            // Initialize memory files with onboarding data
+            (0, memoryFiles_1.initializeMemoryFiles)((_g = session.userId) !== null && _g !== void 0 ? _g : phone, {
+                seniorName: d.seniorName,
+                seniorAge: d.age,
+                conditions: d.conditions,
+                careNeeds: d.careNeeds,
+                city: d.city,
+                clientName: d.firstName,
+                relationship: d.relationship,
+            }).catch((err) => console.error("initializeMemoryFiles error:", err));
+            // Initialize empty memory files not covered by initializeMemoryFiles
+            Promise.all([
+                (0, memoryFiles_1.writeMemoryFile)((_h = session.userId) !== null && _h !== void 0 ? _h : phone, "recent_episodes", `# Recent Episodes\n`),
+                (0, memoryFiles_1.writeMemoryFile)((_j = session.userId) !== null && _j !== void 0 ? _j : phone, "procedural", `# Procedural Notes\n`),
+            ]).catch((err) => console.error("initializeExtraMemoryFiles error:", err));
+            // Initialize Zep — creates user, thread, sends onboarding data to knowledge graph
+            (0, zepClient_1.initializeZepForClient)({
+                userId: (_k = session.userId) !== null && _k !== void 0 ? _k : phone,
+                phone,
+                firstName: ((_l = d.firstName) !== null && _l !== void 0 ? _l : ""),
+                seniorName: ((_m = d.seniorName) !== null && _m !== void 0 ? _m : ""),
+                seniorAge: d.age ? Number(d.age) : undefined,
+                conditions: Array.isArray(d.conditions) ? d.conditions : undefined,
+                careNeeds: Array.isArray(d.careNeeds) ? d.careNeeds : undefined,
+                city: d.city,
+                relationship: d.relationship,
+                daysPerWeek: d.daysPerWeek ? Number(d.daysPerWeek) : undefined,
+                timeOfDay: d.timeOfDay,
+            }).catch((err) => console.error("initializeZepForClient error:", err));
             // Import and start permissions conversation
             const { sendClientPermissionsFlow } = await Promise.resolve().then(() => __importStar(require("./permissionsConversation")));
             await sendClientPermissionsFlow(phone, chatId, session);
@@ -567,7 +631,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
         case "identity": {
             // Stripe Identity verified — currently only used if a future identity step is added
             // For now, just log and advance if stuck in an awaiting_identity step
-            const step = (_g = session.onboardingStep) !== null && _g !== void 0 ? _g : "";
+            const step = (_o = session.onboardingStep) !== null && _o !== void 0 ? _o : "";
             if (step === "caregiver_awaiting_identity") {
                 await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
                 await handleCaregiverSendBgcheck(phone, chatId, session);
@@ -576,7 +640,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
         }
         case "stripe_connect": {
             // Caregiver Stripe Connect complete → finalize caregiver doc
-            const d = (_h = session.onboardingData) !== null && _h !== void 0 ? _h : {};
+            const d = (_p = session.onboardingData) !== null && _p !== void 0 ? _p : {};
             const profileData = {
                 phone,
                 name: d.name,
@@ -605,13 +669,13 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 onboardingStep: "caregiver_ask_permissions",
             });
             // Silently create Firebase Auth account so web dashboard login works later
-            await createFirebaseAuthAccount(phone, ((_j = d.name) !== null && _j !== void 0 ? _j : ""));
+            await createFirebaseAuthAccount(phone, ((_q = d.name) !== null && _q !== void 0 ? _q : ""));
             // Notify admin
             (0, notifications_1.notifyAdminNewCaregiverSignup)({
                 caregiverId,
-                name: ((_k = d.name) !== null && _k !== void 0 ? _k : ""),
+                name: ((_r = d.name) !== null && _r !== void 0 ? _r : ""),
                 phone,
-                city: ((_l = d.city) !== null && _l !== void 0 ? _l : ""),
+                city: ((_s = d.city) !== null && _s !== void 0 ? _s : ""),
             }).catch((err) => console.error("notifyAdminNewCaregiverSignup error:", err));
             await db.collection("admin_alerts").add({
                 type: "new_caregiver_signup",

@@ -42,6 +42,8 @@ const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
 const preferences_1 = require("../memory/preferences");
 const learnedFacts_1 = require("../memory/learnedFacts");
+const zepClient_1 = require("../memory/zepClient");
+const memoryFiles_1 = require("../memory/memoryFiles");
 const server_1 = require("../mcp/server");
 const db = admin.firestore();
 let _client = null;
@@ -125,7 +127,7 @@ async function saveConversationTurn(phone, userText, assistantReply) {
     await batch.commit().catch((err) => console.error("saveConversationTurn error:", err));
 }
 // ── System prompt builders ────────────────────────────────────────────────────
-function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learnedFactsText) {
+function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learnedFactsText, zepContext, memoryContext) {
     var _a, _b, _c;
     const seniorName = (_a = senior === null || senior === void 0 ? void 0 : senior.name) !== null && _a !== void 0 ? _a : "your loved one";
     const needs = (_b = senior === null || senior === void 0 ? void 0 : senior.needs) !== null && _b !== void 0 ? _b : [];
@@ -149,6 +151,11 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         : (permissions === null || permissions === void 0 ? void 0 : permissions.canBookWithConfirmation)
             ? "Bookings require family confirmation."
             : "";
+    const zepSection = zepContext
+        ? `\n${zepContext}\n`
+        : memoryContext
+            ? `\nWhat Cara knows about this family:\n${memoryContext}\n`
+            : "";
     const factsSection = learnedFactsText
         ? `\nWhat I know about this family:\n${learnedFactsText}\n`
         : "";
@@ -157,6 +164,7 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         `You act; you don't describe what you could do. When you can do something, do it and report back.`,
         ``,
         `Care needs: ${needs.join(", ") || "none recorded"}.`,
+        zepSection,
         factsSection,
         `Recent care journal:`,
         journalSummary,
@@ -167,10 +175,17 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         `Rules:`,
         `- Keep answers to 1–3 sentences maximum (you are in an iMessage thread).`,
         `- Never diagnose or give medical advice.`,
-        `- For any emergency: "Please call 911 immediately."`,
+        `- For any emergency: "Please call 911 immediately." Do not follow up with conversation.`,
         `- Be warm and direct — like a knowledgeable friend who gets things done, not a customer service bot.`,
         `- Mirror the emotional tone of the person you're talking with. If they're worried, acknowledge it.`,
         `- Sign off with 💙 occasionally. Never use jargon or bullet points in replies.`,
+        ``,
+        `Eldercare emotional intelligence:`,
+        `- Worry first: when they express concern, acknowledge the feeling first, then share data, then offer ONE clear next step.`,
+        `- Grief: reflect and sit with them. Never offer platitudes like "they're in a better place" or "at least...".`,
+        `- Repetition: if they ask something you've answered before, answer fully every time. Never say "as I mentioned" or "like I said".`,
+        `- Health observations: attribute to the caregiver's notes ("Maria noted..." not "${seniorName} may be experiencing...").`,
+        `- Never rush to action when emotions are high. Acknowledge before solving.`,
     ].join("\n");
 }
 function buildCaregiverSystemPrompt(caregiver, todayAppt) {
@@ -238,7 +253,7 @@ async function sendSplit(chatId, text) {
 }
 // ── Main QA function ──────────────────────────────────────────────────────────
 async function runQaAgent(params) {
-    const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId } = params;
+    const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId } = params;
     // DND check — skip if user has quiet hours enabled
     const prefs = await (0, preferences_1.getPreferences)(userId).catch(() => null);
     if (prefs && (0, preferences_1.isInDND)(prefs)) {
@@ -275,15 +290,28 @@ async function runQaAgent(params) {
                 getConversationHistory(phone),
             ]);
         }
-        // Load learned facts for richer context (non-blocking on failure)
-        const facts = await (0, learnedFacts_1.getRelevantFacts)(userId).catch(() => []);
+        // Load Zep context, memory files, and learned facts in parallel (non-blocking on failure)
+        const [zepContext, memoryContext, facts] = await Promise.all([
+            zepThreadId ? (0, zepClient_1.getZepContext)(zepThreadId).catch(() => "") : Promise.resolve(""),
+            (0, memoryFiles_1.getMemoryContext)(userId).catch(() => ""),
+            (0, learnedFacts_1.getRelevantFacts)(userId).catch(() => []),
+        ]);
         const factsText = facts.length
             ? facts.map((f) => `- ${f.fact} (${f.category})`).join("\n")
             : undefined;
-        systemPrompt = buildClientSystemPrompt(senior, journal, nextAppt, permissions, factsText);
+        systemPrompt = buildClientSystemPrompt(senior, journal, nextAppt, permissions, factsText, zepContext || undefined, memoryContext || undefined);
     }
     try {
         await (0, client_1.startTyping)(chatId).catch(() => { });
+        // Re-inject persona reminder every 10 turns to prevent voice drift
+        const turnCount = Math.floor(history.length / 2);
+        if (turnCount > 0 && turnCount % 10 === 0) {
+            systemPrompt +=
+                "\n\n<system_reminder>You are Cara — warm, direct, specific. " +
+                    "Text format only: no bullet points, no headers, no em-dashes. " +
+                    "Keep replies under 300 characters when possible. " +
+                    "Lead with the human before the data.</system_reminder>";
+        }
         // Tool-use loop: Claude can call MCP tools up to 3 times before producing a final reply
         const messages = [
             ...history,
@@ -331,8 +359,6 @@ async function runQaAgent(params) {
             reply = "I'll look into that and get back to you shortly. 💙";
         await saveConversationTurn(phone, text, reply);
         await sendSplit(chatId, reply);
-        // Extract and store facts from the conversation in the background
-        (0, learnedFacts_1.extractAndStoreFacts)(userId, text).catch(() => { });
         return reply;
     }
     catch (err) {

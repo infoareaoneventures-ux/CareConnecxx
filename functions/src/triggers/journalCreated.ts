@@ -5,6 +5,7 @@ import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { detectHealthSignals } from "../agents/healthSignalDetector";
 import { sendVoiceSummary } from "../agents/voiceSummary";
 import { getPermissions } from "../agents/permissionsConversation";
+import { sendCareJournalToZep } from "../memory/zepClient";
 
 const db = admin.firestore();
 
@@ -162,6 +163,21 @@ export const onJournalCreated = functions.firestore
         severity,
         sentAt:   nowIso,
       });
+
+      // Send care journal to Zep so health facts are extracted and dated
+      const userId = session.userId ?? seniorId;
+      const seniorNameForZep = (clientDoc.data()?.seniorName ?? clientDoc.data()?.displayName ?? "Senior") as string;
+      sendCareJournalToZep({
+        userId,
+        seniorName:         seniorNameForZep,
+        caregiverName,
+        date:               visitDate,
+        mood:               wellness?.mood as string | undefined,
+        ateWell:            wellness?.ateWell as boolean | undefined,
+        medicationsTaken:   wellness?.tookMeds as boolean | undefined,
+        healthObservations: signals.length > 0 ? signals : undefined,
+        notes:              notes as string | undefined,
+      }).catch((err) => console.error("sendCareJournalToZep error:", err));
     } catch (err) {
       console.error("onJournalCreated error:", err);
     }

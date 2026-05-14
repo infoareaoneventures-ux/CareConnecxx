@@ -5,6 +5,7 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 
+
 // STRIPE FUNCTIONS - Payment processing for memberships
 export * from './stripe';
 

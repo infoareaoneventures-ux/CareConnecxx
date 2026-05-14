@@ -230,8 +230,9 @@ export const jobApplicationService = {
       clientId,
       clientName,
       ...caregiverData,
-      coverLetter,
-      proposedRate,
+      rating: caregiverData.rating ?? null,
+      coverLetter: coverLetter ?? '',
+      proposedRate: proposedRate ?? null,
       status: 'pending',
       appliedAt: serverTimestamp()
     });

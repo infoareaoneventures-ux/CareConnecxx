@@ -156,8 +156,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                     caregiverName: profile.name,
                     caregiverPhoto: profile.photo || profile.imageUrl || '',
                     experience: profile.experience,
-                    rating: profile.rating,
-                    skills: profile.skills || profile.certifications
+                    rating: profile.rating ?? null,
+                    skills: profile.skills || profile.certifications || []
                 },
                 coverLetter,
                 proposedRate || undefined

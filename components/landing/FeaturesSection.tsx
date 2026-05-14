@@ -31,18 +31,18 @@ export const FeaturesSection: React.FC<FeaturesSectionProps> = ({ onNavigate }) 
                     <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-slate-200 mb-8">
                         {/* Step 1 */}
                         <div className="flex items-center gap-5 p-5 md:p-6 border-b border-slate-100">
-                            <Edit className="w-[22px] h-[22px] text-slate-800 flex-shrink-0" strokeWidth={2.5} />
-                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Create a job post to share what you need</p>
+                            <MessageSquare className="w-[22px] h-[22px] text-slate-800 flex-shrink-0" strokeWidth={2.5} />
+                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Text Cara what you need (schedule, health conditions)</p>
                         </div>
                         {/* Step 2 */}
                         <div className="flex items-center gap-5 p-5 md:p-6 border-b border-slate-100">
                             <Star className="w-[22px] h-[22px] text-slate-800 flex-shrink-0" strokeWidth={2.5} />
-                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Caregivers apply to your job with their qualifications</p>
+                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Cara sources, filters, and interviews top local caregivers for you</p>
                         </div>
                         {/* Step 3 */}
                         <div className="flex items-center gap-5 p-5 md:p-6">
-                            <MessageSquare className="w-[22px] h-[22px] text-slate-800 flex-shrink-0" strokeWidth={2.5} />
-                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Message your favorites to find your match</p>
+                            <Edit className="w-[22px] h-[22px] text-slate-800 flex-shrink-0" strokeWidth={2.5} />
+                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Cara schedules the visits and sends you updates via text</p>
                         </div>
                     </div>
 

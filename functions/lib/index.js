@@ -36,8 +36,9 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.runTriggerEngine = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.sendTestSMS = void 0;
+exports.zepSetup = exports.runTriggerEngine = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.sendTestSMS = void 0;
 const admin = __importStar(require("firebase-admin"));
+const functions = __importStar(require("firebase-functions"));
 // Initialize Admin globally if not already done
 if (!admin.apps.length) {
     admin.initializeApp();
@@ -112,4 +113,61 @@ Object.defineProperty(exports, "consolidateMemoryNightly", { enumerable: true, g
 // Proactive trigger engine (runs every 5 min)
 var triggerEngine_1 = require("./triggers/triggerEngine");
 Object.defineProperty(exports, "runTriggerEngine", { enumerable: true, get: function () { return triggerEngine_1.runTriggerEngine; } });
+// ── One-time Zep setup: create context template + backfill existing users ─────
+// Call once with header x-setup-key: cara-zep-setup-2026, then leave in place
+// (subsequent calls are safe — already-initialized users are skipped)
+exports.zepSetup = functions.https.onRequest(async (req, res) => {
+    var _a, _b, _c;
+    if (req.headers["x-setup-key"] !== "cara-zep-setup-2026") {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+    }
+    const { createCaraContextTemplate, initializeZepOnFirstContact, pushOnboardingDataToZep, } = await Promise.resolve().then(() => __importStar(require("./memory/zepClient")));
+    const db = admin.firestore();
+    const results = {
+        template: false, backfilled: 0, skipped: 0, errors: [],
+    };
+    // 1. Create eldercare context template
+    try {
+        await createCaraContextTemplate();
+        results.template = true;
+    }
+    catch (err) {
+        results.errors.push(`template: ${String(err)}`);
+    }
+    // 2. Backfill every session that lacks a zepThreadId
+    const sessions = await db.collection("agent_sessions").get();
+    for (const doc of sessions.docs) {
+        const session = doc.data();
+        const phone = doc.id;
+        if (session.zepThreadId || session.optedOut) {
+            results.skipped++;
+            continue;
+        }
+        try {
+            await initializeZepOnFirstContact(phone);
+            results.backfilled++;
+            // Push structured data for fully-onboarded clients
+            const d = (_a = session.onboardingData) !== null && _a !== void 0 ? _a : {};
+            if (session.userType === "client" && d.seniorName) {
+                await pushOnboardingDataToZep({
+                    phone,
+                    firstName: ((_b = d.firstName) !== null && _b !== void 0 ? _b : ""),
+                    seniorName: ((_c = d.seniorName) !== null && _c !== void 0 ? _c : ""),
+                    seniorAge: d.age ? Number(d.age) : undefined,
+                    conditions: Array.isArray(d.conditions) ? d.conditions : undefined,
+                    careNeeds: Array.isArray(d.careNeeds) ? d.careNeeds : undefined,
+                    city: d.city,
+                    relationship: d.relationship,
+                    daysPerWeek: d.daysPerWeek ? Number(d.daysPerWeek) : undefined,
+                    timeOfDay: d.timeOfDay,
+                });
+            }
+        }
+        catch (err) {
+            results.errors.push(`${phone}: ${String(err)}`);
+        }
+    }
+    res.json(results);
+});
 //# sourceMappingURL=index.js.map

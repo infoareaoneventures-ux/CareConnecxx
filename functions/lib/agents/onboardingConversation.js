@@ -538,7 +538,7 @@ async function handleCaregiverSendStripeConnect(phone, chatId, session) {
 // ── Webhook-triggered step advancement ───────────────────────────────────────
 // Called from stripe.ts and checkr.ts when webhooks fire
 async function advanceOnboardingStep(phone, task, taskData) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
     const snap = await db.collection("agent_sessions").doc(phone).get();
     if (!snap.exists)
         return;
@@ -685,6 +685,22 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 createdAt: new Date().toISOString(),
                 resolved: false,
             });
+            // Push caregiver profile to Zep knowledge graph
+            (0, zepClient_1.addBusinessDataToZep)({
+                userId: (0, zepClient_1.getZepUserId)(phone),
+                data: {
+                    user_type: "caregiver",
+                    user_name: ((_s = d.name) !== null && _s !== void 0 ? _s : ""),
+                    caregiver_city: d.city,
+                    caregiver_years_experience: d.yearsExperience,
+                    caregiver_specialties: Array.isArray(d.specialties) ? d.specialties : [],
+                    caregiver_availability: d.availability,
+                    caregiver_hourly_rate: d.hourlyRate,
+                    caregiver_certifications: Array.isArray(d.certifications) ? d.certifications : [],
+                    data_source: "cara_caregiver_onboarding",
+                    timestamp: new Date().toISOString(),
+                },
+            }).catch((err) => console.error("addBusinessDataToZep caregiver error:", err));
             const { sendCaregiverPermissionsFlow } = await Promise.resolve().then(() => __importStar(require("./permissionsConversation")));
             await sendCaregiverPermissionsFlow(phone, chatId, session, d.name);
             break;

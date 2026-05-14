@@ -188,19 +188,20 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         `- Never rush to action when emotions are high. Acknowledge before solving.`,
     ].join("\n");
 }
-function buildCaregiverSystemPrompt(caregiver, todayAppt) {
+function buildCaregiverSystemPrompt(caregiver, todayAppt, zepContext) {
     var _a, _b, _c, _d, _e, _f;
     const name = (_a = caregiver === null || caregiver === void 0 ? void 0 : caregiver.name) !== null && _a !== void 0 ? _a : "there";
     const rate = (_b = caregiver === null || caregiver === void 0 ? void 0 : caregiver.hourlyRate) !== null && _b !== void 0 ? _b : 22;
     const apptLine = todayAppt
         ? `Today's visit: ${todayAppt.date} at ${(_c = todayAppt.startTime) !== null && _c !== void 0 ? _c : "TBD"} for client ${(_d = todayAppt.clientId) !== null && _d !== void 0 ? _d : ""}. Address: ${(_f = (_e = todayAppt.address) !== null && _e !== void 0 ? _e : todayAppt.location) !== null && _f !== void 0 ? _f : "check your schedule"}.`
         : "No visits scheduled for today.";
+    const zepSection = zepContext ? `\n${zepContext}\n` : "";
     return [
         `You are Cara — an AI care assistant texting with ${name}, one of our caregivers.`,
         `You act; you don't describe what you could do. When you can do something, do it and report back.`,
         ``,
         apptLine,
-        ``,
+        zepSection,
         `The caregiver earns $${rate}/hr. Payments are processed automatically after each visit.`,
         ``,
         `Rules:`,
@@ -263,12 +264,13 @@ async function runQaAgent(params) {
     let systemPrompt;
     let history;
     if (userType === "caregiver" && caregiverId) {
-        const [caregiver, todayAppt, hist] = await Promise.all([
+        const [caregiver, todayAppt, hist, cgZepContext] = await Promise.all([
             getCaregiverProfile(caregiverId),
             getCaregiverTodayAppointment(caregiverId),
             getConversationHistory(phone),
+            zepThreadId ? (0, zepClient_1.getZepContext)(zepThreadId).catch(() => "") : Promise.resolve(""),
         ]);
-        systemPrompt = buildCaregiverSystemPrompt(caregiver, todayAppt);
+        systemPrompt = buildCaregiverSystemPrompt(caregiver, todayAppt, cgZepContext || undefined);
         history = hist;
     }
     else {

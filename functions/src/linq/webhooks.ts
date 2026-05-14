@@ -353,6 +353,9 @@ async function handleInbound(event: unknown): Promise<void> {
         createdAt:      new Date().toISOString(),
       });
 
+      // Start Zep memory for this secondary member too
+      initializeZepOnFirstContact(phone).catch(console.error);
+
       await sendMessage(chatId,
         `Hi! 💙 I'm Cara, the care assistant for ${(primarySession as any).onboardingData?.seniorName ?? "your family's loved one"}. ` +
         `I've added you to the care group — you'll receive updates and can ask me anything!`

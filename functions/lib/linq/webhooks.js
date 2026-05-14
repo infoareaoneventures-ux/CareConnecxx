@@ -322,6 +322,8 @@ async function handleInbound(event) {
                 isSecondaryMember: true,
                 createdAt: new Date().toISOString(),
             });
+            // Start Zep memory for this secondary member too
+            (0, zepClient_1.initializeZepOnFirstContact)(phone).catch(console.error);
             await (0, client_1.sendMessage)(chatId, `Hi! 💙 I'm Cara, the care assistant for ${(_k = (_j = primarySession.onboardingData) === null || _j === void 0 ? void 0 : _j.seniorName) !== null && _k !== void 0 ? _k : "your family's loved one"}. ` +
                 `I've added you to the care group — you'll receive updates and can ask me anything!`);
             return;

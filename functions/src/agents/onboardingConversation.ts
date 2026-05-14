@@ -6,7 +6,7 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { generateToken } from "./tokenService";
 import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../notifications";
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
-import { pushOnboardingDataToZep } from "../memory/zepClient";
+import { pushOnboardingDataToZep, addBusinessDataToZep, getZepUserId } from "../memory/zepClient";
 
 const db = admin.firestore();
 
@@ -754,6 +754,23 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         createdAt:   new Date().toISOString(),
         resolved:    false,
       });
+
+      // Push caregiver profile to Zep knowledge graph
+      addBusinessDataToZep({
+        userId: getZepUserId(phone),
+        data: {
+          user_type:                    "caregiver",
+          user_name:                    (d.name ?? "") as string,
+          caregiver_city:               d.city,
+          caregiver_years_experience:   d.yearsExperience,
+          caregiver_specialties:        Array.isArray(d.specialties) ? d.specialties : [],
+          caregiver_availability:       d.availability,
+          caregiver_hourly_rate:        d.hourlyRate,
+          caregiver_certifications:     Array.isArray(d.certifications) ? d.certifications : [],
+          data_source:                  "cara_caregiver_onboarding",
+          timestamp:                    new Date().toISOString(),
+        },
+      }).catch((err) => console.error("addBusinessDataToZep caregiver error:", err));
 
       const { sendCaregiverPermissionsFlow } = await import("./permissionsConversation");
       await sendCaregiverPermissionsFlow(phone, chatId, session, d.name as string);

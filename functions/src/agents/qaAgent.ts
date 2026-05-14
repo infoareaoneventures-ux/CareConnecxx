@@ -182,7 +182,8 @@ function buildClientSystemPrompt(
 
 function buildCaregiverSystemPrompt(
   caregiver: any,
-  todayAppt: any | null
+  todayAppt: any | null,
+  zepContext?: string
 ): string {
   const name = caregiver?.name ?? "there";
   const rate = caregiver?.hourlyRate ?? 22;
@@ -191,12 +192,14 @@ function buildCaregiverSystemPrompt(
     ? `Today's visit: ${todayAppt.date} at ${todayAppt.startTime ?? "TBD"} for client ${todayAppt.clientId ?? ""}. Address: ${todayAppt.address ?? todayAppt.location ?? "check your schedule"}.`
     : "No visits scheduled for today.";
 
+  const zepSection = zepContext ? `\n${zepContext}\n` : "";
+
   return [
     `You are Cara — an AI care assistant texting with ${name}, one of our caregivers.`,
     `You act; you don't describe what you could do. When you can do something, do it and report back.`,
     ``,
     apptLine,
-    ``,
+    zepSection,
     `The caregiver earns $${rate}/hr. Payments are processed automatically after each visit.`,
     ``,
     `Rules:`,
@@ -281,12 +284,13 @@ export async function runQaAgent(params: {
   let history: Array<{ role: "user" | "assistant"; content: string }>;
 
   if (userType === "caregiver" && caregiverId) {
-    const [caregiver, todayAppt, hist] = await Promise.all([
+    const [caregiver, todayAppt, hist, cgZepContext] = await Promise.all([
       getCaregiverProfile(caregiverId),
       getCaregiverTodayAppointment(caregiverId),
       getConversationHistory(phone),
+      zepThreadId ? getZepContext(zepThreadId).catch(() => "") : Promise.resolve(""),
     ]);
-    systemPrompt = buildCaregiverSystemPrompt(caregiver, todayAppt);
+    systemPrompt = buildCaregiverSystemPrompt(caregiver, todayAppt, cgZepContext || undefined);
     history = hist;
   } else {
     const prefetched = await getPrefetchedContext(phone);

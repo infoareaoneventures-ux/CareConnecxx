@@ -6,7 +6,7 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { generateToken } from "./tokenService";
 import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../notifications";
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
-import { initializeZepForClient } from "../memory/zepClient";
+import { pushOnboardingDataToZep } from "../memory/zepClient";
 
 const db = admin.firestore();
 
@@ -645,9 +645,9 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         writeMemoryFile(session.userId ?? phone, "procedural", `# Procedural Notes\n`),
       ]).catch((err) => console.error("initializeExtraMemoryFiles error:", err));
 
-      // Initialize Zep — creates user, thread, sends onboarding data to knowledge graph
-      initializeZepForClient({
-        userId:      session.userId ?? phone,
+      // Push structured onboarding data to Zep — thread already exists from first contact,
+      // this enriches the knowledge graph with senior profile and care details
+      pushOnboardingDataToZep({
         phone,
         firstName:   (d.firstName    ?? "") as string,
         seniorName:  (d.seniorName   ?? "") as string,
@@ -658,7 +658,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         relationship: d.relationship as string | undefined,
         daysPerWeek: d.daysPerWeek  ? Number(d.daysPerWeek) : undefined,
         timeOfDay:   d.timeOfDay    as string | undefined,
-      }).catch((err) => console.error("initializeZepForClient error:", err));
+      }).catch((err) => console.error("pushOnboardingDataToZep error:", err));
 
       // Import and start permissions conversation
       const { sendClientPermissionsFlow } = await import("./permissionsConversation");

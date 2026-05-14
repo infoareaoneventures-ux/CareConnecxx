@@ -165,10 +165,9 @@ export const onJournalCreated = functions.firestore
       });
 
       // Send care journal to Zep so health facts are extracted and dated
-      const userId = session.userId ?? seniorId;
       const seniorNameForZep = (clientDoc.data()?.seniorName ?? clientDoc.data()?.displayName ?? "Senior") as string;
       sendCareJournalToZep({
-        userId,
+        phone,
         seniorName:         seniorNameForZep,
         caregiverName,
         date:               visitDate,

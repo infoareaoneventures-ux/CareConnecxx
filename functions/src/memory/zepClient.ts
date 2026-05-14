@@ -1,6 +1,10 @@
 /**
  * Cara – Zep Memory Integration
  * Docs: https://help.getzep.com/quick-start-guide
+ *
+ * Zep userId = phone digits only (e.g. "14155551234").
+ * This is stable, requires no Firebase Auth UID, and is consistent from
+ * first contact through the entire lifecycle.
  */
 
 import { ZepClient } from "@getzep/zep-cloud";
@@ -23,6 +27,13 @@ function getZep(): ZepClient {
   return _zep;
 }
 
+// ── Stable Zep userId derived from phone ──────────────────────────────────────
+// Exported so all callers use the same derivation consistently
+
+export function getZepUserId(phone: string): string {
+  return phone.replace(/\D/g, "");
+}
+
 // ── Create context template (run ONCE during setup) ────────────────────────────
 
 export async function createCaraContextTemplate(): Promise<void> {
@@ -42,57 +53,37 @@ export async function createCaraContextTemplate(): Promise<void> {
   console.log("Cara context template created in Zep.");
 }
 
-// ── Create Zep user (once per family, at onboarding completion) ────────────────
+// ── Initialize Zep on first contact ───────────────────────────────────────────
+// Call the moment a new user sends their first text — before we know name/role.
+// Uses phone digits as userId so memory starts immediately.
 
-export async function createZepUser(params: {
-  userId: string;
-  firstName: string;
-  lastName?: string;
-  phone: string;
-}): Promise<void> {
+export async function initializeZepOnFirstContact(phone: string): Promise<void> {
+  const userId = getZepUserId(phone);
+
   try {
     await getZep().user.add({
-      userId: params.userId,
-      firstName: params.firstName,
-      lastName: params.lastName ?? "",
-      email: `${params.phone.replace(/\D/g, "")}@cara-internal.local`,
+      userId,
+      email: `${userId}@cara-internal.local`,
     });
   } catch (err: any) {
     if (!err?.message?.includes("already exists")) {
-      console.error("createZepUser error:", err);
+      console.error("initializeZepOnFirstContact user.add error:", err);
     }
   }
-}
 
-// ── Create Zep thread (once per family, stored in agent_sessions) ──────────────
-// thread_id must be a UUID – stored in agent_sessions.zepThreadId
-
-export async function createZepThread(params: {
-  userId: string;
-  phone: string;
-}): Promise<string> {
   const threadId = uuidv4().replace(/-/g, "");
-
   try {
-    await getZep().thread.create({
-      threadId,
-      userId: params.userId,
-    });
-
-    await db.collection("agent_sessions").doc(params.phone).update({
-      zepThreadId: threadId,
-    });
+    await getZep().thread.create({ threadId, userId });
+    await db.collection("agent_sessions").doc(phone).update({ zepThreadId: threadId });
   } catch (err: any) {
     if (!err?.message?.includes("already exists")) {
-      console.error("createZepThread error:", err);
+      console.error("initializeZepOnFirstContact thread.create error:", err);
     }
   }
-
-  return threadId;
 }
 
 // ── Add incoming user message to Zep ──────────────────────────────────────────
-// Call BEFORE calling Claude – when inbound message arrives in webhooks.ts
+// Fire-and-forget before every Claude call AND before handleOnboardingStep
 
 export async function addUserMessageToZep(params: {
   threadId: string;
@@ -107,16 +98,14 @@ export async function addUserMessageToZep(params: {
       role: "user",
       content: params.content,
     };
-    await getZep().thread.addMessages(params.threadId, {
-      messages: [message],
-    });
+    await getZep().thread.addMessages(params.threadId, { messages: [message] });
   } catch (err) {
     console.error("addUserMessageToZep error:", err);
   }
 }
 
 // ── Add Cara's reply to Zep ────────────────────────────────────────────────────
-// Call AFTER Claude generates a reply – in webhooks.ts after sendMessage()
+// Fire-and-forget after Claude/QA agent sends a reply
 
 export async function addAssistantMessageToZep(params: {
   threadId: string;
@@ -129,17 +118,14 @@ export async function addAssistantMessageToZep(params: {
       role: "assistant",
       content: params.content,
     };
-    await getZep().thread.addMessages(params.threadId, {
-      messages: [message],
-    });
+    await getZep().thread.addMessages(params.threadId, { messages: [message] });
   } catch (err) {
     console.error("addAssistantMessageToZep error:", err);
   }
 }
 
-// ── Add business data (care events, onboarding data) to Zep graph ─────────────
-// Zep auto-extracts facts, entities, relationships from any JSON
-// Include user name so Zep associates data with the right person
+// ── Add business data to Zep knowledge graph ──────────────────────────────────
+// Zep auto-extracts facts, entities, relationships from JSON
 
 export async function addBusinessDataToZep(params: {
   userId: string;
@@ -157,19 +143,15 @@ export async function addBusinessDataToZep(params: {
 }
 
 // ── Get assembled context for Claude ──────────────────────────────────────────
-// Call AFTER adding user message to Zep, BEFORE calling Claude
 // Returns: user summary + relevant facts with valid_from/valid_to dates
-// P95 latency < 200ms
 
 export async function getZepContext(threadId: string): Promise<string> {
   try {
-    // Try custom eldercare template first
     const userContext = await getZep().thread.getUserContext(threadId, {
       templateId: "cara-eldercare",
     });
     return userContext.context ?? "";
   } catch {
-    // Fall back to default if template not created yet
     try {
       const userContext = await getZep().thread.getUserContext(threadId);
       return userContext.context ?? "";
@@ -188,11 +170,7 @@ export async function searchZepMemory(
   query: string
 ): Promise<string> {
   try {
-    const results = await getZep().graph.search({
-      userId,
-      query,
-      limit: 5,
-    });
+    const results = await getZep().graph.search({ userId, query, limit: 5 });
     if (!results?.edges?.length) return "";
     return results.edges
       .map((e: any) => `- ${e.fact ?? e.name}`)
@@ -204,14 +182,13 @@ export async function searchZepMemory(
   }
 }
 
-// ── Full onboarding initialization ────────────────────────────────────────────
-// Call when client onboarding completes – creates user, thread, sends all data
+// ── Push structured onboarding data to Zep graph ──────────────────────────────
+// Call at payment completion — thread already exists from first contact.
+// Zep uses this to build richer knowledge: senior name, conditions, care needs.
 
-export async function initializeZepForClient(params: {
-  userId: string;
+export async function pushOnboardingDataToZep(params: {
   phone: string;
   firstName: string;
-  lastName?: string;
   seniorName: string;
   seniorAge?: number;
   conditions?: string[];
@@ -220,24 +197,20 @@ export async function initializeZepForClient(params: {
   relationship?: string;
   daysPerWeek?: number;
   timeOfDay?: string;
-}): Promise<string> {
-  await createZepUser({
-    userId: params.userId,
-    firstName: params.firstName,
-    lastName: params.lastName,
-    phone: params.phone,
-  });
+}): Promise<void> {
+  const userId = getZepUserId(params.phone);
 
-  const threadId = await createZepThread({
-    userId: params.userId,
-    phone: params.phone,
-  });
+  // Update Zep user record with name now that we know it
+  try {
+    await getZep().user.update(userId, { firstName: params.firstName });
+  } catch (err) {
+    console.error("pushOnboardingDataToZep user.update error:", err);
+  }
 
   await addBusinessDataToZep({
-    userId: params.userId,
+    userId,
     data: {
       user_name: params.firstName,
-      user_id: params.userId,
       relationship_to_senior: params.relationship ?? "family member",
       senior_name: params.seniorName,
       senior_age: params.seniorAge,
@@ -250,16 +223,13 @@ export async function initializeZepForClient(params: {
       timestamp: new Date().toISOString(),
     },
   });
-
-  return threadId;
 }
 
 // ── Send care journal to Zep after each visit ──────────────────────────────────
-// Call from journalCreated.ts – Zep extracts health facts and
-// invalidates old facts automatically when conditions change
+// Zep extracts health facts and bi-temporally dates them
 
 export async function sendCareJournalToZep(params: {
-  userId: string;
+  phone: string;
   seniorName: string;
   caregiverName: string;
   date: string;
@@ -270,7 +240,7 @@ export async function sendCareJournalToZep(params: {
   notes?: string;
 }): Promise<void> {
   await addBusinessDataToZep({
-    userId: params.userId,
+    userId: getZepUserId(params.phone),
     data: {
       event_type: "care_visit_completed",
       user_name: params.seniorName,

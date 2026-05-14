@@ -538,7 +538,7 @@ async function handleCaregiverSendStripeConnect(phone, chatId, session) {
 // ── Webhook-triggered step advancement ───────────────────────────────────────
 // Called from stripe.ts and checkr.ts when webhooks fire
 async function advanceOnboardingStep(phone, task, taskData) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r;
     const snap = await db.collection("agent_sessions").doc(phone).get();
     if (!snap.exists)
         return;
@@ -591,12 +591,12 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 (0, memoryFiles_1.writeMemoryFile)((_h = session.userId) !== null && _h !== void 0 ? _h : phone, "recent_episodes", `# Recent Episodes\n`),
                 (0, memoryFiles_1.writeMemoryFile)((_j = session.userId) !== null && _j !== void 0 ? _j : phone, "procedural", `# Procedural Notes\n`),
             ]).catch((err) => console.error("initializeExtraMemoryFiles error:", err));
-            // Initialize Zep — creates user, thread, sends onboarding data to knowledge graph
-            (0, zepClient_1.initializeZepForClient)({
-                userId: (_k = session.userId) !== null && _k !== void 0 ? _k : phone,
+            // Push structured onboarding data to Zep — thread already exists from first contact,
+            // this enriches the knowledge graph with senior profile and care details
+            (0, zepClient_1.pushOnboardingDataToZep)({
                 phone,
-                firstName: ((_l = d.firstName) !== null && _l !== void 0 ? _l : ""),
-                seniorName: ((_m = d.seniorName) !== null && _m !== void 0 ? _m : ""),
+                firstName: ((_k = d.firstName) !== null && _k !== void 0 ? _k : ""),
+                seniorName: ((_l = d.seniorName) !== null && _l !== void 0 ? _l : ""),
                 seniorAge: d.age ? Number(d.age) : undefined,
                 conditions: Array.isArray(d.conditions) ? d.conditions : undefined,
                 careNeeds: Array.isArray(d.careNeeds) ? d.careNeeds : undefined,
@@ -604,7 +604,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 relationship: d.relationship,
                 daysPerWeek: d.daysPerWeek ? Number(d.daysPerWeek) : undefined,
                 timeOfDay: d.timeOfDay,
-            }).catch((err) => console.error("initializeZepForClient error:", err));
+            }).catch((err) => console.error("pushOnboardingDataToZep error:", err));
             // Import and start permissions conversation
             const { sendClientPermissionsFlow } = await Promise.resolve().then(() => __importStar(require("./permissionsConversation")));
             await sendClientPermissionsFlow(phone, chatId, session);
@@ -631,7 +631,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
         case "identity": {
             // Stripe Identity verified — currently only used if a future identity step is added
             // For now, just log and advance if stuck in an awaiting_identity step
-            const step = (_o = session.onboardingStep) !== null && _o !== void 0 ? _o : "";
+            const step = (_m = session.onboardingStep) !== null && _m !== void 0 ? _m : "";
             if (step === "caregiver_awaiting_identity") {
                 await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
                 await handleCaregiverSendBgcheck(phone, chatId, session);
@@ -640,7 +640,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
         }
         case "stripe_connect": {
             // Caregiver Stripe Connect complete → finalize caregiver doc
-            const d = (_p = session.onboardingData) !== null && _p !== void 0 ? _p : {};
+            const d = (_o = session.onboardingData) !== null && _o !== void 0 ? _o : {};
             const profileData = {
                 phone,
                 name: d.name,
@@ -669,13 +669,13 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 onboardingStep: "caregiver_ask_permissions",
             });
             // Silently create Firebase Auth account so web dashboard login works later
-            await createFirebaseAuthAccount(phone, ((_q = d.name) !== null && _q !== void 0 ? _q : ""));
+            await createFirebaseAuthAccount(phone, ((_p = d.name) !== null && _p !== void 0 ? _p : ""));
             // Notify admin
             (0, notifications_1.notifyAdminNewCaregiverSignup)({
                 caregiverId,
-                name: ((_r = d.name) !== null && _r !== void 0 ? _r : ""),
+                name: ((_q = d.name) !== null && _q !== void 0 ? _q : ""),
                 phone,
-                city: ((_s = d.city) !== null && _s !== void 0 ? _s : ""),
+                city: ((_r = d.city) !== null && _r !== void 0 ? _r : ""),
             }).catch((err) => console.error("notifyAdminNewCaregiverSignup error:", err));
             await db.collection("admin_alerts").add({
                 type: "new_caregiver_signup",

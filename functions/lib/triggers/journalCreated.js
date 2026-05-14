@@ -46,7 +46,7 @@ const db = admin.firestore();
 exports.onJournalCreated = functions.firestore
     .document("care_journal/{journalId}")
     .onCreate(async (snap) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
     try {
         const journal = snap.data();
         const { seniorId, caregiverId, notes, photos, wellness, activities, timestamp } = journal;
@@ -180,10 +180,9 @@ exports.onJournalCreated = functions.firestore
             sentAt: nowIso,
         });
         // Send care journal to Zep so health facts are extracted and dated
-        const userId = (_k = session.userId) !== null && _k !== void 0 ? _k : seniorId;
-        const seniorNameForZep = ((_p = (_m = (_l = clientDoc.data()) === null || _l === void 0 ? void 0 : _l.seniorName) !== null && _m !== void 0 ? _m : (_o = clientDoc.data()) === null || _o === void 0 ? void 0 : _o.displayName) !== null && _p !== void 0 ? _p : "Senior");
+        const seniorNameForZep = ((_o = (_l = (_k = clientDoc.data()) === null || _k === void 0 ? void 0 : _k.seniorName) !== null && _l !== void 0 ? _l : (_m = clientDoc.data()) === null || _m === void 0 ? void 0 : _m.displayName) !== null && _o !== void 0 ? _o : "Senior");
         (0, zepClient_1.sendCareJournalToZep)({
-            userId,
+            phone,
             seniorName: seniorNameForZep,
             caregiverName,
             date: visitDate,

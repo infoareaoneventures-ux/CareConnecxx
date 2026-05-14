@@ -288,7 +288,7 @@ async function handleCareNotes(phone, chatId, text, session) {
 }
 // ── Main inbound handler ──────────────────────────────────────────────────────
 async function handleInbound(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41;
     const ev = event;
     const phone = (_b = (_a = ev.data) === null || _a === void 0 ? void 0 : _a.sender_handle) === null || _b === void 0 ? void 0 : _b.value;
     const text = ((_f = (_e = (_d = (_c = ev.data) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.value) !== null && _f !== void 0 ? _f : "");
@@ -341,6 +341,8 @@ async function handleInbound(event) {
             optedOut: false,
             createdAt: new Date().toISOString(),
         });
+        // Start Zep memory immediately — before we know name or role
+        (0, zepClient_1.initializeZepOnFirstContact)(phone).catch(console.error);
         await (0, client_1.startTyping)(chatId).catch(() => { });
         await (0, client_1.sendMessage)(chatId, `Hi! 💙 I'm Cara, your care assistant.\n\n` +
             `Are you looking for care for a loved one, or are you a caregiver looking for work?\n\n` +
@@ -387,14 +389,25 @@ async function handleInbound(event) {
     // ── ONBOARDING gate — route to state machine if not complete ─────────────
     const step = (_q = session.onboardingStep) !== null && _q !== void 0 ? _q : "";
     if (step && step !== "complete") {
+        // Log every onboarding message to Zep — this is where names, conditions,
+        // and care needs are shared, so Zep starts building the knowledge graph now
+        const onboardingZepThreadId = session.zepThreadId;
+        if (onboardingZepThreadId) {
+            (0, zepClient_1.addUserMessageToZep)({
+                threadId: onboardingZepThreadId,
+                content: text,
+                userName: (_s = (_r = session.onboardingData) === null || _r === void 0 ? void 0 : _r.firstName) !== null && _s !== void 0 ? _s : "User",
+                sentAt: new Date(),
+            }).catch(console.error);
+        }
         // Permissions steps
         if (step === "client_permissions_contact" || step === "client_permissions_booking" || step === "client_permissions_autobook") {
-            const userId = (_r = session.userId) !== null && _r !== void 0 ? _r : phone;
+            const userId = (_t = session.userId) !== null && _t !== void 0 ? _t : phone;
             await (0, permissionsConversation_1.handleClientPermissionsReply)(phone, chatId, text, session, userId);
             return;
         }
         if (step === "caregiver_permissions_decline" || step === "caregiver_permissions_arrival") {
-            const caregiverId = (_s = session.caregiverId) !== null && _s !== void 0 ? _s : phone;
+            const caregiverId = (_u = session.caregiverId) !== null && _u !== void 0 ? _u : phone;
             await (0, permissionsConversation_1.handleCaregiverPermissionsReply)(phone, chatId, text, session, caregiverId);
             return;
         }
@@ -504,10 +517,10 @@ async function handleInbound(event) {
                     const cgSnap = session.caregiverId
                         ? await db.collection("caregivers").doc(session.caregiverId).get()
                         : null;
-                    const cgName = (_u = (_t = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _t === void 0 ? void 0 : _t.name) !== null && _u !== void 0 ? _u : "Your caregiver";
+                    const cgName = (_w = (_v = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _v === void 0 ? void 0 : _v.name) !== null && _w !== void 0 ? _w : "Your caregiver";
                     const today = new Date().toISOString().slice(0, 10);
                     const appt = await db.collection("appointments")
-                        .where("caregiverId", "==", (_v = session.caregiverId) !== null && _v !== void 0 ? _v : "")
+                        .where("caregiverId", "==", (_x = session.caregiverId) !== null && _x !== void 0 ? _x : "")
                         .where("date", "==", today).limit(1).get();
                     const origTime = appt.empty ? "" : ` (originally ${appt.docs[0].data().startTime})`;
                     await (0, client_1.sendMessage)(clientSession.data().chatId, `${cgName} is running about ${text} late. They're on their way${origTime}. 🚗`);
@@ -521,7 +534,7 @@ async function handleInbound(event) {
             await db.collection("agent_sessions").doc(phone).update({ awaitingIssueDescription: false });
             await db.collection("admin_alerts").add({
                 type: "caregiver_issue",
-                caregiverId: (_w = session.caregiverId) !== null && _w !== void 0 ? _w : phone,
+                caregiverId: (_y = session.caregiverId) !== null && _y !== void 0 ? _y : phone,
                 phone,
                 description: text,
                 severity: "medium",
@@ -559,14 +572,14 @@ async function handleInbound(event) {
             });
             let timeList = [];
             try {
-                timeList = JSON.parse((_x = parsed.content[0].text) !== null && _x !== void 0 ? _x : "[]");
+                timeList = JSON.parse((_z = parsed.content[0].text) !== null && _z !== void 0 ? _z : "[]");
             }
-            catch ( /* */_40) { /* */ }
+            catch ( /* */_42) { /* */ }
             const timesText = timeList.length > 0 ? timeList.join(", ") : text;
             // Find the relevant interview request
-            const caregiverId = (_y = session.caregiverId) !== null && _y !== void 0 ? _y : "";
+            const caregiverId = (_0 = session.caregiverId) !== null && _0 !== void 0 ? _0 : "";
             const cgSnap = caregiverId ? await db.collection("caregivers").doc(caregiverId).get() : null;
-            const cgName = (_0 = (_z = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _z === void 0 ? void 0 : _z.name) !== null && _0 !== void 0 ? _0 : "Your caregiver";
+            const cgName = (_2 = (_1 = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _1 === void 0 ? void 0 : _1.name) !== null && _2 !== void 0 ? _2 : "Your caregiver";
             const reqSnap = await db.collection("interview_requests")
                 .where("caregiverId", "==", caregiverId)
                 .where("status", "in", ["scheduled", "awaiting_client_confirmation"])
@@ -591,7 +604,7 @@ async function handleInbound(event) {
         }
         // Caregiver availability reply (for interview scheduling)
         if (session.pendingInterviewAvailabilityRequest) {
-            await (0, interviewAgent_1.handleCaregiverAvailabilityReply)(phone, (_1 = session.caregiverId) !== null && _1 !== void 0 ? _1 : "", "", chatId, text);
+            await (0, interviewAgent_1.handleCaregiverAvailabilityReply)(phone, (_3 = session.caregiverId) !== null && _3 !== void 0 ? _3 : "", "", chatId, text);
             return;
         }
     }
@@ -630,7 +643,7 @@ async function handleInbound(event) {
                     await apptRef.update({ status: "cancelled_by_client", cancelledAt: new Date().toISOString() });
                     // Notify caregiver
                     const cgSnap = await db.collection("caregivers").doc(appt.caregiverId).get();
-                    const cgPhone = (_2 = cgSnap.data()) === null || _2 === void 0 ? void 0 : _2.phone;
+                    const cgPhone = (_4 = cgSnap.data()) === null || _4 === void 0 ? void 0 : _4.phone;
                     if (cgPhone) {
                         const cgSess = await (await Promise.resolve().then(() => __importStar(require("./client")))).getOrCreateSession(cgPhone);
                         await (0, client_1.sendMessage)(cgSess.chatId, `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`);
@@ -662,7 +675,7 @@ async function handleInbound(event) {
                 });
                 // Check if caregiver offered more times
                 const reqSnap = await db.collection("interview_requests").doc(pending.docId).get();
-                const availability = ((_4 = (_3 = reqSnap.data()) === null || _3 === void 0 ? void 0 : _3.caregiverAvailability) !== null && _4 !== void 0 ? _4 : []);
+                const availability = ((_6 = (_5 = reqSnap.data()) === null || _5 === void 0 ? void 0 : _5.caregiverAvailability) !== null && _6 !== void 0 ? _6 : []);
                 // Remove the time we just rejected
                 const remaining = availability.filter(t => t !== pending.mutualTime);
                 if (remaining.length > 0) {
@@ -691,13 +704,13 @@ async function handleInbound(event) {
             const pending = session.pendingInterviewOutcome;
             if (pending) {
                 // Resolve caregiverId from interview_requests if not already on pending
-                let caregiverId = (_5 = pending.caregiverId) !== null && _5 !== void 0 ? _5 : "";
+                let caregiverId = (_7 = pending.caregiverId) !== null && _7 !== void 0 ? _7 : "";
                 if (!caregiverId && pending.interviewId) {
                     const reqSnap = await db.collection("interview_requests")
                         .where("interviewId", "==", pending.interviewId)
                         .limit(1).get();
                     if (!reqSnap.empty)
-                        caregiverId = (_6 = reqSnap.docs[0].data().caregiverId) !== null && _6 !== void 0 ? _6 : "";
+                        caregiverId = (_8 = reqSnap.docs[0].data().caregiverId) !== null && _8 !== void 0 ? _8 : "";
                 }
                 await db.collection("agent_sessions").doc(phone).update({
                     hireMode: { caregiverName: pending.caregiverName, caregiverId },
@@ -732,29 +745,27 @@ async function handleInbound(event) {
             }
         }
         // ── Caregiver selection (numbers after match presentation) ────────────────
-        if (((_7 = session.pendingMatches) === null || _7 === void 0 ? void 0 : _7.length) > 0 && /[123]|all/i.test(text)) {
+        if (((_9 = session.pendingMatches) === null || _9 === void 0 ? void 0 : _9.length) > 0 && /[123]|all/i.test(text)) {
             await (0, interviewAgent_1.handleInterviewSelection)(phone, chatId, text, session);
             return;
         }
         // ── Permission update ─────────────────────────────────────────────────────
         if (intent === "PERMISSION_UPDATE") {
-            const userId = (_9 = (_8 = session.userId) !== null && _8 !== void 0 ? _8 : session.caregiverId) !== null && _9 !== void 0 ? _9 : phone;
-            const userType = (_10 = session.userType) !== null && _10 !== void 0 ? _10 : "client";
+            const userId = (_11 = (_10 = session.userId) !== null && _10 !== void 0 ? _10 : session.caregiverId) !== null && _11 !== void 0 ? _11 : phone;
+            const userType = (_12 = session.userType) !== null && _12 !== void 0 ? _12 : "client";
             await (0, permissionsConversation_1.updatePermissionFromText)(userId, userType, phone, chatId, text);
             return;
         }
         if (intent === "MEMORY_QUERY") {
-            const userId = (_12 = (_11 = session.userId) !== null && _11 !== void 0 ? _11 : session.caregiverId) !== null && _12 !== void 0 ? _12 : phone;
-            const zepThreadIdForQuery = session.zepThreadId;
-            const zepFacts = zepThreadIdForQuery
-                ? await (0, zepClient_1.searchZepMemory)(userId, text).catch(() => "")
-                : "";
+            const zepUserId = (0, zepClient_1.getZepUserId)(phone);
+            const zepFacts = await (0, zepClient_1.searchZepMemory)(zepUserId, text).catch(() => "");
             if (zepFacts) {
                 await (0, client_1.sendMessage)(chatId, `Here's what I know about ${(_13 = session.seniorName) !== null && _13 !== void 0 ? _13 : "your loved one"}:\n\n` + zepFacts);
             }
             else {
+                const memUserId = (_15 = (_14 = session.userId) !== null && _14 !== void 0 ? _14 : session.caregiverId) !== null && _15 !== void 0 ? _15 : phone;
                 const { handleMemoryQuery } = await Promise.resolve().then(() => __importStar(require("../memory/memoryFiles")));
-                await handleMemoryQuery(userId, chatId, client_1.sendMessage);
+                await handleMemoryQuery(memUserId, chatId, client_1.sendMessage);
             }
             return;
         }
@@ -770,11 +781,11 @@ async function handleInbound(event) {
             let memberName = null;
             let memberPhone = null;
             try {
-                const parsed = JSON.parse((_14 = extraction.content[0].text) !== null && _14 !== void 0 ? _14 : "{}");
-                memberName = (_15 = parsed.name) !== null && _15 !== void 0 ? _15 : null;
-                memberPhone = (_16 = parsed.phone) !== null && _16 !== void 0 ? _16 : null;
+                const parsed = JSON.parse((_16 = extraction.content[0].text) !== null && _16 !== void 0 ? _16 : "{}");
+                memberName = (_17 = parsed.name) !== null && _17 !== void 0 ? _17 : null;
+                memberPhone = (_18 = parsed.phone) !== null && _18 !== void 0 ? _18 : null;
             }
-            catch ( /* */_41) { /* */ }
+            catch ( /* */_43) { /* */ }
             if (!memberPhone) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch a phone number — please include it (e.g. 'add my sister Sarah at +1 555 000 1234').");
                 return;
@@ -788,7 +799,7 @@ async function handleInbound(event) {
                 primaryPhone: phone,
                 memberPhone,
                 memberName: memberName !== null && memberName !== void 0 ? memberName : "Family member",
-                userId: (_17 = session.userId) !== null && _17 !== void 0 ? _17 : phone,
+                userId: (_19 = session.userId) !== null && _19 !== void 0 ? _19 : phone,
                 addedAt: new Date().toISOString(),
             });
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
@@ -816,16 +827,16 @@ async function handleInbound(event) {
             });
             let schedule = null;
             try {
-                schedule = JSON.parse((_18 = parsedSchedule.content[0].text) !== null && _18 !== void 0 ? _18 : "null");
+                schedule = JSON.parse((_20 = parsedSchedule.content[0].text) !== null && _20 !== void 0 ? _20 : "null");
             }
-            catch ( /* */_42) { /* */ }
-            if (!schedule || !((_19 = schedule.days) === null || _19 === void 0 ? void 0 : _19.length)) {
+            catch ( /* */_44) { /* */ }
+            if (!schedule || !((_21 = schedule.days) === null || _21 === void 0 ? void 0 : _21.length)) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch that — could you try again? (e.g. '3 days, Mon/Wed/Fri, 9am–1pm')");
                 return;
             }
             // Fetch actual hourly rate from caregiver doc
             const cgDoc = await db.collection("caregivers").doc(hire.caregiverId).get();
-            const hourlyRate = ((_21 = (_20 = cgDoc.data()) === null || _20 === void 0 ? void 0 : _20.hourlyRate) !== null && _21 !== void 0 ? _21 : 20);
+            const hourlyRate = ((_23 = (_22 = cgDoc.data()) === null || _22 === void 0 ? void 0 : _22.hourlyRate) !== null && _23 !== void 0 ? _23 : 20);
             // Build one appointment per day starting from the hire date's week
             const startDate = new Date(dateStr + "T12:00:00Z");
             const dayIndexMap = {
@@ -833,7 +844,7 @@ async function handleInbound(event) {
             };
             const appointments = [];
             for (const day of schedule.days) {
-                const target = (_22 = dayIndexMap[day]) !== null && _22 !== void 0 ? _22 : -1;
+                const target = (_24 = dayIndexMap[day]) !== null && _24 !== void 0 ? _24 : -1;
                 if (target < 0)
                     continue;
                 const d = new Date(startDate);
@@ -846,7 +857,7 @@ async function handleInbound(event) {
                     durationHours: schedule.durationHours,
                 });
             }
-            const clientId = (_23 = session.userId) !== null && _23 !== void 0 ? _23 : phone;
+            const clientId = (_25 = session.userId) !== null && _25 !== void 0 ? _25 : phone;
             const taskId = await (0, bookingExecutor_1.createBookingTask)({
                 clientPhone: phone,
                 clientId,
@@ -859,7 +870,7 @@ async function handleInbound(event) {
                 hireMode: admin.firestore.FieldValue.delete(),
                 hireModeDate: admin.firestore.FieldValue.delete(),
             });
-            const perms = await (0, permissionsConversation_1.getPermissions)((_24 = session.userId) !== null && _24 !== void 0 ? _24 : phone).catch(() => null);
+            const perms = await (0, permissionsConversation_1.getPermissions)((_26 = session.userId) !== null && _26 !== void 0 ? _26 : phone).catch(() => null);
             if (perms === null || perms === void 0 ? void 0 : perms.canBookAutomatically) {
                 await (0, bookingExecutor_1.executeBookings)(taskId, phone);
             }
@@ -881,7 +892,7 @@ async function handleInbound(event) {
                     "The user is choosing a start date for care. Reply with only a YYYY-MM-DD date string, nothing else.",
                 messages: [{ role: "user", content: text }],
             });
-            const dateStr = ((_25 = parsedDate.content[0].text) !== null && _25 !== void 0 ? _25 : "").trim();
+            const dateStr = ((_27 = parsedDate.content[0].text) !== null && _27 !== void 0 ? _27 : "").trim();
             if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch that date — could you try again? (e.g. \"next Monday\" or \"May 19\")");
                 return;
@@ -903,7 +914,7 @@ async function handleInbound(event) {
             }
             // Parse which time the family chose
             const reqSnap = await db.collection("interview_requests").doc(sel.interviewRequestId).get();
-            const availability = ((_27 = (_26 = reqSnap.data()) === null || _26 === void 0 ? void 0 : _26.caregiverAvailability) !== null && _27 !== void 0 ? _27 : []);
+            const availability = ((_29 = (_28 = reqSnap.data()) === null || _28 === void 0 ? void 0 : _28.caregiverAvailability) !== null && _29 !== void 0 ? _29 : []);
             const Anthropic = (await Promise.resolve().then(() => __importStar(require("@anthropic-ai/sdk")))).default;
             const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
             const parsed = await claude.messages.create({
@@ -913,7 +924,7 @@ async function handleInbound(event) {
                     "The user picked one of these times. Reply with only the exact string from the list that best matches their reply, or 'NONE' if no match.",
                 messages: [{ role: "user", content: text }],
             });
-            const chosen = ((_28 = parsed.content[0].text) !== null && _28 !== void 0 ? _28 : "").trim();
+            const chosen = ((_30 = parsed.content[0].text) !== null && _30 !== void 0 ? _30 : "").trim();
             if (chosen === "NONE" || !availability.includes(chosen)) {
                 await (0, client_1.sendMessage)(chatId, `I didn't catch that — which of these works for you?\n\n${availability.join("\n")}\n\nOr reply PASS to find someone else.`);
                 return;
@@ -928,7 +939,7 @@ async function handleInbound(event) {
         }
         // ── CANCEL intent — cancel a visit, NOT an opt-out ────────────────────────
         if (intent === "CANCEL_REQUEST" || norm === "CANCEL") {
-            const clientId = (_29 = session.userId) !== null && _29 !== void 0 ? _29 : phone;
+            const clientId = (_31 = session.userId) !== null && _31 !== void 0 ? _31 : phone;
             const upcoming = await db.collection("appointments")
                 .where("clientId", "==", clientId)
                 .where("status", "==", "confirmed")
@@ -956,12 +967,12 @@ async function handleInbound(event) {
                     "The user is choosing a date for a care visit. Reply with only a YYYY-MM-DD date string, nothing else.",
                 messages: [{ role: "user", content: text }],
             });
-            const dateStr = ((_30 = parsedDate.content[0].text) !== null && _30 !== void 0 ? _30 : "").trim();
+            const dateStr = ((_32 = parsedDate.content[0].text) !== null && _32 !== void 0 ? _32 : "").trim();
             if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch that date — could you try again? (e.g. \"May 19\" or \"next Monday\")");
                 return;
             }
-            const clientId = (_31 = session.userId) !== null && _31 !== void 0 ? _31 : phone;
+            const clientId = (_33 = session.userId) !== null && _33 !== void 0 ? _33 : phone;
             const taskId = await (0, bookingExecutor_1.createBookingTask)({
                 clientPhone: phone,
                 clientId,
@@ -971,7 +982,7 @@ async function handleInbound(event) {
                 hourlyRate: 20,
             });
             await db.collection("agent_sessions").doc(phone).update({ pendingRebook: admin.firestore.FieldValue.delete() });
-            const perms = await (0, permissionsConversation_1.getPermissions)((_32 = session.userId) !== null && _32 !== void 0 ? _32 : phone).catch(() => null);
+            const perms = await (0, permissionsConversation_1.getPermissions)((_34 = session.userId) !== null && _34 !== void 0 ? _34 : phone).catch(() => null);
             if (perms === null || perms === void 0 ? void 0 : perms.canBookAutomatically) {
                 await (0, bookingExecutor_1.executeBookings)(taskId, phone);
             }
@@ -987,7 +998,7 @@ async function handleInbound(event) {
         }
         // ── Rebook request ────────────────────────────────────────────────────────
         if (intent === "REBOOK_REQUEST") {
-            const clientId = (_33 = session.userId) !== null && _33 !== void 0 ? _33 : phone;
+            const clientId = (_35 = session.userId) !== null && _35 !== void 0 ? _35 : phone;
             const lastApptSnap = await db.collection("appointments")
                 .where("clientId", "==", clientId)
                 .where("status", "==", "confirmed")
@@ -1001,7 +1012,7 @@ async function handleInbound(event) {
             const caregiverName = last.caregiverName;
             const startTime = last.startTime;
             const endTime = last.endTime;
-            const durationHours = ((_34 = last.durationHours) !== null && _34 !== void 0 ? _34 : 4);
+            const durationHours = ((_36 = last.durationHours) !== null && _36 !== void 0 ? _36 : 4);
             await db.collection("agent_sessions").doc(phone).update({
                 pendingRebook: { caregiverId, caregiverName, startTime, endTime, durationHours },
             });
@@ -1015,7 +1026,7 @@ async function handleInbound(event) {
             (0, zepClient_1.addUserMessageToZep)({
                 threadId: zepThreadId,
                 content: text,
-                userName: (_35 = session.firstName) !== null && _35 !== void 0 ? _35 : "Family",
+                userName: (_37 = session.firstName) !== null && _37 !== void 0 ? _37 : "Family",
                 sentAt: new Date(),
             }).catch(console.error);
         }
@@ -1023,9 +1034,9 @@ async function handleInbound(event) {
             text,
             phone,
             chatId,
-            userId: (_36 = session.userId) !== null && _36 !== void 0 ? _36 : "",
-            seniorId: (_38 = (_37 = session.seniorId) !== null && _37 !== void 0 ? _37 : session.userId) !== null && _38 !== void 0 ? _38 : "",
-            userType: (_39 = session.userType) !== null && _39 !== void 0 ? _39 : "client",
+            userId: (_38 = session.userId) !== null && _38 !== void 0 ? _38 : "",
+            seniorId: (_40 = (_39 = session.seniorId) !== null && _39 !== void 0 ? _39 : session.userId) !== null && _40 !== void 0 ? _40 : "",
+            userType: (_41 = session.userType) !== null && _41 !== void 0 ? _41 : "client",
             caregiverId: session.caregiverId,
             zepThreadId,
         });

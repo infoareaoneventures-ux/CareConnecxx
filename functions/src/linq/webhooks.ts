@@ -27,9 +27,11 @@ import { logCrisisDetected } from "../observability/auditLog";
 import { isBereavementTrigger, activateBereavementMode } from "../agents/bereavement";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import {
+  initializeZepOnFirstContact,
   addUserMessageToZep,
   addAssistantMessageToZep,
   searchZepMemory,
+  getZepUserId,
 } from "../memory/zepClient";
 
 const db = admin.firestore();
@@ -376,6 +378,9 @@ async function handleInbound(event: unknown): Promise<void> {
       createdAt:      new Date().toISOString(),
     });
 
+    // Start Zep memory immediately — before we know name or role
+    initializeZepOnFirstContact(phone).catch(console.error);
+
     await startTyping(chatId).catch(() => {});
     await sendMessage(chatId,
       `Hi! 💙 I'm Cara, your care assistant.\n\n` +
@@ -432,6 +437,18 @@ async function handleInbound(event: unknown): Promise<void> {
   // ── ONBOARDING gate — route to state machine if not complete ─────────────
   const step = session.onboardingStep ?? "";
   if (step && step !== "complete") {
+    // Log every onboarding message to Zep — this is where names, conditions,
+    // and care needs are shared, so Zep starts building the knowledge graph now
+    const onboardingZepThreadId = (session as any).zepThreadId as string | undefined;
+    if (onboardingZepThreadId) {
+      addUserMessageToZep({
+        threadId: onboardingZepThreadId,
+        content:  text,
+        userName: (session as any).onboardingData?.firstName ?? "User",
+        sentAt:   new Date(),
+      }).catch(console.error);
+    }
+
     // Permissions steps
     if (step === "client_permissions_contact" || step === "client_permissions_booking" || step === "client_permissions_autobook") {
       const userId = session.userId ?? phone;
@@ -826,19 +843,17 @@ async function handleInbound(event: unknown): Promise<void> {
     }
 
     if (intent === "MEMORY_QUERY") {
-      const userId = session.userId ?? session.caregiverId ?? phone;
-      const zepThreadIdForQuery = (session as any).zepThreadId as string | undefined;
-      const zepFacts = zepThreadIdForQuery
-        ? await searchZepMemory(userId, text).catch(() => "")
-        : "";
+      const zepUserId = getZepUserId(phone);
+      const zepFacts = await searchZepMemory(zepUserId, text).catch(() => "");
 
       if (zepFacts) {
         await sendMessage(chatId,
           `Here's what I know about ${(session as any).seniorName ?? "your loved one"}:\n\n` + zepFacts
         );
       } else {
+        const memUserId = session.userId ?? session.caregiverId ?? phone;
         const { handleMemoryQuery } = await import("../memory/memoryFiles");
-        await handleMemoryQuery(userId, chatId, sendMessage);
+        await handleMemoryQuery(memUserId, chatId, sendMessage);
       }
       return;
     }

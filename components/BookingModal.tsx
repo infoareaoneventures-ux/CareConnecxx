@@ -1,6 +1,7 @@
 
 
 import React, { useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Calendar, Clock, ArrowLeft, ShieldCheck, MapPin, Info } from 'lucide-react';
 import { Caregiver, Appointment, MicroTask, MICRO_TASKS } from '../types';
 import { Button } from './ui/Button';
@@ -170,7 +171,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ caregiver, onClose, 
     onClose();
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 sm:p-6">
       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={onClose} />
 
@@ -528,5 +529,5 @@ export const BookingModal: React.FC<BookingModalProps> = ({ caregiver, onClose, 
         </div>
       </div>
     </div>
-  );
+  , document.body);
 };

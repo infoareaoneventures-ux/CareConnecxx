@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ChevronLeft, ChevronRight, Plus, X, CheckCircle, Loader2, Calendar,
 } from 'lucide-react';
@@ -298,7 +299,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
       </div>
 
       {/* ── Availability Edit Modal ── */}
-      {showAvailModal && (
+      {showAvailModal && createPortal(
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-4">
           <div
             className="bg-white rounded-3xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl"
@@ -342,7 +343,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
       </div>
     </div>
   );

@@ -207,21 +207,16 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
     return;
   }
   const signature = req.headers["x-checkr-signature"];
-  // Only verify signature when both a secret and a signature are present.
-  // Checkr staging does not send x-checkr-signature, so we skip verification there.
-  if (signature) {
-    const webhookSecret = (process.env.CHECKR_WEBHOOK_SECRET || process.env.CHECKR_API_KEY || "").trim();
-    if (!webhookSecret) {
-      console.error("Checkr webhook secret not configured but signature was sent");
-      res.status(500).send("Webhook not configured");
-      return;
-    }
-    if (!verifyCheckrSignature(req.rawBody, signature, webhookSecret)) {
+  const webhookSecret = (process.env.CHECKR_WEBHOOK_SECRET || "").trim();
+  if (webhookSecret) {
+    // Production: enforce HMAC-SHA256 signature verification using partner client_secret
+    if (!signature || !verifyCheckrSignature(req.rawBody, signature, webhookSecret)) {
       res.status(401).send("Invalid signature");
       return;
     }
   } else {
-    console.log("Checkr webhook received without signature (staging mode)");
+    // Staging / account-level webhooks: no client_secret available, accept by URL obscurity
+    console.log(`Checkr webhook received (no CHECKR_WEBHOOK_SECRET set — skipping verification) type=${(req.body || {}).type}`);
   }
 
   const event = req.body || {};
@@ -248,7 +243,39 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
     const updates: Record<string, any> = {};
     let notificationPayload: { title: string; body: string } | null = null;
 
-    if (type === "invitation.created") {
+    if (type === "candidate.driver_license_required" || type === "candidate.driver_abstract_required") {
+      updates["backgroundCheckData.status"] = "pending";
+      notificationPayload = {
+        title: "Driving record document required",
+        body: "Checkr needs a driving record document to continue your background check. Check your email from Checkr for instructions.",
+      };
+
+    } else if (type === "candidate.id_required") {
+      updates["backgroundCheckData.status"] = "pending";
+      notificationPayload = {
+        title: "ID verification required",
+        body: "Checkr needs to verify your identity to continue your background check. Check your email from Checkr for instructions.",
+      };
+
+    } else if (type === "candidate.deferred") {
+      updates["backgroundCheckData.status"] = "pending";
+      notificationPayload = {
+        title: "Background check deferred",
+        body: "Your background check has been deferred. Check your email from Checkr or contact support for next steps.",
+      };
+
+    } else if (
+      type === "candidate.created" ||
+      type === "candidate.updated" ||
+      type === "candidate.engaged" ||
+      type === "candidate.pre_adverse_action" ||
+      type === "candidate.post_adverse_action"
+    ) {
+      // Silently acknowledge — report-level events handle the meaningful state changes
+      res.status(200).json({ received: true, ignored: type });
+      return;
+
+    } else if (type === "invitation.created") {
       updates["backgroundCheckData.invitationStatus"] = "sent";
 
     } else if (type === "invitation.completed") {

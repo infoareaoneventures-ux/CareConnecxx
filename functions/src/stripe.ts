@@ -626,36 +626,49 @@ export const createIdentityVerificationSession = functions.https.onCall(async (d
  */
 async function handleIdentityVerificationEvent(session: Stripe.Identity.VerificationSession) {
   const userId = session.metadata?.firebaseUID;
-  if (!userId) {
-    console.warn('Identity session missing firebaseUID metadata:', session.id);
-    return;
-  }
+  const phone  = session.metadata?.phone;
 
   const statusMap: Record<string, string> = {
-    verified: 'verified',
-    processing: 'processing',
+    verified:       'verified',
+    processing:     'processing',
     requires_input: 'requires_input',
-    canceled: 'canceled',
+    canceled:       'canceled',
   };
   const status = statusMap[session.status] || session.status;
 
-  const update: Record<string, any> = {
-    identityCheckStatus: status,
-    stripeIdentityVerificationId: session.id,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  };
-  if (status === 'verified') {
-    update.identityVerifiedAt = admin.firestore.FieldValue.serverTimestamp();
+  // ── iMessage onboarding flow (phone metadata, no firebaseUID yet) ──────────
+  if (phone) {
+    const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
+    const { sendToPhone }           = await import('./linq/client');
 
-    // Advance Cara onboarding if phone is in metadata (iMessage flow)
-    if (session.metadata?.phone) {
+    if (status === 'verified') {
       try {
-        const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
-        await advanceOnboardingStep(session.metadata.phone, 'identity', '');
+        await advanceOnboardingStep(phone, 'identity', '');
       } catch (err) {
         console.error('advanceOnboardingStep(identity) error:', err);
       }
+    } else if (status === 'requires_input' || status === 'canceled') {
+      // Let the client retry
+      await sendToPhone(phone,
+        "It looks like we need a little more info to verify you — tap the link above and try again 💙"
+      ).catch((err: unknown) => console.error('identity retry message error:', err));
     }
+    // Don't return — also update Firestore users doc if firebaseUID is present
+  }
+
+  // ── Firebase user doc update (web-app flow or post-auth iMessage users) ─────
+  if (!userId) {
+    if (!phone) console.warn('Identity session missing both firebaseUID and phone metadata:', session.id);
+    return;
+  }
+
+  const update: Record<string, unknown> = {
+    identityCheckStatus:           status,
+    stripeIdentityVerificationId:  session.id,
+    updatedAt:                     admin.firestore.FieldValue.serverTimestamp(),
+  };
+  if (status === 'verified') {
+    update.identityVerifiedAt = admin.firestore.FieldValue.serverTimestamp();
   }
 
   await admin.firestore().collection('users').doc(userId).set(update, { merge: true });

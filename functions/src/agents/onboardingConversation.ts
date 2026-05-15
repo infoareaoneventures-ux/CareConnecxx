@@ -152,6 +152,9 @@ export async function handleOnboardingStep(
     case "client_ask_schedule":   return handleClientAskSchedule(phone, chatId, text, session);
     case "client_ask_plan":       return handleClientPlanReply(phone, chatId, text, session);
     case "client_send_payment":   return handleClientSendPayment(phone, chatId, session);
+    case "client_awaiting_identity":
+      await sendMessage(chatId, "Still verifying — I'll send your caregiver options as soon as it's confirmed! 💙");
+      return;
     case "client_awaiting_payment":
       await sendMessage(chatId, "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳");
       return;
@@ -320,8 +323,79 @@ async function handleClientAskSchedule(phone: string, chatId: string, text: stri
   } catch { /* keep defaults */ }
 
   await mergeOnboardingData(phone, { daysPerWeek, timeOfDay, hoursPerDay });
-  await updateSession(phone, { onboardingStep: "client_ask_plan" });
-  await handleClientAskPlan(phone, chatId);
+  // Refresh session so handleClientShowCaregivers has the full onboardingData
+  const refreshed = await db.collection("agent_sessions").doc(phone).get();
+  await handleClientShowCaregivers(phone, chatId, refreshed.data() as AgentSession);
+}
+
+async function createClientIdentitySession(phone: string): Promise<string> {
+  const session = await getStripe().identity.verificationSessions.create({
+    type: "document",
+    metadata: { phone },
+    return_url: `${APP_URL}/identity/done`,
+  });
+  await db.collection("agent_sessions").doc(phone).update({ identitySessionId: session.id });
+  return session.url!;
+}
+
+async function handleClientShowCaregivers(
+  phone: string,
+  chatId: string,
+  session: AgentSession
+): Promise<void> {
+  const d          = (session as any).onboardingData ?? {};
+  const city       = (d.city       as string) ?? "";
+  const seniorName = (d.seniorName as string) ?? "your loved one";
+  const careNeeds: string[] = Array.isArray(d.careNeeds) ? d.careNeeds : [];
+
+  // Query caregivers by city; fall back to any active caregivers
+  let snap = await db
+    .collection("caregivers")
+    .where("status", "==", "active")
+    .where("city",   "==", city)
+    .limit(5)
+    .get();
+  if (snap.empty) {
+    snap = await db.collection("caregivers").where("status", "==", "active").limit(5).get();
+  }
+
+  const docs  = snap.docs.map(doc => doc.data());
+  const total = snap.size;
+
+  const preview = docs.slice(0, 3).map(c => {
+    const name  = (c.name ?? "Caregiver") as string;
+    const exp   = c.yearsExperience ?? c.experience ?? "";
+    const spec  = Array.isArray(c.specialties)
+      ? c.specialties[0]
+      : (c.primaryServices?.[0]?.name ?? "");
+    return `• ${name}${exp ? ` — ${exp} yrs exp` : ""}${spec ? `, ${spec}` : ""}`;
+  }).join("\n");
+
+  const locationLabel = city || "your area";
+  const needsLabel    = careNeeds.length > 0
+    ? careNeeds.slice(0, 2).join(" & ")
+    : "care";
+
+  const caregiverMsg =
+    `I found ${total > 5 ? "6+" : total} caregiver${total !== 1 ? "s" : ""} near ${locationLabel} ` +
+    `who can help with ${needsLabel}:\n\n${total > 0 ? preview + "\n\n" : ""}` +
+    `To connect ${seniorName} with them, I need to quickly verify your identity — takes 30 seconds:`;
+
+  await sendMessage(chatId, caregiverMsg);
+
+  // Send identity link immediately (back-to-back, no reply needed)
+  let identityUrl: string;
+  try {
+    identityUrl = await createClientIdentitySession(phone);
+  } catch (err) {
+    console.error("createClientIdentitySession error — skipping identity, advancing to plan:", err);
+    await updateSession(phone, { onboardingStep: "client_ask_plan" });
+    await handleClientAskPlan(phone, chatId);
+    return;
+  }
+
+  await sendMessage(chatId, { parts: [{ type: "link", url: identityUrl, value: "🔒 Verify My Identity →" }] });
+  await updateSession(phone, { onboardingStep: "client_awaiting_identity" });
 }
 
 async function handleClientAskPlan(phone: string, chatId: string): Promise<void> {
@@ -690,10 +764,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
     }
 
     case "identity": {
-      // Stripe Identity verified — currently only used if a future identity step is added
-      // For now, just log and advance if stuck in an awaiting_identity step
       const step = session.onboardingStep ?? "";
-      if (step === "caregiver_awaiting_identity") {
+      if (step === "client_awaiting_identity") {
+        await updateSession(phone, { onboardingStep: "client_ask_plan" });
+        await handleClientAskPlan(phone, chatId);
+      } else if (step === "caregiver_awaiting_identity") {
         await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
         await handleCaregiverSendBgcheck(phone, chatId, session);
       }

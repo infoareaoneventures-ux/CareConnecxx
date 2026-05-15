@@ -64,6 +64,18 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "get_caregiver_reviews",
+    description: "Fetch reviews for a specific caregiver.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        limit:       { type: "number", description: "Max reviews to return (default 5)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
     name: "get_health_signals",
     description: "Get health signals detected from recent care journal entries for a senior (last 30 days).",
     input_schema: {
@@ -211,6 +223,17 @@ export async function handleToolCall(
     case "get_caregiver_info": {
       const snap = await db.collection("caregivers").doc(input.caregiverId as string).get();
       return snap.data() ?? { error: "Caregiver not found" };
+    }
+
+    case "get_caregiver_reviews": {
+      const limit = (input.limit as number) ?? 5;
+      const snap = await db
+        .collection("reviews")
+        .where("caregiverId", "==", input.caregiverId as string)
+        .orderBy("createdAt", "desc")
+        .limit(limit)
+        .get();
+      return snap.docs.map((d) => d.data());
     }
 
     case "get_health_signals": {

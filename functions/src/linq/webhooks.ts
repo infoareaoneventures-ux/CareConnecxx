@@ -675,6 +675,30 @@ async function handleInbound(event: unknown): Promise<void> {
     }
   }
 
+  // ── Shift hours APPROVE / DISPUTE (client iMessage reply) ───────────────────
+  if ((session as any).pendingShiftApproval && (norm === "APPROVE" || norm.startsWith("DISPUTE"))) {
+    const { appointmentId, amount, caregiverName } = (session as any).pendingShiftApproval;
+    if (norm === "APPROVE") {
+      const { approveShiftHoursForClient } = await import("../shiftHours");
+      await approveShiftHoursForClient(appointmentId as string);
+      await sendMessage(chatId, `✅ Approved! ${caregiverName as string} will be paid $${amount as string}. 💙`);
+    } else {
+      await sendMessage(chatId,
+        `Got it — I'll flag this for review. Someone from our team will follow up within 24 hours. ` +
+        `If you'd like to add details, just reply with what looks wrong.`
+      );
+      await db.collection("admin_alerts").add({
+        type:          "shift_hours_disputed",
+        appointmentId,
+        clientPhone:   phone,
+        createdAt:     new Date().toISOString(),
+        resolved:      false,
+      });
+    }
+    await db.collection("agent_sessions").doc(phone).update({ pendingShiftApproval: admin.firestore.FieldValue.delete() });
+    return;
+  }
+
   // ── Check for pending task (booking / emergency replacement) ───────────────
   const taskSnap = await db
     .collection("agent_tasks")

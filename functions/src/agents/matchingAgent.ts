@@ -125,10 +125,12 @@ export async function runMatchingForClient(
       const stars    = "⭐".repeat(Math.round(c.rating ?? 4));
       const specials = (c.specialties ?? []).slice(0, 2).join(", ") || "General care";
       const yrs      = c.yearsExperience ?? "?";
-      const bgNote   = (c as any).pendingBackgroundCheck ? "\n   ⏳ Background check in progress" : "";
+      const bgNote     = (c as any).pendingBackgroundCheck ? "\n   ⏳ Background check in progress" : "";
+      const profileUrl = `${process.env.APP_URL ?? "https://careconnecxx.com"}/caregiver/${c.id}`;
       return (
         `${i + 1}️⃣  ${c.name} · ${stars} · $${c.hourlyRate}/hr\n` +
-        `   ${specials} · ${yrs}yrs exp${bgNote}`
+        `   ${specials} · ${yrs}yrs exp${bgNote}\n` +
+        `   👤 ${profileUrl}`
       );
     }).join("\n\n");
 

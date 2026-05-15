@@ -135,15 +135,27 @@ export async function handlePaymentError(params: {
 
   const totalStr = `$${(amountCents / 100).toFixed(2)}`;
 
-  // Notify client — immediate, can't drop
-  await sendViaInteractionAgent(clientPhone, {
-    content:
-      `There was an issue processing payment for the recent visit (${totalStr}). ` +
-      `Please update your payment method in the app, or call us at ${SUPPORT_PHONE}.`,
-    urgency:     "immediate",
-    sourceAgent: "visit_billing",
-    canDrop:     false,
-  }).catch(() => {});
+  // Notify client with a tap-to-fix link — immediate, can't drop
+  try {
+    const { generateToken } = await import("../agents/tokenService");
+    const appUrl    = process.env.APP_URL ?? "https://careconnecxx.com";
+    const token     = generateToken({ phone: clientPhone, task: "payment" });
+    const updateUrl = `${appUrl}/done?task=payment&t=${token}`;
+    await sendViaInteractionAgent(clientPhone, {
+      content:
+        `There was an issue processing payment for the recent visit (${totalStr}). ` +
+        `Tap the link to update your payment method and we'll retry automatically:\n${updateUrl}\n\n` +
+        `Questions? Call us at ${SUPPORT_PHONE}.`,
+      urgency:     "immediate",
+      sourceAgent: "visit_billing",
+      canDrop:     false,
+    });
+    await db.collection("appointments").doc(appointmentId).update({
+      paymentFailureNotifiedAt: now,
+    });
+  } catch (notifyErr) {
+    console.error("visitBilling: failed to notify client via iMessage:", notifyErr);
+  }
 
   // Reassure caregiver they'll be paid
   if (caregiverPhone) {

@@ -145,6 +145,32 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     { appointmentId, totalHours }
   );
 
+  // iMessage: notify client so they can approve or dispute without opening the app
+  try {
+    const clientUserSnap = await db.collection("users").doc(appt.clientId).get();
+    const clientPhone = clientUserSnap.data()?.phone as string | undefined;
+    if (clientPhone) {
+      const hourlyRate = appt.hourlyRate ?? caregiverData.hourlyRate ?? 22;
+      const amount = (totalHours * hourlyRate).toFixed(2);
+      const { sendToPhone } = await import("./linq/client");
+      await sendToPhone(
+        clientPhone,
+        `${caregiverData.name ?? "Your caregiver"} submitted ${totalHours}h for ` +
+        `${appt.date ?? "today"}'s visit ($${amount}).\n\n` +
+        `Reply APPROVE to confirm, or DISPUTE if something looks wrong.`
+      );
+      await db.collection("agent_sessions").doc(clientPhone).update({
+        pendingShiftApproval: {
+          appointmentId,
+          amount,
+          caregiverName: caregiverData.name ?? "Caregiver",
+        },
+      });
+    }
+  } catch (err) {
+    console.error("shiftHours iMessage notification error:", err);
+  }
+
   return { success: true, appointmentId, totalHours };
 });
 
@@ -611,4 +637,22 @@ async function processShiftPayment(appointmentId: string, shift: any): Promise<{
 
     return { ok: false, error: errorMessage };
   }
+}
+
+/**
+ * Approve shift hours on behalf of the client via iMessage reply.
+ */
+export async function approveShiftHoursForClient(appointmentId: string): Promise<void> {
+  const snap = await db.collection("shiftHours")
+    .where("appointmentId", "==", appointmentId)
+    .where("status", "==", "pending_client_review")
+    .limit(1)
+    .get();
+  if (snap.empty) return;
+  await snap.docs[0].ref.update({
+    status:     "approved",
+    approvedAt: new Date().toISOString(),
+    approvedBy: "client_imessage",
+    updatedAt:  new Date().toISOString(),
+  });
 }

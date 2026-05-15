@@ -149,6 +149,35 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       `View your schedule: ${appUrl}/client/schedule\n\n` +
       `Any questions? Just text me. 💙`
     );
+
+    // Check if client has a payment method — if not, send a Stripe setup link
+    try {
+      const Stripe = (await import("stripe")).default;
+      const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY ?? "");
+      const clientSnap   = await db.collection("users").doc(task.clientId ?? "").get();
+      const stripeCustomerId = clientSnap.data()?.stripeCustomerId as string | undefined;
+
+      let hasPaymentMethod = false;
+      if (stripeCustomerId) {
+        const customer = await stripeClient.customers.retrieve(stripeCustomerId) as any;
+        hasPaymentMethod = !!(
+          customer.invoice_settings?.default_payment_method ||
+          customer.default_source
+        );
+      }
+
+      if (!hasPaymentMethod) {
+        const { generateToken } = await import("./tokenService");
+        const token    = generateToken({ phone: clientPhone, task: "payment" });
+        const setupUrl = `${appUrl}/done?task=payment&t=${token}`;
+        await sendMessage(sessionSnap.data()!.chatId,
+          `One more thing — to pay ${task.caregiverName} after each visit, ` +
+          `add a card on file (takes 30 seconds): ${setupUrl}`
+        );
+      }
+    } catch (err) {
+      console.error("bookingExecutor payment method check error:", err);
+    }
   }
 
   // Notify caregiver

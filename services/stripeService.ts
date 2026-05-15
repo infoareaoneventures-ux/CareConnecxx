@@ -59,14 +59,20 @@ export const createCheckoutSession = async (successUrl: string, cancelUrl: strin
 export const createCaregiverCheckoutSession = async (
   priceId: string,
   successUrl: string,
-  cancelUrl: string
+  cancelUrl: string,
+  options?: { includeMVR?: boolean }
 ): Promise<string | null> => {
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
 
   const functions = getFunctions();
   const createCheckoutSessionFn = httpsCallable(functions, 'v1-createCheckoutSession');
-  const result = await createCheckoutSessionFn({ priceId, successUrl, cancelUrl });
+  const result = await createCheckoutSessionFn({
+    priceId,
+    successUrl,
+    cancelUrl,
+    ...(options?.includeMVR && { includeMVR: true }),
+  });
   const { url } = (result.data as { url?: string }) ?? {};
   return url ?? null;
 };

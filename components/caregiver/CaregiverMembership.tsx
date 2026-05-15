@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   ShieldCheck, CheckCircle, Loader2, ChevronLeft,
-  DollarSign, MessageCircle, Briefcase, Calendar,
+  DollarSign, MessageCircle, Briefcase, Car,
 } from 'lucide-react';
 import {
   createCaregiverCheckoutSession,
@@ -43,9 +43,11 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
 }) => {
   const [promoCode, setPromoCode] = useState('');
   const [promoApplied, setPromoApplied] = useState(false);
+  const [includeMVR, setIncludeMVR] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const annualPrice = 24.95;
+  const mvrPrice = 9.50;
   const annualPerMonth = (annualPrice / 12).toFixed(2);
 
   const selectedPrice = annualPrice;
@@ -71,7 +73,7 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
     try {
       const successUrl = `${window.location.origin}/caregiver/dashboard?membership=success`;
       const cancelUrl = `${window.location.origin}/caregiver/membership`;
-      const url = await createCaregiverCheckoutSession(selectedPriceId, successUrl, cancelUrl);
+      const url = await createCaregiverCheckoutSession(selectedPriceId, successUrl, cancelUrl, { includeMVR });
       if (url) {
         window.location.href = url;
       } else {
@@ -161,6 +163,31 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
             </div>
           </div>
 
+          {/* MVR add-on */}
+          <div className="mb-6">
+            <button
+              type="button"
+              onClick={() => setIncludeMVR(v => !v)}
+              className={`w-full flex items-start gap-3 p-4 rounded-2xl border-2 text-left transition-colors ${includeMVR ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300 bg-white'}`}
+            >
+              <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${includeMVR ? 'border-blue-500 bg-blue-500' : 'border-slate-300'}`}>
+                {includeMVR && <CheckCircle className="w-3.5 h-3.5 text-white" />}
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Car className="w-4 h-4 text-blue-600" />
+                    <p className="font-semibold text-slate-900 text-sm">Add Approved Driver status</p>
+                  </div>
+                  <p className="font-bold text-blue-700 text-sm">+${mvrPrice.toFixed(2)}</p>
+                </div>
+                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                  Includes a Motor Vehicle Report (MVR). Families that need a driver will be able to see your Approved Driver badge.
+                </p>
+              </div>
+            </button>
+          </div>
+
           {/* Promo code */}
           <div className="mb-6">
             <label className="text-xs font-medium text-slate-600 block mb-1.5">Promo code (optional)</label>
@@ -184,12 +211,23 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
           </div>
 
           {/* Total */}
-          <div className="flex items-center justify-between py-3.5 border-t border-b border-slate-100 mb-6">
-            <span className="font-semibold text-slate-700">Total today</span>
-            <span className="text-xl font-extrabold text-slate-900">
-              ${promoApplied ? (selectedPrice * 0.9).toFixed(2) : selectedPrice.toFixed(2)}
-              <span className="text-sm font-medium text-slate-500 ml-1">/year</span>
-            </span>
+          <div className="py-3.5 border-t border-b border-slate-100 mb-6">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-slate-700">Total today</span>
+              <span className="text-xl font-extrabold text-slate-900">
+                ${(promoApplied
+                  ? selectedPrice * 0.9
+                  : selectedPrice
+                ).toFixed(2)}
+                {includeMVR && <span className="text-base font-bold text-slate-900"> + ${mvrPrice.toFixed(2)}</span>}
+                <span className="text-sm font-medium text-slate-500 ml-1">/year</span>
+              </span>
+            </div>
+            {includeMVR && (
+              <p className="text-xs text-slate-400 text-right mt-1">
+                ${mvrPrice.toFixed(2)} MVR is a one-time charge — your annual renewal is ${promoApplied ? (selectedPrice * 0.9).toFixed(2) : selectedPrice.toFixed(2)}/yr
+              </p>
+            )}
           </div>
 
           {/* CTA */}

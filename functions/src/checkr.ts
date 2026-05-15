@@ -8,6 +8,7 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 const CHECKR_PACKAGE = process.env.CHECKR_PACKAGE || "driver_pro";
+const CHECKR_PACKAGE_MVR = process.env.CHECKR_PACKAGE_MVR || CHECKR_PACKAGE;
 
 type CheckrStatus = "pending" | "clear" | "consider" | "suspended" | "canceled";
 
@@ -134,9 +135,11 @@ export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async 
       candidateId = candidate.id as string;
     }
 
+    const mvrPaid = caregiverData.mvrPaid === true;
+    const selectedPackage = mvrPaid ? CHECKR_PACKAGE_MVR : CHECKR_PACKAGE;
     const invitationBody: Record<string, unknown> = {
       candidate_id: candidateId,
-      package: CHECKR_PACKAGE,
+      package: selectedPackage,
     };
     if (workLocations.length) invitationBody.work_locations = workLocations;
 
@@ -152,6 +155,7 @@ export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async 
         submittedAt: new Date().toISOString(),
         status: "pending",
         invitationStatus: "sent",
+        ...(mvrPaid && { mvrIncluded: true }),
       },
     }, { merge: true });
 
@@ -334,10 +338,14 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
           body: "Great news — your background check came back clear. You're approved and families can now book you!",
         };
 
-        // Advance Cara onboarding if caregiver has an iMessage session
+        // Advance Cara onboarding if caregiver has an iMessage session; also mark approved driver if MVR was included
         try {
           const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
-          const cgPhone = cgSnap.data()?.phone as string | undefined;
+          const cgData = cgSnap.data();
+          if (cgData?.backgroundCheckData?.mvrIncluded === true) {
+            updates["isApprovedDriver"] = true;
+          }
+          const cgPhone = cgData?.phone as string | undefined;
           if (cgPhone) {
             const { advanceOnboardingStep } = await import("./agents/onboardingConversation");
             await advanceOnboardingStep(cgPhone, "background_check", "");

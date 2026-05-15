@@ -2,6 +2,7 @@ export interface SignupFormData {
   // Step 1
   dateOfBirth: string; // YYYY-MM-DD
   termsAccepted: boolean;
+  smsConsent: boolean;
 
   // Step 2
   email: string;
@@ -48,6 +49,7 @@ export interface SignupFormData {
 export const INITIAL_FORM_DATA: SignupFormData = {
   dateOfBirth: '',
   termsAccepted: false,
+  smsConsent: false,
   email: '',
   password: '',
   confirmPassword: '',

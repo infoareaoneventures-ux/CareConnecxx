@@ -69,6 +69,8 @@ const PhoneSignupPage     = lazy(() => import('./components/auth/PhoneSignupPage
 const AuthLoginPage       = lazy(() => import('./components/auth/LoginPage'));
 const UploadPage          = lazy(() => import('./components/pages/UploadPage'));
 const GenericSuccessPage  = lazy(() => import('./components/pages/GenericSuccessPage'));
+const TermsOfServicePage  = lazy(() => import('./components/pages/TermsOfServicePage'));
+const PrivacyPolicyPage   = lazy(() => import('./components/pages/PrivacyPolicyPage'));
 
 
 
@@ -366,6 +368,8 @@ const AppContent: React.FC = () => {
           <Route path="/admin" element={<AdminRoute element={<AdminView onBack={() => navigate('/')} />} />} />
           <Route path="/admin/audit" element={<AdminRoute element={<AuditDashboard />} />} />
           <Route path="/join" element={<JoinFamilyPage />} />
+          <Route path="/terms" element={<TermsOfServicePage />} />
+          <Route path="/privacy" element={<PrivacyPolicyPage />} />
           <Route path="/stripe/callback" element={<StripeCallback onNavigate={handleNavigation} />} />
           <Route path="/payment/success" element={<PaymentSuccess onNavigate={handleNavigation} onPaymentComplete={(id) => { /* handled in context now but PaymentSuccess might need update */ }} />} />
           <Route path="/payment/cancel" element={<PaymentCancel onNavigate={handleNavigation} />} />

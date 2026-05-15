@@ -98,7 +98,7 @@ async function activateBereavementMode(userId, chatId, phone, seniorName) {
         if (!url)
             return;
         await (0, client_1.sendMessage)(chatId, `I've put together a care memory for you — a record of ${seniorName}'s journey and all the love that surrounded them. 💙`);
-        await (0, client_1.sendMessage)(chatId, url);
+        await (0, client_1.sendMessage)(chatId, { parts: [{ type: "link", value: url }] });
     })
         .catch((err) => console.error("bereavement keepsake error:", err));
     // 5. Audit log

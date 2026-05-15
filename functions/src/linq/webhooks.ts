@@ -156,7 +156,7 @@ async function handleArrived(phone: string, chatId: string, session: AgentSessio
     }
   }
 
-  await sendMessage(chatId, "Great — I've notified the family you've arrived! Have a wonderful visit. 💙");
+  await sendMessage(chatId, "Got it — I've let the family know you're there. Have a good visit.");
 }
 
 async function handleDone(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -357,8 +357,8 @@ async function handleInbound(event: unknown): Promise<void> {
       initializeZepOnFirstContact(phone).catch(console.error);
 
       await sendMessage(chatId,
-        `Hi! 💙 I'm Cara, the care assistant for ${(primarySession as any).onboardingData?.seniorName ?? "your family's loved one"}. ` +
-        `I've added you to the care group — you'll receive updates and can ask me anything!`
+        `Hi, I'm Cara — the care assistant for ${(primarySession as any).onboardingData?.seniorName ?? "your family"}. ` +
+        `I've added you to the care group. You'll get the same updates and can ask me anything.`
       );
       return;
     }
@@ -386,8 +386,8 @@ async function handleInbound(event: unknown): Promise<void> {
 
     await startTyping(chatId).catch(() => {});
     await sendMessage(chatId,
-      `Hi! 💙 I'm Cara, your care assistant.\n\n` +
-      `Are you looking for care for a loved one, or are you a caregiver looking for work?\n\n` +
+      `Hi — I'm Cara. I help families find and manage care for aging parents, all through text. No app needed.\n\n` +
+      `Are you looking for care for someone, or are you a caregiver?\n\n` +
       `1️⃣ I need care for someone\n` +
       `2️⃣ I'm a caregiver`
     );
@@ -497,7 +497,7 @@ async function handleInbound(event: unknown): Promise<void> {
           const familySnap = await db.collection("agent_sessions").doc(appt.clientId ?? appt.clientPhone).get();
           if (familySnap.exists) {
             await sendMessage(familySnap.data()!.chatId,
-              `${appt.caregiverName ?? "Your caregiver"} confirmed the visit on ${appt.date}! You're all set. 💙`
+              `${appt.caregiverName ?? "Your caregiver"} confirmed the visit on ${appt.date}. You're all set.`
             );
           }
           await sendMessage(chatId, "Confirmed! See you then. 👍");
@@ -537,7 +537,7 @@ async function handleInbound(event: unknown): Promise<void> {
         if (task && task.status === "awaiting_approval") {
           if (norm === "YES") {
             await candidateSnap.docs[0].ref.update({ status: "available", respondedAt: new Date().toISOString() });
-            await sendMessage(chatId, "Great — we'll confirm with the family and follow up shortly. 💙");
+            await sendMessage(chatId, "Got it — we'll confirm with the family and follow up shortly.");
           } else {
             await candidateSnap.docs[0].ref.update({ status: "declined", respondedAt: new Date().toISOString() });
             await sendMessage(chatId, "No worries — thanks for letting us know!");
@@ -681,7 +681,7 @@ async function handleInbound(event: unknown): Promise<void> {
     if (norm === "APPROVE") {
       const { approveShiftHoursForClient } = await import("../shiftHours");
       await approveShiftHoursForClient(appointmentId as string);
-      await sendMessage(chatId, `✅ Approved! ${caregiverName as string} will be paid $${amount as string}. 💙`);
+      await sendMessage(chatId, `Approved. ${caregiverName as string} will be paid $${amount as string}.`);
     } else {
       await sendMessage(chatId,
         `Got it — I'll flag this for review. Someone from our team will follow up within 24 hours. ` +
@@ -806,6 +806,69 @@ async function handleInbound(event: unknown): Promise<void> {
       }
     }
 
+    // ── Post-interview outcome: classify natural language as HIRE/MAYBE/PASS ──
+    const pendingOutcome = (session as any).pendingInterviewOutcome as
+      { interviewId: string; caregiverName: string; caregiverId?: string } | undefined;
+    if (pendingOutcome && norm !== "HIRE" && norm !== "MAYBE" && norm !== "PASS") {
+      try {
+        const Anthropic = (await import("@anthropic-ai/sdk")).default;
+        const _ac = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const _r = await _ac.messages.create({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 10,
+          system:
+            "The user just interviewed a caregiver and is sharing their thoughts. " +
+            "Classify as HIRE (positive, wants to proceed), MAYBE (uncertain, not sure), " +
+            "or PASS (negative, concerns, didn't click). Reply with one word only.",
+          messages: [{ role: "user", content: text }],
+        });
+        const classified = ((_r.content[0] as { text: string }).text ?? "").trim().toUpperCase();
+        if (classified === "HIRE" || classified === "MAYBE" || classified === "PASS") {
+          // Re-enter with classified keyword — will be picked up by the checks below
+          (text as any); // text is const; shadow norm instead
+          Object.assign(session, {}); // keep session reference
+          // Override norm for the blocks below
+          const resolvedNorm = classified;
+          if (resolvedNorm === "HIRE") {
+            let caregiverId = pendingOutcome.caregiverId ?? "";
+            if (!caregiverId && pendingOutcome.interviewId) {
+              const reqSnap = await db.collection("interview_requests")
+                .where("interviewId", "==", pendingOutcome.interviewId).limit(1).get();
+              if (!reqSnap.empty) caregiverId = reqSnap.docs[0].data().caregiverId ?? "";
+            }
+            await db.collection("agent_sessions").doc(phone).update({
+              hireMode: { caregiverName: pendingOutcome.caregiverName, caregiverId },
+              pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
+            });
+            await sendMessage(chatId,
+              `${pendingOutcome.caregiverName} sounds like a great fit. When would you like care to start?`
+            );
+          } else if (resolvedNorm === "MAYBE") {
+            const updates: Record<string, unknown> = {
+              pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
+            };
+            if (pendingOutcome.caregiverId) {
+              (updates as any).rejectedCaregiverIds = admin.firestore.FieldValue.arrayUnion(pendingOutcome.caregiverId);
+            }
+            await db.collection("agent_sessions").doc(phone).update(updates);
+            await sendMessage(chatId, `That's okay — want me to reach out to anyone else in the meantime?`);
+          } else {
+            const updates: Record<string, unknown> = {
+              pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
+            };
+            if (pendingOutcome.caregiverId) {
+              (updates as any).rejectedCaregiverIds = admin.firestore.FieldValue.arrayUnion(pendingOutcome.caregiverId);
+            }
+            await db.collection("agent_sessions").doc(phone).update(updates);
+            await sendMessage(chatId, `Understood. Want me to search for more caregivers? Reply YES and I'll get started.`);
+          }
+          return;
+        }
+      } catch (err) {
+        console.error("interview outcome classification error:", err);
+      }
+    }
+
     // ── HIRE — post-interview decision ────────────────────────────────────────
     if (norm === "HIRE") {
       const pending = (session as any).pendingInterviewOutcome as
@@ -824,8 +887,7 @@ async function handleInbound(event: unknown): Promise<void> {
           pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
         });
         await sendMessage(chatId,
-          `Great choice — ${pending.caregiverName} is a fantastic caregiver! 🌟\n\n` +
-          `When would you like care to start? (e.g. "next Monday" or "May 19")`
+          `${pending.caregiverName} sounds like a great fit. When would you like care to start?`
         );
         return;
       }
@@ -924,7 +986,7 @@ async function handleInbound(event: unknown): Promise<void> {
       });
 
       await sendViaInteractionAgent(phone, {
-        content:     `Done! I've added ${memberName ?? memberPhone} to your care group. They'll receive the same updates you do. 💙`,
+        content:     `Done — ${memberName ?? memberPhone} is now in your care group. They'll get the same updates you do.`,
         urgency:     "standard",
         sourceAgent: "family_group",
         canDrop:     false,

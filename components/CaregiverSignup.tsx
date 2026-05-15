@@ -493,7 +493,7 @@ export const CaregiverSignup: React.FC<CaregiverSignupProps> = ({ onNavigate, on
             {/* Logo */}
             <div className="px-8 pt-8 pb-2 flex-shrink-0">
                <div className="flex items-center gap-2">
-                  <div className="bg-accent-500 p-2 rounded-xl shadow-md shadow-accent-200">
+                  <div className="bg-slate-900 p-2 rounded-xl shadow-md shadow-slate-200">
                      <Heart className="text-white w-5 h-5" />
                   </div>
                   <span className="text-xl font-bold text-slate-900">CareConnex</span>
@@ -564,15 +564,15 @@ export const CaregiverSignup: React.FC<CaregiverSignupProps> = ({ onNavigate, on
                               type="checkbox"
                               checked={acceptedTerms}
                               onChange={(e) => setAcceptedTerms(e.target.checked)}
-                              className="mt-0.5 w-4 h-4 rounded border-slate-300 text-accent-600 focus:ring-accent-500"
+                              className="mt-0.5 w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
                            />
                            <span className="text-xs text-slate-600 leading-relaxed">
                               I agree to the{' '}
-                              <button type="button" onClick={() => setLegalModal('terms')} className="text-accent-600 underline hover:text-accent-700">
+                              <button type="button" onClick={() => setLegalModal('terms')} className="text-slate-900 font-medium underline hover:text-slate-700">
                                  Terms of Service
                               </button>
                               {' '}and{' '}
-                              <button type="button" onClick={() => setLegalModal('privacy')} className="text-accent-600 underline hover:text-accent-700">
+                              <button type="button" onClick={() => setLegalModal('privacy')} className="text-slate-900 font-medium underline hover:text-slate-700">
                                  Privacy Policy
                               </button>
                               .
@@ -595,7 +595,7 @@ export const CaregiverSignup: React.FC<CaregiverSignupProps> = ({ onNavigate, on
                                        key={c}
                                        type="button"
                                        onClick={() => toggleSelection(c, certs, setCerts)}
-                                       className={`px-3 py-1.5 text-sm rounded-full border transition-colors ${certs.includes(c) ? 'bg-accent-100 border-accent-500 text-accent-700' : 'bg-white border-slate-200 text-slate-600'
+                                       className={`px-3 py-1.5 text-sm rounded-full border transition-colors ${certs.includes(c) ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-600'
                                           }`}
                                     >
                                        {c}
@@ -612,7 +612,7 @@ export const CaregiverSignup: React.FC<CaregiverSignupProps> = ({ onNavigate, on
                                     <div
                                        key={s}
                                        onClick={() => toggleSelection(s, skills, setSkills)}
-                                       className={`p-2 rounded-lg border text-sm cursor-pointer flex items-center gap-1.5 transition-colors ${skills.includes(s) ? 'bg-accent-50 border-accent-400 text-accent-800 font-medium' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                                       className={`p-2 rounded-lg border text-sm cursor-pointer flex items-center gap-1.5 transition-colors ${skills.includes(s) ? 'bg-slate-50 border-slate-900 text-slate-900 font-medium' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}
                                     >
                                        {skills.includes(s) && <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />}
                                        {s}
@@ -631,7 +631,7 @@ export const CaregiverSignup: React.FC<CaregiverSignupProps> = ({ onNavigate, on
                               placeholder="Tell families about your experience, approach to care, and what makes you unique..."
                               rows={4}
                               maxLength={500}
-                              className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-accent-100 focus:border-accent-500 bg-white text-slate-900 resize-none"
+                              className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-100 focus:border-slate-500 bg-white text-slate-900 resize-none"
                            />
                            <p className={`text-xs mt-1 ${bio.length >= 500 ? 'text-red-500 font-medium' : 'text-slate-400'}`}>
                               {bio.length}/500 characters
@@ -677,9 +677,9 @@ export const CaregiverSignup: React.FC<CaregiverSignupProps> = ({ onNavigate, on
                         </div>
 
                         {/* Tiered pricing for multiple seniors */}
-                        <div className="p-4 bg-accent-50 border border-accent-200 rounded-xl space-y-3">
-                           <p className="text-xs font-semibold text-accent-800 uppercase tracking-wide">Multiple Seniors (Optional)</p>
-                           <p className="text-xs text-accent-700">Many families care for couples. Set different rates for multiple seniors.</p>
+                        <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                           <p className="text-xs font-semibold text-slate-800 uppercase tracking-wide">Multiple Seniors (Optional)</p>
+                           <p className="text-xs text-slate-600">Many families care for couples. Set different rates for multiple seniors.</p>
                            <div className="grid grid-cols-2 gap-3">
                               <Input
                                  label="Rate for 2 seniors ($)"
@@ -724,7 +724,7 @@ export const CaregiverSignup: React.FC<CaregiverSignupProps> = ({ onNavigate, on
                               <span className="block font-bold text-slate-900">Reliable Transportation</span>
                               <span className="text-sm text-slate-500">I have my own car</span>
                            </div>
-                           <div className={`w-12 h-6 rounded-full p-1 transition-colors ${logistics.hasCar ? 'bg-accent-500' : 'bg-slate-300'}`}>
+                           <div className={`w-12 h-6 rounded-full p-1 transition-colors ${logistics.hasCar ? 'bg-slate-900' : 'bg-slate-300'}`}>
                               <div className={`bg-white w-4 h-4 rounded-full shadow-sm transition-transform ${logistics.hasCar ? 'translate-x-6' : 'translate-x-0'}`} />
                            </div>
                            <input
@@ -766,7 +766,7 @@ export const CaregiverSignup: React.FC<CaregiverSignupProps> = ({ onNavigate, on
                               id="skip-docs"
                               checked={skipDocuments}
                               onChange={(e) => setSkipDocuments(e.target.checked)}
-                              className="rounded border-slate-300 text-accent-500 focus:ring-accent-500"
+                              className="rounded border-slate-300 text-slate-900 focus:ring-slate-900"
                            />
                            <label htmlFor="skip-docs" className="text-sm text-slate-600 cursor-pointer">
                               I'll upload these later
@@ -792,7 +792,7 @@ export const CaregiverSignup: React.FC<CaregiverSignupProps> = ({ onNavigate, on
                   {/* Skip step 5 if user chose to skip */}
                   {step === 5 && skipDocuments && (
                      <div className="animate-slide-in text-center py-8">
-                        <CheckCircle className="w-16 h-16 text-accent-500 mx-auto mb-4" />
+                        <CheckCircle className="w-16 h-16 text-slate-400 mx-auto mb-4" />
                         <h4 className="text-lg font-bold text-slate-900 mb-2">Documents skipped</h4>
                         <p className="text-slate-500">You can upload your documents later from your profile.</p>
                      </div>

@@ -74,21 +74,52 @@ exports.sendStaleSessionNudges = functions.pubsub
             let message;
             if (!userType || step === "ask_role") {
                 message =
-                    `Hi! 👋 I'm Cara, your care assistant.\n\n` +
-                        `Ready to continue? Just reply:\n\n` +
+                    `Hi${firstName ? ` ${firstName}` : ""}, still thinking about care?\n\n` +
+                        `Just reply when you're ready:\n\n` +
                         `1️⃣ I need care for someone\n` +
                         `2️⃣ I'm a caregiver`;
             }
             else if (userType === "caregiver") {
-                message =
-                    `${greeting} 👋 Your caregiver profile is almost done.\n\n` +
-                        `Reply here whenever you're ready to continue — ` +
-                        `we'd love to have you on the team! 💙`;
+                if (step === "caregiver_send_bgcheck" || step === "caregiver_awaiting_bgcheck") {
+                    message =
+                        `${greeting} Your background check is the last step before you can start getting booked.\n\n` +
+                            `Families can't book you until it's done. It takes about 5 minutes. ` +
+                            `Reply here and I'll send the link again.`;
+                }
+                else if (step === "caregiver_ask_rate") {
+                    message =
+                        `${greeting} Still thinking about your hourly rate?\n\n` +
+                            `Most caregivers on Cara charge $18-28/hr. ` +
+                            `You can always update it later. No pressure to get it perfect now.`;
+                }
+                else if (step === "caregiver_send_photo") {
+                    message =
+                        `${greeting} Your profile is almost live.\n\n` +
+                            `Adding a photo makes families much more likely to request an interview. ` +
+                            `A clear headshot is all you need. Ready to finish up?`;
+                }
+                else {
+                    message =
+                        `${greeting} Your caregiver profile is almost done.\n\n` +
+                            `Reply here whenever you're ready to continue.`;
+                }
             }
             else {
-                message =
-                    `${greeting} 👋 I noticed you didn't finish setting up your care search.\n\n` +
-                        `Whenever you're ready — just reply here to pick up where you left off. 💙`;
+                if (step === "client_send_payment" || step === "client_awaiting_payment") {
+                    message =
+                        `${greeting} The last step is adding a payment method so caregivers can get paid after each visit.\n\n` +
+                            `Takes about 30 seconds. No charges until you book a caregiver.`;
+                }
+                else if (step === "client_ask_schedule") {
+                    message =
+                        `${greeting} Almost there. Just need to know how often you need care ` +
+                            `and I'll start searching for caregivers.`;
+                }
+                else {
+                    message =
+                        `${greeting} I'm here whenever you're ready to continue.\n\n` +
+                            `Just reply and I'll pick up where we left off.`;
+                }
             }
             await (0, caraAgent_1.sendViaInteractionAgent)(doc.id, {
                 content: message,

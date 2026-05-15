@@ -138,7 +138,28 @@ exports.onJournalCreated = functions.firestore
         const caregiverDoc = await db.collection("caregivers").doc(caregiverId).get();
         const caregiverName = (_h = (_g = caregiverDoc.data()) === null || _g === void 0 ? void 0 : _g.name) !== null && _h !== void 0 ? _h : "Your caregiver";
         const visitDate = (_j = timestamp === null || timestamp === void 0 ? void 0 : timestamp.slice(0, 10)) !== null && _j !== void 0 ? _j : "today";
-        const baseMessage = `${caregiverName} finished today's visit (${visitDate}).\n${summary}`;
+        const seniorName = ((_o = (_l = (_k = clientDoc.data()) === null || _k === void 0 ? void 0 : _k.seniorName) !== null && _l !== void 0 ? _l : (_m = clientDoc.data()) === null || _m === void 0 ? void 0 : _m.displayName) !== null && _o !== void 0 ? _o : null);
+        const opening = seniorName
+            ? `${caregiverName} just finished up with ${seniorName}.`
+            : `${caregiverName} just finished up.`;
+        let observation = "";
+        if (severity === "flag" || severity === "watch") {
+            observation = summary;
+        }
+        else {
+            const goods = [];
+            if (wellness === null || wellness === void 0 ? void 0 : wellness.ateWell)
+                goods.push("ate well");
+            if (wellness === null || wellness === void 0 ? void 0 : wellness.tookMeds)
+                goods.push("took their medication");
+            const mood = wellness === null || wellness === void 0 ? void 0 : wellness.mood;
+            if (mood === "happy" || mood === "positive")
+                goods.push("was in good spirits");
+            observation = goods.length > 0
+                ? `They ${goods.join(" and ")} today.`
+                : (summary || "Visit went smoothly.");
+        }
+        const baseMessage = `${opening} ${observation}`.trim();
         // Send photo inline if available (renders natively in iMessage)
         if ((photos === null || photos === void 0 ? void 0 : photos.length) > 0) {
             // Structured message — send directly (supervisor handles text part separately)
@@ -160,7 +181,7 @@ exports.onJournalCreated = functions.firestore
         // Follow-up for flagged health signals
         if (severity === "flag" && signals.length > 0) {
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
-                content: `⚠️ Worth noting: ${signals.join(", ")}. Might be worth mentioning to the doctor at the next visit.`,
+                content: `Worth keeping an eye on. If you notice the same thing at the next visit, it might be worth mentioning to their doctor.`,
                 urgency: "standard",
                 sourceAgent: "health_watch",
                 canDrop: true,
@@ -180,7 +201,7 @@ exports.onJournalCreated = functions.firestore
             sentAt: nowIso,
         });
         // Send care journal to Zep so health facts are extracted and dated
-        const seniorNameForZep = ((_o = (_l = (_k = clientDoc.data()) === null || _k === void 0 ? void 0 : _k.seniorName) !== null && _l !== void 0 ? _l : (_m = clientDoc.data()) === null || _m === void 0 ? void 0 : _m.displayName) !== null && _o !== void 0 ? _o : "Senior");
+        const seniorNameForZep = seniorName !== null && seniorName !== void 0 ? seniorName : "Senior";
         (0, zepClient_1.sendCareJournalToZep)({
             phone,
             seniorName: seniorNameForZep,

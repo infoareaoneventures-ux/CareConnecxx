@@ -33,7 +33,7 @@ async function detectHealthSignals(notes, wellness, activities) {
     const fallback = {
         signals: [],
         severity: "none",
-        summary: "Visit completed. Caregiver notes have been logged.",
+        summary: "",
     };
     if (!(notes === null || notes === void 0 ? void 0 : notes.trim()) && !wellness)
         return fallback;

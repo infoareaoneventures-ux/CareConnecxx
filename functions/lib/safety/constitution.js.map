@@ -1,1 +1,1 @@
-{"version":3,"file":"constitution.js","sourceRoot":"","sources":["../../src/safety/constitution.ts"],"names":[],"mappings":";;;AAAa,QAAA,kBAAkB,GAAG;IAChC,gFAAgF;IAChF,uEAAuE;IACvE,uEAAuE;IACvE,8FAA8F;IAC9F,qEAAqE;IACrE,iFAAiF;IACjF,oGAAoG;CAC5F,CAAC"}
+{"version":3,"file":"constitution.js","sourceRoot":"","sources":["constitution.ts"],"names":[],"mappings":";;;AAAa,QAAA,kBAAkB,GAAG;IAChC,gFAAgF;IAChF,uEAAuE;IACvE,uEAAuE;IACvE,8FAA8F;IAC9F,qEAAqE;IACrE,iFAAiF;IACjF,oGAAoG;CAC5F,CAAC"}

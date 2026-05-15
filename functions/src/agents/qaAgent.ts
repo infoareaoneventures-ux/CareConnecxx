@@ -47,6 +47,16 @@ async function getNextAppointment(userId: string) {
   return snap.empty ? null : snap.docs[0].data();
 }
 
+async function getActiveVisit(userId: string) {
+  const snap = await db
+    .collection("appointments")
+    .where("clientId", "==", userId)
+    .where("status",   "==", "in_progress")
+    .limit(1)
+    .get();
+  return snap.empty ? null : snap.docs[0].data();
+}
+
 async function getAgentPermissions(userId: string) {
   const snap = await db.collection("agent_permissions").doc(userId).get();
   return snap.data() ?? null;
@@ -113,7 +123,8 @@ function buildClientSystemPrompt(
   permissions: any | null,
   learnedFactsText?: string,
   zepContext?: string,
-  memoryContext?: string
+  memoryContext?: string,
+  activeVisit?: any | null
 ): string {
   const seniorName = senior?.name ?? "your loved one";
   const needs: string[] = senior?.needs ?? [];
@@ -150,6 +161,10 @@ function buildClientSystemPrompt(
     ? `\nWhat I know about this family:\n${learnedFactsText}\n`
     : "";
 
+  const visitSection = activeVisit
+    ? `\nNOTE: ${activeVisit.caregiverName ?? "A caregiver"} is with ${seniorName} right now (visit in progress). If the family asks something the caregiver should know, offer to pass it along.\n`
+    : "";
+
   return [
     `You are Cara — an AI care assistant texting with a family member caring for ${seniorName}.`,
     `You act; you don't describe what you could do. When you can do something, do it and report back.`,
@@ -157,19 +172,26 @@ function buildClientSystemPrompt(
     `Care needs: ${needs.join(", ") || "none recorded"}.`,
     zepSection,
     factsSection,
+    visitSection,
     `Recent care journal:`,
     journalSummary,
     ``,
     apptLine,
     autoBook ? `\n${autoBook}` : "",
     ``,
-    `Rules:`,
-    `- Keep answers to 1–3 sentences maximum (you are in an iMessage thread).`,
-    `- Never diagnose or give medical advice.`,
-    `- For any emergency: "Please call 911 immediately." Do not follow up with conversation.`,
-    `- Be warm and direct — like a knowledgeable friend who gets things done, not a customer service bot.`,
-    `- Mirror the emotional tone of the person you're talking with. If they're worried, acknowledge it.`,
-    `- Sign off with 💙 occasionally. Never use jargon or bullet points in replies.`,
+    `Cara is a warm, direct care assistant who texts like a trusted family friend — someone who knows what they're talking about and always leads with the person before the information.`,
+    ``,
+    `She is not a chatbot. She does not use bullet points, numbered lists, headers, or corporate language. She keeps messages short because she respects people's time.`,
+    ``,
+    `When someone is worried, she acknowledges it before she solves it. When something is hard, she sits with it before offering action. When the senior does something good, she shares it like she noticed.`,
+    ``,
+    `She uses the senior's name — not "your loved one." She signs off with 💙 when a moment genuinely calls for it. Not as punctuation. As warmth.`,
+    ``,
+    `She never says: "I'm happy to help", "Certainly!", "Great question", "As I mentioned", "Is there anything else I can help you with?", "It's important to note".`,
+    ``,
+    `She keeps every message under 280 characters unless the situation genuinely requires more. She never uses markdown.`,
+    ``,
+    `Safety (non-negotiable): Never diagnose or give medical advice. For any emergency: "Please call 911 immediately." Do not follow up with conversation.`,
     ``,
     `Eldercare emotional intelligence:`,
     `- Worry first: when they express concern, acknowledge the feeling first, then share data, then offer ONE clear next step.`,
@@ -313,11 +335,12 @@ export async function runQaAgent(params: {
       ]);
     }
 
-    // Load Zep context, memory files, and learned facts in parallel (non-blocking on failure)
-    const [zepContext, memoryContext, facts] = await Promise.all([
+    // Load Zep context, memory files, learned facts, and active visit in parallel
+    const [zepContext, memoryContext, facts, activeVisit] = await Promise.all([
       zepThreadId ? getZepContext(zepThreadId).catch(() => "") : Promise.resolve(""),
       getMemoryContext(userId).catch(() => ""),
       getRelevantFacts(userId).catch(() => []),
+      getActiveVisit(userId).catch(() => null),
     ]);
     const factsText = facts.length
       ? facts.map((f) => `- ${f.fact} (${f.category})`).join("\n")
@@ -326,7 +349,8 @@ export async function runQaAgent(params: {
     systemPrompt = buildClientSystemPrompt(
       senior, journal, nextAppt, permissions, factsText,
       zepContext || undefined,
-      memoryContext || undefined
+      memoryContext || undefined,
+      activeVisit
     );
   }
 
@@ -388,7 +412,7 @@ export async function runQaAgent(params: {
       }
     }
 
-    if (!reply) reply = "I'll look into that and get back to you shortly. 💙";
+    if (!reply) reply = "I'll look into that and get back to you shortly.";
 
     await saveConversationTurn(phone, text, reply);
     await sendSplit(chatId, reply);

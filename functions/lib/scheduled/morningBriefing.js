@@ -69,29 +69,38 @@ exports.sendMorningBriefings = functions.pubsub
                 continue;
             const senior = clientSnap.data();
             const carePlan = carePlanSnap.data();
-            const name = (_a = caregiver.name) !== null && _a !== void 0 ? _a : "there";
+            const cgFirstName = ((_a = caregiver.name) !== null && _a !== void 0 ? _a : "there").split(" ")[0];
             const seniorName = ((_c = (_b = senior === null || senior === void 0 ? void 0 : senior.seniorName) !== null && _b !== void 0 ? _b : appt.clientName) !== null && _c !== void 0 ? _c : "your client");
             const address = ((_e = (_d = appt.address) !== null && _d !== void 0 ? _d : appt.location) !== null && _e !== void 0 ? _e : "the client's home");
-            // Build care plan highlights
-            const highlights = [];
-            if ((_f = carePlan === null || carePlan === void 0 ? void 0 : carePlan.medications) === null || _f === void 0 ? void 0 : _f.length) {
-                highlights.push(`· Medications: ${carePlan.medications.slice(0, 2).join(", ")}`);
-            }
-            if (carePlan === null || carePlan === void 0 ? void 0 : carePlan.notes) {
-                highlights.push(`· Notes: ${carePlan.notes.slice(0, 100)}`);
-            }
-            if (!highlights.length)
-                highlights.push("· No special notes for today");
+            const schedule = `${(_f = appt.startTime) !== null && _f !== void 0 ? _f : ""}${appt.endTime ? `–${appt.endTime}` : ""}`;
             const mapsUrl = `https://maps.google.com/?q=${encodeURIComponent(address)}`;
+            // Fetch last journal entry for context
+            const lastJournal = await db.collection("care_journal")
+                .where("seniorId", "==", appt.clientId)
+                .orderBy("timestamp", "desc")
+                .limit(1)
+                .get()
+                .catch(() => null);
+            const lastNotes = (lastJournal === null || lastJournal === void 0 ? void 0 : lastJournal.empty) ? null :
+                (_g = lastJournal === null || lastJournal === void 0 ? void 0 : lastJournal.docs[0].data().notes) !== null && _g !== void 0 ? _g : null;
+            // Build context note from last visit or care plan note
+            const contextNote = lastNotes
+                ? lastNotes.slice(0, 120)
+                : ((carePlan === null || carePlan === void 0 ? void 0 : carePlan.notes) ? carePlan.notes.slice(0, 120) : null);
+            // Medication line — only if there are meds
+            const meds = (_h = carePlan === null || carePlan === void 0 ? void 0 : carePlan.medications) !== null && _h !== void 0 ? _h : [];
+            const medLine = meds.length > 0
+                ? `Medications: ${meds.slice(0, 2).join(", ")}.`
+                : null;
+            const lines = [
+                `Morning ${cgFirstName}! ${seniorName} today${schedule ? ` — ${schedule}` : ""} at ${address}.`,
+                mapsUrl,
+                contextNote,
+                medLine,
+                `Reply ARRIVED when you get there.`,
+            ].filter(Boolean);
             await (0, caraAgent_1.sendViaInteractionAgent)(caregiver.phone, {
-                content: `Good morning ${name}! Here's your day:\n\n` +
-                    `👤 ${seniorName}\n` +
-                    `📍 ${address}\n` +
-                    `   ${mapsUrl}\n` +
-                    `⏰ ${(_g = appt.startTime) !== null && _g !== void 0 ? _g : ""}–${(_h = appt.endTime) !== null && _h !== void 0 ? _h : ""}\n\n` +
-                    `Care plan highlights:\n` +
-                    highlights.join("\n") +
-                    `\n\nReply ARRIVED when you get there. 💙`,
+                content: lines.join("\n\n"),
                 urgency: "standard",
                 sourceAgent: "morning_briefing",
                 canDrop: true,

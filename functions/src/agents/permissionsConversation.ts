@@ -279,9 +279,10 @@ export async function updatePermissionFromText(
   const label = friendly[matched as string] ?? matched;
   if (newVal === false) {
     await sendMessage(chatId,
-      `Done — I won't send ${label} anymore. Text me anytime to turn it back on. 👍`
+      `Got it. No more ${label}. Just text me if you change your mind.`
     );
   } else {
-    await sendMessage(chatId, `Done — I'll resume ${label}. 👍`);
+    const resumeLabel = label.includes("book") ? "asking before booking" : `sending ${label} again`;
+    await sendMessage(chatId, `Sure thing. I'll go back to ${resumeLabel}.`);
   }
 }

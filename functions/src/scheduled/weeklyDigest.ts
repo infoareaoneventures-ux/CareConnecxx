@@ -80,21 +80,20 @@ async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>): Pr
   const dayName = now.toLocaleDateString("en-US", { weekday: "long" });
 
   const prompt = [
-    `You're writing a warm Sunday morning care update text for ${clientName} about ${seniorName}.`,
+    `You are Cara. Write a Sunday morning text to ${clientName} about ${seniorName}'s week.`,
+    ``,
+    `Write it like you actually know both of them and genuinely care how the week went.`,
+    `If it was a good week, let that warmth come through.`,
+    `If there were concerns, acknowledge them honestly without being alarming.`,
+    `Mention the upcoming week naturally — not as a list.`,
+    ``,
+    `Do not follow a format. Just tell them what matters most.`,
+    `Under 200 words. Plain text only. No markdown. No bullet points.`,
     ``,
     `This week's data:`,
     `- ${completedCount} visit(s) completed`,
     `Journal entries:\n${journalContext || "None"}`,
-    `Upcoming visits:\n${apptContext || "None scheduled"}`,
-    ``,
-    `Write a warm, personal weekly summary as a text message. Use simple emoji. Include:`,
-    `1. A "Good morning" greeting with the day`,
-    `2. Quick stats on visits completed`,
-    `3. 2-3 notable observations from the journal (mood, appetite, activity)`,
-    `4. Upcoming visits this week (date, time, caregiver)`,
-    `5. One warm closing line`,
-    ``,
-    `Keep it under 300 words. Conversational, not clinical. No markdown, just plain text with line breaks.`,
+    `Upcoming:\n${apptContext || "Nothing scheduled yet"}`,
   ].join("\n");
 
   try {
@@ -199,10 +198,10 @@ async function runWeeklyDigests(): Promise<number> {
       ).join("\n");
 
       const earningsMsg =
-        `Good morning ${cgName} ☀️ Here's your week:\n\n` +
-        `💰 Earnings this week: ${totalStr}\n\n` +
+        `Morning ${cgName}. ${visits.length} visit${visits.length !== 1 ? "s" : ""} this week, ${totalStr} on its way to you.\n\n` +
         `${visitLines}\n\n` +
-        `Payments are processed within 2 business days. Keep up the great work! 💙`;
+        `That's real work. Thank you for taking care of these families.\n\n` +
+        `Payments hit within 2 business days.`;
 
       await sendViaInteractionAgent(cgPhone, {
         content:     earningsMsg,

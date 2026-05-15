@@ -117,7 +117,7 @@ export async function handleMemoryQuery(
 ): Promise<void> {
   const context = await getMemoryContext(userId);
   if (!context) {
-    await sendMessage(chatId, "I'm still learning about your care situation — the more we talk, the more I'll remember! 💙");
+    await sendMessage(chatId, "I'm still building up my picture of your situation. The more we talk, the more I'll know.");
     return;
   }
 
@@ -132,7 +132,7 @@ export async function handleMemoryQuery(
   });
 
   const summary = ((result.content[0] as { text: string }).text ?? "").trim();
-  await sendMessage(chatId, summary || "I remember quite a bit — just ask me something specific! 💙");
+  await sendMessage(chatId, summary || "I remember quite a bit — just ask me something specific.");
 }
 
 // Consolidate last 48h of audit log entries into memory files

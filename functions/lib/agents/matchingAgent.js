@@ -52,7 +52,7 @@ function score(caregiver, intake) {
     return pts;
 }
 async function runMatchingForClient(phone, chatId, intake, session) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
     try {
         const zip = ((_a = intake.zipCode) !== null && _a !== void 0 ? _a : "");
         const city = ((_b = intake.city) !== null && _b !== void 0 ? _b : "");
@@ -101,7 +101,7 @@ async function runMatchingForClient(phone, chatId, intake, session) {
                 severity: "high",
             });
             await (0, client_1.sendMessage)(chatId, "I don't have anyone available in your area right now, but I've flagged your request " +
-                "and our team will reach out within 24 hours to find the right match. 💙");
+                "and our team will reach out within 24 hours to find the right match.");
             return;
         }
         // Write pending interview requests (and caregiver_interest tasks for pending-bg-check caregivers)
@@ -125,21 +125,33 @@ async function runMatchingForClient(phone, chatId, intake, session) {
                 });
             }
         }
-        const lines = top3.map((c, i) => {
-            var _a, _b, _c, _d;
-            const stars = "⭐".repeat(Math.round((_a = c.rating) !== null && _a !== void 0 ? _a : 4));
-            const specials = ((_b = c.specialties) !== null && _b !== void 0 ? _b : []).slice(0, 2).join(", ") || "General care";
-            const yrs = (_c = c.yearsExperience) !== null && _c !== void 0 ? _c : "?";
-            const bgNote = c.pendingBackgroundCheck ? "\n   ⏳ Background check in progress" : "";
-            const profileUrl = `${(_d = process.env.APP_URL) !== null && _d !== void 0 ? _d : "https://careconnecxx.com"}/caregiver/${c.id}`;
-            return (`${i + 1}️⃣  ${c.name} · ${stars} · $${c.hourlyRate}/hr\n` +
-                `   ${specials} · ${yrs}yrs exp${bgNote}\n` +
-                `   👤 ${profileUrl}`);
-        }).join("\n\n");
-        await (0, client_1.sendMessage)(chatId, `I found ${top3.length} great matches for ${((_k = intake.seniorName) !== null && _k !== void 0 ? _k : "your loved one")} in ${city}! 🎉\n\n` +
-            `${lines}\n\n` +
-            `Reply with numbers to request interviews.\n` +
-            `(e.g. "1" or "1 and 3" or "all")`);
+        const seniorName = ((_k = intake.seniorName) !== null && _k !== void 0 ? _k : "your loved one");
+        const needs = ((_l = intake.careNeeds) !== null && _l !== void 0 ? _l : []);
+        const buildLine = (c, i) => {
+            var _a, _b;
+            const matchedNeeds = needs.filter((n) => { var _a; return (_a = c.specialties) === null || _a === void 0 ? void 0 : _a.some((s) => s.toLowerCase().includes(n.toLowerCase())); });
+            let reason;
+            if (matchedNeeds.length > 0) {
+                reason = `specializes in ${matchedNeeds[0]}`;
+            }
+            else if (c.yearsExperience >= 5) {
+                reason = `${c.yearsExperience} years of experience`;
+            }
+            else if (((_a = c.rating) !== null && _a !== void 0 ? _a : 0) >= 4.8) {
+                reason = `top-rated by families`;
+            }
+            else {
+                reason = `available and local`;
+            }
+            const bgNote = c.pendingBackgroundCheck ? ` (background check in progress)` : "";
+            const profileUrl = `${(_b = process.env.APP_URL) !== null && _b !== void 0 ? _b : "https://cara.app"}/caregiver/${c.id}`;
+            return `${i + 1}. ${c.name}, ${reason}. $${c.hourlyRate}/hr${bgNote}\n   ${profileUrl}`;
+        };
+        const intro = top3.length === 1
+            ? `I found one caregiver who looks like a strong match for ${seniorName}:`
+            : `Here are ${top3.length} caregivers I think could be right for ${seniorName}:`;
+        const lines = top3.map(buildLine).join("\n\n");
+        await (0, client_1.sendMessage)(chatId, `${intro}\n\n${lines}\n\nWhich ones would you like to meet?`);
         // Store match list in session for follow-up
         await db.collection("agent_sessions").doc(phone).update({
             pendingMatches: top3.map((c) => ({ id: c.id, name: c.name, rate: c.hourlyRate })),

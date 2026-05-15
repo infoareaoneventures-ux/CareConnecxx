@@ -116,8 +116,27 @@ export const onJournalCreated = functions.firestore
       const caregiverDoc = await db.collection("caregivers").doc(caregiverId).get();
       const caregiverName: string = caregiverDoc.data()?.name ?? "Your caregiver";
 
-      const visitDate = (timestamp as string)?.slice(0, 10) ?? "today";
-      const baseMessage = `${caregiverName} finished today's visit (${visitDate}).\n${summary}`;
+      const visitDate  = (timestamp as string)?.slice(0, 10) ?? "today";
+      const seniorName = (clientDoc.data()?.seniorName ?? clientDoc.data()?.displayName ?? null) as string | null;
+      const opening    = seniorName
+        ? `${caregiverName} just finished up with ${seniorName}.`
+        : `${caregiverName} just finished up.`;
+
+      let observation = "";
+      if (severity === "flag" || severity === "watch") {
+        observation = summary;
+      } else {
+        const goods: string[] = [];
+        if ((wellness as any)?.ateWell)  goods.push("ate well");
+        if ((wellness as any)?.tookMeds) goods.push("took their medication");
+        const mood = (wellness as any)?.mood as string | undefined;
+        if (mood === "happy" || mood === "positive") goods.push("was in good spirits");
+        observation = goods.length > 0
+          ? `They ${goods.join(" and ")} today.`
+          : (summary || "Visit went smoothly.");
+      }
+
+      const baseMessage = `${opening} ${observation}`.trim();
 
       // Send photo inline if available (renders natively in iMessage)
       if (photos?.length > 0) {
@@ -140,7 +159,7 @@ export const onJournalCreated = functions.firestore
       // Follow-up for flagged health signals
       if (severity === "flag" && signals.length > 0) {
         await sendViaInteractionAgent(phone, {
-          content:     `⚠️ Worth noting: ${signals.join(", ")}. Might be worth mentioning to the doctor at the next visit.`,
+          content:     `Worth keeping an eye on. If you notice the same thing at the next visit, it might be worth mentioning to their doctor.`,
           urgency:     "standard",
           sourceAgent: "health_watch",
           canDrop:     true,
@@ -165,7 +184,7 @@ export const onJournalCreated = functions.firestore
       });
 
       // Send care journal to Zep so health facts are extracted and dated
-      const seniorNameForZep = (clientDoc.data()?.seniorName ?? clientDoc.data()?.displayName ?? "Senior") as string;
+      const seniorNameForZep = seniorName ?? "Senior";
       sendCareJournalToZep({
         phone,
         seniorName:         seniorNameForZep,

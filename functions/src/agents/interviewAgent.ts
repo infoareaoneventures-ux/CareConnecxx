@@ -126,7 +126,7 @@ export async function handleInterviewSelection(
   }
 
   await sendMessage(chatId,
-    `I've reached out to ${selected.length === 1 ? "that caregiver" : "those caregivers"} on your behalf! 💙\n\n` +
+    `I've reached out to ${selected.length === 1 ? "that caregiver" : "those caregivers"} on your behalf.\n\n` +
     `I'll text you as soon as I hear back with their availability.`
   );
 }
@@ -317,8 +317,8 @@ export async function handleInterviewConfirm(
     await sendMessage(chatId, { parts: [{ type: "media", url: icsUrl }] } as any);
   }
   await sendMessage(chatId,
-    `✅ Interview set for ${pending.formatted}.\n\n` +
-    `Tap the ${isIMessage ? "FaceTime" : "Meet"} link above to join. Calendar invite included — it has a 30-min reminder built in. 📅`
+    `Interview set for ${pending.formatted}.\n\n` +
+    `Tap the ${isIMessage ? "FaceTime" : "Meet"} link above to join. Calendar invite included, with a 30-minute reminder.`
   );
 
   // Text the caregiver
@@ -337,10 +337,9 @@ export async function handleInterviewConfirm(
         await sendMessage(cgSession.chatId, { parts: [{ type: "media", url: icsUrl }] } as any);
       }
       await sendMessage(cgSession.chatId,
-        `The family confirmed your interview! 🎉\n\n` +
-        `📅 ${pending.formatted}\n\n` +
-        `Tap the ${cgIsIMessa ? "FaceTime" : "Meet"} link above to join. Calendar invite included.\n` +
-        `Reply RESCHEDULE if something comes up.`
+        `Interview confirmed. ${pending.formatted}.\n\n` +
+        `${cgIsIMessa ? "FaceTime" : "Meet"} link above. Calendar invite included, with a 30-minute reminder.\n\n` +
+        `Reply RESCHEDULE if you need to change the time.`
       );
     }
   }
@@ -356,11 +355,7 @@ export async function sendPostInterviewFollowUp(interviewId: string): Promise<vo
   const clientSnap = await db.collection("agent_sessions").doc(data.clientPhone).get();
   if (clientSnap.exists) {
     await sendMessage(clientSnap.data()!.chatId,
-      `How did the interview with ${data.caregiverName} go?\n\n` +
-      `Reply:\n` +
-      `HIRE — I'll start the booking process\n` +
-      `MAYBE — I'll keep them in mind\n` +
-      `PASS — I'll look for other options`
+      `How did it go with ${data.caregiverName}?\n\nJust tell me what you thought.`
     );
     // Look up caregiverId so HIRE flow can fetch hourly rate + rejection memory
     const reqSnap = await db.collection("interview_requests")

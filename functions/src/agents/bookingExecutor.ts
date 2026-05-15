@@ -58,7 +58,8 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
     if (sessionSnap.exists) {
       await sendMessage(sessionSnap.data()!.chatId,
-        "That booking request expired. Text me anytime to book again! 💙"
+        `The booking for ${task.caregiverName} timed out. Those expire after 2 hours to keep availability current.\n\n` +
+        `Want me to start it again? Reply YES and I'll pull up where we left off.`
       );
     }
     return;
@@ -133,7 +134,7 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     totalCost:        task.totalCost,
   }).catch((err) => console.error("notifyAdminBookingConfirmed error:", err));
 
-  const appUrl = process.env.APP_URL ?? "https://app.careconnecxx.com";
+  const appUrl = process.env.APP_URL ?? "https://cara.app";
 
   // Confirm to family
   const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
@@ -147,7 +148,7 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       `${lines}\n\n` +
       `I'll text you when ${task.caregiverName} arrives for the first visit.\n` +
       `View your schedule: ${appUrl}/client/schedule\n\n` +
-      `Any questions? Just text me. 💙`
+      `Any questions? Just text me.`
     );
 
     // Check if client has a payment method — if not, send a Stripe setup link
@@ -181,18 +182,23 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
   }
 
   // Notify caregiver
-  const caregiverSnap = await db.collection("caregivers").doc(task.caregiverId).get();
-  const cgPhone = caregiverSnap.data()?.phone as string | undefined;
+  const [caregiverSnap, clientSnap] = await Promise.all([
+    db.collection("caregivers").doc(task.caregiverId).get(),
+    db.collection("users").doc(task.clientId).get(),
+  ]);
+  const cgPhone   = caregiverSnap.data()?.phone as string | undefined;
+  const seniorName = clientSnap.data()?.seniorName
+    ?? (clientSnap.data()?.senior as any)?.name
+    ?? null;
   if (cgPhone) {
-    const cgSession = await getOrCreateSession(cgPhone, { caregiverId: task.caregiverId });
-    const firstAppt = task.appointments[0];
+    const cgSession  = await getOrCreateSession(cgPhone, { caregiverId: task.caregiverId });
+    const firstAppt  = task.appointments[0];
+    const visitPay   = ((caregiverSnap.data()?.hourlyRate ?? 20) * firstAppt.durationHours).toFixed(2);
+    const clientLabel = seniorName ? `with ${seniorName as string}` : "with your client";
     await sendMessage(cgSession.chatId,
-      `New booking confirmed! 🎉\n\n` +
-      `Client: A family who needs care in your area\n` +
-      `📅 Starting ${firstAppt.date} at ${firstAppt.startTime}\n` +
-      `💰 $${((caregiverSnap.data()?.hourlyRate ?? 20) * firstAppt.durationHours).toFixed(2)} per visit\n\n` +
-      `I'll send you the care plan and directions the morning of each visit.\n\n` +
-      `Reply CONFIRM to accept or ISSUE if something's wrong.`
+      `You're booked ${clientLabel} starting ${firstAppt.date} at ${firstAppt.startTime}.\n\n` +
+      `$${visitPay} per visit, paid automatically after each one.\n\n` +
+      `I'll text you the care plan and directions the morning of every visit.`
     );
   }
 }

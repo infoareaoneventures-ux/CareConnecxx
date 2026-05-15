@@ -77,7 +77,7 @@ export async function activateBereavementMode(
       await sendMessage(chatId,
         `I've put together a care memory for you — a record of ${seniorName}'s journey and all the love that surrounded them. 💙`
       );
-      await sendMessage(chatId, url);
+      await sendMessage(chatId, { parts: [{ type: "link" as const, value: url }] } as any);
     })
     .catch((err) => console.error("bereavement keepsake error:", err));
 

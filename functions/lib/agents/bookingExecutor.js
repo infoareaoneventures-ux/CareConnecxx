@@ -52,7 +52,7 @@ async function hasConflict(caregiverId, date, startTime, endTime) {
 }
 const db = admin.firestore();
 async function executeBookings(taskId, clientPhone) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
     const taskRef = db.collection("agent_tasks").doc(taskId);
     const taskSnap = await taskRef.get();
     if (!taskSnap.exists)
@@ -64,7 +64,8 @@ async function executeBookings(taskId, clientPhone) {
         await taskRef.update({ status: "expired" });
         const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
         if (sessionSnap.exists) {
-            await (0, client_1.sendMessage)(sessionSnap.data().chatId, "That booking request expired. Text me anytime to book again! 💙");
+            await (0, client_1.sendMessage)(sessionSnap.data().chatId, `The booking for ${task.caregiverName} timed out. Those expire after 2 hours to keep availability current.\n\n` +
+                `Want me to start it again? Reply YES and I'll pull up where we left off.`);
         }
         return;
     }
@@ -124,7 +125,7 @@ async function executeBookings(taskId, clientPhone) {
         appointmentCount: task.appointments.length,
         totalCost: task.totalCost,
     }).catch((err) => console.error("notifyAdminBookingConfirmed error:", err));
-    const appUrl = (_a = process.env.APP_URL) !== null && _a !== void 0 ? _a : "https://app.careconnecxx.com";
+    const appUrl = (_a = process.env.APP_URL) !== null && _a !== void 0 ? _a : "https://cara.app";
     // Confirm to family
     const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
     if (sessionSnap.exists) {
@@ -133,7 +134,7 @@ async function executeBookings(taskId, clientPhone) {
             `${lines}\n\n` +
             `I'll text you when ${task.caregiverName} arrives for the first visit.\n` +
             `View your schedule: ${appUrl}/client/schedule\n\n` +
-            `Any questions? Just text me. 💙`);
+            `Any questions? Just text me.`);
         // Check if client has a payment method — if not, send a Stripe setup link
         try {
             const Stripe = (await Promise.resolve().then(() => __importStar(require("stripe")))).default;
@@ -159,17 +160,20 @@ async function executeBookings(taskId, clientPhone) {
         }
     }
     // Notify caregiver
-    const caregiverSnap = await db.collection("caregivers").doc(task.caregiverId).get();
+    const [caregiverSnap, clientSnap] = await Promise.all([
+        db.collection("caregivers").doc(task.caregiverId).get(),
+        db.collection("users").doc(task.clientId).get(),
+    ]);
     const cgPhone = (_f = caregiverSnap.data()) === null || _f === void 0 ? void 0 : _f.phone;
+    const seniorName = (_l = (_h = (_g = clientSnap.data()) === null || _g === void 0 ? void 0 : _g.seniorName) !== null && _h !== void 0 ? _h : (_k = (_j = clientSnap.data()) === null || _j === void 0 ? void 0 : _j.senior) === null || _k === void 0 ? void 0 : _k.name) !== null && _l !== void 0 ? _l : null;
     if (cgPhone) {
         const cgSession = await (0, client_1.getOrCreateSession)(cgPhone, { caregiverId: task.caregiverId });
         const firstAppt = task.appointments[0];
-        await (0, client_1.sendMessage)(cgSession.chatId, `New booking confirmed! 🎉\n\n` +
-            `Client: A family who needs care in your area\n` +
-            `📅 Starting ${firstAppt.date} at ${firstAppt.startTime}\n` +
-            `💰 $${(((_h = (_g = caregiverSnap.data()) === null || _g === void 0 ? void 0 : _g.hourlyRate) !== null && _h !== void 0 ? _h : 20) * firstAppt.durationHours).toFixed(2)} per visit\n\n` +
-            `I'll send you the care plan and directions the morning of each visit.\n\n` +
-            `Reply CONFIRM to accept or ISSUE if something's wrong.`);
+        const visitPay = (((_o = (_m = caregiverSnap.data()) === null || _m === void 0 ? void 0 : _m.hourlyRate) !== null && _o !== void 0 ? _o : 20) * firstAppt.durationHours).toFixed(2);
+        const clientLabel = seniorName ? `with ${seniorName}` : "with your client";
+        await (0, client_1.sendMessage)(cgSession.chatId, `You're booked ${clientLabel} starting ${firstAppt.date} at ${firstAppt.startTime}.\n\n` +
+            `$${visitPay} per visit, paid automatically after each one.\n\n` +
+            `I'll text you the care plan and directions the morning of every visit.`);
     }
 }
 // ── Create a booking task (called from webhooks/agents) ───────────────────────

@@ -208,7 +208,7 @@ async function handleAppointmentCancelledEvent(payload) {
         return;
     await sendViaInteractionAgent(clientPhone, {
         content: `Heads up — ${caregiverName !== null && caregiverName !== void 0 ? caregiverName : "your caregiver"}'s visit on ${date !== null && date !== void 0 ? date : "today"} has been cancelled.\n\n` +
-            `Want me to find a replacement? Reply YES and I'll get on it right away. 💙`,
+            `Want me to find a replacement? Reply YES and I'll get on it right away.`,
         urgency: "immediate",
         sourceAgent: "appointment_cancelled",
         canDrop: false,
@@ -219,7 +219,7 @@ async function handleCaregiverArrivedEvent(payload) {
     if (!clientPhone)
         return;
     await sendViaInteractionAgent(clientPhone, {
-        content: `${caregiverName !== null && caregiverName !== void 0 ? caregiverName : "Your caregiver"} has arrived for today's visit. 💙`,
+        content: `${caregiverName !== null && caregiverName !== void 0 ? caregiverName : "Your caregiver"} has arrived for today's visit.`,
         urgency: "immediate",
         sourceAgent: "arrival_notification",
         canDrop: false,

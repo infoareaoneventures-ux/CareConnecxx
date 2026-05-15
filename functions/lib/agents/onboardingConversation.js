@@ -174,7 +174,7 @@ async function handleOnboardingStep(phone, chatId, text, session) {
         case "client_ask_plan": return handleClientPlanReply(phone, chatId, text, session);
         case "client_send_payment": return handleClientSendPayment(phone, chatId, session);
         case "client_awaiting_identity":
-            await (0, client_1.sendMessage)(chatId, "Still verifying — I'll send your caregiver options as soon as it's confirmed! 💙");
+            await (0, client_1.sendMessage)(chatId, "Still verifying — I'll send your caregiver options as soon as it clears.");
             return;
         case "client_awaiting_payment":
             await (0, client_1.sendMessage)(chatId, "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳");
@@ -214,7 +214,7 @@ async function handleAskRole(phone, chatId, text) {
     const norm = text.trim();
     if (norm === "1" || /need.*care|looking.*care|family|mom|dad|parent/i.test(norm)) {
         await updateSession(phone, { onboardingStep: "client_ask_name", userType: "client" });
-        await (0, client_1.sendMessage)(chatId, "I'd love to help 💙 What's your name?");
+        await (0, client_1.sendMessage)(chatId, "I'd love to help. What's your name?");
         return;
     }
     if (norm === "2" || /caregiver|cna|hha|nurse|work|job/i.test(norm)) {
@@ -230,8 +230,7 @@ async function handleClientAskName(phone, chatId, text) {
     const firstName = await parseWithClaude("Extract only the first name from this message. Reply with just the first name, nothing else.", text);
     await mergeOnboardingData(phone, { firstName });
     await updateSession(phone, { onboardingStep: "client_ask_senior" });
-    await (0, client_1.sendMessage)(chatId, `Hi ${firstName}! 👋\n\n` +
-        `Who are you looking for care for? Tell me their name and your relationship — for example, "my mom Dorothy" or "my dad Bill".`);
+    await (0, client_1.sendMessage)(chatId, `Nice to meet you, ${firstName}. Who are we caring for?`);
 }
 async function handleClientAskSenior(phone, chatId, text, session) {
     if (await isQuestionOrOther(text)) {
@@ -250,11 +249,10 @@ async function handleClientAskSenior(phone, chatId, text, session) {
     catch ( /* keep defaults */_a) { /* keep defaults */ }
     await mergeOnboardingData(phone, { seniorName, relationship });
     await updateSession(phone, { onboardingStep: "client_ask_needs" });
-    await (0, client_1.sendMessage)(chatId, `How old is ${seniorName}, and what kind of help do they need?\n\n` +
-        `Just describe it in your own words — bathing, meals, companionship, medication reminders, anything.`);
+    await (0, client_1.sendMessage)(chatId, `Got it. How old is ${seniorName}, and what do they need help with these days?`);
 }
 async function handleClientAskNeeds(phone, chatId, text, session) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     if (await isQuestionOrOther(text)) {
         const answer = await answerQuestionMidFlow(text, session);
         await (0, client_1.sendMessage)(chatId, answer);
@@ -272,10 +270,11 @@ async function handleClientAskNeeds(phone, chatId, text, session) {
         careNeeds = (_d = parsed.careNeeds) !== null && _d !== void 0 ? _d : [];
         conditions = (_e = parsed.conditions) !== null && _e !== void 0 ? _e : [];
     }
-    catch ( /* keep defaults */_f) { /* keep defaults */ }
+    catch ( /* keep defaults */_g) { /* keep defaults */ }
     await mergeOnboardingData(phone, { age, careNeeds, conditions });
     await updateSession(phone, { onboardingStep: "client_ask_location" });
-    await (0, client_1.sendMessage)(chatId, "What city and zip code does your loved one live in?");
+    const seniorName = (_f = session.onboardingData) === null || _f === void 0 ? void 0 : _f.seniorName;
+    await (0, client_1.sendMessage)(chatId, `And where does ${seniorName !== null && seniorName !== void 0 ? seniorName : "they"} live?`);
 }
 async function handleClientAskLocation(phone, chatId, text, session) {
     var _a, _b, _c, _d;
@@ -296,8 +295,7 @@ async function handleClientAskLocation(phone, chatId, text, session) {
     await mergeOnboardingData(phone, { city, zipCode });
     await updateSession(phone, { onboardingStep: "client_ask_schedule" });
     const d = (_c = session.onboardingData) !== null && _c !== void 0 ? _c : {};
-    await (0, client_1.sendMessage)(chatId, `How many days a week does ${(_d = d.seniorName) !== null && _d !== void 0 ? _d : "your loved one"} need care, and roughly what hours?\n\n` +
-        `For example: "3 days a week, mornings" or "every day, 8am to 4pm".`);
+    await (0, client_1.sendMessage)(chatId, `How often does ${(_d = d.seniorName) !== null && _d !== void 0 ? _d : "they"} need someone, and what times of day work best?`);
 }
 async function handleClientAskSchedule(phone, chatId, text, session) {
     var _a, _b, _c;

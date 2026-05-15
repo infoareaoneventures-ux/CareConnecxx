@@ -134,6 +134,17 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
 
   // Handle the event
   try {
+    // Idempotency check: Ensure we don't process the same event twice
+    const eventRef = admin.firestore().collection('processed_stripe_events').doc(event.id);
+    const eventDoc = await eventRef.get();
+    if (eventDoc.exists) {
+      console.log(`Event ${event.id} already processed. Skipping.`);
+      res.json({ received: true, status: 'already_processed' });
+      return;
+    }
+    // Mark as processing/processed
+    await eventRef.set({ processedAt: admin.firestore.FieldValue.serverTimestamp() });
+
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
@@ -663,7 +674,7 @@ async function handleIdentityVerificationEvent(session: Stripe.Identity.Verifica
     } else if (status === 'requires_input' || status === 'canceled') {
       // Let the client retry
       await sendToPhone(phone,
-        "It looks like we need a little more info to verify you — tap the link above and try again 💙"
+        "It looks like we need a little more info to verify you — tap the link above and try again."
       ).catch((err: unknown) => console.error('identity retry message error:', err));
     }
     // Don't return — also update Firestore users doc if firebaseUID is present

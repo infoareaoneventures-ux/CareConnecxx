@@ -153,7 +153,7 @@ export async function handleOnboardingStep(
     case "client_ask_plan":       return handleClientPlanReply(phone, chatId, text, session);
     case "client_send_payment":   return handleClientSendPayment(phone, chatId, session);
     case "client_awaiting_identity":
-      await sendMessage(chatId, "Still verifying — I'll send your caregiver options as soon as it's confirmed! 💙");
+      await sendMessage(chatId, "Still verifying — I'll send your caregiver options as soon as it clears.");
       return;
     case "client_awaiting_payment":
       await sendMessage(chatId, "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳");
@@ -195,7 +195,7 @@ async function handleAskRole(phone: string, chatId: string, text: string): Promi
   const norm = text.trim();
   if (norm === "1" || /need.*care|looking.*care|family|mom|dad|parent/i.test(norm)) {
     await updateSession(phone, { onboardingStep: "client_ask_name", userType: "client" });
-    await sendMessage(chatId, "I'd love to help 💙 What's your name?");
+    await sendMessage(chatId, "I'd love to help. What's your name?");
     return;
   }
   if (norm === "2" || /caregiver|cna|hha|nurse|work|job/i.test(norm)) {
@@ -219,8 +219,7 @@ async function handleClientAskName(phone: string, chatId: string, text: string):
   await mergeOnboardingData(phone, { firstName });
   await updateSession(phone, { onboardingStep: "client_ask_senior" });
   await sendMessage(chatId,
-    `Hi ${firstName}! 👋\n\n` +
-    `Who are you looking for care for? Tell me their name and your relationship — for example, "my mom Dorothy" or "my dad Bill".`
+    `Nice to meet you, ${firstName}. Who are we caring for?`
   );
 }
 
@@ -245,8 +244,7 @@ async function handleClientAskSenior(phone: string, chatId: string, text: string
   await mergeOnboardingData(phone, { seniorName, relationship });
   await updateSession(phone, { onboardingStep: "client_ask_needs" });
   await sendMessage(chatId,
-    `How old is ${seniorName}, and what kind of help do they need?\n\n` +
-    `Just describe it in your own words — bathing, meals, companionship, medication reminders, anything.`
+    `Got it. How old is ${seniorName}, and what do they need help with these days?`
   );
 }
 
@@ -274,7 +272,8 @@ async function handleClientAskNeeds(phone: string, chatId: string, text: string,
 
   await mergeOnboardingData(phone, { age, careNeeds, conditions });
   await updateSession(phone, { onboardingStep: "client_ask_location" });
-  await sendMessage(chatId, "What city and zip code does your loved one live in?");
+  const seniorName = session.onboardingData?.seniorName;
+  await sendMessage(chatId, `And where does ${seniorName ?? "they"} live?`);
 }
 
 async function handleClientAskLocation(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
@@ -300,8 +299,7 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
   await updateSession(phone, { onboardingStep: "client_ask_schedule" });
   const d = session.onboardingData ?? {};
   await sendMessage(chatId,
-    `How many days a week does ${d.seniorName ?? "your loved one"} need care, and roughly what hours?\n\n` +
-    `For example: "3 days a week, mornings" or "every day, 8am to 4pm".`
+    `How often does ${d.seniorName ?? "they"} need someone, and what times of day work best?`
   );
 }
 

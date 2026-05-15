@@ -228,10 +228,11 @@ async function updatePermissionFromText(userId, userType, phone, chatId, text) {
     };
     const label = (_a = friendly[matched]) !== null && _a !== void 0 ? _a : matched;
     if (newVal === false) {
-        await (0, client_1.sendMessage)(chatId, `Done — I won't send ${label} anymore. Text me anytime to turn it back on. 👍`);
+        await (0, client_1.sendMessage)(chatId, `Got it. No more ${label}. Just text me if you change your mind.`);
     }
     else {
-        await (0, client_1.sendMessage)(chatId, `Done — I'll resume ${label}. 👍`);
+        const resumeLabel = label.includes("book") ? "asking before booking" : `sending ${label} again`;
+        await (0, client_1.sendMessage)(chatId, `Sure thing. I'll go back to ${resumeLabel}.`);
     }
 }
 //# sourceMappingURL=permissionsConversation.js.map

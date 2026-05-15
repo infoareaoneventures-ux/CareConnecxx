@@ -122,7 +122,7 @@ async function handleMemoryQuery(userId, chatId, sendMessage) {
     var _a;
     const context = await getMemoryContext(userId);
     if (!context) {
-        await sendMessage(chatId, "I'm still learning about your care situation — the more we talk, the more I'll remember! 💙");
+        await sendMessage(chatId, "I'm still building up my picture of your situation. The more we talk, the more I'll know.");
         return;
     }
     const result = await getClaude().messages.create({
@@ -134,7 +134,7 @@ async function handleMemoryQuery(userId, chatId, sendMessage) {
         messages: [{ role: "user", content: context }],
     });
     const summary = ((_a = result.content[0].text) !== null && _a !== void 0 ? _a : "").trim();
-    await sendMessage(chatId, summary || "I remember quite a bit — just ask me something specific! 💙");
+    await sendMessage(chatId, summary || "I remember quite a bit — just ask me something specific.");
 }
 // Consolidate last 48h of audit log entries into memory files
 async function consolidateMemoryForUser(userId) {

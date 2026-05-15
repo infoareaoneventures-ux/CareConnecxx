@@ -66,12 +66,14 @@ exports.createCheckoutSession = functions.https.onCall(async (data, context) => 
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
     }
-    const { successUrl, cancelUrl, priceId } = data;
+    const { successUrl, cancelUrl, priceId, includeMVR } = data;
     const userId = context.auth.uid;
     // Resolve which price to charge — validate against allowed list
     const resolvedPriceId = (priceId && ALLOWED_PRICE_IDS.includes(priceId))
         ? priceId
         : MEMBERSHIP_PRICE_ID;
+    const mvrPriceId = (process.env.STRIPE_MVR_PRICE_ID || '').trim();
+    const addMVR = includeMVR === true && mvrPriceId.length > 0 && !mvrPriceId.startsWith('FILL_IN');
     try {
         // Get or create Stripe customer
         const userRef = admin.firestore().collection('customers').doc(userId);
@@ -95,15 +97,16 @@ exports.createCheckoutSession = functions.https.onCall(async (data, context) => 
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
         }
+        const lineItems = [
+            { price: resolvedPriceId, quantity: 1 },
+        ];
+        if (addMVR) {
+            lineItems.push({ price: mvrPriceId, quantity: 1 });
+        }
         // Create checkout session
         const session = await stripe.checkout.sessions.create({
             customer: customerId,
-            line_items: [
-                {
-                    price: resolvedPriceId,
-                    quantity: 1,
-                },
-            ],
+            line_items: lineItems,
             mode: 'subscription',
             success_url: successUrl,
             cancel_url: cancelUrl,
@@ -112,9 +115,7 @@ exports.createCheckoutSession = functions.https.onCall(async (data, context) => 
                     firebaseUID: userId,
                 },
             },
-            metadata: {
-                firebaseUID: userId,
-            },
+            metadata: Object.assign({ firebaseUID: userId }, (addMVR && { includeMVR: 'true' })),
         });
         return { sessionId: session.id, url: session.url };
     }
@@ -149,6 +150,16 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
     }
     // Handle the event
     try {
+        // Idempotency check: Ensure we don't process the same event twice
+        const eventRef = admin.firestore().collection('processed_stripe_events').doc(event.id);
+        const eventDoc = await eventRef.get();
+        if (eventDoc.exists) {
+            console.log(`Event ${event.id} already processed. Skipping.`);
+            res.json({ received: true, status: 'already_processed' });
+            return;
+        }
+        // Mark as processing/processed
+        await eventRef.set({ processedAt: admin.firestore.FieldValue.serverTimestamp() });
         switch (event.type) {
             case 'checkout.session.completed': {
                 const session = event.data.object;
@@ -213,7 +224,7 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
  * For caregiver payments: auto-initiate Checkr background check + set verificationStatus submitted
  */
 async function handleCheckoutSessionCompleted(session) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     // Cara iMessage onboarding — advance step when client finishes payment setup
     if (((_a = session.metadata) === null || _a === void 0 ? void 0 : _a.task) === 'client_payment_setup' && ((_b = session.metadata) === null || _b === void 0 ? void 0 : _b.phone)) {
         try {
@@ -268,23 +279,23 @@ async function handleCheckoutSessionCompleted(session) {
     const lastName = caregiverData.lastName || nameParts.slice(1).join(' ') || '';
     const zipCode = (caregiverData.zipCode || caregiverData.zip || '').trim();
     const state = (caregiverData.state || '').trim();
+    const includeMVRFlag = ((_d = session.metadata) === null || _d === void 0 ? void 0 : _d.includeMVR) === 'true';
     if (!firstName || !lastName || !zipCode) {
         console.warn(`Caregiver ${userId} missing profile fields — marking paid, deferring Checkr`);
-        await admin.firestore().collection('caregivers').doc(userId).set({
-            membershipPaid: true,
-            checkrInitPending: true,
-        }, { merge: true });
+        await admin.firestore().collection('caregivers').doc(userId).set(Object.assign({ membershipPaid: true, checkrInitPending: true }, (includeMVRFlag && { mvrPaid: true })), { merge: true });
         return;
     }
-    const apiKey = (process.env.CHECKR_API_KEY || '').trim();
+    const apiKey = (process.env.CHECKR_KEY || process.env.CHECKR_API_KEY || '').trim();
     if (!apiKey) {
-        console.error('CHECKR_API_KEY not configured — marking paid, skipping Checkr');
+        console.error('CHECKR_KEY / CHECKR_API_KEY not configured — marking paid, skipping Checkr');
         await admin.firestore().collection('caregivers').doc(userId).set({ membershipPaid: true }, { merge: true });
         return;
     }
     try {
         const CHECKR_BASE = process.env.CHECKR_API_URL || 'https://api.checkr.com/v1';
-        const CHECKR_PKG = process.env.CHECKR_PACKAGE || 'driver_pro';
+        const CHECKR_PKG_BASE = process.env.CHECKR_PACKAGE || 'driver_pro';
+        const CHECKR_PKG_MVR = process.env.CHECKR_PACKAGE_MVR || CHECKR_PKG_BASE;
+        const CHECKR_PKG = includeMVRFlag ? CHECKR_PKG_MVR : CHECKR_PKG_BASE;
         const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
         const dateKey = new Date().toISOString().slice(0, 10);
         const workLocations = state ? [{ country: 'US', state: state.toUpperCase() }] : [];
@@ -320,20 +331,7 @@ async function handleCheckoutSessionCompleted(session) {
             const errText = await invRes.text().catch(() => '');
             console.error(`Checkr invitation failed for ${userId}: ${invRes.status} ${errText}`);
         }
-        await admin.firestore().collection('caregivers').doc(userId).set({
-            membershipPaid: true,
-            verificationStatus: 'submitted',
-            backgroundCheckData: {
-                checkrCandidateId: candidateId,
-                legalFirstName: firstName,
-                legalLastName: lastName,
-                zip: zipCode,
-                submittedAt: new Date().toISOString(),
-                status: 'pending',
-                invitationStatus: invOk ? 'sent' : 'error',
-                initiatedVia: 'stripe_webhook',
-            },
-        }, { merge: true });
+        await admin.firestore().collection('caregivers').doc(userId).set(Object.assign(Object.assign({ membershipPaid: true }, (includeMVRFlag && { mvrPaid: true })), { verificationStatus: 'submitted', backgroundCheckData: Object.assign({ checkrCandidateId: candidateId, legalFirstName: firstName, legalLastName: lastName, zip: zipCode, submittedAt: new Date().toISOString(), status: 'pending', invitationStatus: invOk ? 'sent' : 'error', initiatedVia: 'stripe_webhook' }, (includeMVRFlag && { mvrIncluded: true })) }), { merge: true });
         await admin.firestore().collection('users').doc(userId).set({
             verificationStatus: 'submitted',
         }, { merge: true });
@@ -621,7 +619,7 @@ async function handleIdentityVerificationEvent(session) {
         }
         else if (status === 'requires_input' || status === 'canceled') {
             // Let the client retry
-            await sendToPhone(phone, "It looks like we need a little more info to verify you — tap the link above and try again 💙").catch((err) => console.error('identity retry message error:', err));
+            await sendToPhone(phone, "It looks like we need a little more info to verify you — tap the link above and try again.").catch((err) => console.error('identity retry message error:', err));
         }
         // Don't return — also update Firestore users doc if firebaseUID is present
     }

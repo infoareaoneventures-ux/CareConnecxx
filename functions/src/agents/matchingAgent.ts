@@ -93,7 +93,7 @@ export async function runMatchingForClient(
       });
       await sendMessage(chatId,
         "I don't have anyone available in your area right now, but I've flagged your request " +
-        "and our team will reach out within 24 hours to find the right match. 💙"
+        "and our team will reach out within 24 hours to find the right match."
       );
       return;
     }
@@ -121,25 +121,35 @@ export async function runMatchingForClient(
       }
     }
 
-    const lines = top3.map((c, i) => {
-      const stars    = "⭐".repeat(Math.round(c.rating ?? 4));
-      const specials = (c.specialties ?? []).slice(0, 2).join(", ") || "General care";
-      const yrs      = c.yearsExperience ?? "?";
-      const bgNote     = (c as any).pendingBackgroundCheck ? "\n   ⏳ Background check in progress" : "";
-      const profileUrl = `${process.env.APP_URL ?? "https://careconnecxx.com"}/caregiver/${c.id}`;
-      return (
-        `${i + 1}️⃣  ${c.name} · ${stars} · $${c.hourlyRate}/hr\n` +
-        `   ${specials} · ${yrs}yrs exp${bgNote}\n` +
-        `   👤 ${profileUrl}`
-      );
-    }).join("\n\n");
+    const seniorName = (intake.seniorName ?? "your loved one") as string;
+    const needs      = (intake.careNeeds ?? []) as string[];
 
-    await sendMessage(chatId,
-      `I found ${top3.length} great matches for ${(intake.seniorName ?? "your loved one") as string} in ${city}! 🎉\n\n` +
-      `${lines}\n\n` +
-      `Reply with numbers to request interviews.\n` +
-      `(e.g. "1" or "1 and 3" or "all")`
-    );
+    const buildLine = (c: CaregiverCandidate, i: number): string => {
+      const matchedNeeds = needs.filter((n) =>
+        c.specialties?.some((s) => s.toLowerCase().includes(n.toLowerCase()))
+      );
+      let reason: string;
+      if (matchedNeeds.length > 0) {
+        reason = `specializes in ${matchedNeeds[0]}`;
+      } else if (c.yearsExperience >= 5) {
+        reason = `${c.yearsExperience} years of experience`;
+      } else if ((c.rating ?? 0) >= 4.8) {
+        reason = `top-rated by families`;
+      } else {
+        reason = `available and local`;
+      }
+      const bgNote     = c.pendingBackgroundCheck ? ` (background check in progress)` : "";
+      const profileUrl = `${process.env.APP_URL ?? "https://cara.app"}/caregiver/${c.id}`;
+      return `${i + 1}. ${c.name}, ${reason}. $${c.hourlyRate}/hr${bgNote}\n   ${profileUrl}`;
+    };
+
+    const intro = top3.length === 1
+      ? `I found one caregiver who looks like a strong match for ${seniorName}:`
+      : `Here are ${top3.length} caregivers I think could be right for ${seniorName}:`;
+
+    const lines = top3.map(buildLine).join("\n\n");
+
+    await sendMessage(chatId, `${intro}\n\n${lines}\n\nWhich ones would you like to meet?`);
 
     // Store match list in session for follow-up
     await db.collection("agent_sessions").doc(phone).update({

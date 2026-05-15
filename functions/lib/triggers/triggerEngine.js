@@ -36,6 +36,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.triggerEngineScheduled = exports.runTriggerEngine = void 0;
 exports.scheduleTrigger = scheduleTrigger;
 exports.cancelTriggerIfUserReplied = cancelTriggerIfUserReplied;
+exports.markTriggerEngaged = markTriggerEngaged;
+exports.checkIgnoredTriggers = checkIgnoredTriggers;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const caraAgent_1 = require("../agents/caraAgent");
@@ -69,13 +71,96 @@ async function cancelTriggerIfUserReplied(userId, phone) {
         .where("cancelledAt", "==", null)
         .where("firedAt", "==", null)
         .get();
-    if (snap.empty)
-        return;
+    if (!snap.empty) {
+        const batch = db.batch();
+        for (const doc of snap.docs) {
+            batch.update(doc.ref, { cancelledAt: now });
+        }
+        await batch.commit().catch(() => { });
+    }
+    // Mark any recently-fired triggers as engaged — user replied
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const firedSnap = await db
+        .collection("proactive_triggers")
+        .where("userId", "==", userId)
+        .where("firedAt", ">=", oneDayAgo)
+        .get();
+    for (const doc of firedSnap.docs) {
+        const data = doc.data();
+        if (!data.firedAt || data.engagedAt)
+            continue;
+        await doc.ref.update({ engagedAt: now });
+        await markTriggerEngaged(phone, data.type);
+    }
+}
+// Reset consecutive-ignore count when user engages with a trigger
+async function markTriggerEngaged(phone, triggerType) {
+    await db.collection("trigger_engagement")
+        .doc(`${phone}_${triggerType}`)
+        .set({ consecutiveIgnores: 0, lastEngagedAt: new Date().toISOString() }, { merge: true });
+}
+async function pauseTriggerType(phone, triggerType) {
+    await db.collection("trigger_engagement")
+        .doc(`${phone}_${triggerType}`)
+        .set({ paused: true, pausedAt: new Date().toISOString() }, { merge: true });
+    // Cancel any pending triggers of this type for this user
+    const snap = await db.collection("proactive_triggers")
+        .where("phone", "==", phone)
+        .where("type", "==", triggerType)
+        .get();
+    const now = new Date().toISOString();
     const batch = db.batch();
     for (const doc of snap.docs) {
-        batch.update(doc.ref, { cancelledAt: now });
+        const d = doc.data();
+        if (!d.firedAt && !d.cancelledAt)
+            batch.update(doc.ref, { cancelledAt: now });
     }
     await batch.commit().catch(() => { });
+}
+// Detect triggers fired 24h+ ago with no user response; pause after 3 consecutive ignores
+async function checkIgnoredTriggers() {
+    var _a, _b, _c;
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const snap = await db.collection("proactive_triggers")
+        .where("firedAt", "<=", oneDayAgo)
+        .get();
+    for (const doc of snap.docs) {
+        const trigger = doc.data();
+        if (!trigger.firedAt)
+            continue;
+        if (trigger.engagedAt)
+            continue; // user did engage
+        if (trigger.ignoreCounted)
+            continue; // already counted
+        const engRef = db.collection("trigger_engagement").doc(`${trigger.phone}_${trigger.type}`);
+        const engSnap = await engRef.get();
+        const prev = (_b = (_a = engSnap.data()) === null || _a === void 0 ? void 0 : _a.consecutiveIgnores) !== null && _b !== void 0 ? _b : 0;
+        const consecutiveIgnores = prev + 1;
+        await engRef.set({
+            phone: trigger.phone,
+            triggerType: trigger.type,
+            consecutiveIgnores,
+            lastIgnoredAt: new Date().toISOString(),
+        }, { merge: true });
+        await doc.ref.update({ ignoreCounted: true });
+        if (consecutiveIgnores >= 3) {
+            await pauseTriggerType(trigger.phone, trigger.type);
+            const triggerFriendlyNames = {
+                appointment_reminder: "appointment reminders",
+                weekly_checkin: "weekly check-ins",
+                medication_reminder: "medication reminders",
+                custom: "these messages",
+            };
+            const friendlyName = (_c = triggerFriendlyNames[trigger.type]) !== null && _c !== void 0 ? _c : "these messages";
+            await (0, caraAgent_1.sendViaInteractionAgent)(trigger.phone, {
+                content: `I've paused the ${friendlyName} since you haven't been using them lately.\n\n` +
+                    `Want me to turn them back on, try a different time, or skip them for now?`,
+                urgency: "standard",
+                sourceAgent: "trigger_engine",
+                canDrop: false,
+            });
+        }
+    }
 }
 // Every-5-minute executor — fires due triggers, skips cancelled/fired ones
 exports.runTriggerEngine = functions.pubsub
@@ -173,6 +258,8 @@ exports.runTriggerEngine = functions.pubsub
             console.error("triggerEngine no-show handling error for", apptDoc.id, err);
         }
     }
+    // Check for ignored triggers and pause after 3 consecutive ignores
+    await checkIgnoredTriggers().catch((err) => console.error("checkIgnoredTriggers error:", err));
 });
 exports.triggerEngineScheduled = exports.runTriggerEngine;
 //# sourceMappingURL=triggerEngine.js.map

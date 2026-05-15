@@ -107,21 +107,20 @@ async function generateDigest(data) {
     const now = new Date();
     const dayName = now.toLocaleDateString("en-US", { weekday: "long" });
     const prompt = [
-        `You're writing a warm Sunday morning care update text for ${clientName} about ${seniorName}.`,
+        `You are Cara. Write a Sunday morning text to ${clientName} about ${seniorName}'s week.`,
+        ``,
+        `Write it like you actually know both of them and genuinely care how the week went.`,
+        `If it was a good week, let that warmth come through.`,
+        `If there were concerns, acknowledge them honestly without being alarming.`,
+        `Mention the upcoming week naturally — not as a list.`,
+        ``,
+        `Do not follow a format. Just tell them what matters most.`,
+        `Under 200 words. Plain text only. No markdown. No bullet points.`,
         ``,
         `This week's data:`,
         `- ${completedCount} visit(s) completed`,
         `Journal entries:\n${journalContext || "None"}`,
-        `Upcoming visits:\n${apptContext || "None scheduled"}`,
-        ``,
-        `Write a warm, personal weekly summary as a text message. Use simple emoji. Include:`,
-        `1. A "Good morning" greeting with the day`,
-        `2. Quick stats on visits completed`,
-        `3. 2-3 notable observations from the journal (mood, appetite, activity)`,
-        `4. Upcoming visits this week (date, time, caregiver)`,
-        `5. One warm closing line`,
-        ``,
-        `Keep it under 300 words. Conversational, not clinical. No markdown, just plain text with line breaks.`,
+        `Upcoming:\n${apptContext || "Nothing scheduled yet"}`,
     ].join("\n");
     try {
         const response = await getClient().messages.create({
@@ -209,10 +208,10 @@ async function runWeeklyDigests() {
             const cgSnap = await db.collection("caregivers").doc(cgSession.caregiverId).get();
             const cgName = (_d = (_c = (_b = cgSnap.data()) === null || _b === void 0 ? void 0 : _b.name) === null || _c === void 0 ? void 0 : _c.split(" ")[0]) !== null && _d !== void 0 ? _d : "there";
             const visitLines = visits.slice(0, 5).map(v => { var _a, _b; return `· ${(_a = v.date) !== null && _a !== void 0 ? _a : "this week"} — $${(((_b = v.amountCents) !== null && _b !== void 0 ? _b : 0) / 100).toFixed(2)}`; }).join("\n");
-            const earningsMsg = `Good morning ${cgName} ☀️ Here's your week:\n\n` +
-                `💰 Earnings this week: ${totalStr}\n\n` +
+            const earningsMsg = `Morning ${cgName}. ${visits.length} visit${visits.length !== 1 ? "s" : ""} this week, ${totalStr} on its way to you.\n\n` +
                 `${visitLines}\n\n` +
-                `Payments are processed within 2 business days. Keep up the great work! 💙`;
+                `That's real work. Thank you for taking care of these families.\n\n` +
+                `Payments hit within 2 business days.`;
             await (0, caraAgent_1.sendViaInteractionAgent)(cgPhone, {
                 content: earningsMsg,
                 urgency: "standard",

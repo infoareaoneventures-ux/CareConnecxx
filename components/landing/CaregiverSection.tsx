@@ -41,14 +41,14 @@ export const CaregiverSection: React.FC<CaregiverSectionProps> = ({ onNavigate }
                         
                         <div className="flex flex-col sm:flex-row gap-4">
                             <button 
-                                onClick={() => onNavigate('caregiver-signup')}
+                                onClick={() => onNavigate('client-signup')}
                                 className="btn-depth-primary px-8 py-4 rounded-2xl font-semibold text-center text-[15px]"
                             >
-                                Apply Now
+                                Get Started
                             </button>
                             
                             <button 
-                                onClick={() => onNavigate('caregiver-login')}
+                                onClick={() => window.location.href = '/login'}
                                 className="btn-depth-secondary px-8 py-4 rounded-2xl font-semibold text-center text-[15px]"
                             >
                                 Log In

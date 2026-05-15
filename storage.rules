@@ -15,6 +15,14 @@ service firebase.storage {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    // Check if the current user is an admin via Firestore
+    function isAdmin() {
+      return isAuthenticated() && (
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.userType == 'admin' ||
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true
+      );
+    }
+
     // ==========================================
     // CARE JOURNAL PHOTOS
     // ==========================================
@@ -43,7 +51,7 @@ service firebase.storage {
     match /caregivers/{userId}/documents/{documentId} {
       allow read: if isAuthenticated() && (
         request.auth.uid == userId ||  // Owner can read
-        resource.metadata.adminAccess == 'true'  // Admin can read (set via server)
+        isAdmin()  // Admin can read via Firestore role check
       );
       allow write: if isAuthenticated() && request.auth.uid == userId 
         && request.resource.size < 5 * 1024 * 1024  // 5MB max

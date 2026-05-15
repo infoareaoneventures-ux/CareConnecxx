@@ -44,7 +44,7 @@ export const TrustSafetySection: React.FC<TrustSafetySectionProps> = ({ onNaviga
     return (
         <section className="bg-[#fafaf9] relative overflow-hidden pt-20 pb-32">
             <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-                <div className="flex flex-col lg:flex-row items-center lg:items-end justify-between gap-12 lg:gap-8">
+                <div className="flex flex-col lg:flex-row items-start justify-between gap-12 lg:gap-8">
 
                     {/* Left Column: Text & Features */}
                     <div className="w-full lg:w-1/3 pb-8 lg:pb-16 z-10 relative">

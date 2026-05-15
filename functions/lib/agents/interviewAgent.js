@@ -146,7 +146,7 @@ async function handleInterviewSelection(phone, chatId, text, session) {
             `Are you available for a 20-minute video call this week?\n\n` +
             `Reply with 2–3 times that work for you, or PASS to decline.`);
     }
-    await (0, client_1.sendMessage)(chatId, `I've reached out to ${selected.length === 1 ? "that caregiver" : "those caregivers"} on your behalf! 💙\n\n` +
+    await (0, client_1.sendMessage)(chatId, `I've reached out to ${selected.length === 1 ? "that caregiver" : "those caregivers"} on your behalf.\n\n` +
         `I'll text you as soon as I hear back with their availability.`);
 }
 // ── Handle caregiver replying with availability ───────────────────────────────
@@ -295,8 +295,8 @@ async function handleInterviewConfirm(phone, chatId, session) {
     if (icsUrl) {
         await (0, client_1.sendMessage)(chatId, { parts: [{ type: "media", url: icsUrl }] });
     }
-    await (0, client_1.sendMessage)(chatId, `✅ Interview set for ${pending.formatted}.\n\n` +
-        `Tap the ${isIMessage ? "FaceTime" : "Meet"} link above to join. Calendar invite included — it has a 30-min reminder built in. 📅`);
+    await (0, client_1.sendMessage)(chatId, `Interview set for ${pending.formatted}.\n\n` +
+        `Tap the ${isIMessage ? "FaceTime" : "Meet"} link above to join. Calendar invite included, with a 30-minute reminder.`);
     // Text the caregiver
     const reqSnap = await db.collection("interview_requests").doc(pending.docId).get();
     const caregiverId = (_c = reqSnap.data()) === null || _c === void 0 ? void 0 : _c.caregiverId;
@@ -312,10 +312,9 @@ async function handleInterviewConfirm(phone, chatId, session) {
             if (icsUrl) {
                 await (0, client_1.sendMessage)(cgSession.chatId, { parts: [{ type: "media", url: icsUrl }] });
             }
-            await (0, client_1.sendMessage)(cgSession.chatId, `The family confirmed your interview! 🎉\n\n` +
-                `📅 ${pending.formatted}\n\n` +
-                `Tap the ${cgIsIMessa ? "FaceTime" : "Meet"} link above to join. Calendar invite included.\n` +
-                `Reply RESCHEDULE if something comes up.`);
+            await (0, client_1.sendMessage)(cgSession.chatId, `Interview confirmed. ${pending.formatted}.\n\n` +
+                `${cgIsIMessa ? "FaceTime" : "Meet"} link above. Calendar invite included, with a 30-minute reminder.\n\n` +
+                `Reply RESCHEDULE if you need to change the time.`);
         }
     }
 }
@@ -328,11 +327,7 @@ async function sendPostInterviewFollowUp(interviewId) {
     const data = snap.data();
     const clientSnap = await db.collection("agent_sessions").doc(data.clientPhone).get();
     if (clientSnap.exists) {
-        await (0, client_1.sendMessage)(clientSnap.data().chatId, `How did the interview with ${data.caregiverName} go?\n\n` +
-            `Reply:\n` +
-            `HIRE — I'll start the booking process\n` +
-            `MAYBE — I'll keep them in mind\n` +
-            `PASS — I'll look for other options`);
+        await (0, client_1.sendMessage)(clientSnap.data().chatId, `How did it go with ${data.caregiverName}?\n\nJust tell me what you thought.`);
         // Look up caregiverId so HIRE flow can fetch hourly rate + rejection memory
         const reqSnap = await db.collection("interview_requests")
             .where("interviewId", "==", interviewId).limit(1).get();

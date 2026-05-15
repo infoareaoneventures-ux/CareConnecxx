@@ -382,17 +382,17 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-              <div className="bg-primary-600 p-2 rounded-xl shadow-lg shadow-primary-200/50">
+              <div className="bg-slate-900 p-2 rounded-xl shadow-lg shadow-slate-200">
                 <Activity className="text-white w-5 h-5" />
               </div>
               <span className="text-xl font-bold text-slate-900 tracking-tight">CareConnex</span>
             </div>
             <nav className="hidden md:flex items-center gap-8">
-              <button onClick={() => onNavigate('caregiver-signup')} className="text-slate-600 hover:text-primary-600 font-medium transition-colors text-sm">Find Jobs</button>
-              <a href="/help" className="text-slate-600 hover:text-primary-600 font-medium transition-colors text-sm">Help</a>
+              <button onClick={() => onNavigate('caregiver-signup')} className="text-slate-600 hover:text-slate-900 font-medium transition-colors text-sm">Find Jobs</button>
+              <a href="/help" className="text-slate-600 hover:text-slate-900 font-medium transition-colors text-sm">Help</a>
             </nav>
             <div className="flex items-center gap-3">
-              <button onClick={() => onNavigate('client-login')} className="text-sm font-medium text-slate-600 hover:text-primary-600 transition-colors">Log In</button>
+              <button onClick={() => onNavigate('client-login')} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">Log In</button>
             </div>
           </div>
         </div>
@@ -536,9 +536,9 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
               onChange={handleChange}
             />
 
-            <div className="bg-primary-50 border border-primary-100 rounded-xl p-3 flex items-start gap-3">
-              <ShieldCheck className="w-5 h-5 text-primary-600 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-primary-800">Your information is secure and never sold to third parties.</p>
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-start gap-3">
+              <ShieldCheck className="w-5 h-5 text-slate-600 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-slate-800">Your information is secure and never sold to third parties.</p>
             </div>
 
             {/* Terms acceptance */}
@@ -547,13 +547,13 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
                 type="checkbox"
                 checked={termsAccepted}
                 onChange={e => { setTermsAccepted(e.target.checked); setConsentErrors(prev => ({ ...prev, terms: undefined })); }}
-                className="mt-0.5 w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500 flex-shrink-0"
+                className="mt-0.5 w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900 flex-shrink-0"
               />
               <span className={`text-xs leading-relaxed ${consentErrors.terms ? 'text-red-600' : 'text-slate-600'}`}>
                 I agree to CareConnex's{' '}
-                <a href="/terms" target="_blank" rel="noreferrer" className="text-primary-600 underline hover:text-primary-700">Terms of Service</a>
+                <a href="/terms" target="_blank" rel="noreferrer" className="text-slate-900 font-medium underline hover:text-slate-700">Terms of Service</a>
                 {' '}and{' '}
-                <a href="/privacy" target="_blank" rel="noreferrer" className="text-primary-600 underline hover:text-primary-700">Privacy Policy</a>.
+                <a href="/privacy" target="_blank" rel="noreferrer" className="text-slate-900 font-medium underline hover:text-slate-700">Privacy Policy</a>.
               </span>
             </label>
 
@@ -563,7 +563,7 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
                 type="checkbox"
                 checked={smsConsent}
                 onChange={e => { setSmsConsent(e.target.checked); setConsentErrors(prev => ({ ...prev, sms: undefined })); }}
-                className="mt-0.5 w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500 flex-shrink-0"
+                className="mt-0.5 w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900 flex-shrink-0"
               />
               <span className={`text-xs leading-relaxed ${consentErrors.sms ? 'text-red-600' : 'text-slate-600'}`}>
                 I consent to receive text messages (SMS/MMS) from CareConnex at the phone number provided, including appointment reminders and care updates. Message &amp; data rates may apply. Reply STOP to opt out at any time.

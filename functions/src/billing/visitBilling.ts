@@ -87,7 +87,7 @@ export async function createVisitPayment(params: VisitPaymentParams): Promise<vo
   if (resolvedPhone) await sendViaInteractionAgent(resolvedPhone, {
     content:
       `Visit complete! A payment of ${totalStr} will be processed for today's ` +
-      `${durationHours}h visit with ${caregiverName}. 💙`,
+      `${durationHours}h visit with ${caregiverName}.`,
     urgency:     "low",
     sourceAgent: "visit_billing",
     canDrop:     true,
@@ -138,7 +138,7 @@ export async function handlePaymentError(params: {
   // Notify client with a tap-to-fix link — immediate, can't drop
   try {
     const { generateToken } = await import("../agents/tokenService");
-    const appUrl    = process.env.APP_URL ?? "https://careconnecxx.com";
+    const appUrl    = process.env.APP_URL ?? "https://cara.app";
     const token     = generateToken({ phone: clientPhone, task: "payment" });
     const updateUrl = `${appUrl}/done?task=payment&t=${token}`;
     await sendViaInteractionAgent(clientPhone, {
@@ -161,7 +161,7 @@ export async function handlePaymentError(params: {
   if (caregiverPhone) {
     await sendToPhone(caregiverPhone,
       `Hi ${caregiverName.split(" ")[0]} — there was a payment processing issue on our end, ` +
-      `but you will be paid for your visit. We're resolving it now. 💙`
+      `but you will be paid for your visit. We're resolving it now.`
     ).catch(() => {});
   }
 }

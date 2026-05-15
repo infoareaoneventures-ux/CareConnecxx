@@ -372,7 +372,7 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
               await sendViaInteractionAgent(task.clientPhone, {
                 content:
                   `Good news! ${cgName}'s background check just cleared. ` +
-                  `You can now book them — just say the word and I'll take care of it! 💙`,
+                  `You can now book them — just say the word and I'll take care of it.`,
                 urgency:     "standard",
                 sourceAgent: "bg_check_clear",
                 canDrop:     true,
@@ -413,7 +413,7 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
               content:
                 `Hi ${(cgData.name as string | undefined)?.split(" ")[0] ?? "there"} — ` +
                 `your background check is under review. This is normal and usually takes a few business days. ` +
-                `Our team will reach out if anything is needed. Hang tight! 💙`,
+                `Our team will reach out if anything is needed. Hang tight.`,
               urgency:     "standard",
               sourceAgent: "checkr_status",
               canDrop:     true,
@@ -450,7 +450,7 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
                 `Hi ${(cgData.name as string | undefined)?.split(" ")[0] ?? "there"} — ` +
                 `Checkr put your background check on hold while they gather more information. ` +
                 `Please check the email from Checkr and follow any instructions there. ` +
-                `Reach out if you need anything — we're here to help! 💙`,
+                `Reach out if you need anything — we're here to help.`,
               urgency:     "standard",
               sourceAgent: "checkr_status",
               canDrop:     true,

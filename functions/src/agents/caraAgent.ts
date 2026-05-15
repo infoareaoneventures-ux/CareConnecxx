@@ -216,7 +216,7 @@ async function handleAppointmentCancelledEvent(payload: Record<string, unknown>)
   await sendViaInteractionAgent(clientPhone as string, {
     content:
       `Heads up — ${caregiverName ?? "your caregiver"}'s visit on ${date ?? "today"} has been cancelled.\n\n` +
-      `Want me to find a replacement? Reply YES and I'll get on it right away. 💙`,
+      `Want me to find a replacement? Reply YES and I'll get on it right away.`,
     urgency:     "immediate",
     sourceAgent: "appointment_cancelled",
     canDrop:     false,
@@ -228,7 +228,7 @@ async function handleCaregiverArrivedEvent(payload: Record<string, unknown>): Pr
   if (!clientPhone) return;
 
   await sendViaInteractionAgent(clientPhone as string, {
-    content:     `${caregiverName ?? "Your caregiver"} has arrived for today's visit. 💙`,
+    content:     `${caregiverName ?? "Your caregiver"} has arrived for today's visit.`,
     urgency:     "immediate",
     sourceAgent: "arrival_notification",
     canDrop:     false,

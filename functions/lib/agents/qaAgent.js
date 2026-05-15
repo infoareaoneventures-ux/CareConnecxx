@@ -80,6 +80,15 @@ async function getNextAppointment(userId) {
         .get();
     return snap.empty ? null : snap.docs[0].data();
 }
+async function getActiveVisit(userId) {
+    const snap = await db
+        .collection("appointments")
+        .where("clientId", "==", userId)
+        .where("status", "==", "in_progress")
+        .limit(1)
+        .get();
+    return snap.empty ? null : snap.docs[0].data();
+}
 async function getAgentPermissions(userId) {
     var _a;
     const snap = await db.collection("agent_permissions").doc(userId).get();
@@ -127,8 +136,8 @@ async function saveConversationTurn(phone, userText, assistantReply) {
     await batch.commit().catch((err) => console.error("saveConversationTurn error:", err));
 }
 // ── System prompt builders ────────────────────────────────────────────────────
-function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learnedFactsText, zepContext, memoryContext) {
-    var _a, _b, _c;
+function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learnedFactsText, zepContext, memoryContext, activeVisit) {
+    var _a, _b, _c, _d;
     const seniorName = (_a = senior === null || senior === void 0 ? void 0 : senior.name) !== null && _a !== void 0 ? _a : "your loved one";
     const needs = (_b = senior === null || senior === void 0 ? void 0 : senior.needs) !== null && _b !== void 0 ? _b : [];
     const journalSummary = journal.length
@@ -159,6 +168,9 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
     const factsSection = learnedFactsText
         ? `\nWhat I know about this family:\n${learnedFactsText}\n`
         : "";
+    const visitSection = activeVisit
+        ? `\nNOTE: ${(_d = activeVisit.caregiverName) !== null && _d !== void 0 ? _d : "A caregiver"} is with ${seniorName} right now (visit in progress). If the family asks something the caregiver should know, offer to pass it along.\n`
+        : "";
     return [
         `You are Cara — an AI care assistant texting with a family member caring for ${seniorName}.`,
         `You act; you don't describe what you could do. When you can do something, do it and report back.`,
@@ -166,19 +178,26 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         `Care needs: ${needs.join(", ") || "none recorded"}.`,
         zepSection,
         factsSection,
+        visitSection,
         `Recent care journal:`,
         journalSummary,
         ``,
         apptLine,
         autoBook ? `\n${autoBook}` : "",
         ``,
-        `Rules:`,
-        `- Keep answers to 1–3 sentences maximum (you are in an iMessage thread).`,
-        `- Never diagnose or give medical advice.`,
-        `- For any emergency: "Please call 911 immediately." Do not follow up with conversation.`,
-        `- Be warm and direct — like a knowledgeable friend who gets things done, not a customer service bot.`,
-        `- Mirror the emotional tone of the person you're talking with. If they're worried, acknowledge it.`,
-        `- Sign off with 💙 occasionally. Never use jargon or bullet points in replies.`,
+        `Cara is a warm, direct care assistant who texts like a trusted family friend — someone who knows what they're talking about and always leads with the person before the information.`,
+        ``,
+        `She is not a chatbot. She does not use bullet points, numbered lists, headers, or corporate language. She keeps messages short because she respects people's time.`,
+        ``,
+        `When someone is worried, she acknowledges it before she solves it. When something is hard, she sits with it before offering action. When the senior does something good, she shares it like she noticed.`,
+        ``,
+        `She uses the senior's name — not "your loved one." She signs off with 💙 when a moment genuinely calls for it. Not as punctuation. As warmth.`,
+        ``,
+        `She never says: "I'm happy to help", "Certainly!", "Great question", "As I mentioned", "Is there anything else I can help you with?", "It's important to note".`,
+        ``,
+        `She keeps every message under 280 characters unless the situation genuinely requires more. She never uses markdown.`,
+        ``,
+        `Safety (non-negotiable): Never diagnose or give medical advice. For any emergency: "Please call 911 immediately." Do not follow up with conversation.`,
         ``,
         `Eldercare emotional intelligence:`,
         `- Worry first: when they express concern, acknowledge the feeling first, then share data, then offer ONE clear next step.`,
@@ -292,16 +311,17 @@ async function runQaAgent(params) {
                 getConversationHistory(phone),
             ]);
         }
-        // Load Zep context, memory files, and learned facts in parallel (non-blocking on failure)
-        const [zepContext, memoryContext, facts] = await Promise.all([
+        // Load Zep context, memory files, learned facts, and active visit in parallel
+        const [zepContext, memoryContext, facts, activeVisit] = await Promise.all([
             zepThreadId ? (0, zepClient_1.getZepContext)(zepThreadId).catch(() => "") : Promise.resolve(""),
             (0, memoryFiles_1.getMemoryContext)(userId).catch(() => ""),
             (0, learnedFacts_1.getRelevantFacts)(userId).catch(() => []),
+            getActiveVisit(userId).catch(() => null),
         ]);
         const factsText = facts.length
             ? facts.map((f) => `- ${f.fact} (${f.category})`).join("\n")
             : undefined;
-        systemPrompt = buildClientSystemPrompt(senior, journal, nextAppt, permissions, factsText, zepContext || undefined, memoryContext || undefined);
+        systemPrompt = buildClientSystemPrompt(senior, journal, nextAppt, permissions, factsText, zepContext || undefined, memoryContext || undefined, activeVisit);
     }
     try {
         await (0, client_1.startTyping)(chatId).catch(() => { });
@@ -358,7 +378,7 @@ async function runQaAgent(params) {
             }
         }
         if (!reply)
-            reply = "I'll look into that and get back to you shortly. 💙";
+            reply = "I'll look into that and get back to you shortly.";
         await saveConversationTurn(phone, text, reply);
         await sendSplit(chatId, reply);
         return reply;

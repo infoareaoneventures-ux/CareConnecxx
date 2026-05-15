@@ -42,6 +42,7 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 const CHECKR_PACKAGE = process.env.CHECKR_PACKAGE || "driver_pro";
+const CHECKR_PACKAGE_MVR = process.env.CHECKR_PACKAGE_MVR || CHECKR_PACKAGE;
 function basicAuth(apiKey) {
     return "Basic " + Buffer.from(apiKey + ":").toString("base64");
 }
@@ -157,24 +158,18 @@ exports.initiateCheckrCandidate = functions.runWith({}).https.onCall(async (data
             const candidate = await checkrPost("/candidates", candidateBody, `${uid}-candidate-${dateKey}`);
             candidateId = candidate.id;
         }
+        const mvrPaid = caregiverData.mvrPaid === true;
+        const selectedPackage = mvrPaid ? CHECKR_PACKAGE_MVR : CHECKR_PACKAGE;
         const invitationBody = {
             candidate_id: candidateId,
-            package: CHECKR_PACKAGE,
+            package: selectedPackage,
         };
         if (workLocations.length)
             invitationBody.work_locations = workLocations;
         await checkrPost("/invitations", invitationBody, `${uid}-invitation-${dateKey}`);
         await db.collection("caregivers").doc(uid).set({
-            backgroundCheckData: {
-                checkrCandidateId: candidateId,
-                consentGiven: true,
-                legalFirstName,
-                legalLastName,
-                zip: zipCode,
-                submittedAt: new Date().toISOString(),
-                status: "pending",
-                invitationStatus: "sent",
-            },
+            backgroundCheckData: Object.assign({ checkrCandidateId: candidateId, consentGiven: true, legalFirstName,
+                legalLastName, zip: zipCode, submittedAt: new Date().toISOString(), status: "pending", invitationStatus: "sent" }, (mvrPaid && { mvrIncluded: true })),
         }, { merge: true });
         return { success: true, candidateId };
     }
@@ -348,10 +343,14 @@ exports.checkrWebhook = functions.runWith({}).https.onRequest(async (req, res) =
                     title: "Background check approved! 🎉",
                     body: "Great news — your background check came back clear. You're approved and families can now book you!",
                 };
-                // Advance Cara onboarding if caregiver has an iMessage session
+                // Advance Cara onboarding if caregiver has an iMessage session; also mark approved driver if MVR was included
                 try {
                     const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
-                    const cgPhone = (_b = cgSnap.data()) === null || _b === void 0 ? void 0 : _b.phone;
+                    const cgData = cgSnap.data();
+                    if (((_b = cgData === null || cgData === void 0 ? void 0 : cgData.backgroundCheckData) === null || _b === void 0 ? void 0 : _b.mvrIncluded) === true) {
+                        updates["isApprovedDriver"] = true;
+                    }
+                    const cgPhone = cgData === null || cgData === void 0 ? void 0 : cgData.phone;
                     if (cgPhone) {
                         const { advanceOnboardingStep } = await Promise.resolve().then(() => __importStar(require("./agents/onboardingConversation")));
                         await advanceOnboardingStep(cgPhone, "background_check", "");
@@ -375,7 +374,7 @@ exports.checkrWebhook = functions.runWith({}).https.onRequest(async (req, res) =
                             const { sendViaInteractionAgent } = await Promise.resolve().then(() => __importStar(require("./agents/caraAgent")));
                             await sendViaInteractionAgent(task.clientPhone, {
                                 content: `Good news! ${cgName}'s background check just cleared. ` +
-                                    `You can now book them — just say the word and I'll take care of it! 💙`,
+                                    `You can now book them — just say the word and I'll take care of it.`,
                                 urgency: "standard",
                                 sourceAgent: "bg_check_clear",
                                 canDrop: true,
@@ -416,7 +415,7 @@ exports.checkrWebhook = functions.runWith({}).https.onRequest(async (req, res) =
                         await sendViaInteractionAgent(cgData.phone, {
                             content: `Hi ${(_k = (_j = cgData.name) === null || _j === void 0 ? void 0 : _j.split(" ")[0]) !== null && _k !== void 0 ? _k : "there"} — ` +
                                 `your background check is under review. This is normal and usually takes a few business days. ` +
-                                `Our team will reach out if anything is needed. Hang tight! 💙`,
+                                `Our team will reach out if anything is needed. Hang tight.`,
                             urgency: "standard",
                             sourceAgent: "checkr_status",
                             canDrop: true,
@@ -452,7 +451,7 @@ exports.checkrWebhook = functions.runWith({}).https.onRequest(async (req, res) =
                             content: `Hi ${(_q = (_p = cgData.name) === null || _p === void 0 ? void 0 : _p.split(" ")[0]) !== null && _q !== void 0 ? _q : "there"} — ` +
                                 `Checkr put your background check on hold while they gather more information. ` +
                                 `Please check the email from Checkr and follow any instructions there. ` +
-                                `Reach out if you need anything — we're here to help! 💙`,
+                                `Reach out if you need anything — we're here to help.`,
                             urgency: "standard",
                             sourceAgent: "checkr_status",
                             canDrop: true,

@@ -1,7 +1,7 @@
 {
     "name": "functions",
     "scripts": {
-        "build": "node --max-old-space-size=4096 node_modules/typescript/bin/tsc",
+        "build": "node scripts/transpile.js",
         "serve": "firebase emulators:start --only functions",
         "shell": "firebase functions:shell",
         "start": "npm run shell",

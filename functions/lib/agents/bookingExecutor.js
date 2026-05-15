@@ -38,6 +38,7 @@ exports.createBookingTask = createBookingTask;
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
 const notifications_1 = require("../notifications");
+const auditLog_1 = require("../observability/auditLog");
 async function hasConflict(caregiverId, date, startTime, endTime) {
     const snap = await db.collection("appointments")
         .where("caregiverId", "==", caregiverId)
@@ -51,7 +52,7 @@ async function hasConflict(caregiverId, date, startTime, endTime) {
 }
 const db = admin.firestore();
 async function executeBookings(taskId, clientPhone) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     const taskRef = db.collection("agent_tasks").doc(taskId);
     const taskSnap = await taskRef.get();
     if (!taskSnap.exists)
@@ -115,6 +116,7 @@ async function executeBookings(taskId, clientPhone) {
     }
     batch.update(taskRef, { status: "approved", humanApproved: true, approvedAt: now });
     await batch.commit();
+    (0, auditLog_1.logBookingCreated)(task.clientId, task.caregiverId, task.appointments.map((a) => a.date)).catch(() => { });
     (0, notifications_1.notifyAdminBookingConfirmed)({
         taskId: taskId,
         caregiverName: task.caregiverName,
@@ -132,23 +134,64 @@ async function executeBookings(taskId, clientPhone) {
             `I'll text you when ${task.caregiverName} arrives for the first visit.\n` +
             `View your schedule: ${appUrl}/client/schedule\n\n` +
             `Any questions? Just text me. 💙`);
+        // Check if client has a payment method — if not, send a Stripe setup link
+        try {
+            const Stripe = (await Promise.resolve().then(() => __importStar(require("stripe")))).default;
+            const stripeClient = new Stripe((_b = process.env.STRIPE_SECRET_KEY) !== null && _b !== void 0 ? _b : "");
+            const clientSnap = await db.collection("users").doc((_c = task.clientId) !== null && _c !== void 0 ? _c : "").get();
+            const stripeCustomerId = (_d = clientSnap.data()) === null || _d === void 0 ? void 0 : _d.stripeCustomerId;
+            let hasPaymentMethod = false;
+            if (stripeCustomerId) {
+                const customer = await stripeClient.customers.retrieve(stripeCustomerId);
+                hasPaymentMethod = !!(((_e = customer.invoice_settings) === null || _e === void 0 ? void 0 : _e.default_payment_method) ||
+                    customer.default_source);
+            }
+            if (!hasPaymentMethod) {
+                const { generateToken } = await Promise.resolve().then(() => __importStar(require("./tokenService")));
+                const token = generateToken({ phone: clientPhone, task: "payment" });
+                const setupUrl = `${appUrl}/done?task=payment&t=${token}`;
+                await (0, client_1.sendMessage)(sessionSnap.data().chatId, `One more thing — to pay ${task.caregiverName} after each visit, ` +
+                    `add a card on file (takes 30 seconds): ${setupUrl}`);
+            }
+        }
+        catch (err) {
+            console.error("bookingExecutor payment method check error:", err);
+        }
     }
     // Notify caregiver
     const caregiverSnap = await db.collection("caregivers").doc(task.caregiverId).get();
-    const cgPhone = (_b = caregiverSnap.data()) === null || _b === void 0 ? void 0 : _b.phone;
+    const cgPhone = (_f = caregiverSnap.data()) === null || _f === void 0 ? void 0 : _f.phone;
     if (cgPhone) {
         const cgSession = await (0, client_1.getOrCreateSession)(cgPhone, { caregiverId: task.caregiverId });
         const firstAppt = task.appointments[0];
         await (0, client_1.sendMessage)(cgSession.chatId, `New booking confirmed! 🎉\n\n` +
             `Client: A family who needs care in your area\n` +
             `📅 Starting ${firstAppt.date} at ${firstAppt.startTime}\n` +
-            `💰 $${(((_d = (_c = caregiverSnap.data()) === null || _c === void 0 ? void 0 : _c.hourlyRate) !== null && _d !== void 0 ? _d : 20) * firstAppt.durationHours).toFixed(2)} per visit\n\n` +
+            `💰 $${(((_h = (_g = caregiverSnap.data()) === null || _g === void 0 ? void 0 : _g.hourlyRate) !== null && _h !== void 0 ? _h : 20) * firstAppt.durationHours).toFixed(2)} per visit\n\n` +
             `I'll send you the care plan and directions the morning of each visit.\n\n` +
             `Reply CONFIRM to accept or ISSUE if something's wrong.`);
     }
 }
 // ── Create a booking task (called from webhooks/agents) ───────────────────────
 async function createBookingTask(params) {
+    var _a, _b, _c, _d;
+    // Block booking if caregiver's background check is still pending
+    const cgSnap = await db.collection("caregivers").doc(params.caregiverId).get();
+    const cgStatus = (_a = cgSnap.data()) === null || _a === void 0 ? void 0 : _a.status;
+    if (cgStatus === "pending_review") {
+        const submittedAt = (_c = (_b = cgSnap.data()) === null || _b === void 0 ? void 0 : _b.backgroundCheckData) === null || _c === void 0 ? void 0 : _c.submittedAt;
+        const daysInReview = submittedAt
+            ? Math.ceil((Date.now() - new Date(submittedAt).getTime()) / (1000 * 60 * 60 * 24))
+            : 0;
+        const sessionSnap = await db.collection("agent_sessions").doc(params.clientPhone).get();
+        const chatId = (_d = sessionSnap.data()) === null || _d === void 0 ? void 0 : _d.chatId;
+        if (chatId) {
+            await (0, client_1.sendMessage)(chatId, `${params.caregiverName}'s background check is still in progress ` +
+                `(${daysInReview > 0 ? `${daysInReview} day${daysInReview !== 1 ? "s" : ""} in review` : "just submitted"}).\n\n` +
+                `I'll notify you the moment it clears so you can book. Want me to find another available caregiver in the meantime?`);
+        }
+        return ""; // Early return — no booking written
+    }
     const totalCost = params.appointments.reduce((sum, a) => sum + params.hourlyRate * a.durationHours, 0);
     const now = new Date();
     const ref = await db.collection("agent_tasks").add({

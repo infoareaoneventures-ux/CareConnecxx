@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.onShiftHoursApproved = exports.retryFailedShiftPayments = exports.autoAcceptCorrection = exports.autoApproveShiftHours = exports.retryShiftPayment = exports.adminResolveShiftHours = exports.respondToCorrection = exports.reviewShiftHours = exports.submitShiftHours = void 0;
+exports.approveShiftHoursForClient = approveShiftHoursForClient;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const Stripe = require('stripe');
@@ -96,6 +97,7 @@ async function notifyAdmins(type, title, message, data) {
  * Caregiver submits hours for a completed appointment.
  */
 exports.submitShiftHours = functions.https.onCall(async (data, context) => {
+    var _a, _b, _c, _d, _e, _f;
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
     }
@@ -148,6 +150,29 @@ exports.submitShiftHours = functions.https.onCall(async (data, context) => {
         updatedAt: submittedAt,
     });
     await pushNotification(appt.clientId, 'shift_hours_submitted', 'Hours submitted for your review', `${caregiverData.name || 'Your caregiver'} submitted ${totalHours}h for review. Auto-approves in 24h.`, { appointmentId, totalHours });
+    // iMessage: notify client so they can approve or dispute without opening the app
+    try {
+        const clientUserSnap = await db.collection("users").doc(appt.clientId).get();
+        const clientPhone = (_a = clientUserSnap.data()) === null || _a === void 0 ? void 0 : _a.phone;
+        if (clientPhone) {
+            const hourlyRate = (_c = (_b = appt.hourlyRate) !== null && _b !== void 0 ? _b : caregiverData.hourlyRate) !== null && _c !== void 0 ? _c : 22;
+            const amount = (totalHours * hourlyRate).toFixed(2);
+            const { sendToPhone } = await Promise.resolve().then(() => __importStar(require("./linq/client")));
+            await sendToPhone(clientPhone, `${(_d = caregiverData.name) !== null && _d !== void 0 ? _d : "Your caregiver"} submitted ${totalHours}h for ` +
+                `${(_e = appt.date) !== null && _e !== void 0 ? _e : "today"}'s visit ($${amount}).\n\n` +
+                `Reply APPROVE to confirm, or DISPUTE if something looks wrong.`);
+            await db.collection("agent_sessions").doc(clientPhone).update({
+                pendingShiftApproval: {
+                    appointmentId,
+                    amount,
+                    caregiverName: (_f = caregiverData.name) !== null && _f !== void 0 ? _f : "Caregiver",
+                },
+            });
+        }
+    }
+    catch (err) {
+        console.error("shiftHours iMessage notification error:", err);
+    }
     return { success: true, appointmentId, totalHours };
 });
 /**
@@ -513,5 +538,23 @@ async function processShiftPayment(appointmentId, shift) {
         }
         return { ok: false, error: errorMessage };
     }
+}
+/**
+ * Approve shift hours on behalf of the client via iMessage reply.
+ */
+async function approveShiftHoursForClient(appointmentId) {
+    const snap = await db.collection("shiftHours")
+        .where("appointmentId", "==", appointmentId)
+        .where("status", "==", "pending_client_review")
+        .limit(1)
+        .get();
+    if (snap.empty)
+        return;
+    await snap.docs[0].ref.update({
+        status: "approved",
+        approvedAt: new Date().toISOString(),
+        approvedBy: "client_imessage",
+        updatedAt: new Date().toISOString(),
+    });
 }
 //# sourceMappingURL=shiftHours.js.map

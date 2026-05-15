@@ -40,6 +40,7 @@ exports.readMemoryFile = readMemoryFile;
 exports.writeMemoryFile = writeMemoryFile;
 exports.appendToMemoryFile = appendToMemoryFile;
 exports.getMemoryContext = getMemoryContext;
+exports.initializeMemoryFiles = initializeMemoryFiles;
 exports.handleMemoryQuery = handleMemoryQuery;
 exports.consolidateMemoryForUser = consolidateMemoryForUser;
 const admin = __importStar(require("firebase-admin"));
@@ -90,6 +91,31 @@ async function getMemoryContext(userId) {
     if (combined.length <= 12000)
         return combined;
     return combined.slice(0, 12000) + "\n\n[Memory truncated for length]";
+}
+async function initializeMemoryFiles(userId, data) {
+    var _a, _b, _c, _d, _e, _f;
+    const seniorName = (_a = data.seniorName) !== null && _a !== void 0 ? _a : "your loved one";
+    const clientName = (_b = data.clientName) !== null && _b !== void 0 ? _b : "";
+    const relationship = (_c = data.relationship) !== null && _c !== void 0 ? _c : "family member";
+    const conditions = Array.isArray(data.conditions)
+        ? data.conditions.join(", ")
+        : ((_d = data.conditions) !== null && _d !== void 0 ? _d : "none noted");
+    const careNeeds = Array.isArray(data.careNeeds)
+        ? data.careNeeds.join(", ")
+        : ((_e = data.careNeeds) !== null && _e !== void 0 ? _e : "general support");
+    const profileMd = `# Profile\n\n` +
+        `**Senior:** ${seniorName}${data.seniorAge ? `, age ${data.seniorAge}` : ""}\n` +
+        `**Primary contact:** ${clientName} (${relationship})\n` +
+        `**Location:** ${(_f = data.city) !== null && _f !== void 0 ? _f : "unknown"}\n` +
+        `**Care needs:** ${careNeeds}\n`;
+    const healthMd = `# Health\n\n` +
+        `**Conditions:** ${conditions}\n` +
+        `**Medications:** unknown\n` +
+        `**Allergies:** unknown\n`;
+    await Promise.all([
+        writeMemoryFile(userId, "profile", profileMd),
+        writeMemoryFile(userId, "health", healthMd),
+    ]);
 }
 // Triggered when user asks "what do you know about mom?" (or similar)
 async function handleMemoryQuery(userId, chatId, sendMessage) {

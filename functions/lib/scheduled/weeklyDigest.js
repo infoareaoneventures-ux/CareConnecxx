@@ -40,7 +40,7 @@ exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
-const client_1 = require("../linq/client");
+const caraAgent_1 = require("../agents/caraAgent");
 const permissionsConversation_1 = require("../agents/permissionsConversation");
 const db = admin.firestore();
 let _client = null;
@@ -141,7 +141,7 @@ async function generateDigest(data) {
 }
 // ── Core logic (shared by scheduled + manual trigger) ────────────────────────
 async function runWeeklyDigests() {
-    var _a;
+    var _a, _b, _c, _d;
     const sessionsSnap = await db
         .collection("agent_sessions")
         .where("optedOut", "==", false)
@@ -160,12 +160,12 @@ async function runWeeklyDigests() {
             const seniorId = (_a = session.seniorId) !== null && _a !== void 0 ? _a : session.userId;
             const data = await getWeekData(seniorId, session.userId);
             const digest = await generateDigest(data);
-            if (session.chatId) {
-                await (0, client_1.sendMessage)(session.chatId, digest);
-            }
-            else {
-                await (0, client_1.sendToPhone)(phone, digest);
-            }
+            await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+                content: digest,
+                urgency: "standard",
+                sourceAgent: "weekly_digest",
+                canDrop: true,
+            });
             const today = new Date().toISOString().slice(0, 10);
             await db.collection("weekly_digests").doc(`${session.userId}_${today}`).set({
                 clientId: session.userId,
@@ -179,6 +179,57 @@ async function runWeeklyDigests() {
         }
         catch (err) {
             console.error(`weeklyDigest error for session ${sessionDoc.id}:`, err);
+        }
+    }
+    // ── Caregiver earnings summaries ─────────────────────────────────────────────
+    const cgSessionsSnap = await db
+        .collection("agent_sessions")
+        .where("userType", "==", "caregiver")
+        .where("optedOut", "==", false)
+        .get();
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const today = new Date().toISOString().slice(0, 10);
+    for (const cgDoc of cgSessionsSnap.docs) {
+        const cgSession = cgDoc.data();
+        if (!cgSession.caregiverId || cgSession.optedIn === false)
+            continue;
+        try {
+            const cgPhone = cgDoc.id;
+            const paySnap = await db
+                .collection("visit_payments")
+                .where("caregiverId", "==", cgSession.caregiverId)
+                .where("createdAt", ">=", weekAgo)
+                .where("status", "in", ["pending", "paid"])
+                .get();
+            if (paySnap.empty)
+                continue;
+            const visits = paySnap.docs.map(d => d.data());
+            const totalCents = visits.reduce((s, v) => { var _a; return s + ((_a = v.amountCents) !== null && _a !== void 0 ? _a : 0); }, 0);
+            const totalStr = `$${(totalCents / 100).toFixed(2)}`;
+            const cgSnap = await db.collection("caregivers").doc(cgSession.caregiverId).get();
+            const cgName = (_d = (_c = (_b = cgSnap.data()) === null || _b === void 0 ? void 0 : _b.name) === null || _c === void 0 ? void 0 : _c.split(" ")[0]) !== null && _d !== void 0 ? _d : "there";
+            const visitLines = visits.slice(0, 5).map(v => { var _a, _b; return `· ${(_a = v.date) !== null && _a !== void 0 ? _a : "this week"} — $${(((_b = v.amountCents) !== null && _b !== void 0 ? _b : 0) / 100).toFixed(2)}`; }).join("\n");
+            const earningsMsg = `Good morning ${cgName} ☀️ Here's your week:\n\n` +
+                `💰 Earnings this week: ${totalStr}\n\n` +
+                `${visitLines}\n\n` +
+                `Payments are processed within 2 business days. Keep up the great work! 💙`;
+            await (0, caraAgent_1.sendViaInteractionAgent)(cgPhone, {
+                content: earningsMsg,
+                urgency: "standard",
+                sourceAgent: "weekly_digest",
+                canDrop: true,
+            });
+            await db.collection("weekly_digests").doc(`cg_${cgSession.caregiverId}_${today}`).set({
+                caregiverId: cgSession.caregiverId,
+                phone: cgPhone,
+                sentAt: new Date().toISOString(),
+                totalCents,
+                visitCount: visits.length,
+            });
+            await new Promise(r => setTimeout(r, 200));
+        }
+        catch (err) {
+            console.error(`caregiver earnings digest error for ${cgDoc.id}:`, err);
         }
     }
     console.log(`weeklyDigest: sent ${sent} digests`);

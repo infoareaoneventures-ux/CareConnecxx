@@ -36,7 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendMorningBriefings = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
-const client_1 = require("../linq/client");
+const caraAgent_1 = require("../agents/caraAgent");
 const db = admin.firestore();
 // Runs every day at 7am local (12:00 UTC covers most US time zones at 7am)
 exports.sendMorningBriefings = functions.pubsub
@@ -83,14 +83,19 @@ exports.sendMorningBriefings = functions.pubsub
             if (!highlights.length)
                 highlights.push("· No special notes for today");
             const mapsUrl = `https://maps.google.com/?q=${encodeURIComponent(address)}`;
-            await (0, client_1.sendMessage)(cgSession.data().chatId, `Good morning ${name}! Here's your day:\n\n` +
-                `👤 ${seniorName}\n` +
-                `📍 ${address}\n` +
-                `   ${mapsUrl}\n` +
-                `⏰ ${(_g = appt.startTime) !== null && _g !== void 0 ? _g : ""}–${(_h = appt.endTime) !== null && _h !== void 0 ? _h : ""}\n\n` +
-                `Care plan highlights:\n` +
-                highlights.join("\n") +
-                `\n\nReply ARRIVED when you get there. 💙`);
+            await (0, caraAgent_1.sendViaInteractionAgent)(caregiver.phone, {
+                content: `Good morning ${name}! Here's your day:\n\n` +
+                    `👤 ${seniorName}\n` +
+                    `📍 ${address}\n` +
+                    `   ${mapsUrl}\n` +
+                    `⏰ ${(_g = appt.startTime) !== null && _g !== void 0 ? _g : ""}–${(_h = appt.endTime) !== null && _h !== void 0 ? _h : ""}\n\n` +
+                    `Care plan highlights:\n` +
+                    highlights.join("\n") +
+                    `\n\nReply ARRIVED when you get there. 💙`,
+                urgency: "standard",
+                sourceAgent: "morning_briefing",
+                canDrop: true,
+            });
         }
         catch (err) {
             console.error("morningBriefing error for appt", doc.id, err);

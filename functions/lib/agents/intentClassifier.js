@@ -28,17 +28,19 @@ async function classifyIntent(text, hasPendingTask) {
             model: "claude-haiku-4-5-20251001",
             max_tokens: 10,
             system: "You classify a message sent to an AI care assistant named Cara. " +
-                "Reply with exactly one word from this list: STOP, TASK_REPLY, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, QUESTION.\n" +
+                "Reply with exactly one word from this list: STOP, TASK_REPLY, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, QUESTION.\n" +
                 "STOP = opting out of all messages.\n" +
                 "TASK_REPLY = responding to a numbered list or YES/NO approval.\n" +
                 "PERMISSION_UPDATE = asking to stop/start/change a setting (e.g. 'stop weekly summaries').\n" +
                 "REBOOK_REQUEST = asking to rebook a caregiver (e.g. 'book Maria again next week').\n" +
                 "CANCEL_REQUEST = asking to cancel an upcoming visit (e.g. 'cancel Wednesday', 'cancel tomorrow's visit').\n" +
+                "MEMORY_QUERY = asking what Cara knows or remembers (e.g. 'what do you know about mom', 'what have you remembered', 'what's in my file').\n" +
+                "ADD_FAMILY_MEMBER = asking to add a family member to care updates (e.g. 'add my sister', 'include my brother John', 'add +1234567890 to updates').\n" +
                 "QUESTION = anything else.",
             messages: [{ role: "user", content: text }],
         });
         const label = ((_a = response.content[0].text) !== null && _a !== void 0 ? _a : "").trim().toUpperCase();
-        if (["STOP", "TASK_REPLY", "PERMISSION_UPDATE", "REBOOK_REQUEST", "CANCEL_REQUEST", "QUESTION"].includes(label)) {
+        if (["STOP", "TASK_REPLY", "PERMISSION_UPDATE", "REBOOK_REQUEST", "CANCEL_REQUEST", "MEMORY_QUERY", "ADD_FAMILY_MEMBER", "QUESTION"].includes(label)) {
             return label;
         }
     }

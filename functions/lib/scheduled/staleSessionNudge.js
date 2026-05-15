@@ -36,7 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendStaleSessionNudges = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
-const client_1 = require("../linq/client");
+const caraAgent_1 = require("../agents/caraAgent");
 const db = admin.firestore();
 // Runs daily at 10 AM PT (17:00 UTC)
 exports.sendStaleSessionNudges = functions.pubsub
@@ -90,7 +90,12 @@ exports.sendStaleSessionNudges = functions.pubsub
                     `${greeting} 👋 I noticed you didn't finish setting up your care search.\n\n` +
                         `Whenever you're ready — just reply here to pick up where you left off. 💙`;
             }
-            await (0, client_1.sendMessage)(session.chatId, message);
+            await (0, caraAgent_1.sendViaInteractionAgent)(doc.id, {
+                content: message,
+                urgency: "low",
+                sourceAgent: "stale_nudge",
+                canDrop: true,
+            });
             await doc.ref.update({
                 nudgeSentAt: new Date().toISOString(),
                 nudgeCount: admin.firestore.FieldValue.increment(1),

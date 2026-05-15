@@ -48,6 +48,8 @@ exports.MCP_TOOLS = void 0;
 exports.handleToolCall = handleToolCall;
 const admin = __importStar(require("firebase-admin"));
 const matchingAgent_1 = require("../agents/matchingAgent");
+const auditLog_1 = require("../observability/auditLog");
+const memoryFiles_1 = require("../memory/memoryFiles");
 const db = admin.firestore();
 exports.MCP_TOOLS = [
     {
@@ -91,6 +93,18 @@ exports.MCP_TOOLS = [
             type: "object",
             properties: {
                 caregiverId: { type: "string", description: "The caregiver's ID" },
+            },
+            required: ["caregiverId"],
+        },
+    },
+    {
+        name: "get_caregiver_reviews",
+        description: "Fetch reviews for a specific caregiver.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+                limit: { type: "number", description: "Max reviews to return (default 5)" },
             },
             required: ["caregiverId"],
         },
@@ -172,18 +186,45 @@ exports.MCP_TOOLS = [
             required: ["seniorId", "signalType", "description"],
         },
     },
+    {
+        name: "read_memory_file",
+        description: "Read one of Cara's long-term memory files for a user (profile, health, family, recent_episodes, procedural).",
+        input_schema: {
+            type: "object",
+            properties: {
+                userId: { type: "string", description: "The user's ID" },
+                file: { type: "string", description: "One of: profile, health, family, recent_episodes, procedural" },
+            },
+            required: ["userId", "file"],
+        },
+    },
+    {
+        name: "update_memory_file",
+        description: "Append new information to one of Cara's long-term memory files for a user.",
+        input_schema: {
+            type: "object",
+            properties: {
+                userId: { type: "string", description: "The user's ID" },
+                file: { type: "string", description: "One of: profile, health, family, recent_episodes, procedural" },
+                content: { type: "string", description: "Markdown content to append to the file" },
+            },
+            required: ["userId", "file", "content"],
+        },
+    },
 ];
 // ── Tool executor ─────────────────────────────────────────────────────────────
 async function handleToolCall(name, input) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g;
     const nowIso = new Date().toISOString();
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     switch (name) {
         case "get_senior_profile": {
+            (0, auditLog_1.logHealthDataAccessed)(input.seniorId, input.seniorId, "mcp:get_senior_profile").catch(() => { });
             const snap = await db.collection("seniors").doc(input.seniorId).get();
             return (_a = snap.data()) !== null && _a !== void 0 ? _a : { error: "Senior not found" };
         }
         case "get_care_journal": {
+            (0, auditLog_1.logHealthDataAccessed)(input.seniorId, input.seniorId, "mcp:get_care_journal").catch(() => { });
             const limit = (_b = input.limit) !== null && _b !== void 0 ? _b : 5;
             const snap = await db
                 .collection("care_journal")
@@ -209,7 +250,18 @@ async function handleToolCall(name, input) {
             const snap = await db.collection("caregivers").doc(input.caregiverId).get();
             return (_c = snap.data()) !== null && _c !== void 0 ? _c : { error: "Caregiver not found" };
         }
+        case "get_caregiver_reviews": {
+            const limit = (_d = input.limit) !== null && _d !== void 0 ? _d : 5;
+            const snap = await db
+                .collection("reviews")
+                .where("caregiverId", "==", input.caregiverId)
+                .orderBy("createdAt", "desc")
+                .limit(limit)
+                .get();
+            return snap.docs.map((d) => d.data());
+        }
         case "get_health_signals": {
+            (0, auditLog_1.logHealthDataAccessed)(input.seniorId, input.seniorId, "mcp:get_health_signals").catch(() => { });
             const snap = await db
                 .collection("health_signals")
                 .where("seniorId", "==", input.seniorId)
@@ -229,14 +281,16 @@ async function handleToolCall(name, input) {
                     .get(),
             ]);
             return {
-                subscription: (_d = subSnap.data()) !== null && _d !== void 0 ? _d : null,
+                subscription: (_e = subSnap.data()) !== null && _e !== void 0 ? _e : null,
                 recentInvoices: invoiceSnap.docs.map((d) => d.data()),
             };
         }
         case "find_replacement_caregivers": {
             const sessionSnap = await db.collection("agent_sessions").doc(input.phone).get();
-            const session = (_e = sessionSnap.data()) !== null && _e !== void 0 ? _e : {};
-            await (0, matchingAgent_1.runMatchingForClient)(input.phone, input.chatId, session, session);
+            const session = (_f = sessionSnap.data()) !== null && _f !== void 0 ? _f : {};
+            const clientSnap = await db.collection("users").doc(input.clientId).get();
+            const clientProfile = (_g = clientSnap.data()) !== null && _g !== void 0 ? _g : {};
+            await (0, matchingAgent_1.runMatchingForClient)(input.phone, input.chatId, session, clientProfile);
             return { triggered: true };
         }
         case "request_booking": {
@@ -250,6 +304,7 @@ async function handleToolCall(name, input) {
                 source: "qa_agent",
                 createdAt: nowIso,
             });
+            (0, auditLog_1.logBookingCreated)(input.clientId, input.caregiverId, input.dates).catch(() => { });
             return { taskId: ref.id };
         }
         case "update_preferences": {
@@ -258,6 +313,7 @@ async function handleToolCall(name, input) {
             return { updated: true };
         }
         case "log_health_flag": {
+            (0, auditLog_1.logHealthDataAccessed)(input.seniorId, input.seniorId, "mcp:log_health_flag").catch(() => { });
             await db.collection("health_signals").add({
                 seniorId: input.seniorId,
                 signalType: input.signalType,
@@ -267,6 +323,19 @@ async function handleToolCall(name, input) {
                 detectedAt: nowIso,
             });
             return { logged: true };
+        }
+        case "read_memory_file": {
+            (0, auditLog_1.logHealthDataAccessed)(input.userId, input.userId, "mcp:read_memory_file").catch(() => { });
+            const content = await (0, memoryFiles_1.readMemoryFile)(input.userId, input.file);
+            return { content: content || "" };
+        }
+        case "update_memory_file": {
+            const existing = await (0, memoryFiles_1.readMemoryFile)(input.userId, input.file);
+            const updated = existing
+                ? `${existing.trimEnd()}\n\n${input.content}`
+                : input.content;
+            await (0, memoryFiles_1.writeMemoryFile)(input.userId, input.file, updated);
+            return { updated: true };
         }
         default:
             return { error: `Unknown tool: ${name}` };

@@ -45,6 +45,7 @@ const DEFAULTS = {
     activeHours: { start: "08:00", end: "21:00" },
     preferredSummaryTime: "18:00",
     preferSMS: false,
+    timezone: "America/Los_Angeles",
 };
 async function getPreferences(userId) {
     const snap = await db.collection("user_preferences").doc(userId).get();
@@ -55,19 +56,28 @@ async function getPreferences(userId) {
 async function updatePreferences(userId, patch) {
     await db.collection("user_preferences").doc(userId).set(patch, { merge: true });
 }
-function isInDND(prefs, nowUtc) {
+function isInDND(prefs, now) {
+    var _a, _b, _c, _d;
     if (!prefs.dndEnabled)
         return false;
-    const now = nowUtc !== null && nowUtc !== void 0 ? nowUtc : new Date();
-    // Compare as HH:MM strings against UTC hour:minute (caller adjusts tz if needed)
-    const hhmm = now.toISOString().slice(11, 16); // "HH:MM" in UTC
+    const d = now !== null && now !== void 0 ? now : new Date();
+    const tz = prefs.timezone || "America/Los_Angeles";
+    // Get HH:MM in the user's local timezone (avoids UTC-vs-local comparison bug)
+    const parts = new Intl.DateTimeFormat("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: tz,
+    }).formatToParts(d);
+    const h = (_b = (_a = parts.find(p => p.type === "hour")) === null || _a === void 0 ? void 0 : _a.value) !== null && _b !== void 0 ? _b : "00";
+    const m = (_d = (_c = parts.find(p => p.type === "minute")) === null || _c === void 0 ? void 0 : _c.value) !== null && _d !== void 0 ? _d : "00";
+    const hhmm = `${h.padStart(2, "0")}:${m.padStart(2, "0")}`;
     const { dndStart, dndEnd } = prefs;
     if (dndStart <= dndEnd) {
-        // Same-day window: 22:00–23:59 would not wrap; e.g. 08:00–18:00
         return hhmm >= dndStart && hhmm < dndEnd;
     }
     else {
-        // Overnight window: e.g. 22:00–08:00 wraps midnight
+        // Overnight window e.g. 22:00–08:00
         return hhmm >= dndStart || hhmm < dndEnd;
     }
 }

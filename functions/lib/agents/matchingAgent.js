@@ -52,7 +52,7 @@ function score(caregiver, intake) {
     return pts;
 }
 async function runMatchingForClient(phone, chatId, intake, session) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
     try {
         const zip = ((_a = intake.zipCode) !== null && _a !== void 0 ? _a : "");
         const city = ((_b = intake.city) !== null && _b !== void 0 ? _b : "");
@@ -64,13 +64,13 @@ async function runMatchingForClient(phone, chatId, intake, session) {
                 rejectedIds.push(...((_e = (_d = sessionSnap.data()) === null || _d === void 0 ? void 0 : _d.rejectedCaregiverIds) !== null && _e !== void 0 ? _e : []));
             }
         }
-        // Pull verified + approved caregivers in a broad radius
+        // Pull active + pending_review caregivers in a broad radius
         const snap = await db.collection("caregivers")
-            .where("status", "==", "active")
+            .where("status", "in", ["active", "pending_review"])
             .limit(50)
             .get();
         let caregivers = snap.docs
-            .map((d) => (Object.assign({ id: d.id }, d.data())))
+            .map((d) => (Object.assign({ id: d.id, pendingBackgroundCheck: d.data().status === "pending_review" }, d.data())))
             .filter((c) => {
             var _a, _b;
             return !rejectedIds.includes(c.id) && (((_a = c.city) === null || _a === void 0 ? void 0 : _a.toLowerCase()) === city.toLowerCase() ||
@@ -104,7 +104,7 @@ async function runMatchingForClient(phone, chatId, intake, session) {
                 "and our team will reach out within 24 hours to find the right match. 💙");
             return;
         }
-        // Write pending interview requests to track state
+        // Write pending interview requests (and caregiver_interest tasks for pending-bg-check caregivers)
         for (const c of top3) {
             await db.collection("interview_requests").add({
                 clientPhone: phone,
@@ -113,16 +113,30 @@ async function runMatchingForClient(phone, chatId, intake, session) {
                 status: "pending_presentation",
                 createdAt: new Date().toISOString(),
             });
+            if (c.pendingBackgroundCheck) {
+                await db.collection("agent_tasks").add({
+                    type: "caregiver_interest",
+                    caregiverId: c.id,
+                    caregiverName: c.name,
+                    clientPhone: phone,
+                    clientId: (_j = session === null || session === void 0 ? void 0 : session.userId) !== null && _j !== void 0 ? _j : phone,
+                    status: "pending_bg_clear",
+                    createdAt: new Date().toISOString(),
+                });
+            }
         }
         const lines = top3.map((c, i) => {
-            var _a, _b, _c;
+            var _a, _b, _c, _d;
             const stars = "⭐".repeat(Math.round((_a = c.rating) !== null && _a !== void 0 ? _a : 4));
             const specials = ((_b = c.specialties) !== null && _b !== void 0 ? _b : []).slice(0, 2).join(", ") || "General care";
             const yrs = (_c = c.yearsExperience) !== null && _c !== void 0 ? _c : "?";
+            const bgNote = c.pendingBackgroundCheck ? "\n   ⏳ Background check in progress" : "";
+            const profileUrl = `${(_d = process.env.APP_URL) !== null && _d !== void 0 ? _d : "https://careconnecxx.com"}/caregiver/${c.id}`;
             return (`${i + 1}️⃣  ${c.name} · ${stars} · $${c.hourlyRate}/hr\n` +
-                `   ${specials} · ${yrs}yrs exp`);
+                `   ${specials} · ${yrs}yrs exp${bgNote}\n` +
+                `   👤 ${profileUrl}`);
         }).join("\n\n");
-        await (0, client_1.sendMessage)(chatId, `I found ${top3.length} great matches for ${((_j = intake.seniorName) !== null && _j !== void 0 ? _j : "your loved one")} in ${city}! 🎉\n\n` +
+        await (0, client_1.sendMessage)(chatId, `I found ${top3.length} great matches for ${((_k = intake.seniorName) !== null && _k !== void 0 ? _k : "your loved one")} in ${city}! 🎉\n\n` +
             `${lines}\n\n` +
             `Reply with numbers to request interviews.\n` +
             `(e.g. "1" or "1 and 3" or "all")`);

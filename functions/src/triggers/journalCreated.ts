@@ -84,7 +84,7 @@ export const onJournalCreated = functions.firestore
             const seniorName = (seniorDoc.data()?.seniorName ?? seniorDoc.data()?.displayName ?? "your loved one") as string;
             await sendViaInteractionAgent(phone, {
               content:
-                `📊 Heads up — I've noticed "${signalType}" has come up ${recentSignals.size} times this week for ${seniorName}.\n\n` +
+                `Heads up — I've noticed "${signalType}" has come up ${recentSignals.size} times this week for ${seniorName}.\n\n` +
                 `This might be worth a conversation with their doctor or care team. 💙`,
               urgency:     "standard",
               sourceAgent: "health_watch",

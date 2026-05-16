@@ -97,7 +97,7 @@ export async function createVisitPayment(params: VisitPaymentParams): Promise<vo
   // Notify caregiver directly (bypass interaction agent — caregiver-initiated message path)
   if (caregiverPhone) {
     await sendToPhone(caregiverPhone,
-      `✅ Visit logged for ${date}. Your payment of ${totalStr} will be processed shortly.`
+      `Visit logged for ${date}. Your payment of ${totalStr} will be processed shortly.`
     ).catch(() => {});
   }
 }

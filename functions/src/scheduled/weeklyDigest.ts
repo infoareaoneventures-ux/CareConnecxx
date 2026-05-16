@@ -61,7 +61,7 @@ async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>): Pr
   const { journal, pastAppts, upcoming, seniorName, clientName } = data;
 
   if (journal.length === 0 && pastAppts.length === 0) {
-    return `Good morning ${clientName} ☀️ No visits were logged this week for ${seniorName}. If this seems wrong, please check the app or contact support.`;
+    return `Good morning ${clientName}. No visits were logged this week for ${seniorName}. If this seems wrong, please check the app or contact support.`;
   }
 
   const journalContext = journal.map(e => {
@@ -106,8 +106,8 @@ async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>): Pr
   } catch (err) {
     console.error("weeklyDigest Claude error:", err);
     return (
-      `Good morning ${clientName} ☀️ Here's ${seniorName}'s week:\n\n` +
-      `✅ ${completedCount} visit(s) completed\n\n` +
+      `Good morning ${clientName}. Here's ${seniorName}'s week:\n\n` +
+      `${completedCount} visit(s) completed\n\n` +
       (apptContext ? `Coming up:\n${apptContext}\n\n` : "") +
       `Have a wonderful ${dayName}.`
     );

@@ -82,7 +82,7 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
     parts: [{
       type:  "text",
       value:
-        `Hi everyone! 👋 I'm Cara, the AI care assistant for ${seniorName}'s care.\n\n` +
+        `Hi everyone — I'm Cara, the AI care assistant for ${seniorName}'s care.\n\n` +
         `I'll send care updates here so everyone stays in the loop. ` +
         `Anyone can text me questions anytime.`,
     }],

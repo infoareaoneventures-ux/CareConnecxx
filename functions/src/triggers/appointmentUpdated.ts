@@ -58,7 +58,7 @@ export const onAppointmentUpdated = functions.firestore
 
       // ── Arrival / in-progress ────────────────────────────────────────────
       if (after.status === "in-progress" && before.status !== "in-progress") {
-        const msg = `${after.caregiverName ?? "Your caregiver"} has arrived for your ${after.time} visit. ✅`;
+        const msg = `${after.caregiverName ?? "Your caregiver"} has arrived for your ${after.time} visit.`;
         await sendViaInteractionAgent(phone, {
           content: msg, urgency: "immediate", sourceAgent: "arrival_notification", canDrop: false,
         }).catch(() => sendToPhone(phone, msg));
@@ -75,10 +75,10 @@ export const onAppointmentUpdated = functions.firestore
         const caregiverPhone = await getCaregiverPhone(after.caregiverId);
         if (caregiverPhone) {
           const msg =
-            `✅ Booking confirmed!\n` +
-            `📅 ${after.date} at ${after.time}\n` +
-            (after.clientName  ? `👤 ${after.clientName}\n`  : "") +
-            (after.address     ? `📍 ${after.address}`       : "");
+            `Booking confirmed.\n` +
+            `${after.date} at ${after.time}\n` +
+            (after.clientName  ? `${after.clientName}\n`  : "") +
+            (after.address     ? `${after.address}`       : "");
           await sendToPhone(caregiverPhone, msg);
         }
         return;

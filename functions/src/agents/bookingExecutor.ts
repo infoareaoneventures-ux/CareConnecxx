@@ -75,8 +75,8 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
       if (sessionSnap.exists) {
         await sendMessage(sessionSnap.data()!.chatId,
-          `⚠️ I couldn't complete the booking — ${task.caregiverName} already has a visit at that time.\n\n` +
-          `Reply YES and I'll search for a different caregiver. 🔍`
+          `I couldn't complete the booking — ${task.caregiverName} already has a visit at that time.\n\n` +
+          `Reply YES and I'll search for a different caregiver.`
         );
       }
       await db.collection("admin_alerts").add({
@@ -145,11 +145,11 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
   const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
   if (sessionSnap.exists) {
     const lines = task.appointments.map((a) =>
-      `📅 ${a.date} · ${a.startTime}–${a.endTime} · ${task.caregiverName} ✅`
+      `${a.date} · ${a.startTime}–${a.endTime} · ${task.caregiverName}`
     ).join("\n");
 
     await sendMessage(sessionSnap.data()!.chatId,
-      `✅ All booked! Here's your confirmed schedule:\n\n` +
+      `All booked! Here's your confirmed schedule:\n\n` +
       `${lines}\n\n` +
       `I'll text you when ${task.caregiverName} arrives for the first visit.\n` +
       `View your schedule: ${appUrl}/client/schedule\n\n` +

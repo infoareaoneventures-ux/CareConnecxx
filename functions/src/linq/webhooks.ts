@@ -139,7 +139,7 @@ async function handleArrived(phone: string, chatId: string, session: AgentSessio
     .limit(1).get();
 
   if (snap.empty) {
-    await sendMessage(chatId, "I don't see a scheduled visit for you today. Let me know if something looks wrong! 🤔");
+    await sendMessage(chatId, "I don't see a scheduled visit for you today. Let me know if something looks wrong.");
     return;
   }
 
@@ -152,7 +152,7 @@ async function handleArrived(phone: string, chatId: string, session: AgentSessio
     const clientSession = await db.collection("agent_sessions").doc(clientPhone).get();
     if (clientSession.exists) {
       await sendMessage(clientSession.data()!.chatId,
-        `${session.caregiverId ? (await db.collection("caregivers").doc(session.caregiverId).get()).data()?.name ?? "Your caregiver" : "Your caregiver"} just arrived for ${appt.data().clientName ?? "the visit"} ✅`
+        `${session.caregiverId ? (await db.collection("caregivers").doc(session.caregiverId).get()).data()?.name ?? "Your caregiver" : "Your caregiver"} just arrived for ${appt.data().clientName ?? "the visit"}.`
       );
     }
   }
@@ -182,7 +182,6 @@ async function handleDone(phone: string, chatId: string, session: AgentSession):
   });
 
   await sendMessage(chatId,
-    "Great job today! 🌟\n\n" +
     "How did the visit go? Tell me in your own words — I'll handle the notes."
   );
 }
@@ -306,10 +305,10 @@ async function handleCareNotes(
     : `Next visit: ${nextSnap.docs[0].data().date} at ${nextSnap.docs[0].data().startTime ?? ""}`;
 
   await sendMessage(chatId,
-    `Got it — notes saved ✅\n\n` +
+    `Got it — notes saved.\n\n` +
     `Your payment of $${pay} will be processed tonight.\n` +
     `${nextLine}\n\n` +
-    `Have a great rest of your day! 😊`
+    `Have a great rest of your day.`
   );
 }
 
@@ -470,7 +469,7 @@ async function handleInbound(event: unknown): Promise<void> {
 
   // Rate limit
   if (await isRateLimited(phone)) {
-    await sendMessage(chatId, "I'm getting a lot of messages right now — try again in a bit! 😊");
+    await sendMessage(chatId, "I'm getting a lot of messages right now — try again in a bit.");
     return;
   }
 
@@ -577,11 +576,11 @@ async function handleInbound(event: unknown): Promise<void> {
             .where("date", "==", today).limit(1).get();
           const origTime = appt.empty ? "" : ` (originally ${appt.docs[0].data().startTime})`;
           await sendMessage(clientSession.data()!.chatId,
-            `${cgName} is running about ${text} late. They're on their way${origTime}. 🚗`
+            `${cgName} is running about ${text} late. They're on their way${origTime}.`
           );
         }
       }
-      await sendMessage(chatId, "I've notified the family. Drive safe! 🚗");
+      await sendMessage(chatId, "I've notified the family. Drive safe.");
       return;
     }
 
@@ -612,7 +611,7 @@ async function handleInbound(event: unknown): Promise<void> {
           );
         }
       }
-      await sendMessage(chatId, "I've flagged this for our team and notified the family. Thank you for letting me know. 🙏");
+      await sendMessage(chatId, "I've flagged this for our team and notified the family. Thank you for letting me know.");
       return;
     }
 
@@ -659,7 +658,7 @@ async function handleInbound(event: unknown): Promise<void> {
         }
         await reqSnap.docs[0].ref.update({ status: "awaiting_client_confirmation", caregiverAvailability: timeList });
       }
-      await sendMessage(chatId, "Got it — I've sent those times to the family! I'll let you know once they confirm. 📅");
+      await sendMessage(chatId, "Got it — I've sent those times to the family. I'll let you know once they confirm.");
       return;
     }
 
@@ -1082,9 +1081,9 @@ async function handleInbound(event: unknown): Promise<void> {
         await executeBookings(taskId, phone);
       } else {
         const totalCost = (appointments.length * schedule.durationHours * hourlyRate).toFixed(2);
-        const lines = appointments.map(a => `📅 ${a.date} · ${a.startTime}–${a.endTime}`).join("\n");
+        const lines = appointments.map(a => `${a.date} · ${a.startTime}–${a.endTime}`).join("\n");
         await sendMessage(chatId,
-          `Here's your booking summary:\n\n${lines}\n🤝 ${hire.caregiverName}\n💰 $${totalCost} total\n\nReply YES to confirm or NO to cancel.`
+          `Here's your booking summary:\n\n${lines}\n${hire.caregiverName} · $${totalCost} total\n\nReply YES to confirm or NO to cancel.`
         );
       }
       return;
@@ -1217,9 +1216,8 @@ async function handleInbound(event: unknown): Promise<void> {
         const cost = (rebook.durationHours * 20).toFixed(2);
         await sendMessage(chatId,
           `Here's your booking summary:\n\n` +
-          `📅 ${dateStr} · ${rebook.startTime}–${rebook.endTime}\n` +
-          `🤝 ${rebook.caregiverName}\n` +
-          `💰 $${cost}\n\n` +
+          `${dateStr} · ${rebook.startTime}–${rebook.endTime}\n` +
+          `${rebook.caregiverName} · $${cost}\n\n` +
           `Reply YES to confirm or NO to cancel.`
         );
       }

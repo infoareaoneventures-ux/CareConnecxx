@@ -104,7 +104,7 @@ export async function handleOnboardingStep(
   if (norm === "START OVER" || norm === "RESTART") {
     await updateSession(phone, { onboardingStep: "ask_role", onboardingData: {} });
     await sendMessage(chatId,
-      "No problem — let's start fresh! 😊\n\n" +
+      "No problem — let's start fresh.\n\n" +
       "Are you looking for care for a loved one, or are you a caregiver?\n\n" +
       "1️⃣  I need care for someone\n" +
       "2️⃣  I'm a caregiver looking for work"
@@ -137,7 +137,7 @@ export async function handleOnboardingStep(
         caregiver_ask_rate:    "What's your hourly rate?",
       };
       const repeat = stepMessages[step] ?? "Could you continue where we left off?";
-      await sendMessage(chatId, `Got it, updated! ✅\n\n${repeat}`);
+      await sendMessage(chatId, `Got it — updated.\n\n${repeat}`);
       return;
     }
   }
@@ -178,14 +178,14 @@ export async function handleOnboardingStep(
       return;
     case "caregiver_send_bgcheck":    return handleCaregiverSendBgcheck(phone, chatId, session);
     case "caregiver_awaiting_bgcheck":
-      await sendMessage(chatId, "Your background check is still processing — usually 1–3 days. I'll text you the moment results are in! 🕐");
+      await sendMessage(chatId, "Your background check is still processing — usually 1–3 days. I'll text you the moment results are in.");
       return;
     case "caregiver_send_stripe_connect": return handleCaregiverSendStripeConnect(phone, chatId, session);
     case "caregiver_awaiting_stripe":
-      await sendMessage(chatId, "Tap the link I sent to set up your payout account so you can get paid after each visit 💰");
+      await sendMessage(chatId, "Tap the link I sent to set up your payout account so you can get paid after each visit.");
       return;
     default:
-      await sendMessage(chatId, "I think something went sideways 😅 Reply START OVER to begin fresh.");
+      await sendMessage(chatId, "I think something went sideways. Reply START OVER to begin fresh.");
   }
 }
 
@@ -428,7 +428,7 @@ async function handleClientPlanReply(
   };
   const plan = plans[norm];
   if (!plan) {
-    await sendMessage(chatId, "Just reply 1, 2, or 3 to choose your plan! 😊");
+    await sendMessage(chatId, "Just reply 1, 2, or 3 to choose your plan.");
     return;
   }
   await mergeOnboardingData(phone, { selectedPlan: plan.name, selectedPlanPriceId: plan.priceId });
@@ -456,12 +456,12 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
 
   await updateSession(phone, { onboardingStep: "client_awaiting_payment" });
   await sendMessage(chatId,
-    `Perfect — I have everything I need to start finding caregivers for ${d.seniorName ?? "your loved one"}! 🎉\n\n` +
+    `Perfect — I have everything I need to start finding caregivers for ${d.seniorName ?? "your loved one"}.\n\n` +
     `One last step: add a payment method so caregivers know you're ready to book.\n` +
     `Takes about 30 seconds:`
   );
   await sendMessage(chatId, { parts: [{ type: "link", url: checkoutUrl, value: "💳 Add Payment Method →" }] });
-  await sendMessage(chatId, "I'll start searching while you set that up 🔍");
+  await sendMessage(chatId, "I'll start searching while you set that up.");
 }
 
 // ── CAREGIVER FLOW ────────────────────────────────────────────────────────────
@@ -473,7 +473,7 @@ async function handleCaregiverAskName(phone: string, chatId: string, text: strin
   );
   await mergeOnboardingData(phone, { name });
   await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
-  await sendMessage(chatId, `Hi ${name}! 👋 What city and zip code do you work in?`);
+  await sendMessage(chatId, `Hi ${name} — what city and zip code do you work in?`);
 }
 
 async function handleCaregiverAskLocation(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
@@ -565,7 +565,7 @@ async function handleCaregiverSendPhoto(phone: string, chatId: string, session: 
   await updateSession(phone, { onboardingStep: "caregiver_awaiting_photo" });
   const d = session.onboardingData ?? {};
   await sendMessage(chatId,
-    `Almost there, ${d.name ?? ""}! 🎉 One more thing — families want to see who they're trusting.\n\n` +
+    `Almost there${d.name ? `, ${d.name}` : ""}. One more thing — families want to see who they're trusting.\n\n` +
     `Tap to add your profile photo:`
   );
   await sendMessage(chatId, { parts: [{ type: "link", url: photoUrl, value: "📷 Upload Photo →" }] });
@@ -622,7 +622,7 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
     "Tap to get started — usually takes about 5 minutes:"
   );
   await sendMessage(chatId, { parts: [{ type: "link", url: inviteUrl, value: "✅ Start Background Check →" }] });
-  await sendMessage(chatId, "I'll text you when results come in (usually 1–3 days). 🕐");
+  await sendMessage(chatId, "I'll text you when results come in (usually 1–3 days).");
 }
 
 async function handleCaregiverSendStripeConnect(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -754,7 +754,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       // Checkr came back clear → advance to Stripe Connect
       await updateSession(phone, { onboardingStep: "caregiver_send_stripe_connect" });
       await sendMessage(chatId,
-        "Great news — your background check came back clear! 🎉\n\n" +
+        "Your background check came back clear.\n\n" +
         "One last step: set up your payout account so you can get paid after every visit."
       );
       await handleCaregiverSendStripeConnect(phone, chatId, session);

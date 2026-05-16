@@ -67,7 +67,7 @@ export async function sendClientPermissionsFlow(
   });
 
   await sendMessage(chatId,
-    `I'm already searching for caregivers for ${d.seniorName ?? "your loved one"}! 🔍\n\n` +
+    `I'm already searching for caregivers for ${d.seniorName ?? "your loved one"}.\n\n` +
     `Before I send you matches, two quick questions so I know how to best help you.\n\n` +
     `Can I reach out to caregivers on your behalf to schedule interviews once you select someone?\n\n` +
     `Reply YES or NO`
@@ -92,7 +92,7 @@ export async function handleClientPermissionsReply(
     });
     await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "client_permissions_booking" });
     await sendMessage(chatId,
-      `Got it! ${isYes ? "✅" : "👍"}\n\n` +
+      `Got it.\n\n` +
       `Once you've approved a caregiver after an interview, can I book their first visits for you?\n` +
       `I'll always show you exactly what I'm booking and wait for your confirmation before anything is scheduled.\n\n` +
       `Reply YES or NO`
@@ -109,7 +109,7 @@ export async function handleClientPermissionsReply(
     });
     await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "client_permissions_autobook" });
     await sendMessage(chatId,
-      `Got it! ${isYes ? "✅" : "👍"}\n\n` +
+      `Got it.\n\n` +
       `One more thing — for recurring visits with a caregiver you've already approved, ` +
       `can I go ahead and book automatically without checking each time?\n\n` +
       `1️⃣ Yes, book automatically\n` +
@@ -127,7 +127,7 @@ export async function handleClientPermissionsReply(
       optedIn:        true,
     });
     await sendMessage(chatId,
-      `Perfect. I'll handle all the coordination${isYes ? " and book automatically" : " — you make the final calls"}. 💙\n\n` +
+      `Perfect. I'll handle all the coordination${isYes ? " and book automatically" : " — you make the final calls"}.\n\n` +
       `I'm still searching for caregivers — I'll text you the top matches within the hour.\n\n` +
       `Questions? Just text me anytime.`
     );
@@ -186,7 +186,7 @@ export async function handleCaregiverPermissionsReply(
     });
     await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "caregiver_permissions_arrival" });
     await sendMessage(chatId,
-      `Got it! ${isYes ? "✅" : "👍"}\n\n` +
+      `Got it.\n\n` +
       `When you arrive at a client's home, want me to automatically notify the family?\n` +
       `They love knowing their caregiver has arrived.\n\n` +
       `Reply YES or NO`
@@ -205,7 +205,7 @@ export async function handleCaregiverPermissionsReply(
       optedIn:        true,
     });
     await sendMessage(chatId,
-      `You're all set, ${(d.name ?? "") as string}! 🎉\n\n` +
+      `You're all set${d.name ? `, ${d.name as string}` : ""}.\n\n` +
       `Your profile is being reviewed — usually 24–48 hours.\n` +
       `I'll text you the moment you're approved and can start receiving job matches.\n\n` +
       `Questions? Just text me anytime.`

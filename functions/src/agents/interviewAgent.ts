@@ -65,7 +65,7 @@ export async function handleInterviewSelection(
     (session as any).pendingMatches ?? [];
 
   if (matches.length === 0) {
-    await sendMessage(chatId, "I don't have any pending matches right now. Let me search again — I'll text you shortly! 🔍");
+    await sendMessage(chatId, "I don't have any pending matches right now. Let me search again — I'll text you shortly.");
     return;
   }
 
@@ -117,7 +117,7 @@ export async function handleInterviewSelection(
 
     const caregiverSession = await getOrCreateSession(caregiverPhone, { caregiverId: match.id });
     await sendMessage(caregiverSession.chatId,
-      `Hi ${match.name}! 👋 I'm Cara, your care assistant.\n\n` +
+      `Hi ${match.name} — I'm Cara, your care coordinator.\n\n` +
       `A family is interested in meeting you for a care position for their ${relationship}, ` +
       `${age ? `${age}-year-old ` : ""}${seniorName}.\n\n` +
       `Are you available for a 20-minute video call this week?\n\n` +
@@ -159,7 +159,7 @@ export async function handleCaregiverAvailabilityReply(
         const familySession = familySnap.docs[0].data();
         await sendMessage(familySession.chatId,
           `${caregiverName} isn't available right now.\n\n` +
-          `Want me to reach out to the next best match? Reply YES and I'll get on it. 🔍`
+          `Want me to reach out to the next best match? Reply YES and I'll get on it.`
         );
         // Remember this caregiver was declined so matching won't re-present them
         await db.collection("agent_sessions").doc(reqData.clientPhone).update({
@@ -167,7 +167,7 @@ export async function handleCaregiverAvailabilityReply(
         });
       }
     }
-    await sendMessage(chatId, "No problem! I'll let the family know. Good luck with your other bookings! 😊");
+    await sendMessage(chatId, "No problem — I'll let the family know.");
     return;
   }
 
@@ -213,8 +213,8 @@ export async function handleCaregiverAvailabilityReply(
   if (familySnap.exists) {
     const familySession = familySnap.data()!;
     await sendMessage(familySession.chatId,
-      `${caregiverName} is available for an interview!\n\n` +
-      `📅 ${formatted}\n\n` +
+      `${caregiverName} is available for an interview.\n\n` +
+      `${formatted}\n\n` +
       `Confirm this time? Reply YES to schedule.`
     );
     // Store pending confirmation
@@ -224,7 +224,7 @@ export async function handleCaregiverAvailabilityReply(
   }
 
   await sendMessage(chatId,
-    `I've sent those times to the family! I'll let you know once they confirm. 📅`
+    `I've sent those times to the family. I'll let you know once they confirm.`
   );
 }
 
@@ -240,7 +240,7 @@ export async function handleInterviewConfirm(
   } | undefined;
 
   if (!pending) {
-    await sendMessage(chatId, "I don't have a pending interview to confirm. Let me know if you'd like to schedule one! 📅");
+    await sendMessage(chatId, "I don't have a pending interview to confirm. Let me know if you'd like to schedule one.");
     return;
   }
 

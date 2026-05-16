@@ -158,7 +158,7 @@ export async function runMatchingForClient(
   } catch (err) {
     console.error("runMatchingForClient error:", err);
     await sendMessage(chatId,
-      "I'm searching for caregivers — I'll text you top matches within the hour! 🔍"
+      "I'm searching for caregivers — I'll text you top matches within the hour."
     );
   }
 }

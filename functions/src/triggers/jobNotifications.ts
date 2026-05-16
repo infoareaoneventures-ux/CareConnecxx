@@ -169,7 +169,7 @@ export async function handleJobResponse(
       pendingJobId:        null,
       pendingJobSentAt:    null,
     } as any);
-    await sendMessage(chatId, "No problem! We'll reach out if something better comes up. 🙏");
+    await sendMessage(chatId, "No problem — I'll reach out when something comes up.");
     return;
   }
 
@@ -217,7 +217,7 @@ export async function handleAvailabilityConfirmation(
   } as any);
 
   if (!jobId) {
-    await sendMessage(chatId, "No problem — I'll reach out when the next opportunity opens up. 🙏");
+    await sendMessage(chatId, "No problem — I'll reach out when the next opportunity opens up.");
     return;
   }
 
@@ -230,7 +230,7 @@ export async function handleAvailabilityConfirmation(
   }
 
   if (!available) {
-    await sendMessage(chatId, "No worries — thanks for letting us know! We'll reach out if something else opens up. 🙏");
+    await sendMessage(chatId, "No worries — thanks for letting us know. I'll reach out when something else opens up.");
     return;
   }
 
@@ -279,7 +279,7 @@ export async function handleAvailabilityConfirmation(
     // Notify family
     await notifyFamilyOfApplicant(clientId, caregiverName, caregiverId);
 
-    await sendMessage(chatId, "You're in! We'll let you know once the family reviews your application. 🎉");
+    await sendMessage(chatId, "You're in. I'll let you know once the family reviews your application.");
     console.log(`[handleAvailabilityConfirmation] ${caregiverId} applied to job ${jobId}`);
   } catch (err) {
     console.error("[handleAvailabilityConfirmation] application write failed:", err);

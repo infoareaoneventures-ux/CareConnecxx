@@ -20,10 +20,10 @@ export async function contactReplacementCandidate(
   const earnings = ((appt.hourlyRate ?? caregiver.hourlyRate ?? 22) * (appt.durationHours ?? 4)).toFixed(2);
 
   const msg =
-    `Hi ${caregiver.name.split(" ")[0]}! 👋 We have an urgent visit that needs coverage:\n\n` +
-    `📅 ${appt.date} at ${appt.time}\n` +
-    (appt.address ? `📍 ${appt.address}\n` : "") +
-    `💰 ~$${earnings} for the visit\n\n` +
+    `Hi ${caregiver.name.split(" ")[0]} — urgent opening today.\n\n` +
+    `${appt.date} at ${appt.time}\n` +
+    (appt.address ? `${appt.address}\n` : "") +
+    `~$${earnings} for the visit\n\n` +
     `Reply YES if you can take it, or NO to pass.`;
 
   await sendToPhone(caregiver.phone, msg).catch((err) =>

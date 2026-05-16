@@ -51,6 +51,7 @@ const triggerEngine_1 = require("../triggers/triggerEngine");
 const auditLog_1 = require("../observability/auditLog");
 const bereavement_1 = require("../agents/bereavement");
 const caraAgent_1 = require("../agents/caraAgent");
+const jobNotifications_1 = require("../triggers/jobNotifications");
 const zepClient_1 = require("../memory/zepClient");
 const db = admin.firestore();
 // ── Signature verification ────────────────────────────────────────────────────
@@ -607,6 +608,28 @@ async function handleInbound(event) {
         // Caregiver availability reply (for interview scheduling)
         if (session.pendingInterviewAvailabilityRequest) {
             await (0, interviewAgent_1.handleCaregiverAvailabilityReply)(phone, (_4 = session.caregiverId) !== null && _4 !== void 0 ? _4 : "", "", chatId, text);
+            return;
+        }
+        // ── Job alert: YES/NO response ──────────────────────────────────────────
+        if (session.awaitingJobResponse === true && (norm === "YES" || norm === "NO")) {
+            await (0, client_1.startTyping)(chatId).catch(() => { });
+            try {
+                await (0, jobNotifications_1.handleJobResponse)(phone, norm, chatId, session);
+            }
+            finally {
+                await (0, client_1.stopTyping)(chatId).catch(() => { });
+            }
+            return;
+        }
+        // ── Job alert: availability confirmation (any text) ─────────────────────
+        if (session.awaitingAvailabilityConfirmation === true) {
+            await (0, client_1.startTyping)(chatId).catch(() => { });
+            try {
+                await (0, jobNotifications_1.handleAvailabilityConfirmation)(phone, text, chatId, session);
+            }
+            finally {
+                await (0, client_1.stopTyping)(chatId).catch(() => { });
+            }
             return;
         }
     }

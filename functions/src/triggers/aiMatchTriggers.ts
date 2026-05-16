@@ -6,6 +6,7 @@ import {
     runMatchingForIntake,
 } from "../ai/matchJob";
 import { composeCaregiverText, hashText } from "../ai/embeddings";
+import { createJobPost, notifyAreaCaregivers } from "./jobNotifications";
 
 const CAREGIVER_EMBED_FIELDS = [
     "skills",
@@ -102,6 +103,11 @@ export const onIntakeAiMatch = functions.firestore
             console.log(
                 `[onIntakeAiMatch] Wrote ${result?.count ?? 0} matches for client ${result?.clientId}`
             );
+
+            if (result?.clientId) {
+                await createJobPost(intakeId, data, result.clientId);
+                await notifyAreaCaregivers(intakeId, data, result.clientId);
+            }
         } catch (err) {
             console.error("[onIntakeAiMatch] failed:", err);
         }

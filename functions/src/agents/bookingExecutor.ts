@@ -2,6 +2,7 @@ import * as admin from "firebase-admin";
 import { sendMessage, getOrCreateSession } from "../linq/client";
 import { notifyAdminBookingConfirmed } from "../notifications";
 import { logBookingCreated } from "../observability/auditLog";
+import { closeJobPost } from "../triggers/jobNotifications";
 
 async function hasConflict(
   caregiverId: string,
@@ -119,6 +120,10 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
 
   batch.update(taskRef, { status: "approved", humanApproved: true, approvedAt: now });
   await batch.commit();
+
+  await closeJobPost(task.clientId).catch((err) =>
+    console.error("[executeBookings] closeJobPost failed:", err)
+  );
 
   logBookingCreated(
     task.clientId,

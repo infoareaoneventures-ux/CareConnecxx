@@ -39,6 +39,7 @@ const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
 const notifications_1 = require("../notifications");
 const auditLog_1 = require("../observability/auditLog");
+const jobNotifications_1 = require("../triggers/jobNotifications");
 async function hasConflict(caregiverId, date, startTime, endTime) {
     const snap = await db.collection("appointments")
         .where("caregiverId", "==", caregiverId)
@@ -117,6 +118,7 @@ async function executeBookings(taskId, clientPhone) {
     }
     batch.update(taskRef, { status: "approved", humanApproved: true, approvedAt: now });
     await batch.commit();
+    await (0, jobNotifications_1.closeJobPost)(task.clientId).catch((err) => console.error("[executeBookings] closeJobPost failed:", err));
     (0, auditLog_1.logBookingCreated)(task.clientId, task.caregiverId, task.appointments.map((a) => a.date)).catch(() => { });
     (0, notifications_1.notifyAdminBookingConfirmed)({
         taskId: taskId,

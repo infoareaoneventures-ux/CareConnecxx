@@ -26,6 +26,7 @@ import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
 import { logCrisisDetected } from "../observability/auditLog";
 import { isBereavementTrigger, activateBereavementMode } from "../agents/bereavement";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { handleJobResponse, handleAvailabilityConfirmation } from "../triggers/jobNotifications";
 import {
   initializeZepOnFirstContact,
   addUserMessageToZep,
@@ -671,6 +672,22 @@ async function handleInbound(event: unknown): Promise<void> {
         chatId,
         text
       );
+      return;
+    }
+
+    // ── Job alert: YES/NO response ──────────────────────────────────────────
+    if ((session as any).awaitingJobResponse === true && (norm === "YES" || norm === "NO")) {
+      await startTyping(chatId).catch(() => {});
+      try { await handleJobResponse(phone, norm, chatId, session as any); }
+      finally { await stopTyping(chatId).catch(() => {}); }
+      return;
+    }
+
+    // ── Job alert: availability confirmation (any text) ─────────────────────
+    if ((session as any).awaitingAvailabilityConfirmation === true) {
+      await startTyping(chatId).catch(() => {});
+      try { await handleAvailabilityConfirmation(phone, text, chatId, session as any); }
+      finally { await stopTyping(chatId).catch(() => {}); }
       return;
     }
   }

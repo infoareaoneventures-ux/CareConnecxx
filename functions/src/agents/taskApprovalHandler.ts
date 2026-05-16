@@ -21,7 +21,7 @@ export async function handleTaskApproval(
   // Mark task as awaiting final web confirmation
   await taskDoc.ref.update({ status: "pending_confirm", selectedIdx: idx });
 
-  const appUrl = process.env.APP_URL ?? "https://app.careconnecxx.com";
+  const appUrl = process.env.APP_URL ?? "https://cara.app";
   const confirmUrl = `${appUrl}/confirm/${task.confirmToken}`;
 
   await sendMessage(chatId, {

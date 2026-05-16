@@ -15,13 +15,13 @@ const trustPoints = [
 
 const testimonials = [
     {
-        quote: "It's easy and I always find a caregiver! The AI matching is spot on — found someone perfect for my mom in less than a day.",
+        quote: "It's so easy and I always find a caregiver! Cara's AI matching is spot on — she found someone perfect for my mom in less than a day.",
         name: "Jennifer R.",
         location: "San Jose, CA",
         rating: 5
     },
     {
-        quote: "CareConnex is efficient, trustworthy, and has helped me in a bind many times. Way better than calling agencies.",
+        quote: "Cara is efficient, trustworthy, and has helped me in a bind many times. Just texting her is way better than calling agencies.",
         name: "Annika D.",
         location: "Mountain View, CA",
         rating: 5
@@ -44,7 +44,7 @@ export const TrustSafetySection: React.FC<TrustSafetySectionProps> = ({ onNaviga
     return (
         <section className="bg-[#fafaf9] relative overflow-hidden pt-20 pb-32">
             <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-                <div className="flex flex-col lg:flex-row items-center lg:items-end justify-between gap-12 lg:gap-8">
+                <div className="flex flex-col lg:flex-row items-start justify-between gap-12 lg:gap-8">
 
                     {/* Left Column: Text & Features */}
                     <div className="w-full lg:w-1/3 pb-8 lg:pb-16 z-10 relative">

@@ -21,6 +21,7 @@ export default function QuickConfirmPage() {
   }, [token]);
 
   async function loadTask(t: string) {
+    if (!db) { setState('error'); return; }
     try {
       const q    = query(collection(db, 'agent_tasks'), where('confirmToken', '==', t));
       const snap = await getDocs(q);

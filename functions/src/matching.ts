@@ -1,18 +1,14 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { Resend } from "resend";
-import twilio from "twilio";
-
 // Initialize email service
 const resendApiKey = process.env.RESEND_API_KEY || functions.config().resend?.api_key;
 const resend = resendApiKey ? new Resend(resendApiKey) : null;
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@careconnex.com";
 
-// Initialize Twilio for SMS
-const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID || functions.config().twilio?.account_sid;
-const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN || functions.config().twilio?.auth_token;
-const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER || functions.config().twilio?.phone_number;
-const twilioClient = (twilioAccountSid && twilioAuthToken) ? twilio(twilioAccountSid, twilioAuthToken) : null;
+// SMS via Twilio removed (V5 — all messaging via Linq iMessage)
+const twilioClient: null = null;
+const twilioPhoneNumber: string | undefined = undefined;
 
 /**
  * Cloud Function: Create Match Assignment on Intake Completion
@@ -450,20 +446,8 @@ async function sendHireOfferSMS(caregiverId: string, hireRequestData: any): Prom
             return;
         }
         
-        const message = `🎉 Great news! You've been selected by a client on CareConnex! 
-
-A family wants to hire you as their caregiver. 
-
-Schedule: ${hireRequestData.proposedSchedule.days.join(', ')} ${hireRequestData.proposedSchedule.startTime}-${hireRequestData.proposedSchedule.endTime}
-Start Date: ${hireRequestData.proposedStartDate}
-
-Log in to accept or decline: https://careconnex-d4c8b.web.app/caregiver`;
-        
-        await twilioClient.messages.create({
-            body: message,
-            from: twilioPhoneNumber,
-            to: phone
-        });
+        // SMS via Twilio removed in V5 — messaging handled by Linq agent
+        console.log(`[sendHireOfferSMS] SMS skipped (Linq handles messaging): ${phone}`);
         
         console.log(`[sendHireOfferSMS] Sent to caregiver ${caregiverId}`);
     } catch (error) {

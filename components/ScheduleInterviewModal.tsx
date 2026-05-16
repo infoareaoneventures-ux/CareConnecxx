@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Calendar, Clock, MessageSquare } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Caregiver } from '../types';
@@ -127,7 +128,7 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
     // Get minimum date (today)
     const today = new Date().toISOString().split('T')[0];
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
             <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto animate-slide-up">
                 {/* Header */}
@@ -275,5 +276,5 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                 </div>
             </div>
         </div>
-    );
+    , document.body);
 };

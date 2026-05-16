@@ -171,7 +171,7 @@ async function runMonthlyHealthTrends() {
                 shareToken,
             };
             await db.collection("health_trends").doc(`${seniorId}_${period}`).set(trend);
-            const appUrl = (_b = process.env.APP_URL) !== null && _b !== void 0 ? _b : "https://app.careconnecxx.com";
+            const appUrl = (_b = process.env.APP_URL) !== null && _b !== void 0 ? _b : "https://cara.app";
             const summaryUrl = `${appUrl}/health-summary/${shareToken}`;
             const monthName = new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
             const linkMessage = { parts: [{ type: "link", value: summaryUrl }] };

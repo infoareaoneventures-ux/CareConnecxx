@@ -84,10 +84,10 @@ export const ServicesSection: React.FC<ServicesSectionProps> = ({ onNavigate }) 
 
                 <div className="mt-16 text-center">
                     <button 
-                        onClick={() => onNavigate('client-signup')}
-                        className="bg-primary-600 hover:bg-primary-700 text-white font-bold text-sm tracking-wider uppercase px-8 py-4 rounded-full shadow-lg shadow-teal-900/20 transition-all hover:-translate-y-1"
+                        onClick={() => window.location.href = '/start?role=client'}
+                        className="btn-depth-primary px-8 py-4 rounded-2xl font-semibold text-sm flex items-center justify-center"
                     >
-                        Explore All Services
+                        Find Your Caregiver
                     </button>
                 </div>
             </div>

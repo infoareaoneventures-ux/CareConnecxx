@@ -1,0 +1,55 @@
+const BANNED_PHRASES: string[] = [
+  "as an AI",
+  "I cannot",
+  "I am unable",
+  "I don't have the ability",
+  "I'm not able to",
+  "rest assured",
+  "at the end of the day",
+  "moving forward",
+  "in conclusion",
+  "it's important to note",
+  "please note that",
+  "I want to make sure",
+  "I hope this helps",
+  "do not hesitate to",
+  "feel free to",
+  "leverage",
+  "utilize",
+  "synergy",
+  "going forward",
+];
+
+// Patterns that make text feel robotic or formal
+const BANNED_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
+  // Em-dashes → comma
+  { pattern: /\s*—\s*/g,                      replacement: ", " },
+  // Trailing "Is there anything else I can help you with?"
+  { pattern: /is there anything else (?:I can help(?: you)?(?: with)?|you(?:'d like to discuss)?)\??/gi, replacement: "" },
+];
+
+export function lintMessage(text: string): string {
+  let result = text;
+
+  for (const { pattern, replacement } of BANNED_PATTERNS) {
+    result = result.replace(pattern, replacement);
+  }
+
+  for (const phrase of BANNED_PHRASES) {
+    // Case-insensitive, word-boundary-aware replacement
+    const safePhrase = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(safePhrase, "gi"), "");
+  }
+
+  // Clean up double spaces and leading/trailing whitespace left by replacements
+  result = result.replace(/  +/g, " ").trim();
+
+  // Remove lines that became empty after phrase removal
+  result = result
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .join("\n");
+
+  return result;
+}

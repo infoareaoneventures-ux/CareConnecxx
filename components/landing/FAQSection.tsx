@@ -15,12 +15,12 @@ export const faqs = [
     },
     {
         question: "What if I don't like the caregiver you match me with?",
-        answer: "No problem. Our AI matching is highly accurate (94% first-match success rate), but if you're not completely satisfied, you can request a new match at any time—no questions asked, no fees. We'll even schedule video interviews with up to 3 candidates so you can choose the best fit.",
+        answer: "No problem. Our AI matching is highly accurate, but if you're not completely satisfied, just text Cara. She will find a new match immediately—no questions asked, no fees. We can even schedule video interviews with up to 3 candidates so you can choose the best fit.",
         category: "Matching"
     },
     {
         question: "Is my parent's personal information secure?",
-        answer: "Absolutely. We're HIPAA-compliant and use bank-level encryption (AES-256) for all data. Caregivers only see the information they need for care—full medical history and sensitive documents stay private and accessible only to you through your secure dashboard.",
+        answer: "Absolutely. We're HIPAA-compliant and use bank-level encryption (AES-256) for all data. Caregivers only receive the specific information they need for care. Full medical history and sensitive documents stay private and are managed securely by Cara.",
         category: "Privacy"
     },
     {
@@ -40,12 +40,12 @@ export const faqs = [
     },
     {
         question: "How quickly can I get a caregiver?",
-        answer: "Most families find a match within 24-48 hours. For urgent needs, we have a network of pre-approved caregivers who can often start same-day. The sooner you complete your care profile, the faster we can find your perfect match.",
+        answer: "Most families find a match within 24-48 hours. For urgent needs, Cara can often source pre-approved caregivers to start the same day. Just text her your urgent needs and she'll begin matching immediately.",
         category: "Timing"
     },
     {
         question: "What happens if a caregiver calls in sick?",
-        answer: "We've got you covered. Our platform automatically notifies you and suggests backup caregivers from your area who are available. For recurring care, we recommend having a primary and backup caregiver to ensure continuity.",
+        answer: "We've got you covered. Cara automatically notifies you via text and instantly suggests backup caregivers from your area who are available. For recurring care, she can even help you maintain a primary and backup caregiver to ensure continuity.",
         category: "Reliability"
     }
 ];

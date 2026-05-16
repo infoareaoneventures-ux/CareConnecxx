@@ -1,7 +1,9 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import Anthropic from "@anthropic-ai/sdk";
-import { sendMessage, sendToPhone, AgentSession } from "../linq/client";
+import { AgentSession } from "../linq/client";
+import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { getPermissions } from "../agents/permissionsConversation";
 
 const db = admin.firestore();
 
@@ -59,7 +61,7 @@ async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>): Pr
   const { journal, pastAppts, upcoming, seniorName, clientName } = data;
 
   if (journal.length === 0 && pastAppts.length === 0) {
-    return `Good morning ${clientName} ☀️ No visits were logged this week for ${seniorName}. If this seems wrong, please check the app or contact support.`;
+    return `Good morning ${clientName}. No visits were logged this week for ${seniorName}. If this seems wrong, please check the app or contact support.`;
   }
 
   const journalContext = journal.map(e => {
@@ -78,21 +80,20 @@ async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>): Pr
   const dayName = now.toLocaleDateString("en-US", { weekday: "long" });
 
   const prompt = [
-    `You're writing a warm Sunday morning care update text for ${clientName} about ${seniorName}.`,
+    `You are Cara. Write a Sunday morning text to ${clientName} about ${seniorName}'s week.`,
+    ``,
+    `Write it like you actually know both of them and genuinely care how the week went.`,
+    `If it was a good week, let that warmth come through.`,
+    `If there were concerns, acknowledge them honestly without being alarming.`,
+    `Mention the upcoming week naturally — not as a list.`,
+    ``,
+    `Do not follow a format. Just tell them what matters most.`,
+    `Under 200 words. Plain text only. No markdown. No bullet points.`,
     ``,
     `This week's data:`,
     `- ${completedCount} visit(s) completed`,
     `Journal entries:\n${journalContext || "None"}`,
-    `Upcoming visits:\n${apptContext || "None scheduled"}`,
-    ``,
-    `Write a warm, personal weekly summary as a text message. Use simple emoji. Include:`,
-    `1. A "Good morning" greeting with the day`,
-    `2. Quick stats on visits completed`,
-    `3. 2-3 notable observations from the journal (mood, appetite, activity)`,
-    `4. Upcoming visits this week (date, time, caregiver)`,
-    `5. One warm closing line`,
-    ``,
-    `Keep it under 300 words. Conversational, not clinical. No markdown, just plain text with line breaks.`,
+    `Upcoming:\n${apptContext || "Nothing scheduled yet"}`,
   ].join("\n");
 
   try {
@@ -105,8 +106,8 @@ async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>): Pr
   } catch (err) {
     console.error("weeklyDigest Claude error:", err);
     return (
-      `Good morning ${clientName} ☀️ Here's ${seniorName}'s week:\n\n` +
-      `✅ ${completedCount} visit(s) completed\n\n` +
+      `Good morning ${clientName}. Here's ${seniorName}'s week:\n\n` +
+      `${completedCount} visit(s) completed\n\n` +
       (apptContext ? `Coming up:\n${apptContext}\n\n` : "") +
       `Have a wonderful ${dayName}.`
     );
@@ -129,15 +130,21 @@ async function runWeeklyDigests(): Promise<number> {
 
     try {
       const phone    = sessionDoc.id;
+
+      // Check permission before sending
+      const perms = await getPermissions(session.userId).catch(() => null);
+      if (perms !== null && perms.canSendWeeklyDigest === false) continue;
+
       const seniorId = session.seniorId ?? session.userId;
       const data     = await getWeekData(seniorId, session.userId);
       const digest   = await generateDigest(data);
 
-      if (session.chatId) {
-        await sendMessage(session.chatId, digest);
-      } else {
-        await sendToPhone(phone, digest);
-      }
+      await sendViaInteractionAgent(phone, {
+        content:     digest,
+        urgency:     "standard",
+        sourceAgent: "weekly_digest",
+        canDrop:     true,
+      });
 
       const today = new Date().toISOString().slice(0, 10);
       await db.collection("weekly_digests").doc(`${session.userId}_${today}`).set({
@@ -152,6 +159,68 @@ async function runWeeklyDigests(): Promise<number> {
       await new Promise(r => setTimeout(r, 200));
     } catch (err) {
       console.error(`weeklyDigest error for session ${sessionDoc.id}:`, err);
+    }
+  }
+
+  // ── Caregiver earnings summaries ─────────────────────────────────────────────
+  const cgSessionsSnap = await db
+    .collection("agent_sessions")
+    .where("userType",  "==", "caregiver")
+    .where("optedOut",  "==", false)
+    .get();
+
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const today   = new Date().toISOString().slice(0, 10);
+
+  for (const cgDoc of cgSessionsSnap.docs) {
+    const cgSession = cgDoc.data();
+    if (!cgSession.caregiverId || cgSession.optedIn === false) continue;
+
+    try {
+      const cgPhone = cgDoc.id;
+      const paySnap = await db
+        .collection("visit_payments")
+        .where("caregiverId", "==", cgSession.caregiverId)
+        .where("createdAt",   ">=", weekAgo)
+        .where("status",      "in", ["pending", "paid"])
+        .get();
+
+      if (paySnap.empty) continue;
+
+      const visits   = paySnap.docs.map(d => d.data());
+      const totalCents = visits.reduce((s, v) => s + (v.amountCents ?? 0), 0);
+      const totalStr = `$${(totalCents / 100).toFixed(2)}`;
+      const cgSnap   = await db.collection("caregivers").doc(cgSession.caregiverId).get();
+      const cgName   = (cgSnap.data()?.name as string | undefined)?.split(" ")[0] ?? "there";
+
+      const visitLines = visits.slice(0, 5).map(v =>
+        `· ${v.date ?? "this week"} — $${((v.amountCents ?? 0) / 100).toFixed(2)}`
+      ).join("\n");
+
+      const earningsMsg =
+        `Morning ${cgName}. ${visits.length} visit${visits.length !== 1 ? "s" : ""} this week, ${totalStr} on its way to you.\n\n` +
+        `${visitLines}\n\n` +
+        `That's real work. Thank you for taking care of these families.\n\n` +
+        `Payments hit within 2 business days.`;
+
+      await sendViaInteractionAgent(cgPhone, {
+        content:     earningsMsg,
+        urgency:     "standard",
+        sourceAgent: "weekly_digest",
+        canDrop:     true,
+      });
+
+      await db.collection("weekly_digests").doc(`cg_${cgSession.caregiverId}_${today}`).set({
+        caregiverId: cgSession.caregiverId,
+        phone:       cgPhone,
+        sentAt:      new Date().toISOString(),
+        totalCents,
+        visitCount:  visits.length,
+      });
+
+      await new Promise(r => setTimeout(r, 200));
+    } catch (err) {
+      console.error(`caregiver earnings digest error for ${cgDoc.id}:`, err);
     }
   }
 

@@ -1,6 +1,7 @@
 
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
+import { Resend } from "resend";
 import { sendSMSToUser, SMS_TEMPLATES } from "./sms";
 
 // Initialize Firebase Admin if not already done
@@ -283,3 +284,167 @@ export const sendShiftReminders = functions.pubsub
             console.error('Error in sendShiftReminders:', error);
         }
     });
+
+// ── Admin notification helpers ────────────────────────────────────────────────
+// Each writes to admin_alerts and optionally emails/texts the support line.
+
+const ADMIN_EMAIL   = process.env.ADMIN_EMAIL         || "admin@cara.app";
+const SUPPORT_PHONE = process.env.VITE_SUPPORT_PHONE  || process.env.SUPPORT_PHONE || "";
+const RESEND_FROM   = process.env.RESEND_FROM_EMAIL   || "noreply@cara.app";
+
+function getResend(): Resend | null {
+    const key = process.env.RESEND_API_KEY;
+    return key ? new Resend(key) : null;
+}
+
+async function sendAdminEmail(subject: string, html: string): Promise<void> {
+    try {
+        const resend = getResend();
+        if (!resend) return;
+        await resend.emails.send({ from: RESEND_FROM, to: ADMIN_EMAIL, subject, html });
+    } catch (err) {
+        console.error("sendAdminEmail error:", err);
+    }
+}
+
+async function textAdmin(body: string): Promise<void> {
+    if (!SUPPORT_PHONE) return;
+    try {
+        await sendSMSToUser(SUPPORT_PHONE, body);
+    } catch (err) {
+        console.error("textAdmin error:", err);
+    }
+}
+
+export async function notifyAdminNewCaregiverSignup(params: {
+    caregiverId: string;
+    name:        string;
+    phone:       string;
+    city:        string;
+}): Promise<void> {
+    await db.collection("admin_alerts").add({
+        type:        "new_caregiver_signup",
+        ...params,
+        createdAt:   new Date().toISOString(),
+        resolved:    false,
+        severity:    "low",
+    });
+    await sendAdminEmail(
+        `New caregiver signup: ${params.name}`,
+        `<p>A new caregiver just signed up via Cara iMessage.</p>` +
+        `<p><strong>Name:</strong> ${params.name}<br>` +
+        `<strong>Phone:</strong> ${params.phone}<br>` +
+        `<strong>City:</strong> ${params.city}</p>`
+    );
+}
+
+export async function notifyAdminNewClientSignup(params: {
+    clientId:   string;
+    firstName:  string;
+    seniorName: string;
+    phone:      string;
+    city:       string;
+}): Promise<void> {
+    await db.collection("admin_alerts").add({
+        type:      "new_client_signup",
+        ...params,
+        createdAt: new Date().toISOString(),
+        resolved:  false,
+        severity:  "low",
+    });
+    await sendAdminEmail(
+        `New client signup: ${params.firstName}`,
+        `<p>A new family just joined via Cara iMessage.</p>` +
+        `<p><strong>Name:</strong> ${params.firstName}<br>` +
+        `<strong>Senior:</strong> ${params.seniorName}<br>` +
+        `<strong>Phone:</strong> ${params.phone}<br>` +
+        `<strong>City:</strong> ${params.city}</p>`
+    );
+}
+
+export async function notifyAdminInterviewScheduled(params: {
+    interviewId:   string;
+    caregiverName: string;
+    clientPhone:   string;
+    scheduledTime: string;
+}): Promise<void> {
+    await db.collection("admin_alerts").add({
+        type:      "interview_scheduled",
+        ...params,
+        createdAt: new Date().toISOString(),
+        resolved:  false,
+        severity:  "low",
+    });
+    await sendAdminEmail(
+        `Interview scheduled: ${params.caregiverName}`,
+        `<p>An interview was scheduled via Cara.</p>` +
+        `<p><strong>Caregiver:</strong> ${params.caregiverName}<br>` +
+        `<strong>Time:</strong> ${params.scheduledTime}</p>`
+    );
+}
+
+export async function notifyAdminBookingConfirmed(params: {
+    taskId:        string;
+    caregiverName: string;
+    clientPhone:   string;
+    appointmentCount: number;
+    totalCost:     number;
+}): Promise<void> {
+    await db.collection("admin_alerts").add({
+        type:      "booking_confirmed",
+        ...params,
+        createdAt: new Date().toISOString(),
+        resolved:  false,
+        severity:  "low",
+    });
+    await sendAdminEmail(
+        `Booking confirmed: ${params.appointmentCount} appts with ${params.caregiverName}`,
+        `<p>A booking was confirmed via Cara.</p>` +
+        `<p><strong>Caregiver:</strong> ${params.caregiverName}<br>` +
+        `<strong>Appointments:</strong> ${params.appointmentCount}<br>` +
+        `<strong>Total:</strong> $${params.totalCost.toFixed(2)}</p>`
+    );
+}
+
+export async function notifyAdminHealthFlag(params: {
+    clientId:    string;
+    seniorName:  string;
+    signal:      string;
+    journalId:   string;
+}): Promise<void> {
+    await db.collection("admin_alerts").add({
+        type:      "health_flag",
+        ...params,
+        createdAt: new Date().toISOString(),
+        resolved:  false,
+        severity:  "high",
+    });
+    await sendAdminEmail(
+        `Health alert: ${params.seniorName}`,
+        `<p><strong>Alert:</strong> ${params.signal}</p>` +
+        `<p>Senior: ${params.seniorName} (clientId: ${params.clientId})</p>`
+    );
+    await textAdmin(`[Cara] Health alert for ${params.seniorName}: ${params.signal}`);
+}
+
+export async function notifyAdminCaregiverIssue(params: {
+    caregiverId:   string;
+    caregiverName: string;
+    appointmentId: string;
+    description:   string;
+}): Promise<void> {
+    await db.collection("admin_alerts").add({
+        type:      "caregiver_issue",
+        ...params,
+        createdAt: new Date().toISOString(),
+        resolved:  false,
+        severity:  "high",
+    });
+    await sendAdminEmail(
+        `Caregiver issue reported: ${params.caregiverName}`,
+        `<p><strong>Description:</strong> ${params.description}</p>` +
+        `<p>Caregiver: ${params.caregiverName} (${params.caregiverId})<br>` +
+        `Appointment: ${params.appointmentId}</p>`
+    );
+    await textAdmin(`[Cara] Issue from caregiver ${params.caregiverName}: ${params.description}`);
+}

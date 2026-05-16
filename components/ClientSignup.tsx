@@ -33,6 +33,9 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
   const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
   const [googleConfirmData, setGoogleConfirmData] = useState<GoogleConfirmData | null>(null);
   const [googleConfirmLoading, setGoogleConfirmLoading] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [smsConsent, setSmsConsent] = useState(false);
+  const [consentErrors, setConsentErrors] = useState<{ terms?: string; sms?: string }>({});
 
   const prefillZip = sessionStorage.getItem('careconnex_signup_zip') || '';
   if (prefillZip) sessionStorage.removeItem('careconnex_signup_zip');
@@ -202,6 +205,14 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
     if (!formData.state.trim()) {
       onShowToast('Please enter your state.', 'error'); return;
     }
+    const errors: { terms?: string; sms?: string } = {};
+    if (!termsAccepted) errors.terms = 'Please agree to the Terms of Service and Privacy Policy';
+    if (!smsConsent) errors.sms = 'Please consent to receive text messages to continue';
+    if (Object.keys(errors).length > 0) {
+      setConsentErrors(errors);
+      onShowToast(Object.values(errors)[0], 'error');
+      return;
+    }
 
     setIsLoading(true);
     try {
@@ -246,6 +257,14 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
   };
 
   const handleGoogleSignUp = async () => {
+    const errors: { terms?: string; sms?: string } = {};
+    if (!termsAccepted) errors.terms = 'Please agree to the Terms of Service and Privacy Policy';
+    if (!smsConsent) errors.sms = 'Please consent to receive text messages to continue';
+    if (Object.keys(errors).length > 0) {
+      setConsentErrors(errors);
+      onShowToast(Object.values(errors)[0], 'error');
+      return;
+    }
     setIsGoogleLoading(true);
     try {
       const result = await authService.signInWithGoogle('client');
@@ -363,17 +382,17 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-              <div className="bg-primary-600 p-2 rounded-xl shadow-lg shadow-primary-200/50">
+              <div className="bg-slate-900 p-2 rounded-xl shadow-lg shadow-slate-200">
                 <Activity className="text-white w-5 h-5" />
               </div>
               <span className="text-xl font-bold text-slate-900 tracking-tight">CareConnex</span>
             </div>
             <nav className="hidden md:flex items-center gap-8">
-              <button onClick={() => onNavigate('caregiver-signup')} className="text-slate-600 hover:text-primary-600 font-medium transition-colors text-sm">Find Jobs</button>
-              <a href="/help" className="text-slate-600 hover:text-primary-600 font-medium transition-colors text-sm">Help</a>
+              <button onClick={() => onNavigate('caregiver-signup')} className="text-slate-600 hover:text-slate-900 font-medium transition-colors text-sm">Find Jobs</button>
+              <a href="/help" className="text-slate-600 hover:text-slate-900 font-medium transition-colors text-sm">Help</a>
             </nav>
             <div className="flex items-center gap-3">
-              <button onClick={() => onNavigate('client-login')} className="text-sm font-medium text-slate-600 hover:text-primary-600 transition-colors">Log In</button>
+              <button onClick={() => onNavigate('client-login')} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">Log In</button>
             </div>
           </div>
         </div>
@@ -517,10 +536,39 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
               onChange={handleChange}
             />
 
-            <div className="bg-primary-50 border border-primary-100 rounded-xl p-3 flex items-start gap-3">
-              <ShieldCheck className="w-5 h-5 text-primary-600 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-primary-800">Your information is secure and never sold to third parties.</p>
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-start gap-3">
+              <ShieldCheck className="w-5 h-5 text-slate-600 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-slate-800">Your information is secure and never sold to third parties.</p>
             </div>
+
+            {/* Terms acceptance */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={termsAccepted}
+                onChange={e => { setTermsAccepted(e.target.checked); setConsentErrors(prev => ({ ...prev, terms: undefined })); }}
+                className="mt-0.5 w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900 flex-shrink-0"
+              />
+              <span className={`text-xs leading-relaxed ${consentErrors.terms ? 'text-red-600' : 'text-slate-600'}`}>
+                I agree to CareConnex's{' '}
+                <a href="/terms" target="_blank" rel="noreferrer" className="text-slate-900 font-medium underline hover:text-slate-700">Terms of Service</a>
+                {' '}and{' '}
+                <a href="/privacy" target="_blank" rel="noreferrer" className="text-slate-900 font-medium underline hover:text-slate-700">Privacy Policy</a>.
+              </span>
+            </label>
+
+            {/* TCPA SMS consent */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={smsConsent}
+                onChange={e => { setSmsConsent(e.target.checked); setConsentErrors(prev => ({ ...prev, sms: undefined })); }}
+                className="mt-0.5 w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900 flex-shrink-0"
+              />
+              <span className={`text-xs leading-relaxed ${consentErrors.sms ? 'text-red-600' : 'text-slate-600'}`}>
+                I consent to receive text messages (SMS/MMS) from CareConnex at the phone number provided, including appointment reminders and care updates. Message &amp; data rates may apply. Reply STOP to opt out at any time.
+              </span>
+            </label>
 
             <Button fullWidth type="submit" disabled={isLoading || isGoogleLoading || emailChecking || emailExists}>
               {isLoading ? 'Creating your account…' : 'Create Account'}
@@ -547,17 +595,6 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
               {isGoogleLoading ? 'Signing up...' : 'Continue with Google'}
             </button>
 
-            <p className="text-xs text-slate-500 text-center">
-              By signing up, you agree to our{' '}
-              <button type="button" onClick={() => setLegalModal('terms')} className="text-primary-600 underline hover:text-primary-700">
-                Terms of Service
-              </button>
-              {' '}and{' '}
-              <button type="button" onClick={() => setLegalModal('privacy')} className="text-primary-600 underline hover:text-primary-700">
-                Privacy Policy
-              </button>
-              .
-            </p>
           </form>
         </div>
 

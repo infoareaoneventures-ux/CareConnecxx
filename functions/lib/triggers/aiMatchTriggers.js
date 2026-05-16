@@ -39,6 +39,7 @@ const admin = __importStar(require("firebase-admin"));
 const firestore_1 = require("firebase-admin/firestore");
 const matchJob_1 = require("../ai/matchJob");
 const embeddings_1 = require("../ai/embeddings");
+const jobNotifications_1 = require("./jobNotifications");
 const CAREGIVER_EMBED_FIELDS = [
     "skills",
     "specializations",
@@ -128,6 +129,10 @@ exports.onIntakeAiMatch = functions.firestore
     try {
         const result = await (0, matchJob_1.runMatchingForIntake)(intakeId, data);
         console.log(`[onIntakeAiMatch] Wrote ${(_a = result === null || result === void 0 ? void 0 : result.count) !== null && _a !== void 0 ? _a : 0} matches for client ${result === null || result === void 0 ? void 0 : result.clientId}`);
+        if (result === null || result === void 0 ? void 0 : result.clientId) {
+            await (0, jobNotifications_1.createJobPost)(intakeId, data, result.clientId);
+            await (0, jobNotifications_1.notifyAreaCaregivers)(intakeId, data, result.clientId);
+        }
     }
     catch (err) {
         console.error("[onIntakeAiMatch] failed:", err);

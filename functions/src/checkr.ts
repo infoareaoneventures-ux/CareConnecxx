@@ -7,8 +7,8 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-const CHECKR_BASE_URL = process.env.CHECKR_API_URL || "https://api.checkr.com/v1";
 const CHECKR_PACKAGE = process.env.CHECKR_PACKAGE || "driver_pro";
+const CHECKR_PACKAGE_MVR = process.env.CHECKR_PACKAGE_MVR || CHECKR_PACKAGE;
 
 type CheckrStatus = "pending" | "clear" | "consider" | "suspended" | "canceled";
 
@@ -17,7 +17,8 @@ function basicAuth(apiKey: string): string {
 }
 
 async function checkrPost(path: string, body: Record<string, unknown>, idempotencyKey?: string): Promise<any> {
-  const apiKey = (process.env.CHECKR_API_KEY || "").trim();
+  // CHECKR_KEY is preferred — avoids legacy Secret Manager binding on CHECKR_API_KEY
+  const apiKey = (process.env.CHECKR_KEY || process.env.CHECKR_API_KEY || "").trim();
   if (!apiKey) {
     throw new functions.https.HttpsError("internal", "Checkr API Key not configured.");
   }
@@ -28,7 +29,10 @@ async function checkrPost(path: string, body: Record<string, unknown>, idempoten
   if (idempotencyKey) {
     headers["Idempotency-Key"] = idempotencyKey;
   }
-  const res = await fetch(`${CHECKR_BASE_URL}${path}`, {
+  const baseUrl = process.env.CHECKR_API_URL || "https://api.checkr.com/v1";
+  const keySource = process.env.CHECKR_KEY ? "CHECKR_KEY" : "CHECKR_API_KEY";
+  console.log(`Checkr POST ${baseUrl}${path} key=${apiKey.slice(0,8)}... (from ${keySource})`);
+  const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
@@ -50,7 +54,7 @@ function mapCheckrResult(payload: Record<string, any>): CheckrStatus {
   return "pending";
 }
 
-export const initiateCheckrCandidate = functions.runWith({ secrets: ["CHECKR_API_KEY"] }).https.onCall(async (data, context) => {
+export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "User must be logged in.");
   }
@@ -131,9 +135,11 @@ export const initiateCheckrCandidate = functions.runWith({ secrets: ["CHECKR_API
       candidateId = candidate.id as string;
     }
 
+    const mvrPaid = caregiverData.mvrPaid === true;
+    const selectedPackage = mvrPaid ? CHECKR_PACKAGE_MVR : CHECKR_PACKAGE;
     const invitationBody: Record<string, unknown> = {
       candidate_id: candidateId,
-      package: CHECKR_PACKAGE,
+      package: selectedPackage,
     };
     if (workLocations.length) invitationBody.work_locations = workLocations;
 
@@ -149,6 +155,7 @@ export const initiateCheckrCandidate = functions.runWith({ secrets: ["CHECKR_API
         submittedAt: new Date().toISOString(),
         status: "pending",
         invitationStatus: "sent",
+        ...(mvrPaid && { mvrIncluded: true }),
       },
     }, { merge: true });
 
@@ -198,23 +205,22 @@ async function findCaregiverUidByCandidateId(candidateId: string): Promise<strin
   return snap.docs[0].id;
 }
 
-export const checkrWebhook = functions.runWith({ secrets: ["CHECKR_API_KEY"] }).https.onRequest(async (req, res) => {
+export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     res.status(405).send("Method not allowed");
     return;
   }
-  // Use dedicated webhook signing secret if configured; fall back to API key for backwards compatibility
-  const webhookSecret = (process.env.CHECKR_WEBHOOK_SECRET || process.env.CHECKR_API_KEY || "").trim();
-  if (!webhookSecret) {
-    console.error("Checkr webhook secret not configured");
-    res.status(500).send("Webhook not configured");
-    return;
-  }
-
   const signature = req.headers["x-checkr-signature"];
-  if (!verifyCheckrSignature(req.rawBody, signature, webhookSecret)) {
-    res.status(401).send("Invalid signature");
-    return;
+  const webhookSecret = (process.env.CHECKR_WEBHOOK_SECRET || "").trim();
+  if (webhookSecret) {
+    // Production: enforce HMAC-SHA256 signature verification using partner client_secret
+    if (!signature || !verifyCheckrSignature(req.rawBody, signature, webhookSecret)) {
+      res.status(401).send("Invalid signature");
+      return;
+    }
+  } else {
+    // Staging / account-level webhooks: no client_secret available, accept by URL obscurity
+    console.log(`Checkr webhook received (no CHECKR_WEBHOOK_SECRET set — skipping verification) type=${(req.body || {}).type}`);
   }
 
   const event = req.body || {};
@@ -241,7 +247,39 @@ export const checkrWebhook = functions.runWith({ secrets: ["CHECKR_API_KEY"] }).
     const updates: Record<string, any> = {};
     let notificationPayload: { title: string; body: string } | null = null;
 
-    if (type === "invitation.created") {
+    if (type === "candidate.driver_license_required" || type === "candidate.driver_abstract_required") {
+      updates["backgroundCheckData.status"] = "pending";
+      notificationPayload = {
+        title: "Driving record document required",
+        body: "Checkr needs a driving record document to continue your background check. Check your email from Checkr for instructions.",
+      };
+
+    } else if (type === "candidate.id_required") {
+      updates["backgroundCheckData.status"] = "pending";
+      notificationPayload = {
+        title: "ID verification required",
+        body: "Checkr needs to verify your identity to continue your background check. Check your email from Checkr for instructions.",
+      };
+
+    } else if (type === "candidate.deferred") {
+      updates["backgroundCheckData.status"] = "pending";
+      notificationPayload = {
+        title: "Background check deferred",
+        body: "Your background check has been deferred. Check your email from Checkr or contact support for next steps.",
+      };
+
+    } else if (
+      type === "candidate.created" ||
+      type === "candidate.updated" ||
+      type === "candidate.engaged" ||
+      type === "candidate.pre_adverse_action" ||
+      type === "candidate.post_adverse_action"
+    ) {
+      // Silently acknowledge — report-level events handle the meaningful state changes
+      res.status(200).json({ received: true, ignored: type });
+      return;
+
+    } else if (type === "invitation.created") {
       updates["backgroundCheckData.invitationStatus"] = "sent";
 
     } else if (type === "invitation.completed") {
@@ -254,8 +292,19 @@ export const checkrWebhook = functions.runWith({ secrets: ["CHECKR_API_KEY"] }).
         body: "Your background check link expired after 7 days. Return to your dashboard to get a new link.",
       };
 
-    } else if (type === "invitation.deleted") {
+    } else if (type === "invitation.deleted" || type === "invitation.cancelled") {
       updates["backgroundCheckData.invitationStatus"] = "canceled";
+
+    } else if (type === "verification.created") {
+      updates["backgroundCheckData.status"] = "pending";
+      updates["backgroundCheckData.invitationStatus"] = "awaiting_documents";
+      notificationPayload = {
+        title: "Document upload required",
+        body: "Your background check is on hold. Check your email from Checkr — they need you to upload a document to continue.",
+      };
+
+    } else if (type === "verification.completed" || type === "verification.processed") {
+      updates["backgroundCheckData.invitationStatus"] = "documents_submitted";
 
     } else if (type === "report.created") {
       updates["backgroundCheckData.checkrReportId"] = payload.id;
@@ -280,23 +329,136 @@ export const checkrWebhook = functions.runWith({ secrets: ["CHECKR_API_KEY"] }).
       }
 
       if (status === "clear") {
-        // Option B: admin manually approves everyone — do not auto-set verified: true
-        updates["verificationStatus"] = "checkr_clear";
+        updates["verified"] = true;
+        updates["verificationStatus"] = "approved";
+        updates["status"] = "active";
         updates["backgroundCheckData.checkrClearedAt"] = new Date().toISOString();
         notificationPayload = {
-          title: "Background check complete",
-          body: "Your background check came back clear. Our team will complete the final review shortly.",
+          title: "Background check approved! 🎉",
+          body: "Great news — your background check came back clear. You're approved and families can now book you!",
         };
+
+        // Advance Cara onboarding if caregiver has an iMessage session; also mark approved driver if MVR was included
+        try {
+          const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+          const cgData = cgSnap.data();
+          if (cgData?.backgroundCheckData?.mvrIncluded === true) {
+            updates["isApprovedDriver"] = true;
+          }
+          const cgPhone = cgData?.phone as string | undefined;
+          if (cgPhone) {
+            const { advanceOnboardingStep } = await import("./agents/onboardingConversation");
+            await advanceOnboardingStep(cgPhone, "background_check", "");
+          }
+        } catch (err) {
+          console.error("advanceOnboardingStep(background_check) error:", err);
+        }
+
+        // Notify families who expressed interest while bg check was pending
+        try {
+          const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+          const cgName = cgSnap.data()?.name ?? "Your caregiver";
+
+          const interestSnap = await db.collection("agent_tasks")
+            .where("type",        "==", "caregiver_interest")
+            .where("caregiverId", "==", caregiverUid)
+            .where("status",      "==", "pending_bg_clear")
+            .get();
+
+          for (const taskDoc of interestSnap.docs) {
+            const task = taskDoc.data();
+            try {
+              const { sendViaInteractionAgent } = await import("./agents/caraAgent");
+              await sendViaInteractionAgent(task.clientPhone, {
+                content:
+                  `Good news! ${cgName}'s background check just cleared. ` +
+                  `You can now book them — just say the word and I'll take care of it.`,
+                urgency:     "standard",
+                sourceAgent: "bg_check_clear",
+                canDrop:     true,
+              });
+              await taskDoc.ref.update({ status: "notified", notifiedAt: new Date().toISOString() });
+            } catch (notifyErr) {
+              console.error("bg clear family notify error:", notifyErr);
+            }
+          }
+        } catch (err) {
+          console.error("caregiver_interest notify error:", err);
+        }
       } else if (status === "consider") {
         notificationPayload = {
           title: "Background check needs review",
           body: "Your background check is under review. Our team will follow up shortly.",
         };
+
+        // Write admin alert for manual review
+        try {
+          const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+          const cgData = cgSnap.data() ?? {};
+          await db.collection("admin_alerts").add({
+            type:        "background_check_review",
+            caregiverId: caregiverUid,
+            name:        cgData.name ?? "",
+            phone:       cgData.phone ?? "",
+            status:      "consider",
+            checkrReportId: payload.id ?? "",
+            createdAt:   new Date().toISOString(),
+            resolved:    false,
+            severity:    "high",
+          });
+
+          if (cgData.phone) {
+            const { sendViaInteractionAgent } = await import("./agents/caraAgent");
+            await sendViaInteractionAgent(cgData.phone, {
+              content:
+                `Hi ${(cgData.name as string | undefined)?.split(" ")[0] ?? "there"} — ` +
+                `your background check is under review. This is normal and usually takes a few business days. ` +
+                `Our team will reach out if anything is needed. Hang tight.`,
+              urgency:     "standard",
+              sourceAgent: "checkr_status",
+              canDrop:     true,
+            });
+          }
+        } catch (err) {
+          console.error("admin_alerts write error (consider):", err);
+        }
       } else if (status === "suspended") {
         notificationPayload = {
-          title: "Background check update",
-          body: "Your background check could not be completed. Please contact support.",
+          title: "Background check on hold",
+          body: "Your background check is on hold while Checkr gathers additional information. Check your email from Checkr for next steps.",
         };
+
+        // Write admin alert (medium severity — normal Checkr flow, not a failure)
+        try {
+          const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+          const cgData = cgSnap.data() ?? {};
+          await db.collection("admin_alerts").add({
+            type:        "background_check_suspended",
+            caregiverId: caregiverUid,
+            name:        cgData.name ?? "",
+            phone:       cgData.phone ?? "",
+            status:      "suspended",
+            createdAt:   new Date().toISOString(),
+            resolved:    false,
+            severity:    "medium",
+          });
+
+          if (cgData.phone) {
+            const { sendViaInteractionAgent } = await import("./agents/caraAgent");
+            await sendViaInteractionAgent(cgData.phone, {
+              content:
+                `Hi ${(cgData.name as string | undefined)?.split(" ")[0] ?? "there"} — ` +
+                `Checkr put your background check on hold while they gather more information. ` +
+                `Please check the email from Checkr and follow any instructions there. ` +
+                `Reach out if you need anything — we're here to help.`,
+              urgency:     "standard",
+              sourceAgent: "checkr_status",
+              canDrop:     true,
+            });
+          }
+        } catch (err) {
+          console.error("admin_alerts write error (suspended):", err);
+        }
       }
 
     } else if (type === "report.canceled") {

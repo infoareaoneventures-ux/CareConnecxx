@@ -124,6 +124,7 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
         password={formData.password}
         phone={formData.phone}
         termsAccepted={formData.termsAccepted}
+        smsConsent={formData.smsConsent}
         street={formData.street}
         zipCode={formData.zipCode}
         city={formData.city}

@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, AlertCircle } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -43,10 +44,10 @@ export const SupportModal: React.FC<SupportModalProps> = ({ onClose, onShowToast
     }
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
-      
+
       <div className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 animate-slide-in">
         <button onClick={onClose} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
           <X size={24} />
@@ -99,5 +100,5 @@ export const SupportModal: React.FC<SupportModalProps> = ({ onClose, onShowToast
         </form>
       </div>
     </div>
-  );
+  , document.body);
 };

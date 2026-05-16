@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback, Suspense, lazy } from 'react';
+import { createPortal } from 'react-dom';
 import { Calendar, Star, User, MessageSquare, Loader2, CheckCircle, MapPin, CreditCard, HelpCircle, Sparkles, Check, XCircle, Shield, Clock, Heart, TrendingUp } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
@@ -804,7 +805,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
          )}
 
          {/* Appointment Details Modal */}
-         {viewingAppointment && (
+         {viewingAppointment && createPortal(
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
                <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 animate-slide-in">
                   <div className="flex justify-between items-center mb-4">
@@ -888,7 +889,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                   </div>
                </div>
             </div>
-         )}
+         , document.body)}
 
          <SimpleSearchWizard
             isOpen={isSimpleSearchOpen}
@@ -955,7 +956,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
          )}
 
          {/* Referral Program Modal */}
-         {isReferralOpen && (
+         {isReferralOpen && createPortal(
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
                <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
                   <div className="sticky top-0 bg-white border-b border-slate-200 p-4 flex justify-between items-center">
@@ -974,7 +975,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                   />
                </div>
             </div>
-         )}
+         , document.body)}
 
          {/* Persistent Call Support Button for Seniors */}
          <CallSupportButton />

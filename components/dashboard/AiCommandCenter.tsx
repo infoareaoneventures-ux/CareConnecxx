@@ -12,7 +12,7 @@ export const AiCommandCenter: React.FC<AiCommandCenterProps> = ({ onShowToast })
     const handleCallCoordinator = () => {
         // In a real app, this would initiate a call or open a scheduling modal
         onShowToast("Connecting you with a care coordinator...", 'info');
-        window.location.href = 'tel:+14087261331'; // Replace with actual coordinator number
+        window.location.href = `tel:${import.meta.env.VITE_SUPPORT_PHONE || ''}`;
     };
 
     return (

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, List, Loader2, Briefcase, MapPin, Calendar, Clock, Lock, X, FileText, CheckCircle, XCircle, Clock4, Sun, Moon, Users, CreditCard, Banknote, EyeOff, Car } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { JobPost, Caregiver, AddToastFunction } from '../../types';
@@ -155,8 +156,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                     caregiverName: profile.name,
                     caregiverPhoto: profile.photo || profile.imageUrl || '',
                     experience: profile.experience,
-                    rating: profile.rating,
-                    skills: profile.skills || profile.certifications
+                    rating: profile.rating ?? null,
+                    skills: profile.skills || profile.certifications || []
                 },
                 coverLetter,
                 proposedRate || undefined
@@ -438,7 +439,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             )}
 
             {/* Job Details Modal */}
-            {viewingJob && (
+            {viewingJob && createPortal(
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-[var(--color-neutral-900)]/60 backdrop-blur-sm" onClick={() => setViewingJob(null)} />
                     <div className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 animate-slide-in">
@@ -500,10 +501,10 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                         </div>
                     </div>
                 </div>
-            )}
+            , document.body)}
 
             {/* Apply Modal */}
-            {applyingJob && (
+            {applyingJob && createPortal(
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-[var(--color-neutral-900)]/60 backdrop-blur-sm" onClick={() => setApplyingJob(null)} />
                     <div className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 animate-slide-in max-h-[90vh] overflow-y-auto">
@@ -583,7 +584,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                         </form>
                     </div>
                 </div>
-            )}
+            , document.body)}
         </div>
     );
 };

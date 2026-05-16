@@ -29,6 +29,8 @@ const CaregiverSignup = lazy(() => import('./components/caregiver/signup/Caregiv
 const CaregiverLogin = lazy(() => import('./components/CaregiverLogin').then(module => ({ default: module.CaregiverLogin })));
 const ForgotPassword = lazy(() => import('./components/ForgotPassword').then(module => ({ default: module.ForgotPassword })));
 const AdminView = lazy(() => import('./components/AdminView').then(module => ({ default: module.AdminView })));
+const AuditDashboard = lazy(() => import('./components/admin/AuditDashboard').then(module => ({ default: module.AuditDashboard })));
+const JoinFamilyPage = lazy(() => import('./components/pages/JoinFamilyPage'));
 const ClientProfile = lazy(() => import('./components/ClientProfile').then(module => ({ default: module.ClientProfile })));
 const ClientProfileDashboard = lazy(() => import('./components/ClientProfileDashboard'));
 const CaregiverProfile = lazy(() => import('./components/CaregiverProfile').then(module => ({ default: module.CaregiverProfile })));
@@ -60,15 +62,20 @@ const HelpCenter = lazy(() => import('./components/HelpCenter').then(module => (
 const HelpPage = lazy(() => import('./components/HelpPage').then(module => ({ default: module.HelpPage })));
 const BlogPage        = lazy(() => import('./components/pages/BlogPage').then(module => ({ default: module.BlogPage })));
 const CityPage        = lazy(() => import('./components/pages/CityPage').then(module => ({ default: module.CityPage })));
-const QuickConfirmPage = lazy(() => import('./components/pages/QuickConfirmPage'));
-const HealthSummaryPage = lazy(() => import('./components/pages/HealthSummaryPage'));
+const QuickConfirmPage    = lazy(() => import('./components/pages/QuickConfirmPage'));
+const HealthSummaryPage   = lazy(() => import('./components/pages/HealthSummaryPage'));
+const IMessageSignupPage  = lazy(() => import('./components/landing/IMessageSignupPage'));
+const PhoneSignupPage     = lazy(() => import('./components/auth/PhoneSignupPage'));
+const AuthLoginPage       = lazy(() => import('./components/auth/LoginPage'));
+const UploadPage          = lazy(() => import('./components/pages/UploadPage'));
+const GenericSuccessPage  = lazy(() => import('./components/pages/GenericSuccessPage'));
+const TermsOfServicePage  = lazy(() => import('./components/pages/TermsOfServicePage'));
+const PrivacyPolicyPage   = lazy(() => import('./components/pages/PrivacyPolicyPage'));
 
 
 
-// Video Interview & Profile Modals
-const ScheduleInterviewModal = lazy(() => import('./components/ScheduleInterviewModal').then(module => ({ default: module.ScheduleInterviewModal })));
+// Profile Modal
 const CaregiverProfileModal = lazy(() => import('./components/CaregiverProfileModal').then(module => ({ default: module.CaregiverProfileModal })));
-const VideoInterviewRoom = lazy(() => import('./components/VideoInterviewRoom').then(module => ({ default: module.VideoInterviewRoom })));
 
 // Wrapper for landing view
 const LandingView = (props: any) => <LandingViewComponent {...props} />;
@@ -109,14 +116,16 @@ const PublicOnlyRoute: React.FC<{ element: React.ReactElement }> = ({ element })
 };
 
 const ClientRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
-  const { currentUser } = useCareConnex();
+  const { currentUser, authResolved } = useCareConnex();
+  if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/client/login" replace />;
   if (currentUser.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
   return element;
 };
 
 const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
-  const { currentUser } = useCareConnex();
+  const { currentUser, authResolved } = useCareConnex();
+  if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/caregiver/login" replace />;
   if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
   return element;
@@ -133,7 +142,7 @@ const AdminRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isLoading, toasts, removeToast, addToast, currentUser } = useCareConnex();
+  const { isLoading, authResolved, toasts, removeToast, addToast, currentUser } = useCareConnex();
 
   // Caregiver Callout Handling
   const { activeCallout, dismissCallout } = useCaregiverCallout(currentUser?.uid || null);
@@ -141,10 +150,7 @@ const AppContent: React.FC = () => {
     activeCallout?.data?.appointmentId || null
   );
 
-  // Video Interview State
-  const [scheduleInterviewCaregiver, setScheduleInterviewCaregiver] = useState<any>(null);
   const [viewingCaregiver, setViewingCaregiver] = useState<any>(null);
-  const [activeInterview, setActiveInterview] = useState<any>(null);
 
   // Handle caregiver selection from callout modal
   const handleBackupCaregiverSelected = (caregiverId: string, caregiverName: string) => {
@@ -250,7 +256,7 @@ const AppContent: React.FC = () => {
 
   const activeColor = isClientFlow ? 'text-teal-600' : 'text-orange-500';
 
-  if (isLoading) {
+  if (!authResolved) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-[var(--color-neutral-50)]">
         <Loader2 className="w-10 h-10 text-[var(--color-primary-600)] animate-spin mb-4" />
@@ -266,14 +272,17 @@ const AppContent: React.FC = () => {
       <Suspense fallback={<PageLoader fullScreen message="Loading page..." />}>
         <Routes>
           <Route path="/" element={<PublicOnlyRoute element={<LandingView onNavigate={handleNavigation} />} />} />
-          <Route path="/login" element={<PublicOnlyRoute element={<LoginPage onNavigate={handleNavigation} />} />} />
+          <Route path="/login" element={<PublicOnlyRoute element={<AuthLoginPage />} />} />
           <Route path="/auth/login" element={<Navigate to="/login" replace />} />
           <Route path="/how-it-works" element={<HowItWorks onNavigate={handleNavigation} />} />
           <Route path="/trust" element={<TrustAndSafetyPage onNavigate={handleNavigation} />} />
           <Route path="/blog" element={<BlogPage onNavigate={handleNavigation} />} />
           <Route path="/blog/:slug" element={<BlogPage onNavigate={handleNavigation} />} />
           <Route path="/care/:city" element={<CityPage onNavigate={handleNavigation} />} />
-          <Route path="/confirm/:token" element={<QuickConfirmPage />} />
+          <Route path="/start"              element={<PhoneSignupPage />} />
+          <Route path="/upload/:type"        element={<UploadPage />} />
+          <Route path="/done"               element={<GenericSuccessPage />} />
+          <Route path="/confirm/:token"     element={<QuickConfirmPage />} />
           <Route path="/health-summary/:token" element={<HealthSummaryPage />} />
           <Route path="/family-faq" element={<FamilyFAQ onNavigate={handleNavigation} />} />
           <Route path="/help" element={<HelpCenter onNavigate={handleNavigation} />} />
@@ -314,15 +323,7 @@ const AppContent: React.FC = () => {
             userType="client"
             onNavigate={handleNavigation}
             onShowToast={addToast}
-            onScheduleVideoCall={(caregiverId, caregiverName) => {
-              setScheduleInterviewCaregiver({
-                id: caregiverId,
-                uid: caregiverId,
-                name: caregiverName,
-                hourlyRate: 25,
-                imageUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(caregiverName)}&background=random`
-              });
-            }}
+            onScheduleVideoCall={() => { /* V5: interviews scheduled via Cara iMessage */ }}
             onViewProfile={(caregiverId) => {
               navigate(`/client/caregiver/${caregiverId}`);
             }}
@@ -365,6 +366,10 @@ const AppContent: React.FC = () => {
         } />
 
           <Route path="/admin" element={<AdminRoute element={<AdminView onBack={() => navigate('/')} />} />} />
+          <Route path="/admin/audit" element={<AdminRoute element={<AuditDashboard />} />} />
+          <Route path="/join" element={<JoinFamilyPage />} />
+          <Route path="/terms" element={<TermsOfServicePage />} />
+          <Route path="/privacy" element={<PrivacyPolicyPage />} />
           <Route path="/stripe/callback" element={<StripeCallback onNavigate={handleNavigation} />} />
           <Route path="/payment/success" element={<PaymentSuccess onNavigate={handleNavigation} onPaymentComplete={(id) => { /* handled in context now but PaymentSuccess might need update */ }} />} />
           <Route path="/payment/cancel" element={<PaymentCancel onNavigate={handleNavigation} />} />
@@ -402,35 +407,6 @@ const AppContent: React.FC = () => {
         />
       )}
 
-      {/* Video Interview Modals */}
-      <Suspense fallback={null}>
-        {scheduleInterviewCaregiver && (
-          <ScheduleInterviewModal
-            caregiver={scheduleInterviewCaregiver}
-            onClose={() => setScheduleInterviewCaregiver(null)}
-            onSuccess={(message) => {
-              addToast(message, 'success');
-              setScheduleInterviewCaregiver(null);
-            }}
-            onShowToast={addToast}
-          />
-        )}
-      </Suspense>
-
-      <Suspense fallback={null}>
-        {activeInterview && (
-          <VideoInterviewRoom
-            interview={activeInterview}
-            userId={currentUser?.uid || ''}
-            userName={currentUser?.displayName || 'User'}
-            onEnd={() => {
-              setActiveInterview(null);
-              addToast('Interview ended', 'info');
-            }}
-            onShowToast={addToast}
-          />
-        )}
-      </Suspense>
     </div>
   );
 };

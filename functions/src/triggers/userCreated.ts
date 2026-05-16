@@ -3,6 +3,8 @@ import * as admin from "firebase-admin";
 import {
   checkCapability,
   createChat,
+  setContactCard,
+  shareContactCard,
   AgentSession,
   LinqService,
 } from "../linq/client";
@@ -35,7 +37,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
 
     // TCPA: first message must request consent — no care data sent until user replies YES
     const optInText =
-      `Hi ${firstName}! 👋 This is CareConnecxx, your care assistant.\n\n` +
+      `Hi ${firstName} — I'm Cara, your AI care assistant.\n\n` +
       `Reply YES to receive real-time care updates — visit summaries, wellness alerts, ` +
       `and health signals for your loved one.\n\n` +
       `Reply STOP anytime to opt out. Msg & data rates may apply.`;
@@ -43,6 +45,13 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
     const chat = await createChat(phone, {
       parts: [{ type: "text", value: optInText }],
     });
+
+    // Register Cara as a named contact so users see "Cara" not a raw number
+    await setContactCard({
+      phone_number: process.env.LINQ_PHONE_NUMBER ?? "",
+      display_name: "Cara",
+    });
+    await shareContactCard(chat.chat_id).catch(() => {/* non-critical */});
 
     const session: AgentSession = {
       chatId:    chat.chat_id,

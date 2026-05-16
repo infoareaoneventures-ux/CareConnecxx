@@ -132,20 +132,20 @@ async function sendSMSToUser(userId, message) {
 }
 // ── Templates (unchanged) ─────────────────────────────────────────────────────
 exports.SMS_TEMPLATES = {
-    bookingConfirmed: (caregiverName, date, time) => `CareConnex: Your booking with ${caregiverName} is confirmed for ${date} at ${time}. View details in the app.`,
-    newBookingRequest: (clientName, date, time) => `CareConnex: New booking! ${clientName} booked you for ${date} at ${time}. Open app to confirm.`,
-    bookingCancelled: (name, date, reason) => `CareConnex: ${name} cancelled the appointment on ${date}.${reason ? ` Reason: ${reason}` : ""} Open app for details.`,
-    newMessage: (senderName) => `CareConnex: New message from ${senderName}. Open the app to reply.`,
-    interviewScheduled: (name, dateTime) => `CareConnex: Video interview with ${name} scheduled for ${dateTime}. Open app to join when ready.`,
-    interviewReminder: (name, minutesUntil) => `CareConnex: Reminder! Your interview with ${name} starts in ${minutesUntil} minutes. Open app to join.`,
-    shiftReminder: (clientName, time) => `CareConnex: Reminder! Your shift with ${clientName} starts at ${time}. Don't forget to clock in!`,
-    paymentReceived: (amount) => `CareConnex: Payment of ${amount} has been deposited to your account. View earnings in app.`,
+    bookingConfirmed: (caregiverName, date, time) => `Cara: Your booking with ${caregiverName} is confirmed for ${date} at ${time}. View details in the app.`,
+    newBookingRequest: (clientName, date, time) => `Cara: New booking! ${clientName} booked you for ${date} at ${time}. Open app to confirm.`,
+    bookingCancelled: (name, date, reason) => `Cara: ${name} cancelled the appointment on ${date}.${reason ? ` Reason: ${reason}` : ""} Open app for details.`,
+    newMessage: (senderName) => `Cara: New message from ${senderName}. Open the app to reply.`,
+    interviewScheduled: (name, dateTime) => `Cara: Video interview with ${name} scheduled for ${dateTime}. Open app to join when ready.`,
+    interviewReminder: (name, minutesUntil) => `Cara: Reminder! Your interview with ${name} starts in ${minutesUntil} minutes. Open app to join.`,
+    shiftReminder: (clientName, time) => `Cara: Reminder! Your shift with ${clientName} starts at ${time}. Don't forget to clock in!`,
+    paymentReceived: (amount) => `Cara: Payment of ${amount} has been deposited to your account. View earnings in app.`,
     backgroundCheckComplete: (status) => status === "clear"
-        ? `CareConnex: Great news! Your background check is complete and clear. You're ready to accept bookings!`
-        : `CareConnex: Your background check requires review. Please contact support for next steps.`,
-    emergencyAlert: (initiatorName) => `🚨 CareConnex URGENT: ${initiatorName} triggered an emergency alert. Please check in immediately or call 911 if needed.`,
-    caregiverCallout: (caregiverName, date, time, backupCount, backupNames) => `CareConnex: ${caregiverName} cancelled your ${date} at ${time} appointment. ${backupCount} backup caregiver(s) available: ${backupNames}. Open app to select replacement or request refund.`,
-    backupCaregiverAssigned: (clientName, date, time, address) => `CareConnex: You've been assigned to care for ${clientName} on ${date} at ${time}. Previous caregiver called out.${address ? ` Address: ${address}` : ""} Open app for details.`,
+        ? `Cara: Great news! Your background check is complete and clear. You're ready to accept bookings!`
+        : `Cara: Your background check requires review. Please contact support for next steps.`,
+    emergencyAlert: (initiatorName) => `🚨 Cara URGENT: ${initiatorName} triggered an emergency alert. Please check in immediately or call 911 if needed.`,
+    caregiverCallout: (caregiverName, date, time, backupCount, backupNames) => `Cara: ${caregiverName} cancelled your ${date} at ${time} appointment. ${backupCount} backup caregiver(s) available: ${backupNames}. Open app to select replacement or request refund.`,
+    backupCaregiverAssigned: (clientName, date, time, address) => `Cara: You've been assigned to care for ${clientName} on ${date} at ${time}. Previous caregiver called out.${address ? ` Address: ${address}` : ""} Open app for details.`,
 };
 // ── Callable (admin/test) ─────────────────────────────────────────────────────
 exports.sendTestSMS = functions.https.onCall(async (data, context) => {

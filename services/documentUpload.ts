@@ -82,24 +82,26 @@ export async function uploadDocument(
       }
     };
 
-    // Start upload with progress tracking
-    const uploadTask = storageRef.put(file, metadata);
+    // Start upload with progress tracking and handle completion/errors safely
+    const snapshot = await new Promise<any>((resolve, reject) => {
+      const uploadTask = storageRef.put(file, metadata);
 
-    // Track progress if callback provided
-    if (onProgress) {
       uploadTask.on('state_changed', 
-        (snapshot) => {
-          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          onProgress(progress);
+        (snap) => {
+          if (onProgress) {
+            const progress = (snap.bytesTransferred / snap.totalBytes) * 100;
+            onProgress(progress);
+          }
         },
         (error) => {
-          console.error('Upload error:', error);
+          console.error('Upload observer error:', error);
+          reject(error);
+        },
+        () => {
+          resolve(uploadTask.snapshot);
         }
       );
-    }
-
-    // Wait for upload to complete
-    const snapshot = await uploadTask;
+    });
     const downloadUrl = await snapshot.ref.getDownloadURL();
 
     // Create document metadata

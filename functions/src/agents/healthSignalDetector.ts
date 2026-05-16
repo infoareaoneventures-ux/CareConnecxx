@@ -40,7 +40,7 @@ export async function detectHealthSignals(
   const fallback: HealthSignalResult = {
     signals:  [],
     severity: "none",
-    summary:  "Visit completed. Caregiver notes have been logged.",
+    summary:  "",
   };
 
   if (!notes?.trim() && !wellness) return fallback;

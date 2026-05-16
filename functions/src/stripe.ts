@@ -32,7 +32,7 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
 
-  const { successUrl, cancelUrl, priceId } = data;
+  const { successUrl, cancelUrl, priceId, includeMVR } = data;
   const userId = context.auth.uid;
 
   // Resolve which price to charge — validate against allowed list
@@ -40,17 +40,20 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
     ? priceId
     : MEMBERSHIP_PRICE_ID;
 
+  const mvrPriceId = (process.env.STRIPE_MVR_PRICE_ID || '').trim();
+  const addMVR = includeMVR === true && mvrPriceId.length > 0 && !mvrPriceId.startsWith('FILL_IN');
+
   try {
     // Get or create Stripe customer
     const userRef = admin.firestore().collection('customers').doc(userId);
     const userDoc = await userRef.get();
-    
+
     let customerId = userDoc.data()?.stripeCustomerId;
 
     if (!customerId) {
       // Get user email from Auth
       const user = await admin.auth().getUser(userId);
-      
+
       // Create new Stripe customer
       const customer = await stripe.customers.create({
         email: user.email,
@@ -58,9 +61,9 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
           firebaseUID: userId,
         },
       });
-      
+
       customerId = customer.id;
-      
+
       // Save to Firestore
       await userRef.set({
         stripeCustomerId: customerId,
@@ -69,15 +72,17 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
       }, { merge: true });
     }
 
+    const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [
+      { price: resolvedPriceId, quantity: 1 },
+    ];
+    if (addMVR) {
+      lineItems.push({ price: mvrPriceId, quantity: 1 });
+    }
+
     // Create checkout session
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
-      line_items: [
-        {
-          price: resolvedPriceId,
-          quantity: 1,
-        },
-      ],
+      line_items: lineItems,
       mode: 'subscription',
       success_url: successUrl,
       cancel_url: cancelUrl,
@@ -88,6 +93,7 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
       },
       metadata: {
         firebaseUID: userId,
+        ...(addMVR && { includeMVR: 'true' }),
       },
     });
 
@@ -128,6 +134,17 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
 
   // Handle the event
   try {
+    // Idempotency check: Ensure we don't process the same event twice
+    const eventRef = admin.firestore().collection('processed_stripe_events').doc(event.id);
+    const eventDoc = await eventRef.get();
+    if (eventDoc.exists) {
+      console.log(`Event ${event.id} already processed. Skipping.`);
+      res.json({ received: true, status: 'already_processed' });
+      return;
+    }
+    // Mark as processing/processed
+    await eventRef.set({ processedAt: admin.firestore.FieldValue.serverTimestamp() });
+
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
@@ -202,6 +219,17 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
  * For caregiver payments: auto-initiate Checkr background check + set verificationStatus submitted
  */
 async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
+  // Cara iMessage onboarding — advance step when client finishes payment setup
+  if (session.metadata?.task === 'client_payment_setup' && session.metadata?.phone) {
+    try {
+      const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
+      await advanceOnboardingStep(session.metadata.phone, 'payment', '');
+    } catch (err) {
+      console.error('advanceOnboardingStep(payment) error:', err);
+    }
+    return;
+  }
+
   const userId = session.metadata?.firebaseUID;
   if (!userId) return;
 
@@ -250,25 +278,30 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
   const zipCode = (caregiverData.zipCode || caregiverData.zip || '').trim();
   const state = (caregiverData.state || '').trim();
 
+  const includeMVRFlag = session.metadata?.includeMVR === 'true';
+
   if (!firstName || !lastName || !zipCode) {
     console.warn(`Caregiver ${userId} missing profile fields — marking paid, deferring Checkr`);
     await admin.firestore().collection('caregivers').doc(userId).set({
       membershipPaid: true,
       checkrInitPending: true,
+      ...(includeMVRFlag && { mvrPaid: true }),
     }, { merge: true });
     return;
   }
 
-  const apiKey = (process.env.CHECKR_API_KEY || '').trim();
+  const apiKey = (process.env.CHECKR_KEY || process.env.CHECKR_API_KEY || '').trim();
   if (!apiKey) {
-    console.error('CHECKR_API_KEY not configured — marking paid, skipping Checkr');
+    console.error('CHECKR_KEY / CHECKR_API_KEY not configured — marking paid, skipping Checkr');
     await admin.firestore().collection('caregivers').doc(userId).set({ membershipPaid: true }, { merge: true });
     return;
   }
 
   try {
     const CHECKR_BASE = process.env.CHECKR_API_URL || 'https://api.checkr.com/v1';
-    const CHECKR_PKG = process.env.CHECKR_PACKAGE || 'driver_pro';
+    const CHECKR_PKG_BASE = process.env.CHECKR_PACKAGE || 'driver_pro';
+    const CHECKR_PKG_MVR = process.env.CHECKR_PACKAGE_MVR || CHECKR_PKG_BASE;
+    const CHECKR_PKG = includeMVRFlag ? CHECKR_PKG_MVR : CHECKR_PKG_BASE;
     const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
     const dateKey = new Date().toISOString().slice(0, 10);
     const workLocations = state ? [{ country: 'US', state: state.toUpperCase() }] : [];
@@ -311,6 +344,7 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
 
     await admin.firestore().collection('caregivers').doc(userId).set({
       membershipPaid: true,
+      ...(includeMVRFlag && { mvrPaid: true }),
       verificationStatus: 'submitted',
       backgroundCheckData: {
         checkrCandidateId: candidateId,
@@ -321,6 +355,7 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
         status: 'pending',
         invitationStatus: invOk ? 'sent' : 'error',
         initiatedVia: 'stripe_webhook',
+        ...(includeMVRFlag && { mvrIncluded: true }),
       },
     }, { merge: true });
 
@@ -615,23 +650,46 @@ export const createIdentityVerificationSession = functions.https.onCall(async (d
  */
 async function handleIdentityVerificationEvent(session: Stripe.Identity.VerificationSession) {
   const userId = session.metadata?.firebaseUID;
-  if (!userId) {
-    console.warn('Identity session missing firebaseUID metadata:', session.id);
-    return;
-  }
+  const phone  = session.metadata?.phone;
 
   const statusMap: Record<string, string> = {
-    verified: 'verified',
-    processing: 'processing',
+    verified:       'verified',
+    processing:     'processing',
     requires_input: 'requires_input',
-    canceled: 'canceled',
+    canceled:       'canceled',
   };
   const status = statusMap[session.status] || session.status;
 
-  const update: Record<string, any> = {
-    identityCheckStatus: status,
-    stripeIdentityVerificationId: session.id,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  // ── iMessage onboarding flow (phone metadata, no firebaseUID yet) ──────────
+  if (phone) {
+    const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
+    const { sendToPhone }           = await import('./linq/client');
+
+    if (status === 'verified') {
+      try {
+        await advanceOnboardingStep(phone, 'identity', '');
+      } catch (err) {
+        console.error('advanceOnboardingStep(identity) error:', err);
+      }
+    } else if (status === 'requires_input' || status === 'canceled') {
+      // Let the client retry
+      await sendToPhone(phone,
+        "It looks like we need a little more info to verify you — tap the link above and try again."
+      ).catch((err: unknown) => console.error('identity retry message error:', err));
+    }
+    // Don't return — also update Firestore users doc if firebaseUID is present
+  }
+
+  // ── Firebase user doc update (web-app flow or post-auth iMessage users) ─────
+  if (!userId) {
+    if (!phone) console.warn('Identity session missing both firebaseUID and phone metadata:', session.id);
+    return;
+  }
+
+  const update: Record<string, unknown> = {
+    identityCheckStatus:           status,
+    stripeIdentityVerificationId:  session.id,
+    updatedAt:                     admin.firestore.FieldValue.serverTimestamp(),
   };
   if (status === 'verified') {
     update.identityVerifiedAt = admin.firestore.FieldValue.serverTimestamp();

@@ -13,6 +13,7 @@ interface Step1Props {
   password: string;
   phone: string;
   termsAccepted: boolean;
+  smsConsent: boolean;
   street: string;
   zipCode: string;
   city: string;
@@ -34,7 +35,7 @@ const formatPhone = (value: string): string => {
 const GENDER_OPTIONS = ['Male', 'Female', 'Non-binary', 'Prefer not to say'];
 
 export const Step1PersonalInfo: React.FC<Step1Props> = ({
-  firstName, lastName, dateOfBirth, gender, email, password, phone, termsAccepted,
+  firstName, lastName, dateOfBirth, gender, email, password, phone, termsAccepted, smsConsent,
   street, zipCode, city, state,
   onChange, onNext, onShowToast, onGoogleSignup, isLoading,
 }) => {
@@ -111,6 +112,7 @@ export const Step1PersonalInfo: React.FC<Step1Props> = ({
     if (!state.trim()) e.state = 'State is required';
 
     if (!termsAccepted) e.terms = 'Please agree to the Terms of Service and Privacy Policy';
+    if (!smsConsent) e.smsConsent = 'Please consent to receive text messages to continue';
 
     setErrors(e);
     if (Object.keys(e).length > 0) {
@@ -226,14 +228,24 @@ export const Step1PersonalInfo: React.FC<Step1Props> = ({
       </div>
 
       {/* Terms */}
-      <label className="flex items-start gap-3 mt-2 mb-6 cursor-pointer">
+      <label className="flex items-start gap-3 mt-2 mb-3 cursor-pointer">
         <input type="checkbox" checked={termsAccepted}
           onChange={e => onChange('termsAccepted', e.target.checked)}
           className="mt-1 w-5 h-5 rounded border-slate-300 text-primary-600 focus:ring-primary-500" />
         <span className={`text-sm ${errors.terms ? 'text-red-600' : 'text-slate-600'}`}>
           I agree to CareConnecxx's{' '}
-          <a href="/privacy" className="text-primary-600 underline">Privacy Policy</a> &{' '}
-          <a href="/terms" className="text-primary-600 underline">Terms of Service</a>
+          <a href="/privacy" className="text-primary-600 underline" target="_blank" rel="noreferrer">Privacy Policy</a> &{' '}
+          <a href="/terms" className="text-primary-600 underline" target="_blank" rel="noreferrer">Terms of Service</a>
+        </span>
+      </label>
+
+      {/* TCPA SMS consent */}
+      <label className="flex items-start gap-3 mb-6 cursor-pointer">
+        <input type="checkbox" checked={smsConsent}
+          onChange={e => onChange('smsConsent', e.target.checked)}
+          className="mt-1 w-5 h-5 rounded border-slate-300 text-primary-600 focus:ring-primary-500" />
+        <span className={`text-sm ${errors.smsConsent ? 'text-red-600' : 'text-slate-600'}`}>
+          I consent to receive text messages (SMS/MMS) from CareConnex at the phone number provided, including appointment and payment notifications. Message &amp; data rates may apply. Reply STOP to opt out at any time.
         </span>
       </label>
 
@@ -256,6 +268,7 @@ export const Step1PersonalInfo: React.FC<Step1Props> = ({
             type="button"
             onClick={async () => {
               if (!termsAccepted) { onShowToast('Please agree to the Terms of Service and Privacy Policy', 'error'); return; }
+              if (!smsConsent) { onShowToast('Please consent to receive text messages to continue', 'error'); return; }
               await onGoogleSignup();
             }}
             disabled={isLoading}

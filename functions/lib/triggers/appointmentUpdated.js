@@ -37,7 +37,12 @@ exports.onAppointmentUpdated = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
+const caraAgent_1 = require("../agents/caraAgent");
 const replacementScorer_1 = require("../agents/replacementScorer");
+function hoursUntil(date, time) {
+    const apptMs = new Date(`${date}T${time.slice(0, 5)}:00`).getTime();
+    return (apptMs - Date.now()) / (1000 * 60 * 60);
+}
 const db = admin.firestore();
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function getClientPhone(clientId) {
@@ -81,14 +86,10 @@ exports.onAppointmentUpdated = functions.firestore
         }
         // ── Arrival / in-progress ────────────────────────────────────────────
         if (after.status === "in-progress" && before.status !== "in-progress") {
-            const session = await getSession(phone);
-            const msg = `${(_a = after.caregiverName) !== null && _a !== void 0 ? _a : "Your caregiver"} has arrived for your ${after.time} visit. ✅`;
-            if (session) {
-                await (0, client_1.sendMessage)(session.chatId, msg);
-            }
-            else {
-                await (0, client_1.sendToPhone)(phone, msg);
-            }
+            const msg = `${(_a = after.caregiverName) !== null && _a !== void 0 ? _a : "Your caregiver"} has arrived for your ${after.time} visit.`;
+            await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+                content: msg, urgency: "immediate", sourceAgent: "arrival_notification", canDrop: false,
+            }).catch(() => (0, client_1.sendToPhone)(phone, msg));
             await db.collection("agent_alerts_log").add({
                 type: "caregiver_arrived", clientId: after.clientId, phone,
                 appointmentId: change.after.id, sentAt: new Date().toISOString(),
@@ -99,25 +100,21 @@ exports.onAppointmentUpdated = functions.firestore
         if (after.status === "confirmed" && before.status !== "confirmed" && after.caregiverId) {
             const caregiverPhone = await getCaregiverPhone(after.caregiverId);
             if (caregiverPhone) {
-                const msg = `✅ Booking confirmed!\n` +
-                    `📅 ${after.date} at ${after.time}\n` +
-                    (after.clientName ? `👤 ${after.clientName}\n` : "") +
-                    (after.address ? `📍 ${after.address}` : "");
+                const msg = `Booking confirmed.\n` +
+                    `${after.date} at ${after.time}\n` +
+                    (after.clientName ? `${after.clientName}\n` : "") +
+                    (after.address ? `${after.address}` : "");
                 await (0, client_1.sendToPhone)(caregiverPhone, msg);
             }
             return;
         }
         // ── Visit completed ──────────────────────────────────────────────────
         if (after.status === "completed" && before.status !== "completed") {
-            const session = await getSession(phone);
             const msg = `${(_b = after.caregiverName) !== null && _b !== void 0 ? _b : "Your caregiver"}'s visit is complete. ` +
                 `A care journal entry will be posted shortly.`;
-            if (session) {
-                await (0, client_1.sendMessage)(session.chatId, msg);
-            }
-            else {
-                await (0, client_1.sendToPhone)(phone, msg);
-            }
+            await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+                content: msg, urgency: "standard", sourceAgent: "visit_summary", canDrop: true,
+            }).catch(() => (0, client_1.sendToPhone)(phone, msg));
             await db.collection("agent_alerts_log").add({
                 type: "visit_completed", clientId: after.clientId, phone,
                 appointmentId: change.after.id, sentAt: new Date().toISOString(),
@@ -131,8 +128,34 @@ exports.onAppointmentUpdated = functions.firestore
 });
 // ── Emergency replacement flow ────────────────────────────────────────────────
 async function handleCaregiverCancellation(appointmentId, appt, phone) {
-    var _a, _b;
-    const session = await getSession(phone);
+    var _a, _b, _c, _d, _e;
+    await getSession(phone);
+    const hours = hoursUntil((_a = appt.date) !== null && _a !== void 0 ? _a : "", (_b = appt.time) !== null && _b !== void 0 ? _b : "00:00");
+    // Future cancellation (> 24h out) — give family the choice
+    if (hours > 24) {
+        const taskRef = await db.collection("agent_tasks").add({
+            type: "replacement_or_skip",
+            appointmentId,
+            clientId: appt.clientId,
+            clientPhone: phone,
+            status: "awaiting_replace_or_skip",
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            createdAt: new Date().toISOString(),
+        });
+        const daysOut = Math.round(hours / 24);
+        const futureMsg = `${(_c = appt.caregiverName) !== null && _c !== void 0 ? _c : "Your caregiver"} cancelled the ${appt.time} visit on ${appt.date} ` +
+            `(${daysOut} day${daysOut !== 1 ? "s" : ""} away).\n\n` +
+            `Reply REPLACE and I'll find a replacement, or SKIP to cancel the visit.`;
+        await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+            content: futureMsg, urgency: "standard", sourceAgent: "emergency_replacement", canDrop: false,
+        }).catch(() => (0, client_1.sendToPhone)(phone, futureMsg));
+        await db.collection("agent_alerts_log").add({
+            type: "caregiver_cancelled_future", clientId: appt.clientId, phone,
+            appointmentId, taskId: taskRef.id, sentAt: new Date().toISOString(),
+        });
+        return;
+    }
+    // Same-day / imminent (≤ 24h) — immediate replacement search
     // Get top 3 replacement caregivers
     const options = await (0, replacementScorer_1.scoreReplacements)({
         clientId: appt.clientId,
@@ -142,13 +165,12 @@ async function handleCaregiverCancellation(appointmentId, appt, phone) {
         excludeId: appt.caregiverId,
     });
     if (options.length === 0) {
-        const noMatchMsg = `${(_a = appt.caregiverName) !== null && _a !== void 0 ? _a : "Your caregiver"} had to cancel today's ${appt.time} visit. ` +
+        const noMatchMsg = `${(_d = appt.caregiverName) !== null && _d !== void 0 ? _d : "Your caregiver"} had to cancel today's ${appt.time} visit. ` +
             `I wasn't able to find available replacements right now. ` +
             `Please open the app or contact support to reschedule.`;
-        if (session)
-            await (0, client_1.sendMessage)(session.chatId, noMatchMsg);
-        else
-            await (0, client_1.sendToPhone)(phone, noMatchMsg);
+        await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+            content: noMatchMsg, urgency: "immediate", sourceAgent: "emergency_replacement", canDrop: false,
+        }).catch(() => (0, client_1.sendToPhone)(phone, noMatchMsg));
         return;
     }
     // Generate a confirmation token for the QuickConfirm page
@@ -172,16 +194,13 @@ async function handleCaregiverCancellation(appointmentId, appt, phone) {
         return `${numberEmojis[i]} ${o.name} · ${o.rating}⭐ · $${o.hourlyRate}/hr${rebookedNote}`;
     })
         .join("\n");
-    const cancelMsg = `${(_b = appt.caregiverName) !== null && _b !== void 0 ? _b : "Your caregiver"} had to cancel today's ${appt.time} visit.\n\n` +
+    const cancelMsg = `${(_e = appt.caregiverName) !== null && _e !== void 0 ? _e : "Your caregiver"} had to cancel today's ${appt.time} visit.\n\n` +
         `I found ${options.length} available caregiver${options.length > 1 ? "s" : ""}:\n\n` +
         `${optionLines}\n\n` +
         `Reply 1, 2, or 3. Nothing is booked until you confirm.`;
-    if (session) {
-        await (0, client_1.sendMessage)(session.chatId, cancelMsg);
-    }
-    else {
-        await (0, client_1.sendToPhone)(phone, cancelMsg);
-    }
+    await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+        content: cancelMsg, urgency: "immediate", sourceAgent: "emergency_replacement", canDrop: false,
+    }).catch(() => (0, client_1.sendToPhone)(phone, cancelMsg));
     await db.collection("agent_alerts_log").add({
         type: "caregiver_cancelled", clientId: appt.clientId, phone,
         appointmentId, taskId: taskRef.id, sentAt: new Date().toISOString(),

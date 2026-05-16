@@ -101,7 +101,7 @@ export const requestInstantPayout = functions.https.onCall(async (_data, context
                 amount: Math.round(claim.netAmount * 100),
                 currency: 'usd',
                 method: 'instant',
-                statement_descriptor: 'CareConnex Payout',
+                statement_descriptor: 'Cara Payout',
             }, {
                 stripeAccount: stripeAccountId,
                 idempotencyKey: `instant-payout-${pendingPayoutId}`,

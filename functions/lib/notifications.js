@@ -34,8 +34,15 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendShiftReminders = exports.onAppointmentCancelled = exports.onInterviewScheduled = exports.onMessageSent = exports.onAppointmentCreated = void 0;
+exports.notifyAdminNewCaregiverSignup = notifyAdminNewCaregiverSignup;
+exports.notifyAdminNewClientSignup = notifyAdminNewClientSignup;
+exports.notifyAdminInterviewScheduled = notifyAdminInterviewScheduled;
+exports.notifyAdminBookingConfirmed = notifyAdminBookingConfirmed;
+exports.notifyAdminHealthFlag = notifyAdminHealthFlag;
+exports.notifyAdminCaregiverIssue = notifyAdminCaregiverIssue;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
+const resend_1 = require("resend");
 const sms_1 = require("./sms");
 // Initialize Firebase Admin if not already done
 if (!admin.apps.length) {
@@ -256,4 +263,75 @@ exports.sendShiftReminders = functions.pubsub
         console.error('Error in sendShiftReminders:', error);
     }
 });
+// ── Admin notification helpers ────────────────────────────────────────────────
+// Each writes to admin_alerts and optionally emails/texts the support line.
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@cara.app";
+const SUPPORT_PHONE = process.env.VITE_SUPPORT_PHONE || process.env.SUPPORT_PHONE || "";
+const RESEND_FROM = process.env.RESEND_FROM_EMAIL || "noreply@cara.app";
+function getResend() {
+    const key = process.env.RESEND_API_KEY;
+    return key ? new resend_1.Resend(key) : null;
+}
+async function sendAdminEmail(subject, html) {
+    try {
+        const resend = getResend();
+        if (!resend)
+            return;
+        await resend.emails.send({ from: RESEND_FROM, to: ADMIN_EMAIL, subject, html });
+    }
+    catch (err) {
+        console.error("sendAdminEmail error:", err);
+    }
+}
+async function textAdmin(body) {
+    if (!SUPPORT_PHONE)
+        return;
+    try {
+        await (0, sms_1.sendSMSToUser)(SUPPORT_PHONE, body);
+    }
+    catch (err) {
+        console.error("textAdmin error:", err);
+    }
+}
+async function notifyAdminNewCaregiverSignup(params) {
+    await db.collection("admin_alerts").add(Object.assign(Object.assign({ type: "new_caregiver_signup" }, params), { createdAt: new Date().toISOString(), resolved: false, severity: "low" }));
+    await sendAdminEmail(`New caregiver signup: ${params.name}`, `<p>A new caregiver just signed up via Cara iMessage.</p>` +
+        `<p><strong>Name:</strong> ${params.name}<br>` +
+        `<strong>Phone:</strong> ${params.phone}<br>` +
+        `<strong>City:</strong> ${params.city}</p>`);
+}
+async function notifyAdminNewClientSignup(params) {
+    await db.collection("admin_alerts").add(Object.assign(Object.assign({ type: "new_client_signup" }, params), { createdAt: new Date().toISOString(), resolved: false, severity: "low" }));
+    await sendAdminEmail(`New client signup: ${params.firstName}`, `<p>A new family just joined via Cara iMessage.</p>` +
+        `<p><strong>Name:</strong> ${params.firstName}<br>` +
+        `<strong>Senior:</strong> ${params.seniorName}<br>` +
+        `<strong>Phone:</strong> ${params.phone}<br>` +
+        `<strong>City:</strong> ${params.city}</p>`);
+}
+async function notifyAdminInterviewScheduled(params) {
+    await db.collection("admin_alerts").add(Object.assign(Object.assign({ type: "interview_scheduled" }, params), { createdAt: new Date().toISOString(), resolved: false, severity: "low" }));
+    await sendAdminEmail(`Interview scheduled: ${params.caregiverName}`, `<p>An interview was scheduled via Cara.</p>` +
+        `<p><strong>Caregiver:</strong> ${params.caregiverName}<br>` +
+        `<strong>Time:</strong> ${params.scheduledTime}</p>`);
+}
+async function notifyAdminBookingConfirmed(params) {
+    await db.collection("admin_alerts").add(Object.assign(Object.assign({ type: "booking_confirmed" }, params), { createdAt: new Date().toISOString(), resolved: false, severity: "low" }));
+    await sendAdminEmail(`Booking confirmed: ${params.appointmentCount} appts with ${params.caregiverName}`, `<p>A booking was confirmed via Cara.</p>` +
+        `<p><strong>Caregiver:</strong> ${params.caregiverName}<br>` +
+        `<strong>Appointments:</strong> ${params.appointmentCount}<br>` +
+        `<strong>Total:</strong> $${params.totalCost.toFixed(2)}</p>`);
+}
+async function notifyAdminHealthFlag(params) {
+    await db.collection("admin_alerts").add(Object.assign(Object.assign({ type: "health_flag" }, params), { createdAt: new Date().toISOString(), resolved: false, severity: "high" }));
+    await sendAdminEmail(`Health alert: ${params.seniorName}`, `<p><strong>Alert:</strong> ${params.signal}</p>` +
+        `<p>Senior: ${params.seniorName} (clientId: ${params.clientId})</p>`);
+    await textAdmin(`[Cara] Health alert for ${params.seniorName}: ${params.signal}`);
+}
+async function notifyAdminCaregiverIssue(params) {
+    await db.collection("admin_alerts").add(Object.assign(Object.assign({ type: "caregiver_issue" }, params), { createdAt: new Date().toISOString(), resolved: false, severity: "high" }));
+    await sendAdminEmail(`Caregiver issue reported: ${params.caregiverName}`, `<p><strong>Description:</strong> ${params.description}</p>` +
+        `<p>Caregiver: ${params.caregiverName} (${params.caregiverId})<br>` +
+        `Appointment: ${params.appointmentId}</p>`);
+    await textAdmin(`[Cara] Issue from caregiver ${params.caregiverName}: ${params.description}`);
+}
 //# sourceMappingURL=notifications.js.map

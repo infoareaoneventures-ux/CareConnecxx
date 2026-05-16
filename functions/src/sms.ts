@@ -124,36 +124,36 @@ export async function sendSMSToUser(userId: string, message: string): Promise<SM
 
 export const SMS_TEMPLATES = {
   bookingConfirmed: (caregiverName: string, date: string, time: string) =>
-    `CareConnex: Your booking with ${caregiverName} is confirmed for ${date} at ${time}. View details in the app.`,
+    `Cara: Your booking with ${caregiverName} is confirmed for ${date} at ${time}. View details in the app.`,
 
   newBookingRequest: (clientName: string, date: string, time: string) =>
-    `CareConnex: New booking! ${clientName} booked you for ${date} at ${time}. Open app to confirm.`,
+    `Cara: New booking! ${clientName} booked you for ${date} at ${time}. Open app to confirm.`,
 
   bookingCancelled: (name: string, date: string, reason?: string) =>
-    `CareConnex: ${name} cancelled the appointment on ${date}.${reason ? ` Reason: ${reason}` : ""} Open app for details.`,
+    `Cara: ${name} cancelled the appointment on ${date}.${reason ? ` Reason: ${reason}` : ""} Open app for details.`,
 
   newMessage: (senderName: string) =>
-    `CareConnex: New message from ${senderName}. Open the app to reply.`,
+    `Cara: New message from ${senderName}. Open the app to reply.`,
 
   interviewScheduled: (name: string, dateTime: string) =>
-    `CareConnex: Video interview with ${name} scheduled for ${dateTime}. Open app to join when ready.`,
+    `Cara: Video interview with ${name} scheduled for ${dateTime}. Open app to join when ready.`,
 
   interviewReminder: (name: string, minutesUntil: number) =>
-    `CareConnex: Reminder! Your interview with ${name} starts in ${minutesUntil} minutes. Open app to join.`,
+    `Cara: Reminder! Your interview with ${name} starts in ${minutesUntil} minutes. Open app to join.`,
 
   shiftReminder: (clientName: string, time: string) =>
-    `CareConnex: Reminder! Your shift with ${clientName} starts at ${time}. Don't forget to clock in!`,
+    `Cara: Reminder! Your shift with ${clientName} starts at ${time}. Don't forget to clock in!`,
 
   paymentReceived: (amount: string) =>
-    `CareConnex: Payment of ${amount} has been deposited to your account. View earnings in app.`,
+    `Cara: Payment of ${amount} has been deposited to your account. View earnings in app.`,
 
   backgroundCheckComplete: (status: "clear" | "flagged") =>
     status === "clear"
-      ? `CareConnex: Great news! Your background check is complete and clear. You're ready to accept bookings!`
-      : `CareConnex: Your background check requires review. Please contact support for next steps.`,
+      ? `Cara: Great news! Your background check is complete and clear. You're ready to accept bookings!`
+      : `Cara: Your background check requires review. Please contact support for next steps.`,
 
   emergencyAlert: (initiatorName: string) =>
-    `🚨 CareConnex URGENT: ${initiatorName} triggered an emergency alert. Please check in immediately or call 911 if needed.`,
+    `🚨 Cara URGENT: ${initiatorName} triggered an emergency alert. Please check in immediately or call 911 if needed.`,
 
   caregiverCallout: (
     caregiverName: string,
@@ -162,7 +162,7 @@ export const SMS_TEMPLATES = {
     backupCount: number,
     backupNames: string
   ) =>
-    `CareConnex: ${caregiverName} cancelled your ${date} at ${time} appointment. ${backupCount} backup caregiver(s) available: ${backupNames}. Open app to select replacement or request refund.`,
+    `Cara: ${caregiverName} cancelled your ${date} at ${time} appointment. ${backupCount} backup caregiver(s) available: ${backupNames}. Open app to select replacement or request refund.`,
 
   backupCaregiverAssigned: (
     clientName: string,
@@ -170,7 +170,7 @@ export const SMS_TEMPLATES = {
     time: string,
     address?: string
   ) =>
-    `CareConnex: You've been assigned to care for ${clientName} on ${date} at ${time}. Previous caregiver called out.${address ? ` Address: ${address}` : ""} Open app for details.`,
+    `Cara: You've been assigned to care for ${clientName} on ${date} at ${time}. Previous caregiver called out.${address ? ` Address: ${address}` : ""} Open app for details.`,
 };
 
 // ── Callable (admin/test) ─────────────────────────────────────────────────────

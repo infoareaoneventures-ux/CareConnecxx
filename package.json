@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "eval": "cd functions && npx ts-node src/evals/runner.ts",
+    "predeploy": "npm run eval",
     "deploy": "vite build && firebase deploy",
     "test": "vitest",
     "icons": "node scripts/generate-icons.cjs",

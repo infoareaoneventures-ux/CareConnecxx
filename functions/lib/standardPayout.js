@@ -118,7 +118,7 @@ exports.requestStandardPayout = functions
                 amount: Math.round(claim.totalEarnings * 100),
                 currency: "usd",
                 method: "standard",
-                statement_descriptor: "CareConnex Payout",
+                statement_descriptor: "Cara Payout",
             }, {
                 stripeAccount: stripeAccountId,
                 idempotencyKey: `standard-payout-${pendingPayoutId}`,

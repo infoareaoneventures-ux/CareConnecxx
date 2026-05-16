@@ -68,7 +68,7 @@ async function sendClientPermissionsFlow(phone, chatId, session) {
         onboardingStep: "client_permissions_contact",
         permissionsContext: "client",
     });
-    await (0, client_1.sendMessage)(chatId, `I'm already searching for caregivers for ${(_b = d.seniorName) !== null && _b !== void 0 ? _b : "your loved one"}! 🔍\n\n` +
+    await (0, client_1.sendMessage)(chatId, `I'm already searching for caregivers for ${(_b = d.seniorName) !== null && _b !== void 0 ? _b : "your loved one"}.\n\n` +
         `Before I send you matches, two quick questions so I know how to best help you.\n\n` +
         `Can I reach out to caregivers on your behalf to schedule interviews once you select someone?\n\n` +
         `Reply YES or NO`);
@@ -84,7 +84,7 @@ async function handleClientPermissionsReply(phone, chatId, text, session, userId
             canScheduleInterviews: isYes,
         });
         await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "client_permissions_booking" });
-        await (0, client_1.sendMessage)(chatId, `Got it! ${isYes ? "✅" : "👍"}\n\n` +
+        await (0, client_1.sendMessage)(chatId, `Got it.\n\n` +
             `Once you've approved a caregiver after an interview, can I book their first visits for you?\n` +
             `I'll always show you exactly what I'm booking and wait for your confirmation before anything is scheduled.\n\n` +
             `Reply YES or NO`);
@@ -98,7 +98,7 @@ async function handleClientPermissionsReply(phone, chatId, text, session, userId
             canSendHealthAlerts: true,
         });
         await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "client_permissions_autobook" });
-        await (0, client_1.sendMessage)(chatId, `Got it! ${isYes ? "✅" : "👍"}\n\n` +
+        await (0, client_1.sendMessage)(chatId, `Got it.\n\n` +
             `One more thing — for recurring visits with a caregiver you've already approved, ` +
             `can I go ahead and book automatically without checking each time?\n\n` +
             `1️⃣ Yes, book automatically\n` +
@@ -113,7 +113,7 @@ async function handleClientPermissionsReply(phone, chatId, text, session, userId
             onboardingStep: "complete",
             optedIn: true,
         });
-        await (0, client_1.sendMessage)(chatId, `Perfect. I'll handle all the coordination${isYes ? " and book automatically" : " — you make the final calls"}. 💙\n\n` +
+        await (0, client_1.sendMessage)(chatId, `Perfect. I'll handle all the coordination${isYes ? " and book automatically" : " — you make the final calls"}.\n\n` +
             `I'm still searching for caregivers — I'll text you the top matches within the hour.\n\n` +
             `Questions? Just text me anytime.`);
         // Kick off matching
@@ -141,7 +141,7 @@ async function sendCaregiverPermissionsFlow(phone, chatId, _session, caregiverNa
         `Reply YES or NO`);
 }
 async function handleCaregiverPermissionsReply(phone, chatId, text, session, caregiverId) {
-    var _a, _b, _c;
+    var _a, _b;
     const norm = text.trim().toUpperCase();
     const step = (_a = session.onboardingStep) !== null && _a !== void 0 ? _a : "";
     const isYes = norm === "YES" || norm === "Y";
@@ -151,7 +151,7 @@ async function handleCaregiverPermissionsReply(phone, chatId, text, session, car
             canDeclineJobsAutomatically: isYes,
         });
         await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "caregiver_permissions_arrival" });
-        await (0, client_1.sendMessage)(chatId, `Got it! ${isYes ? "✅" : "👍"}\n\n` +
+        await (0, client_1.sendMessage)(chatId, `Got it.\n\n` +
             `When you arrive at a client's home, want me to automatically notify the family?\n` +
             `They love knowing their caregiver has arrived.\n\n` +
             `Reply YES or NO`);
@@ -167,7 +167,7 @@ async function handleCaregiverPermissionsReply(phone, chatId, text, session, car
             onboardingStep: "complete",
             optedIn: true,
         });
-        await (0, client_1.sendMessage)(chatId, `You're all set, ${((_c = d.name) !== null && _c !== void 0 ? _c : "")}! 🎉\n\n` +
+        await (0, client_1.sendMessage)(chatId, `You're all set${d.name ? `, ${d.name}` : ""}.\n\n` +
             `Your profile is being reviewed — usually 24–48 hours.\n` +
             `I'll text you the moment you're approved and can start receiving job matches.\n\n` +
             `Questions? Just text me anytime.`);

@@ -265,9 +265,9 @@ exports.sendShiftReminders = functions.pubsub
 });
 // ── Admin notification helpers ────────────────────────────────────────────────
 // Each writes to admin_alerts and optionally emails/texts the support line.
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@careconnecxx.com";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@cara.app";
 const SUPPORT_PHONE = process.env.VITE_SUPPORT_PHONE || process.env.SUPPORT_PHONE || "";
-const RESEND_FROM = process.env.RESEND_FROM_EMAIL || "noreply@careconnecxx.com";
+const RESEND_FROM = process.env.RESEND_FROM_EMAIL || "noreply@cara.app";
 function getResend() {
     const key = process.env.RESEND_API_KEY;
     return key ? new resend_1.Resend(key) : null;

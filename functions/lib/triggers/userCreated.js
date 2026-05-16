@@ -60,7 +60,7 @@ exports.onUserCreated = functions.auth.user().onCreate(async (user) => {
                 : "SMS";
         const firstName = (_c = (_a = data.firstName) !== null && _a !== void 0 ? _a : (_b = data.name) === null || _b === void 0 ? void 0 : _b.split(" ")[0]) !== null && _c !== void 0 ? _c : "there";
         // TCPA: first message must request consent — no care data sent until user replies YES
-        const optInText = `Hi ${firstName}! 👋 I'm Cara, your AI care assistant.\n\n` +
+        const optInText = `Hi ${firstName} — I'm Cara, your AI care assistant.\n\n` +
             `Reply YES to receive real-time care updates — visit summaries, wellness alerts, ` +
             `and health signals for your loved one.\n\n` +
             `Reply STOP anytime to opt out. Msg & data rates may apply.`;

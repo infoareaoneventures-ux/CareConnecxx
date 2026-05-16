@@ -159,7 +159,7 @@ async function runMatchingForClient(phone, chatId, intake, session) {
     }
     catch (err) {
         console.error("runMatchingForClient error:", err);
-        await (0, client_1.sendMessage)(chatId, "I'm searching for caregivers — I'll text you top matches within the hour! 🔍");
+        await (0, client_1.sendMessage)(chatId, "I'm searching for caregivers — I'll text you top matches within the hour.");
     }
 }
 //# sourceMappingURL=matchingAgent.js.map

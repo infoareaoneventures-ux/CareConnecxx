@@ -179,7 +179,7 @@ async function handleJobResponse(phone, norm, chatId, session) {
             pendingJobId: null,
             pendingJobSentAt: null,
         });
-        await (0, client_1.sendMessage)(chatId, "No problem! We'll reach out if something better comes up. 🙏");
+        await (0, client_1.sendMessage)(chatId, "No problem — I'll reach out when something comes up.");
         return;
     }
     // YES path — ask availability confirmation
@@ -214,7 +214,7 @@ async function handleAvailabilityConfirmation(phone, text, chatId, session) {
         pendingJobSentAt: null,
     });
     if (!jobId) {
-        await (0, client_1.sendMessage)(chatId, "No problem — I'll reach out when the next opportunity opens up. 🙏");
+        await (0, client_1.sendMessage)(chatId, "No problem — I'll reach out when the next opportunity opens up.");
         return;
     }
     let available = false;
@@ -226,7 +226,7 @@ async function handleAvailabilityConfirmation(phone, text, chatId, session) {
         // Default to treating as NO on parse failure
     }
     if (!available) {
-        await (0, client_1.sendMessage)(chatId, "No worries — thanks for letting us know! We'll reach out if something else opens up. 🙏");
+        await (0, client_1.sendMessage)(chatId, "No worries — thanks for letting us know. I'll reach out when something else opens up.");
         return;
     }
     // YES — write application
@@ -265,7 +265,7 @@ async function handleAvailabilityConfirmation(phone, text, chatId, session) {
         await db.collection("clientMatches").doc(clientId).set({ appliedCandidates: firestore_1.FieldValue.arrayUnion(caregiverId), updatedAt: new Date().toISOString() }, { merge: true });
         // Notify family
         await notifyFamilyOfApplicant(clientId, caregiverName, caregiverId);
-        await (0, client_1.sendMessage)(chatId, "You're in! We'll let you know once the family reviews your application. 🎉");
+        await (0, client_1.sendMessage)(chatId, "You're in. I'll let you know once the family reviews your application.");
         console.log(`[handleAvailabilityConfirmation] ${caregiverId} applied to job ${jobId}`);
     }
     catch (err) {

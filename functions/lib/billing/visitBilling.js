@@ -112,7 +112,7 @@ async function createVisitPayment(params) {
         }).catch(() => { });
     // Notify caregiver directly (bypass interaction agent — caregiver-initiated message path)
     if (caregiverPhone) {
-        await (0, client_1.sendToPhone)(caregiverPhone, `✅ Visit logged for ${date}. Your payment of ${totalStr} will be processed shortly.`).catch(() => { });
+        await (0, client_1.sendToPhone)(caregiverPhone, `Visit logged for ${date}. Your payment of ${totalStr} will be processed shortly.`).catch(() => { });
     }
 }
 async function handlePaymentError(params) {

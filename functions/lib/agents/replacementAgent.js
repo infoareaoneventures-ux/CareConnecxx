@@ -50,10 +50,10 @@ async function contactReplacementCandidate(caregiver, appt, taskId) {
     if (!caregiver.phone)
         return;
     const earnings = (((_b = (_a = appt.hourlyRate) !== null && _a !== void 0 ? _a : caregiver.hourlyRate) !== null && _b !== void 0 ? _b : 22) * ((_c = appt.durationHours) !== null && _c !== void 0 ? _c : 4)).toFixed(2);
-    const msg = `Hi ${caregiver.name.split(" ")[0]}! 👋 We have an urgent visit that needs coverage:\n\n` +
-        `📅 ${appt.date} at ${appt.time}\n` +
-        (appt.address ? `📍 ${appt.address}\n` : "") +
-        `💰 ~$${earnings} for the visit\n\n` +
+    const msg = `Hi ${caregiver.name.split(" ")[0]} — urgent opening today.\n\n` +
+        `${appt.date} at ${appt.time}\n` +
+        (appt.address ? `${appt.address}\n` : "") +
+        `~$${earnings} for the visit\n\n` +
         `Reply YES if you can take it, or NO to pass.`;
     await (0, client_1.sendToPhone)(caregiver.phone, msg).catch((err) => console.error(`contactReplacementCandidate failed for ${caregiver.phone}:`, err));
     await db.collection("replacement_candidates").add({

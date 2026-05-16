@@ -93,7 +93,7 @@ async function generateDigest(data) {
     var _a;
     const { journal, pastAppts, upcoming, seniorName, clientName } = data;
     if (journal.length === 0 && pastAppts.length === 0) {
-        return `Good morning ${clientName} ☀️ No visits were logged this week for ${seniorName}. If this seems wrong, please check the app or contact support.`;
+        return `Good morning ${clientName}. No visits were logged this week for ${seniorName}. If this seems wrong, please check the app or contact support.`;
     }
     const journalContext = journal.map(e => {
         var _a, _b, _c, _d, _e, _f, _g;
@@ -132,8 +132,8 @@ async function generateDigest(data) {
     }
     catch (err) {
         console.error("weeklyDigest Claude error:", err);
-        return (`Good morning ${clientName} ☀️ Here's ${seniorName}'s week:\n\n` +
-            `✅ ${completedCount} visit(s) completed\n\n` +
+        return (`Good morning ${clientName}. Here's ${seniorName}'s week:\n\n` +
+            `${completedCount} visit(s) completed\n\n` +
             (apptContext ? `Coming up:\n${apptContext}\n\n` : "") +
             `Have a wonderful ${dayName}.`);
     }

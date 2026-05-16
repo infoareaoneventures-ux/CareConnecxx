@@ -318,8 +318,7 @@ async function bookingAgent(payload) {
             pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
         });
         await sendViaInteractionAgent(p, {
-            content: `Great choice! 🎉 ${caregiverName} will be thrilled.\n\n` +
-                `What date should their first visit be? (e.g. "this Monday" or "June 15")`,
+            content: `Great choice. What date should the first visit be? (e.g. "this Monday" or "June 15")`,
             urgency: "immediate",
             sourceAgent: "booking",
             canDrop: false,

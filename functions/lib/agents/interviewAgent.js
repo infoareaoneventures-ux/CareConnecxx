@@ -96,7 +96,7 @@ async function handleInterviewSelection(phone, chatId, text, session) {
     var _a, _b, _c, _d, _e, _f;
     const matches = (_a = session.pendingMatches) !== null && _a !== void 0 ? _a : [];
     if (matches.length === 0) {
-        await (0, client_1.sendMessage)(chatId, "I don't have any pending matches right now. Let me search again — I'll text you shortly! 🔍");
+        await (0, client_1.sendMessage)(chatId, "I don't have any pending matches right now. Let me search again — I'll text you shortly.");
         return;
     }
     const selected = await parseSelection(text, matches.length);
@@ -140,7 +140,7 @@ async function handleInterviewSelection(phone, chatId, text, session) {
         if (!caregiverPhone)
             continue;
         const caregiverSession = await (0, client_1.getOrCreateSession)(caregiverPhone, { caregiverId: match.id });
-        await (0, client_1.sendMessage)(caregiverSession.chatId, `Hi ${match.name}! 👋 I'm Cara, your care assistant.\n\n` +
+        await (0, client_1.sendMessage)(caregiverSession.chatId, `Hi ${match.name} — I'm Cara, your care coordinator.\n\n` +
             `A family is interested in meeting you for a care position for their ${relationship}, ` +
             `${age ? `${age}-year-old ` : ""}${seniorName}.\n\n` +
             `Are you available for a 20-minute video call this week?\n\n` +
@@ -167,14 +167,14 @@ async function handleCaregiverAvailabilityReply(caregiverPhone, caregiverId, car
             if (!familySnap.empty) {
                 const familySession = familySnap.docs[0].data();
                 await (0, client_1.sendMessage)(familySession.chatId, `${caregiverName} isn't available right now.\n\n` +
-                    `Want me to reach out to the next best match? Reply YES and I'll get on it. 🔍`);
+                    `Want me to reach out to the next best match? Reply YES and I'll get on it.`);
                 // Remember this caregiver was declined so matching won't re-present them
                 await db.collection("agent_sessions").doc(reqData.clientPhone).update({
                     rejectedCaregiverIds: admin.firestore.FieldValue.arrayUnion(caregiverId),
                 });
             }
         }
-        await (0, client_1.sendMessage)(chatId, "No problem! I'll let the family know. Good luck with your other bookings! 😊");
+        await (0, client_1.sendMessage)(chatId, "No problem — I'll let the family know.");
         return;
     }
     const proposedTimes = await parseAvailability(text);
@@ -210,22 +210,22 @@ async function handleCaregiverAvailabilityReply(caregiverPhone, caregiverId, car
         .doc(reqData.clientPhone).get();
     if (familySnap.exists) {
         const familySession = familySnap.data();
-        await (0, client_1.sendMessage)(familySession.chatId, `${caregiverName} is available for an interview!\n\n` +
-            `📅 ${formatted}\n\n` +
+        await (0, client_1.sendMessage)(familySession.chatId, `${caregiverName} is available for an interview.\n\n` +
+            `${formatted}\n\n` +
             `Confirm this time? Reply YES to schedule.`);
         // Store pending confirmation
         await db.collection("agent_sessions").doc(reqData.clientPhone).update({
             pendingInterviewConfirm: { docId: doc.id, caregiverName, mutualTime, formatted },
         });
     }
-    await (0, client_1.sendMessage)(chatId, `I've sent those times to the family! I'll let you know once they confirm. 📅`);
+    await (0, client_1.sendMessage)(chatId, `I've sent those times to the family. I'll let you know once they confirm.`);
 }
 // ── Handle family confirming interview ────────────────────────────────────────
 async function handleInterviewConfirm(phone, chatId, session) {
     var _a, _b, _c, _d;
     const pending = session.pendingInterviewConfirm;
     if (!pending) {
-        await (0, client_1.sendMessage)(chatId, "I don't have a pending interview to confirm. Let me know if you'd like to schedule one! 📅");
+        await (0, client_1.sendMessage)(chatId, "I don't have a pending interview to confirm. Let me know if you'd like to schedule one.");
         return;
     }
     // Create confirmed interview in Firestore

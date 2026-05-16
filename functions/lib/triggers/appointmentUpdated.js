@@ -86,7 +86,7 @@ exports.onAppointmentUpdated = functions.firestore
         }
         // ── Arrival / in-progress ────────────────────────────────────────────
         if (after.status === "in-progress" && before.status !== "in-progress") {
-            const msg = `${(_a = after.caregiverName) !== null && _a !== void 0 ? _a : "Your caregiver"} has arrived for your ${after.time} visit. ✅`;
+            const msg = `${(_a = after.caregiverName) !== null && _a !== void 0 ? _a : "Your caregiver"} has arrived for your ${after.time} visit.`;
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
                 content: msg, urgency: "immediate", sourceAgent: "arrival_notification", canDrop: false,
             }).catch(() => (0, client_1.sendToPhone)(phone, msg));
@@ -100,10 +100,10 @@ exports.onAppointmentUpdated = functions.firestore
         if (after.status === "confirmed" && before.status !== "confirmed" && after.caregiverId) {
             const caregiverPhone = await getCaregiverPhone(after.caregiverId);
             if (caregiverPhone) {
-                const msg = `✅ Booking confirmed!\n` +
-                    `📅 ${after.date} at ${after.time}\n` +
-                    (after.clientName ? `👤 ${after.clientName}\n` : "") +
-                    (after.address ? `📍 ${after.address}` : "");
+                const msg = `Booking confirmed.\n` +
+                    `${after.date} at ${after.time}\n` +
+                    (after.clientName ? `${after.clientName}\n` : "") +
+                    (after.address ? `${after.address}` : "");
                 await (0, client_1.sendToPhone)(caregiverPhone, msg);
             }
             return;

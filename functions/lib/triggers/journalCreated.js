@@ -108,7 +108,7 @@ exports.onJournalCreated = functions.firestore
                     const seniorDoc = await db.collection("users").doc(seniorId).get();
                     const seniorName = ((_f = (_d = (_c = seniorDoc.data()) === null || _c === void 0 ? void 0 : _c.seniorName) !== null && _d !== void 0 ? _d : (_e = seniorDoc.data()) === null || _e === void 0 ? void 0 : _e.displayName) !== null && _f !== void 0 ? _f : "your loved one");
                     await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
-                        content: `📊 Heads up — I've noticed "${signalType}" has come up ${recentSignals.size} times this week for ${seniorName}.\n\n` +
+                        content: `Heads up — I've noticed "${signalType}" has come up ${recentSignals.size} times this week for ${seniorName}.\n\n` +
                             `This might be worth a conversation with their doctor or care team. 💙`,
                         urgency: "standard",
                         sourceAgent: "health_watch",

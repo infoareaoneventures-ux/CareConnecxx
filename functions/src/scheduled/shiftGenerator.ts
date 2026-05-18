@@ -139,6 +139,24 @@ export const onBookingAccepted = functions.firestore
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
       }
+
+      // Auto-close job post if enough caregivers have now accepted
+      if (after.jobId) {
+        const [jobSnap, acceptedSnap] = await Promise.all([
+          db.collection('job_posts').doc(after.jobId).get(),
+          db.collection('booking_requests')
+            .where('jobId', '==', after.jobId)
+            .where('status', '==', 'accepted')
+            .get(),
+        ]);
+        const caregiversNeeded = jobSnap.data()?.caregiversNeeded || 1;
+        if (jobSnap.exists && acceptedSnap.size >= caregiversNeeded) {
+          await db.collection('job_posts').doc(after.jobId).update({
+            status: 'filled',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+      }
     } catch (err) {
       console.error(`onBookingAccepted: error for booking ${bookingId}`, err);
     }

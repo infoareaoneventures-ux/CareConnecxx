@@ -123,7 +123,7 @@ async function generateShiftsForBooking(bookingId, booking, generateFrom, genera
 exports.onBookingAccepted = functions.firestore
     .document('booking_requests/{bookingId}')
     .onWrite(async (change, context) => {
-    var _a;
+    var _a, _b;
     const before = change.before.exists ? change.before.data() : null;
     const after = change.after.exists ? change.after.data() : null;
     // Only fire when status transitions to 'accepted'
@@ -152,6 +152,23 @@ exports.onBookingAccepted = functions.firestore
                 timestamp: admin.firestore.FieldValue.serverTimestamp(),
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
+        }
+        // Auto-close job post if enough caregivers have now accepted
+        if (after.jobId) {
+            const [jobSnap, acceptedSnap] = await Promise.all([
+                db.collection('job_posts').doc(after.jobId).get(),
+                db.collection('booking_requests')
+                    .where('jobId', '==', after.jobId)
+                    .where('status', '==', 'accepted')
+                    .get(),
+            ]);
+            const caregiversNeeded = ((_b = jobSnap.data()) === null || _b === void 0 ? void 0 : _b.caregiversNeeded) || 1;
+            if (jobSnap.exists && acceptedSnap.size >= caregiversNeeded) {
+                await db.collection('job_posts').doc(after.jobId).update({
+                    status: 'filled',
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
         }
     }
     catch (err) {

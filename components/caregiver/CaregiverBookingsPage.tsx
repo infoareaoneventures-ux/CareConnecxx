@@ -10,16 +10,6 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
 
-const ALL_DAYS_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-function nextOccurrence(fromDate: string, dayName: string): string {
-  const target = ALL_DAYS_ORDER.indexOf(dayName);
-  if (target === -1) return fromDate;
-  const base = new Date(fromDate + 'T12:00:00');
-  const diff = (target - base.getDay() + 7) % 7;
-  base.setDate(base.getDate() + diff);
-  return base.toISOString().split('T')[0];
-}
-
 type Tab = 'requests' | 'active' | 'past';
 
 interface RecipientLifestyle {
@@ -1582,25 +1572,6 @@ export const CaregiverBookingsPage: React.FC = () => {
           });
         });
         await batch.commit();
-      }
-
-      // Auto-close job post if enough caregivers have accepted
-      if (booking?.jobId && booking?.clientId) {
-        const [jobSnap, acceptedSnap] = await Promise.all([
-          db.collection('job_posts').doc(booking.jobId).get(),
-          db.collection('booking_requests')
-            .where('jobId', '==', booking.jobId)
-            .where('status', '==', 'accepted')
-            .get(),
-        ]);
-        const jobData = jobSnap.data();
-        const caregiversNeeded = jobData?.caregiversNeeded || 1;
-        if (acceptedSnap.size >= caregiversNeeded) {
-          await db.collection('job_posts').doc(booking.jobId).update({
-            status: 'filled',
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-          });
-        }
       }
 
       addToast('Booking request accepted!', 'success');

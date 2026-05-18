@@ -10,6 +10,16 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
 
+const ALL_DAYS_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function nextOccurrence(fromDate: string, dayName: string): string {
+  const target = ALL_DAYS_ORDER.indexOf(dayName);
+  if (target === -1) return fromDate;
+  const base = new Date(fromDate + 'T12:00:00');
+  const diff = (target - base.getDay() + 7) % 7;
+  base.setDate(base.getDate() + diff);
+  return base.toISOString().split('T')[0];
+}
+
 type Tab = 'requests' | 'active' | 'past';
 
 interface RecipientLifestyle {

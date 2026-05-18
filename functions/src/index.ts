@@ -79,8 +79,8 @@ export { sendMonthlyHealthTrends, triggerHealthTrendsNow } from './scheduled/hea
 // Transportation badge evaluation (daily) + on-demand refresh
 export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/transportBadge';
 
-// Rolling shift generator (daily) — keeps 1 week of shifts ahead for ongoing bookings
-export { generateRollingShifts } from './scheduled/shiftGenerator';
+// Shift generation: instant on acceptance + daily rolling window
+export { generateRollingShifts, onBookingAccepted } from './scheduled/shiftGenerator';
 
 // Cara iMessage pivot — onboarding callables
 export { markTaskComplete } from './agents/onboardingAgent';

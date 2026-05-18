@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.generateRollingShifts = void 0;
+exports.generateRollingShifts = exports.onBookingAccepted = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const db = admin.firestore();
@@ -52,18 +52,123 @@ function addDays(dateStr, days) {
     d.setDate(d.getDate() + days);
     return d.toISOString().split('T')[0];
 }
+// Shared: generate shifts for one booking starting from a given date up to generateTo.
+async function generateShiftsForBooking(bookingId, booking, generateFrom, generateTo) {
+    var _a, _b, _c, _d;
+    const dayShiftTimes = ((_a = booking.schedule) === null || _a === void 0 ? void 0 : _a.dayShiftTimes) || {};
+    if (Object.keys(dayShiftTimes).length === 0)
+        return 0;
+    const endDate = ((_b = booking.schedule) === null || _b === void 0 ? void 0 : _b.ongoing) ? null : (((_c = booking.schedule) === null || _c === void 0 ? void 0 : _c.endDate) || null);
+    if (endDate && generateFrom > endDate)
+        return 0;
+    const caregiverId = booking.caregiverId || '';
+    let caregiverPhotoURL = null;
+    if (caregiverId) {
+        const cgSnap = await db.collection('caregivers').doc(caregiverId).get().catch(() => null);
+        const cgData = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data();
+        caregiverPhotoURL = (cgData === null || cgData === void 0 ? void 0 : cgData.profilePhoto) || (cgData === null || cgData === void 0 ? void 0 : cgData.photoURL) || (cgData === null || cgData === void 0 ? void 0 : cgData.photo) || null;
+    }
+    const shiftBase = {
+        clientId: booking.clientId || '',
+        clientName: booking.clientName || '',
+        clientPhotoURL: booking.clientPhotoURL || null,
+        caregiverId,
+        caregiverName: booking.caregiverName || '',
+        caregiverPhotoURL,
+        status: 'scheduled',
+        address: booking.address || '',
+        lifestylePreferences: booking.lifestylePreferences || [],
+        rate: (_d = booking.rate) !== null && _d !== void 0 ? _d : null,
+        paymentMethod: booking.paymentMethod || null,
+        notes: booking.notes || '',
+        careRecipients: booking.careRecipients || [],
+        emergencyContact: booking.emergencyContact || null,
+        schedule: booking.schedule || null,
+        bookingRequestId: bookingId,
+        jobId: booking.jobId || null,
+        recurringWeekly: true,
+        tasksCompleted: [],
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    const newShifts = [];
+    Object.entries(dayShiftTimes).forEach(([day, blocks]) => {
+        blocks
+            .filter(b => b.start && b.end)
+            .forEach(b => {
+            let dateStr = nextOccurrenceOnOrAfter(generateFrom, day);
+            while (dateStr <= generateTo) {
+                if (endDate && dateStr > endDate)
+                    break;
+                newShifts.push({ date: dateStr, start: b.start, end: b.end });
+                dateStr = addDays(dateStr, 7);
+            }
+        });
+    });
+    if (newShifts.length === 0)
+        return 0;
+    for (let i = 0; i < newShifts.length; i += 499) {
+        const chunk = newShifts.slice(i, i + 499);
+        const batch = db.batch();
+        chunk.forEach(({ date, start, end }) => {
+            batch.set(db.collection('shifts').doc(), Object.assign(Object.assign({}, shiftBase), { date, startTime: start, endTime: end }));
+        });
+        await batch.commit();
+    }
+    return newShifts.length;
+}
 /**
- * Daily job: for every accepted booking, ensure there is at least 1 week of
- * scheduled shifts ahead. Generates exactly 1 more week whenever the furthest
- * scheduled shift falls within 7 days of today. Stops at endDate for
- * fixed-term bookings; runs indefinitely for ongoing ones.
+ * Firestore trigger: when a booking_request is accepted, immediately generate
+ * the first 2 weeks of shifts without waiting for the daily job.
+ */
+exports.onBookingAccepted = functions.firestore
+    .document('booking_requests/{bookingId}')
+    .onWrite(async (change, context) => {
+    var _a;
+    const before = change.before.exists ? change.before.data() : null;
+    const after = change.after.exists ? change.after.data() : null;
+    // Only fire when status transitions to 'accepted'
+    if (!after || after.status !== 'accepted')
+        return;
+    if ((before === null || before === void 0 ? void 0 : before.status) === 'accepted')
+        return; // already accepted, no-op
+    const bookingId = context.params.bookingId;
+    const today = new Date().toISOString().split('T')[0];
+    const startDate = ((_a = after.schedule) === null || _a === void 0 ? void 0 : _a.startDate) || today;
+    const generateFrom = startDate >= today ? startDate : today;
+    const generateTo = addDays(generateFrom, 13); // 2 weeks
+    try {
+        const created = await generateShiftsForBooking(bookingId, after, generateFrom, generateTo);
+        console.log(`onBookingAccepted: created ${created} shifts for booking ${bookingId}`);
+        // Notify the client that the caregiver accepted
+        if (after.clientId) {
+            await db.collection('users').doc(after.clientId).collection('notifications').add({
+                userId: after.clientId,
+                type: 'booking_accepted',
+                title: 'Booking Accepted',
+                message: `${after.caregiverName || 'Your caregiver'} accepted your booking request.`,
+                data: { bookingId, caregiverId: after.caregiverId },
+                read: false,
+                isRead: false,
+                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        }
+    }
+    catch (err) {
+        console.error(`onBookingAccepted: error for booking ${bookingId}`, err);
+    }
+});
+/**
+ * Daily job: for every accepted booking, ensure there is at least 2 weeks of
+ * scheduled shifts ahead. Generates more whenever the furthest scheduled shift
+ * falls within 7 days of today.
  */
 exports.generateRollingShifts = functions.pubsub
     .schedule('every 24 hours')
     .onRun(async () => {
-    var _a, _b, _c, _d;
+    var _a, _b;
     const today = new Date().toISOString().split('T')[0];
-    const threshold = addDays(today, 14); // trigger when less than 2 weeks ahead
+    const threshold = addDays(today, 14);
     const bookingsSnap = await db.collection('booking_requests')
         .where('status', '==', 'accepted')
         .get();
@@ -76,14 +181,9 @@ exports.generateRollingShifts = functions.pubsub
         try {
             const booking = bookingDoc.data();
             const bookingId = bookingDoc.id;
-            const dayShiftTimes = ((_a = booking.schedule) === null || _a === void 0 ? void 0 : _a.dayShiftTimes) || {};
-            if (Object.keys(dayShiftTimes).length === 0)
-                continue;
-            const endDate = ((_b = booking.schedule) === null || _b === void 0 ? void 0 : _b.ongoing) ? null : (((_c = booking.schedule) === null || _c === void 0 ? void 0 : _c.endDate) || null);
-            // Skip if booking period has already ended
+            const endDate = ((_a = booking.schedule) === null || _a === void 0 ? void 0 : _a.ongoing) ? null : (((_b = booking.schedule) === null || _b === void 0 ? void 0 : _b.endDate) || null);
             if (endDate && today > endDate)
                 continue;
-            // Find the furthest future scheduled shift for this booking
             const latestShiftSnap = await db.collection('shifts')
                 .where('bookingRequestId', '==', bookingId)
                 .where('status', '==', 'scheduled')
@@ -91,74 +191,19 @@ exports.generateRollingShifts = functions.pubsub
                 .limit(1)
                 .get();
             const maxShiftDate = latestShiftSnap.empty
-                ? addDays(today, -1) // no future shifts → start from today
+                ? addDays(today, -1)
                 : latestShiftSnap.docs[0].data().date;
-            // Only act if we're within the 7-day threshold
             if (maxShiftDate >= threshold)
                 continue;
             const generateFrom = addDays(maxShiftDate, 1);
             const generateTo = addDays(maxShiftDate, 14);
-            // Fetch caregiver photo
-            const caregiverId = booking.caregiverId || '';
-            let caregiverPhotoURL = null;
-            if (caregiverId) {
-                const cgSnap = await db.collection('caregivers').doc(caregiverId).get().catch(() => null);
-                const cgData = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data();
-                caregiverPhotoURL = (cgData === null || cgData === void 0 ? void 0 : cgData.profilePhoto) || (cgData === null || cgData === void 0 ? void 0 : cgData.photoURL) || (cgData === null || cgData === void 0 ? void 0 : cgData.photo) || null;
-            }
-            const shiftBase = {
-                clientId: booking.clientId || '',
-                clientName: booking.clientName || '',
-                clientPhotoURL: booking.clientPhotoURL || null,
-                caregiverId,
-                caregiverName: booking.caregiverName || '',
-                caregiverPhotoURL,
-                status: 'scheduled',
-                address: booking.address || '',
-                lifestylePreferences: booking.lifestylePreferences || [],
-                rate: (_d = booking.rate) !== null && _d !== void 0 ? _d : null,
-                paymentMethod: booking.paymentMethod || null,
-                notes: booking.notes || '',
-                careRecipients: booking.careRecipients || [],
-                emergencyContact: booking.emergencyContact || null,
-                schedule: booking.schedule || null,
-                bookingRequestId: bookingId,
-                jobId: booking.jobId || null,
-                recurringWeekly: true,
-                tasksCompleted: [],
-                createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            };
-            const newShifts = [];
-            Object.entries(dayShiftTimes).forEach(([day, blocks]) => {
-                blocks
-                    .filter(b => b.start && b.end)
-                    .forEach(b => {
-                    let dateStr = nextOccurrenceOnOrAfter(generateFrom, day);
-                    while (dateStr <= generateTo) {
-                        if (endDate && dateStr > endDate)
-                            break;
-                        newShifts.push({ date: dateStr, start: b.start, end: b.end });
-                        dateStr = addDays(dateStr, 7);
-                    }
-                });
-            });
-            if (newShifts.length === 0)
-                continue;
-            // Firestore batch limit is 500 writes
-            for (let i = 0; i < newShifts.length; i += 499) {
-                const chunk = newShifts.slice(i, i + 499);
-                const batch = db.batch();
-                chunk.forEach(({ date, start, end }) => {
-                    batch.set(db.collection('shifts').doc(), Object.assign(Object.assign({}, shiftBase), { date, startTime: start, endTime: end }));
-                });
-                await batch.commit();
-            }
-            totalCreated += newShifts.length;
+            const created = await generateShiftsForBooking(bookingId, booking, generateFrom, generateTo);
+            totalCreated += created;
         }
         catch (err) {
             console.error(`generateRollingShifts: error processing booking ${bookingDoc.id}`, err);
         }
     }
-    console.log(`generateRollingShifts: created ${totalCreated} shifts across ${bookingsSnap.size} accepted bookings`);
+    console.log(`generateRollingShifts: created ${totalCreated} shifts`);
 });
 //# sourceMappingURL=shiftGenerator.js.map

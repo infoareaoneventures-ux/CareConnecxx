@@ -31,8 +31,7 @@ export const CaregiverJobBoardPage: React.FC = () => {
     <div className="min-h-screen bg-slate-50 pb-24">
       <CaregiverTopNav />
       <div className="max-w-6xl mx-auto px-4 md:px-6 py-6">
-        <h1 className="text-2xl font-bold text-slate-900 mb-1">Find your perfect job</h1>
-        <p className="text-sm text-slate-500 mb-6">Senior-care opportunities near you. Apply, save, or hide posts as you go.</p>
+        <h1 className="text-2xl font-bold text-slate-900 mb-6">Find your perfect job</h1>
 
         {loading ? (
           <div className="flex justify-center py-16">
@@ -43,7 +42,6 @@ export const CaregiverJobBoardPage: React.FC = () => {
             onShowToast={addToast}
             profile={profile}
             onJobAccepted={() => navigate('/caregiver/bookings')}
-            hideApplicationsTab
           />
         )}
       </div>

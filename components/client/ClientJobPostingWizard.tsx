@@ -28,6 +28,7 @@ interface WizardForm {
   careRecipientLastName: string;
   careRecipientAge: string;
   adultsCount: number;
+  caregiversNeeded: number;
   additionalRecipients: { firstName: string; lastName: string; age: string; relationship: string }[];
   relationship: string;
   emergencyFirstName: string;
@@ -53,10 +54,10 @@ interface Props {
 const TOTAL_STEPS = 14;
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const TIME_OPTIONS = [
-  { value: 'morning',   label: 'Morning' },
-  { value: 'afternoon', label: 'Afternoon' },
-  { value: 'evening',   label: 'Evening' },
-  { value: 'overnight', label: 'Overnight' },
+  { value: 'morning',   label: 'Morning',   sub: '6am–12pm' },
+  { value: 'afternoon', label: 'Afternoon', sub: '12pm–6pm' },
+  { value: 'evening',   label: 'Evening',   sub: '6pm–11pm' },
+  { value: 'overnight', label: 'Overnight', sub: '11pm–6am' },
 ];
 const CARE_NEEDS_OPTIONS = [
   'Mobility Assistance',
@@ -115,6 +116,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     careRecipientLastName: '',
     careRecipientAge: '',
     adultsCount: 1,
+    caregiversNeeded: 1,
     additionalRecipients: [],
     relationship: '',
     emergencyFirstName: '',
@@ -328,9 +330,9 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
             <p className="text-sm font-semibold text-slate-700 mt-1">How often do you need this care?</p>
             <div className="flex flex-col gap-2">
               {[
-                { val: 'specific', label: 'Specific date', sub: 'Date night, backup care, one-time needs', icon: <Calendar className="w-5 h-5 text-indigo-500" /> },
-                { val: 'part-time', label: 'Part-time', sub: '25 hours or less per week', icon: <Clock className="w-5 h-5 text-blue-500" /> },
-                { val: 'full-time', label: 'Full-time', sub: 'More than 25 hours per week', icon: <Briefcase className="w-5 h-5 text-teal-500" /> },
+                { val: 'specific', label: 'Occasional', sub: '', icon: <Calendar className="w-5 h-5 text-indigo-500" /> },
+                { val: 'part-time', label: 'Part-time', sub: '', icon: <Clock className="w-5 h-5 text-blue-500" /> },
+                { val: 'full-time', label: 'Full-time', sub: '', icon: <Briefcase className="w-5 h-5 text-teal-500" /> },
               ].map(opt => (
                 <button
                   key={opt.val}
@@ -563,13 +565,14 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                         ? f.timeOfDay.filter(v => v !== opt.value)
                         : [...f.timeOfDay, opt.value],
                     }))}
-                    className={`py-3 rounded-xl text-sm font-medium border-2 transition-all ${
+                    className={`py-3 px-3 rounded-xl text-sm font-medium border-2 transition-all ${
                       form.timeOfDay.includes(opt.value)
                         ? 'bg-indigo-50 border-indigo-500 text-indigo-600'
                         : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
                     }`}
                   >
-                    {opt.label}
+                    <span className="block">{opt.label}</span>
+                    <span className="block text-xs font-normal opacity-60">{opt.sub}</span>
                   </button>
                 ))}
               </div>
@@ -803,15 +806,22 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               </div>
             ))}
 
-            {/* Multiple caregivers note */}
-            {form.adultsCount > 2 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex gap-2 items-start">
-                <span className="text-amber-500 text-sm mt-0.5 shrink-0">ⓘ</span>
-                <p className="text-amber-700 text-xs leading-relaxed">
-                  For more than 2 people, multiple caregivers may be needed.
-                </p>
+            {/* How many caregivers needed */}
+            <div>
+              <p className="text-slate-600 text-sm font-medium mb-1 text-center">How many caregivers do you need?</p>
+              <div className="flex items-center gap-5 justify-center">
+                <button onClick={() => setForm(f => ({ ...f, caregiversNeeded: Math.max(1, f.caregiversNeeded - 1) }))} disabled={form.caregiversNeeded <= 1}
+                  className="w-9 h-9 rounded-full border-2 border-slate-300 flex items-center justify-center text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                  <span className="text-xl leading-none mb-0.5">−</span>
+                </button>
+                <span className="text-2xl font-bold text-slate-800 w-8 text-center">{form.caregiversNeeded}</span>
+                <button onClick={() => setForm(f => ({ ...f, caregiversNeeded: Math.min(4, f.caregiversNeeded + 1) }))} disabled={form.caregiversNeeded >= 4}
+                  className="w-9 h-9 rounded-full border-2 border-slate-300 flex items-center justify-center text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                  <span className="text-xl leading-none mb-0.5">+</span>
+                </button>
               </div>
-            )}
+              <p className="text-slate-500 text-xs text-center mt-1">{form.caregiversNeeded === 1 ? 'Caregiver' : 'Caregivers'}</p>
+            </div>
 
             <button
               onClick={next}
@@ -967,25 +977,20 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           <div className="flex flex-col gap-5">
             <h2 className="text-xl font-bold text-slate-800 text-center">Set your rate</h2>
 
-            {/* Slider */}
+            {/* Rate input */}
             <div>
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm font-semibold text-slate-700">Hourly rate</span>
-                <span className="text-xl font-bold text-indigo-600">${form.rate}/hr</span>
-              </div>
-              <input
-                type="range"
-                min={18}
-                max={75}
-                step={1}
-                value={form.rate}
-                onChange={e => update('rate', Number(e.target.value))}
-                className="w-full accent-indigo-600"
-              />
-              <div className="flex justify-between text-xs text-slate-400 mt-1">
-                <span>$18/hr</span>
-                <span>Avg $32/hr</span>
-                <span>$75/hr</span>
+              <label className="text-sm font-semibold text-slate-700 block mb-2">Hourly rate</label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 font-semibold">$</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={form.rate ?? ''}
+                  onChange={e => update('rate', e.target.value === '' ? undefined : Number(e.target.value))}
+                  placeholder="e.g. 32"
+                  className="w-full pl-8 pr-14 py-3 border-2 border-slate-200 rounded-xl text-lg font-semibold text-slate-900 focus:outline-none focus:border-indigo-500"
+                />
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">/hr</span>
               </div>
             </div>
 

@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { User, Loader2, Calendar, Phone, Heart, FileText, Edit, Clock, Home, Search, CheckCircle, DollarSign, Hourglass } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { BookingModal } from '../BookingModal';
-import { CaregiverProfileModal } from '../CaregiverProfileModal';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
 import { ViewType, Appointment, Caregiver, ClientIntakeData } from '../../types';
 import { dbService, authService } from '../../services/api';
@@ -32,7 +31,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   
   // Modal states
   const [selectedCaregiver, setSelectedCaregiver] = useState<Caregiver | null>(null);
-  const [viewingCaregiver, setViewingCaregiver] = useState<Caregiver | null>(null);
   const [scheduleInterviewCaregiver, setScheduleInterviewCaregiver] = useState<Caregiver | null>(null);
   
   // Loading states
@@ -391,7 +389,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                     matchScore={matchScores[caregiver.id] || 95}
                     matchReasons={getMatchReasons(caregiver)}
                     onBook={handleGatedBook}
-                    onViewProfile={setViewingCaregiver}
+                    onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}
                     onMessage={handleGatedMessage}
                     isSaved={savedIds.includes(caregiver.id)}
                     onToggleSave={handleToggleSave}
@@ -448,7 +446,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                         matchScore={Math.round((caregiver.rating || 4.5) / 5 * 100)}
                         matchReasons={[]}
                         onBook={setSelectedCaregiver}
-                        onViewProfile={setViewingCaregiver}
+                        onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}
                         isSaved={savedIds.includes(caregiver.id)}
                         onToggleSave={handleToggleSave}
                       />
@@ -514,7 +512,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                               <DollarSign className="w-3 h-3" /> Mark Paid
                             </button>
                           )}
-                          <button onClick={() => navigate('/client/schedule')} className="text-xs text-slate-400 hover:text-primary-600 font-medium transition-colors">View</button>
+                          <button onClick={() => navigate('/client/calendar')} className="text-xs text-slate-400 hover:text-primary-600 font-medium transition-colors">View</button>
                         </div>
                       </div>
                     );
@@ -575,7 +573,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             currentUserUid={currentUser?.uid}
             onChatCoordinator={handleChatCoordinator}
             onNavigate={onNavigate}
-            onViewCaregiver={setViewingCaregiver}
+            onViewCaregiver={(cg) => navigate(`/client/caregiver/${cg.id}`)}
           />
         </div>
       </main>
@@ -625,28 +623,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           caregiver={selectedCaregiver}
           onClose={() => setSelectedCaregiver(null)}
           onConfirm={handleBookingConfirm}
-        />
-      )}
-
-      {viewingCaregiver && (
-        <CaregiverProfileModal
-          caregiver={viewingCaregiver}
-          onClose={() => setViewingCaregiver(null)}
-          onBookNow={() => {
-            const c = viewingCaregiver;
-            setViewingCaregiver(null);
-            handleGatedBook(c);
-          }}
-          onMessage={() => {
-            const c = viewingCaregiver;
-            setViewingCaregiver(null);
-            handleGatedMessage(c);
-          }}
-          onRequestInterview={() => {
-            const c = viewingCaregiver;
-            setViewingCaregiver(null);
-            gate('interview', c.name, () => setScheduleInterviewCaregiver(c));
-          }}
         />
       )}
 

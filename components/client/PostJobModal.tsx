@@ -20,7 +20,7 @@ export const PostJobModal: React.FC<PostJobModalProps> = ({ onClose, onShowToast
   const [time, setTime] = useState('');
   const [duration, setDuration] = useState('4');
   const [scheduleType, setScheduleType] = useState('One-time');
-  const [budget, setBudget] = useState(25);
+  const [budget, setBudget] = useState<number | ''>('');
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -186,23 +186,20 @@ export const PostJobModal: React.FC<PostJobModalProps> = ({ onClose, onShowToast
               </div>
             </div>
 
-            {/* Budget Slider */}
+            {/* Budget input */}
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-sm font-semibold text-slate-700">Hourly Budget</label>
-                <span className="text-lg font-bold text-primary-700">${budget}/hr</span>
-              </div>
-              <input
-                type="range"
-                min={18}
-                max={55}
-                value={budget}
-                onChange={e => setBudget(Number(e.target.value))}
-                className="w-full accent-teal-600"
-              />
-              <div className="flex justify-between text-xs text-slate-400 mt-1">
-                <span>$18/hr</span>
-                <span>$55/hr</span>
+              <label className="text-sm font-semibold text-slate-700 block mb-1">Hourly Budget</label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 font-semibold">$</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={budget}
+                  onChange={e => setBudget(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="e.g. 32"
+                  className="w-full pl-8 pr-14 py-3 border-2 border-slate-200 rounded-xl text-lg font-semibold text-slate-900 focus:outline-none focus:border-primary-500"
+                />
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">/hr</span>
               </div>
             </div>
 

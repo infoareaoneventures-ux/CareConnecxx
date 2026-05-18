@@ -5,6 +5,7 @@ import { ClientNavigation } from '../ClientNavigation';
 import { StepIndicator } from '../../ui/StepIndicator';
 import { useCareConnex } from '../../../context/CareConnexContext';
 import { dbService } from '../../../services/api';
+import { geocodeToLatLng } from '../../../utils/geocode';
 import { db } from '../../../lib/firebase';
 import firebase from '../../../lib/firebase';
 import { Step1Schedule } from './Step1Schedule';
@@ -60,6 +61,7 @@ export const PostJobFlow: React.FC = () => {
         applicantCount: 0,
 
         recipientsCount: (Math.min(4, data.careRecipients.length || 1)) as 1 | 2 | 3 | 4,
+        caregiversNeeded: data.caregiversNeeded || 1,
         city: data.city.trim(),
         state: data.state.trim(),
         zipCode: data.zipCode.trim(),
@@ -75,6 +77,15 @@ export const PostJobFlow: React.FC = () => {
       const id = await dbService.createJobPost(payload as any, currentUser.uid);
       setSubmittedPostId(typeof id === 'string' ? id : 'posted');
       addToast('Job posted! Caregivers can now apply.', 'success');
+
+      // Geocode care address and store lat/lng so FindCaregivers can calculate real distances
+      geocodeToLatLng(data.streetAddress, data.city, data.state, data.zipCode).then(coords => {
+        if (coords && db) {
+          db.collection('job_postings').doc(currentUser.uid)
+            .set({ lat: coords.lat, lng: coords.lng }, { merge: true })
+            .catch(() => {});
+        }
+      });
 
       // Save recipients to job_postings (for care plan recipient tabs) and
       // save per-recipient care data to carePlans/{uid}.recipientPlans
@@ -133,6 +144,7 @@ export const PostJobFlow: React.FC = () => {
             const existingLocs = cpData?.recipientPlans?.[key]?.locations;
             const updates: Record<string, any> = {
               [`recipientPlans.${key}.careNeeds`]: data.careTypes,
+              [`recipientPlans.${key}.careNeedDetails`]: data.careNeedDetails || {},
               [`recipientPlans.${key}.notes`]: data.description.trim(),
             };
             // Only set location if recipient has none saved yet
@@ -143,7 +155,7 @@ export const PostJobFlow: React.FC = () => {
               await cpRef.update(updates);
             } catch (e: any) {
               if (e.code === 'not-found') {
-                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, notes: data.description.trim(), locations: locationEntry } } });
+                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, careNeedDetails: data.careNeedDetails || {}, notes: data.description.trim(), locations: locationEntry } } });
               }
             }
           }

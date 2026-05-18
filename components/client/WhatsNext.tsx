@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   Check,
   Heart,
@@ -119,6 +119,51 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
     membershipActive,
     loading,
   } = useOnboardingProgress(uid);
+
+  const autoPosted = useRef(false);
+  useEffect(() => {
+    if (!identityVerified || !membershipActive || autoPosted.current || !uid) return;
+    autoPosted.current = true;
+    (async () => {
+      try {
+        const { db } = await import('../../lib/firebase');
+        if (!db) return;
+        // Check if client already has a job post
+        const existing = await db.collection('job_posts').where('clientId', '==', uid).limit(1).get();
+        if (!existing.empty) return;
+        // Read wizard data
+        const snap = await db.collection('job_postings').doc(uid).get();
+        if (!snap.exists) return;
+        const w = snap.data() as any;
+        if (!w?.careRecipientFirstName) return;
+        const { dbService, authService } = await import('../../services/api');
+        const clientName = authService.getCurrentUser()?.displayName || 'Client';
+        const city = w.city || '';
+        const state = w.state || '';
+        const location = [city, state].filter(Boolean).join(', ');
+        await dbService.createJobPost({
+          title: `Senior care${city ? ` in ${city}` : ''}`,
+          description: w.jobDescription || 'Looking for a caring and reliable caregiver.',
+          careTypes: w.careNeeds || [],
+          requirements: w.careNeeds || [],
+          startDate: w.startDate || new Date().toISOString().split('T')[0],
+          city,
+          state,
+          zipCode: w.zipCode || '',
+          location,
+          streetAddress: w.street || '',
+          timeOfDay: w.timeOfDay || [],
+          daysOfWeek: w.selectedDays || [],
+          rate: w.rate || 0,
+          rateFlexible: !w.rate,
+          paymentMethod: w.paymentMethod || 'cash',
+          careLevel: w.careLevel || 'moderate',
+        }, uid);
+      } catch (e) {
+        console.error('Auto job post failed:', e);
+      }
+    })();
+  }, [identityVerified, membershipActive, uid]);
 
   if (loading) {
     return (

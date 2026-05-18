@@ -26,8 +26,7 @@ let isConfigured = false;
 let googleProvider: firebase.auth.GoogleAuthProvider;
 
 try {
-  googleProvider = new firebase.auth.GoogleAuthProvider();
-  googleProvider.setCustomParameters({ prompt: 'select_account' });
+  console.log("Firebase config check:", { apiKey: firebaseConfig.apiKey ? "present" : "MISSING", projectId: firebaseConfig.projectId });
   // strict validation
   if (!firebaseConfig.apiKey) {
     throw new Error("Missing Firebase Configuration. Check .env file.");
@@ -40,6 +39,8 @@ try {
     app = firebase.app();
   }
   auth = firebase.auth();
+  googleProvider = new firebase.auth.GoogleAuthProvider();
+  googleProvider.setCustomParameters({ prompt: 'select_account' });
   db = firebase.firestore();
   functions = firebase.functions();
   isConfigured = true;

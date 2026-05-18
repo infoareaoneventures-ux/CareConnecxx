@@ -149,6 +149,24 @@ export const AdminClientManager: React.FC = () => {
     finally { setSending(false); }
   };
 
+  const handleApprove = async () => {
+    if (!selected) return;
+    try {
+      await adminService.updateClient(selected.uid, {
+        verified: true,
+        membershipPaid: true,
+        subscriptionActive: true,
+        membershipStatus: 'active',
+        identityCheckStatus: 'verified',
+        onboardingStep: 3,
+        approvedAt: new Date().toISOString(),
+        approvedBy: 'admin',
+      } as any);
+      patch({ verified: true, isBanned: false, isSuspended: false });
+      showToast(`${selected.name} approved`, 'success');
+    } catch { showToast('Failed to approve client', 'error'); }
+  };
+
   const patch = (updates: Partial<ClientRow>) => {
     setClients(prev => prev.map(c => c.uid === selected!.uid ? { ...c, ...updates } : c));
     setSelected(prev => prev ? { ...prev, ...updates } : prev);
@@ -354,6 +372,11 @@ export const AdminClientManager: React.FC = () => {
 
                   {/* Action buttons */}
                   <div className="flex flex-wrap gap-2">
+                    {!selected.verified && !selected.isBanned && (
+                      <button onClick={handleApprove} className="flex items-center gap-1.5 px-3 py-2 text-sm border border-green-300 text-green-700 rounded-lg hover:bg-green-50 font-medium">
+                        <CheckCircle className="w-4 h-4" /> Approve
+                      </button>
+                    )}
                     <button onClick={() => setShowNotifyForm(v => !v)} className="flex items-center gap-1.5 px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700">
                       <Bell className="w-4 h-4" /> Notify
                     </button>

@@ -11,9 +11,9 @@ const firebaseConfig = {
   authDomain: "careconnex-d4c8b.firebaseapp.com",
   projectId: "careconnex-d4c8b",
   storageBucket: "careconnex-d4c8b.firebasestorage.app",
-  messagingSenderId: "1098628562416",
-  appId: "1:1098628562416:web:49a0de9c3f25c80149cf54",
-  measurementId: "G-BVHR08Q5X4"
+  messagingSenderId: "688697288776",
+  appId: "1:688697288776:web:771c1b479ee21521d6107d",
+  measurementId: "G-FG1T1TJTTR"
 };
 
 // Import Firebase scripts

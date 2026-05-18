@@ -14,8 +14,7 @@ const BrowseCaregivers = lazy(() => import('./components/client/BrowseCaregivers
 const FindCaregivers = lazy(() => import('./components/FindCaregivers'));
 const Membership = lazy(() => import('./components/Membership'));
 const Schedule = lazy(() => import('./components/Schedule'));
-const Interviews = lazy(() => import('./components/Interviews'));
-const HireDecision = lazy(() => import('./components/HireDecision'));
+const ClientVisitsPage = lazy(() => import('./components/client/ClientVisitsPage').then(m => ({ default: m.ClientVisitsPage })));
 const ClientCaregiverProfile = lazy(() => import('./components/ClientCaregiverProfile'));
 const IdentityCallback = lazy(() => import('./components/client/IdentityCallback'));
 const BookingFlow = lazy(() => import('./components/client/booking/BookingFlow'));
@@ -309,9 +308,12 @@ const AppContent: React.FC = () => {
           <Route path="/client/post-job" element={<ClientRoute element={<PostJobFlow />} />} />
           <Route path="/client/posts" element={<ClientRoute element={<PostsPage />} />} />
           <Route path="/client/membership" element={<ClientRoute element={<Membership />} />} />
-          <Route path="/client/schedule" element={<ClientRoute element={<Schedule />} />} />
-          <Route path="/client/interviews" element={<ClientRoute element={<Interviews />} />} />
-          <Route path="/client/hire/:caregiverId" element={<ClientRoute element={<HireDecision />} />} />
+          <Route path="/client/calendar" element={<ClientRoute element={<Schedule />} />} />
+          <Route path="/client/schedule" element={<Navigate to="/client/calendar" replace />} />
+          <Route path="/client/bookings" element={<ClientRoute element={<ClientVisitsPage />} />} />
+          <Route path="/client/visits" element={<Navigate to="/client/bookings" replace />} />
+          <Route path="/client/interviews" element={<Navigate to="/client/posts" replace />} />
+          <Route path="/client/hire/:caregiverId" element={<Navigate to="/client/posts" replace />} />
           <Route path="/client/caregiver/:caregiverId" element={<ClientRoute element={<ClientCaregiverProfile />} />} />
           <Route path="/client/identity-callback" element={<ClientRoute element={<IdentityCallback />} />} />
           <Route path="/client/book/:caregiverId" element={<ClientRoute element={<BookingFlow />} />} />

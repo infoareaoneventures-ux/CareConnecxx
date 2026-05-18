@@ -604,7 +604,7 @@ export const dbService = {
         const allowedFields = [
             'title', 'description', 'rate', 'date', 'startTime', 'endTime',
             'location', 'requirements', 'seniorNeeds',
-            'startDate', 'endDate', 'daysOfWeek', 'timeOfDay', 'minHoursPerWeek',
+            'startDate', 'endDate', 'daysOfWeek', 'timeOfDay', 'minHoursPerWeek', 'jobFrequency',
             'recipientsCount', 'streetAddress', 'city', 'state', 'zipCode', 'neighborhood',
             'careTypes', 'careLevel', 'petsInHome', 'smokingHousehold',
             'paymentMethod', 'rateFlexible',
@@ -3565,9 +3565,23 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
         await cpRef.set({ locationPool: pool }, { merge: true });
     };
 
+    // Normalize wizard emergency contact into carePlans/{uid}.emergencyContacts
+    const emergencyContactWrite = (clean.emergencyFirstName || clean.emergencyPhone)
+        ? db.collection('carePlans').doc(uid).set({
+            emergencyContacts: [{
+                id: 'wizard',
+                name: [clean.emergencyFirstName, clean.emergencyLastName].filter(Boolean).join(' '),
+                relation: (clean as any).emergencyRelationship || '',
+                phone: clean.emergencyPhone,
+                isPrimary: true,
+            }],
+        }, { merge: true })
+        : Promise.resolve();
+
     await Promise.allSettled([
         db.collection('senior_profiles').doc(uid).set(profileUpdate, { merge: true }),
         db.collection('users').doc(uid).set({ jobPostingCompleted: true }, { merge: true }),
         locationPoolUpdate(),
+        emergencyContactWrite,
     ]);
 }

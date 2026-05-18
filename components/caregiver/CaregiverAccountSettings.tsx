@@ -1,11 +1,16 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Pencil } from 'lucide-react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle, Loader2, AlertCircle, Clock } from 'lucide-react';
 import { authService, dbService } from '../../services/api';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
-import { DocumentUpload } from '../ui/DocumentUpload';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
 import type { Caregiver, CaregiverDocument, UserProfile } from '../../types';
+
+const TRANSPORT_DOCS: { type: DocumentType; label: string; desc: string }[] = [
+  { type: 'driversLicense', label: "Driver's License", desc: "Front of your valid driver's license" },
+  { type: 'insurance', label: 'Vehicle Insurance', desc: 'Current auto insurance showing active coverage' },
+  { type: 'registration', label: 'Vehicle Registration', desc: 'Current vehicle registration document' },
+];
 
 type NotificationKey =
   | 'monthlyTips'
@@ -66,6 +71,19 @@ export const CaregiverAccountSettings: React.FC = () => {
   const [savingPhone, setSavingPhone] = useState(false);
   const [savingAddress, setSavingAddress] = useState(false);
 
+  // Transport doc upload status
+  const [transportStatus, setTransportStatus] = useState<Record<string, 'idle' | 'uploading' | 'done' | 'approved' | 'expired' | 'rejected' | 'error'>>({
+    driversLicense: 'idle', insurance: 'idle', registration: 'idle',
+  });
+  const [transportExpiry, setTransportExpiry] = useState<Record<string, string | null>>({
+    driversLicense: null, insurance: null, registration: null,
+  });
+  const transportRefs: Record<string, React.RefObject<HTMLInputElement>> = {
+    driversLicense: useRef<HTMLInputElement>(null),
+    insurance: useRef<HTMLInputElement>(null),
+    registration: useRef<HTMLInputElement>(null),
+  };
+
   // Password
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
@@ -94,6 +112,30 @@ export const CaregiverAccountSettings: React.FC = () => {
           notificationPrefs: cp.notificationPrefs,
           bookingRequestPolicy: cp.bookingRequestPolicy,
           notAcceptingNewFamilies: cp.notAcceptingNewFamilies,
+        });
+        const docs = cp.documents || {};
+        const resolveDocStatus = (doc: any) => {
+          if (!doc?.url) return 'idle';
+          if (doc.status === 'approved') {
+            if (doc.expirationDate) {
+              const [y,m,d] = doc.expirationDate.split('-');
+              const today = new Date(); today.setHours(0,0,0,0);
+              if (new Date(+y, +m-1, +d) < today) return 'expired';
+            }
+            return 'approved';
+          }
+          if (doc.status === 'rejected') return 'rejected';
+          return 'done'; // uploaded, pending review
+        };
+        setTransportStatus({
+          driversLicense: resolveDocStatus(docs.driversLicense),
+          insurance: resolveDocStatus(docs.insurance),
+          registration: resolveDocStatus(docs.registration),
+        });
+        setTransportExpiry({
+          driversLicense: docs.driversLicense?.expirationDate || null,
+          insurance: docs.insurance?.expirationDate || null,
+          registration: docs.registration?.expirationDate || null,
         });
       }
     })();
@@ -164,25 +206,19 @@ export const CaregiverAccountSettings: React.FC = () => {
     }
   };
 
-  const handleDocumentUpload = useCallback(async (file: File, type: DocumentType) => {
+  const handleTransportUpload = useCallback(async (type: DocumentType, file: File) => {
     if (!currentUser?.uid) return;
+    setTransportStatus(prev => ({ ...prev, [type]: 'uploading' }));
     try {
       const doc = await documentUploadService.uploadDocument(currentUser.uid, file, type);
-      setProfile(prev => prev ? { ...prev, documents: { ...prev.documents, [type]: doc } } as any : prev);
-      addToast(`${documentUploadService.getDocumentTypeName(type)} uploaded`, 'success');
-    } catch { addToast('Upload failed', 'error'); }
+      setProfile(prev => prev ? { ...prev, documents: { ...(prev as any).documents, [type]: doc } } as any : prev);
+      setTransportStatus(prev => ({ ...prev, [type]: 'done' }));
+      addToast('Document uploaded', 'success');
+    } catch {
+      setTransportStatus(prev => ({ ...prev, [type]: 'error' }));
+      addToast('Upload failed. Please try again.', 'error');
+    }
   }, [currentUser?.uid, addToast]);
-
-  const handleDocumentDelete = useCallback(async (type: DocumentType) => {
-    if (!currentUser?.uid) return;
-    const doc = (profile as any)?.documents?.[type];
-    if (!doc?.path) return;
-    try {
-      await documentUploadService.deleteDocument(currentUser.uid, type, doc.path);
-      setProfile(prev => prev ? { ...prev, documents: { ...(prev as any).documents, [type]: undefined } } as any : prev);
-      addToast('Document removed', 'info');
-    } catch { addToast('Failed to remove document', 'error'); }
-  }, [currentUser?.uid, profile, addToast]);
 
   const handleDeleteAccount = async () => {
     if (!window.confirm('Are you sure? This permanently deletes your account.')) return;
@@ -357,33 +393,89 @@ export const CaregiverAccountSettings: React.FC = () => {
 
         {/* ── Transportation Documents ── */}
         {hasTransportation && (
-          <Accordion open={openTransport} onToggle={() => setOpenTransport(o => !o)} title="Transportation Documents">
+          <Accordion
+            open={openTransport}
+            onToggle={() => setOpenTransport(o => !o)}
+            title="Transportation Documents"
+            badge={Object.values(transportStatus).some(s => s === 'expired' || s === 'rejected')
+              ? <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs font-semibold rounded-full">Action needed</span>
+              : undefined}
+          >
             <div className="p-5 space-y-4">
-              <p className="text-xs text-slate-500">Keep these documents up to date to maintain your Transportation badge.</p>
-              <DocumentUpload
-                type="driversLicense"
-                label="Driver's License (Front)"
-                description="Valid government-issued driver's license"
-                existingDocument={(profile as any)?.documents?.driversLicense}
-                onUpload={handleDocumentUpload}
-                onDelete={handleDocumentDelete}
-              />
-              <DocumentUpload
-                type="insurance"
-                label="Vehicle Insurance"
-                description="Current auto insurance showing active coverage"
-                existingDocument={(profile as any)?.documents?.insurance}
-                onUpload={handleDocumentUpload}
-                onDelete={handleDocumentDelete}
-              />
-              <DocumentUpload
-                type="registration"
-                label="Vehicle Registration"
-                description="Current vehicle registration document"
-                existingDocument={(profile as any)?.documents?.registration}
-                onUpload={handleDocumentUpload}
-                onDelete={handleDocumentDelete}
-              />
+              <p className="text-sm text-slate-500">Required to activate your transportation badge. Keep these up to date.</p>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                <p className="text-xs text-amber-800">
+                  Our team reviews these before approving your transportation services. Upload all three to avoid delays.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {TRANSPORT_DOCS.map(({ type, label, desc }) => (
+                  <div key={type} className={`border-2 rounded-xl p-3 flex items-center gap-3 transition-all ${
+                    transportStatus[type] === 'approved' ? 'border-green-300 bg-green-50'
+                    : transportStatus[type] === 'expired' ? 'border-orange-300 bg-orange-50'
+                    : transportStatus[type] === 'rejected' ? 'border-red-300 bg-red-50'
+                    : transportStatus[type] === 'done' ? 'border-amber-300 bg-amber-50'
+                    : 'border-slate-200'
+                  }`}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-800">{label}</p>
+                      <p className="text-xs text-slate-500">{desc}</p>
+                      {transportExpiry[type] && (
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Expires {(() => { const [y,m,d] = transportExpiry[type]!.split('-'); return new Date(+y, +m-1, +d).toLocaleDateString(); })()}
+                        </p>
+                      )}
+                    </div>
+                    {transportStatus[type] === 'approved' ? (
+                      <span className="flex items-center gap-1 text-green-700 text-xs font-medium shrink-0">
+                        <CheckCircle className="w-3.5 h-3.5" /> Approved
+                      </span>
+                    ) : transportStatus[type] === 'expired' ? (
+                      <button onClick={() => transportRefs[type].current?.click()}
+                        className="flex items-center gap-1 text-orange-700 text-xs font-semibold border border-orange-300 px-3 py-1.5 rounded-lg hover:bg-orange-100 shrink-0">
+                        <AlertCircle className="w-3.5 h-3.5" /> Expired — Re-upload
+                      </button>
+                    ) : transportStatus[type] === 'rejected' ? (
+                      <button onClick={() => transportRefs[type].current?.click()}
+                        className="flex items-center gap-1 text-red-700 text-xs font-semibold border border-red-300 px-3 py-1.5 rounded-lg hover:bg-red-100 shrink-0">
+                        <AlertCircle className="w-3.5 h-3.5" /> Rejected — Re-upload
+                      </button>
+                    ) : transportStatus[type] === 'done' ? (
+                      <span className="flex items-center gap-1 text-amber-700 text-xs font-medium shrink-0">
+                        <Clock className="w-3.5 h-3.5" /> Under Review
+                      </span>
+                    ) : transportStatus[type] === 'uploading' ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-primary-500 shrink-0" />
+                    ) : (
+                      <button
+                        onClick={() => transportRefs[type].current?.click()}
+                        className={`shrink-0 text-xs font-semibold border px-3 py-1.5 rounded-lg transition-colors ${
+                          transportStatus[type] === 'error'
+                            ? 'border-red-300 text-red-600 hover:bg-red-50'
+                            : 'border-primary-200 text-primary-600 hover:bg-primary-50'
+                        }`}
+                      >
+                        {transportStatus[type] === 'error' ? 'Retry' : 'Upload'}
+                      </button>
+                    )}
+                    <input
+                      ref={transportRefs[type]}
+                      type="file"
+                      accept="image/*,application/pdf"
+                      className="hidden"
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleTransportUpload(type, f); e.target.value = ''; }}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {TRANSPORT_DOCS.filter(d => ['done', 'approved'].includes(transportStatus[d.type])).length < 3 && (
+                <p className="text-center text-xs text-amber-600 font-medium">
+                  All three documents are required to activate the transportation badge.
+                </p>
+              )}
             </div>
           </Accordion>
         )}
@@ -450,10 +542,13 @@ export const CaregiverAccountSettings: React.FC = () => {
   );
 };
 
-const Accordion: React.FC<{ open: boolean; onToggle: () => void; title: string; children: React.ReactNode }> = ({ open, onToggle, title, children }) => (
+const Accordion: React.FC<{ open: boolean; onToggle: () => void; title: string; badge?: React.ReactNode; children: React.ReactNode }> = ({ open, onToggle, title, badge, children }) => (
   <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3">
     <button onClick={onToggle} className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-slate-50 transition-colors">
-      <span className="font-semibold text-slate-900">{title}</span>
+      <span className="flex items-center gap-2">
+        <span className="font-semibold text-slate-900">{title}</span>
+        {badge}
+      </span>
       {open ? <ChevronDown className="w-5 h-5 text-slate-400" /> : <ChevronRight className="w-5 h-5 text-slate-400" />}
     </button>
     {open && <div className="border-t border-slate-100">{children}</div>}

@@ -135,7 +135,7 @@ async function executeBookings(taskId, clientPhone) {
         await (0, client_1.sendMessage)(sessionSnap.data().chatId, `All booked! Here's your confirmed schedule:\n\n` +
             `${lines}\n\n` +
             `I'll text you when ${task.caregiverName} arrives for the first visit.\n` +
-            `View your schedule: ${appUrl}/client/schedule\n\n` +
+            `View your schedule: ${appUrl}/client/calendar\n\n` +
             `Any questions? Just text me.`);
         // Check if client has a payment method — if not, send a Stripe setup link
         try {

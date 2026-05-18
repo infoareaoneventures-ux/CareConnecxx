@@ -108,12 +108,24 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
           });
         }
 
+        // Build pets/smoking lookup from carePlans.locationPool so we can attach
+        // those flags to job_postings addresses (which don't store them directly)
+        const petsSmokeMap: Record<string, { petsInHome: boolean; smokingHousehold: boolean }> = {};
+        if (carePlanSnap && (carePlanSnap as any).exists) {
+          const cpData = (carePlanSnap as any).data() as any;
+          (cpData.locationPool || []).forEach((loc: any) => {
+            const k = `${(loc.street || '').toLowerCase()}${loc.zipCode || ''}`;
+            if (k) petsSmokeMap[k] = { petsInHome: !!loc.petsInHome, smokingHousehold: !!loc.smokingHousehold };
+          });
+        }
+
         // Primary address
         if (jp.street && jp.zipCode) {
           const addrKey = `${jp.street.toLowerCase()}${jp.zipCode}`;
           if (!seenAddresses.has(addrKey)) {
             seenAddresses.add(addrKey);
-            locations.push({ id: 'primary', street: jp.street, city: jp.city || '', state: jp.state || '', zipCode: jp.zipCode, source: 'job-primary' });
+            const ps = petsSmokeMap[addrKey] || { petsInHome: false, smokingHousehold: false };
+            locations.push({ id: 'primary', street: jp.street, city: jp.city || '', state: jp.state || '', zipCode: jp.zipCode, source: 'job-primary', petsInHome: ps.petsInHome, smokingHousehold: ps.smokingHousehold });
           }
         }
 
@@ -124,7 +136,8 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
               const addrKey = `${loc.street.toLowerCase()}${loc.zipCode}`;
               if (!seenAddresses.has(addrKey)) {
                 seenAddresses.add(addrKey);
-                locations.push({ id: `saved-${i}`, street: loc.street, city: loc.city || '', state: loc.state || '', zipCode: loc.zipCode, source: 'job-saved' });
+                const ps = petsSmokeMap[addrKey] || { petsInHome: false, smokingHousehold: false };
+                locations.push({ id: `saved-${i}`, street: loc.street, city: loc.city || '', state: loc.state || '', zipCode: loc.zipCode, source: 'job-saved', petsInHome: ps.petsInHome, smokingHousehold: ps.smokingHousehold });
               }
             }
           });
@@ -374,6 +387,11 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
 
   const handleContinue = () => {
     if (data.careRecipients.length === 0) { onShowToast('Select at least one care recipient', 'error'); return; }
+    if (data.careRecipients.length < data.recipientsCount) {
+      const remaining = data.recipientsCount - data.careRecipients.length;
+      onShowToast(`Please select ${remaining} more care recipient${remaining > 1 ? 's' : ''}, or reduce the number of care recipients`, 'error');
+      return;
+    }
     for (const r of data.careRecipients) {
       if (!r.relationship.trim()) { onShowToast(`Please select a relationship for ${r.firstName}`, 'error'); return; }
     }
@@ -406,9 +424,23 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
             </button>
             <span className="text-sm text-slate-500">{data.recipientsCount === 1 ? 'Care Recipient' : 'Care Recipients'}</span>
           </div>
-          {data.recipientsCount > 2 && (
-            <p className="mt-2 text-xs text-amber-600 font-medium">For more than 2 care recipients, multiple caregivers may be needed.</p>
-          )}
+        </div>
+
+        {/* How many caregivers needed */}
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-1">How many caregivers do you need?</label>
+          <div className="inline-flex items-center gap-3 bg-white border-2 border-slate-200 rounded-xl px-3 py-2">
+            <button type="button" onClick={() => onChange({ caregiversNeeded: (Math.max(1, data.caregiversNeeded - 1)) as 1|2|3|4 })} disabled={data.caregiversNeeded === 1}
+              className="w-9 h-9 rounded-lg border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50 disabled:opacity-40">
+              <Minus className="w-4 h-4" />
+            </button>
+            <span className="w-8 text-center text-lg font-semibold text-slate-900">{data.caregiversNeeded}</span>
+            <button type="button" onClick={() => onChange({ caregiversNeeded: (Math.min(4, data.caregiversNeeded + 1)) as 1|2|3|4 })} disabled={data.caregiversNeeded === 4}
+              className="w-9 h-9 rounded-lg border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50 disabled:opacity-40">
+              <Plus className="w-4 h-4" />
+            </button>
+            <span className="text-sm text-slate-500">{data.caregiversNeeded === 1 ? 'Caregiver' : 'Caregivers'}</span>
+          </div>
         </div>
 
         {/* Care recipients */}
@@ -468,8 +500,8 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
             </div>
           ) : null)}
 
-          {/* Add new person — hidden once saved pool hits 4 */}
-          {data.careRecipients.length < 4 && savedPeople.length < 4 && (showNewForm ? (
+          {/* Add new person — visible whenever there are unfilled slots */}
+          {data.careRecipients.length < data.recipientsCount && (showNewForm ? (
             <div className="border-2 border-primary-200 bg-primary-50 rounded-xl p-4 flex flex-col gap-3">
               <p className="text-sm font-semibold text-slate-700">Who are they to you?</p>
               <div className="flex flex-wrap gap-2">

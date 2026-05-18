@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Star, MapPin, Shield, CheckCircle, Heart, CreditCard, ChevronUp, ChevronDown, Zap, MessageSquare, Calendar } from 'lucide-react';
 import { Caregiver } from '../types';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
+import { CaregiverVerificationBadges } from './shared/CaregiverVerificationBadges';
 
 type Tab = 'summary' | 'reviews' | 'calendar';
 
@@ -239,6 +240,7 @@ export const CaregiverProfileModal: React.FC<CaregiverProfileModalProps> = ({
                   <Zap className="w-3 h-3 fill-current" /> {activeStr}
                 </p>
               )}
+              <CaregiverVerificationBadges verified={caregiver.verified} backgroundCheckStatus={caregiver.backgroundCheckStatus} className="mt-2" />
             </div>
           </div>
 
@@ -419,28 +421,11 @@ export const CaregiverProfileModal: React.FC<CaregiverProfileModalProps> = ({
               )}
 
               {/* Background */}
-              <Section title="Background" defaultOpen={false}>
-                <div className="grid sm:grid-cols-2 gap-6">
-                  <div>
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Education</p>
-                    {caregiver.education ? (
-                      <p className="text-sm text-slate-700">{caregiver.education}</p>
-                    ) : (
-                      <p className="text-sm text-slate-400 italic">No information available</p>
-                    )}
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Certifications</p>
-                    {certs.length > 0 ? (
-                      <div className="space-y-1">
-                        {certs.map(c => <p key={c} className="text-sm text-slate-700">{c}</p>)}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-slate-400 italic">No information available</p>
-                    )}
-                  </div>
-                </div>
-              </Section>
+              {caregiver.education && (
+                <Section title="Background" defaultOpen={false}>
+                  <p className="text-sm text-slate-700">{caregiver.education}</p>
+                </Section>
+              )}
 
               {/* Locations */}
               <Section title="Locations" defaultOpen={false}>

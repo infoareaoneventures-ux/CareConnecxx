@@ -78,12 +78,8 @@ export default defineConfig(({ mode }) => ({
       'react',
       'react-dom',
       'react-router-dom',
-      'firebase/app',
-      'firebase/auth',
-      'firebase/firestore',
       'lucide-react',
     ],
-    exclude: ['@firebase/auth', '@firebase/firestore'],
   },
   resolve: {
     dedupe: ['react', 'react-dom'],

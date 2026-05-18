@@ -208,7 +208,7 @@ export default function HireDecision() {
                 Message {name.split(' ')[0]} Now
               </button>
               <button
-                onClick={() => navigate('/client/schedule')}
+                onClick={() => navigate('/client/calendar')}
                 className="w-full py-3 border border-slate-200 text-slate-700 font-medium rounded-xl hover:bg-slate-50 transition-colors"
               >
                 Go to Schedule

@@ -1,17 +1,11 @@
 import React from 'react';
 import { StepProps, PAYMENT_OPTIONS } from './types';
 
-const RATE_MIN = 18;
-const RATE_MAX = 75;
-const AVG_RATE = 32;
-
 export const Step4Rate: React.FC<StepProps> = ({ data, onChange, onContinue, onBack, onShowToast }) => {
   const handleContinue = () => {
-    if (!data.rateFlexible) {
-      if (!data.rate || data.rate < RATE_MIN || data.rate > RATE_MAX) {
-        onShowToast(`Rate must be between $${RATE_MIN} and $${RATE_MAX}/hr`, 'error');
-        return;
-      }
+    if (!data.rateFlexible && (!data.rate || data.rate <= 0)) {
+      onShowToast('Please enter an hourly rate', 'error');
+      return;
     }
     if (!data.paymentMethod) {
       onShowToast('Please choose a payment method', 'error');
@@ -27,27 +21,22 @@ export const Step4Rate: React.FC<StepProps> = ({ data, onChange, onContinue, onB
       <div className="space-y-6">
         {/* Rate */}
         <div>
-          <div className="flex items-baseline justify-between mb-2">
+          <div className="mb-2">
             <label className="text-sm font-semibold text-slate-700">Hourly rate</label>
-            {!data.rateFlexible && (
-              <span className="text-2xl font-bold text-primary-700">${data.rate}/hr</span>
-            )}
           </div>
-          <input
-            type="range"
-            min={RATE_MIN}
-            max={RATE_MAX}
-            value={data.rate}
-            disabled={data.rateFlexible}
-            onChange={e => onChange({ rate: Number(e.target.value) })}
-            className="w-full accent-teal-600 disabled:opacity-40"
-          />
-          <div className="flex justify-between text-xs text-slate-400 mt-1">
-            <span>${RATE_MIN}/hr</span>
-            <span>Avg ${AVG_RATE}/hr</span>
-            <span>${RATE_MAX}/hr</span>
+          <div className="relative">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 font-semibold">$</span>
+            <input
+              type="number"
+              min={1}
+              value={data.rate ?? ''}
+              disabled={data.rateFlexible}
+              onChange={e => onChange({ rate: e.target.value === '' ? undefined : Number(e.target.value) })}
+              placeholder="e.g. 32"
+              className="w-full pl-8 pr-14 py-3 border-2 border-slate-200 rounded-xl text-lg font-semibold text-slate-900 focus:outline-none focus:border-primary-500 disabled:opacity-40"
+            />
+            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">/hr</span>
           </div>
-
         </div>
 
         {/* Payment method */}

@@ -12,6 +12,7 @@ import { chatService } from '../../services/chatService';
 import { logMatchSignal } from '../../services/matchFeedback';
 import { ClientNavigation } from './ClientNavigation';
 import { CreditCardBadge } from '../shared/CreditCardBadge';
+import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { useAccessGates } from '../../hooks/useAccessGates';
 
@@ -307,6 +308,7 @@ export const BrowseCaregivers: React.FC = () => {
                   <div className="mt-2">
                     <CreditCardBadge show={!!(caregiver as any).acceptsCreditCards} />
                   </div>
+                  <CaregiverVerificationBadges verified={(caregiver as any).verified} backgroundCheckStatus={(caregiver as any).backgroundCheckStatus} className="mt-2" />
                 </div>
 
                 {/* Stats Row */}

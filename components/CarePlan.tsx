@@ -1,13 +1,13 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Phone, FileText, ChevronLeft, Plus, Trash2, Loader2, User,
   Check, X, Pencil, MapPin, ClipboardList, StickyNote, PhoneCall,
-  Heart,
+  Heart, Camera,
 } from 'lucide-react';
 import { ViewType, AddToastFunction, CarePlan as CarePlanType } from '../types';
 import { dbService, authService } from '../services/api';
-import { db } from '../lib/firebase';
+import { db, storage } from '../lib/firebase';
 import firebase from '../lib/firebase';
 import { ClientNavigation } from './client/ClientNavigation';
 
@@ -69,7 +69,7 @@ interface RecipientPlanData {
   lifestyle: LifestyleData; tasks: TasksData;
 }
 
-interface RecipientEntry { firstName: string; lastName: string; name: string; relationship: string; age?: string; }
+interface RecipientEntry { firstName: string; lastName: string; name: string; relationship: string; age?: string; photoURL?: string; }
 
 const getKey = (firstName: string, lastName: string) =>
   `${firstName.toLowerCase()}_${(lastName || 'noname').toLowerCase()}`.replace(/\s+/g, '_');
@@ -188,6 +188,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [recipientPlans, setRecipientPlans] = useState<Record<string, RecipientPlanData>>({});
   const [locationPool, setLocationPool] = useState<LocationEntry[]>([]);
   const [activeRecipient, setActiveRecipient] = useState(0);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [recipientPhotos, setRecipientPhotos] = useState<Record<number, string>>({});
+  const [profilePhotoURL, setProfilePhotoURL] = useState<string | null>(null);
 
   const [editingSection, setEditingSection] = useState<'careNeeds' | 'locations' | 'notes' | 'lifestyle' | 'tasks' | null>(null);
   const [savingSection, setSavingSection] = useState(false);
@@ -218,14 +221,32 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [carePlanReviewedAt, setCarePlanReviewedAt] = useState<boolean>(false);
   const [savingReview, setSavingReview] = useState(false);
 
+  const dirtyContactsRef = useRef(false);
 
   const currentUser = authService.getCurrentUser();
   const isReadOnly = !!targetUserId && targetUserId !== currentUser?.uid;
   const currentPlanId = targetUserId || currentUser?.uid || null;
 
+  // Load profile photo for "myself" recipient
+  useEffect(() => {
+    if (!currentUser?.uid || !db) return;
+    db.collection('users').doc(currentUser.uid).get()
+      .then(snap => {
+        const d = snap.data() as any;
+        const url = d?.photoURL || d?.photo || d?.profilePhoto || null;
+        if (url) setProfilePhotoURL(url);
+      }).catch(() => {});
+  }, [currentUser?.uid]);
+
   useEffect(() => {
     if (!currentPlanId) { setLoading(false); onNavigate('client-login'); return; }
-    const unsub = dbService.subscribeToCarePlan(currentPlanId, updated => { setPlan(updated); setLoading(false); });
+    const unsub = dbService.subscribeToCarePlan(currentPlanId, updated => {
+      setPlan(prev => dirtyContactsRef.current
+        ? { ...updated, emergencyContacts: prev.emergencyContacts }
+        : updated
+      );
+      setLoading(false);
+    });
     return () => unsub();
   }, [currentPlanId]);
 
@@ -234,16 +255,27 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       if (!currentPlanId || !db) return;
       try {
         const snap = await db.collection('job_postings').doc(currentPlanId).get();
-        setWizardData(snap.exists ? snap.data() : {});
+        const data = snap.exists ? snap.data() as any : {};
+        setWizardData(data);
+        // Pre-populate recipient photos from stored data
+        const photos: Record<number, string> = {};
+        if (data?.careRecipientPhotoURL) photos[0] = data.careRecipientPhotoURL;
+        (data?.additionalRecipients || []).forEach((r: any, i: number) => {
+          if (r?.photoURL) photos[i + 1] = r.photoURL;
+        });
+        setRecipientPhotos(photos);
       } catch {}
     };
     load();
   }, [currentPlanId]);
 
+  const [carePlanDocLoaded, setCarePlanDocLoaded] = useState(false);
+
   useEffect(() => {
     if (!currentPlanId || !db) return;
     const unsub = db.collection('carePlans').doc(currentPlanId).onSnapshot(snap => {
       const data = snap.data() as any;
+      setCarePlanDocLoaded(true);
       if (!data) return;
       const plans: Record<string, RecipientPlanData> = { ...(data.recipientPlans || {}) };
       Object.keys(data).forEach(k => {
@@ -255,20 +287,29 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       if (Object.keys(plans).length > 0) setRecipientPlans(plans);
       if (data.locationPool) setLocationPool(data.locationPool);
       setCarePlanReviewedAt(!!data.carePlanReviewedAt);
-    }, () => {});
+    }, () => { setCarePlanDocLoaded(true); });
     return () => unsub();
   }, [currentPlanId]);
+
 
 
 
   const recipients = useMemo((): RecipientEntry[] => {
     if (!wizardData || !wizardData.careRecipientFirstName) return [];
     const list: RecipientEntry[] = [];
+    const seenKeys = new Set<string>();
     const pFirst = wizardData.careRecipientFirstName || '';
     const pLast = wizardData.careRecipientLastName || '';
-    list.push({ firstName: pFirst, lastName: pLast, name: [pFirst, pLast].filter(Boolean).join(' ') || 'Primary Recipient', relationship: wizardData.relationship || '', age: wizardData.careRecipientAge || '' });
+    seenKeys.add(getKey(pFirst, pLast));
+    list.push({ firstName: pFirst, lastName: pLast, name: [pFirst, pLast].filter(Boolean).join(' ') || 'Primary Recipient', relationship: wizardData.relationship || '', age: wizardData.careRecipientAge || '', photoURL: wizardData.careRecipientPhotoURL || '' });
     (wizardData.additionalRecipients || []).forEach((r: any, i: number) => {
-      list.push({ firstName: r.firstName || '', lastName: r.lastName || '', name: [r.firstName, r.lastName].filter(Boolean).join(' ') || `Recipient ${i + 2}`, relationship: r.relationship || '', age: r.age || '' });
+      const rFirst = (r.firstName || '').trim();
+      const rLast = (r.lastName || '').trim();
+      if (!rFirst) return; // skip blank entries
+      const rKey = getKey(rFirst, rLast);
+      if (seenKeys.has(rKey)) return; // skip duplicates
+      seenKeys.add(rKey);
+      list.push({ firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(' '), relationship: r.relationship || '', age: r.age || '', photoURL: r.photoURL || '' });
     });
     return list;
   }, [wizardData]);
@@ -309,6 +350,22 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       tasks: emptyTasks(),
     };
   };
+
+  // Auto-seed recipientPlans in Firestore from wizard data so checks pass without needing a manual save
+  useEffect(() => {
+    if (!carePlanDocLoaded || !currentPlanId || !db || recipients.length === 0 || !wizardData) return;
+    const missing = recipients.filter(r => !recipientPlans[getKey(r.firstName, r.lastName)]);
+    if (missing.length === 0) return;
+    const updatePayload: Record<string, any> = {};
+    missing.forEach(r => {
+      const key = getKey(r.firstName, r.lastName);
+      updatePayload[`recipientPlans.${key}`] = JSON.parse(JSON.stringify(getPlan(r)));
+    });
+    const docRef = db.collection('carePlans').doc(currentPlanId);
+    docRef.update(updatePayload).catch(() =>
+      docRef.set({ recipientPlans: Object.fromEntries(missing.map(r => [getKey(r.firstName, r.lastName), JSON.parse(JSON.stringify(getPlan(r)))])) }, { merge: true })
+    );
+  }, [carePlanDocLoaded, recipients, wizardData]);
 
   const startEdit = (section: typeof editingSection) => {
     if (!recipient) return;
@@ -375,6 +432,35 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     } finally { setSavingSection(false); }
   };
 
+  const handleRecipientPhotoUpload = async (file: File, recipientIndex: number) => {
+    if (!currentPlanId || !db) { onShowToast('Not ready — please try again', 'error'); return; }
+    if (!storage) { onShowToast('Photo uploads unavailable — storage not configured', 'error'); return; }
+    setUploadingPhoto(true);
+    try {
+      const ext = file.name.split('.').pop() || 'jpg';
+      const path = `clients/${currentPlanId}/recipients/recipient_${recipientIndex}_${Date.now()}.${ext}`;
+      const ref = storage.ref().child(path);
+      const snap = await ref.put(file, { contentType: file.type });
+      const url = await snap.ref.getDownloadURL();
+      if (recipientIndex === 0) {
+        await db.collection('job_postings').doc(currentPlanId).set({ careRecipientPhotoURL: url }, { merge: true });
+      } else {
+        const additionals = [...(wizardData?.additionalRecipients || [])];
+        if (additionals[recipientIndex - 1]) {
+          additionals[recipientIndex - 1] = { ...additionals[recipientIndex - 1], photoURL: url };
+          await db.collection('job_postings').doc(currentPlanId).set({ additionalRecipients: additionals }, { merge: true });
+        }
+      }
+      setRecipientPhotos(prev => ({ ...prev, [recipientIndex]: url }));
+      onShowToast('Photo saved', 'success');
+    } catch (err) {
+      console.error('Recipient photo upload failed:', err);
+      onShowToast('Photo upload failed — check console for details', 'error');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
   const handleTabChange = (i: number) => {
     setActiveRecipient(i);
     cancelEdit();
@@ -383,6 +469,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   };
 
   const addContact = () => {
+    dirtyContactsRef.current = true;
     const newContacts = [...plan.emergencyContacts, { id: crypto.randomUUID(), name: '', relation: '', phone: '', isPrimary: false }];
     setPlan(prev => ({ ...prev, emergencyContacts: newContacts }));
     setEditingContactIdx(newContacts.length - 1);
@@ -390,6 +477,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
   const updateContact = (idx: number, field: string, value: any) => {
     if (isReadOnly) return;
+    dirtyContactsRef.current = true;
     setPlan(prev => { const list = [...prev.emergencyContacts]; list[idx] = { ...list[idx], [field]: value }; return { ...prev, emergencyContacts: list }; });
   };
 
@@ -399,7 +487,13 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     const updatedPlan = { ...plan, emergencyContacts: updatedList };
     setPlan(updatedPlan);
     setEditingContactIdx(null);
-    try { await dbService.updateCarePlan(currentPlanId, updatedPlan); } catch {}
+    try {
+      await Promise.all([
+        dbService.updateCarePlan(currentPlanId, updatedPlan),
+        db?.collection('carePlans').doc(currentPlanId).set({ emergencyContacts: updatedList }, { merge: true }),
+      ]);
+      dirtyContactsRef.current = false;
+    } catch {}
   };
 
   const handlePhoneInput = (idx: number, value: string) => {
@@ -410,10 +504,23 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     if (!currentPlanId || !db || savingReview) return;
     setSavingReview(true);
     try {
-      await db.collection('carePlans').doc(currentPlanId).set(
-        { carePlanReviewedAt: firebase.firestore.FieldValue.serverTimestamp() },
-        { merge: true }
-      );
+      const cpRef = db.collection('carePlans').doc(currentPlanId);
+      const update: Record<string, any> = {
+        carePlanReviewedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      };
+      // Migrate wizard emergency contact if not yet in carePlans
+      const cpSnap = await cpRef.get();
+      const existingContacts: any[] = (cpSnap.data() as any)?.emergencyContacts || [];
+      if (existingContacts.length === 0 && wizardData?.emergencyFirstName) {
+        update.emergencyContacts = [{
+          id: 'wizard',
+          name: [wizardData.emergencyFirstName, wizardData.emergencyLastName].filter(Boolean).join(' '),
+          relation: wizardData.emergencyRelationship || '',
+          phone: wizardData.emergencyPhone || '',
+          isPrimary: true,
+        }];
+      }
+      await cpRef.set(update, { merge: true });
       setCarePlanReviewedAt(true);
       onShowToast('Care plan confirmed!', 'success');
     } catch {
@@ -432,7 +539,11 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     }
     setSavingContacts(true);
     try {
-      await dbService.updateCarePlan(currentPlanId, plan);
+      await Promise.all([
+        dbService.updateCarePlan(currentPlanId, plan),
+        db?.collection('carePlans').doc(currentPlanId).set({ emergencyContacts: plan.emergencyContacts }, { merge: true }),
+      ]);
+      dirtyContactsRef.current = false;
       setEditingContactIdx(null);
       onShowToast('Contact saved', 'success');
     } catch { onShowToast('Failed to save contact', 'error'); }
@@ -619,12 +730,22 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     }
     setSavingSetup(true);
     try {
-      await db.collection('job_postings').doc(currentPlanId).update({
-        emergencyFirstName: setupDraft.firstName,
-        emergencyLastName: setupDraft.lastName,
-        emergencyPhone: setupDraft.phone,
-        emergencyRelationship: setupDraft.relationship,
-      });
+      const normalizedContact = {
+        id: 'wizard',
+        name: [setupDraft.firstName, setupDraft.lastName].filter(Boolean).join(' '),
+        relation: setupDraft.relationship,
+        phone: setupDraft.phone,
+        isPrimary: true,
+      };
+      await Promise.all([
+        db.collection('job_postings').doc(currentPlanId).update({
+          emergencyFirstName: setupDraft.firstName,
+          emergencyLastName: setupDraft.lastName,
+          emergencyPhone: setupDraft.phone,
+          emergencyRelationship: setupDraft.relationship,
+        }),
+        db.collection('carePlans').doc(currentPlanId).set({ emergencyContacts: [normalizedContact] }, { merge: true }),
+      ]);
       setWizardData((prev: any) => ({ ...prev, emergencyFirstName: setupDraft.firstName, emergencyLastName: setupDraft.lastName, emergencyPhone: setupDraft.phone, emergencyRelationship: setupDraft.relationship }));
       setEditingSetupContact(false);
       onShowToast('Contact updated', 'success');
@@ -690,9 +811,32 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                           ? 'bg-primary-600 border-primary-600 text-white shadow-sm'
                           : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300'
                       }`}>
-                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>
-                        {initials(r.name) || <User className="w-4 h-4" />}
-                      </div>
+                      {(() => {
+                        const isMyself = r.relationship?.toLowerCase() === 'myself';
+                        const photo = isMyself ? (profilePhotoURL || recipientPhotos[i]) : recipientPhotos[i];
+                        return (
+                          <div className="relative shrink-0 group/photo">
+                            <div className={`w-9 h-9 rounded-xl overflow-hidden flex items-center justify-center text-xs font-bold shrink-0 ${active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                              {photo
+                                ? <img src={photo} alt={r.name} className="w-full h-full object-cover" />
+                                : (initials(r.name) || <User className="w-4 h-4" />)
+                              }
+                            </div>
+                            {!isReadOnly && !isMyself && (
+                              <label className="absolute inset-0 rounded-xl flex items-center justify-center bg-black/40 opacity-0 group-hover/photo:opacity-100 transition-opacity cursor-pointer"
+                                onClick={e => e.stopPropagation()}>
+                                {uploadingPhoto && activeRecipient === i
+                                  ? <Loader2 className="w-3.5 h-3.5 text-white animate-spin" />
+                                  : <Camera className="w-3.5 h-3.5 text-white" />
+                                }
+                                <input type="file" accept="image/*" className="hidden"
+                                  onChange={e => { const f = e.target.files?.[0]; if (f) handleRecipientPhotoUpload(f, i); e.target.value = ''; }}
+                                />
+                              </label>
+                            )}
+                          </div>
+                        );
+                      })()}
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-semibold whitespace-nowrap">{r.name}</p>
@@ -1298,7 +1442,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Notes</p>
                             {rPlan.notes
-                              ? <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{rPlan.notes}</p>
+                              ? <p className="text-sm text-slate-700 whitespace-pre-wrap break-words leading-relaxed">{rPlan.notes}</p>
                               : <p className="text-sm text-slate-400 italic">No notes added yet</p>}
                           </div>
                         </div>
@@ -1426,9 +1570,18 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Lifestyle & Preferences</p>
                             {hasLifestyle(rPlan.lifestyle) ? (
                               <div className="space-y-3">
-                                <ReadChips label="Favorite Activities" items={rPlan.lifestyle.favoriteActivities.map(a => a === 'Other' && rPlan.lifestyle.favoriteActivitiesOther ? rPlan.lifestyle.favoriteActivitiesOther : a)} color="bg-rose-50 border-rose-100 text-rose-700" />
-                                <ReadChips label="Needs Help With" items={rPlan.lifestyle.helpActivities.map(a => a === 'Other' && rPlan.lifestyle.helpActivitiesOther ? rPlan.lifestyle.helpActivitiesOther : a)} color="bg-orange-50 border-orange-100 text-orange-700" />
-                                <ReadChips label="Entertainment" items={rPlan.lifestyle.entertainment.map(a => a === 'Other' && rPlan.lifestyle.entertainmentOther ? rPlan.lifestyle.entertainmentOther : a)} color="bg-purple-50 border-purple-100 text-purple-700" />
+                                <div>
+                                  <ReadChips label="Favorite Activities" items={rPlan.lifestyle.favoriteActivities} color="bg-rose-50 border-rose-100 text-rose-700" />
+                                  {rPlan.lifestyle.favoriteActivities.includes('Other') && rPlan.lifestyle.favoriteActivitiesOther && <p className="text-xs text-slate-500 mt-1 ml-0.5"><span className="font-medium text-slate-400">Other:</span> {rPlan.lifestyle.favoriteActivitiesOther}</p>}
+                                </div>
+                                <div>
+                                  <ReadChips label="Needs Help With" items={rPlan.lifestyle.helpActivities} color="bg-orange-50 border-orange-100 text-orange-700" />
+                                  {rPlan.lifestyle.helpActivities.includes('Other') && rPlan.lifestyle.helpActivitiesOther && <p className="text-xs text-slate-500 mt-1 ml-0.5"><span className="font-medium text-slate-400">Other:</span> {rPlan.lifestyle.helpActivitiesOther}</p>}
+                                </div>
+                                <div>
+                                  <ReadChips label="Entertainment" items={rPlan.lifestyle.entertainment} color="bg-purple-50 border-purple-100 text-purple-700" />
+                                  {rPlan.lifestyle.entertainment.includes('Other') && rPlan.lifestyle.entertainmentOther && <p className="text-xs text-slate-500 mt-1 ml-0.5"><span className="font-medium text-slate-400">Other:</span> {rPlan.lifestyle.entertainmentOther}</p>}
+                                </div>
                                 <ReadChips label="Social"
                                   items={[
                                     rPlan.lifestyle.enjoysConversation === true ? 'Enjoys conversation' : '',

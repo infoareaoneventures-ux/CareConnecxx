@@ -7,9 +7,9 @@ const todayIso = () => new Date().toISOString().split('T')[0];
 
 const FREQUENCY_OPTIONS = [
   {
-    value: 'one-time' as const,
-    label: 'Specific date',
-    description: 'Date night, backup care, one-time needs',
+    value: 'occasional' as const,
+    label: 'Occasional',
+    description: '',
     icon: CalendarDays,
     iconBg: 'bg-violet-100',
     iconColor: 'text-violet-600',
@@ -17,7 +17,7 @@ const FREQUENCY_OPTIONS = [
   {
     value: 'part-time' as const,
     label: 'Part-time',
-    description: '25 hours or less per week',
+    description: '',
     icon: Clock,
     iconBg: 'bg-sky-100',
     iconColor: 'text-sky-600',
@@ -25,7 +25,7 @@ const FREQUENCY_OPTIONS = [
   {
     value: 'full-time' as const,
     label: 'Full-time',
-    description: 'More than 25 hours per week',
+    description: '',
     icon: Briefcase,
     iconBg: 'bg-teal-100',
     iconColor: 'text-teal-600',
@@ -90,7 +90,7 @@ export const Step1Schedule: React.FC<StepProps> = ({ data, onChange, onContinue,
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-slate-900 text-base leading-tight">{opt.label}</p>
-                    <p className="text-sm text-slate-500 mt-0.5">{opt.description}</p>
+                    {opt.description && <p className="text-sm text-slate-500 mt-0.5">{opt.description}</p>}
                   </div>
                   <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
                     selected ? 'border-primary-600 bg-primary-600' : 'border-slate-300'
@@ -171,8 +171,9 @@ export const Step1Schedule: React.FC<StepProps> = ({ data, onChange, onContinue,
         <div>
           <label className="block text-sm font-semibold text-slate-700 mb-2">What time of day? <span className="font-normal text-slate-400">(select all that apply)</span></label>
           <div className="grid grid-cols-2 gap-2">
-            {TIME_OF_DAY_OPTIONS.map(opt => {
+            {TIME_OF_DAY_OPTIONS.map((opt, idx) => {
               const selected = data.timeOfDay.includes(opt.value);
+              const isLastOdd = idx === TIME_OF_DAY_OPTIONS.length - 1 && TIME_OF_DAY_OPTIONS.length % 2 !== 0;
               return (
                 <button
                   key={opt.value}
@@ -186,9 +187,10 @@ export const Step1Schedule: React.FC<StepProps> = ({ data, onChange, onContinue,
                     selected
                       ? 'bg-primary-50 border-primary-600 text-primary-700'
                       : 'bg-white border-slate-200 hover:border-primary-300 text-slate-800'
-                  }`}
+                  } ${isLastOdd ? 'col-span-2' : ''}`}
                 >
-                  {opt.label}
+                  <span className="block">{opt.label}</span>
+                  <span className={`block text-xs font-normal mt-0.5 ${selected ? 'text-primary-500' : 'text-slate-400'}`}>{opt.sub}</span>
                 </button>
               );
             })}

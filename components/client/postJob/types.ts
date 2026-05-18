@@ -16,12 +16,14 @@ export interface JobPostFormData {
   daysOfWeek: string[];
   daysFlexible: boolean;
   timeOfDay: JobTimeOfDay[];
+  dayShiftTimes: Record<string, { start: string; end: string }>;
   minHoursPerWeek: string;
-  jobFrequency: 'one-time' | 'part-time' | 'full-time' | '';
+  jobFrequency: 'occasional' | 'part-time' | 'full-time' | '';
 
   // Step 2: Who & Where
   careRecipients: CareRecipientEntry[];
   recipientsCount: 1 | 2 | 3 | 4;
+  caregiversNeeded: 1 | 2 | 3 | 4;
   streetAddress: string;
   city: string;
   state: string;
@@ -34,6 +36,7 @@ export interface JobPostFormData {
 
   // Step 3: Care Needs
   careTypes: string[];
+  careNeedDetails: Record<string, string[]>;
   careLevel: JobCareLevel | '';
 
   // Step 4: Rate & Payment
@@ -56,11 +59,13 @@ export const INITIAL_FORM_DATA: JobPostFormData = {
   daysOfWeek: [],
   daysFlexible: false,
   timeOfDay: [],
+  dayShiftTimes: {},
   minHoursPerWeek: '',
   jobFrequency: '',
 
   careRecipients: [],
   recipientsCount: 1,
+  caregiversNeeded: 1,
   streetAddress: '',
   city: '',
   state: 'CA',
@@ -68,6 +73,7 @@ export const INITIAL_FORM_DATA: JobPostFormData = {
   neighborhood: '',
 
   careTypes: [],
+  careNeedDetails: {},
   careLevel: '',
   petsInHome: false,
   smokingHousehold: false,
@@ -101,11 +107,11 @@ export const CARE_TYPES = [
   'Light Housekeeping',
 ];
 
-export const TIME_OF_DAY_OPTIONS: Array<{ value: JobTimeOfDay; label: string }> = [
-  { value: 'morning', label: 'Morning' },
-  { value: 'afternoon', label: 'Afternoon' },
-  { value: 'evening', label: 'Evening' },
-  { value: 'overnight', label: 'Overnight' },
+export const TIME_OF_DAY_OPTIONS: Array<{ value: JobTimeOfDay; label: string; sub: string }> = [
+  { value: 'morning',   label: 'Morning',   sub: '6am–12pm' },
+  { value: 'afternoon', label: 'Afternoon', sub: '12pm–6pm' },
+  { value: 'evening',   label: 'Evening',   sub: '6pm–11pm' },
+  { value: 'overnight', label: 'Overnight', sub: '11pm–6am' },
 ];
 
 export const CARE_LEVEL_OPTIONS: Array<{ value: JobCareLevel; label: string; description: string }> = [

@@ -1,16 +1,24 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Calendar, Clock, MessageSquare } from 'lucide-react';
+import { X, Calendar, Clock, MessageSquare, Briefcase } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Caregiver } from '../types';
 import { videoService } from '../services/videoService';
 import { authService } from '../services/api';
+
+interface JobOption {
+    id: string;
+    title: string;
+    startDate?: string;
+}
 
 interface ScheduleInterviewModalProps {
     caregiver: Caregiver;
     onClose: () => void;
     onSuccess: (message: string) => void;
     onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    jobPosts?: JobOption[];
+    preselectedJobId?: string;
 }
 
 export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
@@ -18,12 +26,15 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
     onClose,
     onSuccess,
     onShowToast,
+    jobPosts,
+    preselectedJobId,
 }) => {
     const [selectedDate, setSelectedDate] = useState('');
     const [selectedTime, setSelectedTime] = useState('');
     const [interviewType, setInterviewType] = useState<'video' | 'phone' | 'in-person'>('video');
     const [notes, setNotes] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [selectedJobId, setSelectedJobId] = useState(preselectedJobId || '');
 
     const handleSchedule = async () => {
         if (!selectedDate || !selectedTime) {
@@ -77,18 +88,23 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                 originalUid: caregiver.uid
             });
 
+            const selectedJob = jobPosts?.find(j => j.id === selectedJobId);
             await videoService.scheduleInterview(
                 currentUser.uid,
                 currentUser.displayName || 'Client',
                 caregiverId,
                 caregiver.name,
                 scheduledDateTime,
-                notes
+                notes,
+                selectedJob?.id,
+                selectedJob?.title,
+                interviewType,
+                (caregiver as any).photoURL || (caregiver as any).photo || (caregiver as any).imageUrl || '',
             );
 
             // Interview scheduled successfully
-            onSuccess('Video interview scheduled successfully!');
-            onShowToast('Interview scheduled! Both parties will be notified.', 'success');
+            onSuccess('Interview request sent successfully!');
+            onShowToast('Interview requested! Both parties will be notified.', 'success');
             onClose();
         } catch (error: any) {
             console.error('❌ [ScheduleInterviewModal] Error scheduling interview:');
@@ -98,7 +114,7 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
             console.error('Full error object:', error);
 
             // Provide more specific error messages
-            let errorMessage = 'Failed to schedule interview. Please try again.';
+            let errorMessage = 'Failed to request interview. Please try again.';
 
             if (error?.message?.includes('not authenticated')) {
                 errorMessage = 'You must be logged in to schedule an interview.';
@@ -135,7 +151,7 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                 <div className="sticky top-0 bg-gradient-to-r from-primary-600 to-blue-600 text-white p-6 rounded-t-3xl">
                     <div className="flex justify-between items-start">
                         <div>
-                            <h2 className="text-2xl font-bold mb-1">Schedule Interview</h2>
+                            <h2 className="text-2xl font-bold mb-1">Request Interview</h2>
                             <p className="text-primary-50 text-sm">with {caregiver.name}</p>
                         </div>
                         <button
@@ -151,16 +167,26 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                 <div className="p-6 space-y-6">
                     {/* Caregiver Info */}
                     <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl">
-                        <img
-                            src={caregiver.imageUrl || caregiver.photo}
-                            alt={caregiver.name}
-                            className="w-16 h-16 rounded-full object-cover border-2 border-white shadow-md"
-                        />
+                        {caregiver.imageUrl || caregiver.photo ? (
+                            <img
+                                src={caregiver.imageUrl || caregiver.photo}
+                                alt={caregiver.name}
+                                className="w-16 h-16 rounded-full object-cover border-2 border-white shadow-md"
+                            />
+                        ) : (
+                            <div className="w-16 h-16 rounded-full bg-primary-100 flex items-center justify-center border-2 border-white shadow-md flex-shrink-0">
+                                <span className="text-primary-600 font-bold text-xl">
+                                    {caregiver.name?.charAt(0).toUpperCase() || '?'}
+                                </span>
+                            </div>
+                        )}
                         <div>
                             <h3 className="font-bold text-slate-900">{caregiver.name}</h3>
-                            <p className="text-sm text-slate-500">${caregiver.hourlyRate}/hr</p>
-                            {caregiver.rating && (
-                                <p className="text-sm text-accent-500">★ {caregiver.rating}</p>
+                            {caregiver.hourlyRate && (
+                                <p className="text-sm text-slate-500">${caregiver.hourlyRate}/hr</p>
+                            )}
+                            {(caregiver.rating != null) && (
+                                <p className="text-sm text-accent-500">★ {Number(caregiver.rating).toFixed(1)}</p>
                             )}
                         </div>
                     </div>
@@ -191,6 +217,33 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                             ))}
                         </div>
                     </div>
+
+                    {/* Job Post Reference */}
+                    {jobPosts && jobPosts.length > 0 && (
+                        <div>
+                            <label className="flex items-center text-sm font-bold text-slate-700 mb-2">
+                                <Briefcase className="w-4 h-4 mr-2 text-primary-600" />
+                                Related Job Post (Optional)
+                            </label>
+                            <select
+                                value={selectedJobId}
+                                onChange={(e) => setSelectedJobId(e.target.value)}
+                                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all appearance-none bg-white"
+                            >
+                                <option value="">No specific post</option>
+                                {jobPosts.map((job) => {
+                                    const date = job.startDate
+                                        ? new Date(job.startDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                                        : null;
+                                    return (
+                                        <option key={job.id} value={job.id}>
+                                            {job.title}{date ? ` · ${date}` : ''}
+                                        </option>
+                                    );
+                                })}
+                            </select>
+                        </div>
+                    )}
 
                     {/* Date Selection */}
                     <div>
@@ -271,7 +324,7 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                         disabled={isSubmitting || !selectedDate || !selectedTime}
                         className="bg-gradient-to-r from-primary-600 to-blue-600 hover:from-primary-700 hover:to-blue-700"
                     >
-                        {isSubmitting ? 'Scheduling...' : 'Schedule Interview'}
+                        {isSubmitting ? 'Requesting...' : 'Request Interview'}
                     </Button>
                 </div>
             </div>

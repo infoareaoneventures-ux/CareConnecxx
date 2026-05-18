@@ -152,7 +152,7 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       `All booked! Here's your confirmed schedule:\n\n` +
       `${lines}\n\n` +
       `I'll text you when ${task.caregiverName} arrives for the first visit.\n` +
-      `View your schedule: ${appUrl}/client/schedule\n\n` +
+      `View your schedule: ${appUrl}/client/calendar\n\n` +
       `Any questions? Just text me.`
     );
 

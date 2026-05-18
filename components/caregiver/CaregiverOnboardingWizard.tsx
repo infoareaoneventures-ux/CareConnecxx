@@ -9,7 +9,6 @@ import { AddToastFunction } from '../../types';
 import {
   PRIMARY_SERVICES,
   ADDITIONAL_SERVICES,
-  CERTIFICATIONS,
   EXPERIENCE_LEVELS,
   TIME_BLOCKS,
   DAYS,
@@ -35,7 +34,6 @@ interface WizardForm {
   neverAvailable: string[];
   selectedServices: string[];
   yearsExperience: string;
-  certifications: string[];
   hourlyRate: string;
   rateFor2Seniors: string;
   rateFor3PlusSeniors: string;
@@ -64,7 +62,6 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     neverAvailable: [],
     selectedServices: [],
     yearsExperience: '',
-    certifications: [],
     hourlyRate: '',
     rateFor2Seniors: '',
     rateFor3PlusSeniors: '',
@@ -130,7 +127,6 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
         skills: form.selectedServices,
         services: form.selectedServices,
         hasTransportation: form.selectedServices.includes('Transportation'),
-        certifications: form.certifications,
         yearsExperience: form.yearsExperience,
         experience: form.yearsExperience,
       }) as any);
@@ -231,7 +227,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       case 'services':
         return <ServicesStep
           selectedServices={form.selectedServices} yearsExperience={form.yearsExperience}
-          certifications={form.certifications} onChange={updateField}
+          onChange={updateField}
           onNext={handleSaveServices} isLoading={isLoading} onShowToast={onShowToast}
         />;
 
@@ -400,11 +396,10 @@ const AVAIL_DAYS = [
   { id: 'sunday', label: 'Sun' },
 ];
 const AVAIL_TIMES = [
-  { id: 'early',     label: 'Early morning', sub: '5 – 8am' },
-  { id: 'morning',   label: 'Morning',       sub: '8am – 12pm' },
-  { id: 'afternoon', label: 'Afternoon',     sub: '12 – 5pm' },
-  { id: 'evening',   label: 'Evening',       sub: '5 – 11pm' },
-  { id: 'overnight', label: 'Overnight',     sub: '11pm – 5am' },
+  { id: 'morning',   label: 'Morning',   sub: '6am – 12pm' },
+  { id: 'afternoon', label: 'Afternoon', sub: '12pm – 6pm' },
+  { id: 'evening',   label: 'Evening',   sub: '6pm – 11pm' },
+  { id: 'overnight', label: 'Overnight', sub: '11pm – 6am' },
 ];
 
 const AvailabilityStep: React.FC<{
@@ -420,7 +415,7 @@ const AvailabilityStep: React.FC<{
   const [activeTimes, setActiveTimes] = useState<string[]>([]);
 
   const toggleJobType = (id: string) =>
-    onChange('jobTypes', jobTypes.includes(id) ? jobTypes.filter(t => t !== id) : [...jobTypes, id]);
+    onChange('jobTypes', [id]);
 
   const toggleDay = (dayId: string) => {
     const isOn = activeDays.includes(dayId);
@@ -524,18 +519,14 @@ const AvailabilityStep: React.FC<{
 const ServicesStep: React.FC<{
   selectedServices: string[];
   yearsExperience: string;
-  certifications: string[];
   onChange: (field: string, value: any) => void;
   onNext: () => void;
   isLoading: boolean;
   onShowToast: AddToastFunction;
-}> = ({ selectedServices, yearsExperience, certifications, onChange, onNext, isLoading, onShowToast }) => {
+}> = ({ selectedServices, yearsExperience, onChange, onNext, isLoading, onShowToast }) => {
   const toggleService = (name: string) =>
     onChange('selectedServices', selectedServices.includes(name)
       ? selectedServices.filter(s => s !== name) : [...selectedServices, name]);
-  const toggleCert = (cert: string) =>
-    onChange('certifications', certifications.includes(cert)
-      ? certifications.filter(c => c !== cert) : [...certifications, cert]);
 
   const handleNext = () => {
     if (selectedServices.length === 0) { onShowToast('Please select at least one service', 'error'); return; }
@@ -578,20 +569,6 @@ const ServicesStep: React.FC<{
           <option value="">Select your experience level</option>
           {EXPERIENCE_LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
         </select>
-      </div>
-
-      <div>
-        <p className="text-sm font-semibold text-slate-700 mb-2">Certifications</p>
-        <div className="flex flex-wrap gap-2">
-          {CERTIFICATIONS.map(cert => (
-            <button key={cert} onClick={() => toggleCert(cert)}
-              className={`px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-all ${
-                certifications.includes(cert) ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'
-              }`}>
-              {certifications.includes(cert) && '✓ '}{cert}
-            </button>
-          ))}
-        </div>
       </div>
 
       <button onClick={handleNext} disabled={isLoading}

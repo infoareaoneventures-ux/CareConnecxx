@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
 import { ViewType } from '../types';
 import { useCareConnex } from '../context/CareConnexContext';
+import { dbService } from '../services/api';
 
 import { CaregiverOnboardingDashboard } from './caregiver/CaregiverOnboardingDashboard';
 import { CaregiverOnboardingWizard } from './caregiver/CaregiverOnboardingWizard';
@@ -12,21 +13,37 @@ interface CaregiverDashboardProps {
 }
 
 export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNavigate }) => {
-   const { currentUser, caregiverProfile, refreshCaregiverProfile, addToast: onShowToast } = useCareConnex();
+   const { currentUser, addToast: onShowToast } = useCareConnex();
+   const [profile, setProfile] = useState<any>(null);
    const [showWizard, setShowWizard] = useState(false);
 
    useEffect(() => {
-      if (!caregiverProfile) return;
+      let active = true;
+      if (!currentUser?.uid) return;
+      dbService.getUser(currentUser.uid).then(p => {
+         if (active && p) setProfile(p);
+      }).catch(() => {});
+      return () => { active = false; };
+   }, [currentUser?.uid]);
+
+   const refreshProfile = async () => {
+      if (!currentUser?.uid) return;
+      const p = await dbService.getUser(currentUser.uid);
+      if (p) setProfile(p);
+   };
+
+   useEffect(() => {
+      if (!profile) return;
       const fromSignup = sessionStorage.getItem('careconnex_show_caregiver_wizard') === 'true';
       if (fromSignup) {
          sessionStorage.removeItem('careconnex_show_caregiver_wizard');
          setShowWizard(true);
-      } else if ((caregiverProfile as any)?.onboardingStatus === 'incomplete') {
+      } else if (profile?.onboardingStatus === 'incomplete') {
          setShowWizard(true);
       }
-   }, [caregiverProfile]);
+   }, [profile]);
 
-   if (!caregiverProfile) {
+   if (!profile) {
       return (
          <div className="min-h-screen flex items-center justify-center bg-slate-50">
             <Loader2 className="w-8 h-8 text-accent-500 animate-spin" />
@@ -41,16 +58,16 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
          {showWizard && currentUser?.uid && (
             <CaregiverOnboardingWizard
                uid={currentUser.uid}
-               firstName={(caregiverProfile as any).firstName || currentUser.displayName?.split(' ')[0] || ''}
-               city={(caregiverProfile as any).city || ''}
-               state={(caregiverProfile as any).state || ''}
-               onComplete={() => { setShowWizard(false); refreshCaregiverProfile(); }}
+               firstName={profile.firstName || currentUser.displayName?.split(' ')[0] || ''}
+               city={profile.city || ''}
+               state={profile.state || ''}
+               onComplete={() => { setShowWizard(false); refreshProfile(); }}
                onShowToast={onShowToast}
             />
          )}
 
          <CaregiverOnboardingDashboard
-            profile={caregiverProfile}
+            profile={profile}
             onNavigate={onNavigate}
             onShowToast={onShowToast}
          />

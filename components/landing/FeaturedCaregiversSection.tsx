@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Star, MapPin, ArrowRight, CheckCircle, Clock, Heart, Shield, MessageSquare } from 'lucide-react';
 import { ViewType } from '../../types';
 import { db } from '../../lib/firebase';
+import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 
 interface FeaturedCaregiversSectionProps {
     onNavigate: (view: ViewType) => void;
@@ -19,6 +20,7 @@ interface FeaturedCaregiver {
     photo?: string;
     travelRadius?: number;
     verified?: boolean;
+    backgroundCheckStatus?: string;
 }
 
 function CaregiverInitialsAvatar({ name, className }: { name: string; className?: string }) {
@@ -68,6 +70,7 @@ export const FeaturedCaregiversSection: React.FC<FeaturedCaregiversSectionProps>
                         photo: d.photo,
                         travelRadius: d.travelRadius || d.serviceRadius || 10,
                         verified: true,
+                        backgroundCheckStatus: d.backgroundCheckStatus || 'clear',
                     };
                 });
                 setCaregivers(list);
@@ -136,16 +139,7 @@ export const FeaturedCaregiversSection: React.FC<FeaturedCaregiversSectionProps>
                                             )}
                                         </div>
 
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-9 h-9 rounded-full bg-teal-500 flex flex-col items-center justify-center text-white pt-1">
-                                                <Shield className="w-4 h-4 mb-0.5" />
-                                                <span className="text-[7px] font-bold leading-none tracking-wider uppercase">IDV</span>
-                                            </div>
-                                            <div className="w-9 h-9 rounded-full bg-blue-500 flex flex-col items-center justify-center text-white pt-1">
-                                                <CheckCircle className="w-4 h-4 mb-0.5" />
-                                                <span className="text-[7px] font-bold leading-none tracking-wider uppercase">BGC+</span>
-                                            </div>
-                                        </div>
+                                        <CaregiverVerificationBadges verified={cg.verified} backgroundCheckStatus={cg.backgroundCheckStatus} />
                                     </div>
                                 </div>
 

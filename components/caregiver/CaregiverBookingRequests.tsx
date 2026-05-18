@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import type { Appointment } from '../../types';
 import { dbService } from '../../services/api';
+import { db } from '../../lib/firebase';
 import { useCareConnex } from '../../context/CareConnexContext';
 
 // A "request" is either a single appointment or the lead appointment for a recurring group.
@@ -71,10 +72,13 @@ interface Props {
   onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
+interface RecipientInfo { name: string; photoURL: string; }
+
 export const CaregiverBookingRequests: React.FC<Props> = ({ caregiverId, onShowToast }) => {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [recipientData, setRecipientData] = useState<Record<string, RecipientInfo>>({});
   const { currentUser } = useCareConnex();
 
   const groups = useMemo(() => buildGroups(appointments), [appointments]);
@@ -96,6 +100,26 @@ export const CaregiverBookingRequests: React.FC<Props> = ({ caregiverId, onShowT
     const interval = setInterval(fetchRequests, 30000);
     return () => clearInterval(interval);
   }, [caregiverId]);
+
+  useEffect(() => {
+    if (!db || groups.length === 0) return;
+    const clientIds = [...new Set(groups.map(g => g.clientId).filter(Boolean))];
+    const missing = clientIds.filter(id => !recipientData[id]);
+    if (missing.length === 0) return;
+    Promise.all(
+      missing.map(id => db!.collection('job_postings').doc(id).get().then(snap => {
+        if (!snap.exists) return null;
+        const d = snap.data() as any;
+        const firstName = d.careRecipientFirstName || '';
+        const lastName = d.careRecipientLastName || '';
+        return { id, name: [firstName, lastName].filter(Boolean).join(' '), photoURL: d.careRecipientPhotoURL || '' };
+      }).catch(() => null))
+    ).then(results => {
+      const map: Record<string, RecipientInfo> = {};
+      results.forEach(r => { if (r) map[r.id] = { name: r.name, photoURL: r.photoURL }; });
+      if (Object.keys(map).length) setRecipientData(prev => ({ ...prev, ...map }));
+    });
+  }, [groups]);
 
   const removeGroup = (groupId: string) => {
     setAppointments(prev =>
@@ -223,16 +247,22 @@ export const CaregiverBookingRequests: React.FC<Props> = ({ caregiverId, onShowT
         const isProcessing = processingId === group.groupId;
         const n = group.appointments.length;
 
+        const recipient = recipientData[group.clientId];
         return (
           <Card key={group.groupId} className="p-5 border-l-4 border-l-accent-500">
             {/* Header */}
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-primary-100 rounded-full flex items-center justify-center flex-shrink-0">
-                  <User className="w-6 h-6 text-primary-600" />
+                <div className="w-12 h-12 rounded-full overflow-hidden flex-shrink-0 bg-primary-100 flex items-center justify-center">
+                  {recipient?.photoURL
+                    ? <img src={recipient.photoURL} alt={recipient.name} className="w-full h-full object-cover" />
+                    : <User className="w-6 h-6 text-primary-600" />}
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900">{group.clientName}</h3>
+                  {recipient?.name && (
+                    <p className="text-xs text-slate-500">For: {recipient.name}</p>
+                  )}
                   <p className="text-sm text-slate-500">
                     Requested {new Date(group.requestedAt).toLocaleDateString()}
                   </p>

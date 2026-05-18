@@ -34,11 +34,10 @@ export const EXPERIENCE_LEVELS = [
 
 // Availability time blocks (UrbanSitter-style)
 export const TIME_BLOCKS = [
-  { id: 'early', label: 'Early', time: '5 - 8am', icon: '🌅' },
-  { id: 'morning', label: 'Morning', time: '8am - 12pm', icon: '☀️' },
-  { id: 'afternoon', label: 'Afternoon', time: '12 - 5pm', icon: '🌤' },
-  { id: 'evening', label: 'Evening', time: '5 - 11pm', icon: '🌙' },
-  { id: 'overnight', label: 'Overnight', time: '11pm - 5am', icon: '🌑' },
+  { id: 'morning', label: 'Morning', time: '6am - 12pm', icon: '☀️' },
+  { id: 'afternoon', label: 'Afternoon', time: '12pm - 6pm', icon: '🌤' },
+  { id: 'evening', label: 'Evening', time: '6pm - 11pm', icon: '🌙' },
+  { id: 'overnight', label: 'Overnight', time: '11pm - 6am', icon: '🌑' },
 ] as const;
 
 export const DAYS = [
@@ -53,9 +52,9 @@ export const DAYS = [
 
 // Job type options
 export const JOB_TYPES = [
-  { id: 'occasional', label: 'Occasional jobs', subtitle: 'Fill-in, as-needed' },
-  { id: 'part-time', label: 'Part-time jobs', subtitle: '25 hours or less' },
-  { id: 'full-time', label: 'Full-time jobs', subtitle: 'More than 25 hours' },
+  { id: 'occasional', label: 'Occasional', subtitle: '' },
+  { id: 'part-time', label: 'Part-time', subtitle: '' },
+  { id: 'full-time', label: 'Full-time', subtitle: '' },
 ] as const;
 
 // US States

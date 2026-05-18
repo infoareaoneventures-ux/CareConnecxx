@@ -742,7 +742,8 @@ export const AdminCaregiverManager: React.FC = () => {
                       {docList.map(({ key, label }) => {
                         const doc = docs[key];
                         const processing = docProcessing[key];
-                        const isExpired = doc.expirationDate && new Date(doc.expirationDate) < new Date();
+                        const _today = new Date(); _today.setHours(0,0,0,0);
+                        const isExpired = doc.expirationDate && (() => { const [ey,em,ed] = doc.expirationDate.split('-'); return new Date(+ey,+em-1,+ed); })() < _today;
                         const isPending = !doc.status || doc.status === 'pending' || (doc.status === 'approved' && isExpired);
                         return (
                           <div key={key} className="bg-white border border-slate-200 rounded-xl p-3 space-y-2">

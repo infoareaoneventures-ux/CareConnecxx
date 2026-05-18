@@ -24,6 +24,7 @@ export const CaregiverInterviewManager: React.FC<CaregiverInterviewManagerProps>
   const { currentUser } = useCareConnex();
   const [interviews, setInterviews] = useState<InterviewRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [recipientData, setRecipientData] = useState<Record<string, { name: string; photoURL: string; clientName: string }>>({});
   const [selectedInterview, setSelectedInterview] = useState<InterviewRequest | null>(null);
   const [showResponseModal, setShowResponseModal] = useState(false);
   const [responseType, setResponseType] = useState<'accept' | 'decline' | null>(null);
@@ -87,6 +88,26 @@ export const CaregiverInterviewManager: React.FC<CaregiverInterviewManagerProps>
   }
 
   const loadInterviews = async () => { /* replaced by subscriptions */ };
+
+  useEffect(() => {
+    if (!db || interviews.length === 0) return;
+    const clientIds = [...new Set(interviews.map(i => i.clientId).filter(Boolean))];
+    const missing = clientIds.filter(id => !recipientData[id]);
+    if (missing.length === 0) return;
+    Promise.all(
+      missing.map(id => db!.collection('job_postings').doc(id).get().then(snap => {
+        if (!snap.exists) return null;
+        const d = snap.data() as any;
+        const firstName = d.careRecipientFirstName || '';
+        const lastName = d.careRecipientLastName || '';
+        return { id, name: [firstName, lastName].filter(Boolean).join(' '), photoURL: d.careRecipientPhotoURL || '', clientName: d.accountHolderFirstName ? `${d.accountHolderFirstName} ${d.accountHolderLastName || ''}`.trim() : '' };
+      }).catch(() => null))
+    ).then(results => {
+      const map: Record<string, { name: string; photoURL: string; clientName: string }> = {};
+      results.forEach(r => { if (r) map[r.id] = { name: r.name, photoURL: r.photoURL, clientName: r.clientName }; });
+      if (Object.keys(map).length) setRecipientData(prev => ({ ...prev, ...map }));
+    });
+  }, [interviews]);
 
   const handleRespond = async () => {
     if (!selectedInterview || !responseType) return;
@@ -210,6 +231,9 @@ export const CaregiverInterviewManager: React.FC<CaregiverInterviewManagerProps>
                   setShowResponseModal(true);
                 }}
                 showRespondButton={true}
+                recipientPhotoURL={recipientData[interview.clientId]?.photoURL}
+                recipientName={recipientData[interview.clientId]?.name}
+                clientName={recipientData[interview.clientId]?.clientName}
               />
             ))}
           </div>
@@ -230,6 +254,9 @@ export const CaregiverInterviewManager: React.FC<CaregiverInterviewManagerProps>
                 interview={interview}
                 statusBadge={getStatusBadge(interview.status)}
                 showJoinButton={interview.type === 'video'}
+                recipientPhotoURL={recipientData[interview.clientId]?.photoURL}
+                recipientName={recipientData[interview.clientId]?.name}
+                clientName={recipientData[interview.clientId]?.clientName}
               />
             ))}
           </div>
@@ -249,6 +276,9 @@ export const CaregiverInterviewManager: React.FC<CaregiverInterviewManagerProps>
                 key={interview.id}
                 interview={interview}
                 statusBadge={getStatusBadge(interview.status)}
+                recipientPhotoURL={recipientData[interview.clientId]?.photoURL}
+                recipientName={recipientData[interview.clientId]?.name}
+                clientName={recipientData[interview.clientId]?.clientName}
               />
             ))}
           </div>
@@ -414,6 +444,9 @@ interface InterviewCardProps {
   onRespond?: () => void;
   showRespondButton?: boolean;
   showJoinButton?: boolean;
+  recipientPhotoURL?: string;
+  recipientName?: string;
+  clientName?: string;
 }
 
 const InterviewCard: React.FC<InterviewCardProps> = ({
@@ -421,24 +454,30 @@ const InterviewCard: React.FC<InterviewCardProps> = ({
   statusBadge,
   onRespond,
   showRespondButton,
-  showJoinButton
+  showJoinButton,
+  recipientPhotoURL,
+  recipientName,
+  clientName,
 }) => {
   const [expanded, setExpanded] = useState(false);
+  const displayClientName = clientName || (interview as any).clientName || '';
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-            <User className="w-6 h-6 text-blue-600" />
+          <div className="w-12 h-12 rounded-full overflow-hidden bg-blue-100 flex items-center justify-center flex-shrink-0">
+            {recipientPhotoURL
+              ? <img src={recipientPhotoURL} alt={recipientName || 'Recipient'} className="w-full h-full object-cover" />
+              : <User className="w-6 h-6 text-blue-600" />}
           </div>
           <div>
             <h4 className="font-semibold text-slate-900">
-              Interview Request
+              {displayClientName || 'Interview Request'}
             </h4>
-            <p className="text-sm text-slate-500">
-              From client {interview.clientId.slice(0, 8)}...
-            </p>
+            {recipientName && (
+              <p className="text-xs text-slate-500">For: {recipientName}</p>
+            )}
             <div className="flex items-center gap-2 mt-1">
               {statusBadge}
             </div>

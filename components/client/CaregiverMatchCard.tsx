@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Star, Shield, Clock, Heart, MapPin, MessageSquare, CheckCircle } from 'lucide-react';
+import { Star, Heart, MapPin, MessageSquare, Clock } from 'lucide-react';
 import { Caregiver } from '../../types';
 import { CreditCardBadge } from '../shared/CreditCardBadge';
+import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 
 interface CaregiverMatchCardProps {
   caregiver: Caregiver;
@@ -79,24 +80,11 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
 
             <CreditCardBadge show={!!(caregiver as any).acceptsCreditCards} />
 
-            {/* IDV + BGC badges */}
-            <div className="flex items-center gap-2 mt-1.5">
-              <div className="w-9 h-9 rounded-full bg-teal-500 flex flex-col items-center justify-center text-white pt-1">
-                <Shield className="w-4 h-4 mb-0.5" />
-                <span className="text-[7px] font-bold leading-none tracking-wider uppercase">IDV</span>
-              </div>
-              {(caregiver as any).backgroundCheckStatus === 'clear' ? (
-                <div className="w-9 h-9 rounded-full bg-blue-500 flex flex-col items-center justify-center text-white pt-1" title="Background Check Cleared">
-                  <CheckCircle className="w-4 h-4 mb-0.5" />
-                  <span className="text-[7px] font-bold leading-none tracking-wider uppercase">BGC+</span>
-                </div>
-              ) : (
-                <div className="w-9 h-9 rounded-full bg-yellow-400 flex flex-col items-center justify-center text-white pt-1" title="Background Check Pending">
-                  <Clock className="w-4 h-4 mb-0.5" />
-                  <span className="text-[7px] font-bold leading-none tracking-wider uppercase">BGC</span>
-                </div>
-              )}
-            </div>
+            <CaregiverVerificationBadges
+              verified={(caregiver as any).verified}
+              backgroundCheckStatus={(caregiver as any).backgroundCheckStatus}
+              className="mt-1.5"
+            />
           </div>
         </div>
 

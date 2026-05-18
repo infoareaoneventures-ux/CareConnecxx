@@ -4,6 +4,7 @@ import { Star, MapPin, ShieldCheck, Calendar, Loader2 } from 'lucide-react';
 import { dbService } from '../../services/api';
 import { LookingForSection } from './LookingForSection';
 import type { Caregiver } from '../../types';
+import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 
 export const PublicCaregiverProfile: React.FC = () => {
   const { id } = useParams();
@@ -88,6 +89,7 @@ export const PublicCaregiverProfile: React.FC = () => {
               {profile.name}
               {profile.verified && <ShieldCheck className="w-5 h-5 text-blue-500" fill="currentColor" />}
             </h1>
+            <CaregiverVerificationBadges verified={profile.verified} backgroundCheckStatus={profile.backgroundCheckStatus} className="mt-2" />
             <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500 mt-1">
               {profile.rating != null && (
                 <span className="flex items-center gap-1">
@@ -138,16 +140,6 @@ export const PublicCaregiverProfile: React.FC = () => {
           </div>
         )}
 
-        {profile.certifications && profile.certifications.length > 0 && (
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 mt-4">
-            <p className="font-bold text-slate-900 mb-3">Certifications</p>
-            <div className="flex flex-wrap gap-2">
-              {profile.certifications.map(c => (
-                <span key={c} className="px-3 py-1 rounded-full bg-primary-50 text-primary-700 text-xs font-medium border border-primary-200">{c}</span>
-              ))}
-            </div>
-          </div>
-        )}
 
         <div className="bg-primary-50 border border-primary-200 rounded-2xl p-5 mt-6 flex items-center justify-between gap-4">
           <div>

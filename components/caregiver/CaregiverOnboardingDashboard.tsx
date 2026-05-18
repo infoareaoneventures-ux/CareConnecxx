@@ -189,6 +189,8 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
   const [jobs, setJobs] = useState<JobPost[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
   const [successOpen, setSuccessOpen] = useState(false);
+  const [hasApplied, setHasApplied] = useState(false);
+  const [checkingApplied, setCheckingApplied] = useState(true);
   const isApproved = (profile.verificationStatus === 'approved' || profile.verified === true)
     && profile.verificationStatus !== 'info_requested'
     && profile.verificationStatus !== 'rejected';
@@ -199,6 +201,23 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
       .catch(() => {})
       .finally(() => setLoadingJobs(false));
   }, []);
+
+  useEffect(() => {
+    if (!isApproved || !profile.uid) {
+      setCheckingApplied(false);
+      return;
+    }
+    import('../../lib/firebase').then(({ db }) => {
+      if (!db) { setCheckingApplied(false); return; }
+      db.collection('job_applications')
+        .where('caregiverId', '==', profile.uid)
+        .limit(1)
+        .get()
+        .then(snap => setHasApplied(!snap.empty))
+        .catch(() => {})
+        .finally(() => setCheckingApplied(false));
+    });
+  }, [isApproved, profile.uid]);
 
   const successItems = [
     {
@@ -219,7 +238,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
   ];
 
   const greeting = isApproved
-    ? "Let's find your next family."
+    ? (checkingApplied ? '' : hasApplied ? `Welcome back, ${getFirstName(profile.name)}.` : "Let's find your next family.")
     : profile.verificationStatus === 'info_requested'
     ? 'We need more information.'
     : profile.verificationStatus === 'rejected'
@@ -234,7 +253,9 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
       {/* ── Greeting ── */}
       <div className="mb-6">
         <p className="text-slate-500 text-sm mb-0.5">👋 Good {getGreeting()}, {getFirstName(profile.name)}</p>
-        <h1 className="text-2xl font-bold text-slate-900">{greeting}</h1>
+        {!(isApproved && hasApplied) && !checkingApplied && greeting && (
+          <h1 className="text-2xl font-bold text-slate-900">{greeting}</h1>
+        )}
       </div>
 
       {/* ── Progress Card ── */}
@@ -250,7 +271,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
       )}
 
       {/* ── Approved Banner ── */}
-      {isApproved && (
+      {isApproved && !checkingApplied && !hasApplied && (
         <div className="bg-teal-50 border border-teal-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
           <div className="bg-teal-100 p-2.5 rounded-2xl flex-shrink-0">
             <CheckCircle className="w-5 h-5 text-teal-600" />

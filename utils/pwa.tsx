@@ -96,32 +96,35 @@ export const PWAInstallPrompt: React.FC = () => {
 
 // Register service worker
 export const registerServiceWorker = () => {
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-            // Register main service worker
-            navigator.serviceWorker
-                .register('/sw.js')
-                .then((registration) => {
-                    console.log('SW registered:', registration);
+    if (!('serviceWorker' in navigator)) return;
 
-                    // Silent auto-update: SW already calls skipWaiting on install,
-                    // so new versions activate automatically without prompting.
-                })
-                .catch((error) => {
-                    console.log('SW registration failed:', error);
-                });
-
-            // Register Firebase Cloud Messaging service worker
-            navigator.serviceWorker
-                .register('/firebase-messaging-sw.js')
-                .then((registration) => {
-                    console.log('Firebase Messaging SW registered:', registration);
-                })
-                .catch((error) => {
-                    console.log('Firebase Messaging SW registration failed:', error);
-                });
+    // In development, unregister any cached SW so stale assets don't flash
+    if (import.meta.env.DEV) {
+        navigator.serviceWorker.getRegistrations().then(registrations => {
+            registrations.forEach(r => r.unregister());
         });
+        return;
     }
+
+    window.addEventListener('load', () => {
+        navigator.serviceWorker
+            .register('/sw.js')
+            .then((registration) => {
+                console.log('SW registered:', registration);
+            })
+            .catch((error) => {
+                console.log('SW registration failed:', error);
+            });
+
+        navigator.serviceWorker
+            .register('/firebase-messaging-sw.js')
+            .then((registration) => {
+                console.log('Firebase Messaging SW registered:', registration);
+            })
+            .catch((error) => {
+                console.log('Firebase Messaging SW registration failed:', error);
+            });
+    });
 };
 
 // Request notification permission

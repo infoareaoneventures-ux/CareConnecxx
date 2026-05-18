@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ViewType, AddToastFunction } from '../../../types';
 import { authService, dbService } from '../../../services/api';
+import { geocodeToLatLng } from '../../../utils/geocode';
 import { SignupLayout } from './SignupLayout';
 import { SignupFormData, INITIAL_FORM_DATA } from './types';
 import { Step1PersonalInfo } from './steps/Step1PersonalInfo';
@@ -92,14 +93,15 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
         setCreatedUserId(uid);
         const locationString = [formData.street, formData.city, formData.state, formData.zipCode]
           .filter(Boolean).join(', ');
+        const coords = await geocodeToLatLng(formData.street, formData.city, formData.state, formData.zipCode);
         await dbService.updateUser('caregivers', uid, cleanData({
           location: locationString,
           street: formData.street,
           city: formData.city,
           state: formData.state,
           zipCode: formData.zipCode,
-          latitude: formData.latitude || null,
-          longitude: formData.longitude || null,
+          lat: coords?.lat ?? null,
+          lng: coords?.lng ?? null,
         }) as any);
       }
 

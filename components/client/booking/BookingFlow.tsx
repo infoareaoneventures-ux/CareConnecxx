@@ -229,7 +229,7 @@ export default function BookingFlow() {
       frequency: () => setStep('source'),
       confirmDates: () => setStep('frequency'),
       details: () => setStep(form.frequency === 'recurring' ? 'confirmDates' : 'frequency'),
-      done: () => navigate('/client/schedule'),
+      done: () => navigate('/client/calendar'),
     };
     prev[step]();
   };
@@ -357,7 +357,7 @@ export default function BookingFlow() {
           caregiver={caregiver}
           form={form}
           onInbox={() => navigate('/client/inbox')}
-          onDashboard={() => navigate('/client/schedule')}
+          onDashboard={() => navigate('/client/calendar')}
         />
       </div>
     );

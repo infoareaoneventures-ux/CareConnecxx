@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Users, Calendar, Clock, MapPin, Star, Phone, Video, 
+import {
+  Users, Calendar, Clock, MapPin, Star, Phone, Video,
   CheckCircle, ChevronRight, Loader2, MessageSquare,
   Briefcase, Heart
 } from 'lucide-react';
+import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { 
@@ -242,6 +243,7 @@ export const ClientMatchingView: React.FC<ClientMatchingViewProps> = ({
                   <div>
                     <h4 className="font-semibold text-slate-900">{match.caregiverName}</h4>
                     <p className="text-sm text-slate-500">Caregiver #{index + 1}</p>
+                    <CaregiverVerificationBadges verified={(match as any).verified} backgroundCheckStatus={(match as any).backgroundCheckStatus} className="mt-1" />
                   </div>
                 </div>
 

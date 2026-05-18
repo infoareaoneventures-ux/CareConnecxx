@@ -7,7 +7,7 @@ import { ClientNavigation } from './ClientNavigation';
 import { PlanSelectModal } from './PlanSelectModal';
 import { authService } from '../../services/api';
 import { startIdentityVerification } from '../../services/stripeService';
-import { auth, db } from '../../lib/firebase';
+import { auth, db, storage } from '../../lib/firebase';
 import { useCareConnex } from '../../context/CareConnexContext';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -86,6 +86,9 @@ export const AccountSettings: React.FC = () => {
   const [joinedDate, setJoinedDate]              = useState('');
   const [googleEmail, setGoogleEmail]            = useState<string | null>(null);
   const [zipLookingUp, setZipLookingUp]          = useState(false);
+  const [photoURL, setPhotoURL]                  = useState<string | null>(null);
+  const [photoUploading, setPhotoUploading]      = useState(false);
+  const photoInputRef                            = useRef<HTMLInputElement>(null);
 
   // ── Zip → city/state autofill ─────────────────────────────────────────────
   const zipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -144,6 +147,7 @@ export const AccountSettings: React.FC = () => {
 
         // Phone saved by signup
         if (d.phone) setPersonalInfo(prev => ({ ...prev, phone: d.phone }));
+        if (d.photoURL || d.photo || d.profilePhoto) setPhotoURL(d.photoURL || d.photo || d.profilePhoto);
 
         // Address — prefer flat fields saved by signup, fall back to old careLocation object
         const flat = d.street || d.zipCode || d.city || d.state;
@@ -187,6 +191,27 @@ export const AccountSettings: React.FC = () => {
       phone: personalInfo.phone,
     });
   }, 'Account updated');
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !storage) return;
+    const user = authService.getCurrentUser();
+    if (!user?.uid) return;
+    setPhotoUploading(true);
+    try {
+      const ref = storage.ref(`profile_photos/${user.uid}/profile`);
+      await ref.put(file);
+      const url = await ref.getDownloadURL();
+      await db!.collection('users').doc(user.uid).update({ photoURL: url });
+      setPhotoURL(url);
+      addToast('Profile photo updated', 'success');
+    } catch {
+      addToast('Failed to upload photo', 'error');
+    } finally {
+      setPhotoUploading(false);
+      if (photoInputRef.current) photoInputRef.current.value = '';
+    }
+  };
 
   const handleSaveEmail = () => saving(async () => {
     const user = authService.getCurrentUser();
@@ -304,6 +329,40 @@ export const AccountSettings: React.FC = () => {
             {/* ── 1. Account Basics ─────────────────────────────────── */}
             <Section title="Account Basics" open={open.basics} onToggle={() => toggle('basics')}>
               <div className="divide-y divide-slate-100">
+
+                {/* Profile photo */}
+                <Row label="Profile photo">
+                  <div className="flex items-center gap-4">
+                    {photoURL ? (
+                      <div className="w-16 h-16 rounded-full overflow-hidden border border-slate-200 flex-shrink-0">
+                        <img src={photoURL} alt="Profile" className="w-full h-full object-cover" />
+                      </div>
+                    ) : (
+                      <div className="w-16 h-16 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
+                        <span className="text-primary-700 font-bold text-xl">
+                          {personalInfo.firstName?.charAt(0).toUpperCase() || '?'}
+                        </span>
+                      </div>
+                    )}
+                    <div>
+                      <button
+                        onClick={() => photoInputRef.current?.click()}
+                        disabled={photoUploading}
+                        className="text-sm text-primary-600 font-medium hover:text-primary-700 disabled:opacity-50"
+                      >
+                        {photoUploading ? 'Uploading...' : photoURL ? 'Change photo' : 'Upload photo'}
+                      </button>
+                      <p className="text-xs text-slate-400 mt-0.5">JPG or PNG, max 5 MB</p>
+                      <input
+                        ref={photoInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        className="hidden"
+                        onChange={handlePhotoUpload}
+                      />
+                    </div>
+                  </div>
+                </Row>
 
                 {/* Name */}
                 <Row label="Name">

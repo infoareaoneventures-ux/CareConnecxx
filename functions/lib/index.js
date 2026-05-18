@@ -36,7 +36,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.zepSetup = exports.runTriggerEngine = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.sendTestSMS = void 0;
+exports.zepSetup = exports.runTriggerEngine = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.sendTestSMS = void 0;
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions"));
 // Initialize Admin globally if not already done
@@ -100,6 +100,9 @@ Object.defineProperty(exports, "triggerHealthTrendsNow", { enumerable: true, get
 var transportBadge_1 = require("./scheduled/transportBadge");
 Object.defineProperty(exports, "evaluateTransportBadges", { enumerable: true, get: function () { return transportBadge_1.evaluateTransportBadges; } });
 Object.defineProperty(exports, "refreshTransportBadge", { enumerable: true, get: function () { return transportBadge_1.refreshTransportBadge; } });
+// Rolling shift generator (daily) — keeps 1 week of shifts ahead for ongoing bookings
+var shiftGenerator_1 = require("./scheduled/shiftGenerator");
+Object.defineProperty(exports, "generateRollingShifts", { enumerable: true, get: function () { return shiftGenerator_1.generateRollingShifts; } });
 // Cara iMessage pivot — onboarding callables
 var onboardingAgent_1 = require("./agents/onboardingAgent");
 Object.defineProperty(exports, "markTaskComplete", { enumerable: true, get: function () { return onboardingAgent_1.markTaskComplete; } });

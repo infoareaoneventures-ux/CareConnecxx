@@ -731,6 +731,9 @@ export interface VideoInterview {
   startedAt?: string;
   endedAt?: string;
   notes?: string;
+  interviewType?: 'video' | 'phone' | 'in-person';
+  jobId?: string;
+  jobTitle?: string;
 }
 
 /**

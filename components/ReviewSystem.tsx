@@ -157,7 +157,7 @@ export default function ReviewSystem() {
           <p className="text-slate-600 mb-6">Thank you for your feedback. Your review helps other families make informed decisions.</p>
           <div className="space-y-3">
             <button
-              onClick={() => navigate('/client/schedule')}
+              onClick={() => navigate('/client/calendar')}
               className="w-full py-3 bg-primary-600 text-white font-medium rounded-xl hover:bg-primary-700 transition-colors"
             >
               View Schedule
@@ -304,7 +304,7 @@ export default function ReviewSystem() {
         </button>
 
         <button
-          onClick={() => navigate('/client/schedule')}
+          onClick={() => navigate('/client/calendar')}
           className="w-full py-4 mt-3 text-slate-500 font-medium hover:text-slate-700 transition-colors"
         >
           Skip for Now

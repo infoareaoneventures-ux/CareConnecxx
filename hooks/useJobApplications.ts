@@ -34,6 +34,11 @@ export interface JobApplication {
   caregiverExperience?: number;
   caregiverRating?: number;
   caregiverSkills?: string[];
+  jobRate?: number | null;
+  jobLocation?: string | null;
+  jobCareTypes?: string[];
+  jobFrequency?: string | null;
+  jobDaysOfWeek?: string[];
 }
 
 // Hook for caregivers to track their job applications
@@ -202,14 +207,12 @@ export const jobApplicationService = {
 
     // Credit-only job posts block cash-only caregivers from applying.
     const jobSnap = await getDoc(doc(db, 'job_posts', jobId));
-    if (jobSnap.exists()) {
-      const jobData = jobSnap.data();
-      if (jobData?.paymentMethod === 'credit') {
-        const caregiverSnap = await getDoc(doc(db, 'caregivers', caregiverData.caregiverId));
-        const acceptsCreditCards = caregiverSnap.exists() ? caregiverSnap.data()?.acceptsCreditCards : undefined;
-        if (acceptsCreditCards === false) {
-          throw new Error('This job requires credit card payment. Enable "Accepts credit cards" in your profile to apply.');
-        }
+    const jobData = jobSnap.exists() ? jobSnap.data() : {};
+    if (jobData?.paymentMethod === 'credit') {
+      const caregiverSnap = await getDoc(doc(db, 'caregivers', caregiverData.caregiverId));
+      const acceptsCreditCards = caregiverSnap.exists() ? caregiverSnap.data()?.acceptsCreditCards : undefined;
+      if (acceptsCreditCards === false) {
+        throw new Error('This job requires credit card payment. Enable "Accepts credit cards" in your profile to apply.');
       }
     }
 
@@ -234,7 +237,13 @@ export const jobApplicationService = {
       coverLetter: coverLetter ?? '',
       proposedRate: proposedRate ?? null,
       status: 'pending',
-      appliedAt: serverTimestamp()
+      appliedAt: serverTimestamp(),
+      // Snapshot job details so card has context without extra lookups
+      jobRate: jobData.rate ?? null,
+      jobLocation: jobData.location || jobData.city || null,
+      jobCareTypes: jobData.careTypes || [],
+      jobFrequency: jobData.jobFrequency || null,
+      jobDaysOfWeek: jobData.daysOfWeek || [],
     });
 
     return docRef.id;

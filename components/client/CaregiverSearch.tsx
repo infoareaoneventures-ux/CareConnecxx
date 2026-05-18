@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, MapPin, Star, Filter, X, User, CheckCircle, Clock, Play, Briefcase, Heart, GraduationCap, Navigation, Zap, Bookmark } from 'lucide-react';
+import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import { Button } from '../ui/Button';
 import { Caregiver } from '../../types';
 import { dbService, authService } from '../../services/api';
@@ -23,7 +24,6 @@ interface CaregiverSearchProps {
   onPostJob?: () => void;
 }
 
-const CERTIFICATIONS = ['CNA', 'HHA', 'CPR/First Aid', 'RN', 'LPN'];
 
 const SENIOR_CONDITIONS = [
   "Alzheimer's/Dementia",
@@ -55,7 +55,6 @@ export const CaregiverSearch: React.FC<CaregiverSearchProps> = ({
     minRating: 0,
     maxRate: 0,
     verifiedOnly: true,
-    certifications: [] as string[],
     conditions: [] as string[],
   });
   const [showFilters, setShowFilters] = useState(false);
@@ -106,7 +105,7 @@ export const CaregiverSearch: React.FC<CaregiverSearchProps> = ({
     }
   };
 
-  const toggleFilter = (key: 'certifications' | 'conditions', value: string) => {
+  const toggleFilter = (key: 'conditions', value: string) => {
     setFilters(prev => ({
       ...prev,
       [key]: prev[key].includes(value)
@@ -151,22 +150,17 @@ export const CaregiverSearch: React.FC<CaregiverSearchProps> = ({
     const matchesVerified = !filters.verifiedOnly || cg.verified;
     const matchesRate = !filters.maxRate || (cg.hourlyRate || 0) <= filters.maxRate;
 
-    const matchesCerts =
-      filters.certifications.length === 0 ||
-      filters.certifications.some(c => cg.certifications?.includes(c));
-
     const matchesConditions =
       filters.conditions.length === 0 ||
       filters.conditions.some(c => cg.skills?.includes(c));
 
-    return matchesSearch && matchesRating && matchesVerified && matchesRate && matchesCerts && matchesConditions;
+    return matchesSearch && matchesRating && matchesVerified && matchesRate && matchesConditions;
   });
 
   const activeFilterCount =
     (filters.minRating > 0 ? 1 : 0) +
     (filters.maxRate > 0 ? 1 : 0) +
     (!filters.verifiedOnly ? 1 : 0) +
-    filters.certifications.length +
     filters.conditions.length;
 
   const goToPostJob = () => navigate('/client/post-job');
@@ -274,26 +268,6 @@ export const CaregiverSearch: React.FC<CaregiverSearchProps> = ({
               </div>
             </div>
 
-            {/* Certifications */}
-            <div>
-              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2 block">Certifications</label>
-              <div className="flex flex-wrap gap-2">
-                {CERTIFICATIONS.map(cert => (
-                  <button
-                    key={cert}
-                    onClick={() => toggleFilter('certifications', cert)}
-                    className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                      filters.certifications.includes(cert)
-                        ? 'bg-primary-600 border-primary-600 text-white'
-                        : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300'
-                    }`}
-                  >
-                    {cert}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {/* Senior Conditions */}
             <div>
               <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2 block">Senior Care Experience</label>
@@ -316,7 +290,7 @@ export const CaregiverSearch: React.FC<CaregiverSearchProps> = ({
 
             {activeFilterCount > 0 && (
               <button
-                onClick={() => setFilters({ minRating: 0, maxRate: 0, verifiedOnly: true, certifications: [], conditions: [] })}
+                onClick={() => setFilters({ minRating: 0, maxRate: 0, verifiedOnly: true, conditions: [] })}
                 className="text-xs text-primary-600 hover:text-primary-800 font-medium"
               >
                 Clear all filters
@@ -467,11 +441,7 @@ export const CaregiverSearch: React.FC<CaregiverSearchProps> = ({
 
                         {/* Trust badge row */}
                         <div className="flex flex-wrap items-center gap-1.5 mb-2">
-                          {caregiver.verified && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-50 border border-slate-200 rounded-full text-xs text-slate-600">
-                              <CheckCircle className="w-3 h-3 text-primary-500" /> Background Check
-                            </span>
-                          )}
+                          <CaregiverVerificationBadges verified={caregiver.verified} backgroundCheckStatus={caregiver.backgroundCheckStatus} />
                           {(caregiver as any).covidVaccinated && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-50 border border-slate-200 rounded-full text-xs text-slate-600">
                               <CheckCircle className="w-3 h-3 text-primary-500" /> COVID Vaccinated
@@ -504,20 +474,6 @@ export const CaregiverSearch: React.FC<CaregiverSearchProps> = ({
                           <p className="text-xs text-slate-500 mb-1.5">
                             Booked by <span className="font-semibold text-slate-700">{caregiver.repeatFamilies}</span> repeat families
                           </p>
-                        )}
-
-                        {/* Certifications */}
-                        {caregiver.certifications && caregiver.certifications.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mb-2">
-                            {caregiver.certifications.slice(0, 3).map((cert, i) => (
-                              <span
-                                key={i}
-                                className="px-2 py-0.5 bg-primary-50 text-primary-700 border border-primary-200 text-xs rounded-full font-medium"
-                              >
-                                {cert}
-                              </span>
-                            ))}
-                          </div>
                         )}
 
                         {/* Senior care specialties */}

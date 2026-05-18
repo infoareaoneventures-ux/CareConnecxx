@@ -2,6 +2,7 @@ import React from 'react';
 import { Caregiver } from '../types';
 import { Star, MapPin, Clock, Video } from 'lucide-react';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
+import { CaregiverVerificationBadges } from './shared/CaregiverVerificationBadges';
 
 interface InlineCaregiverCardProps {
     caregiver: Caregiver;
@@ -40,17 +41,7 @@ export const InlineCaregiverCard: React.FC<InlineCaregiverCardProps> = ({
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-1">
                             <h4 className="font-bold text-slate-900 truncate">{caregiver.name}</h4>
-                            {caregiver.verified || caregiver.backgroundCheckStatus ? (
-                                caregiver.backgroundCheckStatus === 'clear' || caregiver.verified ? (
-                                    <span className="flex-shrink-0 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
-                                        ✓ BGC Cleared
-                                    </span>
-                                ) : (
-                                    <span className="flex-shrink-0 text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
-                                        ⏳ BGC Pending
-                                    </span>
-                                )
-                            ) : null}
+                            <CaregiverVerificationBadges verified={caregiver.verified} backgroundCheckStatus={caregiver.backgroundCheckStatus} />
                         </div>
 
                         {/* Rating & Rate */}

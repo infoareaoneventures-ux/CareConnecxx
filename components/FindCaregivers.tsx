@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Heart, MapPin, Star, CheckCircle, Sparkles, TrendingUp,
-  MessageSquare, Shield, Clock, Search, SlidersHorizontal, X,
+  MessageSquare, Shield, Search, SlidersHorizontal, X,
   ChevronDown, BookmarkPlus, Languages, Award,
-  Pill, Car, Brain, Activity, Users,
+  Pill, Car, Brain, Activity, Users, Video, Zap,
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
@@ -13,8 +13,11 @@ import { dbService } from '../services/api';
 import { logMatchSignal } from '../services/matchFeedback';
 import { ClientNavigation } from './client/ClientNavigation';
 import { CreditCardBadge } from './shared/CreditCardBadge';
+import { CaregiverVerificationBadges } from './shared/CaregiverVerificationBadges';
 import { chatService } from '../services/chatService';
 import { useAccessGates } from '../hooks/useAccessGates';
+import { ScheduleInterviewModal } from './ScheduleInterviewModal';
+import ClientCaregiverProfile from './ClientCaregiverProfile';
 
 interface Caregiver {
   id: string;
@@ -24,9 +27,14 @@ interface Caregiver {
   rating: number;
   reviewCount?: number;
   city: string;
+  state?: string;
+  zipCode?: string;
+  street?: string;
   verified: boolean;
   backgroundCheckStatus?: 'none' | 'pending' | 'clear' | 'flagged' | 'consider';
   distance: number;
+  lat?: number;
+  lng?: number;
   photoURL?: string;
   hasReliableTransportation: boolean;
   skills?: string[];
@@ -42,21 +50,16 @@ interface Caregiver {
 type SortOption = 'best-match' | 'rating' | 'price-low' | 'price-high' | 'distance' | 'experience';
 
 const SENIOR_SPECIALTIES = [
-  { key: 'Dementia Care', icon: Brain },
-  { key: 'Alzheimer\'s Care', icon: Brain },
-  { key: 'Parkinson\'s Care', icon: Activity },
-  { key: 'Hospice & Palliative', icon: Heart },
-  { key: 'Post-Surgery Recovery', icon: Activity },
   { key: 'Mobility Assistance', icon: Activity },
-  { key: 'Personal Care (ADLs)', icon: Users },
+  { key: 'Dementia / Memory Care', icon: Brain },
   { key: 'Medication Reminders', icon: Pill },
-  { key: 'Transportation', icon: Car },
+  { key: 'Personal Care', icon: Users },
   { key: 'Companionship', icon: Heart },
+  { key: 'Transportation', icon: Car },
   { key: 'Meal Preparation', icon: Users },
   { key: 'Light Housekeeping', icon: Users },
 ];
 
-const CERTIFICATIONS = ['CNA', 'HHA', 'CPR Certified', 'First Aid', 'RN', 'LPN'];
 const LANGUAGES = ['English', 'Spanish', 'Mandarin', 'Tagalog', 'Vietnamese', 'Korean', 'Russian', 'Arabic'];
 const EXPERIENCE_TIERS = [
   { key: 0, label: 'Any experience' },
@@ -65,6 +68,45 @@ const EXPERIENCE_TIERS = [
   { key: 5, label: '5+ years' },
   { key: 10, label: '10+ years' },
 ];
+
+function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 3959;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const GEOCODE_CACHE_KEY = 'careconnex_geocode_v1';
+
+function getGeocodeCache(): Record<string, { lat: number; lng: number }> {
+  try { return JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}'); } catch { return {}; }
+}
+
+function setGeocodeCache(cache: Record<string, { lat: number; lng: number }>) {
+  try { localStorage.setItem(GEOCODE_CACHE_KEY, JSON.stringify(cache)); } catch { /* storage full */ }
+}
+
+// Returns coords + whether they came from cache (cached = no rate-limit delay needed)
+async function geocodeAddress(id: string, street?: string, city?: string, state?: string, zipCode?: string): Promise<{ lat: number; lng: number; cached: boolean } | null> {
+  const cache = getGeocodeCache();
+  if (cache[id]) return { ...cache[id], cached: true };
+  const query = [street, city, state, zipCode].filter(Boolean).join(', ');
+  if (!query) return null;
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&countrycodes=us`,
+      { headers: { 'Accept-Language': 'en', 'User-Agent': 'CareConnex/1.0' } }
+    );
+    const data = await res.json();
+    if (!data?.length) return null;
+    const result = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+    setGeocodeCache({ ...getGeocodeCache(), [id]: result });
+    return { ...result, cached: false };
+  } catch {
+    return null;
+  }
+}
 
 function formatLastActive(iso?: string): string {
   if (!iso) return 'active recently';
@@ -88,6 +130,11 @@ export default function FindCaregivers() {
   const [sortBy, setSortBy] = useState<SortOption>('best-match');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const { gate, Modals: GateModals } = useAccessGates();
+  const [viewingCaregiver, setViewingCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
+  const [interviewCaregiver, setInterviewCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
+  const [clientLat, setClientLat] = useState<number | null>(null);
+  const [clientLng, setClientLng] = useState<number | null>(null);
+  const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
 
   // Filters
   const [nameQuery, setNameQuery] = useState('');
@@ -98,12 +145,87 @@ export default function FindCaregivers() {
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [transportationOnly, setTransportationOnly] = useState(false);
   const [selectedSpecialties, setSelectedSpecialties] = useState<Set<string>>(new Set());
-  const [selectedCerts, setSelectedCerts] = useState<Set<string>>(new Set());
   const [selectedLanguages, setSelectedLanguages] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadClientDataAndCaregivers();
   }, []);
+
+  // Ref so caregiver geocoding closures always see the latest client coords
+  const clientLatRef = useRef<number | null>(null);
+  const clientLngRef = useRef<number | null>(null);
+
+  // Resolve client's care location coordinates — reads from job_postings first (geocoded at post time),
+  // falls back to geocoding their profile address if not yet stored.
+  const resolveClientLocation = async (uid: string) => {
+    try {
+      const jpSnap = await db.collection('job_postings').doc(uid).get();
+      const jp = jpSnap.data() as any;
+      if (jp?.lat && jp?.lng) {
+        clientLatRef.current = jp.lat;
+        clientLngRef.current = jp.lng;
+        setClientLat(jp.lat);
+        setClientLng(jp.lng);
+        return;
+      }
+      // Fallback: geocode from job posting address or profile address
+      const street = jp?.streetAddress || jp?.street;
+      const city = jp?.city;
+      const state = jp?.state;
+      const zipCode = jp?.zipCode;
+      const coords = await geocodeAddress(`client_${uid}`, street, city, state, zipCode);
+      if (coords) {
+        clientLatRef.current = coords.lat;
+        clientLngRef.current = coords.lng;
+        setClientLat(coords.lat);
+        setClientLng(coords.lng);
+        db.collection('job_postings').doc(uid)
+          .set({ lat: coords.lat, lng: coords.lng }, { merge: true })
+          .catch(() => {});
+      }
+    } catch { /* best effort */ }
+  };
+
+  // Recalculate distances for caregivers that already have coords when client location resolves
+  useEffect(() => {
+    if (clientLat === null || clientLng === null) return;
+    setCaregivers(prev => prev.map(cg => {
+      if (cg.lat != null && cg.lng != null) {
+        const dist = haversineDistance(clientLat, clientLng, cg.lat, cg.lng);
+        return { ...cg, distance: Math.round(dist * 10) / 10 };
+      }
+      return cg;
+    }));
+  }, [clientLat, clientLng]);
+
+  // Geocode caregivers without stored coords — runs as soon as caregivers load
+  useEffect(() => {
+    const needsGeocode = caregivers.filter(cg => cg.lat == null && (cg.street || cg.city));
+    if (!needsGeocode.length) return;
+
+    let cancelled = false;
+    (async () => {
+      for (const cg of needsGeocode) {
+        if (cancelled) break;
+        const coords = await geocodeAddress(cg.id, cg.street, cg.city, cg.state, cg.zipCode);
+        if (coords && !cancelled) {
+          setCaregivers(prev => prev.map(c => {
+            if (c.id !== cg.id) return c;
+            const lat = clientLatRef.current;
+            const lng = clientLngRef.current;
+            const dist = lat != null && lng != null
+              ? Math.round(haversineDistance(lat, lng, coords.lat, coords.lng) * 10) / 10
+              : 0;
+            return { ...c, lat: coords.lat, lng: coords.lng, distance: dist };
+          }));
+        }
+        if (!coords?.cached) await new Promise(r => setTimeout(r, 1100)); // Nominatim: 1 req/sec, skip if cached
+      }
+    })();
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caregivers.length]);
 
   const loadClientDataAndCaregivers = async () => {
     try {
@@ -120,8 +242,13 @@ export default function FindCaregivers() {
         setClientIntakeData(intakeData);
       }
 
+      dbService.getJobPostsByClient(user.uid).then(posts => {
+        setClientOpenPosts(posts.filter((p: any) => p.status === 'open').map((p: any) => ({ id: p.id, title: p.title, startDate: p.startDate || p.date })));
+      }).catch(() => {});
+
       await fetchCaregivers(intakeData);
       await fetchFavorites();
+      resolveClientLocation(user.uid); // fire-and-forget; updates distances when resolved
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -159,11 +286,16 @@ export default function FindCaregivers() {
           rating: data.rating || 5.0,
           reviewCount: data.reviewCount ?? 0,
           city: data.city || data.location?.city || 'Nearby',
+          state: data.state || data.location?.state,
+          zipCode: data.zipCode || data.zip,
+          street: data.street || data.streetAddress,
           verified: data.backgroundCheckComplete || data.verified || false,
           backgroundCheckStatus: data.backgroundCheckStatus || data.backgroundCheckData?.status || (data.backgroundCheckComplete || data.verified ? 'clear' : 'none'),
           distance: data.distance ?? 0,
+          lat: data.lat ?? data.latitude ?? data.location?.lat ?? data._geoloc?.lat,
+          lng: data.lng ?? data.longitude ?? data.location?.lng ?? data._geoloc?.lng,
           photoURL: data.photoURL || data.imageUrl || data.profilePhoto,
-          hasReliableTransportation: data.hasReliableTransportation || false,
+          hasReliableTransportation: data.hasTransportation || data.hasReliableTransportation || false,
           skills: data.skills || data.specializations || data.specialties || [],
           certifications: data.certifications || [],
           languages: data.languages || ['English'],
@@ -243,12 +375,10 @@ export default function FindCaregivers() {
     try {
       const user = auth.currentUser;
       if (!user) return;
-      const favDoc = await db.collection('favorites').doc(user.uid).get();
-      if (favDoc.exists) {
-        setFavorites(favDoc.data()?.caregiverIds || []);
-      }
-    } catch (error) {
-      console.error('Error fetching favorites:', error);
+      const userDoc = await db.collection('users').doc(user.uid).get();
+      setFavorites((userDoc.data() as any)?.savedCaregiverIds || []);
+    } catch {
+      // non-critical
     }
   };
 
@@ -256,19 +386,13 @@ export default function FindCaregivers() {
     try {
       const user = auth.currentUser;
       if (!user) { navigate('/login'); return; }
-      const favRef = db.collection('favorites').doc(user.uid);
+      const userRef = db.collection('users').doc(user.uid);
       const isFav = favorites.includes(caregiverId);
       if (isFav) {
-        await favRef.update({
-          caregiverIds: firebase.firestore.FieldValue.arrayRemove(caregiverId),
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
+        await userRef.update({ savedCaregiverIds: firebase.firestore.FieldValue.arrayRemove(caregiverId) });
         setFavorites(prev => prev.filter(id => id !== caregiverId));
       } else {
-        await favRef.set({
-          caregiverIds: firebase.firestore.FieldValue.arrayUnion(caregiverId),
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
+        await userRef.update({ savedCaregiverIds: firebase.firestore.FieldValue.arrayUnion(caregiverId) });
         setFavorites(prev => [...prev, caregiverId]);
         logMatchSignal(caregiverId, 'favorited');
       }
@@ -298,8 +422,9 @@ export default function FindCaregivers() {
     gate('message', caregiverName, () => openChat(caregiverId, caregiverName));
   };
 
-  const handleRequestBooking = (caregiverId: string, caregiverName: string) => {
-    gate('booking', caregiverName, () => navigate(`/client/book/${caregiverId}`));
+  const handleRequestInterview = (cg: Caregiver & { matchScore?: AIMatchScore }) => {
+    const name = `${cg.firstName} ${cg.lastName}`.trim();
+    gate('interview', name, () => setInterviewCaregiver(cg));
   };
 
   const toggleSetItem = (set: Set<string>, item: string, setter: (s: Set<string>) => void) => {
@@ -317,7 +442,6 @@ export default function FindCaregivers() {
     setVerifiedOnly(false);
     setTransportationOnly(false);
     setSelectedSpecialties(new Set());
-    setSelectedCerts(new Set());
     setSelectedLanguages(new Set());
     setShowFavoritesOnly(false);
   };
@@ -332,10 +456,9 @@ export default function FindCaregivers() {
     if (verifiedOnly) n++;
     if (transportationOnly) n++;
     n += selectedSpecialties.size;
-    n += selectedCerts.size;
     n += selectedLanguages.size;
     return n;
-  }, [nameQuery, maxDistance, maxRate, minRating, minExperience, verifiedOnly, transportationOnly, selectedSpecialties, selectedCerts, selectedLanguages]);
+  }, [nameQuery, maxDistance, maxRate, minRating, minExperience, verifiedOnly, transportationOnly, selectedSpecialties, selectedLanguages]);
 
   const filteredCaregivers = useMemo(() => {
     let list = caregivers.filter(cg => {
@@ -357,12 +480,6 @@ export default function FindCaregivers() {
         selectedSpecialties.forEach(s => {
           if (skillSet.has(s.toLowerCase())) hasAny = true;
         });
-        if (!hasAny) return false;
-      }
-      if (selectedCerts.size > 0) {
-        const certSet = new Set((cg.certifications || []).map(c => c.toLowerCase()));
-        let hasAny = false;
-        selectedCerts.forEach(c => { if (certSet.has(c.toLowerCase())) hasAny = true; });
         if (!hasAny) return false;
       }
       if (selectedLanguages.size > 0) {
@@ -397,7 +514,7 @@ export default function FindCaregivers() {
         break;
     }
     return sorted;
-  }, [caregivers, favorites, showFavoritesOnly, nameQuery, maxDistance, maxRate, minRating, minExperience, verifiedOnly, transportationOnly, selectedSpecialties, selectedCerts, selectedLanguages, sortBy]);
+  }, [caregivers, favorites, showFavoritesOnly, nameQuery, maxDistance, maxRate, minRating, minExperience, verifiedOnly, transportationOnly, selectedSpecialties, selectedLanguages, sortBy]);
 
   if (loading) {
     return (
@@ -457,7 +574,7 @@ export default function FindCaregivers() {
 
       {/* Rating */}
       <div>
-        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Minimum Rating</label>
+        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Rating</label>
         <div className="flex gap-1.5">
           {[0, 3, 4, 4.5].map(r => (
             <button
@@ -537,26 +654,6 @@ export default function FindCaregivers() {
         </div>
       </div>
 
-      {/* Certifications */}
-      <div>
-        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Certifications</label>
-        <div className="flex flex-wrap gap-1.5">
-          {CERTIFICATIONS.map(cert => (
-            <button
-              key={cert}
-              onClick={() => toggleSetItem(selectedCerts, cert, setSelectedCerts)}
-              className={`px-2.5 py-1 text-xs font-medium rounded-full border transition-colors ${
-                selectedCerts.has(cert)
-                  ? 'bg-primary-600 border-primary-600 text-white'
-                  : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
-              }`}
-            >
-              {cert}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* Languages */}
       <div>
         <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Languages</label>
@@ -606,10 +703,6 @@ export default function FindCaregivers() {
                 : 'Trusted caregivers, background-checked and ready to help'}
             </p>
           </div>
-          <button className="hidden sm:inline-flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:border-primary-500 hover:text-primary-600 transition-colors">
-            <BookmarkPlus className="w-4 h-4" />
-            Save search
-          </button>
         </div>
 
         {/* Top bar: tabs + sort */}
@@ -704,7 +797,7 @@ export default function FindCaregivers() {
               <EmptyState
                 hasFilters={activeFilterCount > 0 || showFavoritesOnly}
                 onClear={clearAllFilters}
-                onPostJob={() => navigate('/client/dashboard')}
+                onPostJob={() => navigate('/client/posts')}
               />
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -714,9 +807,9 @@ export default function FindCaregivers() {
                     caregiver={cg}
                     isFavorite={favorites.includes(cg.id)}
                     onToggleFavorite={() => toggleFavorite(cg.id)}
-                    onViewProfile={() => navigate(`/client/caregiver/${cg.id}`, { state: { caregiverData: cg } })}
+                    onViewProfile={() => setViewingCaregiver(cg)}
                     onMessage={() => handleMessage(cg.id, `${cg.firstName} ${cg.lastName}`.trim())}
-                    onRequestBooking={() => handleRequestBooking(cg.id, `${cg.firstName} ${cg.lastName}`.trim())}
+                    onRequestInterview={() => handleRequestInterview(cg)}
                     isBestMatch={sortBy === 'best-match' && index === 0 && !!cg.matchScore}
                   />
                 ))}
@@ -725,6 +818,55 @@ export default function FindCaregivers() {
           </section>
         </div>
       </main>
+
+      {/* Full caregiver profile modal */}
+      {viewingCaregiver && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm overflow-y-auto"
+          onClick={() => setViewingCaregiver(null)}
+        >
+          <div
+            className="min-h-full flex items-start justify-center py-6 px-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="bg-slate-50 rounded-2xl w-full max-w-5xl shadow-2xl relative overflow-hidden">
+              {/* Close button */}
+              <button
+                onClick={() => setViewingCaregiver(null)}
+                className="absolute top-4 right-4 z-50 p-2 bg-white/80 hover:bg-white rounded-full shadow-md transition-colors"
+              >
+                <X className="w-5 h-5 text-slate-600" />
+              </button>
+              <ClientCaregiverProfile
+                modalMode
+                overrideId={viewingCaregiver.id}
+                overrideData={viewingCaregiver}
+                onClose={() => setViewingCaregiver(null)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {interviewCaregiver && (
+        <ScheduleInterviewModal
+          caregiver={{
+            id: interviewCaregiver.id,
+            name: `${interviewCaregiver.firstName} ${interviewCaregiver.lastName}`.trim(),
+            imageUrl: interviewCaregiver.photoURL,
+            hourlyRate: interviewCaregiver.hourlyRate,
+            rating: interviewCaregiver.rating,
+            distance: interviewCaregiver.distance,
+            skills: interviewCaregiver.skills || [],
+            availability: interviewCaregiver.availability || [],
+            experience: typeof interviewCaregiver.experience === 'number' ? interviewCaregiver.experience : 0,
+          } as any}
+          jobPosts={clientOpenPosts}
+          onClose={() => setInterviewCaregiver(null)}
+          onSuccess={() => setInterviewCaregiver(null)}
+          onShowToast={() => {}}
+        />
+      )}
 
       {/* Identity + membership gates (shown conditionally based on user state) */}
       <GateModals />
@@ -767,11 +909,11 @@ interface CaregiverCardProps {
   onToggleFavorite: () => void;
   onViewProfile: () => void;
   onMessage: () => void;
-  onRequestBooking: () => void;
+  onRequestInterview: () => void;
 }
 
 const CaregiverCard: React.FC<CaregiverCardProps> = ({
-  caregiver, isFavorite, isBestMatch, onToggleFavorite, onViewProfile, onMessage, onRequestBooking,
+  caregiver, isFavorite, isBestMatch, onToggleFavorite, onViewProfile, onMessage, onRequestInterview,
 }) => {
   const fullName = `${caregiver.firstName} ${caregiver.lastName}`.trim() || 'Caregiver';
 
@@ -822,26 +964,7 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
 
             <CreditCardBadge show={!!(caregiver as any).acceptsCreditCards} />
             
-            <div className="flex items-center gap-2">
-              {/* IDV Badge */}
-              <div className="w-9 h-9 rounded-full bg-teal-500 flex flex-col items-center justify-center text-white pt-1">
-                <Shield className="w-4 h-4 mb-0.5" />
-                <span className="text-[7px] font-bold leading-none tracking-wider uppercase">IDV</span>
-              </div>
-              
-              {/* BGC Badge */}
-              {caregiver.backgroundCheckStatus === 'clear' ? (
-                <div className="w-9 h-9 rounded-full bg-blue-500 flex flex-col items-center justify-center text-white pt-1" title="Background Check Cleared">
-                  <CheckCircle className="w-4 h-4 mb-0.5" />
-                  <span className="text-[7px] font-bold leading-none tracking-wider uppercase">BGC+</span>
-                </div>
-              ) : (
-                <div className="w-9 h-9 rounded-full bg-yellow-400 flex flex-col items-center justify-center text-white pt-1" title="Background Check Pending">
-                  <Clock className="w-4 h-4 mb-0.5" />
-                  <span className="text-[7px] font-bold leading-none tracking-wider uppercase">BGC</span>
-                </div>
-              )}
-            </div>
+            <CaregiverVerificationBadges verified={caregiver.verified} backgroundCheckStatus={caregiver.backgroundCheckStatus} />
           </div>
         </div>
 
@@ -849,44 +972,42 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
         <div className="space-y-3.5 mb-5 mt-1">
           <div className="flex items-center gap-3.5 text-slate-700">
             <Heart className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
-            <span className="text-[17px]">{caregiver.experience || 0} years experience</span>
+            <span className="text-[17px]">{caregiver.experience || 0} experience</span>
           </div>
           <div className="flex items-center gap-3.5 text-slate-700">
             <MapPin className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
-            <span className="text-[17px]">{caregiver.distance} miles</span>
+            <span className="text-[17px]">
+              {caregiver.lat != null && caregiver.distance > 0
+                ? `${caregiver.distance} miles away`
+                : (caregiver.city || 'Nearby')}
+            </span>
+            {caregiver.hourlyRate > 0 && (
+              <>
+                <span className="text-slate-300">·</span>
+                <span className="text-[17px] font-semibold text-slate-800">${caregiver.hourlyRate}/hr</span>
+              </>
+            )}
           </div>
         </div>
 
         {/* Skills pill tags */}
         {(caregiver.skills && caregiver.skills.length > 0) ? (
-          <div className="flex flex-wrap gap-2 mb-6 mt-1">
-            {caregiver.skills.slice(0, 3).map(skill => (
-              <span key={skill} className="px-3.5 py-1.5 bg-slate-100 border border-slate-200 text-slate-800 text-[13px] font-medium rounded-[1rem]">
+          <div className="flex gap-2 mb-6 mt-1">
+            {caregiver.skills.slice(0, 2).map(skill => (
+              <span key={skill} className="shrink-0 px-3.5 py-1.5 bg-slate-100 border border-slate-200 text-slate-800 text-[13px] font-medium rounded-[1rem]">
                 {skill}
               </span>
             ))}
+            {caregiver.skills.length > 2 && (
+              <span className="shrink-0 px-3.5 py-1.5 bg-white border border-slate-200 text-slate-500 text-[13px] font-medium rounded-[1rem]">
+                +{caregiver.skills.length - 2}
+              </span>
+            )}
           </div>
         ) : (
           <div className="mb-6 mt-1"></div>
         )}
 
-        {/* SitterCity-style Footer block: Responds in / Last Login */}
-        <div className="border-t border-slate-200 pt-4 pb-2 flex items-center justify-between mt-auto">
-          <div className="flex-1 text-center border-r border-slate-200 pr-2 pb-1">
-            <div className="flex items-center justify-center gap-1.5 text-slate-500 mb-1">
-              <MessageSquare className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-bold uppercase tracking-[0.08em]">Responds in</span>
-            </div>
-            <p className="text-[16px] text-slate-900 tracking-tight">30 minutes</p>
-          </div>
-          <div className="flex-1 text-center pl-2 pb-1">
-            <div className="flex items-center justify-center gap-1.5 text-slate-500 mb-1">
-              <Clock className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-bold uppercase tracking-[0.08em]">Last Login</span>
-            </div>
-            <p className="text-[16px] text-slate-900 tracking-tight">Online now</p>
-          </div>
-        </div>
 
       </div>
 
@@ -899,10 +1020,10 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
             <MessageSquare className="w-4 h-4" /> Message
          </button>
          <button
-            onClick={(e) => { e.stopPropagation(); onRequestBooking(); }}
-            className="w-full py-2 text-sm font-bold bg-primary-600 border-2 border-primary-600 text-white rounded-xl hover:bg-primary-700 hover:border-primary-700 transition-colors"
+            onClick={(e) => { e.stopPropagation(); onRequestInterview(); }}
+            className="w-full py-2 text-sm font-bold bg-primary-600 border-2 border-primary-600 text-white rounded-xl hover:bg-primary-700 hover:border-primary-700 transition-colors inline-flex items-center justify-center gap-1.5"
          >
-            Book
+            <Video className="w-4 h-4" /> Request Interview
          </button>
       </div>
 
@@ -933,7 +1054,7 @@ const EmptyState: React.FC<{ hasFilters: boolean; onClear: () => void; onPostJob
         </button>
       )}
       <button onClick={onPostJob} className="px-4 py-2 text-sm font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700">
-        Post a Job
+        Post a Care Request
       </button>
     </div>
   </div>

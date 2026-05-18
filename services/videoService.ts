@@ -25,7 +25,11 @@ export const videoService = {
         caregiverId: string,
         caregiverName: string,
         scheduledTime: Date,
-        notes?: string
+        notes?: string,
+        jobId?: string,
+        jobTitle?: string,
+        interviewType?: 'video' | 'phone' | 'in-person',
+        caregiverPhoto?: string,
     ): Promise<VideoInterview> {
         console.log('🎥 [VideoService] scheduleInterview called with:', {
             clientId,
@@ -68,6 +72,10 @@ export const videoService = {
                 roomName,
                 createdAt: new Date().toISOString(),
                 notes: notes || '',
+                interviewType: interviewType || 'video',
+                ...(jobId ? { jobId } : {}),
+                ...(jobTitle ? { jobTitle } : {}),
+                ...(caregiverPhoto ? { caregiverPhoto } : {}),
             };
 
             console.log('📝 [VideoService] Attempting to write to Firestore:', interviewData);

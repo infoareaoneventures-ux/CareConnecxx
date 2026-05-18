@@ -127,7 +127,7 @@ export default function Agreement() {
       });
 
       addToast('Agreement signed successfully!', 'success');
-      navigate('/client/schedule');
+      navigate('/client/calendar');
     } catch (error) {
       console.error('Error saving agreement:', error);
       addToast('Failed to save agreement. Please try again.', 'error');

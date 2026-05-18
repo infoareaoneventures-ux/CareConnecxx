@@ -8,6 +8,7 @@ import {
 import { useCareConnex } from '../../context/CareConnexContext';
 import { authService } from '../../services/api';
 import { CaregiverUserMenu } from './CaregiverUserMenu';
+import type { Caregiver } from '../../types';
 
 const NAV_LINKS = [
   { label: 'Dashboard', path: '/caregiver/dashboard' },

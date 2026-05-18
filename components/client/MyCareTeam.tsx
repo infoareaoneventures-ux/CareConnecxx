@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Phone, MessageCircle, Star, Award, MapPin, Calendar, Clock, Shield, Heart, MessageSquare, Mail, Headphones } from 'lucide-react';
+import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import { Button } from '../ui/Button';
 import { ClientNavigation } from './ClientNavigation';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -300,9 +301,10 @@ export const MyCareTeam: React.FC = () => {
                   <div className="flex-1">
                     <h2 className="text-xl font-bold text-gray-900">{caregiver.name}</h2>
                     <p className="text-sm text-gray-500 mb-2">Caregiver</p>
-                    
+
                     {/* Rating */}
                     {renderStars(caregiver.rating)}
+                    <CaregiverVerificationBadges verified={(caregiver as any).verified} backgroundCheckStatus={(caregiver as any).backgroundCheckStatus} className="mt-2" />
                   </div>
                 </div>
 

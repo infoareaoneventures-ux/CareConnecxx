@@ -353,9 +353,10 @@ service cloud.firestore {
       allow create: if isAuthenticated() && 
         request.resource.data.caregiverId == request.auth.uid;
       
-      // Client can update status (accept/reject)
+      // Client can update status (accept/reject); caregiver can withdraw their own application
       allow update: if isAuthenticated() && (
         resource.data.clientId == request.auth.uid ||
+        (resource.data.caregiverId == request.auth.uid && request.resource.data.status == 'withdrawn') ||
         isAdmin()
       );
       
@@ -630,24 +631,26 @@ service cloud.firestore {
     // SHIFTS (GPS Clock In/Out)
     // ==========================================
     match /shifts/{shiftId} {
-      // Caregiver can create (clock in)
-      allow create: if isAuthenticated() && 
+      // Caregiver can create (clock in or accepted booking)
+      allow create: if isAuthenticated() &&
         request.resource.data.caregiverId == request.auth.uid;
-      
-      // Caregiver can update their own active shift (clock out)
-      // Client can read shifts for their care
-      // Admin can read all
+
+      // Both parties and admin can read
       allow read: if isAuthenticated() && (
         resource.data.caregiverId == request.auth.uid ||
         resource.data.clientId == request.auth.uid ||
         isAdmin()
       );
-      
+
+      // Caregiver: update active shifts (clock out) or scheduled shifts (cancel)
+      // Client: cancel scheduled shifts
       allow update: if isAuthenticated() && (
-        (resource.data.caregiverId == request.auth.uid && resource.data.status == 'active') ||
+        (resource.data.caregiverId == request.auth.uid &&
+          (resource.data.status == 'active' || resource.data.status == 'scheduled' || resource.data.status == 'in-progress')) ||
+        (resource.data.clientId == request.auth.uid && resource.data.status == 'scheduled') ||
         isAdmin()
       );
-      
+
       allow delete: if isAdmin();
     }
     
@@ -733,6 +736,42 @@ service cloud.firestore {
       allow read: if isOwner(userId) || isAdmin();
       allow create, update: if isOwner(userId) || isAdmin();
       allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // BOOKING REQUESTS
+    // ==========================================
+    match /booking_requests/{requestId} {
+      // Client and caregiver involved can read
+      allow read: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+      // Client creates the request
+      allow create: if isAuthenticated() &&
+        request.resource.data.clientId == request.auth.uid;
+      // Client can resend (update); caregiver can accept/decline (update status)
+      allow update: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // HIRE DECISIONS
+    // ==========================================
+    match /hire_decisions/{decisionId} {
+      allow read: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated() &&
+        request.resource.data.clientId == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
 
     // ==========================================

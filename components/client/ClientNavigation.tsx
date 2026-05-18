@@ -3,16 +3,15 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Home, Search, Calendar, MessageSquare, Heart,
   ChevronDown, LogOut, Settings, CreditCard, Crown,
-  Users, FileText, Clock, BookOpen, Bell,
+  Users, FileText, Bell, CalendarCheck,
   Briefcase, X, MoreHorizontal,
 } from 'lucide-react';
 import { authService, dbService } from '../../services/api';
 
 const MY_CARE_ROUTES = [
   '/client/care-plan',
-  '/client/care-journal',
   '/client/my-care-team',
-  '/client/interviews',
+  '/client/bookings',
 ];
 
 const ACCOUNT_ROUTES = ['/client/account', '/client/payments', '/client/membership'];
@@ -109,9 +108,9 @@ export const ClientNavigation: React.FC = () => {
               <Briefcase className="w-4 h-4" /><span>Care Requests</span>
             </button>
 
-            {/* Schedule */}
-            <button onClick={() => navigate('/client/schedule')} className={navBtn(isActive('/client/schedule'))}>
-              <Calendar className="w-4 h-4" /><span>Schedule</span>
+            {/* Calendar */}
+            <button onClick={() => navigate('/client/calendar')} className={navBtn(isActive('/client/calendar'))}>
+              <Calendar className="w-4 h-4" /><span>Calendar</span>
             </button>
 
             {/* Messages */}
@@ -132,9 +131,8 @@ export const ClientNavigation: React.FC = () => {
                 <div className="absolute left-0 mt-2 w-52 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
                   {[
                     { icon: <FileText className="w-4 h-4" />, label: 'Care Plan', path: '/client/care-plan' },
-                    { icon: <BookOpen className="w-4 h-4" />, label: 'Visits', path: '/client/care-journal' },
                     { icon: <Users className="w-4 h-4" />, label: 'Care Team', path: '/client/my-care-team' },
-                    { icon: <Clock className="w-4 h-4" />, label: 'Interviews', path: '/client/interviews' },
+                    { icon: <CalendarCheck className="w-4 h-4" />, label: 'Bookings', path: '/client/bookings' },
                   ].map(item => (
                     <button key={item.path} onClick={() => go(item.path)}
                       className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm transition-colors ${
@@ -207,7 +205,7 @@ export const ClientNavigation: React.FC = () => {
           {[
             { icon: <Home className="w-5 h-5" />, label: 'Home', path: '/client/dashboard', exact: true },
             { icon: <Search className="w-5 h-5" />, label: 'Find Care', path: '/client/find-caregivers', exact: false },
-            { icon: <Calendar className="w-5 h-5" />, label: 'Schedule', path: '/client/schedule', exact: false },
+            { icon: <Calendar className="w-5 h-5" />, label: 'Calendar', path: '/client/calendar', exact: false },
             { icon: <MessageSquare className="w-5 h-5" />, label: 'Messages', path: '/client/inbox', exact: false },
           ].map(item => (
             <button key={item.path} onClick={() => { setMoreOpen(false); navigate(item.path); }}
@@ -271,9 +269,8 @@ export const ClientNavigation: React.FC = () => {
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide px-3 py-1.5">My Care</p>
               {[
                 { icon: <FileText className="w-4 h-4" />, label: 'Care Plan', path: '/client/care-plan' },
-                { icon: <BookOpen className="w-4 h-4" />, label: 'Visits', path: '/client/care-journal' },
                 { icon: <Users className="w-4 h-4" />, label: 'Care Team', path: '/client/my-care-team' },
-                { icon: <Clock className="w-4 h-4" />, label: 'Interviews', path: '/client/interviews' },
+                { icon: <CalendarCheck className="w-4 h-4" />, label: 'Bookings', path: '/client/bookings' },
               ].map(item => (
                 <button key={item.path}
                   onClick={() => { setMoreOpen(false); navigate(item.path); }}

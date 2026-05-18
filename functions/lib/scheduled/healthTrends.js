@@ -160,6 +160,8 @@ async function runMonthlyHealthTrends() {
             const analysis = await analyzeTrends(data);
             const shareToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
             const period = new Date().toISOString().slice(0, 7);
+            const now = new Date();
+            const expiresAt = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000).toISOString();
             const trend = {
                 seniorId,
                 clientId: session.userId,
@@ -167,10 +169,13 @@ async function runMonthlyHealthTrends() {
                 trends: analysis.trends,
                 flags: analysis.flags,
                 highlights: analysis.highlights,
-                generatedAt: new Date().toISOString(),
+                generatedAt: now.toISOString(),
                 shareToken,
+                expiresAt,
             };
             await db.collection("health_trends").doc(`${seniorId}_${period}`).set(trend);
+            // Write a lookup document keyed by shareToken so the React page can fetch by URL
+            await db.collection("health_summaries").doc(shareToken).set(Object.assign(Object.assign({}, trend), { seniorName: data.seniorName }));
             const appUrl = (_b = process.env.APP_URL) !== null && _b !== void 0 ? _b : "https://cara.app";
             const summaryUrl = `${appUrl}/health-summary/${shareToken}`;
             const monthName = new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });

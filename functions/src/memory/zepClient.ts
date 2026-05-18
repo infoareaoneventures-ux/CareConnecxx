@@ -14,6 +14,24 @@ import { v4 as uuidv4 } from "uuid";
 
 const db = admin.firestore();
 
+// ── Structured Zep failure logging ───────────────────────────────────────────
+// Emits a JSON log entry that Cloud Monitoring can use for alerting.
+// severity + zep_failure key are stable — set up a log-based metric on these.
+
+function logZepFailure(operation: string, err: unknown, context?: Record<string, unknown>): void {
+  const code    = (err as any)?.status ?? (err as any)?.code ?? "unknown";
+  const message = (err as any)?.message ?? String(err);
+  console.error(JSON.stringify({
+    severity:  "ERROR",
+    zep_failure: true,
+    operation,
+    error_code:  code,
+    error_message: message,
+    ...context,
+    timestamp: new Date().toISOString(),
+  }));
+}
+
 // ── Singleton client ───────────────────────────────────────────────────────────
 
 let _zep: ZepClient | null = null;
@@ -27,6 +45,42 @@ function getZep(): ZepClient {
   return _zep;
 }
 
+// ── Retry helper for transient Zep failures ───────────────────────────────────
+// Retries on network errors (no status), 429 rate limit, and 5xx server errors.
+// 400-level auth/bad-request errors are not retried — they won't self-heal.
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function withZepRetry<T>(
+  fn:       () => Promise<T>,
+  opName:   string,
+  context?: Record<string, unknown>
+): Promise<T> {
+  const MAX_ATTEMPTS = 3;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const status = (err as any)?.status ?? (err as any)?.statusCode;
+      const isRetryable =
+        !status ||                          // network-level error (no HTTP status)
+        status === 429 ||                   // rate limited
+        (status >= 500 && status < 600);    // server error
+      if (!isRetryable || attempt === MAX_ATTEMPTS - 1) {
+        logZepFailure(opName, err, context);
+        throw err;
+      }
+      // Exponential back-off: 200 ms → 400 ms → 800 ms (+ jitter)
+      await sleep(Math.min(200 * Math.pow(2, attempt), 4_000) + Math.random() * 100);
+    }
+  }
+  throw lastErr;
+}
+
 // ── Stable Zep userId derived from phone ──────────────────────────────────────
 // Exported so all callers use the same derivation consistently
 
@@ -34,12 +88,10 @@ export function getZepUserId(phone: string): string {
   return phone.replace(/\D/g, "");
 }
 
-// ── Create context template (run ONCE during setup) ────────────────────────────
+// ── Context template definition ───────────────────────────────────────────────
 
-export async function createCaraContextTemplate(): Promise<void> {
-  await getZep().context.createContextTemplate({
-    templateId: "cara-eldercare",
-    template: `# CARE CONTEXT
+const CARA_TEMPLATE_ID = "cara-eldercare";
+const CARA_TEMPLATE_BODY = `# CARE CONTEXT
 
 ## About This Family
 %{user_summary}
@@ -48,9 +100,46 @@ export async function createCaraContextTemplate(): Promise<void> {
 %{edges limit=15}
 
 ## Key People & Relationships
-%{entities limit=8}`,
+%{entities limit=8}`;
+
+// Called once during deploy/setup — kept for backwards-compat.
+export async function createCaraContextTemplate(): Promise<void> {
+  await getZep().context.createContextTemplate({
+    templateId: CARA_TEMPLATE_ID,
+    template:   CARA_TEMPLATE_BODY,
   });
   console.log("Cara context template created in Zep.");
+}
+
+// Called automatically on Cloud Function cold-start. Checks whether the template
+// exists; creates it if missing. Safe to call repeatedly — idempotent.
+let _templateEnsured = false;
+
+export async function ensureCaraContextTemplate(): Promise<void> {
+  if (_templateEnsured) return;
+  try {
+    // Attempt to fetch the template — Zep returns 404 if it doesn't exist.
+    await (getZep().context as any).getContextTemplate?.({ templateId: CARA_TEMPLATE_ID });
+    _templateEnsured = true;
+  } catch (err) {
+    const status = (err as any)?.status ?? (err as any)?.statusCode;
+    if (status === 404 || (err as any)?.message?.includes("not found")) {
+      // Template missing — create it now.
+      try {
+        await getZep().context.createContextTemplate({
+          templateId: CARA_TEMPLATE_ID,
+          template:   CARA_TEMPLATE_BODY,
+        });
+        console.log("[zepClient] cara-eldercare context template created.");
+        _templateEnsured = true;
+      } catch (createErr) {
+        logZepFailure("ensureCaraContextTemplate.create", createErr);
+      }
+    } else {
+      // Non-404 — log but don't crash; getContextTemplate may not exist on all SDK versions
+      logZepFailure("ensureCaraContextTemplate.check", err);
+    }
+  }
 }
 
 // ── Initialize Zep on first contact ───────────────────────────────────────────
@@ -67,17 +156,22 @@ export async function initializeZepOnFirstContact(phone: string): Promise<void> 
     });
   } catch (err: any) {
     if (!err?.message?.includes("already exists")) {
-      console.error("initializeZepOnFirstContact user.add error:", err);
+      logZepFailure("initializeZepOnFirstContact.user.add", err, { userId });
     }
   }
+
+  // Guard: if a threadId is already stored, don't create a second thread — that
+  // would split this user's memory across two Zep threads permanently.
+  const existingSession = await db.collection("agent_sessions").doc(phone).get().catch(() => null);
+  if (existingSession?.data()?.zepThreadId) return;
 
   const threadId = uuidv4().replace(/-/g, "");
   try {
     await getZep().thread.create({ threadId, userId });
-    await db.collection("agent_sessions").doc(phone).update({ zepThreadId: threadId });
+    await db.collection("agent_sessions").doc(phone).set({ zepThreadId: threadId }, { merge: true });
   } catch (err: any) {
     if (!err?.message?.includes("already exists")) {
-      console.error("initializeZepOnFirstContact thread.create error:", err);
+      logZepFailure("initializeZepOnFirstContact.thread.create", err, { userId, threadId });
     }
   }
 }
@@ -91,17 +185,17 @@ export async function addUserMessageToZep(params: {
   userName: string;
   sentAt?: Date;
 }): Promise<void> {
-  try {
-    const message: Zep.Message = {
-      createdAt: (params.sentAt ?? new Date()).toISOString(),
-      name: params.userName,
-      role: "user",
-      content: params.content,
-    };
-    await getZep().thread.addMessages(params.threadId, { messages: [message] });
-  } catch (err) {
-    console.error("addUserMessageToZep error:", err);
-  }
+  const message: Zep.Message = {
+    createdAt: (params.sentAt ?? new Date()).toISOString(),
+    name: params.userName,
+    role: "user",
+    content: params.content,
+  };
+  await withZepRetry(
+    () => getZep().thread.addMessages(params.threadId, { messages: [message] }),
+    "addUserMessageToZep",
+    { threadId: params.threadId }
+  ).catch(() => {}); // fire-and-forget: retry exhausted → logged, don't throw
 }
 
 // ── Add Cara's reply to Zep ────────────────────────────────────────────────────
@@ -111,17 +205,17 @@ export async function addAssistantMessageToZep(params: {
   threadId: string;
   content: string;
 }): Promise<void> {
-  try {
-    const message: Zep.Message = {
-      createdAt: new Date().toISOString(),
-      name: "Cara",
-      role: "assistant",
-      content: params.content,
-    };
-    await getZep().thread.addMessages(params.threadId, { messages: [message] });
-  } catch (err) {
-    console.error("addAssistantMessageToZep error:", err);
-  }
+  const message: Zep.Message = {
+    createdAt: new Date().toISOString(),
+    name: "Cara",
+    role: "assistant",
+    content: params.content,
+  };
+  await withZepRetry(
+    () => getZep().thread.addMessages(params.threadId, { messages: [message] }),
+    "addAssistantMessageToZep",
+    { threadId: params.threadId }
+  ).catch(() => {}); // fire-and-forget
 }
 
 // ── Add business data to Zep knowledge graph ──────────────────────────────────
@@ -131,24 +225,29 @@ export async function addBusinessDataToZep(params: {
   userId: string;
   data: Record<string, unknown>;
 }): Promise<void> {
-  try {
-    await getZep().graph.add({
+  await withZepRetry(
+    () => getZep().graph.add({
       userId: params.userId,
       type: "json",
       data: JSON.stringify(params.data),
-    });
-  } catch (err) {
-    console.error("addBusinessDataToZep error:", err);
-  }
+    }),
+    "addBusinessDataToZep",
+    { userId: params.userId }
+  );
+  // Callers that want fire-and-forget must wrap with .catch() themselves
 }
 
 // ── Get assembled context for Claude ──────────────────────────────────────────
-// Returns: user summary + relevant facts with valid_from/valid_to dates
+// Returns: user summary + relevant facts with valid_from/valid_to dates.
+// Self-heals missing template on first call per cold-start.
 
 export async function getZepContext(threadId: string): Promise<string> {
+  // Ensure template exists — no-op after first successful check per instance.
+  await ensureCaraContextTemplate().catch(() => {});
+
   try {
     const userContext = await getZep().thread.getUserContext(threadId, {
-      templateId: "cara-eldercare",
+      templateId: CARA_TEMPLATE_ID,
     });
     return userContext.context ?? "";
   } catch {
@@ -156,7 +255,7 @@ export async function getZepContext(threadId: string): Promise<string> {
       const userContext = await getZep().thread.getUserContext(threadId);
       return userContext.context ?? "";
     } catch (err) {
-      console.error("getZepContext error:", err);
+      logZepFailure("getZepContext", err, { threadId });
       return "";
     }
   }
@@ -177,7 +276,7 @@ export async function searchZepMemory(
       .filter(Boolean)
       .join("\n");
   } catch (err) {
-    console.error("searchZepMemory error:", err);
+    logZepFailure("searchZepMemory", err, { userId, query: query.slice(0, 50) });
     return "";
   }
 }
@@ -204,7 +303,7 @@ export async function pushOnboardingDataToZep(params: {
   try {
     await getZep().user.update(userId, { firstName: params.firstName });
   } catch (err) {
-    console.error("pushOnboardingDataToZep user.update error:", err);
+    logZepFailure("pushOnboardingDataToZep.user.update", err, { userId });
   }
 
   await addBusinessDataToZep({

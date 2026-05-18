@@ -204,14 +204,19 @@ export async function handleCaregiverPermissionsReply(
       onboardingStep: "complete",
       optedIn:        true,
     });
+    const appUrl  = process.env.APP_URL ?? "https://cara.app";
+    const name    = d.name    ? `, ${d.name as string}` : "";
+    const city    = d.city    ? ` in ${d.city as string}` : "";
+
     await sendMessage(chatId,
-      `You're all set${d.name ? `, ${d.name as string}` : ""}.\n\n` +
-      `Your profile is being reviewed — usually 24–48 hours.\n` +
-      `I'll text you the moment you're approved and can start receiving job matches.\n\n` +
-      `Questions? Just text me anytime.`
+      `You're all set${name}! 🎉\n\n` +
+      `Your profile is live and you're ready to be matched with families${city}.\n\n` +
+      `When a family needs someone with your skills, I'll text you the job details — ` +
+      `including the care plan and directions before every visit.\n\n` +
+      `View your profile: ${appUrl}/caregiver/${caregiverId}`
     );
 
-    // Notify admin
+    // Notify admin for final review
     await db.collection("admin_alerts").add({
       type:        "caregiver_pending_review",
       caregiverId,

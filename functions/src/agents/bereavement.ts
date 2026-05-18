@@ -39,9 +39,10 @@ export async function activateBereavementMode(
   phone:      string,
   seniorName: string
 ): Promise<void> {
-  // 1. Set bereavementMode permanently on session
+  // 1. Set bereavementMode with activation timestamp
   await db.collection("agent_sessions").doc(phone).update({
-    bereavementMode: true,
+    bereavementMode:         true,
+    bereavementActivatedAt:  new Date().toISOString(),
   });
 
   // 2. Cancel all pending proactive triggers

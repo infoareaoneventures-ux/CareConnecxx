@@ -110,49 +110,70 @@ export async function initializeMemoryFiles(
 }
 
 // Triggered when user asks "what do you know about mom?" (or similar)
+// zepContext: recent conversational memory from Zep (optional, injected by caller)
 export async function handleMemoryQuery(
   userId: string,
   chatId: string,
-  sendMessage: (id: string, msg: string) => Promise<void>
+  sendMessage: (id: string, msg: string) => Promise<void>,
+  zepContext?: string
 ): Promise<void> {
-  const context = await getMemoryContext(userId);
-  if (!context) {
+  const fileContext = await getMemoryContext(userId);
+  const combined    = [fileContext, zepContext ? `## Recent context\n${zepContext}` : ""]
+    .filter(Boolean)
+    .join("\n\n");
+
+  if (!combined) {
     await sendMessage(chatId, "I'm still building up my picture of your situation. The more we talk, the more I'll know.");
     return;
   }
 
   const result = await getClaude().messages.create({
     model:      "claude-haiku-4-5-20251001",
-    max_tokens: 200,
+    max_tokens: 220,
     system:
       "You are Cara, a care assistant. Summarize what you know about this family's care situation " +
       "in 2–3 warm, conversational sentences. No bullet points. No headers. Speak as if recounting " +
       "what a trusted friend would remember.",
-    messages: [{ role: "user", content: context }],
+    messages: [{ role: "user", content: combined }],
   });
 
   const summary = ((result.content[0] as { text: string }).text ?? "").trim();
   await sendMessage(chatId, summary || "I remember quite a bit — just ask me something specific.");
 }
 
-// Consolidate last 48h of audit log entries into memory files
-export async function consolidateMemoryForUser(userId: string): Promise<void> {
-  const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+// Consolidate last 7 days of actual conversation messages into memory files.
+// `phone` is optional — if omitted, we look it up from agent_sessions using userId.
+export async function consolidateMemoryForUser(userId: string, phone?: string): Promise<void> {
+  // Resolve phone → agent_conversations doc key
+  let conversationKey = phone ?? userId;
+  if (!phone) {
+    const sessionSnap = await db.collection("agent_sessions")
+      .where("userId", "==", userId)
+      .limit(1)
+      .get();
+    if (!sessionSnap.empty) conversationKey = sessionSnap.docs[0].id;
+  }
 
-  const logSnap = await db
-    .collection("agent_audit_log")
-    .where("userId", "==", userId)
-    .where("timestamp", ">=", fortyEightHoursAgo)
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).getTime();
+
+  const msgSnap = await db
+    .collection("agent_conversations")
+    .doc(conversationKey)
+    .collection("messages")
+    .where("timestamp", ">=", sevenDaysAgo)
     .orderBy("timestamp", "asc")
-    .limit(50)
+    .limit(60)
     .get();
 
-  if (logSnap.empty) return;
+  if (msgSnap.empty) return;
 
-  const events = logSnap.docs
-    .map((d) => d.data())
-    .filter((e) => e.eventType === "message_sent" || e.eventType === "message_received")
-    .map((e) => `[${e.timestamp}] ${e.eventType}: ${JSON.stringify(e.data).slice(0, 200)}`)
+  const events = msgSnap.docs
+    .filter((d) => d.data().role === "user" || d.data().role === "assistant")
+    .map((d) => {
+      const label   = d.data().role === "user" ? "Family" : "Cara";
+      const content = (d.data().content as string | undefined) ?? "";
+      return `[${label}]: ${content.slice(0, 600)}`;
+    })
     .join("\n");
 
   if (!events) return;
@@ -182,10 +203,27 @@ export async function consolidateMemoryForUser(userId: string): Promise<void> {
     return;
   }
 
+  const appliedUpdates: Array<{ file: MemoryFile; append: string }> = [];
   for (const { file, append } of updates) {
     if (ALL_FILES.includes(file) && append) {
       await appendToMemoryFile(userId, file, append).catch(() => {});
+      appliedUpdates.push({ file, append });
     }
+  }
+
+  // Sync applied updates to Zep knowledge graph (fire-and-forget)
+  if (appliedUpdates.length > 0 && phone) {
+    const zepUserId = phone.replace(/\D/g, "");
+    const { addBusinessDataToZep } = await import("./zepClient");
+    addBusinessDataToZep({
+      userId: zepUserId,
+      data: {
+        event_type:  "memory_files_consolidated",
+        updates:     appliedUpdates.map((u) => ({ file: u.file, content: u.append.slice(0, 400) })),
+        timestamp:   new Date().toISOString(),
+        data_source: "cara_memory_consolidation",
+      },
+    }).catch(() => {});
   }
 
   // Trim recent_episodes.md if it exceeds 8000 chars
@@ -200,6 +238,23 @@ export async function consolidateMemoryForUser(userId: string): Promise<void> {
       messages: [{ role: "user", content: episodes }],
     });
     const trimmed = ((trimResult.content[0] as { text: string }).text ?? "").trim();
-    if (trimmed) await writeMemoryFile(userId, "recent_episodes", trimmed);
+    if (trimmed) {
+      await writeMemoryFile(userId, "recent_episodes", trimmed);
+
+      // Keep Zep in sync with the trimmed version so context injection stays consistent.
+      if (phone) {
+        const zepUserId = phone.replace(/\D/g, "");
+        const { addBusinessDataToZep } = await import("./zepClient");
+        addBusinessDataToZep({
+          userId: zepUserId,
+          data: {
+            event_type:   "recent_episodes_trimmed",
+            content:      trimmed.slice(0, 800),
+            timestamp:    new Date().toISOString(),
+            data_source:  "cara_memory_trim",
+          },
+        }).catch(() => {});
+      }
+    }
   }
 }

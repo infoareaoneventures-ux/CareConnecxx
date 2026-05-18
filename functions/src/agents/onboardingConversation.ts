@@ -67,7 +67,7 @@ async function detectCorrection(text: string): Promise<{ field: string; value: s
     "The user is in a conversational onboarding flow. Detect if they are correcting previously " +
     "given information (e.g. 'actually my name is X', 'wait, I meant Y', 'sorry, it's Z'). " +
     "If yes, reply with JSON: {\"field\": \"<fieldName>\", \"value\": \"<newValue>\"}. " +
-    "Valid fields: firstName, seniorName, city, zipCode, hourlyRate, yearsExperience. " +
+    "Valid fields: firstName, seniorName, city, zipCode, hourlyRate, yearsExperience, email. " +
     "If this is NOT a correction, reply with the literal word: null",
     text
   );
@@ -118,7 +118,8 @@ export async function handleOnboardingStep(
       && !step.endsWith("_send_photo") && !step.endsWith("_awaiting_photo")
       && !step.endsWith("_send_documents") && !step.endsWith("_awaiting_documents")
       && !step.endsWith("_send_bgcheck") && !step.endsWith("_awaiting_bgcheck")
-      && !step.endsWith("_send_stripe_connect") && !step.endsWith("_awaiting_stripe")) {
+      && !step.endsWith("_send_stripe_connect") && !step.endsWith("_awaiting_stripe")
+      && !step.endsWith("_send_membership") && !step.endsWith("_awaiting_membership")) {
     const correction = await detectCorrection(text);
     if (correction) {
       await mergeOnboardingData(phone, { [correction.field]: correction.value });
@@ -134,7 +135,9 @@ export async function handleOnboardingStep(
         caregiver_ask_experience: "How many years of caregiving experience do you have?",
         caregiver_ask_specialties: "What types of care do you specialize in?",
         caregiver_ask_availability: "What days and hours are you available to work?",
+        caregiver_ask_job_type: "Are you looking for occasional, part-time, or full-time work?",
         caregiver_ask_rate:    "What's your hourly rate?",
+        caregiver_ask_email:   "What's your email address?",
       };
       const repeat = stepMessages[step] ?? "Could you continue where we left off?";
       await sendMessage(chatId, `Got it — updated.\n\n${repeat}`);
@@ -162,19 +165,27 @@ export async function handleOnboardingStep(
     case "caregiver_ask_location":    return handleCaregiverAskLocation(phone, chatId, text, session);
     case "caregiver_ask_experience":  return handleCaregiverAskExperience(phone, chatId, text, session);
     case "caregiver_ask_specialties": return handleCaregiverAskSpecialties(phone, chatId, text, session);
-    case "caregiver_ask_availability":return handleCaregiverAskAvailability(phone, chatId, text, session);
-    case "caregiver_ask_rate":        return handleCaregiverAskRate(phone, chatId, text, session);
-    case "caregiver_send_photo":      return handleCaregiverSendPhoto(phone, chatId, session);
+    case "caregiver_ask_availability": return handleCaregiverAskAvailability(phone, chatId, text, session);
+    case "caregiver_ask_job_type":     return handleCaregiverAskJobType(phone, chatId, text, session);
+    case "caregiver_ask_rate":         return handleCaregiverAskRate(phone, chatId, text, session);
+    case "caregiver_ask_email":        return handleCaregiverAskEmail(phone, chatId, text, session);
+    case "caregiver_ask_bio":          return handleCaregiverAskBio(phone, chatId, text, session);
+    case "caregiver_send_photo":       return handleCaregiverSendPhoto(phone, chatId, session);
     case "caregiver_awaiting_photo":
       await sendMessage(chatId, "Still waiting for your photo! Tap the upload link I sent 📷");
       return;
     case "caregiver_send_documents":  return handleCaregiverSendDocuments(phone, chatId, session);
     case "caregiver_awaiting_documents":
       if (norm === "SKIP") {
-        await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
-        return handleCaregiverSendBgcheck(phone, chatId, session);
+        await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
+        return handleCaregiverAskMvr(phone, chatId, session);
       }
       await sendMessage(chatId, "Tap the link I sent to upload your certifications, or reply SKIP to continue without them.");
+      return;
+    case "caregiver_ask_mvr":          return handleCaregiverAskMvr(phone, chatId, text, session);
+    case "caregiver_send_membership":  return handleCaregiverSendMembership(phone, chatId, session);
+    case "caregiver_awaiting_membership":
+      await handleCaregiverResendMembership(phone, chatId, session);
       return;
     case "caregiver_send_bgcheck":    return handleCaregiverSendBgcheck(phone, chatId, session);
     case "caregiver_awaiting_bgcheck":
@@ -200,7 +211,9 @@ async function handleAskRole(phone: string, chatId: string, text: string): Promi
   }
   if (norm === "2" || /caregiver|cna|hha|nurse|work|job/i.test(norm)) {
     await updateSession(phone, { onboardingStep: "caregiver_ask_name", userType: "caregiver" });
-    await sendMessage(chatId, "Wonderful! What's your name?");
+    await sendMessage(chatId,
+      "Great — let's get your profile set up. Takes about 5 minutes and everything happens right here.\n\nWhat's your name?"
+    );
     return;
   }
   await sendMessage(chatId,
@@ -531,10 +544,10 @@ async function handleCaregiverAskAvailability(phone: string, chatId: string, tex
   try { const p = JSON.parse(raw); days = p.days ?? []; hours = p.hours ?? ""; } catch { /* keep defaults */ }
 
   await mergeOnboardingData(phone, { availability: { days, hours } });
-  await updateSession(phone, { onboardingStep: "caregiver_ask_rate" });
+  await updateSession(phone, { onboardingStep: "caregiver_ask_job_type" });
   await sendMessage(chatId,
-    "What's your hourly rate?\n\n" +
-    "(Most caregivers charge $18–28/hr)"
+    "Are you looking for occasional fill-in shifts, part-time (less than 25 hrs/week), or full-time work?\n\n" +
+    "Reply 1 for Occasional, 2 for Part-time, or 3 for Full-time."
   );
 }
 
@@ -554,8 +567,140 @@ async function handleCaregiverAskRate(phone: string, chatId: string, text: strin
   }
 
   await mergeOnboardingData(phone, { hourlyRate });
+  await updateSession(phone, { onboardingStep: "caregiver_ask_email" });
+  await sendMessage(chatId, "What's your email address? I'll use it to set up your payout account.");
+}
+
+async function handleCaregiverAskJobType(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  const norm = text.trim();
+  let jobType: string;
+
+  if (norm === "1" || /occasional|fill.?in|as.?need/i.test(norm)) {
+    jobType = "occasional";
+  } else if (norm === "2" || /part.?time|part time/i.test(norm)) {
+    jobType = "part_time";
+  } else if (norm === "3" || /full.?time|full time/i.test(norm)) {
+    jobType = "full_time";
+  } else {
+    // Claude Haiku fallback for natural language
+    const raw = await parseWithClaude(
+      "The user is describing the type of caregiving work they want. Reply with one of: occasional, part_time, full_time. Reply with just that word.",
+      text
+    );
+    jobType = ["occasional", "part_time", "full_time"].includes(raw) ? raw : "part_time";
+  }
+
+  await mergeOnboardingData(phone, { jobType });
+  await updateSession(phone, { onboardingStep: "caregiver_ask_rate" });
+  const d = session.onboardingData ?? {};
+  const city = (d.city as string) ?? "";
+  await sendMessage(chatId,
+    `What's your hourly rate?\n\n` +
+    (city ? `(Most caregivers in ${city} charge $18–28/hr)` : "(Most caregivers charge $18–28/hr)")
+  );
+}
+
+async function handleCaregiverAskEmail(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  const email = text.trim().toLowerCase();
+  if (!/\S+@\S+\.\S+/.test(email)) {
+    await sendMessage(chatId, "That doesn't look like a valid email. Could you double-check? (e.g. name@example.com)");
+    return;
+  }
+  await mergeOnboardingData(phone, { email });
+  await updateSession(phone, { onboardingStep: "caregiver_ask_bio" });
+  await sendMessage(chatId,
+    "Last question before your photo — tell me about your approach to care in a sentence or two. Families will see this on your profile."
+  );
+}
+
+async function handleCaregiverAskBio(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  const bio = text.trim().toLowerCase() === "skip" || text.trim().length < 10 ? "" : text.trim();
+  await mergeOnboardingData(phone, { bio });
   await updateSession(phone, { onboardingStep: "caregiver_send_photo" });
   await handleCaregiverSendPhoto(phone, chatId, session);
+}
+
+// Called immediately after doc upload — ask before building the checkout so MVR can be bundled
+async function handleCaregiverAskMvr(phone: string, chatId: string, textOrSession: string | AgentSession, session?: AgentSession): Promise<void> {
+  // When called as a switch case, textOrSession is the user's reply text
+  // When called programmatically (no reply yet), textOrSession is the session object
+  if (typeof textOrSession !== "string") {
+    // First visit — ask the question
+    await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
+    await sendMessage(chatId,
+      "Do you transport clients to appointments or errands?\n\n" +
+      "Adding a Motor Vehicle Record check to your profile shows families you're a verified driver. " +
+      "It's an optional add-on you can include with your membership.\n\n" +
+      "Reply YES to add it, or NO to skip."
+    );
+    return;
+  }
+
+  // User has replied — process their answer
+  const norm = (textOrSession as string).trim().toUpperCase();
+  const wantsMvr = norm === "YES" || norm === "Y";
+  await mergeOnboardingData(phone, { wantsMvr });
+  await updateSession(phone, { onboardingStep: "caregiver_send_membership" });
+  await handleCaregiverSendMembership(phone, chatId, session!);
+}
+
+async function handleCaregiverSendMembership(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  const d       = session.onboardingData ?? {};
+  const wantsMvr = (d.wantsMvr as boolean | undefined) ?? false;
+  const token   = generateToken({ phone, task: "caregiver_membership" });
+  let checkoutUrl = `${APP_URL}/done?task=caregiver_membership&t=${token}`;
+
+  try {
+    const membershipPriceId = process.env.STRIPE_CAREGIVER_ANNUAL_PRICE_ID ?? process.env.VITE_STRIPE_CAREGIVER_ANNUAL ?? "";
+    const mvrPriceId        = (process.env.STRIPE_MVR_PRICE_ID ?? "").trim();
+
+    if (membershipPriceId) {
+      const lineItems: { price: string; quantity: number }[] = [
+        { price: membershipPriceId, quantity: 1 },
+      ];
+      if (wantsMvr && mvrPriceId && !mvrPriceId.startsWith("FILL_IN")) {
+        lineItems.push({ price: mvrPriceId, quantity: 1 });
+      }
+
+      const stripeSession = await getStripe().checkout.sessions.create({
+        mode:                 "payment",
+        payment_method_types: ["card"],
+        line_items:           lineItems,
+        success_url:          `${APP_URL}/done?task=caregiver_membership&t=${token}`,
+        cancel_url:           `${APP_URL}/start`,
+        metadata:             { phone, task: "caregiver_membership", includeMVR: wantsMvr ? "true" : "false" },
+      });
+      checkoutUrl = stripeSession.url ?? checkoutUrl;
+    }
+  } catch (err) {
+    console.error("handleCaregiverSendMembership stripe error:", err);
+  }
+
+  const mvrLine = wantsMvr
+    ? "\n\nYour order includes the $24.95/yr membership + MVR driver check."
+    : "";
+
+  // Store URL on session so we can resend it
+  await updateSession(phone, {
+    onboardingStep:        "caregiver_awaiting_membership",
+    membershipCheckoutUrl: checkoutUrl,
+  });
+  await sendMessage(chatId,
+    "Almost there! There's a $24.95/year platform fee that gives you access to the job board, " +
+    `bookings, and Cara's scheduling tools.${mvrLine}\n\nTap to pay and activate your account:`
+  );
+  await sendMessage(chatId, { parts: [{ type: "link", url: checkoutUrl, value: "💳 Pay Now →" }] });
+}
+
+async function handleCaregiverResendMembership(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  const url = (session as any).membershipCheckoutUrl as string | undefined;
+  if (url) {
+    await sendMessage(chatId, "Tap the link below to complete your membership payment:");
+    await sendMessage(chatId, { parts: [{ type: "link", url, value: "💳 Pay $24.95/year →" }] });
+  } else {
+    // Re-generate if URL was lost
+    await handleCaregiverSendMembership(phone, chatId, session);
+  }
 }
 
 async function handleCaregiverSendPhoto(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -585,10 +730,17 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
   try {
     const d = session.onboardingData ?? {};
     const nameParts = ((d.name ?? "") as string).split(" ");
+
+    // Use MVR package if caregiver paid for it; flag is set on session by stripe.ts webhook
+    const mvrPaid      = (session as any).mvrPaid === true;
+    const checkrPkg    = mvrPaid
+      ? (process.env.CHECKR_PACKAGE_MVR ?? "tasker_standard")
+      : (process.env.CHECKR_PACKAGE     ?? "tasker_standard");
+
     const resp = await axios.post(
       "https://api.checkr.com/v1/invitations",
       {
-        package:    "tasker_standard",
+        package:    checkrPkg,
         first_name: nameParts[0] ?? "",
         last_name:  nameParts.slice(1).join(" ") ?? "",
       },
@@ -608,7 +760,9 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
           checkrCandidateId: candidateId,
           status:            "pending",
           submittedAt:       new Date().toISOString(),
+          mvrIncluded:       mvrPaid,
         },
+        ...(mvrPaid && { mvrPaid: true }),
       });
       await updateSession(phone, { caregiverId: caregiverRef.id });
     }
@@ -634,6 +788,7 @@ async function handleCaregiverSendStripeConnect(phone: string, chatId: string, s
     const account = await getStripe().accounts.create({
       type:    "express",
       country: "US",
+      email:   (d.email ?? "") as string,
       metadata: { phone, caregiverName: (d.name ?? "") as string },
     });
     const link = await getStripe().accountLinks.create({
@@ -655,6 +810,42 @@ async function handleCaregiverSendStripeConnect(phone: string, chatId: string, s
   await sendMessage(chatId, { parts: [{ type: "link", url: connectUrl, value: "💰 Set Up Payouts →" }] });
 }
 
+// ── Resend a stuck onboarding link (called by stale-session nudge after 7 days) ─
+
+export async function resendStuckStep(phone: string): Promise<boolean> {
+  const snap = await db.collection("agent_sessions").doc(phone).get();
+  if (!snap.exists) return false;
+  const session = snap.data() as AgentSession;
+  const chatId  = session.chatId;
+  const step    = (session as any).onboardingStep as string | undefined;
+  if (!chatId || !step) return false;
+
+  switch (step) {
+    case "caregiver_awaiting_bgcheck":
+    case "caregiver_send_bgcheck": {
+      // Re-send the Checkr invite link
+      await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
+      await handleCaregiverSendBgcheck(phone, chatId, session);
+      return true;
+    }
+    case "caregiver_awaiting_stripe":
+    case "caregiver_send_stripe_connect": {
+      // Re-generate Stripe Connect link (creates new account if needed)
+      await updateSession(phone, { onboardingStep: "caregiver_send_stripe_connect" });
+      await handleCaregiverSendStripeConnect(phone, chatId, session);
+      return true;
+    }
+    case "client_awaiting_payment":
+    case "client_send_payment": {
+      // Re-generate Stripe Checkout session
+      await handleClientSendPayment(phone, chatId, session);
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
 // ── Webhook-triggered step advancement ───────────────────────────────────────
 // Called from stripe.ts and checkr.ts when webhooks fire
 
@@ -664,8 +855,20 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
   const session = snap.data() as AgentSession;
   const chatId  = session.chatId;
 
+  // Idempotency: skip if this task was already processed for this session
+  const processedTasks: string[] = (session as any).processedWebhookTasks ?? [];
+  if (processedTasks.includes(task)) {
+    console.info(`advanceOnboardingStep: skipping duplicate webhook task="${task}" for phone=${phone}`);
+    return;
+  }
+
   switch (task) {
     case "payment": {
+      // Mark task processed before any writes to prevent race on retry
+      await db.collection("agent_sessions").doc(phone).update({
+        processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
+      });
+
       // Client paid → move to permissions
       await updateSession(phone, { onboardingStep: "client_ask_permissions" });
 
@@ -745,12 +948,28 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
     }
 
     case "doc_upload": {
+      await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
+      await handleCaregiverAskMvr(phone, chatId, session);
+      break;
+    }
+
+    case "membership": {
+      await db.collection("agent_sessions").doc(phone).update({
+        processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
+      });
       await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
+      await sendMessage(chatId,
+        "Payment received — thank you! Now for the final step: a background check is required for all caregivers.\n\n" +
+        "Tap to get started — usually takes about 5 minutes:"
+      );
       await handleCaregiverSendBgcheck(phone, chatId, session);
       break;
     }
 
     case "background_check": {
+      await db.collection("agent_sessions").doc(phone).update({
+        processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
+      });
       // Checkr came back clear → advance to Stripe Connect
       await updateSession(phone, { onboardingStep: "caregiver_send_stripe_connect" });
       await sendMessage(chatId,
@@ -774,6 +993,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
     }
 
     case "stripe_connect": {
+      // Mark processed first to prevent duplicate caregiver doc creation on retry
+      await db.collection("agent_sessions").doc(phone).update({
+        processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
+      });
+
       // Caregiver Stripe Connect complete → finalize caregiver doc
       const d = session.onboardingData ?? {};
       const profileData = {
@@ -787,6 +1011,9 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         availability:    d.availability,
         hourlyRate:      d.hourlyRate,
         stripeAccountId: d.stripeAccountId,
+        email:           d.email   ?? null,
+        bio:             d.bio     ?? null,
+        jobType:         d.jobType ?? null,
         status:          "active",
       };
 

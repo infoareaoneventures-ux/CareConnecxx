@@ -1,5 +1,6 @@
 import axios, { AxiosError } from "axios";
 import * as admin from "firebase-admin";
+import { v4 as uuidv4 } from "uuid";
 import { supervise, SuperviseContext } from "../safety/supervisor";
 import { logMessageSent } from "../observability/auditLog";
 
@@ -60,19 +61,47 @@ export interface AgentSession {
   onboardingData?:  Record<string, unknown>;
 }
 
+// ── Retry helper — exponential backoff for 3xxx transient server errors ───────
+
+async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const status = (err as AxiosError)?.response?.status;
+      const code   = (err as AxiosError<{ code?: number }>)?.response?.data?.code;
+      const isTransient = (status === 500 || status === 503 || status === 504) ||
+                          (typeof code === "number" && code >= 3000 && code < 4000);
+      if (!isTransient || i === attempts - 1) throw err;
+      await new Promise<void>((r) => setTimeout(r, (i + 1) * 1000));
+    }
+  }
+  throw lastErr;
+}
+
 // ── Capability check ──────────────────────────────────────────────────────────
 
 export async function checkCapability(
   phone: string
 ): Promise<{ iMessage: boolean; RCS: boolean }> {
   try {
-    const { data } = await axios.post(
-      `${cfg().baseUrl}/capability_checks`,
-      { handles: [phone] },
-      { headers: headers() }
-    );
-    const result = data?.handles?.[phone] ?? {};
-    return { iMessage: !!result.iMessage, RCS: !!result.RCS };
+    const [imsgRes, rcsRes] = await Promise.allSettled([
+      axios.post(
+        `${cfg().baseUrl}/capability/check_imessage`,
+        { handle: phone },
+        { headers: headers() }
+      ),
+      axios.post(
+        `${cfg().baseUrl}/capability/check_rcs`,
+        { handle: phone },
+        { headers: headers() }
+      ),
+    ]);
+    const iMessage = imsgRes.status === "fulfilled" ? !!imsgRes.value.data?.available : false;
+    const RCS      = rcsRes.status  === "fulfilled" ? !!rcsRes.value.data?.available  : false;
+    return { iMessage, RCS };
   } catch {
     return { iMessage: false, RCS: false };
   }
@@ -84,12 +113,16 @@ export async function createChat(
   phone: string,
   message: LinqMessage
 ): Promise<{ chat_id: string; service: LinqService }> {
-  const { data } = await axios.post(
-    `${cfg().baseUrl}/chats`,
-    { from: cfg().phoneNumber, to: [phone], message },
-    { headers: headers() }
+  const res = await withRetry(() =>
+    axios.post(
+      `${cfg().baseUrl}/chats`,
+      { from: cfg().phoneNumber, to: [phone], message, idempotency_key: uuidv4() },
+      { headers: headers() }
+    )
   );
-  return { chat_id: data.chat_id ?? data.id, service: data.service ?? "SMS" };
+  const traceId = res.headers["x-trace-id"] as string | undefined;
+  if (traceId) console.info("Linq createChat trace_id:", traceId);
+  return { chat_id: res.data.chat_id ?? res.data.id, service: res.data.service ?? "SMS" };
 }
 
 export async function sendMessage(
@@ -101,11 +134,15 @@ export async function sendMessage(
       ? { parts: [{ type: "text", value: textOrMessage }] }
       : textOrMessage;
 
-  await axios.post(
-    `${cfg().baseUrl}/chats/${chatId}/messages`,
-    message,
-    { headers: headers() }
+  const res = await withRetry(() =>
+    axios.post(
+      `${cfg().baseUrl}/chats/${chatId}/messages`,
+      { ...message, idempotency_key: uuidv4() },
+      { headers: headers() }
+    )
   );
+  const traceId = res.headers["x-trace-id"] as string | undefined;
+  if (traceId) console.info("Linq sendMessage trace_id:", traceId, "chatId:", chatId);
 }
 
 export async function startTyping(chatId: string): Promise<void> {
@@ -152,6 +189,13 @@ export async function addParticipant(chatId: string, phone: string): Promise<voi
   await axios.post(
     `${cfg().baseUrl}/chats/${chatId}/participants`,
     { handle: phone },
+    { headers: headers() }
+  );
+}
+
+export async function removeParticipant(chatId: string, phone: string): Promise<void> {
+  await axios.delete(
+    `${cfg().baseUrl}/chats/${chatId}/participants/${encodeURIComponent(phone)}`,
     { headers: headers() }
   );
 }

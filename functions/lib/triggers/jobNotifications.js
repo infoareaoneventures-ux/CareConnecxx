@@ -163,7 +163,7 @@ function buildScheduleText(intake) {
     return [days, time, hours].filter(Boolean).join(", ");
 }
 // ── handleJobResponse ─────────────────────────────────────────────────────────
-async function handleJobResponse(phone, norm, chatId, session) {
+async function handleJobResponse(phone, text, chatId, session) {
     const jobId = session.pendingJobId;
     if (!jobId) {
         await db.collection("agent_sessions").doc(phone).update({
@@ -173,13 +173,42 @@ async function handleJobResponse(phone, norm, chatId, session) {
         });
         return;
     }
-    if (norm === "NO") {
+    // Use NLU to determine YES/NO from natural language
+    let isYes;
+    const upper = text.trim().toUpperCase();
+    if (["YES", "Y", "YEAH", "YEP", "YUP", "SURE", "OK", "OKAY"].includes(upper)) {
+        isYes = true;
+    }
+    else if (["NO", "N", "NOPE", "PASS", "CANT", "CAN'T", "DECLINE", "SKIP"].includes(upper)) {
+        isYes = false;
+    }
+    else {
+        try {
+            isYes = await parseAvailabilityConfirmation(text);
+        }
+        catch (_a) {
+            isYes = false;
+        }
+    }
+    if (!isYes) {
         await db.collection("agent_sessions").doc(phone).update({
             awaitingJobResponse: false,
             pendingJobId: null,
             pendingJobSentAt: null,
         });
         await (0, client_1.sendMessage)(chatId, "No problem — I'll reach out when something comes up.");
+        // Record the decline and check if all notified caregivers have declined
+        await db.collection("job_notifications")
+            .where("phone", "==", phone)
+            .where("jobId", "==", jobId)
+            .limit(1)
+            .get()
+            .then(snap => {
+            if (!snap.empty)
+                return snap.docs[0].ref.update({ status: "declined", declinedAt: new Date().toISOString() });
+        })
+            .catch(() => { });
+        notifyFamilyIfAllDeclined(jobId).catch(err => console.error("[handleJobResponse] notifyFamilyIfAllDeclined failed:", err));
         return;
     }
     // YES path — ask availability confirmation
@@ -193,6 +222,75 @@ async function handleJobResponse(phone, norm, chatId, session) {
         pendingJobId: jobId,
     });
     await (0, client_1.sendMessage)(chatId, `Great! Just to confirm — are you available for ${scheduleText}?\n\nReply YES to apply or NO to pass.`);
+}
+async function notifyFamilyIfAllDeclined(jobId) {
+    var _a, _b, _c, _d, _e;
+    const notifSnap = await db.collection("job_notifications")
+        .where("jobId", "==", jobId)
+        .get();
+    if (notifSnap.empty)
+        return;
+    const allDeclined = notifSnap.docs.every(d => d.data().status === "declined" || d.data().status === "applied");
+    // Only act if every notified caregiver has responded AND all declined
+    const anyApplied = notifSnap.docs.some(d => d.data().status === "applied");
+    if (!allDeclined || anyApplied)
+        return;
+    // Look up the job post → get clientId → find family phone
+    const jobSnap = await db.collection("job_posts").doc(jobId).get();
+    if (!jobSnap.exists)
+        return;
+    const jobData = jobSnap.data();
+    const clientId = jobData.clientId;
+    if (!clientId)
+        return;
+    // Cap re-match attempts at 2 to prevent infinite loops
+    const rematchAttempts = ((_a = jobData.rematchAttempts) !== null && _a !== void 0 ? _a : 0);
+    if (rematchAttempts >= 2) {
+        // All attempts exhausted — escalate to admin and notify family
+        await db.collection("admin_alerts").add({
+            type: "job_no_coverage",
+            jobId,
+            clientId,
+            createdAt: new Date().toISOString(),
+            resolved: false,
+            priority: "high",
+        });
+        const userSnap = await db.collection("users").doc(clientId).get();
+        const familyPhone = (_b = userSnap.data()) === null || _b === void 0 ? void 0 : _b.phone;
+        if (familyPhone) {
+            await (0, caraAgent_1.sendViaInteractionAgent)(familyPhone, {
+                content: "I've done a thorough search and haven't been able to find available caregivers right now. " +
+                    "Our team has been notified and will reach out within 2 hours to help.",
+                urgency: "standard",
+                sourceAgent: "job_notification",
+                canDrop: false,
+            });
+        }
+        await db.collection("job_posts").doc(jobId).update({ status: "no_coverage" });
+        return;
+    }
+    // Increment attempt counter before proceeding
+    await db.collection("job_posts").doc(jobId).update({
+        rematchAttempts: firestore_1.FieldValue.increment(1),
+    });
+    const userSnap = await db.collection("users").doc(clientId).get();
+    const familyPhone = (_c = userSnap.data()) === null || _c === void 0 ? void 0 : _c.phone;
+    if (!familyPhone)
+        return;
+    await (0, caraAgent_1.sendViaInteractionAgent)(familyPhone, {
+        content: "The caregivers I reached out to aren't available right now. " +
+            "I'm searching for more options and will text you as soon as I find a match.",
+        urgency: "standard",
+        sourceAgent: "job_notification",
+        canDrop: false,
+    });
+    // Trigger a fresh broad matching pass
+    const sessionSnap = await db.collection("agent_sessions").doc(familyPhone).get();
+    if (sessionSnap.exists) {
+        const sessionData = (_d = sessionSnap.data()) !== null && _d !== void 0 ? _d : {};
+        const { runMatchingForClient } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
+        await runMatchingForClient(familyPhone, (_e = sessionData.chatId) !== null && _e !== void 0 ? _e : "", sessionData, sessionData).catch(err => console.error("[notifyFamilyIfAllDeclined] re-match failed:", err));
+    }
 }
 function buildScheduleSummaryFromJobPost(job) {
     var _a;

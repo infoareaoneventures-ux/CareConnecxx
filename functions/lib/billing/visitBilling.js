@@ -124,6 +124,16 @@ async function handlePaymentError(params) {
         failedAt: now,
         errorMessage,
     }, { merge: true });
+    // Mark any pending booking task as payment_failed so the payment_method.attached
+    // retry handler can find and re-execute it when the client updates their card.
+    const taskSnap = await db.collection("agent_tasks")
+        .where("appointmentIds", "array-contains", appointmentId)
+        .where("status", "in", ["awaiting_approval", "approved"])
+        .limit(1)
+        .get();
+    if (!taskSnap.empty) {
+        await taskSnap.docs[0].ref.update({ status: "payment_failed", failedAt: now });
+    }
     await db.collection("admin_alerts").add({
         type: "payment_failed",
         appointmentId,

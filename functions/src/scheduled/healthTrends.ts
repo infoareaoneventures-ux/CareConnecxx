@@ -22,6 +22,7 @@ interface HealthTrend {
   highlights: string;
   generatedAt: string;
   shareToken:  string;
+  expiresAt:   string;   // ISO — token is invalid after this date
 }
 
 // ── Data loader — 90 days of journal entries ──────────────────────────────────
@@ -148,6 +149,9 @@ async function runMonthlyHealthTrends(): Promise<number> {
       const shareToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
       const period     = new Date().toISOString().slice(0, 7);
 
+      const now        = new Date();
+      const expiresAt  = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000).toISOString();
+
       const trend: HealthTrend = {
         seniorId,
         clientId:    session.userId,
@@ -155,11 +159,18 @@ async function runMonthlyHealthTrends(): Promise<number> {
         trends:      analysis.trends,
         flags:       analysis.flags,
         highlights:  analysis.highlights,
-        generatedAt: new Date().toISOString(),
+        generatedAt: now.toISOString(),
         shareToken,
+        expiresAt,
       };
 
       await db.collection("health_trends").doc(`${seniorId}_${period}`).set(trend);
+
+      // Write a lookup document keyed by shareToken so the React page can fetch by URL
+      await db.collection("health_summaries").doc(shareToken).set({
+        ...trend,
+        seniorName: data.seniorName,
+      });
 
       const appUrl     = process.env.APP_URL ?? "https://cara.app";
       const summaryUrl = `${appUrl}/health-summary/${shareToken}`;

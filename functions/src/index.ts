@@ -6,6 +6,9 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 
+// BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID, CREDENTIAL_VAULT_KEY are injected
+// via Firebase Secret Manager on linqWebhook (runWith secrets). Locally, load from .env.
+
 
 // STRIPE FUNCTIONS - Payment processing for memberships
 export * from './stripe';
@@ -76,6 +79,9 @@ export { createFamilyGroup } from './agents/familyGroupManager';
 export { sendWeeklyDigests, triggerWeeklyDigestNow } from './scheduled/weeklyDigest';
 export { sendMonthlyHealthTrends, triggerHealthTrendsNow } from './scheduled/healthTrends';
 
+// Linq proactive — no-visit check-in (daily 9am ET)
+export { runNoVisitCheck } from './scheduled/noVisitCheck';
+
 // Transportation badge evaluation (daily) + on-demand refresh
 export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/transportBadge';
 
@@ -89,9 +95,107 @@ export { markTaskComplete } from './agents/onboardingAgent';
 export { sendMorningBriefings } from './scheduled/morningBriefing';
 export { sendStaleSessionNudges } from './scheduled/staleSessionNudge';
 export { consolidateMemoryNightly } from './scheduled/nightlyMemory';
+export { extendRecurringSchedules } from './scheduled/recurringScheduler';
+export { upcomingVisitReminder } from './scheduled/upcomingVisitReminder';
+export { processDndQueue } from './scheduled/dndQueueProcessor';
+export { expirePostVisitFeedback } from './scheduled/feedbackExpiry';
+export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';
+export { checkBackgroundCheckExpiry } from './scheduled/backgroundCheckExpiry';
 
 // Proactive trigger engine (runs every 5 min)
 export { runTriggerEngine } from './triggers/triggerEngine';
+
+// Admin alerts API (list, resolve, stats)
+export { listAdminAlerts, resolveAdminAlert, getAlertStats } from './adminAlerts';
+
+// Admin alert email notifier (Firestore trigger → admin_email_queue)
+export { onAdminAlertCreated } from './triggers/adminAlertNotifier';
+
+// Dispute resolution (Firestore trigger + hourly SLA check)
+export { onDisputeCreated, checkDisputeSLAs } from './triggers/disputeResolution';
+
+// Refund auto-processing (executes Stripe refund when status → "approved")
+export { onRefundRequestWrite } from './triggers/refundProcessor';
+
+// ── chatWithCara — web callable: routes authenticated web users through qaAgent ─
+// Bridges Firebase Auth UID → phone → agent_sessions so web users get the same
+// Cara experience (memory, tool use, booking) as Linq iMessage users.
+export const chatWithCara = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Must be signed in.");
+  }
+
+  const uid     = context.auth.uid;
+  const message = (data.message as string | undefined)?.trim();
+  if (!message) throw new functions.https.HttpsError("invalid-argument", "message is required");
+
+  const db = admin.firestore();
+
+  // Per-user sliding window: max 10 calls per 60 seconds
+  const rateRef  = db.collection("rate_limits").doc(`web_${uid}`);
+  const rateSnap = await rateRef.get();
+  const now      = Date.now();
+  const rateData = rateSnap.data() ?? { count: 0, windowStart: now };
+  if (rateData.windowStart < now - 60_000) {
+    await rateRef.set({ count: 1, windowStart: now });
+  } else if ((rateData.count as number) >= 10) {
+    return {
+      available:   true,
+      rateLimited: true,
+      reply:       "I'm getting a lot of messages right now — give me a moment before trying again.",
+      showMatches: false,
+    };
+  } else {
+    await rateRef.update({ count: admin.firestore.FieldValue.increment(1) });
+  }
+
+  // Resolve phone from the user's Firestore doc (populated during onboarding)
+  const userSnap = await db.collection("users").doc(uid).get();
+  const phone    = userSnap.data()?.phone as string | undefined;
+  if (!phone) {
+    return { available: false, reply: "Please complete your account setup to chat with Cara." };
+  }
+
+  // Load the agent session keyed by phone
+  const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
+  if (!sessionSnap.exists) {
+    return { available: false, reply: "Your Cara account isn't set up yet. Finish onboarding first." };
+  }
+
+  const session    = sessionSnap.data()!;
+  const userId     = session.userId     as string;
+  const seniorId   = session.seniorId   as string;
+  const zepThreadId = session.zepThreadId as string | undefined;
+
+  // Collect MCP tool names called during this invocation so we can signal the UI
+  const toolsCalled: string[] = [];
+
+  const { runQaAgent } = await import("./agents/qaAgent");
+  let reply: string;
+  try {
+    reply = await runQaAgent({
+      text:          message,
+      phone,
+      chatId:        "",       // no Linq chat for web — skipSend prevents any send attempt
+      userId,
+      seniorId,
+      zepThreadId,
+      session,
+      skipSend:      true,
+      _toolCallsOut: toolsCalled,
+      sourceChannel: "[USER]",
+    });
+  } catch (err) {
+    console.error("chatWithCara: qaAgent threw", err);
+    throw new functions.https.HttpsError("internal", "Cara is unavailable right now.");
+  }
+
+  // Signal the frontend to surface caregiver cards when the matching flow was triggered
+  const MATCH_TOOLS = new Set(["find_replacement_caregivers", "request_booking"]);
+  const showMatches = toolsCalled.some(t => MATCH_TOOLS.has(t));
+
+  return { available: true, reply, showMatches, toolsCalled };
+});
 
 // ── One-time Zep setup: create context template + backfill existing users ─────
 // Call once with header x-setup-key: cara-zep-setup-2026, then leave in place

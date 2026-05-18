@@ -141,7 +141,7 @@ async function sendCaregiverPermissionsFlow(phone, chatId, _session, caregiverNa
         `Reply YES or NO`);
 }
 async function handleCaregiverPermissionsReply(phone, chatId, text, session, caregiverId) {
-    var _a, _b;
+    var _a, _b, _c;
     const norm = text.trim().toUpperCase();
     const step = (_a = session.onboardingStep) !== null && _a !== void 0 ? _a : "";
     const isYes = norm === "YES" || norm === "Y";
@@ -167,11 +167,15 @@ async function handleCaregiverPermissionsReply(phone, chatId, text, session, car
             onboardingStep: "complete",
             optedIn: true,
         });
-        await (0, client_1.sendMessage)(chatId, `You're all set${d.name ? `, ${d.name}` : ""}.\n\n` +
-            `Your profile is being reviewed — usually 24–48 hours.\n` +
-            `I'll text you the moment you're approved and can start receiving job matches.\n\n` +
-            `Questions? Just text me anytime.`);
-        // Notify admin
+        const appUrl = (_c = process.env.APP_URL) !== null && _c !== void 0 ? _c : "https://cara.app";
+        const name = d.name ? `, ${d.name}` : "";
+        const city = d.city ? ` in ${d.city}` : "";
+        await (0, client_1.sendMessage)(chatId, `You're all set${name}! 🎉\n\n` +
+            `Your profile is live and you're ready to be matched with families${city}.\n\n` +
+            `When a family needs someone with your skills, I'll text you the job details — ` +
+            `including the care plan and directions before every visit.\n\n` +
+            `View your profile: ${appUrl}/caregiver/${caregiverId}`);
+        // Notify admin for final review
         await db.collection("admin_alerts").add({
             type: "caregiver_pending_review",
             caregiverId,

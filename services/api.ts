@@ -3003,6 +3003,18 @@ export const dbService = {
         await db.collection('interview_requests').doc(requestId).update(updates);
     },
 
+    getMatchScoreForCaregiver: async (caregiverId: string, clientPhone: string): Promise<any | null> => {
+        if (!isConfigured || !db) return null;
+        const snap = await db.collection('interview_requests')
+            .where('caregiverId', '==', caregiverId)
+            .where('clientPhone', '==', clientPhone)
+            .orderBy('createdAt', 'desc')
+            .limit(1)
+            .get();
+        if (snap.empty) return null;
+        return snap.docs[0].data().matchScore ?? null;
+    },
+
     submitInterviewFeedback: async (requestId: string, feedback: {
         fit: 'strong' | 'maybe' | 'no_match';
         notes?: string;

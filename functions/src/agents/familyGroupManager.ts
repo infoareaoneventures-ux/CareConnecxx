@@ -5,6 +5,7 @@ import {
   sendMessage,
   addParticipant,
   updateChatName,
+  removeParticipant,
 } from "../linq/client";
 
 const db = admin.firestore();
@@ -114,4 +115,46 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
       .doc(phone)
       .set({ groupChatId: chatId }, { merge: true });
   }
+}
+
+// ── removeMemberFromGroup — called from webhook REMOVE_FAMILY_MEMBER handler ──
+
+export async function removeMemberFromGroup(
+  seniorId:   string,
+  targetPhone: string
+): Promise<{ removed: boolean; reason?: string }> {
+  const groupSnap = await db.collection("family_groups")
+    .where("seniorId", "==", seniorId)
+    .limit(1)
+    .get();
+
+  if (groupSnap.empty) {
+    return { removed: false, reason: "no_group" };
+  }
+
+  const groupDoc  = groupSnap.docs[0];
+  const groupData = groupDoc.data();
+  const phones: string[] = groupData.phones ?? [];
+
+  if (!phones.includes(targetPhone)) {
+    return { removed: false, reason: "not_in_group" };
+  }
+
+  const chatId: string = groupData.chatId;
+
+  // Remove from Linq group chat
+  await removeParticipant(chatId, targetPhone).catch(() => {});
+
+  // Update Firestore group record
+  await groupDoc.ref.update({
+    phones: admin.firestore.FieldValue.arrayRemove(targetPhone),
+  });
+
+  // Clear groupChatId from the removed member's session
+  await db.collection("agent_sessions").doc(targetPhone)
+    .update({ groupChatId: admin.firestore.FieldValue.delete() })
+    .catch(() => {});
+
+  console.log(`[removeMemberFromGroup] Removed ${targetPhone} from group for senior ${seniorId}`);
+  return { removed: true };
 }

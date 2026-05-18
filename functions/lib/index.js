@@ -36,13 +36,15 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.zepSetup = exports.runTriggerEngine = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.sendTestSMS = void 0;
+exports.zepSetup = exports.chatWithCara = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.checkBackgroundCheckExpiry = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.sendTestSMS = void 0;
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions"));
 // Initialize Admin globally if not already done
 if (!admin.apps.length) {
     admin.initializeApp();
 }
+// BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID, CREDENTIAL_VAULT_KEY are injected
+// via Firebase Secret Manager on linqWebhook (runWith secrets). Locally, load from .env.
 // STRIPE FUNCTIONS - Payment processing for memberships
 __exportStar(require("./stripe"), exports);
 // CHECKR - Background check initiation + webhook
@@ -96,14 +98,13 @@ Object.defineProperty(exports, "triggerWeeklyDigestNow", { enumerable: true, get
 var healthTrends_1 = require("./scheduled/healthTrends");
 Object.defineProperty(exports, "sendMonthlyHealthTrends", { enumerable: true, get: function () { return healthTrends_1.sendMonthlyHealthTrends; } });
 Object.defineProperty(exports, "triggerHealthTrendsNow", { enumerable: true, get: function () { return healthTrends_1.triggerHealthTrendsNow; } });
+// Linq proactive — no-visit check-in (daily 9am ET)
+var noVisitCheck_1 = require("./scheduled/noVisitCheck");
+Object.defineProperty(exports, "runNoVisitCheck", { enumerable: true, get: function () { return noVisitCheck_1.runNoVisitCheck; } });
 // Transportation badge evaluation (daily) + on-demand refresh
 var transportBadge_1 = require("./scheduled/transportBadge");
 Object.defineProperty(exports, "evaluateTransportBadges", { enumerable: true, get: function () { return transportBadge_1.evaluateTransportBadges; } });
 Object.defineProperty(exports, "refreshTransportBadge", { enumerable: true, get: function () { return transportBadge_1.refreshTransportBadge; } });
-// Shift generation: instant on acceptance + daily rolling window
-var shiftGenerator_1 = require("./scheduled/shiftGenerator");
-Object.defineProperty(exports, "generateRollingShifts", { enumerable: true, get: function () { return shiftGenerator_1.generateRollingShifts; } });
-Object.defineProperty(exports, "onBookingAccepted", { enumerable: true, get: function () { return shiftGenerator_1.onBookingAccepted; } });
 // Cara iMessage pivot — onboarding callables
 var onboardingAgent_1 = require("./agents/onboardingAgent");
 Object.defineProperty(exports, "markTaskComplete", { enumerable: true, get: function () { return onboardingAgent_1.markTaskComplete; } });
@@ -114,9 +115,110 @@ var staleSessionNudge_1 = require("./scheduled/staleSessionNudge");
 Object.defineProperty(exports, "sendStaleSessionNudges", { enumerable: true, get: function () { return staleSessionNudge_1.sendStaleSessionNudges; } });
 var nightlyMemory_1 = require("./scheduled/nightlyMemory");
 Object.defineProperty(exports, "consolidateMemoryNightly", { enumerable: true, get: function () { return nightlyMemory_1.consolidateMemoryNightly; } });
+var recurringScheduler_1 = require("./scheduled/recurringScheduler");
+Object.defineProperty(exports, "extendRecurringSchedules", { enumerable: true, get: function () { return recurringScheduler_1.extendRecurringSchedules; } });
+var upcomingVisitReminder_1 = require("./scheduled/upcomingVisitReminder");
+Object.defineProperty(exports, "upcomingVisitReminder", { enumerable: true, get: function () { return upcomingVisitReminder_1.upcomingVisitReminder; } });
+var dndQueueProcessor_1 = require("./scheduled/dndQueueProcessor");
+Object.defineProperty(exports, "processDndQueue", { enumerable: true, get: function () { return dndQueueProcessor_1.processDndQueue; } });
+var feedbackExpiry_1 = require("./scheduled/feedbackExpiry");
+Object.defineProperty(exports, "expirePostVisitFeedback", { enumerable: true, get: function () { return feedbackExpiry_1.expirePostVisitFeedback; } });
+var caregiverInactivityCheck_1 = require("./scheduled/caregiverInactivityCheck");
+Object.defineProperty(exports, "checkCaregiverInactivity", { enumerable: true, get: function () { return caregiverInactivityCheck_1.checkCaregiverInactivity; } });
+var backgroundCheckExpiry_1 = require("./scheduled/backgroundCheckExpiry");
+Object.defineProperty(exports, "checkBackgroundCheckExpiry", { enumerable: true, get: function () { return backgroundCheckExpiry_1.checkBackgroundCheckExpiry; } });
 // Proactive trigger engine (runs every 5 min)
 var triggerEngine_1 = require("./triggers/triggerEngine");
 Object.defineProperty(exports, "runTriggerEngine", { enumerable: true, get: function () { return triggerEngine_1.runTriggerEngine; } });
+// Admin alerts API (list, resolve, stats)
+var adminAlerts_1 = require("./adminAlerts");
+Object.defineProperty(exports, "listAdminAlerts", { enumerable: true, get: function () { return adminAlerts_1.listAdminAlerts; } });
+Object.defineProperty(exports, "resolveAdminAlert", { enumerable: true, get: function () { return adminAlerts_1.resolveAdminAlert; } });
+Object.defineProperty(exports, "getAlertStats", { enumerable: true, get: function () { return adminAlerts_1.getAlertStats; } });
+// Admin alert email notifier (Firestore trigger → admin_email_queue)
+var adminAlertNotifier_1 = require("./triggers/adminAlertNotifier");
+Object.defineProperty(exports, "onAdminAlertCreated", { enumerable: true, get: function () { return adminAlertNotifier_1.onAdminAlertCreated; } });
+// Dispute resolution (Firestore trigger + hourly SLA check)
+var disputeResolution_1 = require("./triggers/disputeResolution");
+Object.defineProperty(exports, "onDisputeCreated", { enumerable: true, get: function () { return disputeResolution_1.onDisputeCreated; } });
+Object.defineProperty(exports, "checkDisputeSLAs", { enumerable: true, get: function () { return disputeResolution_1.checkDisputeSLAs; } });
+// Refund auto-processing (executes Stripe refund when status → "approved")
+var refundProcessor_1 = require("./triggers/refundProcessor");
+Object.defineProperty(exports, "onRefundRequestWrite", { enumerable: true, get: function () { return refundProcessor_1.onRefundRequestWrite; } });
+// ── chatWithCara — web callable: routes authenticated web users through qaAgent ─
+// Bridges Firebase Auth UID → phone → agent_sessions so web users get the same
+// Cara experience (memory, tool use, booking) as Linq iMessage users.
+exports.chatWithCara = functions.https.onCall(async (data, context) => {
+    var _a, _b, _c;
+    if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated", "Must be signed in.");
+    }
+    const uid = context.auth.uid;
+    const message = (_a = data.message) === null || _a === void 0 ? void 0 : _a.trim();
+    if (!message)
+        throw new functions.https.HttpsError("invalid-argument", "message is required");
+    const db = admin.firestore();
+    // Per-user sliding window: max 10 calls per 60 seconds
+    const rateRef = db.collection("rate_limits").doc(`web_${uid}`);
+    const rateSnap = await rateRef.get();
+    const now = Date.now();
+    const rateData = (_b = rateSnap.data()) !== null && _b !== void 0 ? _b : { count: 0, windowStart: now };
+    if (rateData.windowStart < now - 60000) {
+        await rateRef.set({ count: 1, windowStart: now });
+    }
+    else if (rateData.count >= 10) {
+        return {
+            available: true,
+            rateLimited: true,
+            reply: "I'm getting a lot of messages right now — give me a moment before trying again.",
+            showMatches: false,
+        };
+    }
+    else {
+        await rateRef.update({ count: admin.firestore.FieldValue.increment(1) });
+    }
+    // Resolve phone from the user's Firestore doc (populated during onboarding)
+    const userSnap = await db.collection("users").doc(uid).get();
+    const phone = (_c = userSnap.data()) === null || _c === void 0 ? void 0 : _c.phone;
+    if (!phone) {
+        return { available: false, reply: "Please complete your account setup to chat with Cara." };
+    }
+    // Load the agent session keyed by phone
+    const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
+    if (!sessionSnap.exists) {
+        return { available: false, reply: "Your Cara account isn't set up yet. Finish onboarding first." };
+    }
+    const session = sessionSnap.data();
+    const userId = session.userId;
+    const seniorId = session.seniorId;
+    const zepThreadId = session.zepThreadId;
+    // Collect MCP tool names called during this invocation so we can signal the UI
+    const toolsCalled = [];
+    const { runQaAgent } = await Promise.resolve().then(() => __importStar(require("./agents/qaAgent")));
+    let reply;
+    try {
+        reply = await runQaAgent({
+            text: message,
+            phone,
+            chatId: "", // no Linq chat for web — skipSend prevents any send attempt
+            userId,
+            seniorId,
+            zepThreadId,
+            session,
+            skipSend: true,
+            _toolCallsOut: toolsCalled,
+            sourceChannel: "[USER]",
+        });
+    }
+    catch (err) {
+        console.error("chatWithCara: qaAgent threw", err);
+        throw new functions.https.HttpsError("internal", "Cara is unavailable right now.");
+    }
+    // Signal the frontend to surface caregiver cards when the matching flow was triggered
+    const MATCH_TOOLS = new Set(["find_replacement_caregivers", "request_booking"]);
+    const showMatches = toolsCalled.some(t => MATCH_TOOLS.has(t));
+    return { available: true, reply, showMatches, toolsCalled };
+});
 // ── One-time Zep setup: create context template + backfill existing users ─────
 // Call once with header x-setup-key: cara-zep-setup-2026, then leave in place
 // (subsequent calls are safe — already-initialized users are skipped)

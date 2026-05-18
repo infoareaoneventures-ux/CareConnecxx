@@ -3,9 +3,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { AgentSession, sendMessage } from "../linq/client";
 import { runMatchingForClient } from "./matchingAgent";
 import { executeBookings } from "./bookingExecutor";
-import { getPreferences, isInDND, CaraPreferences } from "../memory/preferences";
+import { getPreferences, isInDND, isActiveHour, CaraPreferences } from "../memory/preferences";
 import { supervise } from "../safety/supervisor";
 import { logAudit } from "../observability/auditLog";
+import { callClaudeWithRetry } from "../utils/claudeRetry";
 
 const db = admin.firestore();
 
@@ -56,6 +57,7 @@ async function shouldSend(
 ): Promise<boolean> {
   if (output.urgency === "immediate") return true;
   if (prefs.dndEnabled && isInDND(prefs)) return false;
+  if (!isActiveHour(prefs)) return false;
 
   const lastSentAt = session.lastMessageSentAt as string | undefined;
   if (lastSentAt) {
@@ -66,7 +68,7 @@ async function shouldSend(
   // LLM judgment for standard urgency
   if (output.urgency === "standard") {
     try {
-      const result = await getClaude().messages.create({
+      const result = await callClaudeWithRetry(getClaude(), {
         model:      "claude-haiku-4-5-20251001",
         max_tokens: 5,
         system:
@@ -80,9 +82,10 @@ async function shouldSend(
             `Last sent: ${lastSentAt ?? "never"}\n` +
             `Current UTC hour: ${new Date().getUTCHours()}`,
         }],
-      });
+      }, { timeoutMs: 5_000, maxAttempts: 2 });
       return ((result.content[0] as { text: string }).text ?? "").trim().toUpperCase() === "SEND";
     } catch {
+      console.warn("shouldSend Claude timeout — defaulting to SEND");
       return true; // default open on failure
     }
   }
@@ -139,7 +142,10 @@ export async function sendViaInteractionAgent(
   }
 
   // Run through supervisor (which also lints internally)
-  const safe = await supervise(output.content, { phone }).catch(() => output.content);
+  const safe = await supervise(output.content, { phone }).catch((err) => {
+    console.error("caraAgent: supervisor threw, sending message unsupervised", err instanceof Error ? err.message : err);
+    return output.content;
+  });
 
   // Send in chunks with 1s delay between
   const chunks = splitMessage(safe);
@@ -151,7 +157,7 @@ export async function sendViaInteractionAgent(
   // Update lastMessageSentAt
   db.collection("agent_sessions").doc(phone)
     .update({ lastMessageSentAt: new Date().toISOString() })
-    .catch(() => {});
+    .catch((err) => console.error("caraAgent: failed to update lastMessageSentAt", err));
 
   // HIPAA audit log
   logAudit({
@@ -159,7 +165,7 @@ export async function sendViaInteractionAgent(
     userId:    phone,
     phone,
     data: { preview: safe.slice(0, 100), urgency: output.urgency, sourceAgent: output.sourceAgent, chatId: targetChatId },
-  }).catch(() => {});
+  }).catch((err) => console.error("caraAgent: audit log write failed", err));
 }
 
 // ── processEvent — internal natural language event dispatch ───────────────────
@@ -182,7 +188,7 @@ export async function processEvent(
       break;
 
     case "interview.scheduled":
-      // Future: notify family and caregiver with calendar details
+      await handleInterviewScheduledEvent(payload);
       break;
 
     default:
@@ -193,7 +199,7 @@ export async function processEvent(
 // ── Event handlers ────────────────────────────────────────────────────────────
 
 async function handleJournalEvent(payload: Record<string, unknown>): Promise<void> {
-  const { seniorId, caregiverId } = payload;
+  const { seniorId, caregiverId, journalId } = payload;
   if (!seniorId) return;
 
   const clientDoc = await db.collection("users").doc(seniorId as string).get();
@@ -206,7 +212,87 @@ async function handleJournalEvent(payload: Record<string, unknown>): Promise<voi
   const session = sessionSnap.data() as AgentSession;
   if (session.optedOut || session.optedIn === false) return;
 
-  console.log(`processEvent journal.created: seniorId=${seniorId}, caregiver=${caregiverId}`);
+  // Prefer inline payload fields; fall back to Firestore fetch when only journalId is provided
+  let notes      = payload.notes      as string | undefined;
+  let wellness   = payload.wellness   as Record<string, unknown> | undefined;
+  let activities = payload.activities as string[] | undefined;
+
+  if (journalId && !notes) {
+    const journalSnap = await db.collection("care_journal").doc(journalId as string).get();
+    if (!journalSnap.exists) return;
+    const j  = journalSnap.data()!;
+    notes      = j.notes      as string | undefined;
+    wellness   = j.wellness   as Record<string, unknown> | undefined;
+    activities = j.activities as string[] | undefined;
+  }
+
+  const { detectHealthSignals } = await import("./healthSignalDetector");
+  const signals = await detectHealthSignals(
+    notes ?? "",
+    {
+      ateWell:   wellness?.ateWell   as boolean | undefined,
+      tookMeds:  wellness?.tookMeds  as boolean | undefined,
+      wasActive: wellness?.wasActive as boolean | undefined,
+      mood:      wellness?.mood      as string  | undefined,
+    },
+    Array.isArray(activities) ? activities : []
+  ).catch(() => null);
+
+  if (!signals || signals.severity === "none") return;
+
+  const caregiverSnap = caregiverId
+    ? await db.collection("caregivers").doc(caregiverId as string).get().catch(() => null)
+    : null;
+  const caregiverName = caregiverSnap?.data()?.name ?? "your caregiver";
+
+  await sendViaInteractionAgent(phone, {
+    content:     `${caregiverName} noted: ${signals.summary}`,
+    urgency:     signals.severity === "flag" ? "immediate" : "standard",
+    sourceAgent: signals.severity === "flag" ? "health_watch" : "visit_summary",
+    canDrop:     signals.severity !== "flag",
+  });
+
+  if (signals.severity === "flag") {
+    db.collection("health_flags").add({
+      userId:      (session as any).userId ?? phone,
+      seniorId,
+      journalId:   journalId ?? null,
+      signals:     signals.signals,
+      summary:     signals.summary,
+      caregiverId: caregiverId ?? null,
+      createdAt:   new Date().toISOString(),
+    }).catch(() => {});
+  }
+}
+
+async function handleInterviewScheduledEvent(payload: Record<string, unknown>): Promise<void> {
+  const { clientPhone, caregiverPhone, caregiverName, scheduledAt, interviewUrl } = payload;
+
+  const dateStr = scheduledAt
+    ? new Date(scheduledAt as string).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })
+    : "soon";
+
+  if (clientPhone) {
+    await sendViaInteractionAgent(clientPhone as string, {
+      content:
+        `Your interview with ${caregiverName ?? "a caregiver"} is set for ${dateStr}.` +
+        (interviewUrl ? ` Join here: ${interviewUrl as string}` : ""),
+      urgency:     "standard",
+      sourceAgent: "interview_scheduler",
+      canDrop:     false,
+    });
+  }
+
+  if (caregiverPhone) {
+    await sendViaInteractionAgent(caregiverPhone as string, {
+      content:
+        `You have a video interview scheduled for ${dateStr}.` +
+        (interviewUrl ? ` Join here: ${interviewUrl as string}` : ""),
+      urgency:     "standard",
+      sourceAgent: "interview_scheduler",
+      canDrop:     false,
+    });
+  }
 }
 
 async function handleAppointmentCancelledEvent(payload: Record<string, unknown>): Promise<void> {
@@ -244,6 +330,16 @@ export async function runInteractionAgent(
   session: AgentSession
 ): Promise<ExecutionTask> {
   const norm = text.trim().toUpperCase();
+
+  // Active goal guard — if a booking goal is in progress and user selects 1/2/3,
+  // route directly to matching/interview selection without re-doing NLU
+  const activeGoal = (session as any).activeGoal as { type: string } | null | undefined;
+  if (activeGoal?.type === "booking" && /^[123]$/.test(norm)) {
+    return {
+      type: "matching",
+      payload: { clientId: session.userId ?? phone, phone, chatId },
+    };
+  }
 
   // Delegate hire intent → booking execution
   if (norm === "HIRE") {
@@ -393,9 +489,11 @@ async function alertAgent(payload: Record<string, unknown>): Promise<void> {
 }
 
 async function memoryAgent(payload: Record<string, unknown>): Promise<void> {
-  const { userId, text } = payload;
+  const { userId, text, phone } = payload;
   if (!userId || !text) return;
 
+  const zepUserId = phone ? (phone as string).replace(/\D/g, "") : undefined;
+
   const { extractAndStoreFacts } = await import("../memory/learnedFacts");
-  await extractAndStoreFacts(userId as string, text as string).catch(() => {});
+  await extractAndStoreFacts(userId as string, text as string, zepUserId).catch(() => {});
 }

@@ -775,6 +775,61 @@ service cloud.firestore {
     }
 
     // ==========================================
+    // Internal-only collections — accessible only via Firebase Admin SDK (Cloud Functions)
+    match /browser_sessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /credential_vault/{docId} {
+      allow read, write: if false;
+    }
+
+    // Caregiver lateness log — admin read only, functions write only
+    match /caregiver_lateness_log/{docId} {
+      allow read: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      allow write: if false;
+    }
+
+    // Issue log — admin read + owning client read, functions write only
+    match /issue_log/{docId} {
+      allow read: if request.auth != null && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        resource.data.clientId == request.auth.uid
+      );
+      allow write: if false;
+    }
+
+    // Recurring schedules — client can read their own; writes via Cloud Functions only
+    match /recurring_schedules/{scheduleId} {
+      allow read: if isAuthenticated() && resource.data.clientId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Family groups — members can read; writes via Cloud Functions only
+    match /family_groups/{groupId} {
+      allow read: if isAuthenticated() && request.auth.uid in resource.data.phones;
+      allow write: if false;
+    }
+
+    // Care journal — caregiver and client can read their entries; writes via Cloud Functions only
+    match /care_journal/{entryId} {
+      allow read: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+      );
+      allow write: if false;
+    }
+
+    // Post-visit feedback — admin + owning client read, functions write only
+    match /post_visit_feedback/{docId} {
+      allow read: if request.auth != null && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true ||
+        resource.data.clientId == request.auth.uid
+      );
+      allow write: if false;
+    }
+
     // DENY ALL OTHER ACCESS BY DEFAULT
     // ==========================================
     match /{document=**} {

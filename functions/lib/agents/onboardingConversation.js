@@ -38,6 +38,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleOnboardingStep = handleOnboardingStep;
+exports.resendStuckStep = resendStuckStep;
 exports.advanceOnboardingStep = advanceOnboardingStep;
 const admin = __importStar(require("firebase-admin"));
 const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
@@ -99,7 +100,7 @@ async function detectCorrection(text) {
     const raw = await parseWithClaude("The user is in a conversational onboarding flow. Detect if they are correcting previously " +
         "given information (e.g. 'actually my name is X', 'wait, I meant Y', 'sorry, it's Z'). " +
         "If yes, reply with JSON: {\"field\": \"<fieldName>\", \"value\": \"<newValue>\"}. " +
-        "Valid fields: firstName, seniorName, city, zipCode, hourlyRate, yearsExperience. " +
+        "Valid fields: firstName, seniorName, city, zipCode, hourlyRate, yearsExperience, email. " +
         "If this is NOT a correction, reply with the literal word: null", text);
     if (raw === "__parse_error__" || raw === "null" || !raw.startsWith("{"))
         return null;
@@ -140,7 +141,8 @@ async function handleOnboardingStep(phone, chatId, text, session) {
         && !step.endsWith("_send_photo") && !step.endsWith("_awaiting_photo")
         && !step.endsWith("_send_documents") && !step.endsWith("_awaiting_documents")
         && !step.endsWith("_send_bgcheck") && !step.endsWith("_awaiting_bgcheck")
-        && !step.endsWith("_send_stripe_connect") && !step.endsWith("_awaiting_stripe")) {
+        && !step.endsWith("_send_stripe_connect") && !step.endsWith("_awaiting_stripe")
+        && !step.endsWith("_send_membership") && !step.endsWith("_awaiting_membership")) {
         const correction = await detectCorrection(text);
         if (correction) {
             await mergeOnboardingData(phone, { [correction.field]: correction.value });
@@ -156,7 +158,9 @@ async function handleOnboardingStep(phone, chatId, text, session) {
                 caregiver_ask_experience: "How many years of caregiving experience do you have?",
                 caregiver_ask_specialties: "What types of care do you specialize in?",
                 caregiver_ask_availability: "What days and hours are you available to work?",
+                caregiver_ask_job_type: "Are you looking for occasional, part-time, or full-time work?",
                 caregiver_ask_rate: "What's your hourly rate?",
+                caregiver_ask_email: "What's your email address?",
             };
             const repeat = (_b = stepMessages[step]) !== null && _b !== void 0 ? _b : "Could you continue where we left off?";
             await (0, client_1.sendMessage)(chatId, `Got it — updated.\n\n${repeat}`);
@@ -184,7 +188,10 @@ async function handleOnboardingStep(phone, chatId, text, session) {
         case "caregiver_ask_experience": return handleCaregiverAskExperience(phone, chatId, text, session);
         case "caregiver_ask_specialties": return handleCaregiverAskSpecialties(phone, chatId, text, session);
         case "caregiver_ask_availability": return handleCaregiverAskAvailability(phone, chatId, text, session);
+        case "caregiver_ask_job_type": return handleCaregiverAskJobType(phone, chatId, text, session);
         case "caregiver_ask_rate": return handleCaregiverAskRate(phone, chatId, text, session);
+        case "caregiver_ask_email": return handleCaregiverAskEmail(phone, chatId, text, session);
+        case "caregiver_ask_bio": return handleCaregiverAskBio(phone, chatId, text, session);
         case "caregiver_send_photo": return handleCaregiverSendPhoto(phone, chatId, session);
         case "caregiver_awaiting_photo":
             await (0, client_1.sendMessage)(chatId, "Still waiting for your photo! Tap the upload link I sent 📷");
@@ -192,10 +199,15 @@ async function handleOnboardingStep(phone, chatId, text, session) {
         case "caregiver_send_documents": return handleCaregiverSendDocuments(phone, chatId, session);
         case "caregiver_awaiting_documents":
             if (norm === "SKIP") {
-                await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
-                return handleCaregiverSendBgcheck(phone, chatId, session);
+                await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
+                return handleCaregiverAskMvr(phone, chatId, session);
             }
             await (0, client_1.sendMessage)(chatId, "Tap the link I sent to upload your certifications, or reply SKIP to continue without them.");
+            return;
+        case "caregiver_ask_mvr": return handleCaregiverAskMvr(phone, chatId, text, session);
+        case "caregiver_send_membership": return handleCaregiverSendMembership(phone, chatId, session);
+        case "caregiver_awaiting_membership":
+            await handleCaregiverResendMembership(phone, chatId, session);
             return;
         case "caregiver_send_bgcheck": return handleCaregiverSendBgcheck(phone, chatId, session);
         case "caregiver_awaiting_bgcheck":
@@ -219,7 +231,7 @@ async function handleAskRole(phone, chatId, text) {
     }
     if (norm === "2" || /caregiver|cna|hha|nurse|work|job/i.test(norm)) {
         await updateSession(phone, { onboardingStep: "caregiver_ask_name", userType: "caregiver" });
-        await (0, client_1.sendMessage)(chatId, "Wonderful! What's your name?");
+        await (0, client_1.sendMessage)(chatId, "Great — let's get your profile set up. Takes about 5 minutes and everything happens right here.\n\nWhat's your name?");
         return;
     }
     await (0, client_1.sendMessage)(chatId, "I want to make sure I help you with the right thing!\n\n" +
@@ -494,9 +506,9 @@ async function handleCaregiverAskAvailability(phone, chatId, text, session) {
     }
     catch ( /* keep defaults */_c) { /* keep defaults */ }
     await mergeOnboardingData(phone, { availability: { days, hours } });
-    await updateSession(phone, { onboardingStep: "caregiver_ask_rate" });
-    await (0, client_1.sendMessage)(chatId, "What's your hourly rate?\n\n" +
-        "(Most caregivers charge $18–28/hr)");
+    await updateSession(phone, { onboardingStep: "caregiver_ask_job_type" });
+    await (0, client_1.sendMessage)(chatId, "Are you looking for occasional fill-in shifts, part-time (less than 25 hrs/week), or full-time work?\n\n" +
+        "Reply 1 for Occasional, 2 for Part-time, or 3 for Full-time.");
 }
 async function handleCaregiverAskRate(phone, chatId, text, session) {
     const raw = await parseWithClaude("Extract the hourly rate as a number from this message. Reply with just the number (e.g. 22). No dollar sign.", text);
@@ -510,8 +522,122 @@ async function handleCaregiverAskRate(phone, chatId, text, session) {
         return;
     }
     await mergeOnboardingData(phone, { hourlyRate });
+    await updateSession(phone, { onboardingStep: "caregiver_ask_email" });
+    await (0, client_1.sendMessage)(chatId, "What's your email address? I'll use it to set up your payout account.");
+}
+async function handleCaregiverAskJobType(phone, chatId, text, session) {
+    var _a, _b;
+    const norm = text.trim();
+    let jobType;
+    if (norm === "1" || /occasional|fill.?in|as.?need/i.test(norm)) {
+        jobType = "occasional";
+    }
+    else if (norm === "2" || /part.?time|part time/i.test(norm)) {
+        jobType = "part_time";
+    }
+    else if (norm === "3" || /full.?time|full time/i.test(norm)) {
+        jobType = "full_time";
+    }
+    else {
+        // Claude Haiku fallback for natural language
+        const raw = await parseWithClaude("The user is describing the type of caregiving work they want. Reply with one of: occasional, part_time, full_time. Reply with just that word.", text);
+        jobType = ["occasional", "part_time", "full_time"].includes(raw) ? raw : "part_time";
+    }
+    await mergeOnboardingData(phone, { jobType });
+    await updateSession(phone, { onboardingStep: "caregiver_ask_rate" });
+    const d = (_a = session.onboardingData) !== null && _a !== void 0 ? _a : {};
+    const city = (_b = d.city) !== null && _b !== void 0 ? _b : "";
+    await (0, client_1.sendMessage)(chatId, `What's your hourly rate?\n\n` +
+        (city ? `(Most caregivers in ${city} charge $18–28/hr)` : "(Most caregivers charge $18–28/hr)"));
+}
+async function handleCaregiverAskEmail(phone, chatId, text, session) {
+    const email = text.trim().toLowerCase();
+    if (!/\S+@\S+\.\S+/.test(email)) {
+        await (0, client_1.sendMessage)(chatId, "That doesn't look like a valid email. Could you double-check? (e.g. name@example.com)");
+        return;
+    }
+    await mergeOnboardingData(phone, { email });
+    await updateSession(phone, { onboardingStep: "caregiver_ask_bio" });
+    await (0, client_1.sendMessage)(chatId, "Last question before your photo — tell me about your approach to care in a sentence or two. Families will see this on your profile.");
+}
+async function handleCaregiverAskBio(phone, chatId, text, session) {
+    const bio = text.trim().toLowerCase() === "skip" || text.trim().length < 10 ? "" : text.trim();
+    await mergeOnboardingData(phone, { bio });
     await updateSession(phone, { onboardingStep: "caregiver_send_photo" });
     await handleCaregiverSendPhoto(phone, chatId, session);
+}
+// Called immediately after doc upload — ask before building the checkout so MVR can be bundled
+async function handleCaregiverAskMvr(phone, chatId, textOrSession, session) {
+    // When called as a switch case, textOrSession is the user's reply text
+    // When called programmatically (no reply yet), textOrSession is the session object
+    if (typeof textOrSession !== "string") {
+        // First visit — ask the question
+        await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
+        await (0, client_1.sendMessage)(chatId, "Do you transport clients to appointments or errands?\n\n" +
+            "Adding a Motor Vehicle Record check to your profile shows families you're a verified driver. " +
+            "It's an optional add-on you can include with your membership.\n\n" +
+            "Reply YES to add it, or NO to skip.");
+        return;
+    }
+    // User has replied — process their answer
+    const norm = textOrSession.trim().toUpperCase();
+    const wantsMvr = norm === "YES" || norm === "Y";
+    await mergeOnboardingData(phone, { wantsMvr });
+    await updateSession(phone, { onboardingStep: "caregiver_send_membership" });
+    await handleCaregiverSendMembership(phone, chatId, session);
+}
+async function handleCaregiverSendMembership(phone, chatId, session) {
+    var _a, _b, _c, _d, _e, _f;
+    const d = (_a = session.onboardingData) !== null && _a !== void 0 ? _a : {};
+    const wantsMvr = (_b = d.wantsMvr) !== null && _b !== void 0 ? _b : false;
+    const token = (0, tokenService_1.generateToken)({ phone, task: "caregiver_membership" });
+    let checkoutUrl = `${APP_URL}/done?task=caregiver_membership&t=${token}`;
+    try {
+        const membershipPriceId = (_d = (_c = process.env.STRIPE_CAREGIVER_ANNUAL_PRICE_ID) !== null && _c !== void 0 ? _c : process.env.VITE_STRIPE_CAREGIVER_ANNUAL) !== null && _d !== void 0 ? _d : "";
+        const mvrPriceId = ((_e = process.env.STRIPE_MVR_PRICE_ID) !== null && _e !== void 0 ? _e : "").trim();
+        if (membershipPriceId) {
+            const lineItems = [
+                { price: membershipPriceId, quantity: 1 },
+            ];
+            if (wantsMvr && mvrPriceId && !mvrPriceId.startsWith("FILL_IN")) {
+                lineItems.push({ price: mvrPriceId, quantity: 1 });
+            }
+            const stripeSession = await getStripe().checkout.sessions.create({
+                mode: "payment",
+                payment_method_types: ["card"],
+                line_items: lineItems,
+                success_url: `${APP_URL}/done?task=caregiver_membership&t=${token}`,
+                cancel_url: `${APP_URL}/start`,
+                metadata: { phone, task: "caregiver_membership", includeMVR: wantsMvr ? "true" : "false" },
+            });
+            checkoutUrl = (_f = stripeSession.url) !== null && _f !== void 0 ? _f : checkoutUrl;
+        }
+    }
+    catch (err) {
+        console.error("handleCaregiverSendMembership stripe error:", err);
+    }
+    const mvrLine = wantsMvr
+        ? "\n\nYour order includes the $24.95/yr membership + MVR driver check."
+        : "";
+    // Store URL on session so we can resend it
+    await updateSession(phone, {
+        onboardingStep: "caregiver_awaiting_membership",
+        membershipCheckoutUrl: checkoutUrl,
+    });
+    await (0, client_1.sendMessage)(chatId, "Almost there! There's a $24.95/year platform fee that gives you access to the job board, " +
+        `bookings, and Cara's scheduling tools.${mvrLine}\n\nTap to pay and activate your account:`);
+    await (0, client_1.sendMessage)(chatId, { parts: [{ type: "link", url: checkoutUrl, value: "💳 Pay Now →" }] });
+}
+async function handleCaregiverResendMembership(phone, chatId, session) {
+    const url = session.membershipCheckoutUrl;
+    if (url) {
+        await (0, client_1.sendMessage)(chatId, "Tap the link below to complete your membership payment:");
+        await (0, client_1.sendMessage)(chatId, { parts: [{ type: "link", url, value: "💳 Pay $24.95/year →" }] });
+    }
+    else {
+        // Re-generate if URL was lost
+        await handleCaregiverSendMembership(phone, chatId, session);
+    }
 }
 async function handleCaregiverSendPhoto(phone, chatId, session) {
     var _a;
@@ -531,31 +657,32 @@ async function handleCaregiverSendDocuments(phone, chatId, session) {
     await (0, client_1.sendMessage)(chatId, { parts: [{ type: "link", url: docUrl, value: "📄 Upload Documents →" }] });
 }
 async function handleCaregiverSendBgcheck(phone, chatId, session) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
     let inviteUrl = `${APP_URL}/done?task=background_check`;
     try {
         const d = (_a = session.onboardingData) !== null && _a !== void 0 ? _a : {};
         const nameParts = ((_b = d.name) !== null && _b !== void 0 ? _b : "").split(" ");
+        // Use MVR package if caregiver paid for it; flag is set on session by stripe.ts webhook
+        const mvrPaid = session.mvrPaid === true;
+        const checkrPkg = mvrPaid
+            ? ((_c = process.env.CHECKR_PACKAGE_MVR) !== null && _c !== void 0 ? _c : "tasker_standard")
+            : ((_d = process.env.CHECKR_PACKAGE) !== null && _d !== void 0 ? _d : "tasker_standard");
         const resp = await axios_1.default.post("https://api.checkr.com/v1/invitations", {
-            package: "tasker_standard",
-            first_name: (_c = nameParts[0]) !== null && _c !== void 0 ? _c : "",
-            last_name: (_d = nameParts.slice(1).join(" ")) !== null && _d !== void 0 ? _d : "",
-        }, { auth: { username: (_e = process.env.CHECKR_API_KEY) !== null && _e !== void 0 ? _e : "", password: "" } });
-        inviteUrl = (_g = (_f = resp.data) === null || _f === void 0 ? void 0 : _f.invitation_url) !== null && _g !== void 0 ? _g : inviteUrl;
+            package: checkrPkg,
+            first_name: (_e = nameParts[0]) !== null && _e !== void 0 ? _e : "",
+            last_name: (_f = nameParts.slice(1).join(" ")) !== null && _f !== void 0 ? _f : "",
+        }, { auth: { username: (_g = process.env.CHECKR_API_KEY) !== null && _g !== void 0 ? _g : "", password: "" } });
+        inviteUrl = (_j = (_h = resp.data) === null || _h === void 0 ? void 0 : _h.invitation_url) !== null && _j !== void 0 ? _j : inviteUrl;
         // Pre-create the caregivers doc so the Checkr webhook can find this caregiver
         // by checkrCandidateId when the report comes back.
-        const candidateId = ((_j = (_h = resp.data) === null || _h === void 0 ? void 0 : _h.candidate_id) !== null && _j !== void 0 ? _j : (_k = resp.data) === null || _k === void 0 ? void 0 : _k.id);
+        const candidateId = ((_l = (_k = resp.data) === null || _k === void 0 ? void 0 : _k.candidate_id) !== null && _l !== void 0 ? _l : (_m = resp.data) === null || _m === void 0 ? void 0 : _m.id);
         if (candidateId && !session.caregiverId) {
-            const caregiverRef = await db.collection("caregivers").add({
-                phone,
-                status: "pending_review",
-                createdAt: new Date().toISOString(),
-                backgroundCheckData: {
+            const caregiverRef = await db.collection("caregivers").add(Object.assign({ phone, status: "pending_review", createdAt: new Date().toISOString(), backgroundCheckData: {
                     checkrCandidateId: candidateId,
                     status: "pending",
                     submittedAt: new Date().toISOString(),
-                },
-            });
+                    mvrIncluded: mvrPaid,
+                } }, (mvrPaid && { mvrPaid: true })));
             await updateSession(phone, { caregiverId: caregiverRef.id });
         }
     }
@@ -569,7 +696,7 @@ async function handleCaregiverSendBgcheck(phone, chatId, session) {
     await (0, client_1.sendMessage)(chatId, "I'll text you when results come in (usually 1–3 days).");
 }
 async function handleCaregiverSendStripeConnect(phone, chatId, session) {
-    var _a, _b;
+    var _a, _b, _c;
     const token = (0, tokenService_1.generateToken)({ phone, task: "stripe_connect" });
     let connectUrl = `${APP_URL}/done?task=stripe_connect&t=${token}`;
     try {
@@ -577,7 +704,8 @@ async function handleCaregiverSendStripeConnect(phone, chatId, session) {
         const account = await getStripe().accounts.create({
             type: "express",
             country: "US",
-            metadata: { phone, caregiverName: ((_b = d.name) !== null && _b !== void 0 ? _b : "") },
+            email: ((_b = d.email) !== null && _b !== void 0 ? _b : ""),
+            metadata: { phone, caregiverName: ((_c = d.name) !== null && _c !== void 0 ? _c : "") },
         });
         const link = await getStripe().accountLinks.create({
             account: account.id,
@@ -595,21 +723,66 @@ async function handleCaregiverSendStripeConnect(phone, chatId, session) {
     await (0, client_1.sendMessage)(chatId, "Last step — set up your payout account so you can get paid after every visit:\n");
     await (0, client_1.sendMessage)(chatId, { parts: [{ type: "link", url: connectUrl, value: "💰 Set Up Payouts →" }] });
 }
+// ── Resend a stuck onboarding link (called by stale-session nudge after 7 days) ─
+async function resendStuckStep(phone) {
+    const snap = await db.collection("agent_sessions").doc(phone).get();
+    if (!snap.exists)
+        return false;
+    const session = snap.data();
+    const chatId = session.chatId;
+    const step = session.onboardingStep;
+    if (!chatId || !step)
+        return false;
+    switch (step) {
+        case "caregiver_awaiting_bgcheck":
+        case "caregiver_send_bgcheck": {
+            // Re-send the Checkr invite link
+            await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
+            await handleCaregiverSendBgcheck(phone, chatId, session);
+            return true;
+        }
+        case "caregiver_awaiting_stripe":
+        case "caregiver_send_stripe_connect": {
+            // Re-generate Stripe Connect link (creates new account if needed)
+            await updateSession(phone, { onboardingStep: "caregiver_send_stripe_connect" });
+            await handleCaregiverSendStripeConnect(phone, chatId, session);
+            return true;
+        }
+        case "client_awaiting_payment":
+        case "client_send_payment": {
+            // Re-generate Stripe Checkout session
+            await handleClientSendPayment(phone, chatId, session);
+            return true;
+        }
+        default:
+            return false;
+    }
+}
 // ── Webhook-triggered step advancement ───────────────────────────────────────
 // Called from stripe.ts and checkr.ts when webhooks fire
 async function advanceOnboardingStep(phone, task, taskData) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w;
     const snap = await db.collection("agent_sessions").doc(phone).get();
     if (!snap.exists)
         return;
     const session = snap.data();
     const chatId = session.chatId;
+    // Idempotency: skip if this task was already processed for this session
+    const processedTasks = (_a = session.processedWebhookTasks) !== null && _a !== void 0 ? _a : [];
+    if (processedTasks.includes(task)) {
+        console.info(`advanceOnboardingStep: skipping duplicate webhook task="${task}" for phone=${phone}`);
+        return;
+    }
     switch (task) {
         case "payment": {
+            // Mark task processed before any writes to prevent race on retry
+            await db.collection("agent_sessions").doc(phone).update({
+                processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
+            });
             // Client paid → move to permissions
             await updateSession(phone, { onboardingStep: "client_ask_permissions" });
             // Write intake to Firestore
-            const d = (_a = session.onboardingData) !== null && _a !== void 0 ? _a : {};
+            const d = (_b = session.onboardingData) !== null && _b !== void 0 ? _b : {};
             await db.collection("clientIntakes").add({
                 phone,
                 firstName: d.firstName,
@@ -628,16 +801,16 @@ async function advanceOnboardingStep(phone, task, taskData) {
             });
             // Notify admin of new client signup
             (0, notifications_1.notifyAdminNewClientSignup)({
-                clientId: (_b = session.userId) !== null && _b !== void 0 ? _b : phone,
-                firstName: ((_c = d.firstName) !== null && _c !== void 0 ? _c : ""),
-                seniorName: ((_d = d.seniorName) !== null && _d !== void 0 ? _d : ""),
+                clientId: (_c = session.userId) !== null && _c !== void 0 ? _c : phone,
+                firstName: ((_d = d.firstName) !== null && _d !== void 0 ? _d : ""),
+                seniorName: ((_e = d.seniorName) !== null && _e !== void 0 ? _e : ""),
                 phone,
-                city: ((_e = d.city) !== null && _e !== void 0 ? _e : ""),
+                city: ((_f = d.city) !== null && _f !== void 0 ? _f : ""),
             }).catch((err) => console.error("notifyAdminNewClientSignup error:", err));
             // Silently create Firebase Auth account so web dashboard login works later
-            await createFirebaseAuthAccount(phone, ((_f = d.firstName) !== null && _f !== void 0 ? _f : ""));
+            await createFirebaseAuthAccount(phone, ((_g = d.firstName) !== null && _g !== void 0 ? _g : ""));
             // Initialize memory files with onboarding data
-            (0, memoryFiles_1.initializeMemoryFiles)((_g = session.userId) !== null && _g !== void 0 ? _g : phone, {
+            (0, memoryFiles_1.initializeMemoryFiles)((_h = session.userId) !== null && _h !== void 0 ? _h : phone, {
                 seniorName: d.seniorName,
                 seniorAge: d.age,
                 conditions: d.conditions,
@@ -648,15 +821,15 @@ async function advanceOnboardingStep(phone, task, taskData) {
             }).catch((err) => console.error("initializeMemoryFiles error:", err));
             // Initialize empty memory files not covered by initializeMemoryFiles
             Promise.all([
-                (0, memoryFiles_1.writeMemoryFile)((_h = session.userId) !== null && _h !== void 0 ? _h : phone, "recent_episodes", `# Recent Episodes\n`),
-                (0, memoryFiles_1.writeMemoryFile)((_j = session.userId) !== null && _j !== void 0 ? _j : phone, "procedural", `# Procedural Notes\n`),
+                (0, memoryFiles_1.writeMemoryFile)((_j = session.userId) !== null && _j !== void 0 ? _j : phone, "recent_episodes", `# Recent Episodes\n`),
+                (0, memoryFiles_1.writeMemoryFile)((_k = session.userId) !== null && _k !== void 0 ? _k : phone, "procedural", `# Procedural Notes\n`),
             ]).catch((err) => console.error("initializeExtraMemoryFiles error:", err));
             // Push structured onboarding data to Zep — thread already exists from first contact,
             // this enriches the knowledge graph with senior profile and care details
             (0, zepClient_1.pushOnboardingDataToZep)({
                 phone,
-                firstName: ((_k = d.firstName) !== null && _k !== void 0 ? _k : ""),
-                seniorName: ((_l = d.seniorName) !== null && _l !== void 0 ? _l : ""),
+                firstName: ((_l = d.firstName) !== null && _l !== void 0 ? _l : ""),
+                seniorName: ((_m = d.seniorName) !== null && _m !== void 0 ? _m : ""),
                 seniorAge: d.age ? Number(d.age) : undefined,
                 conditions: Array.isArray(d.conditions) ? d.conditions : undefined,
                 careNeeds: Array.isArray(d.careNeeds) ? d.careNeeds : undefined,
@@ -676,11 +849,24 @@ async function advanceOnboardingStep(phone, task, taskData) {
             break;
         }
         case "doc_upload": {
+            await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
+            await handleCaregiverAskMvr(phone, chatId, session);
+            break;
+        }
+        case "membership": {
+            await db.collection("agent_sessions").doc(phone).update({
+                processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
+            });
             await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
+            await (0, client_1.sendMessage)(chatId, "Payment received — thank you! Now for the final step: a background check is required for all caregivers.\n\n" +
+                "Tap to get started — usually takes about 5 minutes:");
             await handleCaregiverSendBgcheck(phone, chatId, session);
             break;
         }
         case "background_check": {
+            await db.collection("agent_sessions").doc(phone).update({
+                processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
+            });
             // Checkr came back clear → advance to Stripe Connect
             await updateSession(phone, { onboardingStep: "caregiver_send_stripe_connect" });
             await (0, client_1.sendMessage)(chatId, "Your background check came back clear.\n\n" +
@@ -689,7 +875,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
             break;
         }
         case "identity": {
-            const step = (_m = session.onboardingStep) !== null && _m !== void 0 ? _m : "";
+            const step = (_o = session.onboardingStep) !== null && _o !== void 0 ? _o : "";
             if (step === "client_awaiting_identity") {
                 await updateSession(phone, { onboardingStep: "client_ask_plan" });
                 await handleClientAskPlan(phone, chatId);
@@ -701,8 +887,12 @@ async function advanceOnboardingStep(phone, task, taskData) {
             break;
         }
         case "stripe_connect": {
+            // Mark processed first to prevent duplicate caregiver doc creation on retry
+            await db.collection("agent_sessions").doc(phone).update({
+                processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
+            });
             // Caregiver Stripe Connect complete → finalize caregiver doc
-            const d = (_o = session.onboardingData) !== null && _o !== void 0 ? _o : {};
+            const d = (_p = session.onboardingData) !== null && _p !== void 0 ? _p : {};
             const profileData = {
                 phone,
                 name: d.name,
@@ -714,6 +904,9 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 availability: d.availability,
                 hourlyRate: d.hourlyRate,
                 stripeAccountId: d.stripeAccountId,
+                email: (_q = d.email) !== null && _q !== void 0 ? _q : null,
+                bio: (_r = d.bio) !== null && _r !== void 0 ? _r : null,
+                jobType: (_s = d.jobType) !== null && _s !== void 0 ? _s : null,
                 status: "active",
             };
             let caregiverId;
@@ -731,13 +924,13 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 onboardingStep: "caregiver_ask_permissions",
             });
             // Silently create Firebase Auth account so web dashboard login works later
-            await createFirebaseAuthAccount(phone, ((_p = d.name) !== null && _p !== void 0 ? _p : ""));
+            await createFirebaseAuthAccount(phone, ((_t = d.name) !== null && _t !== void 0 ? _t : ""));
             // Notify admin
             (0, notifications_1.notifyAdminNewCaregiverSignup)({
                 caregiverId,
-                name: ((_q = d.name) !== null && _q !== void 0 ? _q : ""),
+                name: ((_u = d.name) !== null && _u !== void 0 ? _u : ""),
                 phone,
-                city: ((_r = d.city) !== null && _r !== void 0 ? _r : ""),
+                city: ((_v = d.city) !== null && _v !== void 0 ? _v : ""),
             }).catch((err) => console.error("notifyAdminNewCaregiverSignup error:", err));
             await db.collection("admin_alerts").add({
                 type: "new_caregiver_signup",
@@ -752,7 +945,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 userId: (0, zepClient_1.getZepUserId)(phone),
                 data: {
                     user_type: "caregiver",
-                    user_name: ((_s = d.name) !== null && _s !== void 0 ? _s : ""),
+                    user_name: ((_w = d.name) !== null && _w !== void 0 ? _w : ""),
                     caregiver_city: d.city,
                     caregiver_years_experience: d.yearsExperience,
                     caregiver_specialties: Array.isArray(d.specialties) ? d.specialties : [],

@@ -12,19 +12,49 @@ const SUPPORT_PHONE = process.env.SUPPORT_PHONE ?? "1-800-555-0199";
 
 export async function contactReplacementCandidate(
   caregiver: ReplacementOption & { phone?: string },
-  appt: { date: string; time: string; address?: string; durationHours?: number; hourlyRate?: number },
+  appt: { date: string; time: string; address?: string; durationHours?: number; hourlyRate?: number; clientId?: string; seniorName?: string },
   taskId: string
 ): Promise<void> {
   if (!caregiver.phone) return;
 
   const earnings = ((appt.hourlyRate ?? caregiver.hourlyRate ?? 22) * (appt.durationHours ?? 4)).toFixed(2);
 
+  // Fetch care notes so the substitute arrives informed
+  let careNoteLines = "";
+  if (appt.clientId) {
+    try {
+      const [carePlanSnap, lastJournalSnap] = await Promise.all([
+        db.collection("care_plans").doc(appt.clientId).get(),
+        db.collection("care_journal")
+          .where("seniorId", "==", appt.clientId)
+          .orderBy("timestamp", "desc")
+          .limit(1)
+          .get(),
+      ]);
+      const carePlan = carePlanSnap.data();
+      const meds  = (carePlan?.medications as string[] | undefined) ?? [];
+      const needs = (carePlan?.careNeeds   as string[] | undefined) ?? [];
+      const lastNote = lastJournalSnap.empty
+        ? null
+        : (lastJournalSnap.docs[0].data().notes as string | undefined)?.slice(0, 100);
+      const noteLines: string[] = [];
+      if (needs.length)  noteLines.push(`Needs: ${needs.slice(0, 3).join(", ")}`);
+      if (meds.length)   noteLines.push(`Meds: ${meds.slice(0, 2).join(", ")}`);
+      if (lastNote)      noteLines.push(`Last visit: ${lastNote}`);
+      if (noteLines.length) careNoteLines = `\n${noteLines.join("\n")}`;
+    } catch { /* non-critical */ }
+  }
+
+  const seniorLine = appt.seniorName ? `Client: ${appt.seniorName}\n` : "";
+
   const msg =
     `Hi ${caregiver.name.split(" ")[0]} — urgent opening today.\n\n` +
     `${appt.date} at ${appt.time}\n` +
     (appt.address ? `${appt.address}\n` : "") +
-    `~$${earnings} for the visit\n\n` +
-    `Reply YES if you can take it, or NO to pass.`;
+    seniorLine +
+    `~$${earnings} for the visit` +
+    careNoteLines +
+    `\n\nReply YES if you can take it, or NO to pass.`;
 
   await sendToPhone(caregiver.phone, msg).catch((err) =>
     console.error(`contactReplacementCandidate failed for ${caregiver.phone}:`, err)
@@ -61,8 +91,8 @@ export async function handleNoReplacementsFound(
   });
 
   const msg =
-    `${appt.caregiverName ?? "Your caregiver"} had to cancel and I wasn't able to find a replacement in time. ` +
-    `Please call our support team at ${SUPPORT_PHONE} or open the app to reschedule.`;
+    `${appt.caregiverName ?? "Your caregiver"} had to cancel and I wasn't able to find a replacement right now. ` +
+    `I've flagged this for our team and I'm searching for new options — someone will follow up within the hour.`;
 
   await sendViaInteractionAgent(phone, {
     content:     msg,
@@ -70,6 +100,16 @@ export async function handleNoReplacementsFound(
     sourceAgent: "emergency_replacement",
     canDrop:     false,
   }).catch(() => sendToPhone(phone, msg));
+
+  // Kick off a fresh broad matching pass as a fallback
+  const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
+  if (sessionSnap.exists) {
+    const session = sessionSnap.data()!;
+    const { runMatchingForClient } = await import("./matchingAgent");
+    runMatchingForClient(phone, session.chatId ?? "", session, session).catch(err =>
+      console.error("[handleNoReplacementsFound] fallback re-match failed:", err)
+    );
+  }
 }
 
 // ── Full emergency replacement flow ──────────────────────────────────────────
@@ -83,6 +123,14 @@ export async function runEmergencyReplacement(params: {
   const { appointmentId, clientId, clientPhone, appt } = params;
   const now = new Date().toISOString();
 
+  // Mark replacement as in-progress so Cara can tell the family what's happening
+  await db.collection("agent_tasks_active").doc(clientPhone).set({
+    type:        "emergency_replacement",
+    status:      "searching",
+    startedAt:   now,
+    description: `Searching for a replacement for ${appt.caregiverName ?? "your caregiver"}'s cancelled ${appt.time ?? ""} visit`,
+  }).catch(() => {});
+
   const options = await scoreReplacements({
     clientId,
     appointmentId,
@@ -92,6 +140,7 @@ export async function runEmergencyReplacement(params: {
   });
 
   if (options.length === 0) {
+    await db.collection("agent_tasks_active").doc(clientPhone).delete().catch(() => {});
     await handleNoReplacementsFound(appointmentId, clientId, clientPhone, appt);
     return;
   }
@@ -132,6 +181,15 @@ export async function runEmergencyReplacement(params: {
     canDrop:     false,
   }).catch(() => sendToPhone(clientPhone, cancelMsg));
 
+  // Update active task status — waiting for family to pick
+  await db.collection("agent_tasks_active").doc(clientPhone).set({
+    type:        "emergency_replacement",
+    status:      "awaiting_family_choice",
+    taskId:      taskRef.id,
+    startedAt:   now,
+    description: `${options.length} replacement option${options.length > 1 ? "s" : ""} found — waiting for your reply`,
+  }).catch(() => {});
+
   // Contact all candidates in parallel
   const caregiverSnaps = await Promise.all(
     options.slice(0, 3).map((o) => db.collection("caregivers").doc(o.caregiverId).get())
@@ -141,7 +199,11 @@ export async function runEmergencyReplacement(params: {
       const phone = caregiverSnaps[i].data()?.phone as string | undefined;
       return contactReplacementCandidate(
         { ...o, phone },
-        { date: appt.date, time: appt.time, address: appt.address, durationHours: appt.durationHours },
+        {
+          date: appt.date, time: appt.time, address: appt.address,
+          durationHours: appt.durationHours, hourlyRate: appt.hourlyRate,
+          clientId, seniorName: appt.clientName ?? appt.seniorName,
+        },
         taskRef.id
       );
     })

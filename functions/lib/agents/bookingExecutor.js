@@ -44,7 +44,7 @@ async function hasConflict(caregiverId, date, startTime, endTime) {
     const snap = await db.collection("appointments")
         .where("caregiverId", "==", caregiverId)
         .where("date", "==", date)
-        .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
+        .where("status", "in", ["confirmed", "in-progress", "pending_caregiver_confirmation"])
         .get();
     return snap.docs.some((doc) => {
         const d = doc.data();
@@ -55,14 +55,29 @@ const db = admin.firestore();
 async function executeBookings(taskId, clientPhone) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
     const taskRef = db.collection("agent_tasks").doc(taskId);
-    const taskSnap = await taskRef.get();
-    if (!taskSnap.exists)
-        throw new Error(`agent_tasks/${taskId} not found`);
-    const task = taskSnap.data();
-    if (task.status !== "awaiting_approval")
-        return; // Already processed
-    if (new Date(task.expiresAt) < new Date()) {
-        await taskRef.update({ status: "expired" });
+    // Atomically claim the task — prevents duplicate execution from concurrent YES replies.
+    // Transitions: awaiting_approval → processing (success) | expired (timed out) | no-op (already claimed).
+    let task = null;
+    let didExpire = false;
+    await db.runTransaction(async (t) => {
+        const snap = await t.get(taskRef);
+        if (!snap.exists)
+            throw new Error(`agent_tasks/${taskId} not found`);
+        const data = snap.data();
+        if (data.status !== "awaiting_approval")
+            return; // Already claimed or processed — no-op
+        if (new Date(data.expiresAt) < new Date()) {
+            t.update(taskRef, { status: "expired" });
+            task = data;
+            didExpire = true;
+            return;
+        }
+        t.update(taskRef, { status: "processing" });
+        task = data;
+    });
+    if (!task)
+        return; // Already processed by a concurrent caller
+    if (didExpire) {
         const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
         if (sessionSnap.exists) {
             await (0, client_1.sendMessage)(sessionSnap.data().chatId, `The booking for ${task.caregiverName} timed out. Those expire after 2 hours to keep availability current.\n\n` +
@@ -75,11 +90,6 @@ async function executeBookings(taskId, clientPhone) {
     for (const appt of task.appointments) {
         if (await hasConflict(task.caregiverId, appt.date, appt.startTime, appt.endTime)) {
             await taskRef.update({ status: "conflict_detected" });
-            const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
-            if (sessionSnap.exists) {
-                await (0, client_1.sendMessage)(sessionSnap.data().chatId, `I couldn't complete the booking — ${task.caregiverName} already has a visit at that time.\n\n` +
-                    `Reply YES and I'll search for a different caregiver.`);
-            }
             await db.collection("admin_alerts").add({
                 type: "booking_conflict",
                 caregiverId: task.caregiverId,
@@ -91,8 +101,41 @@ async function executeBookings(taskId, clientPhone) {
                 createdAt: now,
                 resolved: false,
             });
+            // Mark this caregiver as rejected so matching skips them in the retry
+            await db.collection("agent_sessions").doc(clientPhone).update({
+                rejectedCaregiverIds: admin.firestore.FieldValue.arrayUnion(task.caregiverId),
+            }).catch(() => { });
+            // Set an active goal so Cara carries booking context through the re-match.
+            // If this fails, reset the task to awaiting_approval so the family can retry.
+            const { setActiveGoal } = await Promise.resolve().then(() => __importStar(require("./qaAgent")));
+            const goalSet = await setActiveGoal(clientPhone, "booking", `Rebook after conflict with ${task.caregiverName} on ${appt.date}`, { originalDate: appt.date, startTime: appt.startTime, endTime: appt.endTime, durationHours: appt.durationHours }).then(() => true).catch((err) => {
+                console.error("bookingExecutor: setActiveGoal failed", err);
+                return false;
+            });
+            if (!goalSet) {
+                await taskRef.update({ status: "awaiting_approval" }).catch(() => { });
+                return;
+            }
+            const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
+            if (sessionSnap.exists) {
+                const sessionData = sessionSnap.data();
+                await (0, client_1.sendMessage)(sessionData.chatId, `${task.caregiverName} already has a visit at that time — finding someone else for ${appt.date}.`);
+                // Auto-retry matching immediately — family sees results without replying
+                const { runMatchingForClient } = await Promise.resolve().then(() => __importStar(require("./matchingAgent")));
+                await runMatchingForClient(clientPhone, sessionData.chatId, sessionData, sessionData).catch((err) => console.error("bookingExecutor: conflict re-match failed", err));
+            }
             return;
         }
+    }
+    // Idempotency guard: if Cloud Functions retries this invocation after a partial commit,
+    // agentTaskId is already on every appointment written in the first attempt — skip if found.
+    const existingAppts = await db.collection("appointments")
+        .where("agentTaskId", "==", taskId)
+        .limit(1)
+        .get();
+    if (!existingAppts.empty) {
+        await taskRef.update({ status: "approved", humanApproved: true }).catch(() => { });
+        return;
     }
     // Write each appointment — this is the ONLY place appointments are written by the agent
     const batch = db.batch();
@@ -137,6 +180,37 @@ async function executeBookings(taskId, clientPhone) {
             `I'll text you when ${task.caregiverName} arrives for the first visit.\n` +
             `View your schedule: ${appUrl}/client/calendar\n\n` +
             `Any questions? Just text me.`);
+        // Ask about recurring care — only for single-visit (one-time) bookings
+        if (task.appointments.length === 1) {
+            const firstAppt = task.appointments[0];
+            const dayOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(firstAppt.date).getDay()];
+            const schedDesc = `${dayOfWeek}s ${firstAppt.startTime}–${firstAppt.endTime}`;
+            await (0, client_1.sendMessage)(sessionSnap.data().chatId, `Want me to set this up as a weekly recurring schedule — ${schedDesc} every week with ${task.caregiverName}? ` +
+                `I'll handle the bookings automatically.\n\nReply YES to set it up, or NO to keep it one visit at a time.`);
+            await db.collection("agent_sessions").doc(clientPhone).update({
+                awaitingRecurringConfirmation: true,
+                pendingRecurringSchedule: {
+                    caregiverId: task.caregiverId,
+                    caregiverName: task.caregiverName,
+                    days: [dayOfWeek],
+                    startTime: firstAppt.startTime,
+                    endTime: firstAppt.endTime,
+                    durationHours: firstAppt.durationHours,
+                    hourlyRate: (() => {
+                        var _a;
+                        const totalHours = task.appointments.reduce((s, a) => s + a.durationHours, 0);
+                        return totalHours > 0 ? ((_a = task.hourlyRate) !== null && _a !== void 0 ? _a : task.totalCost / totalHours) : 20;
+                    })(),
+                },
+            }).catch(() => { });
+        }
+        // Post-crisis emotional anchoring — only for emergency replacements
+        if (task.isEmergencyReplacement) {
+            // Clear the active task roster entry — replacement is resolved
+            await db.collection("agent_tasks_active").doc(clientPhone).delete().catch(() => { });
+            await new Promise(r => setTimeout(r, 3000));
+            await (0, client_1.sendMessage)(sessionSnap.data().chatId, `Last-minute coverage is one of the hardest parts of care. That's exactly what I'm here for. 💙`);
+        }
         // Check if client has a payment method — if not, send a Stripe setup link
         try {
             const Stripe = (await Promise.resolve().then(() => __importStar(require("stripe")))).default;
@@ -155,6 +229,12 @@ async function executeBookings(taskId, clientPhone) {
                 const setupUrl = `${appUrl}/done?task=payment&t=${token}`;
                 await (0, client_1.sendMessage)(sessionSnap.data().chatId, `One more thing — to pay ${task.caregiverName} after each visit, ` +
                     `add a card on file (takes 30 seconds): ${setupUrl}`);
+                // Mark the task so it can be auto-retried when the card is added
+                await db.collection("agent_tasks").doc(taskId).update({
+                    status: "pending_payment_setup",
+                    stripeCustomerId: stripeCustomerId !== null && stripeCustomerId !== void 0 ? stripeCustomerId : null,
+                    paymentSetupSentAt: new Date().toISOString(),
+                }).catch(() => { });
             }
         }
         catch (err) {
@@ -200,19 +280,7 @@ async function createBookingTask(params) {
     }
     const totalCost = params.appointments.reduce((sum, a) => sum + params.hourlyRate * a.durationHours, 0);
     const now = new Date();
-    const ref = await db.collection("agent_tasks").add({
-        type: "booking_confirmation",
-        clientPhone: params.clientPhone,
-        clientId: params.clientId,
-        caregiverId: params.caregiverId,
-        caregiverName: params.caregiverName,
-        appointments: params.appointments,
-        totalCost,
-        status: "awaiting_approval",
-        humanApproved: false,
-        expiresAt: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
-        createdAt: now.toISOString(),
-    });
+    const ref = await db.collection("agent_tasks").add(Object.assign({ type: "booking_confirmation", clientPhone: params.clientPhone, clientId: params.clientId, caregiverId: params.caregiverId, caregiverName: params.caregiverName, appointments: params.appointments, totalCost, status: "awaiting_approval", humanApproved: false, expiresAt: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(), createdAt: now.toISOString() }, (params.isEmergencyReplacement && { isEmergencyReplacement: true })));
     return ref.id;
 }
 //# sourceMappingURL=bookingExecutor.js.map

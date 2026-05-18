@@ -68,9 +68,10 @@ function isBereavementTrigger(text) {
 }
 async function activateBereavementMode(userId, chatId, phone, seniorName) {
     var _a, _b;
-    // 1. Set bereavementMode permanently on session
+    // 1. Set bereavementMode with activation timestamp
     await db.collection("agent_sessions").doc(phone).update({
         bereavementMode: true,
+        bereavementActivatedAt: new Date().toISOString(),
     });
     // 2. Cancel all pending proactive triggers
     const triggerSnap = await db

@@ -39,10 +39,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleInterviewSelection = handleInterviewSelection;
 exports.handleCaregiverAvailabilityReply = handleCaregiverAvailabilityReply;
 exports.handleInterviewConfirm = handleInterviewConfirm;
+exports.writeInterviewOutcomeSignal = writeInterviewOutcomeSignal;
 exports.sendPostInterviewFollowUp = sendPostInterviewFollowUp;
 const admin = __importStar(require("firebase-admin"));
 const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
 const client_1 = require("../linq/client");
+const feedback_1 = require("../ai/feedback");
 let _claude = null;
 function getClaude() {
     if (!_claude)
@@ -52,6 +54,7 @@ function getClaude() {
 const permissionsConversation_1 = require("./permissionsConversation");
 const notifications_1 = require("../notifications");
 const interviewLinks_1 = require("./interviewLinks");
+const triggerEngine_1 = require("../triggers/triggerEngine");
 const db = admin.firestore();
 // ── Parse caregiver selection from family text ────────────────────────────────
 async function parseSelection(text, matchCount) {
@@ -90,6 +93,40 @@ async function parseAvailability(text) {
     catch (_b) {
         return [];
     }
+}
+// ── Cross-check proposed times against client's existing confirmed appointments ─
+async function findMutualTime(proposedTimes, clientPhone) {
+    var _a;
+    if (proposedTimes.length === 0)
+        return null;
+    // Load the client's confirmed upcoming appointments
+    const sessSnap = await db.collection("agent_sessions").doc(clientPhone).get();
+    const clientId = (_a = sessSnap.data()) === null || _a === void 0 ? void 0 : _a.userId;
+    if (!clientId)
+        return proposedTimes[0];
+    const today = new Date().toISOString().slice(0, 10);
+    const apptSnap = await db.collection("appointments")
+        .where("clientId", "==", clientId)
+        .where("status", "in", ["confirmed", "pending"])
+        .where("date", ">=", today)
+        .get();
+    // Build set of busy hours as "YYYY-MM-DDTHH" strings
+    const busy = new Set();
+    for (const d of apptSnap.docs) {
+        const a = d.data();
+        if (a.date && a.time) {
+            const hour = a.time.slice(0, 2);
+            busy.add(`${a.date}T${hour}`);
+        }
+    }
+    for (const iso of proposedTimes) {
+        const dt = new Date(iso);
+        const key = `${dt.toISOString().slice(0, 10)}T${String(dt.getHours()).padStart(2, "0")}`;
+        if (!busy.has(key))
+            return iso;
+    }
+    // All proposed times conflict — return the first anyway
+    return proposedTimes[0];
 }
 // ── Handle family selecting caregivers for interview ─────────────────────────
 async function handleInterviewSelection(phone, chatId, text, session) {
@@ -151,6 +188,7 @@ async function handleInterviewSelection(phone, chatId, text, session) {
 }
 // ── Handle caregiver replying with availability ───────────────────────────────
 async function handleCaregiverAvailabilityReply(caregiverPhone, caregiverId, caregiverName, chatId, text) {
+    var _a, _b;
     if (text.trim().toUpperCase() === "PASS") {
         // Find the pending interview request and mark declined
         const snap = await db.collection("interview_requests")
@@ -189,13 +227,15 @@ async function handleCaregiverAvailabilityReply(caregiverPhone, caregiverId, car
         .where("status", "==", "awaiting_caregiver_availability")
         .orderBy("createdAt", "desc").limit(1).get();
     if (snap.empty) {
-        await (0, client_1.sendMessage)(chatId, "I couldn't find an active interview request. Please try again or contact support.");
+        // Request expired or already filled — let the caregiver know and close gracefully
+        await (0, client_1.sendMessage)(chatId, "That interview request has already been filled or expired. I'll reach out when there's a new opening that fits your availability.");
         return;
     }
     const doc = snap.docs[0];
     const reqData = doc.data();
-    // Pick first proposed time that works
-    const mutualTime = proposedTimes[0]; // TODO: cross-check with client's calendar
+    // Cross-check proposed times against client's existing confirmed appointments
+    const clientPhone = (_a = reqData.clientPhone) !== null && _a !== void 0 ? _a : "";
+    const mutualTime = (_b = await findMutualTime(proposedTimes, clientPhone)) !== null && _b !== void 0 ? _b : proposedTimes[0];
     await doc.ref.update({
         status: "awaiting_client_confirmation",
         caregiverAvailability: proposedTimes,
@@ -222,7 +262,7 @@ async function handleCaregiverAvailabilityReply(caregiverPhone, caregiverId, car
 }
 // ── Handle family confirming interview ────────────────────────────────────────
 async function handleInterviewConfirm(phone, chatId, session) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
     const pending = session.pendingInterviewConfirm;
     if (!pending) {
         await (0, client_1.sendMessage)(chatId, "I don't have a pending interview to confirm. Let me know if you'd like to schedule one.");
@@ -300,9 +340,10 @@ async function handleInterviewConfirm(phone, chatId, session) {
     // Text the caregiver
     const reqSnap = await db.collection("interview_requests").doc(pending.docId).get();
     const caregiverId = (_c = reqSnap.data()) === null || _c === void 0 ? void 0 : _c.caregiverId;
+    let cgPhone;
     if (caregiverId) {
         const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
-        const cgPhone = (_d = cgSnap.data()) === null || _d === void 0 ? void 0 : _d.phone;
+        cgPhone = (_d = cgSnap.data()) === null || _d === void 0 ? void 0 : _d.phone;
         if (cgPhone) {
             const cgSession = await (0, client_1.getOrCreateSession)(cgPhone);
             const cgIsIMessa = cgSession.service === "iMessage";
@@ -317,6 +358,56 @@ async function handleInterviewConfirm(phone, chatId, session) {
                 `Reply RESCHEDULE if you need to change the time.`);
         }
     }
+    // Schedule 1h-before reminders and a post-interview follow-up trigger
+    const interviewMs = new Date(pending.mutualTime).getTime();
+    const nowMs = Date.now();
+    const oneHourBefore = interviewMs - 60 * 60 * 1000;
+    const ninetyMinAway = interviewMs - 90 * 60 * 1000;
+    if (nowMs < ninetyMinAway) {
+        // 1h-before reminder to the family
+        const familySessionSnap = await db.collection("agent_sessions").doc(phone).get();
+        const familyUserId = ((_f = (_e = familySessionSnap.data()) === null || _e === void 0 ? void 0 : _e.userId) !== null && _f !== void 0 ? _f : phone);
+        await (0, triggerEngine_1.scheduleTrigger)({
+            userId: familyUserId,
+            phone,
+            type: "appointment_reminder",
+            scheduledAt: new Date(oneHourBefore).toISOString(),
+            message: `Your interview with ${pending.caregiverName} is in an hour — ` +
+                (callUrl ? callUrl : "make sure you have the link ready."),
+        }).catch((err) => console.error("scheduleTrigger (family reminder) error:", err));
+        // 1h-before reminder to the caregiver
+        if (cgPhone) {
+            const cgSessionSnap = await db.collection("agent_sessions").doc(cgPhone).get();
+            const cgUserId = ((_h = (_g = cgSessionSnap.data()) === null || _g === void 0 ? void 0 : _g.userId) !== null && _h !== void 0 ? _h : cgPhone);
+            await (0, triggerEngine_1.scheduleTrigger)({
+                userId: cgUserId,
+                phone: cgPhone,
+                type: "appointment_reminder",
+                scheduledAt: new Date(oneHourBefore).toISOString(),
+                message: `Interview in an hour with a family. ` +
+                    (callUrl ? callUrl : "Check your calendar.") +
+                    ` Reply if you need to reschedule.`,
+            }).catch((err) => console.error("scheduleTrigger (caregiver reminder) error:", err));
+        }
+    }
+    // Post-interview follow-up at scheduledTime + 75 min (regardless of lead time)
+    const followUpAt = new Date(interviewMs + 75 * 60 * 1000).toISOString();
+    await (0, triggerEngine_1.scheduleTrigger)({
+        userId: (_k = (_j = (await db.collection("agent_sessions").doc(phone).get()).data()) === null || _j === void 0 ? void 0 : _j.userId) !== null && _k !== void 0 ? _k : phone,
+        phone,
+        type: "custom",
+        scheduledAt: followUpAt,
+        message: `interview_followup:${interviewRef.id}`,
+    }).catch((err) => console.error("scheduleTrigger (followup) error:", err));
+}
+// ── Write interview outcome feedback signal ───────────────────────────────────
+async function writeInterviewOutcomeSignal(clientId, caregiverId, outcome) {
+    await (0, feedback_1.writeFeedbackSignal)({
+        clientId,
+        caregiverId,
+        signal: outcome === "hire" ? 3 : -2,
+        source: outcome === "hire" ? "hire" : "pass",
+    }).catch((err) => console.error("writeInterviewOutcomeSignal error:", err));
 }
 // ── Post-interview follow-up ──────────────────────────────────────────────────
 async function sendPostInterviewFollowUp(interviewId) {

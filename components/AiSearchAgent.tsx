@@ -8,7 +8,8 @@ import { aiService } from '../services/ai';
 import { availabilityService } from '../services/availabilityService';
 import { matchService } from '../services/matchService';
 import { dbService } from '../services/api';
-import { auth } from '../lib/firebase';
+import { auth, functions } from '../lib/firebase';
+import { logMatchSignal } from '../services/matchFeedback';
 import { InlineCaregiverCard } from './InlineCaregiverCard';
 import { useBookingFlow } from '../hooks/useBookingFlow';
 
@@ -74,6 +75,7 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
 
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [caraAvailable, setCaraAvailable] = useState<boolean | null>(null);
 
   // Filter State
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -100,7 +102,8 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
     if (backendMatchesRef.current) return backendMatchesRef.current;
     const user = auth.currentUser;
     if (!user) return new Map();
-    const data = await dbService.getClientMatches(user.uid).catch(() => null);
+    const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), 5000));
+    const data = await Promise.race([dbService.getClientMatches(user.uid).catch(() => null), timeout]);
     const map = new Map<string, { score: number; reasons: string[] }>(
       (data?.topMatches || []).map(m => [m.caregiverId, { score: m.score, reasons: m.reasons }] as [string, { score: number; reasons: string[] }])
     );
@@ -269,56 +272,92 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
     }
   };
 
-  // ENHANCED: Phase 2 Context Awareness & Conversational booking
+  // Try Cara (backend qaAgent) first; fall back to Gemini if unavailable
   const processAiResponse = async (userText: string) => {
     setIsTyping(true);
 
     try {
-      // 1. Convert messages to AI compatible format
+      // ── Cara path ──────────────────────────────────────────────────────────
+      if (caraAvailable !== false && functions && auth?.currentUser) {
+        try {
+          const caraFn = functions.httpsCallable('chatWithCara');
+          const result = await caraFn({ message: userText });
+          const data = result.data as {
+            available: boolean;
+            reply: string;
+            showMatches?: boolean;
+            rateLimited?: boolean;
+          };
+
+          if (data.available) {
+            setCaraAvailable(true);
+            let recommendedCaregivers: Caregiver[] | undefined;
+
+            if (data.showMatches) {
+              const scoreMap = await loadBackendMatches();
+              let matches = applyBackendScores(caregivers, scoreMap);
+              if (filters.date && filters.time) {
+                const [year, month, day] = filters.date.split('-').map(Number);
+                const requestedDate = new Date(year, month - 1, day);
+                const availChecks = await Promise.all(
+                  matches.slice(0, 20).map(async cg => {
+                    try { return await availabilityService.isAvailable(cg as any, requestedDate, filters.time, 2) ? cg : null; }
+                    catch { return cg; }
+                  })
+                );
+                const available = availChecks.filter(Boolean) as Caregiver[];
+                if (available.length >= 2) matches = available;
+              }
+              recommendedCaregivers = matches.slice(0, 5);
+            }
+
+            setMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              sender: 'ai',
+              text: data.reply || "I'm listening, tell me more about what you need.",
+              recommendedCaregivers,
+            }]);
+            return;
+          }
+
+          // available: false means user isn't onboarded to Linq — fall through to Gemini
+          setCaraAvailable(false);
+        } catch (caraErr) {
+          console.warn('Cara callable unavailable, falling back to Gemini:', caraErr);
+          setCaraAvailable(false);
+        }
+      }
+
+      // ── Gemini fallback ────────────────────────────────────────────────────
       const history = messages.map(m => ({
         role: (m.sender === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
         content: m.text
       }));
 
-      // 0. Caregiver Schedule Context (New for Phase 3: Proactive Problem Solving)
       let targetCaregiverSchedule = undefined;
       const targetId = bookingState.selectedCaregiverId;
-
       if (targetId) {
         const caregiver = caregivers.find(c => c.id === targetId);
-        if (caregiver) {
-          targetCaregiverSchedule = caregiver.weeklyAvailability;
-        }
+        if (caregiver) targetCaregiverSchedule = caregiver.weeklyAvailability;
       }
 
-      // 2. Call conversational booking with context
       const bookingResult = await aiService.conversationalBooking(history, bookingState, {
         previousBookings,
         seniorProfile,
         targetCaregiverSchedule
       });
 
-      // 3. Update booking state if AI extracted new info
-      if (bookingResult.extractedInfo) {
-        updateBookingState(bookingResult.extractedInfo);
-      }
+      if (bookingResult.extractedInfo) updateBookingState(bookingResult.extractedInfo);
 
-      // 4. Emergency Mode Handling (Phase 4)
       const isEmergency = bookingResult.isEmergency || false;
+      let recommendedCaregivers: Caregiver[] | undefined;
 
-      // 5. Determine if we should show matches
-      let recommendedCaregivers: Caregiver[] | undefined = undefined;
-
-      // In emergency mode, show matches even if some info is missing
       if (bookingResult.readyToShowMatches || (isEmergency && bookingResult.extractedInfo?.service)) {
         if (filters.date && filters.time) {
           const [year, month, day] = filters.date.split('-').map(Number);
           const requestedDate = new Date(year, month - 1, day);
-
-          // Prefer backend AI scores; fall back to client-side scoring
           const scoreMap = await loadBackendMatches();
           let matches: Caregiver[];
-
           if (scoreMap.size > 0) {
             matches = applyBackendScores(caregivers, scoreMap);
             const availChecks = await Promise.all(
@@ -332,63 +371,44 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
           } else {
             matches = await matchService.scoreCaregivers(
               caregivers,
-              seniorProfile || {
-                id: 0, name: 'Client', age: 75, location: 'Nearby', zipCode: '',
-                needs: bookingResult.extractedInfo?.service ? [bookingResult.extractedInfo.service] : [],
-                personality: 'Ambivert'
-              },
+              seniorProfile || { id: 0, name: 'Client', age: 75, location: 'Nearby', zipCode: '', needs: bookingResult.extractedInfo?.service ? [bookingResult.extractedInfo.service] : [], personality: 'Ambivert' },
               [],
               { requestedDate, requestedTime: filters.time, requestedDuration: 2 }
             );
           }
-
           if (isEmergency) {
             const emergency = matches.filter(c => c.verified && (c.rating || 0) >= 4.5);
             if (emergency.length >= 1) matches = emergency;
           }
-
           recommendedCaregivers = matches.slice(0, 5);
         } else {
-          // No date/time — use Gemini conversational search re-ranked over backend scores
           const scoreMap = await loadBackendMatches();
           const query = `${bookingResult.extractedInfo?.service || ''} ${userText}`.trim();
           const { recommendedIds } = await aiService.searchCaregivers(query, caregivers, seniorProfile);
-
-          let matches = recommendedIds?.length
-            ? caregivers.filter(c => recommendedIds.includes(c.id))
-            : caregivers;
-
-          // Apply backend scores on top of Gemini's selection
-          if (scoreMap.size > 0) {
-            matches = applyBackendScores(matches, scoreMap);
-          }
-
+          let matches = recommendedIds?.length ? caregivers.filter(c => recommendedIds.includes(c.id)) : caregivers;
+          if (scoreMap.size > 0) matches = applyBackendScores(matches, scoreMap);
           if (isEmergency) {
-            const emergency = matches.filter(c => c.verified && (c.rating || 0) >= 4.5)
-              .sort((a, b) => (b.rating || 0) - (a.rating || 0));
+            const emergency = matches.filter(c => c.verified && (c.rating || 0) >= 4.5).sort((a, b) => (b.rating || 0) - (a.rating || 0));
             if (emergency.length >= 1) matches = emergency;
           }
-
           recommendedCaregivers = matches.slice(0, 5);
         }
       }
 
-      const aiMessage: ChatMessage = {
+      setMessages(prev => [...prev, {
         id: Date.now().toString(),
         sender: 'ai',
         text: bookingResult.response || "I'm listening, tell me more about what you need.",
         recommendedCaregivers,
         suggestions: bookingResult.suggestions,
-        isEmergency
-      };
-
-      setMessages(prev => [...prev, aiMessage]);
+        isEmergency,
+      }]);
     } catch (e) {
       console.error("AI Error", e);
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
         sender: 'ai',
-        text: "I'm having trouble connecting to my brain right now. Please try again."
+        text: "I'm having trouble connecting right now. Please try again."
       }]);
     } finally {
       setIsTyping(false);
@@ -455,7 +475,8 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
             <div>
               <h3 className="font-bold">Care Concierge</h3>
               <p className="text-xs text-primary-100 flex items-center">
-                <span className="w-2 h-2 bg-green-400 rounded-full mr-1 animate-pulse"></span> Gemini AI Active
+                <span className="w-2 h-2 bg-green-400 rounded-full mr-1 animate-pulse"></span>
+                {caraAvailable === true ? 'Cara AI Active' : 'Gemini AI Active'}
               </p>
             </div>
           </div>
@@ -679,6 +700,7 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
                         <div className="mt-2 grid grid-cols-3 gap-2">
                           <button
                             onClick={() => {
+                              logMatchSignal(caregiver.id, 'hired').catch(() => {});
                               onBookCaregiver(caregiver);
                               setTimeout(() => onClose(), 100);
                             }}
@@ -688,6 +710,7 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
                           </button>
                           <button
                             onClick={() => {
+                              logMatchSignal(caregiver.id, 'favorited').catch(() => {});
                               onViewProfile?.(caregiver);
                               setTimeout(() => onClose(), 100);
                             }}
@@ -697,6 +720,7 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
                           </button>
                           <button
                             onClick={() => {
+                              logMatchSignal(caregiver.id, 'interviewed').catch(() => {});
                               onScheduleInterview?.(caregiver);
                               setTimeout(() => onClose(), 100);
                             }}

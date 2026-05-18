@@ -7,6 +7,8 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
   apiVersion: '2023-10-16',
 });
 
+export function getStripeClient(): Stripe { return stripe; }
+
 // Webhook secret for verifying Stripe events
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 
@@ -203,6 +205,12 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
         break;
       }
 
+      case 'payment_method.attached': {
+        const pm = event.data.object as Stripe.PaymentMethod;
+        await handlePaymentMethodAttached(pm);
+        break;
+      }
+
       default:
         console.log(`Unhandled event type: ${event.type}`);
     }
@@ -226,6 +234,22 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
       await advanceOnboardingStep(session.metadata.phone, 'payment', '');
     } catch (err) {
       console.error('advanceOnboardingStep(payment) error:', err);
+    }
+    return;
+  }
+
+  // Cara iMessage onboarding — caregiver membership payment complete
+  if (session.metadata?.task === 'caregiver_membership' && session.metadata?.phone) {
+    try {
+      const phone = session.metadata.phone;
+      // If MVR was included in the checkout, flag the session so Checkr uses the MVR package
+      if (session.metadata?.includeMVR === 'true') {
+        await admin.firestore().collection('agent_sessions').doc(phone).update({ mvrPaid: true });
+      }
+      const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
+      await advanceOnboardingStep(phone, 'membership', '');
+    } catch (err) {
+      console.error('advanceOnboardingStep(membership) error:', err);
     }
     return;
   }
@@ -423,9 +447,35 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
 
   // Update user status
   await admin.firestore().collection('users').doc(userId).update({
-    membershipStatus: 'payment_failed',
+    membershipStatus:   'payment_failed',
+    subscriptionStatus: 'past_due',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
+
+  // Proactively text the client via Cara
+  try {
+    const sessionSnap = await admin.firestore()
+      .collection("agent_sessions")
+      .where("userId", "==", userId)
+      .where("optedOut", "==", false)
+      .limit(1)
+      .get();
+    if (!sessionSnap.empty) {
+      const clientPhone = sessionSnap.docs[0].id;
+      const { sendViaInteractionAgent } = await import("./agents/caraAgent");
+      await sendViaInteractionAgent(clientPhone, {
+        content:
+          "There was an issue processing your Cara membership payment. " +
+          "To keep your care coordination uninterrupted, please update your billing at cara.app/billing. " +
+          "Reply HELP if you need assistance.",
+        urgency:     "high",
+        sourceAgent: "billing",
+        canDrop:     false,
+      });
+    }
+  } catch (err) {
+    console.error(`handleInvoicePaymentFailed: failed to notify client ${userId}:`, err);
+  }
 
   console.log(`Payment failed for user: ${userId}`);
 }
@@ -775,3 +825,39 @@ export const reactivateSubscription = functions.https.onCall(async (data, contex
     throw new functions.https.HttpsError('internal', 'Failed to reactivate subscription');
   }
 });
+
+// ── Auto-retry booking tasks when client adds a payment method ────────────────
+
+async function handlePaymentMethodAttached(pm: Stripe.PaymentMethod): Promise<void> {
+  const customerId = typeof pm.customer === "string" ? pm.customer : pm.customer?.id;
+  if (!customerId) return;
+
+  const db = admin.firestore();
+
+  // Find booking tasks awaiting payment setup for this customer
+  const taskSnap = await db.collection("agent_tasks")
+    .where("stripeCustomerId", "==", customerId)
+    .where("status",           "==", "pending_payment_setup")
+    .get();
+
+  if (taskSnap.empty) return;
+
+  for (const taskDoc of taskSnap.docs) {
+    const task = taskDoc.data();
+    const clientPhone: string | undefined = task.clientPhone;
+    if (!clientPhone) continue;
+
+    try {
+      // Reset status so executeBookings can proceed
+      await taskDoc.ref.update({ status: "approved" });
+
+      const { executeBookings } = await import("./agents/bookingExecutor");
+      await executeBookings(taskDoc.id, clientPhone);
+
+      console.log(`[handlePaymentMethodAttached] Retried booking task ${taskDoc.id} for customer ${customerId}`);
+    } catch (err) {
+      console.error(`[handlePaymentMethodAttached] retry failed for task ${taskDoc.id}:`, err);
+      await taskDoc.ref.update({ status: "pending_payment_setup" }); // revert
+    }
+  }
+}

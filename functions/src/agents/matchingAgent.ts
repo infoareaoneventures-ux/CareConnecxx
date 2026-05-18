@@ -1,30 +1,120 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
+import {
+  spawnExecutionAgent,
+  getActiveAgentForUser,
+  runExecutionAgentTurn,
+  updateExecutionAgentContext,
+} from "./executionAgent";
 
 const db = admin.firestore();
 
 interface CaregiverCandidate {
-  id:                     string;
-  name:                   string;
-  rating?:                number;
-  hourlyRate:             number;
-  specialties:            string[];
-  city:                   string;
-  yearsExperience:        number;
-  availability?:          { days: string[]; hours: string };
-  pendingBackgroundCheck?: boolean;
+  id:                       string;
+  name:                     string;
+  rating?:                  number;
+  hourlyRate:               number;
+  specialties:              string[];
+  city:                     string;
+  yearsExperience:          number;
+  availability?:            { days: string[]; hours: string };
+  pendingBackgroundCheck?:  boolean;
+  genderPreference?:        string;
+  gender?:                  string;
+  backgroundCheckStatus?:   string;   // "clear" | "pending" | "consider" | "suspended"
+  certifications?:          string[];
 }
 
-function score(caregiver: CaregiverCandidate, intake: Record<string, unknown>): number {
-  let pts = 0;
-  const needs = (intake.careNeeds ?? []) as string[];
-  for (const need of needs) {
-    if (caregiver.specialties?.some((s) => s.toLowerCase().includes(need.toLowerCase()))) pts += 10;
+interface ScoreBreakdown {
+  skillsMatch:        number;
+  availabilityMatch:  number;
+  personalityMatch:   number;
+  distanceScore:      number;
+  ratingScore:        number;
+  rebookingRate:      number;
+}
+
+interface MatchScoreResult {
+  overallScore: number;
+  breakdown:    ScoreBreakdown;
+  reasoning:    string[];
+  confidence:   "high" | "medium" | "low";
+}
+
+function computeMatchScore(
+  caregiver: CaregiverCandidate,
+  intake: Record<string, unknown>
+): MatchScoreResult {
+  const needs          = (intake.careNeeds ?? []) as string[];
+  const intakeCity     = ((intake.city ?? "") as string).toLowerCase();
+  const intakeZip      = ((intake.zipCode ?? "") as string);
+  const intakeDays     = (intake.daysPerWeek ?? 0) as number;
+  const intakeTimeOfDay = ((intake.timeOfDay ?? "") as string).toLowerCase();
+  const genderPref     = ((intake.genderPreference ?? "") as string).toLowerCase();
+
+  // Skills match (0-100): % of care needs matched by specialties
+  const matchedNeeds = needs.filter((n) =>
+    caregiver.specialties?.some((s) => s.toLowerCase().includes(n.toLowerCase()))
+  );
+  const skillsMatch = needs.length > 0
+    ? Math.round((matchedNeeds.length / needs.length) * 100)
+    : 70;
+
+  // Distance score (0-100): exact city = 100, zip prefix match = 70, no match = 30
+  const cgCity = (caregiver.city ?? "").toLowerCase();
+  const cgZip  = ((caregiver as any).zipCode ?? "") as string;
+  let distanceScore = 30;
+  if (cgCity === intakeCity) distanceScore = 100;
+  else if (intakeZip && cgZip && intakeZip.slice(0, 3) === cgZip.slice(0, 3)) distanceScore = 70;
+
+  // Availability match (0-100): simplified — overlap on time of day
+  const cgHours = (caregiver.availability?.hours ?? "").toLowerCase();
+  let availabilityMatch = 60;
+  if (cgHours.includes(intakeTimeOfDay) || intakeTimeOfDay === "") availabilityMatch = 90;
+  if (intakeDays > 5 && !cgHours.includes("weekend")) availabilityMatch = Math.min(availabilityMatch, 70);
+
+  // Rating score (0-100): 5-star → 100
+  const ratingScore = Math.min(Math.round((caregiver.rating ?? 3.5) / 5 * 100), 100);
+
+  // Personality / gender preference (0-100)
+  let personalityMatch = 75;
+  if (genderPref && caregiver.gender) {
+    personalityMatch = caregiver.gender.toLowerCase() === genderPref ? 95 : 55;
   }
-  pts += Math.min((caregiver.yearsExperience ?? 0) * 2, 20);
-  pts += Math.min((caregiver.rating ?? 0) * 4, 20);
-  if ((caregiver.city ?? "").toLowerCase() === ((intake.city ?? "") as string).toLowerCase()) pts += 10;
-  return pts;
+
+  // Experience-weighted rebooking proxy (0-100)
+  const rebookingRate = Math.min(
+    Math.round(50 + (caregiver.yearsExperience ?? 0) * 5 + (caregiver.rating ?? 3) * 5),
+    100
+  );
+
+  // Weighted average: skills 35%, distance 20%, rating 20%, availability 15%, personality 10%
+  const overallScore = Math.round(
+    skillsMatch       * 0.35 +
+    distanceScore     * 0.20 +
+    ratingScore       * 0.20 +
+    availabilityMatch * 0.15 +
+    personalityMatch  * 0.10
+  );
+
+  // Build reasoning list
+  const reasoning: string[] = [];
+  if (matchedNeeds.length > 0) reasoning.push(`Specializes in ${matchedNeeds.slice(0, 2).join(" and ")}`);
+  if (distanceScore === 100) reasoning.push(`Located in ${intake.city}`);
+  if ((caregiver.rating ?? 0) >= 4.8) reasoning.push("Top-rated by families");
+  if ((caregiver.yearsExperience ?? 0) >= 5) reasoning.push(`${caregiver.yearsExperience} years of experience`);
+  if (availabilityMatch >= 90) reasoning.push("Available at your preferred times");
+  if (reasoning.length === 0) reasoning.push("Available and local");
+
+  const confidence: "high" | "medium" | "low" =
+    overallScore >= 80 ? "high" : overallScore >= 65 ? "medium" : "low";
+
+  return {
+    overallScore,
+    breakdown: { skillsMatch, availabilityMatch, personalityMatch, distanceScore, ratingScore, rebookingRate },
+    reasoning,
+    confidence,
+  };
 }
 
 export async function runMatchingForClient(
@@ -54,8 +144,10 @@ export async function runMatchingForClient(
 
     let caregivers: CaregiverCandidate[] = snap.docs
       .map((d) => ({
-        id:                    d.id,
+        id:                     d.id,
         pendingBackgroundCheck: d.data().status === "pending_review",
+        backgroundCheckStatus:  d.data().backgroundCheckData?.status as string | undefined,
+        certifications:         d.data().certifications as string[] | undefined,
         ...d.data(),
       } as CaregiverCandidate))
       .filter((c) =>
@@ -72,11 +164,12 @@ export async function runMatchingForClient(
         .filter((c) => !rejectedIds.includes(c.id));
     }
 
-    const top3 = caregivers
-      .map((c) => ({ c, pts: score(c, intake) }))
-      .sort((a, b) => b.pts - a.pts)
-      .slice(0, 3)
-      .map((x) => x.c);
+    const scoredCaregivers = caregivers
+      .map((c) => ({ c, matchScore: computeMatchScore(c, intake) }))
+      .sort((a, b) => b.matchScore.overallScore - a.matchScore.overallScore);
+
+    const top3 = scoredCaregivers.slice(0, 3).map((x) => x.c);
+    const top3Scores = scoredCaregivers.slice(0, 3).map((x) => x.matchScore);
 
     if (top3.length === 0) {
       // Write admin alert so the team can manually follow up
@@ -99,13 +192,21 @@ export async function runMatchingForClient(
     }
 
     // Write pending interview requests (and caregiver_interest tasks for pending-bg-check caregivers)
-    for (const c of top3) {
+    for (let i = 0; i < top3.length; i++) {
+      const c = top3[i];
+      const ms = top3Scores[i];
       await db.collection("interview_requests").add({
         clientPhone:  phone,
         caregiverId:  c.id,
         caregiverName: c.name,
         status:       "pending_presentation",
         createdAt:    new Date().toISOString(),
+        matchScore: {
+          overallScore: ms.overallScore,
+          breakdown:    ms.breakdown,
+          reasoning:    ms.reasoning,
+          confidence:   ms.confidence,
+        },
       });
 
       if ((c as any).pendingBackgroundCheck) {
@@ -123,37 +224,96 @@ export async function runMatchingForClient(
 
     const seniorName = (intake.seniorName ?? "your loved one") as string;
     const needs      = (intake.careNeeds ?? []) as string[];
+    const appUrl     = process.env.APP_URL ?? "https://cara.app";
 
-    const buildLine = (c: CaregiverCandidate, i: number): string => {
-      const matchedNeeds = needs.filter((n) =>
-        c.specialties?.some((s) => s.toLowerCase().includes(n.toLowerCase()))
-      );
-      let reason: string;
-      if (matchedNeeds.length > 0) {
-        reason = `specializes in ${matchedNeeds[0]}`;
-      } else if (c.yearsExperience >= 5) {
-        reason = `${c.yearsExperience} years of experience`;
-      } else if ((c.rating ?? 0) >= 4.8) {
-        reason = `top-rated by families`;
-      } else {
-        reason = `available and local`;
-      }
-      const bgNote     = c.pendingBackgroundCheck ? ` (background check in progress)` : "";
-      const profileUrl = `${process.env.APP_URL ?? "https://cara.app"}/caregiver/${c.id}`;
-      return `${i + 1}. ${c.name}, ${reason}. $${c.hourlyRate}/hr${bgNote}\n   ${profileUrl}`;
-    };
+    // Build structured match data for the execution agent's context
+    const matchData = top3.map((c, i) => {
+      const ms          = top3Scores[i];
+      const bgStatus    = c.backgroundCheckStatus ?? (c.pendingBackgroundCheck ? "pending" : "clear");
+      const trustLines: string[] = [];
+      if (bgStatus === "clear")       trustLines.push("background check cleared");
+      if (c.certifications?.length)   trustLines.push(c.certifications.slice(0, 2).join(", "));
+      return {
+        index:        i + 1,
+        id:           c.id,
+        name:         c.name,
+        hourlyRate:   c.hourlyRate,
+        rating:       c.rating ?? null,
+        bgStatus,
+        trustSignals: trustLines,
+        pendingBg:    !!c.pendingBackgroundCheck,
+        topReason:    ms.reasoning[0] ?? "available and local",
+        allReasons:   ms.reasoning,
+        overallScore: ms.overallScore,
+        profileUrl:   `${appUrl}/caregiver/${c.id}`,
+        specialties:  c.specialties ?? [],
+        yearsExp:     c.yearsExperience ?? null,
+        city:         c.city ?? "",
+      };
+    });
 
-    const intro = top3.length === 1
-      ? `I found one caregiver who looks like a strong match for ${seniorName}:`
-      : `Here are ${top3.length} caregivers I think could be right for ${seniorName}:`;
+    // Build the matching agent system prompt with full caregiver context baked in
+    const matchSummary = matchData
+      .map(m =>
+        `${m.index}. ${m.name} — ${m.topReason}. $${m.hourlyRate}/hr` +
+        (m.trustSignals.length ? `\n   ✓ ${m.trustSignals.join(" · ")}` : "") +
+        (m.pendingBg ? `\n   ⏳ Background check in progress` : "") +
+        `\n   Profile: ${m.profileUrl}` +
+        `\n   Specialties: ${m.specialties.join(", ") || "general care"}` +
+        (m.yearsExp ? `\n   Experience: ${m.yearsExp} years` : "")
+      )
+      .join("\n\n");
 
-    const lines = top3.map(buildLine).join("\n\n");
+    const agentSystemPrompt =
+      `You are Cara's matching agent. You found these caregivers for ${seniorName}:\n\n` +
+      `${matchSummary}\n\n` +
+      `Care needs: ${needs.join(", ") || "general"}\n\n` +
+      `Your job:\n` +
+      `- First turn: write a warm, specific intro message presenting these caregivers\n` +
+      `- Follow-up turns: answer questions about the specific caregivers from the details above\n` +
+      `- If asked about a caregiver not in this list, say you only have details for the ones you presented\n\n` +
+      `Rules: plain text only, no bullet points, no headers. Warm, direct, specific. ` +
+      `Under 300 characters per message when possible. End the intro with "Which ones would you like to meet?"`;
 
-    await sendMessage(chatId, `${intro}\n\n${lines}\n\nWhich ones would you like to meet?`);
+    const userId = (session as any)?.userId ?? phone;
 
-    // Store match list in session for follow-up
+    // Roster check — reuse existing agent if one is active for this user
+    const existingAgent = await getActiveAgentForUser(phone, "matching");
+    let agentId: string;
+
+    if (existingAgent) {
+      await updateExecutionAgentContext(existingAgent.id, { matchData, seniorName, careNeeds: needs }, agentSystemPrompt, true);
+      agentId = existingAgent.id;
+    } else {
+      agentId = await spawnExecutionAgent({
+        type:         "matching",
+        ownerId:      userId,
+        ownerPhone:   phone,
+        systemPrompt: agentSystemPrompt,
+        context:      { matchData, seniorName, careNeeds: needs },
+      });
+    }
+
+    // First agent turn generates the intro message
+    const introMessage = await runExecutionAgentTurn(agentId, "Introduce these caregivers to the family now.");
+    await sendMessage(chatId, introMessage || `Here are ${top3.length} caregivers I found for ${seniorName}. Which would you like to meet?`);
+
+    // Store match list in session for follow-up; embed active goal context so
+    // interview selection can pre-populate booking dates without re-prompting the family
+    const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();
+    const goalContext = (sessionSnap2.data() as any)?.activeGoal?.type === "booking"
+      ? (sessionSnap2.data() as any).activeGoal.context
+      : null;
+
     await db.collection("agent_sessions").doc(phone).update({
-      pendingMatches: top3.map((c) => ({ id: c.id, name: c.name, rate: c.hourlyRate })),
+      pendingMatches: top3.map((c, i) => ({
+        id:          c.id,
+        name:        c.name,
+        rate:        c.hourlyRate,
+        matchScore:  top3Scores[i],
+        agentId,
+        ...(goalContext ? { goalContext } : {}),
+      })),
     });
   } catch (err) {
     console.error("runMatchingForClient error:", err);

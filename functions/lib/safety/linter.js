@@ -21,6 +21,16 @@ const BANNED_PHRASES = [
     "utilize",
     "synergy",
     "going forward",
+    // Anti-sycophancy: robotic sympathy openers
+    "I'm sorry to hear that",
+    "I understand your frustration",
+    "I understand how difficult",
+    "Of course!",
+    "Certainly!",
+    "Absolutely!",
+    "Let me know if you need anything else",
+    "Let me know if there's anything else",
+    "Is there anything else I can",
 ];
 // Patterns that make text feel robotic or formal
 const BANNED_PATTERNS = [
@@ -28,6 +38,8 @@ const BANNED_PATTERNS = [
     { pattern: /\s*—\s*/g, replacement: ", " },
     // Trailing "Is there anything else I can help you with?"
     { pattern: /is there anything else (?:I can help(?: you)?(?: with)?|you(?:'d like to discuss)?)\??/gi, replacement: "" },
+    // Sycophantic openers: "I understand" as sentence start → nothing (keep the rest)
+    { pattern: /^I understand[,.]?\s*/i, replacement: "" },
 ];
 function lintMessage(text) {
     let result = text;

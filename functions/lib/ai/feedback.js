@@ -33,11 +33,30 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.writeFeedbackSignal = writeFeedbackSignal;
 exports.readClientFeedback = readClientFeedback;
 exports.boostForCaregiver = boostForCaregiver;
 const admin = __importStar(require("firebase-admin"));
 const MAX_BOOST = 5; // max positive boost (pts)
 const MAX_PENALTY = -5; // max negative penalty (pts)
+async function writeFeedbackSignal(params) {
+    var _a, _b, _c;
+    const db = admin.firestore();
+    const ref = db.collection("users").doc(params.clientId)
+        .collection("match_history").doc(params.caregiverId);
+    const snap = await ref.get();
+    const current = snap.exists ? ((_b = (_a = snap.data()) === null || _a === void 0 ? void 0 : _a.weight) !== null && _b !== void 0 ? _b : 0) : 0;
+    const next = Math.min(MAX_BOOST, Math.max(MAX_PENALTY, current + params.signal));
+    await ref.set({
+        weight: next,
+        lastUpdated: new Date().toISOString(),
+        lastSource: params.source,
+        lastAppointmentId: (_c = params.appointmentId) !== null && _c !== void 0 ? _c : null,
+        signalCount: admin.firestore.FieldValue.increment(1),
+    }, { merge: true });
+    console.log(`[writeFeedbackSignal] ${params.clientId} ↔ ${params.caregiverId}: ` +
+        `${current} + ${params.signal} = ${next} (${params.source})`);
+}
 async function readClientFeedback(clientId) {
     const map = new Map();
     if (!clientId)

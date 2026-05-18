@@ -1,11 +1,53 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
+import Anthropic from "@anthropic-ai/sdk";
 import { sendMessage, sendToPhone, AgentSession } from "../linq/client";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { detectHealthSignals } from "../agents/healthSignalDetector";
 import { sendVoiceSummary } from "../agents/voiceSummary";
 import { getPermissions } from "../agents/permissionsConversation";
 import { sendCareJournalToZep } from "../memory/zepClient";
+import { scheduleTrigger } from "./triggerEngine";
+import { writeFeedbackSignal } from "../ai/feedback";
+
+let _claude: Anthropic | null = null;
+function getClaude(): Anthropic {
+  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return _claude;
+}
+
+async function generateVisitSummary(
+  caregiverName: string,
+  seniorName: string | null,
+  notes: string,
+  wellness: Record<string, unknown>
+): Promise<string | null> {
+  try {
+    const resp = await getClaude().messages.create({
+      model:      "claude-haiku-4-5-20251001",
+      max_tokens: 120,
+      system:
+        "You write one-to-two sentence visit summaries for families receiving care updates via text.\n" +
+        "Tone: warm, specific, direct — like a trusted care coordinator. No bullet points, no headers.\n" +
+        "Lead with what the senior did or felt. Include one concrete detail from the notes.\n" +
+        "End with one brief observation worth watching if anything stands out (optional).\n" +
+        "Never mention the caregiver's name in the observation — only in the lead.\n" +
+        "Output the summary only. No preamble.",
+      messages: [{
+        role: "user",
+        content:
+          `Caregiver: ${caregiverName}\n` +
+          `Senior: ${seniorName ?? "the senior"}\n` +
+          `Notes: ${notes.slice(0, 400)}\n` +
+          `Wellness: ate_well=${wellness.ateWell}, meds_taken=${wellness.tookMeds}, mood=${wellness.mood ?? "unknown"}`,
+      }],
+    });
+    const text = ((resp.content[0] as { text: string }).text ?? "").trim();
+    return text || null;
+  } catch {
+    return null;
+  }
+}
 
 const db = admin.firestore();
 
@@ -122,21 +164,31 @@ export const onJournalCreated = functions.firestore
         ? `${caregiverName} just finished up with ${seniorName}.`
         : `${caregiverName} just finished up.`;
 
-      let observation = "";
+      let baseMessage: string;
       if (severity === "flag" || severity === "watch") {
-        observation = summary;
+        // Health signal path: use the detected signal summary
+        baseMessage = `${opening} ${summary}`.trim();
+      } else if (notes && (notes as string).length > 50) {
+        // Rich notes available: ask Claude to generate a warm, specific summary
+        const aiSummary = await generateVisitSummary(
+          caregiverName,
+          seniorName,
+          notes as string,
+          wellness as Record<string, unknown>
+        );
+        baseMessage = aiSummary ?? `${opening} ${summary || "Visit went smoothly."}`.trim();
       } else {
+        // Fallback: boolean wellness template
         const goods: string[] = [];
         if ((wellness as any)?.ateWell)  goods.push("ate well");
         if ((wellness as any)?.tookMeds) goods.push("took their medication");
         const mood = (wellness as any)?.mood as string | undefined;
         if (mood === "happy" || mood === "positive") goods.push("was in good spirits");
-        observation = goods.length > 0
+        const observation = goods.length > 0
           ? `They ${goods.join(" and ")} today.`
           : (summary || "Visit went smoothly.");
+        baseMessage = `${opening} ${observation}`.trim();
       }
-
-      const baseMessage = `${opening} ${observation}`.trim();
 
       // Send photo inline if available (renders natively in iMessage)
       if (photos?.length > 0) {
@@ -164,6 +216,57 @@ export const onJournalCreated = functions.firestore
           sourceAgent: "health_watch",
           canDrop:     true,
         });
+
+        // Schedule 24h escalation to emergency contact if family doesn't acknowledge
+        const alertLogRef = await db.collection("health_alerts_pending").add({
+          seniorId,
+          phone,
+          signals,
+          severity,
+          sentAt:      nowIso,
+          escalated:   false,
+        });
+        // Write directly to proactive_triggers to bypass calibration gating
+        await db.collection("proactive_triggers").add({
+          userId:      seniorId,
+          phone,
+          type:        "custom",
+          scheduledAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          message:     `health_escalation:${seniorId}:${alertLogRef.id}`,
+          createdAt:   nowIso,
+        });
+
+        // Write mild negative signal — health concern during this visit
+        if (caregiverId && seniorId) {
+          writeFeedbackSignal({
+            clientId:      seniorId,
+            caregiverId,
+            signal:        -1,
+            source:        "health_signal",
+            appointmentId: snap.id,
+          }).catch((err) => console.error("writeFeedbackSignal health_signal error:", err));
+        }
+      }
+
+      // Schedule post-visit feedback ask 30 minutes after summary
+      if (caregiverId && seniorId) {
+        scheduleTrigger({
+          userId:      seniorId,
+          phone,
+          type:        "post_visit_feedback" as any,
+          message:
+            `How did today's visit go with ${caregiverName}?\n\n` +
+            `👍 great — or just tell me if anything felt off.`,
+          scheduledAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+          metadata: {
+            caregiverId,
+            clientId:      seniorId,
+            appointmentId: snap.id,
+            visitDate:     new Date().toISOString().slice(0, 10),
+          },
+          urgency:   "low",
+          canDrop:   true,
+        } as any).catch((err) => console.error("scheduleTrigger post_visit_feedback error:", err));
       }
 
       // Send voice memo on iMessage — family taps play to hear the update

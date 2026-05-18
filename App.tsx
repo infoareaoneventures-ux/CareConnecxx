@@ -282,7 +282,7 @@ const AppContent: React.FC = () => {
           <Route path="/upload/:type"        element={<UploadPage />} />
           <Route path="/done"               element={<GenericSuccessPage />} />
           <Route path="/confirm/:token"     element={<QuickConfirmPage />} />
-          <Route path="/health-summary/:token" element={<HealthSummaryPage />} />
+          <Route path="/health-summary/:token" element={<ErrorBoundary><HealthSummaryPage /></ErrorBoundary>} />
           <Route path="/family-faq" element={<FamilyFAQ onNavigate={handleNavigation} />} />
           <Route path="/help" element={<HelpCenter onNavigate={handleNavigation} />} />
           <Route path="/help/families" element={<HelpPage section="families" onNavigate={handleNavigation} />} />
@@ -292,7 +292,7 @@ const AppContent: React.FC = () => {
           <Route path="/client/signup" element={<ClientSignup onNavigate={handleNavigation} onShowToast={addToast} />} />
           <Route path="/client/login" element={<PublicOnlyRoute element={<ClientLogin onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/client/intake" element={<Navigate to="/client/dashboard" replace />} />
-          <Route path="/client/profile" element={<ClientProfileDashboard />} />
+          <Route path="/client/profile" element={<ClientRoute element={<ClientProfileDashboard />} />} />
           <Route path="/client/forgot-password" element={<ForgotPassword userType="client" onNavigate={handleNavigation} onShowToast={addToast} />} />
 
           <Route path="/caregiver/signup" element={<CaregiverSignup onNavigate={handleNavigation} onShowToast={addToast} />} />

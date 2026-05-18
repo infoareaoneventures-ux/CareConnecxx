@@ -68,9 +68,30 @@ async function supervise(message, context) {
                 `Never change the friendly tone or add formal language.`,
             messages: [{ role: "user", content: linted }],
         });
-        const raw = (_a = result.content[0].text) !== null && _a !== void 0 ? _a : "";
-        const parsed = JSON.parse(raw);
-        if (parsed.violation && parsed.revised) {
+        const raw = ((_a = result.content[0].text) !== null && _a !== void 0 ? _a : "").trim();
+        // Strip markdown code fences if model wraps the JSON
+        const jsonText = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+        let parsed = null;
+        try {
+            const candidate = JSON.parse(jsonText);
+            if (candidate !== null &&
+                typeof candidate === "object" &&
+                "violation" in candidate &&
+                "revised" in candidate &&
+                typeof candidate.revised === "string") {
+                parsed = candidate;
+            }
+            else {
+                console.warn("supervisor: unexpected JSON shape, falling back to linted message", { jsonText: jsonText.slice(0, 100) });
+            }
+        }
+        catch (parseErr) {
+            console.warn("supervisor: failed to parse JSON response, falling back to linted message", {
+                raw: raw.slice(0, 100),
+                error: String(parseErr),
+            });
+        }
+        if ((parsed === null || parsed === void 0 ? void 0 : parsed.violation) && parsed.revised) {
             // Log to safety log (non-blocking)
             db.collection("agent_safety_log").add({
                 phone: context.phone,
@@ -81,9 +102,14 @@ async function supervise(message, context) {
             }).catch(() => { });
             checked = parsed.revised;
         }
+        else if (!parsed) {
+            // JSON parse failed — linted message is already the safe fallback
+            console.info("supervisor: using linted message as fallback", { phone: context.phone });
+        }
     }
-    catch (_c) {
-        // Supervisor failure is non-critical — fall back to linted message
+    catch (err) {
+        // Supervisor Claude call failed — fall back to linted message
+        console.warn("supervisor: Claude call failed, using linted message", { error: String(err) });
     }
     return checked;
 }

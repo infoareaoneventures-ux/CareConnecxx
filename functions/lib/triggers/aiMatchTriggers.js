@@ -98,25 +98,37 @@ exports.onCaregiverWrite = functions.firestore
 });
 async function rescoreActiveIntakes() {
     const db = admin.firestore();
-    const recent = await db
-        .collection("clientIntakes")
-        .orderBy("createdAt", "desc")
-        .limit(50)
-        .get()
-        .catch(() => null);
-    if (!recent || recent.empty)
-        return;
-    for (const doc of recent.docs) {
-        const data = doc.data();
-        if (!data)
-            continue;
-        try {
-            await (0, matchJob_1.runMatchingForIntake)(doc.id, data);
+    let cursor = null;
+    let totalRescored = 0;
+    // Paginate through all active intakes so no records are missed
+    while (true) {
+        let query = db
+            .collection("clientIntakes")
+            .where("status", "in", ["active", "open", "pending"])
+            .orderBy("createdAt", "desc")
+            .limit(100);
+        if (cursor)
+            query = query.startAfter(cursor);
+        const page = await query.get().catch(() => null);
+        if (!page || page.empty)
+            break;
+        for (const doc of page.docs) {
+            const data = doc.data();
+            if (!data)
+                continue;
+            try {
+                await (0, matchJob_1.runMatchingForIntake)(doc.id, data);
+                totalRescored++;
+            }
+            catch (err) {
+                console.error(`[rescoreActiveIntakes] failed for intake ${doc.id}:`, err);
+            }
         }
-        catch (err) {
-            console.error(`[rescoreActiveIntakes] failed for intake ${doc.id}:`, err);
-        }
+        if (page.docs.length < 100)
+            break; // last page
+        cursor = page.docs[page.docs.length - 1];
     }
+    console.log(`[rescoreActiveIntakes] Rescored ${totalRescored} intakes`);
 }
 exports.onIntakeAiMatch = functions.firestore
     .document("clientIntakes/{intakeId}")

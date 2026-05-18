@@ -35,10 +35,42 @@ export async function updatePreferences(
   await db.collection("user_preferences").doc(userId).set(patch, { merge: true });
 }
 
+function validatedTz(tz: string): string {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date());
+    return tz;
+  } catch {
+    console.warn(`[preferences] Invalid timezone "${tz}", falling back to America/Los_Angeles`);
+    return "America/Los_Angeles";
+  }
+}
+
+export function isActiveHour(prefs: CaraPreferences, now?: Date): boolean {
+  const d  = now ?? new Date();
+  const tz = validatedTz(prefs.timezone || "America/Los_Angeles");
+  const { start, end } = prefs.activeHours ?? { start: "08:00", end: "21:00" };
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    hour:     "2-digit",
+    minute:   "2-digit",
+    hour12:   false,
+    timeZone: tz,
+  }).formatToParts(d);
+  const h    = parts.find(p => p.type === "hour")?.value   ?? "00";
+  const m    = parts.find(p => p.type === "minute")?.value ?? "00";
+  const hhmm = `${h.padStart(2, "0")}:${m.padStart(2, "0")}`;
+
+  if (start <= end) {
+    return hhmm >= start && hhmm < end;
+  } else {
+    return hhmm >= start || hhmm < end;
+  }
+}
+
 export function isInDND(prefs: CaraPreferences, now?: Date): boolean {
   if (!prefs.dndEnabled) return false;
   const d  = now ?? new Date();
-  const tz = prefs.timezone || "America/Los_Angeles";
+  const tz = validatedTz(prefs.timezone || "America/Los_Angeles");
 
   // Get HH:MM in the user's local timezone (avoids UTC-vs-local comparison bug)
   const parts = new Intl.DateTimeFormat("en-US", {

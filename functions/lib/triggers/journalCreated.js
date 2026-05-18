@@ -32,16 +32,55 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.onJournalCreated = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
+const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
 const client_1 = require("../linq/client");
 const caraAgent_1 = require("../agents/caraAgent");
 const healthSignalDetector_1 = require("../agents/healthSignalDetector");
 const voiceSummary_1 = require("../agents/voiceSummary");
 const permissionsConversation_1 = require("../agents/permissionsConversation");
 const zepClient_1 = require("../memory/zepClient");
+const triggerEngine_1 = require("./triggerEngine");
+const feedback_1 = require("../ai/feedback");
+let _claude = null;
+function getClaude() {
+    if (!_claude)
+        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+    return _claude;
+}
+async function generateVisitSummary(caregiverName, seniorName, notes, wellness) {
+    var _a, _b;
+    try {
+        const resp = await getClaude().messages.create({
+            model: "claude-haiku-4-5-20251001",
+            max_tokens: 120,
+            system: "You write one-to-two sentence visit summaries for families receiving care updates via text.\n" +
+                "Tone: warm, specific, direct — like a trusted care coordinator. No bullet points, no headers.\n" +
+                "Lead with what the senior did or felt. Include one concrete detail from the notes.\n" +
+                "End with one brief observation worth watching if anything stands out (optional).\n" +
+                "Never mention the caregiver's name in the observation — only in the lead.\n" +
+                "Output the summary only. No preamble.",
+            messages: [{
+                    role: "user",
+                    content: `Caregiver: ${caregiverName}\n` +
+                        `Senior: ${seniorName !== null && seniorName !== void 0 ? seniorName : "the senior"}\n` +
+                        `Notes: ${notes.slice(0, 400)}\n` +
+                        `Wellness: ate_well=${wellness.ateWell}, meds_taken=${wellness.tookMeds}, mood=${(_a = wellness.mood) !== null && _a !== void 0 ? _a : "unknown"}`,
+                }],
+        });
+        const text = ((_b = resp.content[0].text) !== null && _b !== void 0 ? _b : "").trim();
+        return text || null;
+    }
+    catch (_c) {
+        return null;
+    }
+}
 const db = admin.firestore();
 exports.onJournalCreated = functions.firestore
     .document("care_journal/{journalId}")
@@ -142,11 +181,18 @@ exports.onJournalCreated = functions.firestore
         const opening = seniorName
             ? `${caregiverName} just finished up with ${seniorName}.`
             : `${caregiverName} just finished up.`;
-        let observation = "";
+        let baseMessage;
         if (severity === "flag" || severity === "watch") {
-            observation = summary;
+            // Health signal path: use the detected signal summary
+            baseMessage = `${opening} ${summary}`.trim();
+        }
+        else if (notes && notes.length > 50) {
+            // Rich notes available: ask Claude to generate a warm, specific summary
+            const aiSummary = await generateVisitSummary(caregiverName, seniorName, notes, wellness);
+            baseMessage = aiSummary !== null && aiSummary !== void 0 ? aiSummary : `${opening} ${summary || "Visit went smoothly."}`.trim();
         }
         else {
+            // Fallback: boolean wellness template
             const goods = [];
             if (wellness === null || wellness === void 0 ? void 0 : wellness.ateWell)
                 goods.push("ate well");
@@ -155,11 +201,11 @@ exports.onJournalCreated = functions.firestore
             const mood = wellness === null || wellness === void 0 ? void 0 : wellness.mood;
             if (mood === "happy" || mood === "positive")
                 goods.push("was in good spirits");
-            observation = goods.length > 0
+            const observation = goods.length > 0
                 ? `They ${goods.join(" and ")} today.`
                 : (summary || "Visit went smoothly.");
+            baseMessage = `${opening} ${observation}`.trim();
         }
-        const baseMessage = `${opening} ${observation}`.trim();
         // Send photo inline if available (renders natively in iMessage)
         if ((photos === null || photos === void 0 ? void 0 : photos.length) > 0) {
             // Structured message — send directly (supervisor handles text part separately)
@@ -186,6 +232,53 @@ exports.onJournalCreated = functions.firestore
                 sourceAgent: "health_watch",
                 canDrop: true,
             });
+            // Schedule 24h escalation to emergency contact if family doesn't acknowledge
+            const alertLogRef = await db.collection("health_alerts_pending").add({
+                seniorId,
+                phone,
+                signals,
+                severity,
+                sentAt: nowIso,
+                escalated: false,
+            });
+            // Write directly to proactive_triggers to bypass calibration gating
+            await db.collection("proactive_triggers").add({
+                userId: seniorId,
+                phone,
+                type: "custom",
+                scheduledAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                message: `health_escalation:${seniorId}:${alertLogRef.id}`,
+                createdAt: nowIso,
+            });
+            // Write mild negative signal — health concern during this visit
+            if (caregiverId && seniorId) {
+                (0, feedback_1.writeFeedbackSignal)({
+                    clientId: seniorId,
+                    caregiverId,
+                    signal: -1,
+                    source: "health_signal",
+                    appointmentId: snap.id,
+                }).catch((err) => console.error("writeFeedbackSignal health_signal error:", err));
+            }
+        }
+        // Schedule post-visit feedback ask 30 minutes after summary
+        if (caregiverId && seniorId) {
+            (0, triggerEngine_1.scheduleTrigger)({
+                userId: seniorId,
+                phone,
+                type: "post_visit_feedback",
+                message: `How did today's visit go with ${caregiverName}?\n\n` +
+                    `👍 great — or just tell me if anything felt off.`,
+                scheduledAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+                metadata: {
+                    caregiverId,
+                    clientId: seniorId,
+                    appointmentId: snap.id,
+                    visitDate: new Date().toISOString().slice(0, 10),
+                },
+                urgency: "low",
+                canDrop: true,
+            }).catch((err) => console.error("scheduleTrigger post_visit_feedback error:", err));
         }
         // Send voice memo on iMessage — family taps play to hear the update
         if (session.service === "iMessage") {

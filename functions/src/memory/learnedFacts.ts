@@ -12,12 +12,18 @@ function getClaude(): Anthropic {
 export type FactCategory = "medical" | "preference" | "routine" | "family";
 
 export interface LearnedFact {
-  userId: string;
-  fact: string;
-  weight: number;           // 1–10; increments on re-mention
-  category: FactCategory;
-  createdAt: string;
+  userId:          string;
+  fact:            string;
+  weight:          number;           // 1–10; increments on re-mention
+  category:        FactCategory;
+  createdAt:       string;
   lastMentionedAt: string;
+  supersededAt?:   string;           // ISO — set when this fact is replaced or retracted
+  supersededBy?:   string;           // docId of the replacement fact
+}
+
+export interface LearnedFactWithId extends LearnedFact {
+  _docId: string;
 }
 
 // Normalize a fact string for deduplication comparison
@@ -25,7 +31,11 @@ function normalizeFact(fact: string): string {
   return fact.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-export async function extractAndStoreFacts(userId: string, text: string): Promise<void> {
+export async function extractAndStoreFacts(
+  userId:     string,
+  text:       string,
+  zepUserId?: string
+): Promise<void> {
   if (!text || text.length < 10) return;
 
   let extracted: Array<{ fact: string; category: FactCategory }> = [];
@@ -43,29 +53,31 @@ export async function extractAndStoreFacts(userId: string, text: string): Promis
       messages: [{ role: "user", content: text }],
     });
     extracted = JSON.parse((result.content[0] as { text: string }).text ?? "[]");
-  } catch {
-    return; // Non-critical — don't throw
+  } catch (err) {
+    console.warn("[learnedFacts] extractAndStoreFacts failed:", err instanceof Error ? err.message : err, { userId });
+    return;
   }
 
   if (!Array.isArray(extracted) || extracted.length === 0) return;
 
-  const factsCol = db.collection("learned_facts").doc(userId).collection("facts");
-  const nowIso   = new Date().toISOString();
+  const factsCol  = db.collection("learned_facts").doc(userId).collection("facts");
+  const nowIso    = new Date().toISOString();
+  const newFacts: Array<{ fact: string; category: FactCategory }> = [];
 
   for (const item of extracted) {
     if (!item.fact || !item.category) continue;
     const norm = normalizeFact(item.fact);
 
-    // Check for existing fact with same normalized text
+    // Check for existing active (non-superseded) fact with same normalized text
     const existing = await factsCol
       .where("_norm", "==", norm)
       .limit(1)
       .get();
 
-    if (!existing.empty) {
-      const doc = existing.docs[0];
-      const currentWeight = doc.data().weight ?? 1;
-      await doc.ref.update({
+    const activeExisting = existing.docs.find((d) => !d.data().supersededAt);
+    if (activeExisting) {
+      const currentWeight = activeExisting.data().weight ?? 1;
+      await activeExisting.ref.update({
         weight:          Math.min(currentWeight + 1, 10),
         lastMentionedAt: nowIso,
       });
@@ -78,32 +90,172 @@ export async function extractAndStoreFacts(userId: string, text: string): Promis
         category:        item.category,
         createdAt:       nowIso,
         lastMentionedAt: nowIso,
-      } satisfies LearnedFact & { _norm: string });
+      });
+      newFacts.push({ fact: item.fact, category: item.category });
     }
+  }
+
+  // Push newly-stored facts to Zep knowledge graph (fire-and-forget)
+  if (zepUserId && newFacts.length > 0) {
+    const { addBusinessDataToZep } = await import("./zepClient");
+    addBusinessDataToZep({
+      userId: zepUserId,
+      data: {
+        event_type:  "learned_facts_extracted",
+        facts:       newFacts,
+        source_text: text.slice(0, 200),
+        timestamp:   nowIso,
+        data_source: "cara_fact_extraction",
+      },
+    }).catch(() => {});
   }
 }
 
 export async function getRelevantFacts(
   userId: string,
   _topic?: string
-): Promise<LearnedFact[]> {
+): Promise<LearnedFactWithId[]> {
+  // Fetch top-20 by weight, then filter superseded client-side (avoids composite index)
   const snap = await db
     .collection("learned_facts")
     .doc(userId)
     .collection("facts")
     .orderBy("weight", "desc")
-    .limit(10)
+    .limit(20)
     .get();
 
-  return snap.docs.map((d) => {
-    const data = d.data();
-    return {
-      userId:          data.userId,
-      fact:            data.fact,
-      weight:          data.weight,
-      category:        data.category,
-      createdAt:       data.createdAt,
-      lastMentionedAt: data.lastMentionedAt,
-    } as LearnedFact;
+  return snap.docs
+    .filter((d) => !d.data().supersededAt)
+    .slice(0, 10)
+    .map((d) => ({
+      userId:          d.data().userId,
+      fact:            d.data().fact,
+      weight:          d.data().weight,
+      category:        d.data().category,
+      createdAt:       d.data().createdAt,
+      lastMentionedAt: d.data().lastMentionedAt,
+      _docId:          d.id,
+    } as LearnedFactWithId));
+}
+
+// Soft-delete an existing fact and optionally replace it with a corrected version.
+// Both the new-fact creation and the old-fact supersession are wrapped in a single
+// Firestore transaction to prevent the "both facts active" corruption if we crash between writes.
+export async function updateOrRetractFact(
+  userId:     string,
+  oldDocId:   string,
+  newFact?:   { fact: string; category: FactCategory },
+  zepUserId?: string
+): Promise<void> {
+  const factsCol = db.collection("learned_facts").doc(userId).collection("facts");
+  const nowIso   = new Date().toISOString();
+
+  const oldRef   = factsCol.doc(oldDocId);
+  const newRef   = newFact ? factsCol.doc() : null;
+
+  let oldFactText: string | undefined;
+
+  await db.runTransaction(async (t) => {
+    const oldSnap = await t.get(oldRef);
+    oldFactText   = oldSnap.exists ? (oldSnap.data()?.fact as string | undefined) : undefined;
+
+    if (newRef && newFact) {
+      t.set(newRef, {
+        userId,
+        fact:            newFact.fact,
+        _norm:           normalizeFact(newFact.fact),
+        weight:          2,   // user explicitly stated — start higher than passive extraction
+        category:        newFact.category,
+        createdAt:       nowIso,
+        lastMentionedAt: nowIso,
+      });
+    }
+
+    t.update(oldRef, {
+      supersededAt: nowIso,
+      ...(newRef ? { supersededBy: newRef.id } : {}),
+    });
   });
+
+  // Sync correction to Zep as a bi-temporal event (fire-and-forget, non-blocking)
+  if (zepUserId) {
+    const { addBusinessDataToZep } = await import("./zepClient");
+    addBusinessDataToZep({
+      userId:      zepUserId,
+      data: {
+        event_type:   "fact_correction",
+        old_fact:     oldFactText ?? oldDocId,
+        new_fact:     newFact?.fact ?? null,
+        category:     newFact?.category ?? null,
+        corrected_at: nowIso,
+        data_source:  "cara_correction",
+      },
+    }).catch(() => {});
+  }
+}
+
+// Detect if the user's message corrects a known fact, and apply the correction.
+// Returns true if a correction was found and applied.
+export async function detectAndApplyCorrection(
+  userId:     string,
+  text:       string,
+  zepUserId?: string
+): Promise<boolean> {
+  // Fast pre-filter — only run if message looks like a correction or an update to known information.
+  // Deliberately broad: false positives are cheap (one Haiku call); false negatives silently corrupt memory.
+  if (!/actually|wait,?|sorry|i meant|meant to say|no,?\s*it'?s|that'?s wrong|wrong,?\s*it'?s|not\s+\d+|his\s+(doctor|nurse|med|name|age|condition)|her\s+(doctor|nurse|med|name|age|condition)|they?\s+(changed|switched|stopped|started|now\s+takes?|no\s+longer)|update|correction|forgot\s+to\s+mention|should\s+be|it'?s\s+actually|the\s+(new|correct|right)\s+(doctor|medication|med|number|address|diagnosis)/i.test(text)) {
+    return false;
+  }
+
+  const currentFacts = await getRelevantFacts(userId).catch(() => [] as LearnedFactWithId[]);
+  if (currentFacts.length === 0) return false;
+
+  const factsJson = currentFacts
+    .map((f, i) => `${i}: "${f.fact}" [${f.category}]`)
+    .join("\n");
+
+  let raw: string;
+  try {
+    const result = await getClaude().messages.create({
+      model:      "claude-haiku-4-5-20251001",
+      max_tokens: 200,
+      system:
+        "The user may be correcting previously stated information about their care situation. " +
+        "You are given a numbered list of known facts and the user's message. " +
+        "If the message directly corrects one of the known facts, reply with JSON only: " +
+        "{\"corrects\": <index>, \"newFact\": \"<corrected text>\", \"category\": \"medical|preference|routine|family\"}. " +
+        "If the message retracts a fact without replacement: {\"corrects\": <index>, \"newFact\": null}. " +
+        "If this is NOT a correction of a known fact, reply with the single word: null",
+      messages: [{
+        role:    "user",
+        content: `Known facts:\n${factsJson}\n\nUser message: "${text}"`,
+      }],
+    });
+    raw = ((result.content[0] as { text: string }).text ?? "").trim();
+  } catch {
+    return false;
+  }
+
+  if (raw === "null" || !raw.startsWith("{")) return false;
+
+  let parsed: { corrects: number; newFact: string | null; category?: FactCategory };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+
+  const targetFact = currentFacts[parsed.corrects];
+  if (!targetFact) return false;
+
+  await updateOrRetractFact(
+    userId,
+    targetFact._docId,
+    parsed.newFact
+      ? { fact: parsed.newFact, category: parsed.category ?? targetFact.category }
+      : undefined,
+    zepUserId
+  );
+
+  return true;
 }

@@ -16,7 +16,24 @@ export type AuditEventType =
   | "crisis_detected"
   | "session_created"
   | "safety_violation"
-  | "interview_scheduled";
+  | "interview_scheduled"
+  | "profile_updated"
+  | "review_submitted"
+  | "subscription_cancelled"
+  | "subscription_reactivated"
+  | "family_member_added"
+  | "family_member_removed"
+  | "senior_profile_updated"
+  | "recurring_schedule_updated"
+  | "appointment_rescheduled"
+  | "care_journal_created"
+  | "job_application_submitted"
+  | "job_application_responded"
+  | "interview_feedback_submitted"
+  | "instant_payout_requested"
+  | "shift_hours_submitted"
+  | "shift_hours_reviewed"
+  | "support_ticket_created";
 
 export interface AuditEvent {
   eventType: AuditEventType;

@@ -2,8 +2,38 @@ import * as admin from "firebase-admin";
 
 export type FeedbackMap = Map<string, number>;
 
-const MAX_BOOST = 5;    // max positive boost (pts)
-const MAX_PENALTY = -5; // max negative penalty (pts)
+const MAX_BOOST   =  5;  // max positive boost (pts)
+const MAX_PENALTY = -5;  // max negative penalty (pts)
+
+export async function writeFeedbackSignal(params: {
+  clientId:       string;
+  caregiverId:    string;
+  signal:         number;  // e.g. +1, -1, +3, -2
+  source:         "post_visit_feedback" | "hire" | "pass" | "health_signal";
+  appointmentId?: string;
+  rawText?:       string;
+}): Promise<void> {
+  const db = admin.firestore();
+  const ref = db.collection("users").doc(params.clientId)
+                .collection("match_history").doc(params.caregiverId);
+
+  const snap = await ref.get();
+  const current = snap.exists ? (snap.data()?.weight as number ?? 0) : 0;
+  const next    = Math.min(MAX_BOOST, Math.max(MAX_PENALTY, current + params.signal));
+
+  await ref.set({
+    weight:            next,
+    lastUpdated:       new Date().toISOString(),
+    lastSource:        params.source,
+    lastAppointmentId: params.appointmentId ?? null,
+    signalCount:       admin.firestore.FieldValue.increment(1),
+  }, { merge: true });
+
+  console.log(
+    `[writeFeedbackSignal] ${params.clientId} ↔ ${params.caregiverId}: ` +
+    `${current} + ${params.signal} = ${next} (${params.source})`
+  );
+}
 
 export async function readClientFeedback(
     clientId: string

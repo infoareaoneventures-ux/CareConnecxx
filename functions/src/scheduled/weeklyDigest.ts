@@ -4,6 +4,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { AgentSession } from "../linq/client";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { getPermissions } from "../agents/permissionsConversation";
+import { handlePromptGet } from "../mcp/server";
+import { getMemoryContext } from "../memory/memoryFiles";
+import { getRelevantFacts } from "../memory/learnedFacts";
 
 const db = admin.firestore();
 
@@ -57,8 +60,18 @@ async function getWeekData(seniorId: string, userId: string) {
 
 // ── Claude digest generation ──────────────────────────────────────────────────
 
-async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>): Promise<string> {
+async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>, userId: string): Promise<string> {
   const { journal, pastAppts, upcoming, seniorName, clientName } = data;
+
+  const [memCtx, facts] = await Promise.all([
+    getMemoryContext(userId).catch(() => ""),
+    getRelevantFacts(userId).catch(() => [] as { fact: string; category: string }[]),
+  ]);
+
+  const topFacts = facts
+    .filter((f) => f.category === "medical" || f.category === "preference")
+    .slice(0, 3)
+    .map((f) => f.fact);
 
   if (journal.length === 0 && pastAppts.length === 0) {
     return `Good morning ${clientName}. No visits were logged this week for ${seniorName}. If this seems wrong, please check the app or contact support.`;
@@ -79,22 +92,20 @@ async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>): Pr
   const now = new Date();
   const dayName = now.toLocaleDateString("en-US", { weekday: "long" });
 
-  const prompt = [
-    `You are Cara. Write a Sunday morning text to ${clientName} about ${seniorName}'s week.`,
-    ``,
-    `Write it like you actually know both of them and genuinely care how the week went.`,
-    `If it was a good week, let that warmth come through.`,
-    `If there were concerns, acknowledge them honestly without being alarming.`,
-    `Mention the upcoming week naturally — not as a list.`,
-    ``,
-    `Do not follow a format. Just tell them what matters most.`,
-    `Under 200 words. Plain text only. No markdown. No bullet points.`,
-    ``,
-    `This week's data:`,
-    `- ${completedCount} visit(s) completed`,
-    `Journal entries:\n${journalContext || "None"}`,
-    `Upcoming:\n${apptContext || "Nothing scheduled yet"}`,
-  ].join("\n");
+  const factsLine = topFacts.length > 0
+    ? `Care notes on file: ${topFacts.join("; ")}.`
+    : "";
+  const memLine = memCtx ? memCtx.slice(0, 400) : "";
+
+  const prompt = handlePromptGet("weekly-care-summary", {
+    clientName,
+    seniorName,
+    completedCount: String(completedCount),
+    journalContext: journalContext || "None",
+    apptContext:    apptContext    || "Nothing scheduled yet",
+    careNotes:      factsLine,
+    memoryContext:  memLine,
+  });
 
   try {
     const response = await getClient().messages.create({
@@ -137,7 +148,7 @@ async function runWeeklyDigests(): Promise<number> {
 
       const seniorId = session.seniorId ?? session.userId;
       const data     = await getWeekData(seniorId, session.userId);
-      const digest   = await generateDigest(data);
+      const digest   = await generateDigest(data, session.userId);
 
       await sendViaInteractionAgent(phone, {
         content:     digest,

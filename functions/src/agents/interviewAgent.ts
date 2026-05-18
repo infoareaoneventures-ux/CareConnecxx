@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import Anthropic from "@anthropic-ai/sdk";
 import { sendMessage, getOrCreateSession, AgentSession } from "../linq/client";
+import { writeFeedbackSignal } from "../ai/feedback";
 
 let _claude: Anthropic | null = null;
 function getClaude(): Anthropic {
@@ -10,6 +11,7 @@ function getClaude(): Anthropic {
 import { getPermissions } from "./permissionsConversation";
 import { notifyAdminInterviewScheduled } from "../notifications";
 import { generateCallLink, generateICSFile, uploadICSToStorage } from "./interviewLinks";
+import { scheduleTrigger } from "../triggers/triggerEngine";
 
 const db = admin.firestore();
 
@@ -51,6 +53,43 @@ async function parseAvailability(text: string): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+// ── Cross-check proposed times against client's existing confirmed appointments ─
+
+async function findMutualTime(proposedTimes: string[], clientPhone: string): Promise<string | null> {
+  if (proposedTimes.length === 0) return null;
+
+  // Load the client's confirmed upcoming appointments
+  const sessSnap  = await db.collection("agent_sessions").doc(clientPhone).get();
+  const clientId: string | undefined = sessSnap.data()?.userId;
+  if (!clientId) return proposedTimes[0];
+
+  const today = new Date().toISOString().slice(0, 10);
+  const apptSnap = await db.collection("appointments")
+    .where("clientId", "==", clientId)
+    .where("status", "in", ["confirmed", "pending"])
+    .where("date", ">=", today)
+    .get();
+
+  // Build set of busy hours as "YYYY-MM-DDTHH" strings
+  const busy = new Set<string>();
+  for (const d of apptSnap.docs) {
+    const a = d.data();
+    if (a.date && a.time) {
+      const hour = a.time.slice(0, 2);
+      busy.add(`${a.date}T${hour}`);
+    }
+  }
+
+  for (const iso of proposedTimes) {
+    const dt   = new Date(iso);
+    const key  = `${dt.toISOString().slice(0, 10)}T${String(dt.getHours()).padStart(2, "0")}`;
+    if (!busy.has(key)) return iso;
+  }
+
+  // All proposed times conflict — return the first anyway
+  return proposedTimes[0];
 }
 
 // ── Handle family selecting caregivers for interview ─────────────────────────
@@ -187,15 +226,17 @@ export async function handleCaregiverAvailabilityReply(
     .orderBy("createdAt", "desc").limit(1).get();
 
   if (snap.empty) {
-    await sendMessage(chatId, "I couldn't find an active interview request. Please try again or contact support.");
+    // Request expired or already filled — let the caregiver know and close gracefully
+    await sendMessage(chatId, "That interview request has already been filled or expired. I'll reach out when there's a new opening that fits your availability.");
     return;
   }
 
   const doc     = snap.docs[0];
   const reqData = doc.data();
 
-  // Pick first proposed time that works
-  const mutualTime = proposedTimes[0]; // TODO: cross-check with client's calendar
+  // Cross-check proposed times against client's existing confirmed appointments
+  const clientPhone: string = reqData.clientPhone ?? "";
+  const mutualTime = await findMutualTime(proposedTimes, clientPhone) ?? proposedTimes[0];
   await doc.ref.update({
     status:             "awaiting_client_confirmation",
     caregiverAvailability: proposedTimes,
@@ -324,9 +365,10 @@ export async function handleInterviewConfirm(
   // Text the caregiver
   const reqSnap = await db.collection("interview_requests").doc(pending.docId).get();
   const caregiverId = reqSnap.data()?.caregiverId as string | undefined;
+  let cgPhone: string | undefined;
   if (caregiverId) {
-    const cgSnap  = await db.collection("caregivers").doc(caregiverId).get();
-    const cgPhone = cgSnap.data()?.phone as string | undefined;
+    const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
+    cgPhone = cgSnap.data()?.phone as string | undefined;
     if (cgPhone) {
       const cgSession  = await getOrCreateSession(cgPhone);
       const cgIsIMessa = (cgSession as any).service === "iMessage";
@@ -343,6 +385,68 @@ export async function handleInterviewConfirm(
       );
     }
   }
+
+  // Schedule 1h-before reminders and a post-interview follow-up trigger
+  const interviewMs    = new Date(pending.mutualTime).getTime();
+  const nowMs          = Date.now();
+  const oneHourBefore  = interviewMs - 60 * 60 * 1000;
+  const ninetyMinAway  = interviewMs - 90 * 60 * 1000;
+
+  if (nowMs < ninetyMinAway) {
+    // 1h-before reminder to the family
+    const familySessionSnap = await db.collection("agent_sessions").doc(phone).get();
+    const familyUserId = (familySessionSnap.data()?.userId ?? phone) as string;
+    await scheduleTrigger({
+      userId:      familyUserId,
+      phone,
+      type:        "appointment_reminder",
+      scheduledAt: new Date(oneHourBefore).toISOString(),
+      message:
+        `Your interview with ${pending.caregiverName} is in an hour — ` +
+        (callUrl ? callUrl : "make sure you have the link ready."),
+    }).catch((err) => console.error("scheduleTrigger (family reminder) error:", err));
+
+    // 1h-before reminder to the caregiver
+    if (cgPhone) {
+      const cgSessionSnap = await db.collection("agent_sessions").doc(cgPhone).get();
+      const cgUserId = (cgSessionSnap.data()?.userId ?? cgPhone) as string;
+      await scheduleTrigger({
+        userId:      cgUserId,
+        phone:       cgPhone,
+        type:        "appointment_reminder",
+        scheduledAt: new Date(oneHourBefore).toISOString(),
+        message:
+          `Interview in an hour with a family. ` +
+          (callUrl ? callUrl : "Check your calendar.") +
+          ` Reply if you need to reschedule.`,
+      }).catch((err) => console.error("scheduleTrigger (caregiver reminder) error:", err));
+    }
+  }
+
+  // Post-interview follow-up at scheduledTime + 75 min (regardless of lead time)
+  const followUpAt = new Date(interviewMs + 75 * 60 * 1000).toISOString();
+  await scheduleTrigger({
+    userId:      (await db.collection("agent_sessions").doc(phone).get()).data()?.userId ?? phone,
+    phone,
+    type:        "custom",
+    scheduledAt: followUpAt,
+    message:     `interview_followup:${interviewRef.id}`,
+  }).catch((err) => console.error("scheduleTrigger (followup) error:", err));
+}
+
+// ── Write interview outcome feedback signal ───────────────────────────────────
+
+export async function writeInterviewOutcomeSignal(
+  clientId:    string,
+  caregiverId: string,
+  outcome:     "hire" | "pass"
+): Promise<void> {
+  await writeFeedbackSignal({
+    clientId,
+    caregiverId,
+    signal: outcome === "hire" ? 3 : -2,
+    source: outcome === "hire" ? "hire" : "pass",
+  }).catch((err) => console.error("writeInterviewOutcomeSignal error:", err));
 }
 
 // ── Post-interview follow-up ──────────────────────────────────────────────────

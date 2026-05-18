@@ -42,10 +42,43 @@ const db = admin.firestore();
 exports.sendStaleSessionNudges = functions.pubsub
     .schedule("0 17 * * *")
     .onRun(async () => {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     const now = Date.now();
     const fortyEightHoursAgo = new Date(now - 48 * 60 * 60 * 1000).toISOString();
     const seventyTwoHoursAgo = new Date(now - 72 * 60 * 60 * 1000).toISOString();
+    const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+    // ── Auto-recover sessions stuck waiting for a webhook for 7+ days ─────────
+    const WEBHOOK_AWAITING_STEPS = [
+        "caregiver_awaiting_bgcheck",
+        "caregiver_awaiting_stripe",
+        "client_awaiting_payment",
+    ];
+    const stuckSnap = await db.collection("agent_sessions")
+        .where("onboardingStep", "in", WEBHOOK_AWAITING_STEPS)
+        .get();
+    for (const doc of stuckSnap.docs) {
+        const session = doc.data();
+        if (session.optedOut)
+            continue;
+        // Only recover sessions stuck > 7 days
+        const updatedAt = ((_b = (_a = session.updatedAt) !== null && _a !== void 0 ? _a : session.createdAt) !== null && _b !== void 0 ? _b : "");
+        if (!updatedAt || updatedAt > sevenDaysAgo)
+            continue;
+        // Idempotency: don't re-send more than once per 7 days
+        if (session.stuckRecoverySentAt && session.stuckRecoverySentAt > sevenDaysAgo)
+            continue;
+        try {
+            const { resendStuckStep } = await Promise.resolve().then(() => __importStar(require("../agents/onboardingConversation")));
+            const sent = await resendStuckStep(doc.id);
+            if (sent) {
+                await doc.ref.update({ stuckRecoverySentAt: new Date().toISOString() });
+                console.log(`[staleSessionNudge] Re-sent stuck step for ${doc.id} (step: ${session.onboardingStep})`);
+            }
+        }
+        catch (err) {
+            console.error(`[staleSessionNudge] resendStuckStep failed for ${doc.id}:`, err);
+        }
+    }
     // Sessions that started onboarding but never completed
     const snap = await db.collection("agent_sessions")
         .where("onboardingStep", "!=", "complete")
@@ -62,13 +95,13 @@ exports.sendStaleSessionNudges = functions.pubsub
         if (session.nudgeSentAt && session.nudgeSentAt > seventyTwoHoursAgo)
             continue;
         // Cap at 2 nudges total
-        if (((_a = session.nudgeCount) !== null && _a !== void 0 ? _a : 0) >= 2)
+        if (((_c = session.nudgeCount) !== null && _c !== void 0 ? _c : 0) >= 2)
             continue;
         if (!session.chatId)
             continue;
         try {
-            const step = (_b = session.onboardingStep) !== null && _b !== void 0 ? _b : "ask_role";
-            const firstName = ((_f = (_d = (_c = session.onboardingData) === null || _c === void 0 ? void 0 : _c.firstName) !== null && _d !== void 0 ? _d : (_e = session.onboardingData) === null || _e === void 0 ? void 0 : _e.name) !== null && _f !== void 0 ? _f : "");
+            const step = (_d = session.onboardingStep) !== null && _d !== void 0 ? _d : "ask_role";
+            const firstName = ((_h = (_f = (_e = session.onboardingData) === null || _e === void 0 ? void 0 : _e.firstName) !== null && _f !== void 0 ? _f : (_g = session.onboardingData) === null || _g === void 0 ? void 0 : _g.name) !== null && _h !== void 0 ? _h : "");
             const greeting = firstName ? `Hey ${firstName}!` : "Hey there!";
             const userType = session.userType;
             let message;

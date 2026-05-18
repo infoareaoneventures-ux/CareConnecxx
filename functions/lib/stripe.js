@@ -37,6 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.reactivateSubscription = exports.createIdentityVerificationSession = exports.cancelSubscription = exports.getSubscriptionDetails = exports.stripeWebhook = exports.createCheckoutSession = void 0;
+exports.getStripeClient = getStripeClient;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const stripe_1 = __importDefault(require("stripe"));
@@ -44,6 +45,7 @@ const stripe_1 = __importDefault(require("stripe"));
 const stripe = new stripe_1.default(process.env.STRIPE_SECRET_KEY || '', {
     apiVersion: '2023-10-16',
 });
+function getStripeClient() { return stripe; }
 // Webhook secret for verifying Stripe events
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 // Price ID for $29.95/month membership (legacy fallback)
@@ -209,6 +211,11 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
                 await handleShiftPaymentIntentFailed(intent);
                 break;
             }
+            case 'payment_method.attached': {
+                const pm = event.data.object;
+                await handlePaymentMethodAttached(pm);
+                break;
+            }
             default:
                 console.log(`Unhandled event type: ${event.type}`);
         }
@@ -224,7 +231,7 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
  * For caregiver payments: auto-initiate Checkr background check + set verificationStatus submitted
  */
 async function handleCheckoutSessionCompleted(session) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g;
     // Cara iMessage onboarding — advance step when client finishes payment setup
     if (((_a = session.metadata) === null || _a === void 0 ? void 0 : _a.task) === 'client_payment_setup' && ((_b = session.metadata) === null || _b === void 0 ? void 0 : _b.phone)) {
         try {
@@ -236,7 +243,23 @@ async function handleCheckoutSessionCompleted(session) {
         }
         return;
     }
-    const userId = (_c = session.metadata) === null || _c === void 0 ? void 0 : _c.firebaseUID;
+    // Cara iMessage onboarding — caregiver membership payment complete
+    if (((_c = session.metadata) === null || _c === void 0 ? void 0 : _c.task) === 'caregiver_membership' && ((_d = session.metadata) === null || _d === void 0 ? void 0 : _d.phone)) {
+        try {
+            const phone = session.metadata.phone;
+            // If MVR was included in the checkout, flag the session so Checkr uses the MVR package
+            if (((_e = session.metadata) === null || _e === void 0 ? void 0 : _e.includeMVR) === 'true') {
+                await admin.firestore().collection('agent_sessions').doc(phone).update({ mvrPaid: true });
+            }
+            const { advanceOnboardingStep } = await Promise.resolve().then(() => __importStar(require('./agents/onboardingConversation')));
+            await advanceOnboardingStep(phone, 'membership', '');
+        }
+        catch (err) {
+            console.error('advanceOnboardingStep(membership) error:', err);
+        }
+        return;
+    }
+    const userId = (_f = session.metadata) === null || _f === void 0 ? void 0 : _f.firebaseUID;
     if (!userId)
         return;
     await admin.firestore().collection('users').doc(userId).set({
@@ -279,7 +302,7 @@ async function handleCheckoutSessionCompleted(session) {
     const lastName = caregiverData.lastName || nameParts.slice(1).join(' ') || '';
     const zipCode = (caregiverData.zipCode || caregiverData.zip || '').trim();
     const state = (caregiverData.state || '').trim();
-    const includeMVRFlag = ((_d = session.metadata) === null || _d === void 0 ? void 0 : _d.includeMVR) === 'true';
+    const includeMVRFlag = ((_g = session.metadata) === null || _g === void 0 ? void 0 : _g.includeMVR) === 'true';
     if (!firstName || !lastName || !zipCode) {
         console.warn(`Caregiver ${userId} missing profile fields — marking paid, deferring Checkr`);
         await admin.firestore().collection('caregivers').doc(userId).set(Object.assign({ membershipPaid: true, checkrInitPending: true }, (includeMVRFlag && { mvrPaid: true })), { merge: true });
@@ -393,8 +416,33 @@ async function handleInvoicePaymentFailed(invoice) {
     // Update user status
     await admin.firestore().collection('users').doc(userId).update({
         membershipStatus: 'payment_failed',
+        subscriptionStatus: 'past_due',
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    // Proactively text the client via Cara
+    try {
+        const sessionSnap = await admin.firestore()
+            .collection("agent_sessions")
+            .where("userId", "==", userId)
+            .where("optedOut", "==", false)
+            .limit(1)
+            .get();
+        if (!sessionSnap.empty) {
+            const clientPhone = sessionSnap.docs[0].id;
+            const { sendViaInteractionAgent } = await Promise.resolve().then(() => __importStar(require("./agents/caraAgent")));
+            await sendViaInteractionAgent(clientPhone, {
+                content: "There was an issue processing your Cara membership payment. " +
+                    "To keep your care coordination uninterrupted, please update your billing at cara.app/billing. " +
+                    "Reply HELP if you need assistance.",
+                urgency: "high",
+                sourceAgent: "billing",
+                canDrop: false,
+            });
+        }
+    }
+    catch (err) {
+        console.error(`handleInvoicePaymentFailed: failed to notify client ${userId}:`, err);
+    }
     console.log(`Payment failed for user: ${userId}`);
 }
 /**
@@ -711,4 +759,36 @@ exports.reactivateSubscription = functions.https.onCall(async (data, context) =>
         throw new functions.https.HttpsError('internal', 'Failed to reactivate subscription');
     }
 });
+// ── Auto-retry booking tasks when client adds a payment method ────────────────
+async function handlePaymentMethodAttached(pm) {
+    var _a;
+    const customerId = typeof pm.customer === "string" ? pm.customer : (_a = pm.customer) === null || _a === void 0 ? void 0 : _a.id;
+    if (!customerId)
+        return;
+    const db = admin.firestore();
+    // Find booking tasks awaiting payment setup for this customer
+    const taskSnap = await db.collection("agent_tasks")
+        .where("stripeCustomerId", "==", customerId)
+        .where("status", "==", "pending_payment_setup")
+        .get();
+    if (taskSnap.empty)
+        return;
+    for (const taskDoc of taskSnap.docs) {
+        const task = taskDoc.data();
+        const clientPhone = task.clientPhone;
+        if (!clientPhone)
+            continue;
+        try {
+            // Reset status so executeBookings can proceed
+            await taskDoc.ref.update({ status: "approved" });
+            const { executeBookings } = await Promise.resolve().then(() => __importStar(require("./agents/bookingExecutor")));
+            await executeBookings(taskDoc.id, clientPhone);
+            console.log(`[handlePaymentMethodAttached] Retried booking task ${taskDoc.id} for customer ${customerId}`);
+        }
+        catch (err) {
+            console.error(`[handlePaymentMethodAttached] retry failed for task ${taskDoc.id}:`, err);
+            await taskDoc.ref.update({ status: "pending_payment_setup" }); // revert
+        }
+    }
+}
 //# sourceMappingURL=stripe.js.map

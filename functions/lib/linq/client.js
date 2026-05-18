@@ -46,11 +46,13 @@ exports.shareContactCard = shareContactCard;
 exports.setContactCard = setContactCard;
 exports.updateChatName = updateChatName;
 exports.addParticipant = addParticipant;
+exports.removeParticipant = removeParticipant;
 exports.getOrCreateSession = getOrCreateSession;
 exports.safeSend = safeSend;
 exports.sendToPhone = sendToPhone;
 const axios_1 = __importDefault(require("axios"));
 const admin = __importStar(require("firebase-admin"));
+const uuid_1 = require("uuid");
 const supervisor_1 = require("../safety/supervisor");
 const auditLog_1 = require("../observability/auditLog");
 const db = admin.firestore();
@@ -69,13 +71,38 @@ function headers() {
         "Content-Type": "application/json",
     };
 }
+// ── Retry helper — exponential backoff for 3xxx transient server errors ───────
+async function withRetry(fn, attempts = 3) {
+    var _a, _b, _c;
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+        try {
+            return await fn();
+        }
+        catch (err) {
+            lastErr = err;
+            const status = (_a = err === null || err === void 0 ? void 0 : err.response) === null || _a === void 0 ? void 0 : _a.status;
+            const code = (_c = (_b = err === null || err === void 0 ? void 0 : err.response) === null || _b === void 0 ? void 0 : _b.data) === null || _c === void 0 ? void 0 : _c.code;
+            const isTransient = (status === 500 || status === 503 || status === 504) ||
+                (typeof code === "number" && code >= 3000 && code < 4000);
+            if (!isTransient || i === attempts - 1)
+                throw err;
+            await new Promise((r) => setTimeout(r, (i + 1) * 1000));
+        }
+    }
+    throw lastErr;
+}
 // ── Capability check ──────────────────────────────────────────────────────────
 async function checkCapability(phone) {
     var _a, _b;
     try {
-        const { data } = await axios_1.default.post(`${cfg().baseUrl}/capability_checks`, { handles: [phone] }, { headers: headers() });
-        const result = (_b = (_a = data === null || data === void 0 ? void 0 : data.handles) === null || _a === void 0 ? void 0 : _a[phone]) !== null && _b !== void 0 ? _b : {};
-        return { iMessage: !!result.iMessage, RCS: !!result.RCS };
+        const [imsgRes, rcsRes] = await Promise.allSettled([
+            axios_1.default.post(`${cfg().baseUrl}/capability/check_imessage`, { handle: phone }, { headers: headers() }),
+            axios_1.default.post(`${cfg().baseUrl}/capability/check_rcs`, { handle: phone }, { headers: headers() }),
+        ]);
+        const iMessage = imsgRes.status === "fulfilled" ? !!((_a = imsgRes.value.data) === null || _a === void 0 ? void 0 : _a.available) : false;
+        const RCS = rcsRes.status === "fulfilled" ? !!((_b = rcsRes.value.data) === null || _b === void 0 ? void 0 : _b.available) : false;
+        return { iMessage, RCS };
     }
     catch (_c) {
         return { iMessage: false, RCS: false };
@@ -84,14 +111,20 @@ async function checkCapability(phone) {
 // ── Core send ─────────────────────────────────────────────────────────────────
 async function createChat(phone, message) {
     var _a, _b;
-    const { data } = await axios_1.default.post(`${cfg().baseUrl}/chats`, { from: cfg().phoneNumber, to: [phone], message }, { headers: headers() });
-    return { chat_id: (_a = data.chat_id) !== null && _a !== void 0 ? _a : data.id, service: (_b = data.service) !== null && _b !== void 0 ? _b : "SMS" };
+    const res = await withRetry(() => axios_1.default.post(`${cfg().baseUrl}/chats`, { from: cfg().phoneNumber, to: [phone], message, idempotency_key: (0, uuid_1.v4)() }, { headers: headers() }));
+    const traceId = res.headers["x-trace-id"];
+    if (traceId)
+        console.info("Linq createChat trace_id:", traceId);
+    return { chat_id: (_a = res.data.chat_id) !== null && _a !== void 0 ? _a : res.data.id, service: (_b = res.data.service) !== null && _b !== void 0 ? _b : "SMS" };
 }
 async function sendMessage(chatId, textOrMessage) {
     const message = typeof textOrMessage === "string"
         ? { parts: [{ type: "text", value: textOrMessage }] }
         : textOrMessage;
-    await axios_1.default.post(`${cfg().baseUrl}/chats/${chatId}/messages`, message, { headers: headers() });
+    const res = await withRetry(() => axios_1.default.post(`${cfg().baseUrl}/chats/${chatId}/messages`, Object.assign(Object.assign({}, message), { idempotency_key: (0, uuid_1.v4)() }), { headers: headers() }));
+    const traceId = res.headers["x-trace-id"];
+    if (traceId)
+        console.info("Linq sendMessage trace_id:", traceId, "chatId:", chatId);
 }
 async function startTyping(chatId) {
     await axios_1.default.post(`${cfg().baseUrl}/chats/${chatId}/typing`, {}, { headers: headers() });
@@ -121,6 +154,9 @@ async function updateChatName(chatId, displayName) {
 }
 async function addParticipant(chatId, phone) {
     await axios_1.default.post(`${cfg().baseUrl}/chats/${chatId}/participants`, { handle: phone }, { headers: headers() });
+}
+async function removeParticipant(chatId, phone) {
+    await axios_1.default.delete(`${cfg().baseUrl}/chats/${chatId}/participants/${encodeURIComponent(phone)}`, { headers: headers() });
 }
 // ── Session management (get-or-create) ───────────────────────────────────────
 async function getOrCreateSession(phone, meta) {

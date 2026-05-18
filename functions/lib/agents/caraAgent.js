@@ -48,6 +48,7 @@ const bookingExecutor_1 = require("./bookingExecutor");
 const preferences_1 = require("../memory/preferences");
 const supervisor_1 = require("../safety/supervisor");
 const auditLog_1 = require("../observability/auditLog");
+const claudeRetry_1 = require("../utils/claudeRetry");
 const db = admin.firestore();
 let _claude = null;
 function getClaude() {
@@ -70,6 +71,8 @@ async function shouldSend(output, phone, prefs, session) {
         return true;
     if (prefs.dndEnabled && (0, preferences_1.isInDND)(prefs))
         return false;
+    if (!(0, preferences_1.isActiveHour)(prefs))
+        return false;
     const lastSentAt = session.lastMessageSentAt;
     if (lastSentAt) {
         const minutesSinceLast = (Date.now() - new Date(lastSentAt).getTime()) / 60000;
@@ -79,7 +82,7 @@ async function shouldSend(output, phone, prefs, session) {
     // LLM judgment for standard urgency
     if (output.urgency === "standard") {
         try {
-            const result = await getClaude().messages.create({
+            const result = await (0, claudeRetry_1.callClaudeWithRetry)(getClaude(), {
                 model: "claude-haiku-4-5-20251001",
                 max_tokens: 5,
                 system: "You decide if a care update should be sent to a family right now.\n" +
@@ -91,10 +94,11 @@ async function shouldSend(output, phone, prefs, session) {
                             `Last sent: ${lastSentAt !== null && lastSentAt !== void 0 ? lastSentAt : "never"}\n` +
                             `Current UTC hour: ${new Date().getUTCHours()}`,
                     }],
-            });
+            }, { timeoutMs: 5000, maxAttempts: 2 });
             return ((_a = result.content[0].text) !== null && _a !== void 0 ? _a : "").trim().toUpperCase() === "SEND";
         }
         catch (_b) {
+            console.warn("shouldSend Claude timeout — defaulting to SEND");
             return true; // default open on failure
         }
     }
@@ -145,7 +149,10 @@ async function sendViaInteractionAgent(phone, output) {
         }
     }
     // Run through supervisor (which also lints internally)
-    const safe = await (0, supervisor_1.supervise)(output.content, { phone }).catch(() => output.content);
+    const safe = await (0, supervisor_1.supervise)(output.content, { phone }).catch((err) => {
+        console.error("caraAgent: supervisor threw, sending message unsupervised", err instanceof Error ? err.message : err);
+        return output.content;
+    });
     // Send in chunks with 1s delay between
     const chunks = splitMessage(safe);
     for (let i = 0; i < chunks.length; i++) {
@@ -156,14 +163,14 @@ async function sendViaInteractionAgent(phone, output) {
     // Update lastMessageSentAt
     db.collection("agent_sessions").doc(phone)
         .update({ lastMessageSentAt: new Date().toISOString() })
-        .catch(() => { });
+        .catch((err) => console.error("caraAgent: failed to update lastMessageSentAt", err));
     // HIPAA audit log
     (0, auditLog_1.logAudit)({
         eventType: "message_sent",
         userId: phone,
         phone,
         data: { preview: safe.slice(0, 100), urgency: output.urgency, sourceAgent: output.sourceAgent, chatId: targetChatId },
-    }).catch(() => { });
+    }).catch((err) => console.error("caraAgent: audit log write failed", err));
 }
 // ── processEvent — internal natural language event dispatch ───────────────────
 async function processEvent(eventType, payload) {
@@ -178,7 +185,7 @@ async function processEvent(eventType, payload) {
             await handleCaregiverArrivedEvent(payload);
             break;
         case "interview.scheduled":
-            // Future: notify family and caregiver with calendar details
+            await handleInterviewScheduledEvent(payload);
             break;
         default:
             console.warn(`processEvent: unknown eventType "${eventType}"`);
@@ -186,8 +193,8 @@ async function processEvent(eventType, payload) {
 }
 // ── Event handlers ────────────────────────────────────────────────────────────
 async function handleJournalEvent(payload) {
-    var _a;
-    const { seniorId, caregiverId } = payload;
+    var _a, _b, _c, _d;
+    const { seniorId, caregiverId, journalId } = payload;
     if (!seniorId)
         return;
     const clientDoc = await db.collection("users").doc(seniorId).get();
@@ -200,7 +207,73 @@ async function handleJournalEvent(payload) {
     const session = sessionSnap.data();
     if (session.optedOut || session.optedIn === false)
         return;
-    console.log(`processEvent journal.created: seniorId=${seniorId}, caregiver=${caregiverId}`);
+    // Prefer inline payload fields; fall back to Firestore fetch when only journalId is provided
+    let notes = payload.notes;
+    let wellness = payload.wellness;
+    let activities = payload.activities;
+    if (journalId && !notes) {
+        const journalSnap = await db.collection("care_journal").doc(journalId).get();
+        if (!journalSnap.exists)
+            return;
+        const j = journalSnap.data();
+        notes = j.notes;
+        wellness = j.wellness;
+        activities = j.activities;
+    }
+    const { detectHealthSignals } = await Promise.resolve().then(() => __importStar(require("./healthSignalDetector")));
+    const signals = await detectHealthSignals(notes !== null && notes !== void 0 ? notes : "", {
+        ateWell: wellness === null || wellness === void 0 ? void 0 : wellness.ateWell,
+        tookMeds: wellness === null || wellness === void 0 ? void 0 : wellness.tookMeds,
+        wasActive: wellness === null || wellness === void 0 ? void 0 : wellness.wasActive,
+        mood: wellness === null || wellness === void 0 ? void 0 : wellness.mood,
+    }, Array.isArray(activities) ? activities : []).catch(() => null);
+    if (!signals || signals.severity === "none")
+        return;
+    const caregiverSnap = caregiverId
+        ? await db.collection("caregivers").doc(caregiverId).get().catch(() => null)
+        : null;
+    const caregiverName = (_c = (_b = caregiverSnap === null || caregiverSnap === void 0 ? void 0 : caregiverSnap.data()) === null || _b === void 0 ? void 0 : _b.name) !== null && _c !== void 0 ? _c : "your caregiver";
+    await sendViaInteractionAgent(phone, {
+        content: `${caregiverName} noted: ${signals.summary}`,
+        urgency: signals.severity === "flag" ? "immediate" : "standard",
+        sourceAgent: signals.severity === "flag" ? "health_watch" : "visit_summary",
+        canDrop: signals.severity !== "flag",
+    });
+    if (signals.severity === "flag") {
+        db.collection("health_flags").add({
+            userId: (_d = session.userId) !== null && _d !== void 0 ? _d : phone,
+            seniorId,
+            journalId: journalId !== null && journalId !== void 0 ? journalId : null,
+            signals: signals.signals,
+            summary: signals.summary,
+            caregiverId: caregiverId !== null && caregiverId !== void 0 ? caregiverId : null,
+            createdAt: new Date().toISOString(),
+        }).catch(() => { });
+    }
+}
+async function handleInterviewScheduledEvent(payload) {
+    const { clientPhone, caregiverPhone, caregiverName, scheduledAt, interviewUrl } = payload;
+    const dateStr = scheduledAt
+        ? new Date(scheduledAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })
+        : "soon";
+    if (clientPhone) {
+        await sendViaInteractionAgent(clientPhone, {
+            content: `Your interview with ${caregiverName !== null && caregiverName !== void 0 ? caregiverName : "a caregiver"} is set for ${dateStr}.` +
+                (interviewUrl ? ` Join here: ${interviewUrl}` : ""),
+            urgency: "standard",
+            sourceAgent: "interview_scheduler",
+            canDrop: false,
+        });
+    }
+    if (caregiverPhone) {
+        await sendViaInteractionAgent(caregiverPhone, {
+            content: `You have a video interview scheduled for ${dateStr}.` +
+                (interviewUrl ? ` Join here: ${interviewUrl}` : ""),
+            urgency: "standard",
+            sourceAgent: "interview_scheduler",
+            canDrop: false,
+        });
+    }
 }
 async function handleAppointmentCancelledEvent(payload) {
     const { clientPhone, caregiverName, date } = payload;
@@ -227,8 +300,17 @@ async function handleCaregiverArrivedEvent(payload) {
 }
 // ── Interaction Agent — NLU only, reads only ──────────────────────────────────
 async function runInteractionAgent(phone, chatId, text, session) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     const norm = text.trim().toUpperCase();
+    // Active goal guard — if a booking goal is in progress and user selects 1/2/3,
+    // route directly to matching/interview selection without re-doing NLU
+    const activeGoal = session.activeGoal;
+    if ((activeGoal === null || activeGoal === void 0 ? void 0 : activeGoal.type) === "booking" && /^[123]$/.test(norm)) {
+        return {
+            type: "matching",
+            payload: { clientId: (_a = session.userId) !== null && _a !== void 0 ? _a : phone, phone, chatId },
+        };
+    }
     // Delegate hire intent → booking execution
     if (norm === "HIRE") {
         const outcome = session.pendingInterviewOutcome;
@@ -266,7 +348,7 @@ async function runInteractionAgent(phone, chatId, text, session) {
         norm.includes("LOOKING FOR")) {
         return {
             type: "matching",
-            payload: { clientId: (_a = session.userId) !== null && _a !== void 0 ? _a : phone, phone, chatId },
+            payload: { clientId: (_b = session.userId) !== null && _b !== void 0 ? _b : phone, phone, chatId },
         };
     }
     // Default: hand off to QA agent
@@ -276,9 +358,9 @@ async function runInteractionAgent(phone, chatId, text, session) {
             text,
             phone,
             chatId,
-            userId: (_b = session.userId) !== null && _b !== void 0 ? _b : phone,
-            seniorId: (_d = (_c = session.seniorId) !== null && _c !== void 0 ? _c : session.userId) !== null && _d !== void 0 ? _d : phone,
-            userType: (_e = session.userType) !== null && _e !== void 0 ? _e : "client",
+            userId: (_c = session.userId) !== null && _c !== void 0 ? _c : phone,
+            seniorId: (_e = (_d = session.seniorId) !== null && _d !== void 0 ? _d : session.userId) !== null && _e !== void 0 ? _e : phone,
+            userType: (_f = session.userType) !== null && _f !== void 0 ? _f : "client",
             caregiverId: session.caregiverId,
         },
     };
@@ -348,10 +430,11 @@ async function alertAgent(payload) {
     db.collection("agent_alerts_log").add(Object.assign({ type: type !== null && type !== void 0 ? type : "agent_alert", sentAt: new Date().toISOString() }, (typeof metadata === "object" && metadata !== null ? metadata : {}))).catch(() => { });
 }
 async function memoryAgent(payload) {
-    const { userId, text } = payload;
+    const { userId, text, phone } = payload;
     if (!userId || !text)
         return;
+    const zepUserId = phone ? phone.replace(/\D/g, "") : undefined;
     const { extractAndStoreFacts } = await Promise.resolve().then(() => __importStar(require("../memory/learnedFacts")));
-    await extractAndStoreFacts(userId, text).catch(() => { });
+    await extractAndStoreFacts(userId, text, zepUserId).catch(() => { });
 }
 //# sourceMappingURL=caraAgent.js.map

@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPreferences = getPreferences;
 exports.updatePreferences = updatePreferences;
+exports.isActiveHour = isActiveHour;
 exports.isInDND = isInDND;
 const admin = __importStar(require("firebase-admin"));
 const db = admin.firestore();
@@ -56,12 +57,43 @@ async function getPreferences(userId) {
 async function updatePreferences(userId, patch) {
     await db.collection("user_preferences").doc(userId).set(patch, { merge: true });
 }
+function validatedTz(tz) {
+    try {
+        new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date());
+        return tz;
+    }
+    catch (_a) {
+        console.warn(`[preferences] Invalid timezone "${tz}", falling back to America/Los_Angeles`);
+        return "America/Los_Angeles";
+    }
+}
+function isActiveHour(prefs, now) {
+    var _a, _b, _c, _d, _e;
+    const d = now !== null && now !== void 0 ? now : new Date();
+    const tz = validatedTz(prefs.timezone || "America/Los_Angeles");
+    const { start, end } = (_a = prefs.activeHours) !== null && _a !== void 0 ? _a : { start: "08:00", end: "21:00" };
+    const parts = new Intl.DateTimeFormat("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: tz,
+    }).formatToParts(d);
+    const h = (_c = (_b = parts.find(p => p.type === "hour")) === null || _b === void 0 ? void 0 : _b.value) !== null && _c !== void 0 ? _c : "00";
+    const m = (_e = (_d = parts.find(p => p.type === "minute")) === null || _d === void 0 ? void 0 : _d.value) !== null && _e !== void 0 ? _e : "00";
+    const hhmm = `${h.padStart(2, "0")}:${m.padStart(2, "0")}`;
+    if (start <= end) {
+        return hhmm >= start && hhmm < end;
+    }
+    else {
+        return hhmm >= start || hhmm < end;
+    }
+}
 function isInDND(prefs, now) {
     var _a, _b, _c, _d;
     if (!prefs.dndEnabled)
         return false;
     const d = now !== null && now !== void 0 ? now : new Date();
-    const tz = prefs.timezone || "America/Los_Angeles";
+    const tz = validatedTz(prefs.timezone || "America/Los_Angeles");
     // Get HH:MM in the user's local timezone (avoids UTC-vs-local comparison bug)
     const parts = new Intl.DateTimeFormat("en-US", {
         hour: "2-digit",

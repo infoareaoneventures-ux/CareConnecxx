@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Activity, AlertCircle, CheckCircle, TrendingUp, Printer, Loader } from 'lucide-react';
 import { db } from '../../lib/firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 
 interface HealthTrend {
   seniorId:    string;
@@ -13,6 +13,8 @@ interface HealthTrend {
   highlights:  string;
   generatedAt: string;
   shareToken:  string;
+  expiresAt?:  string;
+  seniorName?: string;
 }
 
 type PageState = 'loading' | 'ready' | 'notfound';
@@ -30,20 +32,19 @@ export default function HealthSummaryPage() {
 
   async function loadTrend(t: string) {
     try {
-      const q    = query(collection(db, 'health_trends'), where('shareToken', '==', t));
-      const snap = await getDocs(q);
-      if (snap.empty) { setState('notfound'); return; }
+      const snap = await getDoc(doc(db, 'health_summaries', t));
+      if (!snap.exists()) { setState('notfound'); return; }
 
-      const data = snap.docs[0].data() as HealthTrend;
-      setTrend(data);
+      const data = snap.data() as HealthTrend;
 
-      // Load senior name
-      const seniorSnap = await getDocs(
-        query(collection(db, 'senior_profiles'), where('uid', '==', data.seniorId))
-      );
-      if (!seniorSnap.empty) {
-        setSeniorName(seniorSnap.docs[0].data().name ?? '');
+      // Reject expired tokens
+      if (data.expiresAt && new Date(data.expiresAt) < new Date()) {
+        setState('notfound');
+        return;
       }
+
+      setTrend(data);
+      if (data.seniorName) setSeniorName(data.seniorName);
 
       setState('ready');
     } catch {

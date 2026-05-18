@@ -39,6 +39,7 @@ const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
 const caraAgent_1 = require("../agents/caraAgent");
 const replacementScorer_1 = require("../agents/replacementScorer");
+const triggerEngine_1 = require("./triggerEngine");
 function hoursUntil(date, time) {
     const apptMs = new Date(`${date}T${time.slice(0, 5)}:00`).getTime();
     return (apptMs - Date.now()) / (1000 * 60 * 60);
@@ -66,7 +67,7 @@ async function getCaregiverPhone(caregiverId) {
 exports.onAppointmentUpdated = functions.firestore
     .document("appointments/{appointmentId}")
     .onUpdate(async (change) => {
-    var _a, _b;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j;
     try {
         const before = change.before.data();
         const after = change.after.data();
@@ -96,7 +97,7 @@ exports.onAppointmentUpdated = functions.firestore
             });
             return;
         }
-        // ── Booking confirmed → notify caregiver ────────────────────────────
+        // ── Booking confirmed → notify caregiver + schedule pre-visit check-in ──
         if (after.status === "confirmed" && before.status !== "confirmed" && after.caregiverId) {
             const caregiverPhone = await getCaregiverPhone(after.caregiverId);
             if (caregiverPhone) {
@@ -106,11 +107,49 @@ exports.onAppointmentUpdated = functions.firestore
                     (after.address ? `${after.address}` : "");
                 await (0, client_1.sendToPhone)(caregiverPhone, msg);
             }
+            if (phone && after.date && after.time) {
+                try {
+                    const visitMs = new Date(`${after.date}T${after.time.slice(0, 5)}:00`).getTime();
+                    const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
+                    const clientId = (_d = (_c = (_b = sessionSnap.data()) === null || _b === void 0 ? void 0 : _b.userId) !== null && _c !== void 0 ? _c : after.clientId) !== null && _d !== void 0 ? _d : "";
+                    const cgName = (_e = after.caregiverName) !== null && _e !== void 0 ? _e : "Your caregiver";
+                    // Schedule 1h-before family reminder
+                    const remindMs = visitMs - 60 * 60 * 1000;
+                    if (remindMs > Date.now()) {
+                        await (0, triggerEngine_1.scheduleTrigger)({
+                            userId: clientId,
+                            phone,
+                            type: "appointment_reminder",
+                            scheduledAt: new Date(remindMs).toISOString(),
+                            message: `Just a heads up — ${cgName} is confirmed for your ${after.time} visit today. ` +
+                                `Reply CANCEL if plans change and I'll handle it.`,
+                        });
+                    }
+                    // Schedule 2h-before caregiver check-in
+                    if (caregiverPhone && after.caregiverId) {
+                        const checkInMs = visitMs - 2 * 60 * 60 * 1000;
+                        if (checkInMs > Date.now()) {
+                            const cgSessionSnap = await db.collection("agent_sessions").doc(caregiverPhone).get();
+                            const cgUserId = (_h = (_g = (_f = cgSessionSnap.data()) === null || _f === void 0 ? void 0 : _f.userId) !== null && _g !== void 0 ? _g : after.caregiverId) !== null && _h !== void 0 ? _h : "";
+                            await (0, triggerEngine_1.scheduleTrigger)({
+                                userId: cgUserId,
+                                phone: caregiverPhone,
+                                type: "custom",
+                                scheduledAt: new Date(checkInMs).toISOString(),
+                                message: `caregiver_checkin:${change.after.id}`,
+                            });
+                        }
+                    }
+                }
+                catch (err) {
+                    console.error("[appointmentUpdated] trigger scheduling failed:", err);
+                }
+            }
             return;
         }
         // ── Visit completed ──────────────────────────────────────────────────
         if (after.status === "completed" && before.status !== "completed") {
-            const msg = `${(_b = after.caregiverName) !== null && _b !== void 0 ? _b : "Your caregiver"}'s visit is complete. ` +
+            const msg = `${(_j = after.caregiverName) !== null && _j !== void 0 ? _j : "Your caregiver"}'s visit is complete. ` +
                 `A care journal entry will be posted shortly.`;
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
                 content: msg, urgency: "standard", sourceAgent: "visit_summary", canDrop: true,
@@ -175,6 +214,7 @@ async function handleCaregiverCancellation(appointmentId, appt, phone) {
     }
     // Generate a confirmation token for the QuickConfirm page
     const confirmToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min
     const taskRef = await db.collection("agent_tasks").add({
         type: "replacement",
         appointmentId,
@@ -183,9 +223,17 @@ async function handleCaregiverCancellation(appointmentId, appt, phone) {
         options,
         confirmToken,
         status: "awaiting_approval",
-        expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), // 30 min
+        expiresAt,
         createdAt: new Date().toISOString(),
     });
+    // Schedule auto-book fallback at the 30-min expiry mark
+    await (0, triggerEngine_1.scheduleTrigger)({
+        userId: appt.clientId,
+        phone,
+        type: "custom",
+        scheduledAt: expiresAt,
+        message: `replacement_task:${taskRef.id}`,
+    }).catch(err => console.error("[handleCaregiverCancellation] scheduleTrigger failed:", err));
     const numberEmojis = ["1️⃣", "2️⃣", "3️⃣"];
     const optionLines = options
         .slice(0, 3)

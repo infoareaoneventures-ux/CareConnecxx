@@ -1,5 +1,8 @@
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
+import { createBookingTask } from "./bookingExecutor";
+
+const db = admin.firestore();
 
 export async function handleTaskApproval(
   taskDoc: admin.firestore.QueryDocumentSnapshot,
@@ -18,21 +21,93 @@ export async function handleTaskApproval(
 
   const selected = options[idx];
 
-  // Mark task as awaiting final web confirmation
+  // Validate caregiver is still active
+  const cgSnap = selected.caregiverId
+    ? await db.collection("caregivers").doc(selected.caregiverId).get()
+    : null;
+  if (cgSnap && cgSnap.exists && cgSnap.data()?.status === "inactive") {
+    await sendMessage(chatId,
+      `${selected.name} is no longer available. Want me to search for another caregiver?`
+    );
+    return;
+  }
+
+  // Store selection so CONFIRM reply can finalize it
   await taskDoc.ref.update({ status: "pending_confirm", selectedIdx: idx });
+  await db.collection("agent_sessions").doc((session as any).phone ?? taskDoc.ref.path).update({
+    pendingTaskConfirm: {
+      taskId:        taskDoc.id,
+      caregiverName: selected.name,
+      caregiverId:   selected.caregiverId ?? "",
+      time:          task.time ?? "",
+    },
+  }).catch(() => {});
 
-  const appUrl = process.env.APP_URL ?? "https://cara.app";
-  const confirmUrl = `${appUrl}/confirm/${task.confirmToken}`;
+  await sendMessage(chatId,
+    `Got it — ${selected.name} for your ${task.time ?? "upcoming"} visit.\n\n` +
+    `Reply CONFIRM to book, or SKIP to choose someone else.`
+  );
+}
 
-  await sendMessage(chatId, {
-    parts: [
-      {
-        type:  "text",
-        value:
-          `Great choice! Tap below to confirm ${selected.name} for your ${task.time ?? "upcoming"} visit.\n` +
-          `Nothing is booked until you tap Confirm.`,
-      },
-      { type: "link", value: confirmUrl },
-    ],
+// Called when user replies CONFIRM after handleTaskApproval
+export async function finalizeTaskApproval(
+  phone: string,
+  chatId: string,
+  session: Record<string, unknown>
+): Promise<void> {
+  const pending = (session as any).pendingTaskConfirm as {
+    taskId: string; caregiverName: string; caregiverId: string; time: string;
+  } | undefined;
+
+  if (!pending) {
+    await sendMessage(chatId, "I don't have a pending booking to confirm. Want me to search for caregivers?");
+    return;
+  }
+
+  // Pull original task for appointment details
+  const taskSnap = await db.collection("agent_tasks").doc(pending.taskId).get();
+  if (!taskSnap.exists) {
+    await sendMessage(chatId, "That booking has expired. Want me to start a fresh search?");
+    await db.collection("agent_sessions").doc(phone).update({
+      pendingTaskConfirm: admin.firestore.FieldValue.delete(),
+    }).catch(() => {});
+    return;
+  }
+
+  const task = taskSnap.data()!;
+
+  // Create a real booking task that goes through the standard confirmation flow
+  const clientId = (session as any).userId ?? phone;
+  const cgSnap   = await db.collection("caregivers").doc(pending.caregiverId).get();
+  const hourlyRate = (cgSnap.data()?.hourlyRate ?? 20) as number;
+
+  // Use appointments from original task or fall back to stored time
+  const appointments = (task.appointments ?? [{
+    date:          task.date ?? new Date().toISOString().slice(0, 10),
+    startTime:     task.startTime ?? "09:00",
+    endTime:       task.endTime   ?? "17:00",
+    durationHours: task.durationHours ?? 8,
+  }]) as Array<{ date: string; startTime: string; endTime: string; durationHours: number }>;
+
+  const bookingTaskId = await createBookingTask({
+    clientPhone:            phone,
+    clientId,
+    caregiverId:            pending.caregiverId,
+    caregiverName:          pending.caregiverName,
+    appointments,
+    hourlyRate,
+    isEmergencyReplacement: task.type === "replacement_confirmation",
   });
+
+  await db.collection("agent_sessions").doc(phone).update({
+    pendingTaskConfirm: admin.firestore.FieldValue.delete(),
+  }).catch(() => {});
+
+  if (bookingTaskId) {
+    // Auto-approve — user already confirmed intent
+    const { executeBookings } = await import("./bookingExecutor");
+    await executeBookings(bookingTaskId, phone);
+  } else {
+    await sendMessage(chatId, "Something went wrong starting the booking. Try again or text FIND to search for a new caregiver.");
+  }
 }

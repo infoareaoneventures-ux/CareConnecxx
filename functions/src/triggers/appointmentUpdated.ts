@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { sendToPhone, AgentSession } from "../linq/client";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { scoreReplacements } from "../agents/replacementScorer";
+import { scheduleTrigger } from "./triggerEngine";
 
 function hoursUntil(date: string, time: string): number {
   const apptMs = new Date(`${date}T${time.slice(0, 5)}:00`).getTime();
@@ -70,7 +71,7 @@ export const onAppointmentUpdated = functions.firestore
         return;
       }
 
-      // ── Booking confirmed → notify caregiver ────────────────────────────
+      // ── Booking confirmed → notify caregiver + schedule pre-visit check-in ──
       if (after.status === "confirmed" && before.status !== "confirmed" && after.caregiverId) {
         const caregiverPhone = await getCaregiverPhone(after.caregiverId);
         if (caregiverPhone) {
@@ -80,6 +81,47 @@ export const onAppointmentUpdated = functions.firestore
             (after.clientName  ? `${after.clientName}\n`  : "") +
             (after.address     ? `${after.address}`       : "");
           await sendToPhone(caregiverPhone, msg);
+        }
+
+        if (phone && after.date && after.time) {
+          try {
+            const visitMs  = new Date(`${after.date}T${after.time.slice(0, 5)}:00`).getTime();
+            const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
+            const clientId    = sessionSnap.data()?.userId ?? after.clientId ?? "";
+            const cgName      = after.caregiverName ?? "Your caregiver";
+
+            // Schedule 1h-before family reminder
+            const remindMs = visitMs - 60 * 60 * 1000;
+            if (remindMs > Date.now()) {
+              await scheduleTrigger({
+                userId:      clientId,
+                phone,
+                type:        "appointment_reminder",
+                scheduledAt: new Date(remindMs).toISOString(),
+                message:
+                  `Just a heads up — ${cgName} is confirmed for your ${after.time} visit today. ` +
+                  `Reply CANCEL if plans change and I'll handle it.`,
+              });
+            }
+
+            // Schedule 2h-before caregiver check-in
+            if (caregiverPhone && after.caregiverId) {
+              const checkInMs = visitMs - 2 * 60 * 60 * 1000;
+              if (checkInMs > Date.now()) {
+                const cgSessionSnap = await db.collection("agent_sessions").doc(caregiverPhone).get();
+                const cgUserId      = cgSessionSnap.data()?.userId ?? after.caregiverId ?? "";
+                await scheduleTrigger({
+                  userId:      cgUserId,
+                  phone:       caregiverPhone,
+                  type:        "custom",
+                  scheduledAt: new Date(checkInMs).toISOString(),
+                  message:     `caregiver_checkin:${change.after.id}`,
+                });
+              }
+            }
+          } catch (err) {
+            console.error("[appointmentUpdated] trigger scheduling failed:", err);
+          }
         }
         return;
       }
@@ -168,6 +210,7 @@ async function handleCaregiverCancellation(
   // Generate a confirmation token for the QuickConfirm page
   const confirmToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min
   const taskRef = await db.collection("agent_tasks").add({
     type:          "replacement",
     appointmentId,
@@ -176,9 +219,18 @@ async function handleCaregiverCancellation(
     options,
     confirmToken,
     status:        "awaiting_approval",
-    expiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(), // 30 min
+    expiresAt,
     createdAt:     new Date().toISOString(),
   });
+
+  // Schedule auto-book fallback at the 30-min expiry mark
+  await scheduleTrigger({
+    userId:      appt.clientId,
+    phone,
+    type:        "custom",
+    scheduledAt: expiresAt,
+    message:     `replacement_task:${taskRef.id}`,
+  }).catch(err => console.error("[handleCaregiverCancellation] scheduleTrigger failed:", err));
 
   const numberEmojis = ["1️⃣", "2️⃣", "3️⃣"];
   const optionLines = options

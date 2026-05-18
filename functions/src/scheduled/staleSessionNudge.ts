@@ -11,6 +11,38 @@ export const sendStaleSessionNudges = functions.pubsub
     const now        = Date.now();
     const fortyEightHoursAgo = new Date(now - 48 * 60 * 60 * 1000).toISOString();
     const seventyTwoHoursAgo = new Date(now - 72 * 60 * 60 * 1000).toISOString();
+    const sevenDaysAgo       = new Date(now - 7  * 24 * 60 * 60 * 1000).toISOString();
+
+    // ── Auto-recover sessions stuck waiting for a webhook for 7+ days ─────────
+    const WEBHOOK_AWAITING_STEPS = [
+      "caregiver_awaiting_bgcheck",
+      "caregiver_awaiting_stripe",
+      "client_awaiting_payment",
+    ];
+    const stuckSnap = await db.collection("agent_sessions")
+      .where("onboardingStep", "in", WEBHOOK_AWAITING_STEPS)
+      .get();
+
+    for (const doc of stuckSnap.docs) {
+      const session = doc.data();
+      if (session.optedOut) continue;
+      // Only recover sessions stuck > 7 days
+      const updatedAt = (session.updatedAt ?? session.createdAt ?? "") as string;
+      if (!updatedAt || updatedAt > sevenDaysAgo) continue;
+      // Idempotency: don't re-send more than once per 7 days
+      if (session.stuckRecoverySentAt && session.stuckRecoverySentAt > sevenDaysAgo) continue;
+
+      try {
+        const { resendStuckStep } = await import("../agents/onboardingConversation");
+        const sent = await resendStuckStep(doc.id);
+        if (sent) {
+          await doc.ref.update({ stuckRecoverySentAt: new Date().toISOString() });
+          console.log(`[staleSessionNudge] Re-sent stuck step for ${doc.id} (step: ${session.onboardingStep})`);
+        }
+      } catch (err) {
+        console.error(`[staleSessionNudge] resendStuckStep failed for ${doc.id}:`, err);
+      }
+    }
 
     // Sessions that started onboarding but never completed
     const snap = await db.collection("agent_sessions")

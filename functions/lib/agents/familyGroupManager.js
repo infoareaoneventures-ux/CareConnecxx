@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createFamilyGroup = void 0;
 exports.buildOrUpdateFamilyGroup = buildOrUpdateFamilyGroup;
+exports.removeMemberFromGroup = removeMemberFromGroup;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
@@ -129,5 +130,35 @@ async function buildOrUpdateFamilyGroup(seniorId) {
             .doc(phone)
             .set({ groupChatId: chatId }, { merge: true });
     }
+}
+// ── removeMemberFromGroup — called from webhook REMOVE_FAMILY_MEMBER handler ──
+async function removeMemberFromGroup(seniorId, targetPhone) {
+    var _a;
+    const groupSnap = await db.collection("family_groups")
+        .where("seniorId", "==", seniorId)
+        .limit(1)
+        .get();
+    if (groupSnap.empty) {
+        return { removed: false, reason: "no_group" };
+    }
+    const groupDoc = groupSnap.docs[0];
+    const groupData = groupDoc.data();
+    const phones = (_a = groupData.phones) !== null && _a !== void 0 ? _a : [];
+    if (!phones.includes(targetPhone)) {
+        return { removed: false, reason: "not_in_group" };
+    }
+    const chatId = groupData.chatId;
+    // Remove from Linq group chat
+    await (0, client_1.removeParticipant)(chatId, targetPhone).catch(() => { });
+    // Update Firestore group record
+    await groupDoc.ref.update({
+        phones: admin.firestore.FieldValue.arrayRemove(targetPhone),
+    });
+    // Clear groupChatId from the removed member's session
+    await db.collection("agent_sessions").doc(targetPhone)
+        .update({ groupChatId: admin.firestore.FieldValue.delete() })
+        .catch(() => { });
+    console.log(`[removeMemberFromGroup] Removed ${targetPhone} from group for senior ${seniorId}`);
+    return { removed: true };
 }
 //# sourceMappingURL=familyGroupManager.js.map

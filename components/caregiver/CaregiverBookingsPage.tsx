@@ -1507,73 +1507,7 @@ export const CaregiverBookingsPage: React.FC = () => {
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
 
-      const [bookingSnap, caregiverSnap] = await Promise.all([
-        db.collection('booking_requests').doc(id).get(),
-        uid ? db.collection('caregivers').doc(uid).get().catch(() => null) : Promise.resolve(null),
-      ]);
-      const booking = bookingSnap.data() as any;
-      const caregiverData = caregiverSnap?.data() as any;
-      const caregiverPhotoURL = caregiverData?.profilePhoto || caregiverData?.photoURL || caregiverData?.photo || null;
-
-      // Create shifts for the next 4 weeks (or up to endDate for fixed-term bookings)
-      const dayShiftTimes: Record<string, Array<{ start: string; end: string }>> =
-        booking?.schedule?.dayShiftTimes || {};
-      const startDate: string =
-        booking?.schedule?.startDate || new Date().toISOString().split('T')[0];
-      const endDate: string | null = booking?.schedule?.ongoing ? null : (booking?.schedule?.endDate || null);
-      const WEEKS = 4;
-
-      const shiftDocs: Array<{ date: string; start: string; end: string }> = [];
-      Object.entries(dayShiftTimes).forEach(([day, blocks]) => {
-        (blocks as Array<{ start: string; end: string }>)
-          .filter(b => b.start && b.end)
-          .forEach(b => {
-            const first = nextOccurrence(startDate, day);
-            for (let w = 0; w < WEEKS; w++) {
-              const d = new Date(first + 'T12:00:00');
-              d.setDate(d.getDate() + w * 7);
-              const dateStr = d.toISOString().split('T')[0];
-              if (endDate && dateStr > endDate) break;
-              shiftDocs.push({ date: dateStr, start: b.start, end: b.end });
-            }
-          });
-      });
-
-      if (shiftDocs.length > 0) {
-        const shiftBase = {
-          clientId: booking.clientId || '',
-          clientName: booking.clientName || '',
-          clientPhotoURL: booking.clientPhotoURL || null,
-          caregiverId: uid || '',
-          caregiverName: booking.caregiverName || currentUser?.displayName || '',
-          caregiverPhotoURL: caregiverPhotoURL,
-          status: 'scheduled',
-          address: booking.address || '',
-          lifestylePreferences: booking.lifestylePreferences || [],
-          rate: booking.rate ?? null,
-          paymentMethod: booking.paymentMethod || null,
-          notes: booking.notes || '',
-          careRecipients: booking.careRecipients || [],
-          emergencyContact: booking.emergencyContact || null,
-          schedule: booking.schedule || null,
-          bookingRequestId: id,
-          jobId: booking.jobId || null,
-          recurringWeekly: true,
-          tasksCompleted: [],
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        };
-        const batch = db.batch();
-        shiftDocs.forEach(({ date, start, end }) => {
-          batch.set(db!.collection('shifts').doc(), {
-            ...shiftBase,
-            date,
-            startTime: start,
-            endTime: end,
-          });
-        });
-        await batch.commit();
-      }
-
+      // Shift generation is handled by the onBookingAccepted Cloud Function
       addToast('Booking request accepted!', 'success');
     } catch (e) {
       console.error('handleAccept error', e);

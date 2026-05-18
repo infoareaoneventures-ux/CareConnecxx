@@ -541,6 +541,7 @@ export const ClientVisitsPage: React.FC = () => {
       const futureSnap = await db.collection('shifts')
         .where('bookingRequestId', '==', bookingRequestId)
         .where('status', '==', 'scheduled')
+        .where('clientId', '==', user?.uid)
         .get();
       futureSnap.docs.forEach(doc => batch.update(doc.ref, { status: 'cancelled' }));
       await batch.commit();

@@ -1551,6 +1551,7 @@ export const CaregiverBookingsPage: React.FC = () => {
         const futureSnap = await db.collection('shifts')
           .where('bookingRequestId', '==', bookingRequestId)
           .where('status', '==', 'scheduled')
+          .where('caregiverId', '==', uid)
           .get();
         futureSnap.docs.forEach(doc => {
           if (doc.id !== id) {

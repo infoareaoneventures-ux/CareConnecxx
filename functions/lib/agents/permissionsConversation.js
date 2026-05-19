@@ -32,6 +32,9 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPermissions = getPermissions;
 exports.sendClientPermissionsFlow = sendClientPermissionsFlow;
@@ -40,7 +43,27 @@ exports.sendCaregiverPermissionsFlow = sendCaregiverPermissionsFlow;
 exports.handleCaregiverPermissionsReply = handleCaregiverPermissionsReply;
 exports.updatePermissionFromText = updatePermissionFromText;
 const admin = __importStar(require("firebase-admin"));
+const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
 const client_1 = require("../linq/client");
+let _claude = null;
+function getClaude() {
+    if (!_claude)
+        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+    return _claude;
+}
+async function askClaude(system, userText) {
+    var _a;
+    try {
+        const res = await getClaude().messages.create({
+            model: "claude-haiku-4-5-20251001", max_tokens: 100,
+            system, messages: [{ role: "user", content: userText }],
+        });
+        return ((_a = res.content[0].text) !== null && _a !== void 0 ? _a : "").trim();
+    }
+    catch (_b) {
+        return "__error__";
+    }
+}
 const db = admin.firestore();
 // ── Read helper — used by action handlers to check before acting ──────────────
 async function getPermissions(userId) {
@@ -189,37 +212,34 @@ async function handleCaregiverPermissionsReply(phone, chatId, text, session, car
 }
 // ── Permission updates via text ───────────────────────────────────────────────
 async function updatePermissionFromText(userId, userType, phone, chatId, text) {
-    var _a;
-    const lower = text.toLowerCase();
-    const CLIENT_PERM_MAP = {
-        "weekly summar": "canSendWeeklyDigest",
-        "weekly digest": "canSendWeeklyDigest",
-        "health alert": "canSendHealthAlerts",
-        "book automaticall": "canBookAutomatically",
-        "auto-book": "canBookAutomatically",
-        "auto book": "canBookAutomatically",
-    };
-    const CAREGIVER_PERM_MAP = {
-        "auto-decline": "canDeclineJobsAutomatically",
-        "auto decline": "canDeclineJobsAutomatically",
-        "arrival notif": "canSendArrivalNotifications",
-        "share journal": "canShareJournalWithFamily",
-    };
-    const turnOff = /stop|don't|dont|disable|turn off|no more/i.test(text);
-    const turnOn = /start|enable|turn on/i.test(text);
-    const newVal = turnOff ? false : turnOn ? true : null;
-    if (newVal === null)
+    var _a, _b, _c;
+    const permOptions = userType === "client"
+        ? "canSendWeeklyDigest (weekly summaries/digest), canSendHealthAlerts (health alerts), canBookAutomatically (auto-booking)"
+        : "canDeclineJobsAutomatically (auto-decline jobs), canSendArrivalNotifications (arrival notifications), canShareJournalWithFamily (share journal with family)";
+    const raw = await askClaude(`The user is changing a notification or feature permission. ` +
+        `Available permissions for a ${userType}: ${permOptions}. ` +
+        `Determine: (1) which permission they mean, (2) whether they want to enable or disable it. ` +
+        `Reply in JSON: {"permission":"<permissionKey>","action":"enable|disable"}. ` +
+        `If the message is not a permission change request, reply with the literal word: none`, text);
+    if (raw === "__error__" || raw === "none" || !raw.startsWith("{"))
         return;
-    const map = userType === "client" ? CLIENT_PERM_MAP : CAREGIVER_PERM_MAP;
-    let matched = null;
-    for (const [keyword, field] of Object.entries(map)) {
-        if (lower.includes(keyword)) {
-            matched = field;
-            break;
-        }
+    let permission, action;
+    try {
+        const parsed = JSON.parse(raw);
+        permission = (_a = parsed.permission) !== null && _a !== void 0 ? _a : "";
+        action = (_b = parsed.action) !== null && _b !== void 0 ? _b : "";
     }
-    if (!matched)
+    catch (_d) {
         return;
+    }
+    const validPerms = [
+        "canSendWeeklyDigest", "canSendHealthAlerts", "canBookAutomatically",
+        "canDeclineJobsAutomatically", "canSendArrivalNotifications", "canShareJournalWithFamily",
+    ];
+    const matched = validPerms.find(p => p === permission);
+    if (!matched || (action !== "enable" && action !== "disable"))
+        return;
+    const newVal = action === "enable";
     const ref = db.collection("agent_permissions").doc(userId);
     await ref.set({ [matched]: newVal, updatedAt: new Date().toISOString() }, { merge: true });
     const friendly = {
@@ -230,8 +250,8 @@ async function updatePermissionFromText(userId, userType, phone, chatId, text) {
         canSendArrivalNotifications: "arrival notifications",
         canShareJournalWithFamily: "sharing journal entries with families",
     };
-    const label = (_a = friendly[matched]) !== null && _a !== void 0 ? _a : matched;
-    if (newVal === false) {
+    const label = (_c = friendly[matched]) !== null && _c !== void 0 ? _c : matched;
+    if (!newVal) {
         await (0, client_1.sendMessage)(chatId, `Got it. No more ${label}. Just text me if you change your mind.`);
     }
     else {

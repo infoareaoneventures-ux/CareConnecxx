@@ -7,6 +7,7 @@ import { generateToken } from "./tokenService";
 import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../notifications";
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
 import { pushOnboardingDataToZep, addBusinessDataToZep, getZepUserId } from "../memory/zepClient";
+import { buildAndSaveJobPost } from "./buildJobPost";
 
 const db = admin.firestore();
 
@@ -119,7 +120,8 @@ export async function handleOnboardingStep(
       && !step.endsWith("_send_documents") && !step.endsWith("_awaiting_documents")
       && !step.endsWith("_send_bgcheck") && !step.endsWith("_awaiting_bgcheck")
       && !step.endsWith("_send_stripe_connect") && !step.endsWith("_awaiting_stripe")
-      && !step.endsWith("_send_membership") && !step.endsWith("_awaiting_membership")) {
+      && !step.endsWith("_send_membership") && !step.endsWith("_awaiting_membership")
+      && !step.startsWith("job_")) {
     const correction = await detectCorrection(text);
     if (correction) {
       await mergeOnboardingData(phone, { [correction.field]: correction.value });
@@ -161,6 +163,17 @@ export async function handleOnboardingStep(
     case "client_awaiting_payment":
       await sendMessage(chatId, "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳");
       return;
+    case "job_ask_start":        return handleJobAskStart(phone, chatId, text, session);
+    case "job_ask_frequency":    return handleJobAskFrequency(phone, chatId, text, session);
+    case "job_ask_days":         return handleJobAskDays(phone, chatId, text, session);
+    case "job_ask_time":         return handleJobAskTime(phone, chatId, text, session);
+    case "job_ask_care_needs":   return handleJobAskCareNeeds(phone, chatId, text, session);
+    case "job_ask_care_level":   return handleJobAskCareLevel(phone, chatId, text, session);
+    case "job_ask_environment":  return handleJobAskEnvironment(phone, chatId, text, session);
+    case "job_ask_rate":         return handleJobAskRate(phone, chatId, text, session);
+    case "job_ask_pay_method":   return handleJobAskPayMethod(phone, chatId, text, session);
+    case "job_ask_description":  return handleJobAskDescription(phone, chatId, text, session);
+    case "job_confirm_post":     return handleJobConfirmPost(phone, chatId, text, session);
     case "caregiver_ask_name":        return handleCaregiverAskName(phone, chatId, text);
     case "caregiver_ask_location":    return handleCaregiverAskLocation(phone, chatId, text, session);
     case "caregiver_ask_experience":  return handleCaregiverAskExperience(phone, chatId, text, session);
@@ -203,13 +216,20 @@ export async function handleOnboardingStep(
 // ── ask_role ──────────────────────────────────────────────────────────────────
 
 async function handleAskRole(phone: string, chatId: string, text: string): Promise<void> {
-  const norm = text.trim();
-  if (norm === "1" || /need.*care|looking.*care|family|mom|dad|parent/i.test(norm)) {
+  const raw = await parseWithClaude(
+    'The user is choosing between two options: (1) they need care for a loved one (family/client) or ' +
+    '(2) they are a caregiver looking for work. ' +
+    '"1", "family", "need care", "mom", "dad", "parent", "loved one" → client. ' +
+    '"2", "caregiver", "CNA", "HHA", "nurse", "work", "job", "looking for work" → caregiver. ' +
+    'Reply with exactly one word: client or caregiver. If truly unclear, reply: unclear',
+    text
+  );
+  if (raw === "client") {
     await updateSession(phone, { onboardingStep: "client_ask_name", userType: "client" });
     await sendMessage(chatId, "I'd love to help. What's your name?");
     return;
   }
-  if (norm === "2" || /caregiver|cna|hha|nurse|work|job/i.test(norm)) {
+  if (raw === "caregiver") {
     await updateSession(phone, { onboardingStep: "caregiver_ask_name", userType: "caregiver" });
     await sendMessage(chatId,
       "Great — let's get your profile set up. Takes about 5 minutes and everything happens right here.\n\nWhat's your name?"
@@ -340,10 +360,11 @@ async function handleClientAskSchedule(phone: string, chatId: string, text: stri
 }
 
 async function createClientIdentitySession(phone: string): Promise<string> {
+  const caraPhone = encodeURIComponent(process.env.LINQ_PHONE_NUMBER ?? "");
   const session = await getStripe().identity.verificationSessions.create({
     type: "document",
     metadata: { phone },
-    return_url: `${APP_URL}/identity/done`,
+    return_url: `${APP_URL}/client/identity-callback?source=cara&caraPhone=${caraPhone}`,
   });
   await db.collection("agent_sessions").doc(phone).update({ identitySessionId: session.id });
   return session.url!;
@@ -433,15 +454,21 @@ async function handleClientPlanReply(
   text:   string,
   session: AgentSession
 ): Promise<void> {
-  const norm  = text.trim();
+  const raw = await parseWithClaude(
+    '"1", "basic", "cheapest", "starter" → basic. ' +
+    '"2", "family", "middle", "group" → family. ' +
+    '"3", "premium", "best", "top", "priority", "coordinator" → premium. ' +
+    'Reply with exactly one word: basic, family, or premium. If unclear, reply: unclear',
+    text
+  );
   const plans: Record<string, { name: string; priceId: string }> = {
-    "1": { name: "Basic",   priceId: process.env.STRIPE_PLAN_BASIC_PRICE_ID   ?? "" },
-    "2": { name: "Family",  priceId: process.env.STRIPE_PLAN_FAMILY_PRICE_ID  ?? "" },
-    "3": { name: "Premium", priceId: process.env.STRIPE_PLAN_PREMIUM_PRICE_ID ?? "" },
+    basic:   { name: "Basic",   priceId: process.env.STRIPE_PLAN_BASIC_PRICE_ID   ?? "" },
+    family:  { name: "Family",  priceId: process.env.STRIPE_PLAN_FAMILY_PRICE_ID  ?? "" },
+    premium: { name: "Premium", priceId: process.env.STRIPE_PLAN_PREMIUM_PRICE_ID ?? "" },
   };
-  const plan = plans[norm];
+  const plan = plans[raw];
   if (!plan) {
-    await sendMessage(chatId, "Just reply 1, 2, or 3 to choose your plan.");
+    await sendMessage(chatId, "Just reply 1, 2, or 3 to choose your plan — or tell me which tier you'd like (Basic, Family, or Premium).");
     return;
   }
   await mergeOnboardingData(phone, { selectedPlan: plan.name, selectedPlanPriceId: plan.priceId });
@@ -453,12 +480,13 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
   const d    = session.onboardingData ?? {};
   const token = generateToken({ phone, task: "payment" });
 
-  let checkoutUrl = `${APP_URL}/done?task=payment&t=${token}`;
+  const caraPhone = encodeURIComponent(process.env.LINQ_PHONE_NUMBER ?? "");
+  let checkoutUrl = `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`;
   try {
     const stripeSession = await getStripe().checkout.sessions.create({
       mode:               "setup",
       payment_method_types: ["card"],
-      success_url:        `${APP_URL}/done?task=payment&t=${token}`,
+      success_url:        `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`,
       cancel_url:         `${APP_URL}/start`,
       metadata:           { phone, task: "client_payment_setup" },
     });
@@ -572,30 +600,27 @@ async function handleCaregiverAskRate(phone: string, chatId: string, text: strin
 }
 
 async function handleCaregiverAskJobType(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  const norm = text.trim();
-  let jobType: string;
-
-  if (norm === "1" || /occasional|fill.?in|as.?need/i.test(norm)) {
-    jobType = "occasional";
-  } else if (norm === "2" || /part.?time|part time/i.test(norm)) {
-    jobType = "part_time";
-  } else if (norm === "3" || /full.?time|full time/i.test(norm)) {
-    jobType = "full_time";
-  } else {
-    // Claude Haiku fallback for natural language
-    const raw = await parseWithClaude(
-      "The user is describing the type of caregiving work they want. Reply with one of: occasional, part_time, full_time. Reply with just that word.",
-      text
-    );
-    jobType = ["occasional", "part_time", "full_time"].includes(raw) ? raw : "part_time";
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "Are you looking for occasional, part-time, or full-time work? Reply 1, 2, or 3.");
+    return;
   }
-
+  const raw = await parseWithClaude(
+    '"1", occasional, fill-in, as-needed, flexible, sometimes → occasional. ' +
+    '"2", part-time, part time, a few days, some days → part_time. ' +
+    '"3", full-time, full time, every day, all week → full_time. ' +
+    'Reply with exactly one of: occasional, part_time, full_time',
+    text
+  );
+  const jobType = ["occasional", "part_time", "full_time"].includes(raw) ? raw : "part_time";
+  const jobTypeLabel: Record<string, string> = { occasional: "Occasional", part_time: "Part-time", full_time: "Full-time" };
   await mergeOnboardingData(phone, { jobType });
   await updateSession(phone, { onboardingStep: "caregiver_ask_rate" });
   const d = session.onboardingData ?? {};
   const city = (d.city as string) ?? "";
   await sendMessage(chatId,
-    `What's your hourly rate?\n\n` +
+    `${jobTypeLabel[jobType] ?? "Got it"}! What's your hourly rate?\n\n` +
     (city ? `(Most caregivers in ${city} charge $18–28/hr)` : "(Most caregivers charge $18–28/hr)")
   );
 }
@@ -869,13 +894,75 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
       });
 
-      // Client paid → move to permissions
-      await updateSession(phone, { onboardingStep: "client_ask_permissions" });
-
-      // Write intake to Firestore
       const d = session.onboardingData ?? {};
+
+      // Get or create Firebase Auth UID (may already exist from identity step)
+      let uid = session.userId as string | undefined;
+      if (!uid) {
+        try {
+          const userRecord = await admin.auth().getUserByPhoneNumber(phone);
+          uid = userRecord.uid;
+        } catch {
+          try {
+            const newUser = await admin.auth().createUser({
+              phoneNumber: phone,
+              displayName: (d.firstName ?? "") as string,
+            });
+            uid = newUser.uid;
+          } catch (err) {
+            console.error("advanceOnboardingStep(payment) createUser error:", err);
+          }
+        }
+        if (uid) await updateSession(phone, { userId: uid });
+      }
+
+      // Write subscription status to users/{uid} so web app shows membership as active
+      if (uid) {
+        await db.collection("users").doc(uid).set({
+          membershipStatus:   "active",
+          subscriptionActive: true,
+          phone,
+          firstName:          (d.firstName ?? "") as string,
+          updatedAt:          admin.firestore.FieldValue.serverTimestamp(),
+          onboardingProgress: {
+            identityVerified: true,
+            membershipActive: true,
+          },
+        }, { merge: true });
+
+        // Write initial carePlans/{uid} with what we know so far
+        const seniorName   = (d.seniorName   ?? "") as string;
+        const firstName    = seniorName.split(" ")[0] || seniorName;
+        const relationship = (d.relationship ?? "") as string;
+        const city         = (d.city         ?? "") as string;
+        const zipCode      = (d.zipCode      ?? "") as string;
+        const conditions   = (d.conditions   ?? []) as string[];
+        const careNeeds    = (d.careNeeds    ?? []) as string[];
+        const seniorAge    = d.age as number | undefined;
+
+        const recipientKey = `recipient_${firstName.toLowerCase().replace(/[^a-z0-9]/g, "_") || "primary"}`;
+        await db.collection("carePlans").doc(uid).set({
+          clientId: uid,
+          phone,
+          recipientPlans: {
+            [recipientKey]: {
+              name:        seniorName,
+              age:         seniorAge,
+              relationship,
+              careNeeds,
+              conditions,
+              updatedAt:   new Date().toISOString(),
+            },
+          },
+          locationPool: [{ city, zipCode, primary: true }],
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      }
+
+      // Write intake to Firestore for admin records
       await db.collection("clientIntakes").add({
         phone,
+        userId:      uid ?? null,
         firstName:   d.firstName,
         seniorName:  d.seniorName,
         relationship: d.relationship,
@@ -893,18 +980,15 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
 
       // Notify admin of new client signup
       notifyAdminNewClientSignup({
-        clientId:   session.userId ?? phone,
+        clientId:   uid ?? phone,
         firstName:  (d.firstName  ?? "") as string,
         seniorName: (d.seniorName ?? "") as string,
         phone,
         city:       (d.city ?? "") as string,
       }).catch((err) => console.error("notifyAdminNewClientSignup error:", err));
 
-      // Silently create Firebase Auth account so web dashboard login works later
-      await createFirebaseAuthAccount(phone, (d.firstName ?? "") as string);
-
       // Initialize memory files with onboarding data
-      initializeMemoryFiles(session.userId ?? phone, {
+      initializeMemoryFiles(uid ?? phone, {
         seniorName:   d.seniorName   as string | undefined,
         seniorAge:    d.age          as string | undefined,
         conditions:   d.conditions   as string | string[] | undefined,
@@ -914,14 +998,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         relationship: d.relationship as string | undefined,
       }).catch((err) => console.error("initializeMemoryFiles error:", err));
 
-      // Initialize empty memory files not covered by initializeMemoryFiles
       Promise.all([
-        writeMemoryFile(session.userId ?? phone, "recent_episodes", `# Recent Episodes\n`),
-        writeMemoryFile(session.userId ?? phone, "procedural", `# Procedural Notes\n`),
+        writeMemoryFile(uid ?? phone, "recent_episodes", `# Recent Episodes\n`),
+        writeMemoryFile(uid ?? phone, "procedural",      `# Procedural Notes\n`),
       ]).catch((err) => console.error("initializeExtraMemoryFiles error:", err));
 
-      // Push structured onboarding data to Zep — thread already exists from first contact,
-      // this enriches the knowledge graph with senior profile and care details
       pushOnboardingDataToZep({
         phone,
         firstName:   (d.firstName    ?? "") as string,
@@ -935,9 +1016,9 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         timeOfDay:   d.timeOfDay    as string | undefined,
       }).catch((err) => console.error("pushOnboardingDataToZep error:", err));
 
-      // Import and start permissions conversation
-      const { sendClientPermissionsFlow } = await import("./permissionsConversation");
-      await sendClientPermissionsFlow(phone, chatId, session);
+      // Advance to job posting flow instead of going straight to permissions
+      await updateSession(phone, { onboardingStep: "job_ask_start" });
+      await handleJobAskStart(phone, chatId, "", session);
       break;
     }
 
@@ -983,6 +1064,37 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
     case "identity": {
       const step = session.onboardingStep ?? "";
       if (step === "client_awaiting_identity") {
+        // Ensure Firebase Auth account exists and get UID so we can write to users/{uid}
+        let uid = session.userId as string | undefined;
+        if (!uid) {
+          try {
+            const userRecord = await admin.auth().getUserByPhoneNumber(phone);
+            uid = userRecord.uid;
+          } catch {
+            try {
+              const d = session.onboardingData ?? {} as any;
+              const newUser = await admin.auth().createUser({
+                phoneNumber:  phone,
+                displayName:  (d.firstName ?? "") as string,
+              });
+              uid = newUser.uid;
+            } catch (err) {
+              console.error("advanceOnboardingStep(identity) createUser error:", err);
+            }
+          }
+          if (uid) await updateSession(phone, { userId: uid });
+        }
+
+        // Write identityCheckStatus to the web app's users doc
+        if (uid) {
+          await db.collection("users").doc(uid).set({
+            identityCheckStatus:  "verified",
+            identityVerifiedAt:   admin.firestore.FieldValue.serverTimestamp(),
+            phone,
+            updatedAt:            admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        }
+
         await updateSession(phone, { onboardingStep: "client_ask_plan" });
         await handleClientAskPlan(phone, chatId);
       } else if (step === "caregiver_awaiting_identity") {
@@ -1076,6 +1188,387 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       await sendCaregiverPermissionsFlow(phone, chatId, session, d.name as string);
       break;
     }
+  }
+}
+
+// ── JOB POSTING FLOW ──────────────────────────────────────────────────────────
+// Triggered after client pays membership. Mirrors the 6-step PostJobFlow web
+// form and writes to the same Firestore collections so the web dashboard syncs.
+
+async function handleJobAskStart(
+  phone: string, chatId: string, _text: string, session: AgentSession
+): Promise<void> {
+  const d = session.onboardingData ?? {};
+  await sendMessage(chatId,
+    `Your membership is active! 🎉 Let's find the perfect caregiver for ${(d.seniorName as string) ?? "your loved one"}.\n\n` +
+    `When would you like care to start? (e.g. "next Monday", "ASAP", "June 1")`
+  );
+  await updateSession(phone, { onboardingStep: "job_ask_frequency" });
+}
+
+async function handleJobAskFrequency(
+  phone: string, chatId: string, text: string, session: AgentSession
+): Promise<void> {
+  const startDate = await parseWithClaude(
+    "Extract a start date from this message. If the user says 'ASAP' or similar, return 'ASAP'. " +
+    "Otherwise return the date in YYYY-MM-DD format if possible, or a plain text description. Reply with just the date value.",
+    text
+  );
+  await mergeOnboardingData(phone, { jobStartDate: startDate !== "__parse_error__" ? startDate : text.trim() });
+  await updateSession(phone, { onboardingStep: "job_ask_days" });
+  await sendMessage(chatId,
+    "How often do you need help?\n\n" +
+    "1️⃣  Occasional (1–2 days/week)\n" +
+    "2️⃣  Part-time (3–4 days/week)\n" +
+    "3️⃣  Full-time (5+ days/week)"
+  );
+}
+
+async function handleJobAskDays(
+  phone: string, chatId: string, text: string, session: AgentSession
+): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId,
+      "How often do you need help?\n\n" +
+      "1️⃣  Occasional (1–2 days/week)\n" +
+      "2️⃣  Part-time (3–4 days/week)\n" +
+      "3️⃣  Full-time (5+ days/week)"
+    );
+    return;
+  }
+  const raw = await parseWithClaude(
+    'Classify the care frequency. "1", occasional, 1-2 days = occasional. ' +
+    '"2", part-time, part time, 3-4 days = part_time. ' +
+    '"3", full-time, full time, every day, 5+ days = full_time. ' +
+    'Reply with exactly one of: occasional, part_time, full_time',
+    text
+  );
+  const frequency = ["occasional", "part_time", "full_time"].includes(raw) ? raw : "occasional";
+  const freqLabel: Record<string, string> = { occasional: "Occasional", part_time: "Part-time", full_time: "Full-time" };
+  await mergeOnboardingData(phone, { jobFrequency: frequency });
+  await updateSession(phone, { onboardingStep: "job_ask_time" });
+  await sendMessage(chatId,
+    `${freqLabel[frequency] ?? "Got it"}! Which days work best?\n\n(e.g. "Mon, Wed, Fri" or "weekdays" or "every day")`
+  );
+}
+
+async function handleJobAskTime(
+  phone: string, chatId: string, text: string, session: AgentSession
+): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "Which days work best? (e.g. \"Mon, Wed, Fri\" or \"weekdays\")");
+    return;
+  }
+  const raw = await parseWithClaude(
+    'Extract days of the week as a JSON array using full names (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday). ' +
+    '"weekdays" or "mon-fri" = ["Monday","Tuesday","Wednesday","Thursday","Friday"]. ' +
+    '"weekends" = ["Saturday","Sunday"]. ' +
+    '"every day" or "daily" = all 7 days. ' +
+    'Return only a JSON array, nothing else.',
+    text
+  );
+  let days: string[] = [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) days = parsed;
+  } catch { /**/ }
+  if (days.length === 0) days = ["Monday", "Wednesday", "Friday"];
+  await mergeOnboardingData(phone, { jobDays: days });
+  await updateSession(phone, { onboardingStep: "job_ask_care_needs" });
+  await sendMessage(chatId,
+    `${days.length === 7 ? "Every day" : days.join(", ")} — perfect! What time of day works best?\n\n` +
+    "Reply with one or more numbers:\n\n" +
+    "1️⃣  Morning (6am–noon)\n" +
+    "2️⃣  Afternoon (noon–6pm)\n" +
+    "3️⃣  Evening (6pm–10pm)\n" +
+    "4️⃣  Overnight"
+  );
+}
+
+async function handleJobAskCareNeeds(
+  phone: string, chatId: string, text: string, session: AgentSession
+): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId,
+      "What time of day works best?\n\n" +
+      "1️⃣  Morning  2️⃣  Afternoon  3️⃣  Evening  4️⃣  Overnight"
+    );
+    return;
+  }
+  const raw = await parseWithClaude(
+    'Extract the times of day as a JSON array. Valid values: "Morning", "Afternoon", "Evening", "Overnight". ' +
+    '"1" or "morning" or "am" → Morning. "2" or "afternoon" or "noon" → Afternoon. ' +
+    '"3" or "evening" or "night" or "pm" → Evening. "4" or "overnight" or "24" → Overnight. ' +
+    'Return only a JSON array of matching values.',
+    text
+  );
+  let timeOfDay: string[] = [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) timeOfDay = parsed;
+  } catch { /**/ }
+  if (timeOfDay.length === 0) timeOfDay = ["Morning"];
+  const d = session.onboardingData ?? {};
+  await mergeOnboardingData(phone, { jobTimeOfDay: timeOfDay });
+  await updateSession(phone, { onboardingStep: "job_ask_care_level" });
+  await sendMessage(chatId,
+    `Got it — ${timeOfDay.join(" & ")}! What kind of help does ${(d.seniorName as string) ?? "your loved one"} need?\n\n` +
+    "Reply with numbers (pick all that apply):\n\n" +
+    "1️⃣  Mobility & Movement\n" +
+    "2️⃣  Memory Care / Dementia\n" +
+    "3️⃣  Medications\n" +
+    "4️⃣  Personal Care (bathing, dressing)\n" +
+    "5️⃣  Meals & Nutrition\n" +
+    "6️⃣  Transportation\n" +
+    "7️⃣  Light Housekeeping\n" +
+    "8️⃣  Companionship"
+  );
+}
+
+async function handleJobAskCareLevel(
+  phone: string, chatId: string, text: string, session: AgentSession
+): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    const d2 = session.onboardingData ?? {};
+    await sendMessage(chatId,
+      `What kind of help does ${(d2.seniorName as string) ?? "your loved one"} need? Reply with numbers.`
+    );
+    return;
+  }
+  const NEEDS_MAP: Record<string, string> = {
+    "1": "Mobility & Movement", "2": "Memory Care / Dementia",
+    "3": "Medications", "4": "Personal Care",
+    "5": "Meals & Nutrition", "6": "Transportation",
+    "7": "Light Housekeeping", "8": "Companionship",
+  };
+  const raw = await parseWithClaude(
+    'Return a JSON array of care need numbers that match the user\'s message. ' +
+    '1=Mobility, 2=Memory Care/Dementia, 3=Medications, 4=Personal Care (bathing/dressing), ' +
+    '5=Meals/Nutrition, 6=Transportation, 7=Housekeeping, 8=Companionship. ' +
+    'Match by number or keyword. Return only a JSON array of number strings like ["1","3"].',
+    text
+  );
+  let careNeeds: string[] = [];
+  try {
+    const nums = JSON.parse(raw) as string[];
+    if (Array.isArray(nums)) careNeeds = nums.map(n => NEEDS_MAP[n]).filter(Boolean);
+  } catch { /**/ }
+  if (careNeeds.length === 0) careNeeds = ["Companionship"];
+  const d = session.onboardingData ?? {};
+  await mergeOnboardingData(phone, { jobCareNeeds: careNeeds });
+  await updateSession(phone, { onboardingStep: "job_ask_environment" });
+  await sendMessage(chatId,
+    `Noted — ${careNeeds.join(", ")}. How much support does ${(d.seniorName as string) ?? "your loved one"} need overall?\n\n` +
+    "1️⃣  Light — mostly supervision & companionship\n" +
+    "2️⃣  Moderate — hands-on help with some tasks\n" +
+    "3️⃣  Intensive — full assistance with most tasks"
+  );
+}
+
+async function handleJobAskEnvironment(
+  phone: string, chatId: string, text: string, session: AgentSession
+): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId,
+      "How much support is needed?\n1️⃣ Light  2️⃣ Moderate  3️⃣ Intensive"
+    );
+    return;
+  }
+  const raw = await parseWithClaude(
+    '"1", light, supervision, minimal, companion = light. ' +
+    '"2", moderate, some help, hands-on = moderate. ' +
+    '"3", intensive, full assist, full help, a lot = intensive. ' +
+    'Reply with exactly one of: light, moderate, intensive',
+    text
+  );
+  const careLevel = ["light", "moderate", "intensive"].includes(raw) ? raw : "moderate";
+  const levelLabel: Record<string, string> = { light: "Light", moderate: "Moderate", intensive: "Intensive" };
+  await mergeOnboardingData(phone, { jobCareLevel: careLevel });
+  await updateSession(phone, { onboardingStep: "job_ask_rate" });
+  await sendMessage(chatId,
+    `${levelLabel[careLevel] ?? "Got it"}. Two quick things about the home: Are there pets? Is it a smoking household?\n\n` +
+    `(e.g. "dog, non-smoking" or "no pets, non-smoking")`
+  );
+}
+
+async function handleJobAskRate(
+  phone: string, chatId: string, text: string, session: AgentSession
+): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "Are there pets in the home? Is it a smoking household?");
+    return;
+  }
+  const rawPets = await parseWithClaude(
+    'Does the user mention pets (dog, cat, pet, bird, animal) in a positive sense (not "no pet")? Reply yes or no.',
+    text
+  );
+  const rawSmoke = await parseWithClaude(
+    'Does the user mention smoking in a positive sense (not "non-smoking", "no smoking")? Reply yes or no.',
+    text
+  );
+  const petsInHome = rawPets.toLowerCase().startsWith("yes");
+  const smokingHousehold = rawSmoke.toLowerCase().startsWith("yes");
+  const petsLabel = petsInHome ? "pets in home" : "no pets";
+  const smokeLabel = smokingHousehold ? "smoking household" : "non-smoking";
+  const d = session.onboardingData ?? {};
+  const city = (d.city as string) ?? "";
+  await mergeOnboardingData(phone, { petsInHome, smokingHousehold });
+  await updateSession(phone, { onboardingStep: "job_ask_pay_method" });
+  await sendMessage(chatId,
+    `Got it — ${petsLabel}, ${smokeLabel}. What hourly rate are you hoping to pay?\n\n` +
+    (city
+      ? `Most families in ${city} pay $18–$28/hr. Reply with a number or "flexible".`
+      : `Most families pay $18–$28/hr. Reply with a number or "flexible".`)
+  );
+}
+
+async function handleJobAskPayMethod(
+  phone: string, chatId: string, text: string, session: AgentSession
+): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "What hourly rate are you hoping to pay? (or \"flexible\")");
+    return;
+  }
+  const raw = await parseWithClaude(
+    'Extract an hourly pay rate. If the user says flexible, open, negotiable, or similar, return "flexible". ' +
+    'Otherwise extract just the number (e.g. 20, 22.50). Return only the number or the word flexible.',
+    text
+  );
+  let hourlyRate: number | "flexible" = "flexible";
+  if (raw !== "flexible") {
+    const n = parseFloat(raw);
+    if (!isNaN(n) && n >= 5 && n <= 200) hourlyRate = n;
+  }
+  const rateLabel = hourlyRate === "flexible" ? "flexible rate" : `$${hourlyRate}/hr`;
+  await mergeOnboardingData(phone, { jobHourlyRate: hourlyRate });
+  await updateSession(phone, { onboardingStep: "job_ask_description" });
+  await sendMessage(chatId,
+    `${rateLabel} — sounds good! How will you pay the caregiver?\n\n` +
+    "1️⃣  Credit/debit card\n" +
+    "2️⃣  Cash directly"
+  );
+}
+
+async function handleJobAskDescription(
+  phone: string, chatId: string, text: string, session: AgentSession
+): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "How will you pay the caregiver?\n1️⃣ Card  2️⃣ Cash");
+    return;
+  }
+  const raw = await parseWithClaude(
+    '"1", card, credit, debit, stripe = card. "2", cash, direct, hand = cash. ' +
+    'Reply with exactly one of: card, cash',
+    text
+  );
+  const paymentMethod = raw === "cash" ? "cash" : "card";
+  const payLabel = paymentMethod === "cash" ? "Cash" : "Card";
+  const d = session.onboardingData ?? {};
+  await mergeOnboardingData(phone, { jobPaymentMethod: paymentMethod });
+  await updateSession(phone, { onboardingStep: "job_confirm_post" });
+  await sendMessage(chatId,
+    `${payLabel} — perfect! Last step: in 1–3 sentences, describe a typical day of care for ` +
+    `${(d.seniorName as string) ?? "your loved one"}. What should a caregiver know?`
+  );
+}
+
+async function handleJobConfirmPost(
+  phone: string, chatId: string, text: string, session: AgentSession
+): Promise<void> {
+  const norm = text.trim().toUpperCase();
+
+  // If this is the first time we're here, store description and show summary
+  const d = session.onboardingData ?? {};
+  if (!(d as any).jobDescription) {
+    await mergeOnboardingData(phone, { jobDescription: text.trim() });
+
+    // Refresh onboarding data after merge
+    const refreshed = await db.collection("agent_sessions").doc(phone).get();
+    const rd = (refreshed.data()?.onboardingData ?? {}) as Record<string, unknown>;
+
+    const rateLabel     = rd.jobHourlyRate === "flexible" ? "flexible rate" : `$${rd.jobHourlyRate}/hr`;
+    const payLabel      = rd.jobPaymentMethod === "cash" ? "cash" : "card";
+    const daysArr       = Array.isArray(rd.jobDays)       ? (rd.jobDays as string[]).join(", ") : "—";
+    const timeArr       = Array.isArray(rd.jobTimeOfDay)  ? (rd.jobTimeOfDay as string[]).join(", ") : "—";
+    const needsArr      = Array.isArray(rd.jobCareNeeds)  ? (rd.jobCareNeeds as string[]).join(", ") : "—";
+    const levelLabel    = (rd.jobCareLevel as string) ?? "moderate";
+    const startLabel    = (rd.jobStartDate as string) ?? "ASAP";
+    const frequencyMap: Record<string, string> = { occasional: "Occasional", part_time: "Part-time", full_time: "Full-time" };
+    const freqLabel     = frequencyMap[(rd.jobFrequency as string) ?? "occasional"] ?? "Occasional";
+
+    await sendMessage(chatId,
+      `Here's your care request:\n\n` +
+      `📅 Starting ${startLabel} · ${freqLabel} · ${daysArr} · ${timeArr}\n` +
+      `🏠 ${(rd.city as string) ?? "—"}, ${(rd.zipCode as string) ?? ""}\n` +
+      `💛 ${needsArr}\n` +
+      `📊 ${levelLabel.charAt(0).toUpperCase() + levelLabel.slice(1)} care\n` +
+      `💰 ${rateLabel} · ${payLabel}\n\n` +
+      `Shall I post this? Reply YES to go live, or NO to make a change.`
+    );
+    return;
+  }
+
+  // User replied YES/NO to the confirmation
+  if (norm === "YES" || norm === "Y" || norm === "YEP" || norm === "SURE" || norm === "OK" || norm === "OKAY") {
+    const uid = session.userId as string | undefined;
+    if (!uid) {
+      await sendMessage(chatId, "Something went wrong — please try again or head to the app to complete your care request.");
+      return;
+    }
+
+    try {
+      const refreshed = await db.collection("agent_sessions").doc(phone).get();
+      const jobData   = (refreshed.data()?.onboardingData ?? {}) as Record<string, unknown>;
+      const onboarding = jobData; // same object holds both
+
+      const jobId = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
+
+      const city = (onboarding.city as string) ?? "your area";
+      await updateSession(phone, { onboardingStep: "client_ask_permissions" });
+      await sendMessage(chatId,
+        `Your care request is live! 🎉\n\n` +
+        `I've notified caregivers within 25 miles of ${city}. ` +
+        `I'll message you as soon as someone applies!\n\n` +
+        `You can also browse caregivers and manage everything at ${APP_URL}/client/dashboard`
+      );
+
+      // Move to permissions after a short pause
+      const { sendClientPermissionsFlow } = await import("./permissionsConversation");
+      const freshSnap = await db.collection("agent_sessions").doc(phone).get();
+      await sendClientPermissionsFlow(phone, chatId, freshSnap.data() as AgentSession);
+
+      console.log(`[handleJobConfirmPost] Job posted: ${jobId} for uid=${uid}`);
+    } catch (err) {
+      console.error("[handleJobConfirmPost] buildAndSaveJobPost error:", err);
+      await sendMessage(chatId, "There was a problem posting your request — our team has been notified. Try again or visit " + APP_URL + "/client/post-job");
+    }
+  } else if (norm === "NO" || norm === "N" || norm === "NOPE") {
+    // Clear description so the summary won't re-fire and restart from the top
+    await db.collection("agent_sessions").doc(phone).update({
+      "onboardingData.jobDescription": admin.firestore.FieldValue.delete(),
+      onboardingStep: "job_ask_start",
+    });
+    await sendMessage(chatId,
+      "No problem! Let's go through it again. When would you like care to start?"
+    );
+  } else {
+    await sendMessage(chatId, "Just reply YES to post or NO to make a change.");
   }
 }
 

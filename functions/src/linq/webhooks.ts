@@ -402,16 +402,6 @@ async function handleCareNotes(
 async function classifyFeedbackSentiment(
   text: string
 ): Promise<"positive" | "negative" | "neutral"> {
-  const upper = text.trim().toUpperCase();
-
-  const POSITIVES = ["👍", "GREAT", "GOOD", "AMAZING", "PERFECT", "LOVED", "LOVE",
-    "EXCELLENT", "WONDERFUL", "FANTASTIC", "YES", "👏", "AWESOME"];
-  const NEGATIVES = ["NO", "BAD", "TERRIBLE", "AWFUL", "WRONG", "ISSUE", "PROBLEM",
-    "CONCERNED", "CONCERN", "NOT HAPPY", "UNHAPPY", "👎", "WORRIED", "WORRY"];
-
-  if (POSITIVES.some((w) => upper.includes(w))) return "positive";
-  if (NEGATIVES.some((w) => upper.includes(w))) return "negative";
-
   try {
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -420,6 +410,7 @@ async function classifyFeedbackSentiment(
       max_tokens: 10,
       system:
         "Classify this feedback about a home care visit as positive, negative, or neutral. " +
+        "Consider tone, context, and nuance — not just keywords. " +
         "Reply with one word: POSITIVE, NEGATIVE, or NEUTRAL.",
       messages: [{ role: "user", content: text }],
     });
@@ -845,15 +836,32 @@ async function handleInbound(event: unknown): Promise<void> {
   }
 
   // ── Bereavement detection — before intent classification ───────────────────
-  if (isBereavementTrigger(text) && !(session as any).bereavementMode) {
+  if (await isBereavementTrigger(text) && !(session as any).bereavementMode) {
     const seniorName = (session as any).seniorName ?? "your loved one";
     await activateBereavementMode(session.userId ?? phone, chatId, phone, seniorName as string);
     return;
   }
   // If already in bereavement mode — allow explicit exit or send gentle acknowledgment
   if ((session as any).bereavementMode) {
-    const EXIT_PHRASES = ["ready to continue", "back to normal", "resume service", "ready for care", "need a caregiver", "need care again", "exit bereavement"];
-    const isExit = EXIT_PHRASES.some((p) => text.toLowerCase().includes(p));
+    let isExit = false;
+    try {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const res = await claude.messages.create({
+        model:      "claude-haiku-4-5-20251001",
+        max_tokens: 5,
+        system:
+          "The user is in bereavement mode after losing a loved one. " +
+          "Reply YES if they are clearly expressing that they are ready to resume normal service " +
+          "(e.g. they need a caregiver, want to continue, are ready). " +
+          "Reply NO if they are still grieving or just checking in. " +
+          "Reply with only YES or NO.",
+        messages: [{ role: "user", content: text }],
+      });
+      isExit = ((res.content[0] as { text: string }).text ?? "").trim().toUpperCase().startsWith("Y");
+    } catch {
+      isExit = false;
+    }
     if (isExit) {
       await db.collection("agent_sessions").doc(phone).update({ bereavementMode: admin.firestore.FieldValue.delete() });
       await sendMessage(chatId, "Of course. I'm here whenever you need me. What can I help you with?");

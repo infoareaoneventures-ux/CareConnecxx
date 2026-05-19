@@ -1,27 +1,30 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ShieldCheck, Loader2, AlertCircle, CheckCircle } from 'lucide-react';
+import { ShieldCheck, Loader2, AlertCircle, CheckCircle, MessageCircle } from 'lucide-react';
 import { auth, db } from '../../lib/firebase';
 
 type Status = 'waiting' | 'verified' | 'requires_input' | 'canceled' | 'timeout';
 
-/**
- * Landing page Stripe redirects to after the hosted Identity flow.
- * Subscribes to the user doc; the webhook flips `identityCheckStatus` to
- * 'verified' asynchronously. When that arrives, we bounce to `?next=`.
- */
 export default function IdentityCallback() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const next = params.get('next') || '/client/find-caregivers';
+
+  const sourceCara  = params.get('source') === 'cara';
+  const caraPhone   = params.get('caraPhone') ?? '';
+  const isMobile    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  const showBackBtn = sourceCara && isMobile && !!caraPhone;
 
   const [status, setStatus] = useState<Status>('waiting');
 
   useEffect(() => {
     const uid = auth.currentUser?.uid;
     if (!uid) {
-      navigate('/login');
-      return;
+      // SMS-originated users may not be logged in via web — just wait for webhook
+      const timeout = window.setTimeout(() => {
+        setStatus(prev => (prev === 'waiting' ? 'timeout' : prev));
+      }, 30000);
+      return () => window.clearTimeout(timeout);
     }
 
     const unsub = db.collection('users').doc(uid).onSnapshot(doc => {
@@ -39,11 +42,12 @@ export default function IdentityCallback() {
   }, [navigate]);
 
   useEffect(() => {
-    if (status === 'verified') {
+    // On mobile Cara flow: don't auto-navigate — let the user tap "Go back to messages"
+    if (status === 'verified' && !showBackBtn) {
       const t = window.setTimeout(() => navigate(next, { replace: true }), 1200);
       return () => window.clearTimeout(t);
     }
-  }, [status, next, navigate]);
+  }, [status, next, navigate, showBackBtn]);
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -70,7 +74,28 @@ export default function IdentityCallback() {
                 <CheckCircle className="w-8 h-8 text-green-600" />
               </div>
               <h1 className="text-lg font-bold text-slate-900 mb-2">You're verified!</h1>
-              <p className="text-sm text-slate-600">Redirecting you back…</p>
+              {showBackBtn ? (
+                <>
+                  <p className="text-sm text-slate-600 mb-5">
+                    All done! Cara is ready to continue setting up your care.
+                  </p>
+                  <a
+                    href={`sms:${caraPhone}`}
+                    className="flex items-center justify-center gap-2 w-full py-3 px-5 rounded-full bg-primary-600 hover:bg-primary-700 text-white font-semibold text-sm transition-colors mb-3"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    Go back to messages
+                  </a>
+                  <button
+                    onClick={() => navigate(next, { replace: true })}
+                    className="text-xs text-slate-500 hover:text-slate-700 underline"
+                  >
+                    Continue in the app
+                  </button>
+                </>
+              ) : (
+                <p className="text-sm text-slate-600">Redirecting you back…</p>
+              )}
             </>
           )}
 

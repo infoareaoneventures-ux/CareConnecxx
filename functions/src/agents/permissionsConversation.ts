@@ -1,5 +1,22 @@
 import * as admin from "firebase-admin";
+import Anthropic from "@anthropic-ai/sdk";
 import { sendMessage, AgentSession } from "../linq/client";
+
+let _claude: Anthropic | null = null;
+function getClaude(): Anthropic {
+  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return _claude;
+}
+
+async function askClaude(system: string, userText: string): Promise<string> {
+  try {
+    const res = await getClaude().messages.create({
+      model: "claude-haiku-4-5-20251001", max_tokens: 100,
+      system, messages: [{ role: "user", content: userText }],
+    });
+    return ((res.content[0] as { text: string }).text ?? "").trim();
+  } catch { return "__error__"; }
+}
 
 const db = admin.firestore();
 
@@ -238,38 +255,37 @@ export async function updatePermissionFromText(
   chatId:   string,
   text:     string
 ): Promise<void> {
-  const lower = text.toLowerCase();
+  const permOptions = userType === "client"
+    ? "canSendWeeklyDigest (weekly summaries/digest), canSendHealthAlerts (health alerts), canBookAutomatically (auto-booking)"
+    : "canDeclineJobsAutomatically (auto-decline jobs), canSendArrivalNotifications (arrival notifications), canShareJournalWithFamily (share journal with family)";
 
-  const CLIENT_PERM_MAP: Record<string, keyof AgentPermissions> = {
-    "weekly summar": "canSendWeeklyDigest",
-    "weekly digest": "canSendWeeklyDigest",
-    "health alert":  "canSendHealthAlerts",
-    "book automaticall": "canBookAutomatically",
-    "auto-book":     "canBookAutomatically",
-    "auto book":     "canBookAutomatically",
-  };
+  const raw = await askClaude(
+    `The user is changing a notification or feature permission. ` +
+    `Available permissions for a ${userType}: ${permOptions}. ` +
+    `Determine: (1) which permission they mean, (2) whether they want to enable or disable it. ` +
+    `Reply in JSON: {"permission":"<permissionKey>","action":"enable|disable"}. ` +
+    `If the message is not a permission change request, reply with the literal word: none`,
+    text
+  );
 
-  const CAREGIVER_PERM_MAP: Record<string, keyof AgentPermissions> = {
-    "auto-decline":      "canDeclineJobsAutomatically",
-    "auto decline":      "canDeclineJobsAutomatically",
-    "arrival notif":     "canSendArrivalNotifications",
-    "share journal":     "canShareJournalWithFamily",
-  };
+  if (raw === "__error__" || raw === "none" || !raw.startsWith("{")) return;
 
-  const turnOff = /stop|don't|dont|disable|turn off|no more/i.test(text);
-  const turnOn  = /start|enable|turn on/i.test(text);
-  const newVal  = turnOff ? false : turnOn ? true : null;
-  if (newVal === null) return;
+  let permission: string, action: string;
+  try {
+    const parsed = JSON.parse(raw);
+    permission = parsed.permission ?? "";
+    action     = parsed.action     ?? "";
+  } catch { return; }
 
-  const map = userType === "client" ? CLIENT_PERM_MAP : CAREGIVER_PERM_MAP;
-  let matched: keyof AgentPermissions | null = null;
-  for (const [keyword, field] of Object.entries(map)) {
-    if (lower.includes(keyword)) { matched = field; break; }
-  }
+  const validPerms: (keyof AgentPermissions)[] = [
+    "canSendWeeklyDigest", "canSendHealthAlerts", "canBookAutomatically",
+    "canDeclineJobsAutomatically", "canSendArrivalNotifications", "canShareJournalWithFamily",
+  ];
+  const matched = validPerms.find(p => p === permission);
+  if (!matched || (action !== "enable" && action !== "disable")) return;
 
-  if (!matched) return;
-
-  const ref  = db.collection("agent_permissions").doc(userId);
+  const newVal = action === "enable";
+  const ref = db.collection("agent_permissions").doc(userId);
   await ref.set({ [matched]: newVal, updatedAt: new Date().toISOString() }, { merge: true });
 
   const friendly: Record<string, string> = {
@@ -280,12 +296,9 @@ export async function updatePermissionFromText(
     canSendArrivalNotifications: "arrival notifications",
     canShareJournalWithFamily:   "sharing journal entries with families",
   };
-
-  const label = friendly[matched as string] ?? matched;
-  if (newVal === false) {
-    await sendMessage(chatId,
-      `Got it. No more ${label}. Just text me if you change your mind.`
-    );
+  const label = friendly[matched] ?? matched;
+  if (!newVal) {
+    await sendMessage(chatId, `Got it. No more ${label}. Just text me if you change your mind.`);
   } else {
     const resumeLabel = label.includes("book") ? "asking before booking" : `sending ${label} again`;
     await sendMessage(chatId, `Sure thing. I'll go back to ${resumeLabel}.`);

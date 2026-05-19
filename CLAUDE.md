@@ -105,3 +105,38 @@ Firebase config is typically embedded via `lib/firebase.ts` (check for hardcoded
 - All user input going to Firestore should be sanitized via `utils/sanitize.ts`
 - Stripe Connect is used for caregiver payouts; instant payouts are a separate flow via `components/caregiver/InstantPayoutModal.tsx`
 - `services/api.ts` is the authoritative place to add new Firestore operations — avoid direct `db` calls in components
+
+## Cara — AI-Agentic Rules (MANDATORY)
+
+Cara is a fully AI-agentic assistant powered by Claude. Every piece of code that touches Cara MUST follow these rules:
+
+### Always use Claude AI for user input understanding
+- **NEVER** use regex, hardcoded keyword arrays, `.includes()`, or string equality to parse the MEANING or INTENT of free-form user SMS text
+- **ALWAYS** call `parseWithClaude(systemPrompt, userText)` (Claude Haiku) to extract structured values from any natural language input
+- **ALWAYS** add an `isQuestionOrOther(text)` check at the top of every conversational handler so Cara can answer mid-flow questions before re-asking the current question
+
+### The `parseWithClaude` pattern (use this in every handler)
+```typescript
+const raw = await parseWithClaude(
+  '"1" or "basic" or "cheapest" → basic. "2" or "family" → family. ...',
+  text
+);
+const validated = ["basic","family","premium"].includes(raw) ? raw : "basic";
+```
+
+### What IS allowed without Claude
+- `norm === "YES" || norm === "NO"` when the system explicitly said "Reply YES or NO" (strict binary SMS protocol)
+- Email format regex for validation (not intent parsing)
+- STOP/UNSUBSCRIBE/QUIT keywords (SMS carrier opt-out protocol requirement)
+- Safety/crisis keyword fast-path in `crisisDetector.ts` (speed is life-critical; Claude can't be the only gate)
+
+### New Cara handlers checklist
+Every new conversational step handler must have:
+1. `isQuestionOrOther` check → answer question → re-ask current question
+2. `parseWithClaude` for all user input → validate the returned value → store
+3. Conversational acknowledgment of what the user said before moving to the next question
+4. `sendMessage` with the next question
+
+### Model to use
+- **Claude Haiku** (`claude-haiku-4-5-20251001`) for all `parseWithClaude` calls — fast and cheap
+- **Claude Sonnet** for QA, complex reasoning, or multi-step decisions

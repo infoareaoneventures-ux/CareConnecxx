@@ -404,13 +404,6 @@
         { "fieldPath": "clientId",    "order": "ASCENDING" },
         { "fieldPath": "triggeredAt", "order": "DESCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "rate_limits",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "windowStart", "order": "ASCENDING" }
-      ]
     }
   ],
   "fieldOverrides": [

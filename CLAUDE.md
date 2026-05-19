@@ -29,7 +29,11 @@ npm --prefix functions ci && npm --prefix functions run build
 - **Frontend**: React 18, TypeScript, Vite 5, Tailwind CSS 4
 - **Backend**: Firebase (Auth, Firestore, Cloud Functions, Storage, Messaging)
 - **Payments**: Stripe subscriptions (clients) + Stripe Connect (caregiver payouts)
-- **AI/ML**: Google GenAI (`@google/genai`) + TensorFlow.js for caregiver matching
+- **AI**: Anthropic Claude (unified — both frontend and backend)
+  - Frontend calls via `aiProxy` Firebase Function (server-side key, auth-gated, rate-limited)
+  - Claude Haiku (`claude-haiku-4-5-20251001`): parseJobRequest, generateShiftNote, suggestRate, intent classification, health signals
+  - Claude Sonnet (`claude-sonnet-4-6`): conversationalBooking, searchCaregivers, weekly digest, dispute analysis
+- **ML**: TensorFlow.js for caregiver matching scoring
 - **Video**: Twilio Video for live caregiver interviews
 - **Background checks**: Checkr via Cloud Functions webhooks
 - **Error tracking**: Sentry (dsn via `VITE_SENTRY_DSN`)

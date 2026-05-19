@@ -37,6 +37,7 @@ exports.runMatchingForClient = runMatchingForClient;
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
 const executionAgent_1 = require("./executionAgent");
+const learnedFacts_1 = require("../memory/learnedFacts");
 const db = admin.firestore();
 function computeMatchScore(caregiver, intake) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q;
@@ -191,6 +192,32 @@ async function runMatchingForClient(phone, chatId, intake, session) {
         const seniorName = ((_k = intake.seniorName) !== null && _k !== void 0 ? _k : "your loved one");
         const needs = ((_l = intake.careNeeds) !== null && _l !== void 0 ? _l : []);
         const appUrl = (_m = process.env.APP_URL) !== null && _m !== void 0 ? _m : "https://cara.app";
+        const userId = (_o = session === null || session === void 0 ? void 0 : session.userId) !== null && _o !== void 0 ? _o : phone;
+        // Surface remembered client preferences so Cara can reference them naturally
+        const learnedFacts = await (0, learnedFacts_1.getRelevantFacts)(userId).catch(() => []);
+        const factsContext = learnedFacts.length > 0
+            ? `\n\n🧠 KNOWN PREFERENCES (learned from past conversations):\n${learnedFacts.map(f => `- ${f.fact}`).join("\n")}\nIf the top match aligns with a known preference, mention it naturally (e.g. "You mentioned preferring female caregivers — Maria fits that perfectly.").`
+            : "";
+        // Compute a simple trust score (0-100) for each caregiver
+        function caregiversTrustScore(c) {
+            var _a, _b, _c;
+            let s = 0;
+            const bgStatus = (_a = c.backgroundCheckStatus) !== null && _a !== void 0 ? _a : (c.pendingBackgroundCheck ? "pending" : "clear");
+            if (bgStatus === "clear")
+                s += 30;
+            const approvedAt = c.approvedAt;
+            if (approvedAt) {
+                const months = Math.floor((Date.now() - new Date(approvedAt).getTime()) / (30 * 24 * 60 * 60 * 1000));
+                s += Math.min(months, 12) / 12 * 20;
+            }
+            if (c.rating != null)
+                s += (c.rating / 5) * 20;
+            const vStatus = c.verificationStatus;
+            if (vStatus === "approved" || vStatus === "checkr_clear")
+                s += 15;
+            s += (Math.min((_c = (_b = c.certifications) === null || _b === void 0 ? void 0 : _b.length) !== null && _c !== void 0 ? _c : 0, 3) / 3) * 15;
+            return Math.round(s);
+        }
         // Build structured match data for the execution agent's context
         const matchData = top3.map((c, i) => {
             var _a, _b, _c, _d, _e, _f, _g;
@@ -209,6 +236,7 @@ async function runMatchingForClient(phone, chatId, intake, session) {
                 rating: (_c = c.rating) !== null && _c !== void 0 ? _c : null,
                 bgStatus,
                 trustSignals: trustLines,
+                trustScore: caregiversTrustScore(c),
                 pendingBg: !!c.pendingBackgroundCheck,
                 topReason: (_d = ms.reasoning[0]) !== null && _d !== void 0 ? _d : "available and local",
                 allReasons: ms.reasoning,
@@ -222,6 +250,7 @@ async function runMatchingForClient(phone, chatId, intake, session) {
         // Build the matching agent system prompt with full caregiver context baked in
         const matchSummary = matchData
             .map(m => `${m.index}. ${m.name} — ${m.topReason}. $${m.hourlyRate}/hr` +
+            (m.trustScore >= 60 ? ` · ${m.trustScore}⭐ Trust` : "") +
             (m.trustSignals.length ? `\n   ✓ ${m.trustSignals.join(" · ")}` : "") +
             (m.pendingBg ? `\n   ⏳ Background check in progress` : "") +
             `\n   Profile: ${m.profileUrl}` +
@@ -230,14 +259,14 @@ async function runMatchingForClient(phone, chatId, intake, session) {
             .join("\n\n");
         const agentSystemPrompt = `You are Cara's matching agent. You found these caregivers for ${seniorName}:\n\n` +
             `${matchSummary}\n\n` +
-            `Care needs: ${needs.join(", ") || "general"}\n\n` +
-            `Your job:\n` +
+            `Care needs: ${needs.join(", ") || "general"}` +
+            factsContext +
+            `\n\nYour job:\n` +
             `- First turn: write a warm, specific intro message presenting these caregivers\n` +
             `- Follow-up turns: answer questions about the specific caregivers from the details above\n` +
             `- If asked about a caregiver not in this list, say you only have details for the ones you presented\n\n` +
             `Rules: plain text only, no bullet points, no headers. Warm, direct, specific. ` +
             `Under 300 characters per message when possible. End the intro with "Which ones would you like to meet?"`;
-        const userId = (_o = session === null || session === void 0 ? void 0 : session.userId) !== null && _o !== void 0 ? _o : phone;
         // Roster check — reuse existing agent if one is active for this user
         const existingAgent = await (0, executionAgent_1.getActiveAgentForUser)(phone, "matching");
         let agentId;

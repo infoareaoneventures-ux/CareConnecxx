@@ -5,6 +5,45 @@ import { haversineMiles } from "../ai/scoring";
 import { sendMessage, startTyping, getOrCreateSession } from "../linq/client";
 import { sendViaInteractionAgent, AgentOutput } from "../agents/caraAgent";
 
+const MATCH_PUSH_THRESHOLD = 80; // push only when skill overlap is ≥ 80%
+
+function computeSimpleMatchScore(cgSkills: string[], jobCareTypes: string[]): number {
+  if (!jobCareTypes.length) return 50;
+  const cgNorm = cgSkills.map(s => s.toLowerCase());
+  const matches = jobCareTypes.filter(t => cgNorm.some(s => s.includes(t.toLowerCase()) || t.toLowerCase().includes(s)));
+  return Math.round((matches.length / jobCareTypes.length) * 100);
+}
+
+async function sendJobMatchPush(
+  caregiverId: string,
+  jobId: string,
+  jobTitle: string,
+  city: string,
+  matchScore: number
+): Promise<void> {
+  const userSnap = await admin.firestore().collection("caregivers").doc(caregiverId).get();
+  const fcmTokens: string[] = userSnap.data()?.fcmTokens ?? [];
+  if (!fcmTokens.length) return;
+
+  const sends = fcmTokens.slice(0, 5).map(token =>
+    admin.messaging().send({
+      token,
+      notification: {
+        title: "New job match for you!",
+        body: `${jobTitle} · ${city} — ${matchScore}% match`,
+      },
+      data: {
+        type:       "job_match",
+        jobId,
+        matchScore: String(matchScore),
+        deepLink:   `/caregiver/jobs/${jobId}`,
+      },
+      android: { priority: "high" },
+    }).catch(() => { /* ignore invalid token errors */ })
+  );
+  await Promise.all(sends);
+}
+
 const db = admin.firestore();
 
 const NOTIFY_RADIUS_MILES = 25;
@@ -70,6 +109,8 @@ export async function notifyAreaCaregivers(
   }
 
   let notifiedCount = 0;
+  let pushSentCount = 0;
+  const jobTitle = careTypes.length > 0 ? `${careTypes.join(", ")} job` : "Care job";
 
   for (const doc of snap.docs) {
     const cg    = doc.data();
@@ -122,6 +163,21 @@ export async function notifyAreaCaregivers(
       } as any);
 
       notifiedCount++;
+
+      // FCM push for high-match caregivers (cap at 50)
+      if (pushSentCount < 50) {
+        const cgSkills: string[] = [
+          ...(cg.specialties ?? []),
+          ...(cg.medicalSkills ?? []),
+          ...(cg.certifications ?? []),
+        ];
+        const matchScore = computeSimpleMatchScore(cgSkills, careTypes);
+        if (matchScore >= MATCH_PUSH_THRESHOLD) {
+          await sendJobMatchPush(doc.id, jobId, jobTitle, city || "your area", matchScore)
+            .catch(err => console.error(`[notifyAreaCaregivers] push failed for ${doc.id}:`, err));
+          pushSentCount++;
+        }
+      }
     } catch (err) {
       console.error(`[notifyAreaCaregivers] Failed for caregiver ${doc.id}:`, err);
     }

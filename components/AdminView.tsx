@@ -21,6 +21,7 @@ import { AdminReviews } from './admin/AdminReviews';
 import { CaregiverVerificationDashboard } from './admin/CaregiverVerificationDashboard';
 import { CoordinatorManagement } from './admin/CoordinatorManagement';
 import { AdminBlogManager } from './admin/AdminBlogManager';
+import { AuditTrail } from './admin/AuditTrail';
 
 interface AdminViewProps {
   onBack: () => void;
@@ -29,7 +30,7 @@ interface AdminViewProps {
 type TabId =
   | 'overview' | 'clients' | 'caregivers' | 'verification' | 'coordinators'
   | 'appointments' | 'reviews' | 'intakes' | 'matching' | 'assignments'
-  | 'finance' | 'disputes' | 'tickets' | 'messages' | 'blog';
+  | 'finance' | 'disputes' | 'tickets' | 'messages' | 'blog' | 'audit';
 
 const StatCard = ({ icon: Icon, label, value, trend, color, onClick }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -164,6 +165,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
       label: 'Content',
       items: [
         { id: 'blog' as TabId, label: 'Blog Manager', icon: BookOpen },
+      ],
+    },
+    {
+      label: 'Security',
+      items: [
+        { id: 'audit' as TabId, label: 'Audit Log', icon: Shield },
       ],
     },
   ];
@@ -452,6 +459,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {activeTab === 'tickets' && (
               <TicketManager onShowToast={(msg, type) => { if (type === 'error') showToast(msg); }} />
             )}
+
+            {/* ── AUDIT LOG ────────────────────────────── */}
+            {activeTab === 'audit' && <AuditTrail />}
           </div>
         )}
       </main>

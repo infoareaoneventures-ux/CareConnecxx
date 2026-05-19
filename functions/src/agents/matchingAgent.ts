@@ -6,6 +6,7 @@ import {
   runExecutionAgentTurn,
   updateExecutionAgentContext,
 } from "./executionAgent";
+import { getRelevantFacts } from "../memory/learnedFacts";
 
 const db = admin.firestore();
 
@@ -225,11 +226,35 @@ export async function runMatchingForClient(
     const seniorName = (intake.seniorName ?? "your loved one") as string;
     const needs      = (intake.careNeeds ?? []) as string[];
     const appUrl     = process.env.APP_URL ?? "https://cara.app";
+    const userId     = (session as any)?.userId ?? phone;
+
+    // Surface remembered client preferences so Cara can reference them naturally
+    const learnedFacts = await getRelevantFacts(userId).catch(() => [] as Awaited<ReturnType<typeof getRelevantFacts>>);
+    const factsContext = learnedFacts.length > 0
+      ? `\n\n🧠 KNOWN PREFERENCES (learned from past conversations):\n${learnedFacts.map(f => `- ${f.fact}`).join("\n")}\nIf the top match aligns with a known preference, mention it naturally (e.g. "You mentioned preferring female caregivers — Maria fits that perfectly.").`
+      : "";
+
+    // Compute a simple trust score (0-100) for each caregiver
+    function caregiversTrustScore(c: CaregiverCandidate): number {
+      let s = 0;
+      const bgStatus = (c as any).backgroundCheckStatus ?? (c.pendingBackgroundCheck ? "pending" : "clear");
+      if (bgStatus === "clear") s += 30;
+      const approvedAt = (c as any).approvedAt as string | undefined;
+      if (approvedAt) {
+        const months = Math.floor((Date.now() - new Date(approvedAt).getTime()) / (30 * 24 * 60 * 60 * 1000));
+        s += Math.min(months, 12) / 12 * 20;
+      }
+      if (c.rating != null) s += (c.rating / 5) * 20;
+      const vStatus = (c as any).verificationStatus as string | undefined;
+      if (vStatus === "approved" || vStatus === "checkr_clear") s += 15;
+      s += (Math.min(c.certifications?.length ?? 0, 3) / 3) * 15;
+      return Math.round(s);
+    }
 
     // Build structured match data for the execution agent's context
     const matchData = top3.map((c, i) => {
       const ms          = top3Scores[i];
-      const bgStatus    = c.backgroundCheckStatus ?? (c.pendingBackgroundCheck ? "pending" : "clear");
+      const bgStatus    = (c as any).backgroundCheckStatus ?? (c.pendingBackgroundCheck ? "pending" : "clear");
       const trustLines: string[] = [];
       if (bgStatus === "clear")       trustLines.push("background check cleared");
       if (c.certifications?.length)   trustLines.push(c.certifications.slice(0, 2).join(", "));
@@ -241,6 +266,7 @@ export async function runMatchingForClient(
         rating:       c.rating ?? null,
         bgStatus,
         trustSignals: trustLines,
+        trustScore:   caregiversTrustScore(c),
         pendingBg:    !!c.pendingBackgroundCheck,
         topReason:    ms.reasoning[0] ?? "available and local",
         allReasons:   ms.reasoning,
@@ -256,6 +282,7 @@ export async function runMatchingForClient(
     const matchSummary = matchData
       .map(m =>
         `${m.index}. ${m.name} — ${m.topReason}. $${m.hourlyRate}/hr` +
+        (m.trustScore >= 60 ? ` · ${m.trustScore}⭐ Trust` : "") +
         (m.trustSignals.length ? `\n   ✓ ${m.trustSignals.join(" · ")}` : "") +
         (m.pendingBg ? `\n   ⏳ Background check in progress` : "") +
         `\n   Profile: ${m.profileUrl}` +
@@ -267,15 +294,14 @@ export async function runMatchingForClient(
     const agentSystemPrompt =
       `You are Cara's matching agent. You found these caregivers for ${seniorName}:\n\n` +
       `${matchSummary}\n\n` +
-      `Care needs: ${needs.join(", ") || "general"}\n\n` +
-      `Your job:\n` +
+      `Care needs: ${needs.join(", ") || "general"}` +
+      factsContext +
+      `\n\nYour job:\n` +
       `- First turn: write a warm, specific intro message presenting these caregivers\n` +
       `- Follow-up turns: answer questions about the specific caregivers from the details above\n` +
       `- If asked about a caregiver not in this list, say you only have details for the ones you presented\n\n` +
       `Rules: plain text only, no bullet points, no headers. Warm, direct, specific. ` +
       `Under 300 characters per message when possible. End the intro with "Which ones would you like to meet?"`;
-
-    const userId = (session as any)?.userId ?? phone;
 
     // Roster check — reuse existing agent if one is active for this user
     const existingAgent = await getActiveAgentForUser(phone, "matching");

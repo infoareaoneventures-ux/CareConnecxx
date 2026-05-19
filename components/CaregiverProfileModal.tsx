@@ -3,6 +3,7 @@ import { X, Star, MapPin, Shield, CheckCircle, Heart, CreditCard, ChevronUp, Che
 import { Caregiver } from '../types';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
 import { CaregiverVerificationBadges } from './shared/CaregiverVerificationBadges';
+import { TrustBadge } from './shared/TrustBadge';
 
 type Tab = 'summary' | 'reviews' | 'calendar';
 
@@ -240,7 +241,10 @@ export const CaregiverProfileModal: React.FC<CaregiverProfileModalProps> = ({
                   <Zap className="w-3 h-3 fill-current" /> {activeStr}
                 </p>
               )}
-              <CaregiverVerificationBadges verified={caregiver.verified} backgroundCheckStatus={caregiver.backgroundCheckStatus} className="mt-2" />
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <CaregiverVerificationBadges verified={caregiver.verified} backgroundCheckStatus={caregiver.backgroundCheckStatus} />
+                <TrustBadge caregiver={caregiver} />
+              </div>
             </div>
           </div>
 

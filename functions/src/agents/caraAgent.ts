@@ -7,6 +7,7 @@ import { getPreferences, isInDND, isActiveHour, CaraPreferences } from "../memor
 import { supervise } from "../safety/supervisor";
 import { logAudit } from "../observability/auditLog";
 import { callClaudeWithRetry } from "../utils/claudeRetry";
+import { classifyIntent, Intent } from "./intentClassifier";
 
 const db = admin.firestore();
 
@@ -376,16 +377,35 @@ export async function runInteractionAgent(
     }
   }
 
-  // Search for caregiver
-  if (
-    norm.includes("FIND") ||
-    norm.includes("CAREGIVER") ||
-    norm.includes("NEED HELP") ||
-    norm.includes("LOOKING FOR")
-  ) {
+  // NLU intent classification — all free-form text routes through Claude
+  const intent: Intent = await classifyIntent(text, false);
+
+  if (intent === "FIND_CAREGIVER" || intent === "REBOOK_REQUEST") {
     return {
       type: "matching",
       payload: { clientId: session.userId ?? phone, phone, chatId },
+    };
+  }
+
+  if (intent === "CANCEL_REQUEST") {
+    return {
+      type: "qa",
+      payload: {
+        text,
+        phone,
+        chatId,
+        userId:      session.userId ?? phone,
+        seniorId:    session.seniorId ?? session.userId ?? phone,
+        userType:    session.userType ?? "client",
+        caregiverId: session.caregiverId,
+      },
+    };
+  }
+
+  if (intent === "SCHEDULE_REQUEST" || intent === "BOOKING_CONFIRM") {
+    return {
+      type: "booking",
+      payload: { phone, chatId },
     };
   }
 

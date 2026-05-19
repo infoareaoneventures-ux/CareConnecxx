@@ -18,6 +18,8 @@ import { calculateMLMatchScore } from '../../services/mlMatchScoring';
 import { SupportChatModal } from '../shared/SupportChatModal';
 import firebase, { db } from '../../lib/firebase';
 import { ClientJobPostingWizard } from './ClientJobPostingWizard';
+import { LiveCareFeed } from './LiveCareFeed';
+import { FamilyEmergency } from './FamilyEmergency';
 
 
 interface ClientDashboardProps {
@@ -327,6 +329,17 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             onScrollToMatches={scrollToMatches}
           />
         )}
+
+        {/* Live shift check-ins — shown when there is an active appointment today */}
+        {currentUser?.uid && (() => {
+          const todayIso = new Date().toISOString().slice(0, 10);
+          const active = appointments.find(a =>
+            a.isoDate === todayIso &&
+            (a.status === 'confirmed' || a.status === 'in-progress')
+          );
+          if (!active) return null;
+          return <LiveCareFeed clientId={currentUser.uid} />;
+        })()}
 
         {/* Shift hours to review */}
         {shiftsToReview.length > 0 && (
@@ -798,6 +811,17 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           onComplete={() => setShowWizard(false)}
         />
       )}
+
+      {/* Family emergency button — visible only when a shift is active today */}
+      {currentUser?.uid && (() => {
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const active = appointments.find(a =>
+          a.isoDate === todayIso &&
+          (a.status === 'confirmed' || a.status === 'in-progress')
+        );
+        if (!active) return null;
+        return <FamilyEmergency appointmentId={active.id} />;
+      })()}
     </div>
   );
 };

@@ -1211,6 +1211,31 @@ async function handleInbound(event: unknown): Promise<void> {
       return;
     }
 
+    // ── Wellbeing check-in response: "4 3 5" style reply ──────────────────────
+    if ((session as any).pendingWellbeingCheckin) {
+      const parts = text.trim().split(/\s+/).map(Number).filter(n => !isNaN(n) && n >= 1 && n <= 5);
+      if (parts.length === 3) {
+        const [energy, stress, satisfaction] = parts;
+        await db.collection("wellbeing_checkins").add({
+          caregiverId: session.caregiverId ?? session.userId ?? phone,
+          phone,
+          energy,
+          stress,
+          satisfaction,
+          recordedAt: new Date().toISOString(),
+        });
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingWellbeingCheckin: admin.firestore.FieldValue.delete(),
+        });
+        const avg = (energy + stress + satisfaction) / 3;
+        const reply = avg < 3
+          ? `Thank you for being honest 💙 Your scores tell me you might need some support. Would you like to:\n\n1. Adjust your schedule\n2. Talk to our support team\n3. Get info on mental health resources\n\nReply 1, 2, or 3 — or just ignore this if you're okay.`
+          : `Thanks for checking in! Glad things are going well 😊 Keep up the great work — your clients are lucky to have you.`;
+        await sendMessage(chatId, reply);
+        return;
+      }
+    }
+
     // Caregiver rescheduling — parse new times and notify family
     if ((session as any).caregiverRescheduling) {
       await db.collection("agent_sessions").doc(phone).update({ caregiverRescheduling: admin.firestore.FieldValue.delete() });

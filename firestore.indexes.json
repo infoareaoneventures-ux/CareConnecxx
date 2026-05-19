@@ -380,6 +380,37 @@
         { "fieldPath": "appointmentId", "order": "ASCENDING" },
         { "fieldPath": "status",        "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "shift_checkins",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId",   "order": "ASCENDING" },
+        { "fieldPath": "timestamp",  "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "wellbeing_checkins",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "recordedAt",  "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "emergency_events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId",    "order": "ASCENDING" },
+        { "fieldPath": "triggeredAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "rate_limits",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "windowStart", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

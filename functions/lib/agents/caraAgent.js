@@ -49,6 +49,7 @@ const preferences_1 = require("../memory/preferences");
 const supervisor_1 = require("../safety/supervisor");
 const auditLog_1 = require("../observability/auditLog");
 const claudeRetry_1 = require("../utils/claudeRetry");
+const intentClassifier_1 = require("./intentClassifier");
 const db = admin.firestore();
 let _claude = null;
 function getClaude() {
@@ -300,7 +301,7 @@ async function handleCaregiverArrivedEvent(payload) {
 }
 // ── Interaction Agent — NLU only, reads only ──────────────────────────────────
 async function runInteractionAgent(phone, chatId, text, session) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
     const norm = text.trim().toUpperCase();
     // Active goal guard — if a booking goal is in progress and user selects 1/2/3,
     // route directly to matching/interview selection without re-doing NLU
@@ -341,14 +342,32 @@ async function runInteractionAgent(phone, chatId, text, session) {
             };
         }
     }
-    // Search for caregiver
-    if (norm.includes("FIND") ||
-        norm.includes("CAREGIVER") ||
-        norm.includes("NEED HELP") ||
-        norm.includes("LOOKING FOR")) {
+    // NLU intent classification — all free-form text routes through Claude
+    const intent = await (0, intentClassifier_1.classifyIntent)(text, false);
+    if (intent === "FIND_CAREGIVER" || intent === "REBOOK_REQUEST") {
         return {
             type: "matching",
             payload: { clientId: (_b = session.userId) !== null && _b !== void 0 ? _b : phone, phone, chatId },
+        };
+    }
+    if (intent === "CANCEL_REQUEST") {
+        return {
+            type: "qa",
+            payload: {
+                text,
+                phone,
+                chatId,
+                userId: (_c = session.userId) !== null && _c !== void 0 ? _c : phone,
+                seniorId: (_e = (_d = session.seniorId) !== null && _d !== void 0 ? _d : session.userId) !== null && _e !== void 0 ? _e : phone,
+                userType: (_f = session.userType) !== null && _f !== void 0 ? _f : "client",
+                caregiverId: session.caregiverId,
+            },
+        };
+    }
+    if (intent === "SCHEDULE_REQUEST" || intent === "BOOKING_CONFIRM") {
+        return {
+            type: "booking",
+            payload: { phone, chatId },
         };
     }
     // Default: hand off to QA agent
@@ -358,9 +377,9 @@ async function runInteractionAgent(phone, chatId, text, session) {
             text,
             phone,
             chatId,
-            userId: (_c = session.userId) !== null && _c !== void 0 ? _c : phone,
-            seniorId: (_e = (_d = session.seniorId) !== null && _d !== void 0 ? _d : session.userId) !== null && _e !== void 0 ? _e : phone,
-            userType: (_f = session.userType) !== null && _f !== void 0 ? _f : "client",
+            userId: (_g = session.userId) !== null && _g !== void 0 ? _g : phone,
+            seniorId: (_j = (_h = session.seniorId) !== null && _h !== void 0 ? _h : session.userId) !== null && _j !== void 0 ? _j : phone,
+            userType: (_k = session.userType) !== null && _k !== void 0 ? _k : "client",
             caregiverId: session.caregiverId,
         },
     };

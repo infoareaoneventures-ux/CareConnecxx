@@ -36,7 +36,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.zepSetup = exports.chatWithCara = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.checkBackgroundCheckExpiry = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.sendTestSMS = void 0;
+exports.zepSetup = exports.chatWithCara = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions"));
 // Initialize Admin globally if not already done
@@ -88,6 +88,10 @@ __exportStar(require("./triggers/userCreated"), exports);
 // Linq Sprint 2 — proactive care alerts + emergency replacement
 __exportStar(require("./triggers/journalCreated"), exports);
 __exportStar(require("./triggers/appointmentUpdated"), exports);
+var checkinAlert_1 = require("./triggers/checkinAlert");
+Object.defineProperty(exports, "onCheckinCreated", { enumerable: true, get: function () { return checkinAlert_1.onCheckinCreated; } });
+var familyEmergency_1 = require("./triggers/familyEmergency");
+Object.defineProperty(exports, "triggerFamilyEmergency", { enumerable: true, get: function () { return familyEmergency_1.triggerFamilyEmergency; } });
 // Linq Sprint 3 — family group thread
 var familyGroupManager_1 = require("./agents/familyGroupManager");
 Object.defineProperty(exports, "createFamilyGroup", { enumerable: true, get: function () { return familyGroupManager_1.createFamilyGroup; } });
@@ -131,6 +135,8 @@ var caregiverInactivityCheck_1 = require("./scheduled/caregiverInactivityCheck")
 Object.defineProperty(exports, "checkCaregiverInactivity", { enumerable: true, get: function () { return caregiverInactivityCheck_1.checkCaregiverInactivity; } });
 var backgroundCheckExpiry_1 = require("./scheduled/backgroundCheckExpiry");
 Object.defineProperty(exports, "checkBackgroundCheckExpiry", { enumerable: true, get: function () { return backgroundCheckExpiry_1.checkBackgroundCheckExpiry; } });
+var wellbeingCheckin_1 = require("./scheduled/wellbeingCheckin");
+Object.defineProperty(exports, "wellbeingCheckinJob", { enumerable: true, get: function () { return wellbeingCheckin_1.wellbeingCheckinJob; } });
 // Proactive trigger engine (runs every 5 min)
 var triggerEngine_1 = require("./triggers/triggerEngine");
 Object.defineProperty(exports, "runTriggerEngine", { enumerable: true, get: function () { return triggerEngine_1.runTriggerEngine; } });
@@ -149,6 +155,9 @@ Object.defineProperty(exports, "checkDisputeSLAs", { enumerable: true, get: func
 // Refund auto-processing (executes Stripe refund when status → "approved")
 var refundProcessor_1 = require("./triggers/refundProcessor");
 Object.defineProperty(exports, "onRefundRequestWrite", { enumerable: true, get: function () { return refundProcessor_1.onRefundRequestWrite; } });
+// AI proxy — secure server-side Anthropic calls (auth-gated, rate-limited)
+var aiProxy_1 = require("./aiProxy");
+Object.defineProperty(exports, "aiProxy", { enumerable: true, get: function () { return aiProxy_1.aiProxy; } });
 // ── chatWithCara — web callable: routes authenticated web users through qaAgent ─
 // Bridges Firebase Auth UID → phone → agent_sessions so web users get the same
 // Cara experience (memory, tool use, booking) as Linq iMessage users.

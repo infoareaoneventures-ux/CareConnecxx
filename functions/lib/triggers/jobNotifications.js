@@ -47,6 +47,36 @@ const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
 const scoring_1 = require("../ai/scoring");
 const client_1 = require("../linq/client");
 const caraAgent_1 = require("../agents/caraAgent");
+const MATCH_PUSH_THRESHOLD = 80; // push only when skill overlap is ≥ 80%
+function computeSimpleMatchScore(cgSkills, jobCareTypes) {
+    if (!jobCareTypes.length)
+        return 50;
+    const cgNorm = cgSkills.map(s => s.toLowerCase());
+    const matches = jobCareTypes.filter(t => cgNorm.some(s => s.includes(t.toLowerCase()) || t.toLowerCase().includes(s)));
+    return Math.round((matches.length / jobCareTypes.length) * 100);
+}
+async function sendJobMatchPush(caregiverId, jobId, jobTitle, city, matchScore) {
+    var _a, _b;
+    const userSnap = await admin.firestore().collection("caregivers").doc(caregiverId).get();
+    const fcmTokens = (_b = (_a = userSnap.data()) === null || _a === void 0 ? void 0 : _a.fcmTokens) !== null && _b !== void 0 ? _b : [];
+    if (!fcmTokens.length)
+        return;
+    const sends = fcmTokens.slice(0, 5).map(token => admin.messaging().send({
+        token,
+        notification: {
+            title: "New job match for you!",
+            body: `${jobTitle} · ${city} — ${matchScore}% match`,
+        },
+        data: {
+            type: "job_match",
+            jobId,
+            matchScore: String(matchScore),
+            deepLink: `/caregiver/jobs/${jobId}`,
+        },
+        android: { priority: "high" },
+    }).catch(() => { }));
+    await Promise.all(sends);
+}
 const db = admin.firestore();
 const NOTIFY_RADIUS_MILES = 25;
 // ── createJobPost ─────────────────────────────────────────────────────────────
@@ -82,7 +112,7 @@ async function createJobPost(intakeId, intakeData, clientId) {
 }
 // ── notifyAreaCaregivers ──────────────────────────────────────────────────────
 async function notifyAreaCaregivers(jobId, intakeData, clientId) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0;
     const clientLat = (_c = (_a = intakeData.latitude) !== null && _a !== void 0 ? _a : (_b = intakeData.location) === null || _b === void 0 ? void 0 : _b.latitude) !== null && _c !== void 0 ? _c : (_d = intakeData.location) === null || _d === void 0 ? void 0 : _d.lat;
     const clientLng = (_g = (_e = intakeData.longitude) !== null && _e !== void 0 ? _e : (_f = intakeData.location) === null || _f === void 0 ? void 0 : _f.longitude) !== null && _g !== void 0 ? _g : (_h = intakeData.location) === null || _h === void 0 ? void 0 : _h.lng;
     const city = (_l = (_j = intakeData.city) !== null && _j !== void 0 ? _j : (_k = intakeData.location) === null || _k === void 0 ? void 0 : _k.city) !== null && _l !== void 0 ? _l : "";
@@ -97,6 +127,8 @@ async function notifyAreaCaregivers(jobId, intakeData, clientId) {
         return;
     }
     let notifiedCount = 0;
+    let pushSentCount = 0;
+    const jobTitle = careTypes.length > 0 ? `${careTypes.join(", ")} job` : "Care job";
     for (const doc of snap.docs) {
         const cg = doc.data();
         const phone = cg.phone;
@@ -141,6 +173,20 @@ async function notifyAreaCaregivers(jobId, intakeData, clientId) {
                 pendingJobSentAt: new Date().toISOString(),
             });
             notifiedCount++;
+            // FCM push for high-match caregivers (cap at 50)
+            if (pushSentCount < 50) {
+                const cgSkills = [
+                    ...((_y = cg.specialties) !== null && _y !== void 0 ? _y : []),
+                    ...((_z = cg.medicalSkills) !== null && _z !== void 0 ? _z : []),
+                    ...((_0 = cg.certifications) !== null && _0 !== void 0 ? _0 : []),
+                ];
+                const matchScore = computeSimpleMatchScore(cgSkills, careTypes);
+                if (matchScore >= MATCH_PUSH_THRESHOLD) {
+                    await sendJobMatchPush(doc.id, jobId, jobTitle, city || "your area", matchScore)
+                        .catch(err => console.error(`[notifyAreaCaregivers] push failed for ${doc.id}:`, err));
+                    pushSentCount++;
+                }
+            }
         }
         catch (err) {
             console.error(`[notifyAreaCaregivers] Failed for caregiver ${doc.id}:`, err);

@@ -71,6 +71,8 @@ export * from './triggers/userCreated';
 // Linq Sprint 2 — proactive care alerts + emergency replacement
 export * from './triggers/journalCreated';
 export * from './triggers/appointmentUpdated';
+export { onCheckinCreated } from './triggers/checkinAlert';
+export { triggerFamilyEmergency } from './triggers/familyEmergency';
 
 // Linq Sprint 3 — family group thread
 export { createFamilyGroup } from './agents/familyGroupManager';
@@ -101,6 +103,7 @@ export { processDndQueue } from './scheduled/dndQueueProcessor';
 export { expirePostVisitFeedback } from './scheduled/feedbackExpiry';
 export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';
 export { checkBackgroundCheckExpiry } from './scheduled/backgroundCheckExpiry';
+export { wellbeingCheckinJob } from './scheduled/wellbeingCheckin';
 
 // Proactive trigger engine (runs every 5 min)
 export { runTriggerEngine } from './triggers/triggerEngine';
@@ -116,6 +119,9 @@ export { onDisputeCreated, checkDisputeSLAs } from './triggers/disputeResolution
 
 // Refund auto-processing (executes Stripe refund when status → "approved")
 export { onRefundRequestWrite } from './triggers/refundProcessor';
+
+// AI proxy — secure server-side Anthropic calls (auth-gated, rate-limited)
+export { aiProxy } from "./aiProxy";
 
 // ── chatWithCara — web callable: routes authenticated web users through qaAgent ─
 // Bridges Firebase Auth UID → phone → agent_sessions so web users get the same

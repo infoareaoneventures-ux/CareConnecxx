@@ -3,6 +3,7 @@ import { Star, Heart, MapPin, MessageSquare, Clock } from 'lucide-react';
 import { Caregiver } from '../../types';
 import { CreditCardBadge } from '../shared/CreditCardBadge';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
+import { TrustBadge } from '../shared/TrustBadge';
 
 interface CaregiverMatchCardProps {
   caregiver: Caregiver;
@@ -80,11 +81,13 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
 
             <CreditCardBadge show={!!(caregiver as any).acceptsCreditCards} />
 
-            <CaregiverVerificationBadges
-              verified={(caregiver as any).verified}
-              backgroundCheckStatus={(caregiver as any).backgroundCheckStatus}
-              className="mt-1.5"
-            />
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              <CaregiverVerificationBadges
+                verified={(caregiver as any).verified}
+                backgroundCheckStatus={(caregiver as any).backgroundCheckStatus}
+              />
+              <TrustBadge caregiver={caregiver} />
+            </div>
           </div>
         </div>
 

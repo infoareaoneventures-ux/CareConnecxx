@@ -12,6 +12,8 @@ const VALID_INTENTS = new Set([
     "FACT_CORRECTION", "FIND_CAREGIVER", "PAUSE_SCHEDULE", "CANCEL_SCHEDULE", "QUESTION",
     "BOOKING_CONFIRM", "BOOKING_DECLINE", "HIRE_CAREGIVER", "CAREGIVER_DECLINE_JOB",
     "SCHEDULE_REQUEST", "TRIGGER_MANAGEMENT", "CREDENTIAL_MANAGEMENT",
+    "POST_JOB", "VIEW_MY_JOBS", "VIEW_APPLICANTS", "VIEW_JOURNAL",
+    "APPROVE_TIMESHEET", "VIEW_EARNINGS", "UPDATE_AVAILABILITY", "BROWSE_JOB_BOARD",
 ]);
 let _client = null;
 function getClient() {
@@ -36,7 +38,7 @@ async function classifyIntent(text, hasPendingTask) {
             model: "claude-haiku-4-5-20251001",
             max_tokens: 10,
             system: "You classify a message sent to an AI care assistant named Cara. " +
-                "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, QUESTION.\n" +
+                "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, QUESTION.\n" +
                 "STOP = opting out of all messages.\n" +
                 "TASK_REPLY = responding to a numbered list (1, 2, or 3).\n" +
                 "BOOKING_CONFIRM = confirming or approving a booking, schedule, or action (e.g. 'yes', 'sure', 'sounds good', 'let's do it', 'book it', 'go ahead', 'that works', 'perfect', 'confirmed', 'ok', 'yep').\n" +
@@ -56,6 +58,14 @@ async function classifyIntent(text, hasPendingTask) {
                 "SCHEDULE_REQUEST = asking Cara to set up a personal reminder (e.g. 'remind me every Monday about mom's medications', 'set a daily reminder at 8am', 'alert me every Friday afternoon').\n" +
                 "TRIGGER_MANAGEMENT = viewing, listing, or cancelling existing personal reminders (e.g. 'show my reminders', 'list my alerts', 'cancel my medication reminder', 'delete the Monday reminder').\n" +
                 "CREDENTIAL_MANAGEMENT = asking about stored portal logins (e.g. 'what logins do you have for me', 'remove my CVS login', 'update my MyChart password', 'do you have my Walgreens login', 'delete my insurance login').\n" +
+                "POST_JOB = a client wanting to post a new care job (e.g. 'post a new job', 'I need to find a caregiver', 'can you post another listing', 'add a new care request', 'I want to hire someone new').\n" +
+                "VIEW_MY_JOBS = a client asking about their own posted jobs (e.g. 'what jobs do I have posted', 'show my listings', 'see my care requests', 'which jobs are open', 'my job posts').\n" +
+                "VIEW_APPLICANTS = a client asking who applied to a job (e.g. 'who applied', 'show me applicants', 'any caregivers interested', 'did anyone apply yet', 'applicants for my job').\n" +
+                "VIEW_JOURNAL = a client asking to see care journal or visit notes (e.g. 'show me the care journal', 'what happened at the last visit', 'see the notes from today', 'what did the caregiver report', 'care updates').\n" +
+                "APPROVE_TIMESHEET = a client wanting to approve shift hours or timesheets (e.g. 'approve the timesheet', 'review hours', 'approve payment', 'approve shift', 'caregiver submitted hours').\n" +
+                "VIEW_EARNINGS = a caregiver asking about their pay or earnings (e.g. 'what have I earned', 'show my earnings', 'how much did I make this week', 'my balance', 'my payouts', 'my pay').\n" +
+                "UPDATE_AVAILABILITY = a caregiver wanting to change their availability schedule (e.g. 'update my availability', 'change my schedule', 'not available Fridays anymore', 'add Monday to my availability', 'I am free on Tuesdays now').\n" +
+                "BROWSE_JOB_BOARD = a caregiver wanting to see open jobs they can apply to (e.g. 'show me open jobs', 'any jobs available', 'job board', 'what jobs can I apply for', 'looking for work', 'find me a job').\n" +
                 "QUESTION = anything else.",
             messages: [{ role: "user", content: text }],
         }, { timeoutMs: 8000, maxAttempts: 3 });

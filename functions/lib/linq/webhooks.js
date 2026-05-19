@@ -51,6 +51,7 @@ const triggerEngine_1 = require("../triggers/triggerEngine");
 const auditLog_1 = require("../observability/auditLog");
 const bereavement_1 = require("../agents/bereavement");
 const caraAgent_1 = require("../agents/caraAgent");
+const jobPostingFlow_1 = require("../agents/jobPostingFlow");
 const sessionState_1 = require("../utils/sessionState");
 const dndGuard_1 = require("../utils/dndGuard");
 const feedback_1 = require("../ai/feedback");
@@ -600,7 +601,7 @@ async function handleRecurringResume(phone, chatId, session) {
 }
 // ── Main inbound handler ──────────────────────────────────────────────────────
 async function handleInbound(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98, _99, _100, _101, _102, _103, _104, _105, _106, _107, _108, _109, _110, _111, _112, _113;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98, _99, _100, _101, _102, _103, _104, _105, _106, _107, _108, _109, _110, _111, _112, _113, _114, _115, _116, _117;
     const ev = event;
     const phone = (_b = (_a = ev.data) === null || _a === void 0 ? void 0 : _a.sender_handle) === null || _b === void 0 ? void 0 : _b.value;
     const text = ((_f = (_e = (_d = (_c = ev.data) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.value) !== null && _f !== void 0 ? _f : "");
@@ -743,7 +744,7 @@ async function handleInbound(event) {
             });
             isExit = ((_y = res.content[0].text) !== null && _y !== void 0 ? _y : "").trim().toUpperCase().startsWith("Y");
         }
-        catch (_114) {
+        catch (_118) {
             isExit = false;
         }
         if (isExit) {
@@ -1123,7 +1124,7 @@ async function handleInbound(event) {
             try {
                 timeList = JSON.parse((_39 = parsed.content[0].text) !== null && _39 !== void 0 ? _39 : "[]");
             }
-            catch ( /* */_115) { /* */ }
+            catch ( /* */_119) { /* */ }
             const timesText = timeList.length > 0 ? timeList.join(", ") : text;
             // Find the relevant interview request
             const caregiverId = (_40 = session.caregiverId) !== null && _40 !== void 0 ? _40 : "";
@@ -1257,6 +1258,29 @@ async function handleInbound(event) {
         });
         if (handled)
             return;
+    }
+    // ── Job posting flow — multi-step state machine for returning clients ───────
+    if (session.jobPostingStep) {
+        const jpExpiry = session.stateExpiresAt;
+        if (jpExpiry && new Date(jpExpiry) < new Date()) {
+            await db.collection("agent_sessions").doc(phone).update({
+                jobPostingStep: admin.firestore.FieldValue.delete(),
+                jobPostingData: admin.firestore.FieldValue.delete(),
+                stateExpiresAt: admin.firestore.FieldValue.delete(),
+            });
+            await (0, client_1.sendMessage)(chatId, "Your job posting session timed out. Text me anytime to start a new one!");
+            return;
+        }
+        if (session.service === "iMessage" && !session.groupChatId)
+            await (0, client_1.startTyping)(chatId).catch(() => { });
+        try {
+            await (0, jobPostingFlow_1.handleJobPostingStep)(phone, chatId, text, session);
+        }
+        finally {
+            if (session.service === "iMessage" && !session.groupChatId)
+                await (0, client_1.stopTyping)(chatId).catch(() => { });
+        }
+        return;
     }
     // ── Check for pending task (booking / emergency replacement) ───────────────
     const taskSnap = await db
@@ -1679,7 +1703,7 @@ async function handleInbound(event) {
                 memberName = (_77 = parsed.name) !== null && _77 !== void 0 ? _77 : null;
                 memberPhone = (_78 = parsed.phone) !== null && _78 !== void 0 ? _78 : null;
             }
-            catch ( /* */_116) { /* */ }
+            catch ( /* */_120) { /* */ }
             if (!memberPhone) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch a phone number — please include it (e.g. 'add my sister Sarah at +1 555 000 1234').");
                 return;
@@ -1720,7 +1744,7 @@ async function handleInbound(event) {
                 targetName = (_81 = parsed.name) !== null && _81 !== void 0 ? _81 : null;
                 targetPhone = (_82 = parsed.phone) !== null && _82 !== void 0 ? _82 : null;
             }
-            catch ( /* */_117) { /* */ }
+            catch ( /* */_121) { /* */ }
             // If no phone provided, try to resolve by name from family_group_members
             if (!targetPhone && targetName) {
                 const memberSnap = await db.collection("family_group_members")
@@ -1776,7 +1800,7 @@ async function handleInbound(event) {
             try {
                 schedule = JSON.parse((_85 = parsedSchedule.content[0].text) !== null && _85 !== void 0 ? _85 : "null");
             }
-            catch ( /* */_118) { /* */ }
+            catch ( /* */_122) { /* */ }
             if (!schedule || !((_86 = schedule.days) === null || _86 === void 0 ? void 0 : _86.length)) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch that — could you try again? (e.g. '3 days, Mon/Wed/Fri, 9am–1pm')");
                 return;
@@ -2003,14 +2027,46 @@ async function handleInbound(event) {
             await handleTriggerManagement(phone, text, session);
             return;
         }
+        // ── POST_JOB — start the conversational job posting state machine ────────
+        if (intent === "POST_JOB" && session.userType !== "caregiver") {
+            await (0, jobPostingFlow_1.startJobPostingFlow)(phone, chatId, session);
+            return;
+        }
+        // ── Platform-action intents — routed to QA agent with new MCP tools ─────
+        if (intent === "VIEW_MY_JOBS" ||
+            intent === "VIEW_APPLICANTS" ||
+            intent === "VIEW_JOURNAL" ||
+            intent === "APPROVE_TIMESHEET" ||
+            intent === "VIEW_EARNINGS" ||
+            intent === "UPDATE_AVAILABILITY" ||
+            intent === "BROWSE_JOB_BOARD") {
+            const qaReplyPlatform = await (0, qaAgent_1.runQaAgent)({
+                text,
+                phone,
+                chatId,
+                userId: (_104 = session.userId) !== null && _104 !== void 0 ? _104 : "",
+                seniorId: (_106 = (_105 = session.seniorId) !== null && _105 !== void 0 ? _105 : session.userId) !== null && _106 !== void 0 ? _106 : "",
+                userType: (_107 = session.userType) !== null && _107 !== void 0 ? _107 : "client",
+                caregiverId: session.caregiverId,
+                zepThreadId: session.zepThreadId,
+                session: session,
+            });
+            await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+                content: qaReplyPlatform,
+                urgency: "standard",
+                sourceAgent: "qa",
+                canDrop: false,
+            });
+            return;
+        }
         // ── Credential management — "what logins do you have", "remove my CVS login" ─
         if (intent === "CREDENTIAL_MANAGEMENT" && session.userType !== "caregiver") {
             const qaReply = await (0, qaAgent_1.runQaAgent)({
                 text,
                 phone,
                 chatId,
-                userId: (_104 = session.userId) !== null && _104 !== void 0 ? _104 : "",
-                seniorId: (_106 = (_105 = session.seniorId) !== null && _105 !== void 0 ? _105 : session.userId) !== null && _106 !== void 0 ? _106 : "",
+                userId: (_108 = session.userId) !== null && _108 !== void 0 ? _108 : "",
+                seniorId: (_110 = (_109 = session.seniorId) !== null && _109 !== void 0 ? _109 : session.userId) !== null && _110 !== void 0 ? _110 : "",
                 userType: "client",
                 caregiverId: session.caregiverId,
                 zepThreadId: session.zepThreadId,
@@ -2028,7 +2084,7 @@ async function handleInbound(event) {
         if (intent === "FIND_CAREGIVER" && session.userType !== "caregiver") {
             const { runMatchingForClient } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
             const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();
-            const sessionData = (_107 = sessionSnap2.data()) !== null && _107 !== void 0 ? _107 : {};
+            const sessionData = (_111 = sessionSnap2.data()) !== null && _111 !== void 0 ? _111 : {};
             await runMatchingForClient(phone, chatId, sessionData, sessionData);
             return;
         }
@@ -2036,7 +2092,7 @@ async function handleInbound(event) {
         if (intent === "FACT_CORRECTION" && session.userType !== "caregiver") {
             const { detectAndApplyCorrection } = await Promise.resolve().then(() => __importStar(require("../memory/learnedFacts")));
             const zepUserId2 = session.zepThreadId ? phone.replace(/\D/g, "") : undefined;
-            const applied = await detectAndApplyCorrection((_108 = session.userId) !== null && _108 !== void 0 ? _108 : phone, text, zepUserId2).catch(() => false);
+            const applied = await detectAndApplyCorrection((_112 = session.userId) !== null && _112 !== void 0 ? _112 : phone, text, zepUserId2).catch(() => false);
             if (applied) {
                 await (0, client_1.sendMessage)(chatId, "Got it — I've updated that.");
                 return;
@@ -2049,7 +2105,7 @@ async function handleInbound(event) {
             (0, zepClient_1.addUserMessageToZep)({
                 threadId: zepThreadId,
                 content: text,
-                userName: (_109 = session.firstName) !== null && _109 !== void 0 ? _109 : "Family",
+                userName: (_113 = session.firstName) !== null && _113 !== void 0 ? _113 : "Family",
                 sentAt: new Date(),
             }).catch(console.error);
         }
@@ -2057,9 +2113,9 @@ async function handleInbound(event) {
             text,
             phone,
             chatId,
-            userId: (_110 = session.userId) !== null && _110 !== void 0 ? _110 : "",
-            seniorId: (_112 = (_111 = session.seniorId) !== null && _111 !== void 0 ? _111 : session.userId) !== null && _112 !== void 0 ? _112 : "",
-            userType: (_113 = session.userType) !== null && _113 !== void 0 ? _113 : "client",
+            userId: (_114 = session.userId) !== null && _114 !== void 0 ? _114 : "",
+            seniorId: (_116 = (_115 = session.seniorId) !== null && _115 !== void 0 ? _115 : session.userId) !== null && _116 !== void 0 ? _116 : "",
+            userType: (_117 = session.userType) !== null && _117 !== void 0 ? _117 : "client",
             caregiverId: session.caregiverId,
             zepThreadId,
             session: session,

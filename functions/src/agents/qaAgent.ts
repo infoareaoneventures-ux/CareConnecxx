@@ -270,6 +270,16 @@ function buildClientSystemPrompt(
     `  · manage_recurring_schedule — pause, resume, or cancel the recurring care schedule. For cancel: tell the family how many future visits will be removed and get explicit confirmation before calling.`,
     `  · respond_to_job_application — accept or reject a caregiver's application. Confirm accept before calling.`,
     `  · submit_interview_feedback — record fit level (strong/maybe/no) after a caregiver interview. If strong, a hire request is automatically created.`,
+    `  · schedule_interview — schedule a video/phone interview with a caregiver. Ask the family for their preferred date and time, then call. Notifies the caregiver automatically.`,
+    `  · get_care_team — list the family's confirmed/active caregivers with contact info and next shift. Call when they ask "who's on my team", "my caregivers", or "who do I have".`,
+    `  · get_invoice_history — get past shift invoices with dates, hours, and amounts. Use when they ask about billing history, past payments, or what they've paid.`,
+    `  · list_client_jobs — list the family's posted job listings. Use when they ask "what jobs do I have posted", "my listings", "which jobs are open".`,
+    `  · cancel_job_post — close an open job post. Confirm before calling.`,
+    `  · list_job_applicants — list caregivers who applied to a specific job. Ask which job if they have more than one open.`,
+    `  · edit_job_post — edit an existing job post's rate, description, schedule, or payment method. Confirm the specific changes before calling.`,
+    `  · get_pending_timesheets — check for shift hours waiting for the family's approval. Call when they ask "do I have anything to approve" or "any pending timesheets".`,
+    `  · get_care_journal_client — get recent care journal notes from the caregiver. Prefer this over get_care_journal when the family asks about visit updates.`,
+    `  · get_recent_messages — show recent inbox messages with a caregiver. Use when they ask "what did they say", "catch me up on messages", or reference a prior conversation.`,
     `  · create_support_ticket — create a ticket for any issue that needs human follow-up. The support team will respond within 24 hours.`,
     `  · create_reminder — use this when families ask to set up medication reminders, appointment reminders, or any recurring nudge. Say "I've set that up — I'll text you a reminder." Don't ask them to use an app.`,
     `  · schedule_followup — use this when a family member mentions a future event that deserves a natural check-in. Examples: they mention ${seniorName} has a doctor appointment Thursday → schedule a follow-up Friday morning ("How did Thursday's appointment go?"). They mention trying a new medication → schedule 3 days out. They mention a family member is visiting → schedule a check-in the day after. Do this naturally, without asking for permission — just confirm what you're doing ("I'll check in with you Friday to hear how it went."). Only schedule one follow-up per event.`,
@@ -350,8 +360,16 @@ function buildCaregiverSystemPrompt(
     `- update_caregiver_profile: update your hourly rate, bio, phone, city, or weekly availability`,
     `- create_care_journal_entry: log notes, mood, and medications for a completed visit`,
     `- apply_to_job: apply to an open job post with optional rate and cover note`,
+    `- browse_job_board: see open jobs available to apply to`,
+    `- get_my_applications: check the status of your submitted applications`,
+    `- respond_to_interview_request: accept or decline an interview; include proposedDate/Time to counter-offer`,
     `- submit_shift_hours: submit your clock-in/out times after a visit for client approval`,
     `- request_instant_payout: request immediate payment of your earned balance (1.5% fee)`,
+    `- get_payout_history: see your recent payout records from Stripe`,
+    `- get_caregiver_earnings: see how much you've earned in the last 30 days`,
+    `- update_caregiver_availability: add or remove days from your weekly availability`,
+    `- send_client_message: send a message to a client on your behalf`,
+    `- get_recent_messages: see recent messages with a client`,
     `- create_support_ticket: escalate an issue to the support team`,
     ``,
     `Only state facts from the appointment details above or tool results in this conversation. If you don't have an answer, call a tool or say you'll check.`,
@@ -664,12 +682,18 @@ export async function runQaAgent(params: {
       { role: "user", content: taggedText },
     ];
 
+    // Cache the system prompt — it's large, stable within a session, and called up to 8x per turn.
+    // Prompt caching cuts latency and cost on every tool-use iteration after the first.
+    const cachedSystem: Anthropic.TextBlockParam[] = [
+      { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } } as any,
+    ];
+
     let reply = "";
     for (let iteration = 0; iteration < 8; iteration++) {
       const response = await callClaudeWithRetry(getClient(), {
         model:       "claude-sonnet-4-6",
         max_tokens:  600,
-        system:      systemPrompt,
+        system:      cachedSystem as any,
         tools:       activeTools as any,
         tool_choice: { type: "auto" },
         messages,

@@ -768,6 +768,231 @@ exports.MCP_TOOLS = [
             required: ["userId", "userType", "subject", "description"],
         },
     },
+    // ── Full-platform coverage tools ─────────────────────────────────────────
+    {
+        name: "schedule_interview",
+        description: "Schedule a video interview between a client and a caregiver applicant. " +
+            "Notifies the caregiver and creates the interview record. Confirm date/time with client before calling.",
+        input_schema: {
+            type: "object",
+            properties: {
+                clientId: { type: "string", description: "The client's user ID" },
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+                applicationId: { type: "string", description: "The job_applications document ID (optional)" },
+                preferredDate: { type: "string", description: "Date in YYYY-MM-DD format" },
+                preferredTime: { type: "string", description: "Time in HH:MM (24h) format" },
+                interviewType: { type: "string", enum: ["video", "phone", "in_person"], description: "Default: video" },
+            },
+            required: ["clientId", "caregiverId", "preferredDate", "preferredTime"],
+        },
+    },
+    {
+        name: "respond_to_interview_request",
+        description: "Caregiver accepts or declines a scheduled interview. If proposing a new time, include proposedDate and proposedTime.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+                interviewId: { type: "string", description: "The video_interviews document ID" },
+                decision: { type: "string", enum: ["accept", "decline"], description: "accept or decline" },
+                proposedDate: { type: "string", description: "Alternative date YYYY-MM-DD (when declining with counter-offer)" },
+                proposedTime: { type: "string", description: "Alternative time HH:MM (when declining with counter-offer)" },
+                message: { type: "string", description: "Optional message to the client" },
+            },
+            required: ["caregiverId", "interviewId", "decision"],
+        },
+    },
+    {
+        name: "get_care_team",
+        description: "List a client's confirmed/active caregivers — their name, phone, rating, and next scheduled visit.",
+        input_schema: {
+            type: "object",
+            properties: {
+                clientId: { type: "string", description: "The client's user ID" },
+            },
+            required: ["clientId"],
+        },
+    },
+    {
+        name: "get_invoice_history",
+        description: "Get a client's past shift invoices — caregiver name, date, hours worked, amount, and payment status.",
+        input_schema: {
+            type: "object",
+            properties: {
+                clientId: { type: "string", description: "The client's user ID" },
+                limit: { type: "number", description: "Number of invoices to return (default 5, max 20)" },
+            },
+            required: ["clientId"],
+        },
+    },
+    {
+        name: "edit_job_post",
+        description: "Edit an existing open job post. Only call after client has confirmed what to change. " +
+            "Cannot change status — use cancel_job_post for that.",
+        input_schema: {
+            type: "object",
+            properties: {
+                jobId: { type: "string", description: "The job_posts document ID" },
+                clientId: { type: "string", description: "The client's user ID (ownership check)" },
+                rate: { type: "number", description: "New hourly rate" },
+                description: { type: "string", description: "New job description" },
+                startDate: { type: "string", description: "New start date YYYY-MM-DD" },
+                daysOfWeek: { type: "array", items: { type: "string" }, description: "New days array" },
+                timeOfDay: { type: "array", items: { type: "string" }, description: "New time-of-day array" },
+                paymentMethod: { type: "string", enum: ["card", "cash"], description: "New payment method" },
+            },
+            required: ["jobId", "clientId"],
+        },
+    },
+    {
+        name: "send_client_message",
+        description: "Send a message to a client on behalf of a caregiver. Tell the caregiver what you're sending before calling.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+                clientId: { type: "string", description: "The client's user ID (optional — resolved from recent appointments if omitted)" },
+                message: { type: "string", description: "The message to send to the client" },
+            },
+            required: ["caregiverId", "message"],
+        },
+    },
+    {
+        name: "get_payout_history",
+        description: "Get a caregiver's recent payout records — dates, amounts, and transfer status from Stripe.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+                limit: { type: "number", description: "Number of payouts to return (default 5, max 20)" },
+            },
+            required: ["caregiverId"],
+        },
+    },
+    {
+        name: "get_recent_messages",
+        description: "Get the most recent inbox messages between the user and their caregiver(s) or client(s). " +
+            "Use when the user asks what was said, wants to catch up on messages, or references a prior conversation.",
+        input_schema: {
+            type: "object",
+            properties: {
+                userId: { type: "string", description: "The current user's ID (client or caregiver)" },
+                counterpartId: { type: "string", description: "Specific caregiver or client ID to filter (optional)" },
+                limit: { type: "number", description: "Messages per thread to return (default 5, max 20)" },
+            },
+            required: ["userId"],
+        },
+    },
+    // ── Platform-action tools (post-onboarding) ───────────────────────────────
+    {
+        name: "list_client_jobs",
+        description: "List job posts created by this client. Returns open, filled, and closed postings with applicant counts.",
+        input_schema: {
+            type: "object",
+            properties: {
+                clientId: { type: "string", description: "The client's user ID" },
+                status: { type: "string", enum: ["open", "filled", "closed", "all"], description: "Filter by status (default: all)" },
+            },
+            required: ["clientId"],
+        },
+    },
+    {
+        name: "cancel_job_post",
+        description: "Close an open job post. Only call after the client has explicitly confirmed they want to close it.",
+        input_schema: {
+            type: "object",
+            properties: {
+                jobId: { type: "string", description: "The job_posts document ID" },
+                clientId: { type: "string", description: "The client's user ID (ownership check)" },
+            },
+            required: ["jobId", "clientId"],
+        },
+    },
+    {
+        name: "list_job_applicants",
+        description: "List caregivers who applied to one of the client's job posts. Returns name, proposed rate, cover note, and status.",
+        input_schema: {
+            type: "object",
+            properties: {
+                jobId: { type: "string", description: "The job_posts document ID" },
+                clientId: { type: "string", description: "The client's user ID (access check)" },
+            },
+            required: ["jobId", "clientId"],
+        },
+    },
+    {
+        name: "get_caregiver_earnings",
+        description: "Get an earnings summary for a caregiver — total earned, pending balance, and recent visit count.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+                daysBack: { type: "number", description: "Days of history to include (default 30, max 90)" },
+            },
+            required: ["caregiverId"],
+        },
+    },
+    {
+        name: "update_caregiver_availability",
+        description: "Add or remove days from a caregiver's weekly availability. Changes take effect immediately for job matching.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+                availableDays: { type: "array", items: { type: "string" }, description: "Days to add (Monday, Tuesday, etc.)" },
+                unavailableDays: { type: "array", items: { type: "string" }, description: "Days to remove from availability" },
+                preferredTimeOfDay: { type: "string", description: "Preferred time: morning, afternoon, evening, overnight, or flexible" },
+            },
+            required: ["caregiverId"],
+        },
+    },
+    {
+        name: "browse_job_board",
+        description: "Show open care jobs that a caregiver can apply to. Returns up to 5 matching jobs with care needs, schedule, and rate.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+                limit: { type: "number", description: "Max jobs to return (default 5, max 10)" },
+            },
+            required: ["caregiverId"],
+        },
+    },
+    {
+        name: "get_my_applications",
+        description: "Get a caregiver's submitted job applications and their current status (pending, accepted, rejected).",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+            },
+            required: ["caregiverId"],
+        },
+    },
+    {
+        name: "get_pending_timesheets",
+        description: "List shift-hour submissions awaiting client approval. Returns caregiver name, date, hours, and amount owed.",
+        input_schema: {
+            type: "object",
+            properties: {
+                clientId: { type: "string", description: "The client's user ID" },
+            },
+            required: ["clientId"],
+        },
+    },
+    {
+        name: "get_care_journal_client",
+        description: "Get recent care journal entries for a client's senior — resolves the senior automatically from clientId. " +
+            "Returns notes, mood, activities, and caregiver name for each entry.",
+        input_schema: {
+            type: "object",
+            properties: {
+                clientId: { type: "string", description: "The client's user ID" },
+                limit: { type: "number", description: "Number of entries (default 5, max 20)" },
+            },
+            required: ["clientId"],
+        },
+    },
 ];
 // Tools available to caregivers — scoped to what's relevant to their role
 const CAREGIVER_TOOL_NAMES = new Set([
@@ -791,6 +1016,14 @@ const CAREGIVER_TOOL_NAMES = new Set([
     "request_instant_payout",
     "submit_shift_hours",
     "create_support_ticket",
+    "get_caregiver_earnings",
+    "update_caregiver_availability",
+    "browse_job_board",
+    "get_my_applications",
+    "respond_to_interview_request",
+    "send_client_message",
+    "get_payout_history",
+    "get_recent_messages",
 ]);
 exports.CAREGIVER_TOOLS = exports.MCP_TOOLS.filter(t => CAREGIVER_TOOL_NAMES.has(t.name));
 async function handleToolCallForCaregiver(name, input) {
@@ -929,7 +1162,7 @@ function toolError(code, message) {
 }
 // ── Tool executor ─────────────────────────────────────────────────────────────
 async function handleToolCall(name, input) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54;
     const nowIso = new Date().toISOString();
     const daysBack = Math.min((_a = input.daysBack) !== null && _a !== void 0 ? _a : 30, 90);
     const daysAgo = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
@@ -1935,6 +2168,478 @@ async function handleToolCall(name, input) {
             await db.collection("admin_alerts").add({ type: "support_ticket_created", ticketId: ticketRef.id, userId, userType, subject, priority: "medium", resolved: false, createdAt: nowIso });
             (0, auditLog_1.logAudit)({ eventType: "support_ticket_created", userId: userId, data: { source: "mcp:create_support_ticket", ticketId: ticketRef.id, subject } }).catch(() => { });
             return { success: true, ticketId: ticketRef.id };
+        }
+        // ── schedule_interview ──────────────────────────────────────────────────
+        if (name === "schedule_interview") {
+            const { clientId, caregiverId, applicationId, preferredDate, preferredTime, interviewType } = input;
+            if (!clientId || !caregiverId || !preferredDate || !preferredTime)
+                return toolError("INVALID_INPUT", "clientId, caregiverId, preferredDate, and preferredTime are required");
+            const scheduledTime = `${preferredDate}T${preferredTime}:00`;
+            const ivRef = await db.collection("video_interviews").add({
+                clientId,
+                caregiverId,
+                applicationId: applicationId !== null && applicationId !== void 0 ? applicationId : null,
+                scheduledTime,
+                interviewType: interviewType !== null && interviewType !== void 0 ? interviewType : "video",
+                status: "scheduled",
+                createdAt: nowIso,
+                feedbackSubmitted: false,
+            });
+            if (applicationId) {
+                await db.collection("job_applications").doc(applicationId).update({ status: "interview_scheduled", interviewId: ivRef.id }).catch(() => { });
+            }
+            const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
+            const cgPhone = (_39 = cgSnap.data()) === null || _39 === void 0 ? void 0 : _39.phone;
+            if (cgPhone) {
+                const clientSnap = await db.collection("users").doc(clientId).get();
+                const clientName = (_41 = (_40 = clientSnap.data()) === null || _40 === void 0 ? void 0 : _40.name) !== null && _41 !== void 0 ? _41 : "A family";
+                const { sendToPhone } = await Promise.resolve().then(() => __importStar(require("../linq/client")));
+                await sendToPhone(cgPhone, `Interview scheduled! ${clientName} wants to meet ${preferredDate} at ${preferredTime}. Reply to confirm.`).catch(() => { });
+            }
+            (0, auditLog_1.logAudit)({ eventType: "interview_scheduled", userId: clientId, data: { source: "mcp:schedule_interview", interviewId: ivRef.id, caregiverId, scheduledTime } }).catch(() => { });
+            return { success: true, interviewId: ivRef.id, scheduledTime, interviewType: interviewType !== null && interviewType !== void 0 ? interviewType : "video" };
+        }
+        // ── respond_to_interview_request ────────────────────────────────────────
+        if (name === "respond_to_interview_request") {
+            const { caregiverId, interviewId, decision, proposedDate, proposedTime, message: ivMsg } = input;
+            if (!caregiverId || !interviewId || !decision)
+                return toolError("INVALID_INPUT", "caregiverId, interviewId, and decision are required");
+            const ivSnap = await db.collection("video_interviews").doc(interviewId).get();
+            if (!ivSnap.exists)
+                return toolError("NOT_FOUND", "Interview not found");
+            const iv = ivSnap.data();
+            if (iv.caregiverId !== caregiverId)
+                return toolError("PERMISSION_DENIED", "Interview does not belong to this caregiver");
+            const newStatus = decision === "accept" ? "confirmed" : "declined";
+            const upd = { status: newStatus, respondedAt: nowIso };
+            if (proposedDate && proposedTime) {
+                upd.proposedTime = `${proposedDate}T${proposedTime}:00`;
+            }
+            await ivSnap.ref.update(upd);
+            const clientSess = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
+            if (!clientSess.empty) {
+                const cgData = (await db.collection("caregivers").doc(caregiverId).get()).data();
+                const cgName = (_42 = cgData === null || cgData === void 0 ? void 0 : cgData.name) !== null && _42 !== void 0 ? _42 : "The caregiver";
+                const { sendToPhone } = await Promise.resolve().then(() => __importStar(require("../linq/client")));
+                const notifyMsg = decision === "accept"
+                    ? `${cgName} confirmed the interview for ${(_44 = (_43 = iv.scheduledTime) === null || _43 === void 0 ? void 0 : _43.slice(0, 10)) !== null && _44 !== void 0 ? _44 : "the scheduled time"}.`
+                    : proposedDate
+                        ? `${cgName} can't make the original time but is free ${proposedDate} at ${proposedTime !== null && proposedTime !== void 0 ? proposedTime : ""}.`
+                        : `${cgName} isn't available for the interview. ${(_45 = ivMsg) !== null && _45 !== void 0 ? _45 : ""}`.trim();
+                await sendToPhone(clientSess.docs[0].id, notifyMsg).catch(() => { });
+            }
+            (0, auditLog_1.logAudit)({ eventType: "interview_responded", userId: caregiverId, data: { source: "mcp:respond_to_interview_request", interviewId, decision } }).catch(() => { });
+            return { success: true, decision, interviewId, proposedTime: proposedDate ? `${proposedDate}T${proposedTime}:00` : null };
+        }
+        // ── get_care_team ───────────────────────────────────────────────────────
+        if (name === "get_care_team") {
+            const { clientId } = input;
+            if (!clientId)
+                return toolError("INVALID_INPUT", "clientId is required");
+            const today = new Date().toISOString().slice(0, 10);
+            const teamSnap = await db.collection("appointments")
+                .where("clientId", "==", clientId)
+                .where("status", "in", ["confirmed", "completed", "in-progress"])
+                .orderBy("date", "desc")
+                .limit(50)
+                .get();
+            const seenCaregivers = new Map();
+            for (const d of teamSnap.docs) {
+                const appt = d.data();
+                const cid = appt.caregiverId;
+                if (!seenCaregivers.has(cid)) {
+                    seenCaregivers.set(cid, { nextShift: appt.date >= today ? appt.date : null, lastSeen: appt.date });
+                }
+                else if (appt.date >= today && !seenCaregivers.get(cid).nextShift) {
+                    seenCaregivers.get(cid).nextShift = appt.date;
+                }
+            }
+            const careTeam = await Promise.all([...seenCaregivers.entries()].slice(0, 10).map(async ([cid, meta]) => {
+                var _a, _b, _c, _d, _e, _f;
+                const cgSnap = await db.collection("caregivers").doc(cid).get();
+                const cg = (_a = cgSnap.data()) !== null && _a !== void 0 ? _a : {};
+                return {
+                    caregiverId: cid,
+                    name: ((_b = cg.name) !== null && _b !== void 0 ? _b : `${(_c = cg.firstName) !== null && _c !== void 0 ? _c : ""} ${(_d = cg.lastName) !== null && _d !== void 0 ? _d : ""}`.trim()) || "Caregiver",
+                    phone: (_e = cg.phone) !== null && _e !== void 0 ? _e : null,
+                    rating: (_f = cg.rating) !== null && _f !== void 0 ? _f : null,
+                    nextShift: meta.nextShift,
+                    lastSeen: meta.lastSeen,
+                };
+            }));
+            return { success: true, careTeam, total: careTeam.length };
+        }
+        // ── get_invoice_history ─────────────────────────────────────────────────
+        if (name === "get_invoice_history") {
+            const { clientId } = input;
+            if (!clientId)
+                return toolError("INVALID_INPUT", "clientId is required");
+            const limit10 = Math.min((_46 = input.limit) !== null && _46 !== void 0 ? _46 : 5, 20);
+            const invSnap = await db.collection("shiftHours")
+                .where("clientId", "==", clientId)
+                .where("status", "in", ["approved", "paid"])
+                .orderBy("submittedAt", "desc")
+                .limit(limit10)
+                .get();
+            const invoices = await Promise.all(invSnap.docs.map(async (d) => {
+                var _a, _b, _c, _d, _e, _f;
+                const sh = d.data();
+                const cgSnap = await db.collection("caregivers").doc(sh.caregiverId).get().catch(() => null);
+                const cg = (_a = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) !== null && _a !== void 0 ? _a : {};
+                return {
+                    invoiceId: d.id,
+                    date: sh.date,
+                    caregiverName: ((_b = cg.name) !== null && _b !== void 0 ? _b : `${(_c = cg.firstName) !== null && _c !== void 0 ? _c : ""} ${(_d = cg.lastName) !== null && _d !== void 0 ? _d : ""}`.trim()) || "Caregiver",
+                    hours: sh.durationHours,
+                    amount: `$${(((_e = sh.amountCents) !== null && _e !== void 0 ? _e : 0) / 100).toFixed(2)}`,
+                    status: sh.status,
+                    approvedAt: (_f = sh.reviewedAt) !== null && _f !== void 0 ? _f : null,
+                };
+            }));
+            return { success: true, invoices, total: invoices.length };
+        }
+        // ── edit_job_post ───────────────────────────────────────────────────────
+        if (name === "edit_job_post") {
+            const { jobId, clientId, rate, description, startDate, daysOfWeek, timeOfDay, paymentMethod } = input;
+            if (!jobId || !clientId)
+                return toolError("INVALID_INPUT", "jobId and clientId are required");
+            const jpSnap = await db.collection("job_posts").doc(jobId).get();
+            if (!jpSnap.exists)
+                return toolError("NOT_FOUND", "Job post not found");
+            const jp = jpSnap.data();
+            if (jp.clientId !== clientId)
+                return toolError("PERMISSION_DENIED", "This job post does not belong to you");
+            if (jp.status !== "open")
+                return toolError("INVALID_INPUT", `Cannot edit a job post with status '${jp.status}'`);
+            const upd = { updatedAt: nowIso };
+            if (rate != null)
+                upd.hourlyRate = rate;
+            if (description != null)
+                upd.description = description.slice(0, 500);
+            if (startDate != null)
+                upd.startDate = startDate;
+            if (daysOfWeek != null)
+                upd["schedule.days"] = daysOfWeek;
+            if (timeOfDay != null)
+                upd["schedule.timeOfDay"] = timeOfDay;
+            if (paymentMethod != null)
+                upd.paymentMethod = paymentMethod;
+            await jpSnap.ref.update(upd);
+            await db.collection("job_postings").doc(clientId).set(Object.assign(Object.assign({}, upd), { clientId }), { merge: true });
+            (0, auditLog_1.logAudit)({ eventType: "job_post_edited", userId: clientId, data: { source: "mcp:edit_job_post", jobId, fields: Object.keys(upd) } }).catch(() => { });
+            return { success: true, jobId, updatedFields: Object.keys(upd).filter(k => k !== "updatedAt") };
+        }
+        // ── send_client_message ─────────────────────────────────────────────────
+        if (name === "send_client_message") {
+            const { caregiverId, message, clientId: clientIdInput } = input;
+            if (!caregiverId || !message)
+                return toolError("INVALID_INPUT", "caregiverId and message are required");
+            let resolvedClientId = clientIdInput;
+            if (!resolvedClientId) {
+                const recentAppt = await db.collection("appointments").where("caregiverId", "==", caregiverId).orderBy("date", "desc").limit(1).get();
+                if (!recentAppt.empty)
+                    resolvedClientId = recentAppt.docs[0].data().clientId;
+            }
+            if (!resolvedClientId)
+                return toolError("NOT_FOUND", "Could not find a client to message — please provide clientId");
+            const clientSnap = await db.collection("users").doc(resolvedClientId).get();
+            const clientPhone = (_47 = clientSnap.data()) === null || _47 === void 0 ? void 0 : _47.phone;
+            if (!clientPhone)
+                return toolError("NOT_FOUND", "Client phone number not found");
+            const cgData = (await db.collection("caregivers").doc(caregiverId).get()).data();
+            const cgName = (_48 = cgData === null || cgData === void 0 ? void 0 : cgData.name) !== null && _48 !== void 0 ? _48 : "Your caregiver";
+            const { sendToPhone } = await Promise.resolve().then(() => __importStar(require("../linq/client")));
+            await sendToPhone(clientPhone, `${cgName}: ${message}`);
+            (0, auditLog_1.logAudit)({ eventType: "caregiver_sent_message", userId: caregiverId, data: { source: "mcp:send_client_message", resolvedClientId, messageLength: message.length } }).catch(() => { });
+            return { success: true, sentTo: resolvedClientId };
+        }
+        // ── get_payout_history ──────────────────────────────────────────────────
+        if (name === "get_payout_history") {
+            const { caregiverId } = input;
+            if (!caregiverId)
+                return toolError("INVALID_INPUT", "caregiverId is required");
+            const limit11 = Math.min((_49 = input.limit) !== null && _49 !== void 0 ? _49 : 5, 20);
+            const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
+            if (!cgSnap.exists)
+                return toolError("NOT_FOUND", "Caregiver not found");
+            const cg = cgSnap.data();
+            if (!cg.stripeAccountId)
+                return { success: true, payouts: [], message: "No payout account set up yet. Complete Stripe Connect onboarding to start receiving payouts." };
+            try {
+                const { getStripeClient } = await Promise.resolve().then(() => __importStar(require("../stripe")));
+                const sc = getStripeClient();
+                const payoutList = await sc.payouts.list({ limit: limit11 }, { stripeAccount: cg.stripeAccountId });
+                const payouts = payoutList.data.map((p) => ({
+                    id: p.id,
+                    amount: `$${(p.amount / 100).toFixed(2)}`,
+                    status: p.status,
+                    method: p.method,
+                    arrivalDate: new Date(p.arrival_date * 1000).toISOString().slice(0, 10),
+                    createdAt: new Date(p.created * 1000).toISOString().slice(0, 10),
+                }));
+                return { success: true, payouts, hasMore: payoutList.has_more };
+            }
+            catch (stripeErr) {
+                console.error("get_payout_history stripe error:", stripeErr);
+                return toolError("UNAVAILABLE", "Could not fetch payout history from Stripe right now");
+            }
+        }
+        // ── get_recent_messages ─────────────────────────────────────────────────
+        if (name === "get_recent_messages") {
+            const { userId, counterpartId } = input;
+            if (!userId)
+                return toolError("INVALID_INPUT", "userId is required");
+            const msgLimit = Math.min((_50 = input.limit) !== null && _50 !== void 0 ? _50 : 5, 20);
+            let threadsQuery = db.collection("threads").where("participants", "array-contains", userId);
+            if (counterpartId)
+                threadsQuery = threadsQuery.where("participants", "array-contains", counterpartId);
+            const threadsSnap = await threadsQuery.orderBy("updatedAt", "desc").limit(5).get();
+            const results = await Promise.all(threadsSnap.docs.map(async (t) => {
+                var _a, _b, _c, _d, _e, _f;
+                const thread = t.data();
+                const participants = (_a = thread.participants) !== null && _a !== void 0 ? _a : [];
+                const otherUserId = participants.find((p) => p !== userId);
+                let otherName = "Unknown";
+                if (otherUserId) {
+                    const cgSnap = await db.collection("caregivers").doc(otherUserId).get().catch(() => null);
+                    const uSnap = await db.collection("users").doc(otherUserId).get().catch(() => null);
+                    const d = (_c = (_b = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) !== null && _b !== void 0 ? _b : uSnap === null || uSnap === void 0 ? void 0 : uSnap.data()) !== null && _c !== void 0 ? _c : {};
+                    otherName = ((_d = d.name) !== null && _d !== void 0 ? _d : `${(_e = d.firstName) !== null && _e !== void 0 ? _e : ""} ${(_f = d.lastName) !== null && _f !== void 0 ? _f : ""}`.trim()) || "Unknown";
+                }
+                const msgsSnap = await db.collection("threads").doc(t.id).collection("messages")
+                    .orderBy("timestamp", "desc").limit(msgLimit).get();
+                const messages = msgsSnap.docs.reverse().map((m) => {
+                    var _a;
+                    const msg = m.data();
+                    return {
+                        from: msg.senderId === userId ? "you" : otherName,
+                        text: ((_a = msg.text) !== null && _a !== void 0 ? _a : "").slice(0, 200),
+                        timestamp: msg.timestamp,
+                    };
+                });
+                return { threadId: t.id, with: otherName, messages };
+            }));
+            return { success: true, threads: results, total: results.length };
+        }
+        // ── list_client_jobs ────────────────────────────────────────────────────
+        if (name === "list_client_jobs") {
+            const { clientId, status } = input;
+            if (!clientId)
+                return toolError("INVALID_INPUT", "clientId is required");
+            let query = db.collection("job_posts").where("clientId", "==", clientId);
+            if (status && status !== "all")
+                query = query.where("status", "==", status);
+            const snap = await query.orderBy("createdAt", "desc").limit(10).get();
+            const jobs = snap.docs.map((d) => {
+                var _a, _b, _c;
+                const data = d.data();
+                return {
+                    id: d.id,
+                    title: (_a = data.summary) !== null && _a !== void 0 ? _a : `Care job — ${((_b = data.careTypes) !== null && _b !== void 0 ? _b : []).slice(0, 2).join(", ")}`,
+                    status: data.status,
+                    applicantCount: (_c = data.applicantCount) !== null && _c !== void 0 ? _c : 0,
+                    createdAt: data.createdAt,
+                    schedule: data.schedule,
+                };
+            });
+            return { success: true, jobs, total: jobs.length };
+        }
+        // ── cancel_job_post ─────────────────────────────────────────────────────
+        if (name === "cancel_job_post") {
+            const { jobId, clientId } = input;
+            if (!jobId || !clientId)
+                return toolError("INVALID_INPUT", "jobId and clientId are required");
+            const jpSnap = await db.collection("job_posts").doc(jobId).get();
+            if (!jpSnap.exists)
+                return toolError("NOT_FOUND", "Job post not found");
+            const jp = jpSnap.data();
+            if (jp.clientId !== clientId)
+                return toolError("PERMISSION_DENIED", "This job post does not belong to you");
+            if (jp.status === "closed" || jp.status === "cancelled")
+                return toolError("INVALID_INPUT", "Job post is already closed");
+            await jpSnap.ref.update({ status: "closed", closedAt: nowIso });
+            (0, auditLog_1.logAudit)({ eventType: "job_post_cancelled", userId: clientId, data: { source: "mcp:cancel_job_post", jobId } }).catch(() => { });
+            return { success: true, jobId };
+        }
+        // ── list_job_applicants ─────────────────────────────────────────────────
+        if (name === "list_job_applicants") {
+            const { jobId, clientId } = input;
+            if (!jobId || !clientId)
+                return toolError("INVALID_INPUT", "jobId and clientId are required");
+            const jpSnap2 = await db.collection("job_posts").doc(jobId).get();
+            if (!jpSnap2.exists)
+                return toolError("NOT_FOUND", "Job post not found");
+            if (jpSnap2.data().clientId !== clientId)
+                return toolError("PERMISSION_DENIED", "Not authorized");
+            const appSnap3 = await db.collection("job_applications").where("jobId", "==", jobId).limit(10).get();
+            const applicants = await Promise.all(appSnap3.docs.map(async (d) => {
+                var _a, _b, _c, _d, _e, _f, _g, _h;
+                const app = d.data();
+                const cgSnap = await db.collection("caregivers").doc(app.caregiverId).get();
+                const cg = (_a = cgSnap.data()) !== null && _a !== void 0 ? _a : {};
+                return {
+                    applicationId: d.id,
+                    caregiverName: ((_b = cg.name) !== null && _b !== void 0 ? _b : `${(_c = cg.firstName) !== null && _c !== void 0 ? _c : ""} ${(_d = cg.lastName) !== null && _d !== void 0 ? _d : ""}`.trim()) || "Unknown",
+                    caregiverId: app.caregiverId,
+                    proposedRate: (_e = app.proposedRate) !== null && _e !== void 0 ? _e : null,
+                    coverNote: (_f = app.coverNote) !== null && _f !== void 0 ? _f : null,
+                    status: (_g = app.status) !== null && _g !== void 0 ? _g : "pending",
+                    appliedAt: app.appliedAt,
+                    rating: (_h = cg.rating) !== null && _h !== void 0 ? _h : null,
+                };
+            }));
+            return { success: true, applicants, total: applicants.length };
+        }
+        // ── get_caregiver_earnings ──────────────────────────────────────────────
+        if (name === "get_caregiver_earnings") {
+            const { caregiverId } = input;
+            if (!caregiverId)
+                return toolError("INVALID_INPUT", "caregiverId is required");
+            const cgSnap5 = await db.collection("caregivers").doc(caregiverId).get();
+            if (!cgSnap5.exists)
+                return toolError("NOT_FOUND", "Caregiver not found");
+            const cg5 = cgSnap5.data();
+            const earnSnap = await db
+                .collection("appointments")
+                .where("caregiverId", "==", caregiverId)
+                .where("status", "==", "completed")
+                .where("isoDate", ">=", daysAgo)
+                .orderBy("isoDate", "desc")
+                .limit(50)
+                .get();
+            const totalEarned = earnSnap.docs.reduce((sum, d) => { var _a; return sum + ((_a = d.data().cost) !== null && _a !== void 0 ? _a : 0); }, 0);
+            return {
+                success: true,
+                totalEarned: Math.round(totalEarned * 100) / 100,
+                pendingBalance: (_51 = cg5.pendingBalance) !== null && _51 !== void 0 ? _51 : 0,
+                stripeSetup: !!cg5.stripeAccountId,
+                payoutsEnabled: !!cg5.payoutsEnabled,
+                recentVisitCount: earnSnap.size,
+                periodDays: daysBack,
+            };
+        }
+        // ── update_caregiver_availability ───────────────────────────────────────
+        if (name === "update_caregiver_availability") {
+            const { caregiverId, availableDays, unavailableDays, preferredTimeOfDay } = input;
+            if (!caregiverId)
+                return toolError("INVALID_INPUT", "caregiverId is required");
+            const cgSnap6 = await db.collection("caregivers").doc(caregiverId).get();
+            if (!cgSnap6.exists)
+                return toolError("NOT_FOUND", "Caregiver not found");
+            const upd6 = { updatedAt: nowIso };
+            if (Array.isArray(availableDays) && availableDays.length > 0)
+                upd6["availability"] = admin.firestore.FieldValue.arrayUnion(...availableDays);
+            if (Array.isArray(unavailableDays) && unavailableDays.length > 0)
+                upd6["availability"] = admin.firestore.FieldValue.arrayRemove(...unavailableDays);
+            if (typeof preferredTimeOfDay === "string")
+                upd6["preferredTimeOfDay"] = preferredTimeOfDay;
+            await cgSnap6.ref.update(upd6);
+            (0, auditLog_1.logAudit)({ eventType: "caregiver_availability_updated", userId: caregiverId, data: { source: "mcp:update_caregiver_availability", availableDays, unavailableDays } }).catch(() => { });
+            return { success: true, updated: { availableDays: availableDays !== null && availableDays !== void 0 ? availableDays : [], unavailableDays: unavailableDays !== null && unavailableDays !== void 0 ? unavailableDays : [], preferredTimeOfDay: preferredTimeOfDay !== null && preferredTimeOfDay !== void 0 ? preferredTimeOfDay : null } };
+        }
+        // ── browse_job_board ────────────────────────────────────────────────────
+        if (name === "browse_job_board") {
+            const { caregiverId } = input;
+            if (!caregiverId)
+                return toolError("INVALID_INPUT", "caregiverId is required");
+            const cgSnap7 = await db.collection("caregivers").doc(caregiverId).get();
+            if (!cgSnap7.exists)
+                return toolError("NOT_FOUND", "Caregiver not found");
+            const limit7 = Math.min((_52 = input.limit) !== null && _52 !== void 0 ? _52 : 5, 10);
+            const alreadyApplied = await db.collection("job_applications").where("caregiverId", "==", caregiverId).get();
+            const appliedJobIds = new Set(alreadyApplied.docs.map((d) => d.data().jobId));
+            const jobsSnap = await db.collection("job_posts").where("status", "==", "open").orderBy("createdAt", "desc").limit(20).get();
+            const jobs7 = jobsSnap.docs
+                .filter((d) => !appliedJobIds.has(d.id))
+                .slice(0, limit7)
+                .map((d) => {
+                var _a, _b, _c, _d, _e, _f;
+                const data = d.data();
+                return {
+                    jobId: d.id,
+                    summary: (_a = data.summary) !== null && _a !== void 0 ? _a : "Care job",
+                    careNeeds: (_b = data.careTypes) !== null && _b !== void 0 ? _b : [],
+                    schedule: (_c = data.schedule) !== null && _c !== void 0 ? _c : {},
+                    hourlyRate: (_d = data.hourlyRate) !== null && _d !== void 0 ? _d : null,
+                    location: (_f = (_e = data.location) === null || _e === void 0 ? void 0 : _e.city) !== null && _f !== void 0 ? _f : "Nearby",
+                };
+            });
+            return { success: true, jobs: jobs7, total: jobs7.length };
+        }
+        // ── get_my_applications ─────────────────────────────────────────────────
+        if (name === "get_my_applications") {
+            const { caregiverId } = input;
+            if (!caregiverId)
+                return toolError("INVALID_INPUT", "caregiverId is required");
+            const myAppSnap = await db.collection("job_applications").where("caregiverId", "==", caregiverId).orderBy("appliedAt", "desc").limit(10).get();
+            const applications = await Promise.all(myAppSnap.docs.map(async (d) => {
+                var _a, _b, _c, _d, _e;
+                const app = d.data();
+                const jpSnap3 = await db.collection("job_posts").doc(app.jobId).get().catch(() => null);
+                const jp3 = (_a = jpSnap3 === null || jpSnap3 === void 0 ? void 0 : jpSnap3.data()) !== null && _a !== void 0 ? _a : {};
+                return {
+                    applicationId: d.id,
+                    jobId: app.jobId,
+                    jobSummary: (_b = jp3.summary) !== null && _b !== void 0 ? _b : `Care job`,
+                    jobStatus: (_c = jp3.status) !== null && _c !== void 0 ? _c : "unknown",
+                    status: (_d = app.status) !== null && _d !== void 0 ? _d : "pending",
+                    appliedAt: app.appliedAt,
+                    proposedRate: (_e = app.proposedRate) !== null && _e !== void 0 ? _e : null,
+                };
+            }));
+            return { success: true, applications, total: applications.length };
+        }
+        // ── get_pending_timesheets ──────────────────────────────────────────────
+        if (name === "get_pending_timesheets") {
+            const { clientId } = input;
+            if (!clientId)
+                return toolError("INVALID_INPUT", "clientId is required");
+            const tsSnap = await db.collection("shiftHours").where("clientId", "==", clientId).where("status", "==", "pending_client_review").orderBy("submittedAt", "desc").limit(5).get();
+            const timesheets = await Promise.all(tsSnap.docs.map(async (d) => {
+                var _a, _b, _c, _d, _e;
+                const ts = d.data();
+                const cgSnap8 = await db.collection("caregivers").doc(ts.caregiverId).get().catch(() => null);
+                const cg8 = (_a = cgSnap8 === null || cgSnap8 === void 0 ? void 0 : cgSnap8.data()) !== null && _a !== void 0 ? _a : {};
+                return {
+                    appointmentId: ts.appointmentId,
+                    caregiverName: ((_b = cg8.name) !== null && _b !== void 0 ? _b : `${(_c = cg8.firstName) !== null && _c !== void 0 ? _c : ""} ${(_d = cg8.lastName) !== null && _d !== void 0 ? _d : ""}`.trim()) || "Caregiver",
+                    date: ts.date,
+                    clockIn: ts.clockInTime,
+                    clockOut: ts.clockOutTime,
+                    hours: ts.durationHours,
+                    amountOwed: `$${(((_e = ts.amountCents) !== null && _e !== void 0 ? _e : 0) / 100).toFixed(2)}`,
+                    submittedAt: ts.submittedAt,
+                };
+            }));
+            return { success: true, timesheets, total: timesheets.length };
+        }
+        // ── get_care_journal_client ─────────────────────────────────────────────
+        if (name === "get_care_journal_client") {
+            const { clientId } = input;
+            if (!clientId)
+                return toolError("INVALID_INPUT", "clientId is required");
+            const limit9 = Math.min((_53 = input.limit) !== null && _53 !== void 0 ? _53 : 5, 20);
+            const userSnap = await db.collection("users").doc(clientId).get();
+            const seniorId9 = (_54 = userSnap.data()) === null || _54 === void 0 ? void 0 : _54.seniorId;
+            if (!seniorId9)
+                return toolError("NOT_FOUND", "No senior profile linked to this client");
+            (0, auditLog_1.logHealthDataAccessed)(clientId, seniorId9, "mcp:get_care_journal_client").catch(() => { });
+            const jSnap = await db.collection("care_journal").where("seniorId", "==", seniorId9).orderBy("timestamp", "desc").limit(limit9).get();
+            const entries = await Promise.all(jSnap.docs.map(async (d) => {
+                var _a, _b, _c, _d, _e, _f, _g, _h;
+                const entry = d.data();
+                const cgSnap9 = await db.collection("caregivers").doc(entry.caregiverId).get().catch(() => null);
+                const cg9 = (_a = cgSnap9 === null || cgSnap9 === void 0 ? void 0 : cgSnap9.data()) !== null && _a !== void 0 ? _a : {};
+                return {
+                    timestamp: entry.timestamp,
+                    caregiverName: ((_b = cg9.name) !== null && _b !== void 0 ? _b : `${(_c = cg9.firstName) !== null && _c !== void 0 ? _c : ""} ${(_d = cg9.lastName) !== null && _d !== void 0 ? _d : ""}`.trim()) || "Caregiver",
+                    notes: (_e = entry.notes) !== null && _e !== void 0 ? _e : null,
+                    mood: (_f = entry.mood) !== null && _f !== void 0 ? _f : null,
+                    activities: (_g = entry.activities) !== null && _g !== void 0 ? _g : [],
+                    wellness: (_h = entry.wellness) !== null && _h !== void 0 ? _h : null,
+                };
+            }));
+            return { success: true, entries, total: entries.length };
         }
         return toolError("INVALID_INPUT", `Unknown tool: ${name}`);
     }

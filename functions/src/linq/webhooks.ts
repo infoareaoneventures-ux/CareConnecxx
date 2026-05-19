@@ -27,6 +27,7 @@ import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
 import { logCrisisDetected } from "../observability/auditLog";
 import { isBereavementTrigger, activateBereavementMode } from "../agents/bereavement";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { handleJobPostingStep, startJobPostingFlow } from "../agents/jobPostingFlow";
 import { STATE_MACHINE_FLAGS, clearAllStateFlags } from "../utils/sessionState";
 import { sendIfNotDND } from "../utils/dndGuard";
 import { writeFeedbackSignal } from "../ai/feedback";
@@ -1401,6 +1402,27 @@ async function handleInbound(event: unknown): Promise<void> {
     if (handled) return;
   }
 
+  // ── Job posting flow — multi-step state machine for returning clients ───────
+  if ((session as any).jobPostingStep) {
+    const jpExpiry = (session as any).stateExpiresAt as string | undefined;
+    if (jpExpiry && new Date(jpExpiry) < new Date()) {
+      await db.collection("agent_sessions").doc(phone).update({
+        jobPostingStep: admin.firestore.FieldValue.delete(),
+        jobPostingData:  admin.firestore.FieldValue.delete(),
+        stateExpiresAt: admin.firestore.FieldValue.delete(),
+      });
+      await sendMessage(chatId, "Your job posting session timed out. Text me anytime to start a new one!");
+      return;
+    }
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      await handleJobPostingStep(phone, chatId, text, session);
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+    return;
+  }
+
   // ── Check for pending task (booking / emergency replacement) ───────────────
   const taskSnap = await db
     .collection("agent_tasks")
@@ -2219,6 +2241,42 @@ async function handleInbound(event: unknown): Promise<void> {
     if (intent === "TRIGGER_MANAGEMENT") {
       const { handleTriggerManagement } = await import("../agents/schedulingHandler");
       await handleTriggerManagement(phone, text, session as Record<string, unknown>);
+      return;
+    }
+
+    // ── POST_JOB — start the conversational job posting state machine ────────
+    if (intent === "POST_JOB" && session.userType !== "caregiver") {
+      await startJobPostingFlow(phone, chatId, session);
+      return;
+    }
+
+    // ── Platform-action intents — routed to QA agent with new MCP tools ─────
+    if (
+      intent === "VIEW_MY_JOBS"        ||
+      intent === "VIEW_APPLICANTS"     ||
+      intent === "VIEW_JOURNAL"        ||
+      intent === "APPROVE_TIMESHEET"   ||
+      intent === "VIEW_EARNINGS"       ||
+      intent === "UPDATE_AVAILABILITY" ||
+      intent === "BROWSE_JOB_BOARD"
+    ) {
+      const qaReplyPlatform = await runQaAgent({
+        text,
+        phone,
+        chatId,
+        userId:      session.userId      ?? "",
+        seniorId:    session.seniorId    ?? session.userId ?? "",
+        userType:    session.userType    ?? "client",
+        caregiverId: session.caregiverId,
+        zepThreadId: (session as Record<string, unknown>).zepThreadId as string | undefined,
+        session:     session as Record<string, unknown>,
+      });
+      await sendViaInteractionAgent(phone, {
+        content:     qaReplyPlatform,
+        urgency:     "standard",
+        sourceAgent: "qa",
+        canDrop:     false,
+      });
       return;
     }
 

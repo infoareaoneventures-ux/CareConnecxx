@@ -58,6 +58,8 @@ exports.STATE_MACHINE_FLAGS = [
     "pendingDisputeDetail",
     "collectingCredential",
     "stateExpiresAt",
+    "jobPostingStep",
+    "jobPostingData",
 ];
 async function clearAllStateFlags(phone, db) {
     const update = {};

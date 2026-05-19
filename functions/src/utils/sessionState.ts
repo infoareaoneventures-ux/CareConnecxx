@@ -22,6 +22,8 @@ export const STATE_MACHINE_FLAGS = [
   "pendingDisputeDetail",
   "collectingCredential",
   "stateExpiresAt",
+  "jobPostingStep",
+  "jobPostingData",
 ] as const;
 
 export async function clearAllStateFlags(

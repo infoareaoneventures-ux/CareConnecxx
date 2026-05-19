@@ -993,6 +993,35 @@ exports.MCP_TOOLS = [
             required: ["clientId"],
         },
     },
+    {
+        name: "modify_recurring_schedule",
+        description: "Change the days and/or times of an active recurring care schedule. " +
+            "Cancels future appointments from the old schedule and generates new ones with the updated days/times. " +
+            "Confirm with the client before calling.",
+        input_schema: {
+            type: "object",
+            properties: {
+                scheduleId: { type: "string", description: "The recurring_schedules document ID" },
+                clientId: { type: "string", description: "The client's user ID (ownership check)" },
+                newDays: { type: "array", items: { type: "string" }, description: "New days of the week (e.g. ['Tuesday','Thursday']). Omit to keep current days." },
+                newStartTime: { type: "string", description: "New start time HH:MM. Omit to keep current start time." },
+                newEndTime: { type: "string", description: "New end time HH:MM. Omit to keep current end time." },
+            },
+            required: ["scheduleId", "clientId"],
+        },
+    },
+    {
+        name: "get_payment_update_link",
+        description: "Generate a Stripe Billing Portal link for the client to securely update their payment method. " +
+            "Send this link to the client. Do NOT ask for card details directly.",
+        input_schema: {
+            type: "object",
+            properties: {
+                clientId: { type: "string", description: "The client's user ID" },
+            },
+            required: ["clientId"],
+        },
+    },
 ];
 // Tools available to caregivers — scoped to what's relevant to their role
 const CAREGIVER_TOOL_NAMES = new Set([
@@ -1162,7 +1191,7 @@ function toolError(code, message) {
 }
 // ── Tool executor ─────────────────────────────────────────────────────────────
 async function handleToolCall(name, input) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63;
     const nowIso = new Date().toISOString();
     const daysBack = Math.min((_a = input.daysBack) !== null && _a !== void 0 ? _a : 30, 90);
     const daysAgo = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
@@ -2535,7 +2564,53 @@ async function handleToolCall(name, input) {
                 upd6["preferredTimeOfDay"] = preferredTimeOfDay;
             await cgSnap6.ref.update(upd6);
             (0, auditLog_1.logAudit)({ eventType: "caregiver_availability_updated", userId: caregiverId, data: { source: "mcp:update_caregiver_availability", availableDays, unavailableDays } }).catch(() => { });
-            return { success: true, updated: { availableDays: availableDays !== null && availableDays !== void 0 ? availableDays : [], unavailableDays: unavailableDays !== null && unavailableDays !== void 0 ? unavailableDays : [], preferredTimeOfDay: preferredTimeOfDay !== null && preferredTimeOfDay !== void 0 ? preferredTimeOfDay : null } };
+            // Auto-reject pending interview_requests that fall on days no longer available
+            let conflictsCancelled = 0;
+            if (Array.isArray(unavailableDays) && unavailableDays.length > 0) {
+                const removedDays = unavailableDays.map((d) => d.toLowerCase());
+                const pendingInterviews = await db.collection("interview_requests")
+                    .where("caregiverId", "==", caregiverId)
+                    .where("status", "in", ["pending_presentation", "awaiting_caregiver_response", "scheduled"])
+                    .get();
+                const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+                const conflictedRequests = [];
+                for (const doc of pendingInterviews.docs) {
+                    const req = doc.data();
+                    // Check if scheduled date falls on a removed day
+                    const scheduledDate = (_52 = req.scheduledAt) !== null && _52 !== void 0 ? _52 : req.proposedTime;
+                    if (scheduledDate) {
+                        const dayOfWeek = DAY_NAMES[new Date(scheduledDate).getDay()];
+                        if (removedDays.includes(dayOfWeek)) {
+                            conflictedRequests.push({ id: doc.id, clientPhone: req.clientPhone, scheduledDate });
+                        }
+                    }
+                }
+                for (const conflict of conflictedRequests) {
+                    await db.collection("interview_requests").doc(conflict.id).update({
+                        status: "cancelled_availability",
+                        cancelledAt: nowIso,
+                        cancelReason: "caregiver_removed_availability",
+                    }).catch(() => { });
+                    // Notify the client that this interview slot is no longer available
+                    if (conflict.clientPhone) {
+                        const clientSess = await db.collection("agent_sessions").doc(conflict.clientPhone).get().catch(() => null);
+                        if (clientSess === null || clientSess === void 0 ? void 0 : clientSess.exists) {
+                            const { sendToPhone } = await Promise.resolve().then(() => __importStar(require("../linq/client")));
+                            const cgData = cgSnap6.data();
+                            const cgName = (_54 = (_53 = cgData === null || cgData === void 0 ? void 0 : cgData.name) !== null && _53 !== void 0 ? _53 : cgData === null || cgData === void 0 ? void 0 : cgData.firstName) !== null && _54 !== void 0 ? _54 : "The caregiver";
+                            await sendToPhone(conflict.clientPhone, `${cgName} is no longer available on that day and your scheduled interview has been cancelled. ` +
+                                `Would you like me to find another time or a different caregiver?`).catch(() => { });
+                            // Set state so client's next YES triggers rematching
+                            await db.collection("agent_sessions").doc(conflict.clientPhone).update({
+                                pendingRematch: { reason: "interview_cancelled_availability", caregiverId },
+                                stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+                            }).catch(() => { });
+                        }
+                    }
+                    conflictsCancelled++;
+                }
+            }
+            return { success: true, updated: { availableDays: availableDays !== null && availableDays !== void 0 ? availableDays : [], unavailableDays: unavailableDays !== null && unavailableDays !== void 0 ? unavailableDays : [], preferredTimeOfDay: preferredTimeOfDay !== null && preferredTimeOfDay !== void 0 ? preferredTimeOfDay : null }, conflictingInterviewsCancelled: conflictsCancelled };
         }
         // ── browse_job_board ────────────────────────────────────────────────────
         if (name === "browse_job_board") {
@@ -2545,7 +2620,7 @@ async function handleToolCall(name, input) {
             const cgSnap7 = await db.collection("caregivers").doc(caregiverId).get();
             if (!cgSnap7.exists)
                 return toolError("NOT_FOUND", "Caregiver not found");
-            const limit7 = Math.min((_52 = input.limit) !== null && _52 !== void 0 ? _52 : 5, 10);
+            const limit7 = Math.min((_55 = input.limit) !== null && _55 !== void 0 ? _55 : 5, 10);
             const alreadyApplied = await db.collection("job_applications").where("caregiverId", "==", caregiverId).get();
             const appliedJobIds = new Set(alreadyApplied.docs.map((d) => d.data().jobId));
             const jobsSnap = await db.collection("job_posts").where("status", "==", "open").orderBy("createdAt", "desc").limit(20).get();
@@ -2618,9 +2693,9 @@ async function handleToolCall(name, input) {
             const { clientId } = input;
             if (!clientId)
                 return toolError("INVALID_INPUT", "clientId is required");
-            const limit9 = Math.min((_53 = input.limit) !== null && _53 !== void 0 ? _53 : 5, 20);
+            const limit9 = Math.min((_56 = input.limit) !== null && _56 !== void 0 ? _56 : 5, 20);
             const userSnap = await db.collection("users").doc(clientId).get();
-            const seniorId9 = (_54 = userSnap.data()) === null || _54 === void 0 ? void 0 : _54.seniorId;
+            const seniorId9 = (_57 = userSnap.data()) === null || _57 === void 0 ? void 0 : _57.seniorId;
             if (!seniorId9)
                 return toolError("NOT_FOUND", "No senior profile linked to this client");
             (0, auditLog_1.logHealthDataAccessed)(clientId, seniorId9, "mcp:get_care_journal_client").catch(() => { });
@@ -2640,6 +2715,97 @@ async function handleToolCall(name, input) {
                 };
             }));
             return { success: true, entries, total: entries.length };
+        }
+        // ── modify_recurring_schedule ───────────────────────────────────────────
+        if (name === "modify_recurring_schedule") {
+            const { scheduleId, clientId, newDays, newStartTime, newEndTime } = input;
+            if (!scheduleId || !clientId)
+                return toolError("INVALID_INPUT", "scheduleId and clientId are required");
+            if (!newDays && !newStartTime && !newEndTime)
+                return toolError("INVALID_INPUT", "At least one of newDays, newStartTime, or newEndTime is required");
+            const schedSnap = await db.collection("recurring_schedules").doc(scheduleId).get();
+            if (!schedSnap.exists)
+                return toolError("NOT_FOUND", "Recurring schedule not found");
+            const sched = schedSnap.data();
+            if (sched.clientId !== clientId)
+                return toolError("PERMISSION_DENIED", "Schedule does not belong to this client");
+            if (sched.status === "cancelled")
+                return toolError("INVALID_INPUT", "Cannot modify a cancelled schedule");
+            const resolvedDays = (_58 = newDays) !== null && _58 !== void 0 ? _58 : sched.days;
+            const resolvedStart = (_59 = newStartTime) !== null && _59 !== void 0 ? _59 : sched.startTime;
+            const resolvedEnd = (_60 = newEndTime) !== null && _60 !== void 0 ? _60 : sched.endTime;
+            // Validate times
+            const timePattern = /^\d{2}:\d{2}$/;
+            if (!timePattern.test(resolvedStart) || !timePattern.test(resolvedEnd)) {
+                return toolError("INVALID_INPUT", "Start and end times must be in HH:MM format");
+            }
+            const [sh, sm] = resolvedStart.split(":").map(Number);
+            const [eh, em] = resolvedEnd.split(":").map(Number);
+            if (eh * 60 + em <= sh * 60 + sm)
+                return toolError("INVALID_INPUT", "End time must be after start time");
+            const newDurationHours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+            const today = nowIso.slice(0, 10);
+            // Cancel all future confirmed appointments from the old schedule
+            const futureSnap = await db.collection("appointments")
+                .where("recurringScheduleId", "==", scheduleId)
+                .where("date", ">", today)
+                .where("status", "in", ["confirmed"])
+                .get();
+            const { generateRecurringDates } = await Promise.resolve().then(() => __importStar(require("../scheduled/recurringScheduler")));
+            const newDatesArr = generateRecurringDates(today, resolvedDays, 4);
+            const batchMs = db.batch();
+            for (const doc of futureSnap.docs) {
+                batchMs.update(doc.ref, { status: "cancelled_modified", cancelledAt: nowIso, cancelReason: "schedule_modified" });
+            }
+            batchMs.update(schedSnap.ref, {
+                days: resolvedDays, startTime: resolvedStart, endTime: resolvedEnd,
+                durationHours: newDurationHours, modifiedAt: nowIso,
+                lastExtendedAt: nowIso, weeksBookedAhead: 4,
+            });
+            for (const { date } of newDatesArr) {
+                const apptRef = db.collection("appointments").doc();
+                batchMs.set(apptRef, {
+                    clientId,
+                    caregiverId: sched.caregiverId,
+                    caregiverName: sched.caregiverName,
+                    date, startTime: resolvedStart, endTime: resolvedEnd,
+                    durationHours: newDurationHours, hourlyRate: sched.hourlyRate,
+                    status: "confirmed", recurringScheduleId: scheduleId,
+                    humanApproved: true, createdByAgent: true, createdAt: nowIso,
+                });
+            }
+            await batchMs.commit();
+            // Notify caregiver
+            const cgSnap = await db.collection("caregivers").doc(sched.caregiverId).get().catch(() => null);
+            const cgPhone = (_61 = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _61 === void 0 ? void 0 : _61.phone;
+            if (cgPhone) {
+                const { sendToPhone } = await Promise.resolve().then(() => __importStar(require("../linq/client")));
+                await sendToPhone(cgPhone, `Your recurring schedule with this family has been updated. New schedule: ${resolvedDays.join(", ")}, ${resolvedStart}–${resolvedEnd}. ` +
+                    `Old upcoming visits were replaced with new ones.`).catch(() => { });
+            }
+            (0, auditLog_1.logAudit)({ eventType: "recurring_schedule_updated", userId: clientId, data: { source: "mcp:modify_recurring_schedule", scheduleId, newDays: resolvedDays, newStartTime: resolvedStart, newEndTime: resolvedEnd } }).catch(() => { });
+            return { success: true, scheduleId, newDays: resolvedDays, newStartTime: resolvedStart, newEndTime: resolvedEnd, newVisitsCreated: newDatesArr.length, oldVisitsCancelled: futureSnap.size };
+        }
+        // ── get_payment_update_link ─────────────────────────────────────────────
+        if (name === "get_payment_update_link") {
+            const { clientId } = input;
+            if (!clientId)
+                return toolError("INVALID_INPUT", "clientId is required");
+            const userSnap = await db.collection("users").doc(clientId).get();
+            if (!userSnap.exists)
+                return toolError("NOT_FOUND", "Client not found");
+            const stripeCustomerId = (_62 = userSnap.data()) === null || _62 === void 0 ? void 0 : _62.stripeCustomerId;
+            if (!stripeCustomerId)
+                return toolError("INVALID_INPUT", "No Stripe billing account found for this client. They may need to re-subscribe.");
+            const { getStripeClient } = await Promise.resolve().then(() => __importStar(require("../stripe")));
+            const sc = getStripeClient();
+            const appUrl = (_63 = process.env.APP_URL) !== null && _63 !== void 0 ? _63 : "https://cara.app";
+            const session = await sc.billingPortal.sessions.create({
+                customer: stripeCustomerId,
+                return_url: `${appUrl}/settings/billing`,
+            });
+            (0, auditLog_1.logAudit)({ eventType: "billing_portal_opened", userId: clientId, data: { source: "mcp:get_payment_update_link" } }).catch(() => { });
+            return { success: true, url: session.url, expiresIn: "5 minutes" };
         }
         return toolError("INVALID_INPUT", `Unknown tool: ${name}`);
     }

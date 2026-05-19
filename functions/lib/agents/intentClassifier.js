@@ -14,6 +14,7 @@ const VALID_INTENTS = new Set([
     "SCHEDULE_REQUEST", "TRIGGER_MANAGEMENT", "CREDENTIAL_MANAGEMENT",
     "POST_JOB", "VIEW_MY_JOBS", "VIEW_APPLICANTS", "VIEW_JOURNAL",
     "APPROVE_TIMESHEET", "VIEW_EARNINGS", "UPDATE_AVAILABILITY", "BROWSE_JOB_BOARD",
+    "RESCHEDULE_REQUEST", "MODIFY_SCHEDULE", "UPDATE_PAYMENT_METHOD",
 ]);
 let _client = null;
 function getClient() {
@@ -38,7 +39,7 @@ async function classifyIntent(text, hasPendingTask) {
             model: "claude-haiku-4-5-20251001",
             max_tokens: 10,
             system: "You classify a message sent to an AI care assistant named Cara. " +
-                "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, QUESTION.\n" +
+                "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, QUESTION.\n" +
                 "STOP = opting out of all messages.\n" +
                 "TASK_REPLY = responding to a numbered list (1, 2, or 3).\n" +
                 "BOOKING_CONFIRM = confirming or approving a booking, schedule, or action (e.g. 'yes', 'sure', 'sounds good', 'let's do it', 'book it', 'go ahead', 'that works', 'perfect', 'confirmed', 'ok', 'yep').\n" +
@@ -66,6 +67,9 @@ async function classifyIntent(text, hasPendingTask) {
                 "VIEW_EARNINGS = a caregiver asking about their pay or earnings (e.g. 'what have I earned', 'show my earnings', 'how much did I make this week', 'my balance', 'my payouts', 'my pay').\n" +
                 "UPDATE_AVAILABILITY = a caregiver wanting to change their availability schedule (e.g. 'update my availability', 'change my schedule', 'not available Fridays anymore', 'add Monday to my availability', 'I am free on Tuesdays now').\n" +
                 "BROWSE_JOB_BOARD = a caregiver wanting to see open jobs they can apply to (e.g. 'show me open jobs', 'any jobs available', 'job board', 'what jobs can I apply for', 'looking for work', 'find me a job').\n" +
+                "RESCHEDULE_REQUEST = a client wanting to move an existing appointment to a different date or time (e.g. 'reschedule Wednesday to Friday', 'move tomorrow\\'s visit to next week', 'can we switch the Monday appointment to Tuesday', 'change the appointment time').\n" +
+                "MODIFY_SCHEDULE = a client wanting to change the days or times of their recurring care schedule — NOT a one-time appointment (e.g. 'change my recurring Mondays to Tuesdays', 'move weekly care from morning to afternoon', 'swap my Thursday visits to Fridays going forward', 'change the schedule days').\n" +
+                "UPDATE_PAYMENT_METHOD = a client wanting to update or change their billing or payment method (e.g. 'update my card', 'change my credit card', 'my card expired', 'update billing', 'add a new payment method', 'my payment failed').\n" +
                 "QUESTION = anything else.",
             messages: [{ role: "user", content: text }],
         }, { timeoutMs: 8000, maxAttempts: 3 });

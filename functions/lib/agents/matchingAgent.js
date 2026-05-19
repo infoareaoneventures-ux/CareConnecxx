@@ -105,7 +105,7 @@ function computeMatchScore(caregiver, intake) {
     };
 }
 async function runMatchingForClient(phone, chatId, intake, session) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
     try {
         const zip = ((_a = intake.zipCode) !== null && _a !== void 0 ? _a : "");
         const city = ((_b = intake.city) !== null && _b !== void 0 ? _b : "");
@@ -144,22 +144,46 @@ async function runMatchingForClient(phone, chatId, intake, session) {
         const top3 = scoredCaregivers.slice(0, 3).map((x) => x.c);
         const top3Scores = scoredCaregivers.slice(0, 3).map((x) => x.matchScore);
         if (top3.length === 0) {
-            // Write admin alert so the team can manually follow up
-            const intakeCareNeeds = ((_f = intake.careNeeds) !== null && _f !== void 0 ? _f : []);
+            // Read and increment the failure counter on the client's session
+            const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
+            const prevFailures = ((_g = (_f = sessionSnap.data()) === null || _f === void 0 ? void 0 : _f.consecutiveMatchFailures) !== null && _g !== void 0 ? _g : 0);
+            const failureCount = prevFailures + 1;
+            await db.collection("agent_sessions").doc(phone).update({ consecutiveMatchFailures: failureCount });
+            const intakeCareNeeds = ((_h = intake.careNeeds) !== null && _h !== void 0 ? _h : []);
+            const severity = failureCount >= 2 ? "urgent" : "high";
             await db.collection("admin_alerts").add({
                 type: "no_match_found",
                 clientPhone: phone,
-                city: ((_g = intake.city) !== null && _g !== void 0 ? _g : ""),
-                zipCode: ((_h = intake.zipCode) !== null && _h !== void 0 ? _h : ""),
+                city: ((_j = intake.city) !== null && _j !== void 0 ? _j : ""),
+                zipCode: ((_k = intake.zipCode) !== null && _k !== void 0 ? _k : ""),
                 careNeeds: intakeCareNeeds,
+                failureCount,
                 createdAt: new Date().toISOString(),
                 resolved: false,
-                severity: "high",
+                severity,
             });
-            await (0, client_1.sendMessage)(chatId, "I don't have anyone available in your area right now, but I've flagged your request " +
-                "and our team will reach out within 24 hours to find the right match.");
+            if (failureCount >= 2) {
+                // Pool is repeatedly exhausted — escalate urgently and keep searching
+                await (0, client_1.sendMessage)(chatId, "I haven't been able to find the right match yet, but I'm still actively searching. " +
+                    "Our team has also been notified and will personally reach out to you shortly — we won't let you wait.");
+                // Auto-trigger a broader rematch on the next cycle by clearing rejected list
+                // only if all local + broader search is exhausted
+                if (rejectedIds.length > 0) {
+                    // Widen the pool: keep only the last 3 rejections to allow re-presentation after escalation
+                    const trimmedRejections = rejectedIds.slice(-3);
+                    await db.collection("agent_sessions").doc(phone).update({
+                        rejectedCaregiverIds: trimmedRejections,
+                    });
+                }
+            }
+            else {
+                await (0, client_1.sendMessage)(chatId, "I don't have anyone available in your area right now, but I've flagged your request " +
+                    "and our team will reach out within 24 hours to find the right match.");
+            }
             return;
         }
+        // Successful match — reset the failure counter
+        await db.collection("agent_sessions").doc(phone).update({ consecutiveMatchFailures: 0 }).catch(() => { });
         // Write pending interview requests (and caregiver_interest tasks for pending-bg-check caregivers)
         for (let i = 0; i < top3.length; i++) {
             const c = top3[i];
@@ -183,16 +207,16 @@ async function runMatchingForClient(phone, chatId, intake, session) {
                     caregiverId: c.id,
                     caregiverName: c.name,
                     clientPhone: phone,
-                    clientId: (_j = session === null || session === void 0 ? void 0 : session.userId) !== null && _j !== void 0 ? _j : phone,
+                    clientId: (_l = session === null || session === void 0 ? void 0 : session.userId) !== null && _l !== void 0 ? _l : phone,
                     status: "pending_bg_clear",
                     createdAt: new Date().toISOString(),
                 });
             }
         }
-        const seniorName = ((_k = intake.seniorName) !== null && _k !== void 0 ? _k : "your loved one");
-        const needs = ((_l = intake.careNeeds) !== null && _l !== void 0 ? _l : []);
-        const appUrl = (_m = process.env.APP_URL) !== null && _m !== void 0 ? _m : "https://cara.app";
-        const userId = (_o = session === null || session === void 0 ? void 0 : session.userId) !== null && _o !== void 0 ? _o : phone;
+        const seniorName = ((_m = intake.seniorName) !== null && _m !== void 0 ? _m : "your loved one");
+        const needs = ((_o = intake.careNeeds) !== null && _o !== void 0 ? _o : []);
+        const appUrl = (_p = process.env.APP_URL) !== null && _p !== void 0 ? _p : "https://cara.app";
+        const userId = (_q = session === null || session === void 0 ? void 0 : session.userId) !== null && _q !== void 0 ? _q : phone;
         // Surface remembered client preferences so Cara can reference them naturally
         const learnedFacts = await (0, learnedFacts_1.getRelevantFacts)(userId).catch(() => []);
         const factsContext = learnedFacts.length > 0
@@ -289,7 +313,7 @@ async function runMatchingForClient(phone, chatId, intake, session) {
         // Store match list in session for follow-up; embed active goal context so
         // interview selection can pre-populate booking dates without re-prompting the family
         const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();
-        const goalContext = ((_q = (_p = sessionSnap2.data()) === null || _p === void 0 ? void 0 : _p.activeGoal) === null || _q === void 0 ? void 0 : _q.type) === "booking"
+        const goalContext = ((_s = (_r = sessionSnap2.data()) === null || _r === void 0 ? void 0 : _r.activeGoal) === null || _s === void 0 ? void 0 : _s.type) === "booking"
             ? sessionSnap2.data().activeGoal.context
             : null;
         await db.collection("agent_sessions").doc(phone).update({

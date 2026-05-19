@@ -173,24 +173,53 @@ export async function runMatchingForClient(
     const top3Scores = scoredCaregivers.slice(0, 3).map((x) => x.matchScore);
 
     if (top3.length === 0) {
-      // Write admin alert so the team can manually follow up
+      // Read and increment the failure counter on the client's session
+      const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
+      const prevFailures = (sessionSnap.data()?.consecutiveMatchFailures ?? 0) as number;
+      const failureCount = prevFailures + 1;
+      await db.collection("agent_sessions").doc(phone).update({ consecutiveMatchFailures: failureCount });
+
       const intakeCareNeeds = (intake.careNeeds ?? []) as string[];
+      const severity = failureCount >= 2 ? "urgent" : "high";
+
       await db.collection("admin_alerts").add({
-        type:       "no_match_found",
-        clientPhone: phone,
-        city:       (intake.city    ?? "") as string,
-        zipCode:    (intake.zipCode ?? "") as string,
-        careNeeds:  intakeCareNeeds,
-        createdAt:  new Date().toISOString(),
-        resolved:   false,
-        severity:   "high",
+        type:           "no_match_found",
+        clientPhone:    phone,
+        city:           (intake.city    ?? "") as string,
+        zipCode:        (intake.zipCode ?? "") as string,
+        careNeeds:      intakeCareNeeds,
+        failureCount,
+        createdAt:      new Date().toISOString(),
+        resolved:       false,
+        severity,
       });
-      await sendMessage(chatId,
-        "I don't have anyone available in your area right now, but I've flagged your request " +
-        "and our team will reach out within 24 hours to find the right match."
-      );
+
+      if (failureCount >= 2) {
+        // Pool is repeatedly exhausted — escalate urgently and keep searching
+        await sendMessage(chatId,
+          "I haven't been able to find the right match yet, but I'm still actively searching. " +
+          "Our team has also been notified and will personally reach out to you shortly — we won't let you wait."
+        );
+        // Auto-trigger a broader rematch on the next cycle by clearing rejected list
+        // only if all local + broader search is exhausted
+        if (rejectedIds.length > 0) {
+          // Widen the pool: keep only the last 3 rejections to allow re-presentation after escalation
+          const trimmedRejections = rejectedIds.slice(-3);
+          await db.collection("agent_sessions").doc(phone).update({
+            rejectedCaregiverIds: trimmedRejections,
+          });
+        }
+      } else {
+        await sendMessage(chatId,
+          "I don't have anyone available in your area right now, but I've flagged your request " +
+          "and our team will reach out within 24 hours to find the right match."
+        );
+      }
       return;
     }
+
+    // Successful match — reset the failure counter
+    await db.collection("agent_sessions").doc(phone).update({ consecutiveMatchFailures: 0 }).catch(() => {});
 
     // Write pending interview requests (and caregiver_interest tasks for pending-bg-check caregivers)
     for (let i = 0; i < top3.length; i++) {

@@ -28,6 +28,7 @@ import { logCrisisDetected } from "../observability/auditLog";
 import { isBereavementTrigger, activateBereavementMode } from "../agents/bereavement";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { handleJobPostingStep, startJobPostingFlow } from "../agents/jobPostingFlow";
+import { startModifyScheduleFlow, handleModifyScheduleStep } from "../agents/modifyScheduleFlow";
 import { STATE_MACHINE_FLAGS, clearAllStateFlags } from "../utils/sessionState";
 import { sendIfNotDND } from "../utils/dndGuard";
 import { writeFeedbackSignal } from "../ai/feedback";
@@ -787,14 +788,75 @@ async function handleInbound(event: unknown): Promise<void> {
 
   if (session.optedOut) return;
 
-  // ── Expired state machine — clear and reset before routing ───────────────────
+  // ── Expired state machine — save checkpoint for onboarding, clear otherwise ─
   {
     const stateExpiresAt = (session as any).stateExpiresAt as string | undefined;
     const hasStateFlag   = STATE_MACHINE_FLAGS.filter(f => f !== "stateExpiresAt")
                              .some(f => !!(session as any)[f]);
     if (hasStateFlag && stateExpiresAt && new Date(stateExpiresAt) < new Date()) {
+      // If mid-onboarding, save a checkpoint so the user can resume instead of restarting
+      const isOnboarding = session.onboardingStep && session.onboardingStep !== "complete";
+      if (isOnboarding) {
+        await db.collection("agent_sessions").doc(phone).update({
+          onboardingCheckpoint: {
+            step:          session.onboardingStep,
+            onboardingData: (session as any).onboardingData ?? {},
+            savedAt:       new Date().toISOString(),
+          },
+        }).catch(() => {});
+      }
       await clearAllStateFlags(phone, db);
-      await sendMessage(chatId, "Your previous session timed out — just text me if you'd like to continue.");
+      if (isOnboarding) {
+        await sendMessage(chatId,
+          "Your session timed out. No worries — I saved your progress!\n\n" +
+          "Reply RESUME to pick up where you left off, or START OVER to begin fresh."
+        );
+      } else {
+        await sendMessage(chatId, "Your previous session timed out — just text me if you'd like to continue.");
+      }
+      return;
+    }
+  }
+
+  // ── Onboarding resume from checkpoint ────────────────────────────────────────
+  {
+    const checkpoint = (session as any).onboardingCheckpoint as {
+      step: string; onboardingData: Record<string, unknown>; savedAt: string;
+    } | undefined;
+    const isResumeCommand = norm === "RESUME" || norm === "CONTINUE" || norm === "PICK UP WHERE I LEFT OFF";
+    const isStartOver     = norm === "START OVER" || norm === "RESTART" || norm === "BEGIN AGAIN";
+
+    if (checkpoint && (isResumeCommand || isStartOver)) {
+      await db.collection("agent_sessions").doc(phone).update({
+        onboardingCheckpoint: admin.firestore.FieldValue.delete(),
+      });
+      if (isStartOver) {
+        await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "ask_role", onboardingData: {} });
+        await sendMessage(chatId,
+          "Starting fresh! Are you looking for care for someone, or are you a caregiver?\n\n" +
+          "1️⃣  I need care for someone\n" +
+          "2️⃣  I'm a caregiver"
+        );
+      } else {
+        // Resume: restore checkpoint data and re-ask the current step's question
+        await db.collection("agent_sessions").doc(phone).update({
+          onboardingStep: checkpoint.step,
+          onboardingData: checkpoint.onboardingData,
+          stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
+        const resumedSession = { ...session, onboardingStep: checkpoint.step, onboardingData: checkpoint.onboardingData } as AgentSession;
+        await sendMessage(chatId, "Picking up where we left off!");
+        await handleOnboardingStep(phone, chatId, "__RESUME__", resumedSession);
+      }
+      return;
+    }
+
+    // If checkpoint exists but user sent a normal message (not resume/start-over),
+    // nudge them to choose before processing normally
+    if (checkpoint && session.onboardingStep !== "complete") {
+      await sendMessage(chatId,
+        "You have a saved onboarding session. Reply RESUME to continue, or START OVER to begin fresh."
+      );
       return;
     }
   }
@@ -1420,6 +1482,26 @@ async function handleInbound(event: unknown): Promise<void> {
     } finally {
       if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
     }
+    return;
+  }
+
+  // ── Recurring schedule modification flow ─────────────────────────────────
+  if ((session as any).modifyScheduleStep) {
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      await handleModifyScheduleStep(phone, chatId, text, session);
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+    return;
+  }
+
+  // ── Pending rematching after interview cancelled due to availability change ──
+  if ((session as any).pendingRematch && (norm === "YES" || norm === "Y")) {
+    await db.collection("agent_sessions").doc(phone).update({ pendingRematch: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete() });
+    const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
+    const { runMatchingForClient: rmfcPendingRematch } = await import("../agents/matchingAgent");
+    await rmfcPendingRematch(phone, chatId, sd, sd);
     return;
   }
 
@@ -2247,6 +2329,59 @@ async function handleInbound(event: unknown): Promise<void> {
     // ── POST_JOB — start the conversational job posting state machine ────────
     if (intent === "POST_JOB" && session.userType !== "caregiver") {
       await startJobPostingFlow(phone, chatId, session);
+      return;
+    }
+
+    // ── RESCHEDULE_REQUEST — move an existing appointment to a new date/time ──
+    if (intent === "RESCHEDULE_REQUEST" && session.userType !== "caregiver") {
+      const qaReplyReschedule = await runQaAgent({
+        text,
+        phone,
+        chatId,
+        userId:      session.userId      ?? "",
+        seniorId:    session.seniorId    ?? session.userId ?? "",
+        userType:    "client",
+        caregiverId: session.caregiverId,
+        zepThreadId: (session as Record<string, unknown>).zepThreadId as string | undefined,
+        session:     session as Record<string, unknown>,
+      });
+      await sendViaInteractionAgent(phone, {
+        content:     qaReplyReschedule,
+        urgency:     "standard",
+        sourceAgent: "qa_reschedule",
+        canDrop:     false,
+      });
+      return;
+    }
+
+    // ── MODIFY_SCHEDULE — change days/times of recurring care schedule ────────
+    if (intent === "MODIFY_SCHEDULE" && session.userType !== "caregiver") {
+      await startModifyScheduleFlow(phone, chatId, session);
+      return;
+    }
+
+    // ── UPDATE_PAYMENT_METHOD — generate Stripe billing portal link ───────────
+    if (intent === "UPDATE_PAYMENT_METHOD" && session.userType !== "caregiver") {
+      const clientId = session.userId ?? phone;
+      try {
+        const { handleToolCall } = await import("../mcp/server");
+        const result = await handleToolCall("get_payment_update_link", { clientId }) as { success?: boolean; url?: string };
+        if (result?.success && result?.url) {
+          await sendMessage(chatId,
+            `Here's a secure link to update your payment method:\n\n${result.url}\n\n` +
+            `This link expires in 5 minutes. Once updated, your next scheduled payment will use the new method.`
+          );
+        } else {
+          await sendMessage(chatId,
+            "I wasn't able to generate a payment update link right now. Please visit the app settings to update your billing, or reply again and I'll try once more."
+          );
+        }
+      } catch (err) {
+        console.error("UPDATE_PAYMENT_METHOD error:", err);
+        await sendMessage(chatId,
+          "I ran into an issue generating your billing link. You can update your payment method in the app under Settings → Billing."
+        );
+      }
       return;
     }
 

@@ -24,6 +24,10 @@ export const STATE_MACHINE_FLAGS = [
   "stateExpiresAt",
   "jobPostingStep",
   "jobPostingData",
+  // Recurring schedule modification flow
+  "modifyScheduleStep",
+  "modifyScheduleData",
+  // Onboarding resume checkpoint (NOT cleared — intentionally kept for resume)
 ] as const;
 
 export async function clearAllStateFlags(

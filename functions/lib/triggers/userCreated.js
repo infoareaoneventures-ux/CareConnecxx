@@ -68,9 +68,10 @@ exports.onUserCreated = functions.auth.user().onCreate(async (user) => {
             parts: [{ type: "text", value: optInText }],
         });
         // Register Cara as a named contact so users see "Cara" not a raw number
-        await (0, client_1.setContactCard)({
+        await (0, client_1.createOrUpdateContactCard)({
             phone_number: (_d = process.env.LINQ_PHONE_NUMBER) !== null && _d !== void 0 ? _d : "",
-            display_name: "Cara",
+            first_name: "Cara",
+            last_name: "CareConnex",
         });
         await (0, client_1.shareContactCard)(chat.chat_id).catch(() => { });
         const session = {

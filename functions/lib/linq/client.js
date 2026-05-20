@@ -39,12 +39,23 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.checkCapability = checkCapability;
 exports.createChat = createChat;
 exports.sendMessage = sendMessage;
+exports.getMessage = getMessage;
+exports.listMessages = listMessages;
+exports.editMessage = editMessage;
+exports.deleteMessage = deleteMessage;
+exports.addReaction = addReaction;
+exports.removeReaction = removeReaction;
 exports.startTyping = startTyping;
 exports.stopTyping = stopTyping;
 exports.sendVoiceMemo = sendVoiceMemo;
-exports.shareContactCard = shareContactCard;
+exports.createOrUpdateContactCard = createOrUpdateContactCard;
+exports.getContactCard = getContactCard;
 exports.setContactCard = setContactCard;
+exports.shareContactCard = shareContactCard;
+exports.listPhoneNumbers = listPhoneNumbers;
 exports.updateChatName = updateChatName;
+exports.updateChatIcon = updateChatIcon;
+exports.markChatRead = markChatRead;
 exports.addParticipant = addParticipant;
 exports.removeParticipant = removeParticipant;
 exports.getOrCreateSession = getOrCreateSession;
@@ -71,9 +82,9 @@ function headers() {
         "Content-Type": "application/json",
     };
 }
-// ── Retry helper — exponential backoff for 3xxx transient server errors ───────
+// ── Retry helper — exponential backoff for 5xx and 3xxx transient errors ──────
 async function withRetry(fn, attempts = 3) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e, _f;
     let lastErr;
     for (let i = 0; i < attempts; i++) {
         try {
@@ -83,22 +94,32 @@ async function withRetry(fn, attempts = 3) {
             lastErr = err;
             const status = (_a = err === null || err === void 0 ? void 0 : err.response) === null || _a === void 0 ? void 0 : _a.status;
             const code = (_c = (_b = err === null || err === void 0 ? void 0 : err.response) === null || _b === void 0 ? void 0 : _b.data) === null || _c === void 0 ? void 0 : _c.code;
+            // Retry on server errors and transient 3xxx codes; respect Retry-After for 429
+            if (status === 429) {
+                const retryAfter = parseInt((_f = (_e = (_d = err === null || err === void 0 ? void 0 : err.response) === null || _d === void 0 ? void 0 : _d.headers) === null || _e === void 0 ? void 0 : _e["retry-after"]) !== null && _f !== void 0 ? _f : "5", 10);
+                if (i < attempts - 1) {
+                    await new Promise((r) => setTimeout(r, retryAfter * 1000));
+                    continue;
+                }
+            }
             const isTransient = (status === 500 || status === 503 || status === 504) ||
                 (typeof code === "number" && code >= 3000 && code < 4000);
             if (!isTransient || i === attempts - 1)
                 throw err;
-            await new Promise((r) => setTimeout(r, (i + 1) * 1000));
+            await new Promise((r) => setTimeout(r, Math.pow(2, i) * 1000));
         }
     }
     throw lastErr;
 }
 // ── Capability check ──────────────────────────────────────────────────────────
-async function checkCapability(phone) {
+// Docs: use `address` field (not `handle`) per /guides/chats/capability-checks/
+async function checkCapability(phone, from) {
     var _a, _b;
     try {
+        const body = Object.assign({ address: phone }, (from ? { from } : {}));
         const [imsgRes, rcsRes] = await Promise.allSettled([
-            axios_1.default.post(`${cfg().baseUrl}/capability/check_imessage`, { handle: phone }, { headers: headers() }),
-            axios_1.default.post(`${cfg().baseUrl}/capability/check_rcs`, { handle: phone }, { headers: headers() }),
+            axios_1.default.post(`${cfg().baseUrl}/capability/check_imessage`, body, { headers: headers() }),
+            axios_1.default.post(`${cfg().baseUrl}/capability/check_rcs`, body, { headers: headers() }),
         ]);
         const iMessage = imsgRes.status === "fulfilled" ? !!((_a = imsgRes.value.data) === null || _a === void 0 ? void 0 : _a.available) : false;
         const RCS = rcsRes.status === "fulfilled" ? !!((_b = rcsRes.value.data) === null || _b === void 0 ? void 0 : _b.available) : false;
@@ -111,52 +132,153 @@ async function checkCapability(phone) {
 // ── Core send ─────────────────────────────────────────────────────────────────
 async function createChat(phone, message) {
     var _a, _b;
-    const res = await withRetry(() => axios_1.default.post(`${cfg().baseUrl}/chats`, { from: cfg().phoneNumber, to: [phone], message, idempotency_key: (0, uuid_1.v4)() }, { headers: headers() }));
+    const res = await withRetry(() => {
+        var _a;
+        return axios_1.default.post(`${cfg().baseUrl}/chats`, {
+            from: cfg().phoneNumber,
+            to: [phone],
+            message: Object.assign(Object.assign({}, message), { idempotency_key: (_a = message.idempotency_key) !== null && _a !== void 0 ? _a : (0, uuid_1.v4)() }),
+        }, { headers: headers() });
+    });
     const traceId = res.headers["x-trace-id"];
     if (traceId)
         console.info("Linq createChat trace_id:", traceId);
     return { chat_id: (_a = res.data.chat_id) !== null && _a !== void 0 ? _a : res.data.id, service: (_b = res.data.service) !== null && _b !== void 0 ? _b : "SMS" };
 }
 async function sendMessage(chatId, textOrMessage) {
+    var _a, _b;
     const message = typeof textOrMessage === "string"
         ? { parts: [{ type: "text", value: textOrMessage }] }
         : textOrMessage;
-    const res = await withRetry(() => axios_1.default.post(`${cfg().baseUrl}/chats/${chatId}/messages`, Object.assign(Object.assign({}, message), { idempotency_key: (0, uuid_1.v4)() }), { headers: headers() }));
+    const res = await withRetry(() => {
+        var _a;
+        return axios_1.default.post(`${cfg().baseUrl}/chats/${chatId}/messages`, Object.assign(Object.assign({}, message), { idempotency_key: (_a = message.idempotency_key) !== null && _a !== void 0 ? _a : (0, uuid_1.v4)() }), { headers: headers() });
+    });
     const traceId = res.headers["x-trace-id"];
     if (traceId)
         console.info("Linq sendMessage trace_id:", traceId, "chatId:", chatId);
+    return { message_id: (_b = (_a = res.data.id) !== null && _a !== void 0 ? _a : res.data.message_id) !== null && _b !== void 0 ? _b : "" };
 }
+// ── Message retrieval + editing + deletion ───────────────────────────────────
+async function getMessage(messageId) {
+    const res = await withRetry(() => axios_1.default.get(`${cfg().baseUrl}/messages/${messageId}`, { headers: headers() }));
+    return res.data;
+}
+async function listMessages(params) {
+    var _a, _b;
+    const query = new URLSearchParams();
+    if (params.cursor)
+        query.set("cursor", params.cursor);
+    if (params.limit)
+        query.set("limit", String(Math.min(params.limit, 100)));
+    if (params.order)
+        query.set("order", params.order);
+    const res = await withRetry(() => axios_1.default.get(`${cfg().baseUrl}/messages/${params.messageId}/thread?${query}`, { headers: headers() }));
+    return { messages: (_a = res.data.messages) !== null && _a !== void 0 ? _a : [], next_cursor: (_b = res.data.next_cursor) !== null && _b !== void 0 ? _b : null };
+}
+async function editMessage(messageId, newText) {
+    await withRetry(() => axios_1.default.post(`${cfg().baseUrl}/messages/${messageId}/update`, { text: newText }, { headers: headers() }));
+}
+async function deleteMessage(messageId) {
+    await withRetry(() => axios_1.default.post(`${cfg().baseUrl}/messages/${messageId}/delete`, {}, { headers: headers() }));
+}
+// ── Reactions ─────────────────────────────────────────────────────────────────
+async function addReaction(params) {
+    await withRetry(() => axios_1.default.post(`${cfg().baseUrl}/messages/${params.messageId}/reactions`, Object.assign(Object.assign({ operation: "add", type: params.type }, (params.customEmoji ? { custom_emoji: params.customEmoji } : {})), (params.partIndex !== undefined ? { part_index: params.partIndex } : {})), { headers: headers() }));
+}
+async function removeReaction(params) {
+    await withRetry(() => axios_1.default.post(`${cfg().baseUrl}/messages/${params.messageId}/reactions`, Object.assign(Object.assign({ operation: "remove", type: params.type }, (params.customEmoji ? { custom_emoji: params.customEmoji } : {})), (params.partIndex !== undefined ? { part_index: params.partIndex } : {})), { headers: headers() }));
+}
+// ── Typing indicators ─────────────────────────────────────────────────────────
 async function startTyping(chatId) {
-    await axios_1.default.post(`${cfg().baseUrl}/chats/${chatId}/typing`, {}, { headers: headers() });
+    await axios_1.default
+        .post(`${cfg().baseUrl}/chats/${chatId}/typing`, {}, { headers: headers() })
+        .catch(() => { });
 }
 async function stopTyping(chatId) {
     await axios_1.default
         .delete(`${cfg().baseUrl}/chats/${chatId}/typing`, { headers: headers() })
         .catch(() => { });
 }
-async function sendVoiceMemo(chatId, voiceMemoUrl) {
-    await axios_1.default.post(`${cfg().baseUrl}/chats/${chatId}/voicememo`, { voice_memo_url: voiceMemoUrl }, { headers: headers() });
+// ── Voice memos ───────────────────────────────────────────────────────────────
+async function sendVoiceMemo(chatId, source) {
+    const body = "url" in source
+        ? { voice_memo_url: source.url }
+        : { attachment_id: source.attachment_id };
+    await withRetry(() => axios_1.default.post(`${cfg().baseUrl}/chats/${chatId}/voicememo`, body, { headers: headers() }));
+}
+// ── Contact card ──────────────────────────────────────────────────────────────
+// Docs schema: first_name, last_name?, image_url? (not display_name/profile_photo_url)
+async function createOrUpdateContactCard(params) {
+    var _a, _b;
+    // Try create first; if 2014 (already exists) fall back to PATCH update
+    try {
+        await withRetry(() => axios_1.default.post(`${cfg().baseUrl}/contact_card`, params, { headers: headers() }));
+    }
+    catch (err) {
+        const code = (_b = (_a = err === null || err === void 0 ? void 0 : err.response) === null || _a === void 0 ? void 0 : _a.data) === null || _b === void 0 ? void 0 : _b.code;
+        if (code === 2014) {
+            await withRetry(() => axios_1.default.patch(`${cfg().baseUrl}/contact_card`, params, { headers: headers() })).catch(() => { });
+        }
+        // Other errors are non-critical for brand identity
+    }
+}
+async function getContactCard() {
+    try {
+        const res = await withRetry(() => axios_1.default.get(`${cfg().baseUrl}/contact_card`, { headers: headers() }));
+        return res.data;
+    }
+    catch (_a) {
+        return null;
+    }
+}
+/** @deprecated Use createOrUpdateContactCard — this alias kept for backward compat */
+async function setContactCard(params) {
+    const [first_name, ...rest] = params.display_name.split(" ");
+    await createOrUpdateContactCard({
+        phone_number: params.phone_number,
+        first_name: first_name !== null && first_name !== void 0 ? first_name : params.display_name,
+        last_name: rest.join(" ") || undefined,
+        image_url: params.profile_photo_url,
+    });
 }
 async function shareContactCard(chatId) {
     await axios_1.default
         .post(`${cfg().baseUrl}/chats/${chatId}/share_contact_card`, {}, { headers: headers() })
         .catch(() => { });
 }
-async function setContactCard(params) {
-    await axios_1.default
-        .post(`${cfg().baseUrl}/contact_card`, params, { headers: headers() })
-        .catch(() => { });
+// ── Phone numbers ─────────────────────────────────────────────────────────────
+async function listPhoneNumbers() {
+    var _a, _b, _c;
+    try {
+        const res = await withRetry(() => axios_1.default.get(`${cfg().baseUrl}/phone_numbers`, { headers: headers() }));
+        return ((_c = (_b = (_a = res.data) === null || _a === void 0 ? void 0 : _a.phone_numbers) !== null && _b !== void 0 ? _b : res.data) !== null && _c !== void 0 ? _c : []);
+    }
+    catch (_d) {
+        return [];
+    }
 }
+// ── Chat management ───────────────────────────────────────────────────────────
 async function updateChatName(chatId, displayName) {
     await axios_1.default
         .put(`${cfg().baseUrl}/chats/${chatId}`, { display_name: displayName }, { headers: headers() })
         .catch(() => { });
 }
+async function updateChatIcon(chatId, iconUrl) {
+    await axios_1.default
+        .put(`${cfg().baseUrl}/chats/${chatId}`, { group_chat_icon: iconUrl }, { headers: headers() })
+        .catch(() => { });
+}
+async function markChatRead(chatId) {
+    await axios_1.default
+        .post(`${cfg().baseUrl}/chats/${chatId}/mark_as_read`, {}, { headers: headers() })
+        .catch(() => { });
+}
 async function addParticipant(chatId, phone) {
-    await axios_1.default.post(`${cfg().baseUrl}/chats/${chatId}/participants`, { handle: phone }, { headers: headers() });
+    await withRetry(() => axios_1.default.post(`${cfg().baseUrl}/chats/${chatId}/participants`, { handle: phone }, { headers: headers() }));
 }
 async function removeParticipant(chatId, phone) {
-    await axios_1.default.delete(`${cfg().baseUrl}/chats/${chatId}/participants/${encodeURIComponent(phone)}`, { headers: headers() });
+    await withRetry(() => axios_1.default.delete(`${cfg().baseUrl}/chats/${chatId}/participants/${encodeURIComponent(phone)}`, { headers: headers() }));
 }
 // ── Session management (get-or-create) ───────────────────────────────────────
 async function getOrCreateSession(phone, meta) {
@@ -167,12 +289,17 @@ async function getOrCreateSession(phone, meta) {
     }
     const capability = await checkCapability(phone);
     const service = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
-    // First message is a silent thread-opener; real content comes from the caller
+    // First message is a silent thread-opener; real content comes from the caller.
+    // Per best-practices: no links or media in first message.
     const { chat_id } = await createChat(phone, {
         parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
     });
-    const session = Object.assign({ chatId: chat_id, service, optedOut: false, createdAt: new Date().toISOString() }, meta);
+    const session = Object.assign({ chatId: chat_id, service, optedOut: false, createdAt: new Date().toISOString(), phone }, meta);
     await ref.set(session);
+    // Best-practice: share contact card once after first outbound (non-blocking)
+    if (service === "iMessage") {
+        shareContactCard(chat_id).catch(() => { });
+    }
     return session;
 }
 // ── safeSend — lints + supervises then sends ─────────────────────────────────
@@ -223,12 +350,18 @@ async function sendToPhone(phone, textOrMessage) {
     const service = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
     try {
         const { chat_id } = await createChat(phone, message);
-        await ref.set({
+        const newSession = {
             chatId: chat_id,
             service,
             optedOut: false,
             createdAt: new Date().toISOString(),
-        });
+            phone,
+        };
+        await ref.set(newSession);
+        // Best-practice: share contact card after first outbound on iMessage (non-blocking)
+        if (service === "iMessage") {
+            shareContactCard(chat_id).catch(() => { });
+        }
     }
     catch (err) {
         const e = err;

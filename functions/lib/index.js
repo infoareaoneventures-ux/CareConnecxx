@@ -60,6 +60,7 @@ __exportStar(require("./caregiverCallout"), exports);
 // Export SMS Functions
 var sms_1 = require("./sms");
 Object.defineProperty(exports, "sendTestSMS", { enumerable: true, get: function () { return sms_1.sendTestSMS; } });
+// Linq management utilities are imported by other modules — not exposed as Cloud Functions
 // INSTANT PAYOUT
 __exportStar(require("./instantPayout"), exports);
 // STANDARD PAYOUT (free 2-3 day)

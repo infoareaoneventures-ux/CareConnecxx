@@ -31,6 +31,8 @@ export * from './caregiverCallout';
 // Export SMS Functions
 export { sendTestSMS } from './sms';
 
+// Linq management utilities are imported by other modules — not exposed as Cloud Functions
+
 // INSTANT PAYOUT
 export * from './instantPayout';
 

@@ -3,7 +3,7 @@ import * as admin from "firebase-admin";
 import {
   checkCapability,
   createChat,
-  setContactCard,
+  createOrUpdateContactCard,
   shareContactCard,
   AgentSession,
   LinqService,
@@ -47,9 +47,10 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
     });
 
     // Register Cara as a named contact so users see "Cara" not a raw number
-    await setContactCard({
+    await createOrUpdateContactCard({
       phone_number: process.env.LINQ_PHONE_NUMBER ?? "",
-      display_name: "Cara",
+      first_name:   "Cara",
+      last_name:    "CareConnex",
     });
     await shareContactCard(chat.chat_id).catch(() => {/* non-critical */});
 

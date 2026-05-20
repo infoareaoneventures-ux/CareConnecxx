@@ -1,7 +1,8 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import * as crypto from "crypto";
-import { sendMessage, startTyping, stopTyping, shareContactCard, setContactCard, checkCapability, AgentSession, LinqService } from "./client";
+import { v4 as uuidv4 } from "uuid";
+import { sendMessage, startTyping, stopTyping, shareContactCard, createOrUpdateContactCard, checkCapability, AgentSession, LinqService } from "./client";
 import { classifyIntent } from "../agents/intentClassifier";
 import { runQaAgent } from "../agents/qaAgent";
 import { handleTaskApproval, finalizeTaskApproval } from "../agents/taskApprovalHandler";
@@ -92,7 +93,7 @@ async function isRateLimited(phone: string): Promise<boolean> {
 
 async function handleTypingStarted(event: unknown): Promise<void> {
   const ev    = event as any;
-  const phone  = ev.data?.sender_handle?.value as string | undefined;
+  const phone  = ev.data?.sender_handle?.handle as string | undefined;
   const chatId = ev.data?.chat?.id as string | undefined;
   if (!phone || !chatId) return;
 
@@ -696,7 +697,7 @@ async function handleRecurringResume(phone: string, chatId: string, session: Age
 
 async function handleInbound(event: unknown): Promise<void> {
   const ev      = event as any;
-  const phone   = ev.data?.sender_handle?.value as string | undefined;
+  const phone   = ev.data?.sender_handle?.handle as string | undefined;
   const text    = (ev.data?.parts?.[0]?.value ?? "") as string;
   const chatId  = ev.data?.chat?.id as string | undefined;
   const service = (ev.data?.service ?? ev.data?.chat?.service ?? "SMS") as string;
@@ -755,7 +756,7 @@ async function handleInbound(event: unknown): Promise<void> {
     const service: LinqService = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
     const linqPhone = process.env.LINQ_PHONE_NUMBER ?? "";
 
-    await setContactCard({ phone_number: linqPhone, display_name: "Cara" }).catch(() => {/* non-critical */});
+    await createOrUpdateContactCard({ phone_number: linqPhone, first_name: "Cara" }).catch(() => {/* non-critical */});
     await shareContactCard(chatId).catch(() => {/* non-critical */});
 
     await db.collection("agent_sessions").doc(phone).set({
@@ -2871,7 +2872,7 @@ const POSITIVE_REACTIONS = new Set(["thumbsup", "love", "ha", "emphasize", "like
 const NEGATIVE_REACTIONS = new Set(["thumbsdown", "dislike", "👎", "✖️", "❌"]);
 
 async function handleReactionAdded(event: any): Promise<void> {
-  const phone    = event.data?.sender_handle?.value as string | undefined;
+  const phone    = event.data?.sender_handle?.handle as string | undefined;
   const reaction = (event.data?.reaction ?? "") as string;
   const chatId   = event.data?.chat?.id     as string | undefined;
   const now      = new Date().toISOString();
@@ -2995,7 +2996,7 @@ export const linqWebhook = functions
       await db.collection("agent_read_receipts").add({
         chatId:    event.data?.chat?.id,
         messageId: event.data?.message_id,
-        phone:     event.data?.sender_handle?.value,
+        phone:     event.data?.sender_handle?.handle,
         readAt:    new Date().toISOString(),
       }).catch(() => {/* non-critical */});
       break;
@@ -3035,6 +3036,106 @@ export const linqWebhook = functions
       await handlePhoneNumberStatusUpdated(event).catch((err) =>
         console.error("linqWebhook handlePhoneNumberStatusUpdated:", err)
       );
+      break;
+
+    case "message.sent":
+      // Outbound confirmed — update conversation record with message_id for later receipt matching
+      await db.collection("agent_conversations")
+        .where("chatId",    "==", event.data?.chat?.id)
+        .where("direction", "==", "outbound")
+        .orderBy("createdAt", "desc")
+        .limit(1)
+        .get()
+        .then(async (snap) => {
+          if (!snap.empty) {
+            await snap.docs[0].ref.update({
+              messageId: event.data?.id ?? event.data?.message_id,
+              service:   event.data?.service,
+              sentAt:    event.data?.sent_at ?? new Date().toISOString(),
+            });
+          }
+        })
+        .catch(() => {/* non-critical */});
+      break;
+
+    case "message.edited":
+      // Store latest text for the edited part
+      await db.collection("agent_conversations")
+        .where("messageId", "==", event.data?.id ?? event.data?.message_id)
+        .limit(1)
+        .get()
+        .then(async (snap) => {
+          if (!snap.empty) {
+            await snap.docs[0].ref.update({
+              editedText: event.data?.part?.text,
+              editedAt:   event.data?.edited_at ?? new Date().toISOString(),
+            });
+          }
+        })
+        .catch(() => {/* non-critical */});
+      break;
+
+    case "reaction.removed":
+      await db.collection("agent_reactions").add({
+        chatId:    event.data?.chat_id,
+        messageId: event.data?.message_id,
+        reaction:  event.data?.reaction_type ?? event.data?.reaction,
+        phone:     event.data?.from,
+        operation: "removed",
+        reactedAt: event.data?.reacted_at ?? new Date().toISOString(),
+      }).catch(() => {/* non-critical */});
+      break;
+
+    case "chat.created":
+      // Log new chat creation; check chat health on first contact
+      await db.collection("agent_event_log").doc(eventId ?? uuidv4()).set({
+        type:      "chat.created",
+        chatId:    event.data?.id,
+        service:   event.data?.service,
+        isGroup:   event.data?.is_group ?? false,
+        createdAt: event.data?.created_at ?? new Date().toISOString(),
+      }, { merge: true }).catch(() => {});
+      break;
+
+    case "chat.typing_indicator.stopped":
+      // No action needed — started is used for prefetch; stopped is informational
+      break;
+
+    case "participant.added":
+      await db.collection("agent_group_events").add({
+        type:      "participant.added",
+        chatId:    event.data?.chat_id,
+        handle:    event.data?.handle,
+        joinedAt:  event.data?.added_at ?? new Date().toISOString(),
+      }).catch(() => {/* non-critical */});
+      break;
+
+    case "participant.removed":
+      await db.collection("agent_group_events").add({
+        type:      "participant.removed",
+        chatId:    event.data?.chat_id,
+        handle:    event.data?.handle,
+        leftAt:    event.data?.removed_at ?? new Date().toISOString(),
+      }).catch(() => {/* non-critical */});
+      break;
+
+    case "chat.group_name_updated":
+    case "chat.group_icon_updated":
+      await db.collection("agent_group_events").add({
+        type:      event.type,
+        chatId:    event.data?.chat_id,
+        oldValue:  event.data?.old_value,
+        newValue:  event.data?.new_value,
+        updatedAt: event.data?.updated_at ?? new Date().toISOString(),
+      }).catch(() => {/* non-critical */});
+      break;
+
+    case "chat.group_name_update_failed":
+    case "chat.group_icon_update_failed":
+      console.warn(`linqWebhook: ${event.type}`, {
+        chatId:    event.data?.chat_id,
+        errorCode: event.data?.error_code,
+      });
       break;
 
     default:

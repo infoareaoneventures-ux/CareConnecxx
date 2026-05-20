@@ -5,7 +5,7 @@
 
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import { sendToPhone } from "./linq/client";
+import { sendToPhone, listPhoneNumbers, createOrUpdateContactCard } from "./linq/client";
 import { checkRateLimit, RATE_LIMITS, getClientIdentifier } from "./rateLimit";
 
 const db = admin.firestore();
@@ -44,6 +44,28 @@ export interface SMSResult {
   error?:      string;
 }
 
+// ── Circuit breaker — blocks all outbound when Linq line is CRITICAL ─────────
+
+async function isCircuitOpen(): Promise<boolean> {
+  try {
+    const snap = await db.collection("system_config").doc("linq_circuit_breaker").get();
+    return snap.exists && snap.data()?.status === "open";
+  } catch {
+    return false; // fail open so we don't silently drop messages
+  }
+}
+
+// ── Chat health gate — respect OPTED_OUT status ───────────────────────────────
+
+async function getChatHealthStatus(phone: string): Promise<string | null> {
+  try {
+    const snap = await db.collection("agent_sessions").doc(phone).get();
+    return (snap.data() as any)?.healthStatus ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Opt-out (stored in agent_sessions.optedOut) ───────────────────────────────
 
 export async function hasOptedOut(phoneNumber: string): Promise<boolean> {
@@ -73,6 +95,18 @@ export async function sendSMS(payload: SMSPayload): Promise<SMSResult> {
 
     if (await hasOptedOut(payload.to)) {
       return { success: false, error: "Recipient has opted out of SMS notifications" };
+    }
+
+    // Linq best-practice: do not send when line is circuit-broken (CRITICAL phone health)
+    if (await isCircuitOpen()) {
+      console.warn("sendSMS: circuit breaker is OPEN — message dropped for", payload.to);
+      return { success: false, error: "Messaging line is temporarily unavailable" };
+    }
+
+    // Linq best-practice: do not send to OPTED_OUT chats
+    const chatHealth = await getChatHealthStatus(payload.to);
+    if (chatHealth === "OPTED_OUT") {
+      return { success: false, error: "Chat is in OPTED_OUT state" };
     }
 
     const message =
@@ -172,6 +206,64 @@ export const SMS_TEMPLATES = {
   ) =>
     `Cara: You've been assigned to care for ${clientName} on ${date} at ${time}. Previous caregiver called out.${address ? ` Address: ${address}` : ""} Open app for details.`,
 };
+
+// ── Phone health check (Linq API) ────────────────────────────────────────────
+
+/**
+ * Fetches live phone health from Linq and stores it in Firestore.
+ * Call on startup or from a scheduled job to keep health state fresh.
+ */
+export async function syncPhoneHealth(): Promise<void> {
+  const numbers = await listPhoneNumbers();
+  const batch   = db.batch();
+
+  for (const pn of numbers) {
+    const ref = db.collection("linq_phone_health").doc(pn.phone_number);
+    batch.set(ref, {
+      phoneNumber:   pn.phone_number,
+      status:        pn.status,
+      healthStatus:  pn.health_status.status,
+      updatedAt:     pn.health_status.updated_at ?? new Date().toISOString(),
+    }, { merge: true });
+
+    // Auto-open circuit breaker if CRITICAL
+    if (pn.health_status.status === "CRITICAL") {
+      const cbRef = db.collection("system_config").doc("linq_circuit_breaker");
+      batch.set(cbRef, {
+        status:   "open",
+        reason:   `Phone ${pn.phone_number} is CRITICAL`,
+        openedAt: new Date().toISOString(),
+        phone:    pn.phone_number,
+      }, { merge: true });
+    }
+  }
+
+  await batch.commit();
+}
+
+// ── Contact card setup ────────────────────────────────────────────────────────
+
+/**
+ * One-time setup: configure Cara's identity on the provisioned Linq number.
+ * Safe to call on every deploy — uses PATCH if card already exists.
+ */
+export async function setupCaraContactCard(params?: {
+  firstName?: string;
+  lastName?:  string;
+  imageUrl?:  string;
+}): Promise<void> {
+  const phoneNumber = process.env.LINQ_PHONE_NUMBER ?? "";
+  if (!phoneNumber) {
+    console.warn("setupCaraContactCard: LINQ_PHONE_NUMBER not set");
+    return;
+  }
+  await createOrUpdateContactCard({
+    phone_number: phoneNumber,
+    first_name:   params?.firstName ?? "Cara",
+    last_name:    params?.lastName  ?? "CareConnex",
+    image_url:    params?.imageUrl  ?? process.env.CARA_AVATAR_URL,
+  });
+}
 
 // ── Callable (admin/test) ─────────────────────────────────────────────────────
 

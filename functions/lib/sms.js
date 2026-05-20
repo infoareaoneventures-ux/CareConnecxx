@@ -43,6 +43,8 @@ exports.optOutPhoneNumber = optOutPhoneNumber;
 exports.sendSMS = sendSMS;
 exports.getUserPhone = getUserPhone;
 exports.sendSMSToUser = sendSMSToUser;
+exports.syncPhoneHealth = syncPhoneHealth;
+exports.setupCaraContactCard = setupCaraContactCard;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("./linq/client");
@@ -64,6 +66,28 @@ function validateString(value, fieldName, maxLength = 1600) {
 function validateUserId(userId) {
     if (!userId || typeof userId !== "string")
         throw new Error("userId must be a non-empty string");
+}
+// ── Circuit breaker — blocks all outbound when Linq line is CRITICAL ─────────
+async function isCircuitOpen() {
+    var _a;
+    try {
+        const snap = await db.collection("system_config").doc("linq_circuit_breaker").get();
+        return snap.exists && ((_a = snap.data()) === null || _a === void 0 ? void 0 : _a.status) === "open";
+    }
+    catch (_b) {
+        return false; // fail open so we don't silently drop messages
+    }
+}
+// ── Chat health gate — respect OPTED_OUT status ───────────────────────────────
+async function getChatHealthStatus(phone) {
+    var _a, _b;
+    try {
+        const snap = await db.collection("agent_sessions").doc(phone).get();
+        return (_b = (_a = snap.data()) === null || _a === void 0 ? void 0 : _a.healthStatus) !== null && _b !== void 0 ? _b : null;
+    }
+    catch (_c) {
+        return null;
+    }
 }
 // ── Opt-out (stored in agent_sessions.optedOut) ───────────────────────────────
 async function hasOptedOut(phoneNumber) {
@@ -88,6 +112,16 @@ async function sendSMS(payload) {
         validateString(payload.message, "message", 1600);
         if (await hasOptedOut(payload.to)) {
             return { success: false, error: "Recipient has opted out of SMS notifications" };
+        }
+        // Linq best-practice: do not send when line is circuit-broken (CRITICAL phone health)
+        if (await isCircuitOpen()) {
+            console.warn("sendSMS: circuit breaker is OPEN — message dropped for", payload.to);
+            return { success: false, error: "Messaging line is temporarily unavailable" };
+        }
+        // Linq best-practice: do not send to OPTED_OUT chats
+        const chatHealth = await getChatHealthStatus(payload.to);
+        if (chatHealth === "OPTED_OUT") {
+            return { success: false, error: "Chat is in OPTED_OUT state" };
         }
         const message = payload.message.length > 1600
             ? payload.message.substring(0, 1597) + "..."
@@ -147,6 +181,55 @@ exports.SMS_TEMPLATES = {
     caregiverCallout: (caregiverName, date, time, backupCount, backupNames) => `Cara: ${caregiverName} cancelled your ${date} at ${time} appointment. ${backupCount} backup caregiver(s) available: ${backupNames}. Open app to select replacement or request refund.`,
     backupCaregiverAssigned: (clientName, date, time, address) => `Cara: You've been assigned to care for ${clientName} on ${date} at ${time}. Previous caregiver called out.${address ? ` Address: ${address}` : ""} Open app for details.`,
 };
+// ── Phone health check (Linq API) ────────────────────────────────────────────
+/**
+ * Fetches live phone health from Linq and stores it in Firestore.
+ * Call on startup or from a scheduled job to keep health state fresh.
+ */
+async function syncPhoneHealth() {
+    var _a;
+    const numbers = await (0, client_1.listPhoneNumbers)();
+    const batch = db.batch();
+    for (const pn of numbers) {
+        const ref = db.collection("linq_phone_health").doc(pn.phone_number);
+        batch.set(ref, {
+            phoneNumber: pn.phone_number,
+            status: pn.status,
+            healthStatus: pn.health_status.status,
+            updatedAt: (_a = pn.health_status.updated_at) !== null && _a !== void 0 ? _a : new Date().toISOString(),
+        }, { merge: true });
+        // Auto-open circuit breaker if CRITICAL
+        if (pn.health_status.status === "CRITICAL") {
+            const cbRef = db.collection("system_config").doc("linq_circuit_breaker");
+            batch.set(cbRef, {
+                status: "open",
+                reason: `Phone ${pn.phone_number} is CRITICAL`,
+                openedAt: new Date().toISOString(),
+                phone: pn.phone_number,
+            }, { merge: true });
+        }
+    }
+    await batch.commit();
+}
+// ── Contact card setup ────────────────────────────────────────────────────────
+/**
+ * One-time setup: configure Cara's identity on the provisioned Linq number.
+ * Safe to call on every deploy — uses PATCH if card already exists.
+ */
+async function setupCaraContactCard(params) {
+    var _a, _b, _c, _d;
+    const phoneNumber = (_a = process.env.LINQ_PHONE_NUMBER) !== null && _a !== void 0 ? _a : "";
+    if (!phoneNumber) {
+        console.warn("setupCaraContactCard: LINQ_PHONE_NUMBER not set");
+        return;
+    }
+    await (0, client_1.createOrUpdateContactCard)({
+        phone_number: phoneNumber,
+        first_name: (_b = params === null || params === void 0 ? void 0 : params.firstName) !== null && _b !== void 0 ? _b : "Cara",
+        last_name: (_c = params === null || params === void 0 ? void 0 : params.lastName) !== null && _c !== void 0 ? _c : "CareConnex",
+        image_url: (_d = params === null || params === void 0 ? void 0 : params.imageUrl) !== null && _d !== void 0 ? _d : process.env.CARA_AVATAR_URL,
+    });
+}
 // ── Callable (admin/test) ─────────────────────────────────────────────────────
 exports.sendTestSMS = functions.https.onCall(async (data, context) => {
     var _a;

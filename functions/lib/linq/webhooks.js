@@ -37,6 +37,7 @@ exports.linqWebhook = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const crypto = __importStar(require("crypto"));
+const uuid_1 = require("uuid");
 const client_1 = require("./client");
 const intentClassifier_1 = require("../agents/intentClassifier");
 const qaAgent_1 = require("../agents/qaAgent");
@@ -98,7 +99,7 @@ async function isRateLimited(phone) {
 async function handleTypingStarted(event) {
     var _a, _b, _c, _d, _e, _f, _g;
     const ev = event;
-    const phone = (_b = (_a = ev.data) === null || _a === void 0 ? void 0 : _a.sender_handle) === null || _b === void 0 ? void 0 : _b.value;
+    const phone = (_b = (_a = ev.data) === null || _a === void 0 ? void 0 : _a.sender_handle) === null || _b === void 0 ? void 0 : _b.handle;
     const chatId = (_d = (_c = ev.data) === null || _c === void 0 ? void 0 : _c.chat) === null || _d === void 0 ? void 0 : _d.id;
     if (!phone || !chatId)
         return;
@@ -607,7 +608,7 @@ async function handleRecurringResume(phone, chatId, session) {
 async function handleInbound(event) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98, _99, _100, _101, _102, _103, _104, _105, _106, _107, _108, _109, _110, _111, _112, _113, _114, _115, _116, _117, _118, _119, _120, _121, _122, _123, _124, _125, _126, _127, _128, _129, _130, _131, _132, _133, _134, _135, _136, _137, _138, _139, _140, _141, _142, _143, _144, _145, _146, _147;
     const ev = event;
-    const phone = (_b = (_a = ev.data) === null || _a === void 0 ? void 0 : _a.sender_handle) === null || _b === void 0 ? void 0 : _b.value;
+    const phone = (_b = (_a = ev.data) === null || _a === void 0 ? void 0 : _a.sender_handle) === null || _b === void 0 ? void 0 : _b.handle;
     const text = ((_f = (_e = (_d = (_c = ev.data) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.value) !== null && _f !== void 0 ? _f : "");
     const chatId = (_h = (_g = ev.data) === null || _g === void 0 ? void 0 : _g.chat) === null || _h === void 0 ? void 0 : _h.id;
     const service = ((_o = (_k = (_j = ev.data) === null || _j === void 0 ? void 0 : _j.service) !== null && _k !== void 0 ? _k : (_m = (_l = ev.data) === null || _l === void 0 ? void 0 : _l.chat) === null || _m === void 0 ? void 0 : _m.service) !== null && _o !== void 0 ? _o : "SMS");
@@ -654,7 +655,7 @@ async function handleInbound(event) {
         const capability = await (0, client_1.checkCapability)(phone);
         const service = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
         const linqPhone = (_s = process.env.LINQ_PHONE_NUMBER) !== null && _s !== void 0 ? _s : "";
-        await (0, client_1.setContactCard)({ phone_number: linqPhone, display_name: "Cara" }).catch(() => { });
+        await (0, client_1.createOrUpdateContactCard)({ phone_number: linqPhone, first_name: "Cara" }).catch(() => { });
         await (0, client_1.shareContactCard)(chatId).catch(() => { });
         await db.collection("agent_sessions").doc(phone).set({
             chatId,
@@ -2583,7 +2584,7 @@ const POSITIVE_REACTIONS = new Set(["thumbsup", "love", "ha", "emphasize", "like
 const NEGATIVE_REACTIONS = new Set(["thumbsdown", "dislike", "👎", "✖️", "❌"]);
 async function handleReactionAdded(event) {
     var _a, _b, _c, _d, _e, _f, _g;
-    const phone = (_b = (_a = event.data) === null || _a === void 0 ? void 0 : _a.sender_handle) === null || _b === void 0 ? void 0 : _b.value;
+    const phone = (_b = (_a = event.data) === null || _a === void 0 ? void 0 : _a.sender_handle) === null || _b === void 0 ? void 0 : _b.handle;
     const reaction = ((_d = (_c = event.data) === null || _c === void 0 ? void 0 : _c.reaction) !== null && _d !== void 0 ? _d : "");
     const chatId = (_f = (_e = event.data) === null || _e === void 0 ? void 0 : _e.chat) === null || _f === void 0 ? void 0 : _f.id;
     const now = new Date().toISOString();
@@ -2657,7 +2658,7 @@ async function handleReactionAdded(event) {
 exports.linqWebhook = functions
     .runWith({ secrets: ["BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID", "CREDENTIAL_VAULT_KEY"] })
     .https.onRequest(async (req, res) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21;
     res.status(200).send("ok");
     if (req.method !== "POST")
         return;
@@ -2695,7 +2696,7 @@ exports.linqWebhook = functions
             await db.collection("agent_read_receipts").add({
                 chatId: (_f = (_e = event.data) === null || _e === void 0 ? void 0 : _e.chat) === null || _f === void 0 ? void 0 : _f.id,
                 messageId: (_g = event.data) === null || _g === void 0 ? void 0 : _g.message_id,
-                phone: (_j = (_h = event.data) === null || _h === void 0 ? void 0 : _h.sender_handle) === null || _j === void 0 ? void 0 : _j.value,
+                phone: (_j = (_h = event.data) === null || _h === void 0 ? void 0 : _h.sender_handle) === null || _j === void 0 ? void 0 : _j.handle,
                 readAt: new Date().toISOString(),
             }).catch(() => { });
             break;
@@ -2724,8 +2725,101 @@ exports.linqWebhook = functions
         case "phone_number.status_updated":
             await handlePhoneNumberStatusUpdated(event).catch((err) => console.error("linqWebhook handlePhoneNumberStatusUpdated:", err));
             break;
+        case "message.sent":
+            // Outbound confirmed — update conversation record with message_id for later receipt matching
+            await db.collection("agent_conversations")
+                .where("chatId", "==", (_m = (_l = event.data) === null || _l === void 0 ? void 0 : _l.chat) === null || _m === void 0 ? void 0 : _m.id)
+                .where("direction", "==", "outbound")
+                .orderBy("createdAt", "desc")
+                .limit(1)
+                .get()
+                .then(async (snap) => {
+                var _a, _b, _c, _d, _e, _f;
+                if (!snap.empty) {
+                    await snap.docs[0].ref.update({
+                        messageId: (_b = (_a = event.data) === null || _a === void 0 ? void 0 : _a.id) !== null && _b !== void 0 ? _b : (_c = event.data) === null || _c === void 0 ? void 0 : _c.message_id,
+                        service: (_d = event.data) === null || _d === void 0 ? void 0 : _d.service,
+                        sentAt: (_f = (_e = event.data) === null || _e === void 0 ? void 0 : _e.sent_at) !== null && _f !== void 0 ? _f : new Date().toISOString(),
+                    });
+                }
+            })
+                .catch(() => { });
+            break;
+        case "message.edited":
+            // Store latest text for the edited part
+            await db.collection("agent_conversations")
+                .where("messageId", "==", (_p = (_o = event.data) === null || _o === void 0 ? void 0 : _o.id) !== null && _p !== void 0 ? _p : (_q = event.data) === null || _q === void 0 ? void 0 : _q.message_id)
+                .limit(1)
+                .get()
+                .then(async (snap) => {
+                var _a, _b, _c, _d;
+                if (!snap.empty) {
+                    await snap.docs[0].ref.update({
+                        editedText: (_b = (_a = event.data) === null || _a === void 0 ? void 0 : _a.part) === null || _b === void 0 ? void 0 : _b.text,
+                        editedAt: (_d = (_c = event.data) === null || _c === void 0 ? void 0 : _c.edited_at) !== null && _d !== void 0 ? _d : new Date().toISOString(),
+                    });
+                }
+            })
+                .catch(() => { });
+            break;
+        case "reaction.removed":
+            await db.collection("agent_reactions").add({
+                chatId: (_s = event.data) === null || _s === void 0 ? void 0 : _s.chat_id,
+                messageId: (_t = event.data) === null || _t === void 0 ? void 0 : _t.message_id,
+                reaction: (_v = (_u = event.data) === null || _u === void 0 ? void 0 : _u.reaction_type) !== null && _v !== void 0 ? _v : (_w = event.data) === null || _w === void 0 ? void 0 : _w.reaction,
+                phone: (_x = event.data) === null || _x === void 0 ? void 0 : _x.from,
+                operation: "removed",
+                reactedAt: (_z = (_y = event.data) === null || _y === void 0 ? void 0 : _y.reacted_at) !== null && _z !== void 0 ? _z : new Date().toISOString(),
+            }).catch(() => { });
+            break;
+        case "chat.created":
+            // Log new chat creation; check chat health on first contact
+            await db.collection("agent_event_log").doc(eventId !== null && eventId !== void 0 ? eventId : (0, uuid_1.v4)()).set({
+                type: "chat.created",
+                chatId: (_0 = event.data) === null || _0 === void 0 ? void 0 : _0.id,
+                service: (_1 = event.data) === null || _1 === void 0 ? void 0 : _1.service,
+                isGroup: (_3 = (_2 = event.data) === null || _2 === void 0 ? void 0 : _2.is_group) !== null && _3 !== void 0 ? _3 : false,
+                createdAt: (_5 = (_4 = event.data) === null || _4 === void 0 ? void 0 : _4.created_at) !== null && _5 !== void 0 ? _5 : new Date().toISOString(),
+            }, { merge: true }).catch(() => { });
+            break;
+        case "chat.typing_indicator.stopped":
+            // No action needed — started is used for prefetch; stopped is informational
+            break;
+        case "participant.added":
+            await db.collection("agent_group_events").add({
+                type: "participant.added",
+                chatId: (_6 = event.data) === null || _6 === void 0 ? void 0 : _6.chat_id,
+                handle: (_7 = event.data) === null || _7 === void 0 ? void 0 : _7.handle,
+                joinedAt: (_9 = (_8 = event.data) === null || _8 === void 0 ? void 0 : _8.added_at) !== null && _9 !== void 0 ? _9 : new Date().toISOString(),
+            }).catch(() => { });
+            break;
+        case "participant.removed":
+            await db.collection("agent_group_events").add({
+                type: "participant.removed",
+                chatId: (_10 = event.data) === null || _10 === void 0 ? void 0 : _10.chat_id,
+                handle: (_11 = event.data) === null || _11 === void 0 ? void 0 : _11.handle,
+                leftAt: (_13 = (_12 = event.data) === null || _12 === void 0 ? void 0 : _12.removed_at) !== null && _13 !== void 0 ? _13 : new Date().toISOString(),
+            }).catch(() => { });
+            break;
+        case "chat.group_name_updated":
+        case "chat.group_icon_updated":
+            await db.collection("agent_group_events").add({
+                type: event.type,
+                chatId: (_14 = event.data) === null || _14 === void 0 ? void 0 : _14.chat_id,
+                oldValue: (_15 = event.data) === null || _15 === void 0 ? void 0 : _15.old_value,
+                newValue: (_16 = event.data) === null || _16 === void 0 ? void 0 : _16.new_value,
+                updatedAt: (_18 = (_17 = event.data) === null || _17 === void 0 ? void 0 : _17.updated_at) !== null && _18 !== void 0 ? _18 : new Date().toISOString(),
+            }).catch(() => { });
+            break;
+        case "chat.group_name_update_failed":
+        case "chat.group_icon_update_failed":
+            console.warn(`linqWebhook: ${event.type}`, {
+                chatId: (_19 = event.data) === null || _19 === void 0 ? void 0 : _19.chat_id,
+                errorCode: (_20 = event.data) === null || _20 === void 0 ? void 0 : _20.error_code,
+            });
+            break;
         default:
-            console.warn(`linqWebhook: unhandled event type "${(_l = event === null || event === void 0 ? void 0 : event.type) !== null && _l !== void 0 ? _l : "unknown"}"`);
+            console.warn(`linqWebhook: unhandled event type "${(_21 = event === null || event === void 0 ? void 0 : event.type) !== null && _21 !== void 0 ? _21 : "unknown"}"`);
             break;
     }
 });

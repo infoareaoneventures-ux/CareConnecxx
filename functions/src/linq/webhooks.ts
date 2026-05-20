@@ -29,6 +29,7 @@ import { isBereavementTrigger, activateBereavementMode } from "../agents/bereave
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { handleJobPostingStep, startJobPostingFlow } from "../agents/jobPostingFlow";
 import { startModifyScheduleFlow, handleModifyScheduleStep } from "../agents/modifyScheduleFlow";
+import { handleRefundRequest } from "../agents/refundHandler";
 import { STATE_MACHINE_FLAGS, clearAllStateFlags } from "../utils/sessionState";
 import { sendIfNotDND } from "../utils/dndGuard";
 import { writeFeedbackSignal } from "../ai/feedback";
@@ -1500,6 +1501,23 @@ async function handleInbound(event: unknown): Promise<void> {
     return;
   }
 
+  // ── Refund self-service flow (multi-step state machine) ───────────────────
+  if ((session as any).refundStep) {
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      const refundClientId = ((session as any).userId ?? phone) as string;
+      await handleRefundRequest(
+        refundClientId,
+        text,
+        session as Record<string, unknown>,
+        (msg: string) => sendMessage(chatId, msg)
+      );
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+    return;
+  }
+
   // ── Pending rematching after interview cancelled due to availability change ──
   if ((session as any).pendingRematch && (norm === "YES" || norm === "Y")) {
     await db.collection("agent_sessions").doc(phone).update({ pendingRematch: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete() });
@@ -2396,6 +2414,44 @@ async function handleInbound(event: unknown): Promise<void> {
           "I ran into an issue generating your billing link. You can update your payment method in the app under Settings → Billing."
         );
       }
+      return;
+    }
+
+    // ── REQUEST_REFUND — start the refund self-service state machine ─────────
+    if (intent === "REQUEST_REFUND" && session.userType !== "caregiver") {
+      const refundClientId = (session.userId ?? phone) as string;
+      // Initialise the state machine by calling with step = "identify_visit"
+      await handleRefundRequest(
+        refundClientId,
+        text,
+        session as Record<string, unknown>,
+        (msg: string) => sendMessage(chatId, msg)
+      );
+      return;
+    }
+
+    // ── VIEW_INVOICE / VIEW_CARE_PLAN_HISTORY — routed to QA agent ───────────
+    if (
+      (intent === "VIEW_INVOICE" && session.userType !== "caregiver") ||
+      (intent === "VIEW_CARE_PLAN_HISTORY" && session.userType !== "caregiver")
+    ) {
+      const qaReplyInvoice = await runQaAgent({
+        text,
+        phone,
+        chatId,
+        userId:      session.userId      ?? "",
+        seniorId:    session.seniorId    ?? session.userId ?? "",
+        userType:    "client",
+        caregiverId: session.caregiverId,
+        zepThreadId: (session as Record<string, unknown>).zepThreadId as string | undefined,
+        session:     session as Record<string, unknown>,
+      });
+      await sendViaInteractionAgent(phone, {
+        content:     qaReplyInvoice,
+        urgency:     "standard",
+        sourceAgent: "qa",
+        canDrop:     false,
+      });
       return;
     }
 

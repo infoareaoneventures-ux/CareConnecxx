@@ -36,7 +36,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.zepSetup = exports.chatWithCara = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
+exports.zepSetup = exports.chatWithCara = exports.send1099Notifications = exports.submitGpsCheckin = exports.sendJobMatchNotifications = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions"));
 // Initialize Admin globally if not already done
@@ -155,9 +155,22 @@ Object.defineProperty(exports, "checkDisputeSLAs", { enumerable: true, get: func
 // Refund auto-processing (executes Stripe refund when status → "approved")
 var refundProcessor_1 = require("./triggers/refundProcessor");
 Object.defineProperty(exports, "onRefundRequestWrite", { enumerable: true, get: function () { return refundProcessor_1.onRefundRequestWrite; } });
+// CARE PLAN HISTORY trigger (saves version on every care plan write)
+__exportStar(require("./triggers/carePlanHistory"), exports);
 // AI proxy — secure server-side Anthropic calls (auth-gated, rate-limited)
 var aiProxy_1 = require("./aiProxy");
 Object.defineProperty(exports, "aiProxy", { enumerable: true, get: function () { return aiProxy_1.aiProxy; } });
+// JOB MATCH NOTIFICATIONS (daily 10am — texts caregivers about high-match new jobs)
+var jobMatchNotifications_1 = require("./scheduled/jobMatchNotifications");
+Object.defineProperty(exports, "sendJobMatchNotifications", { enumerable: true, get: function () { return jobMatchNotifications_1.sendJobMatchNotifications; } });
+// GPS CHECK-IN (callable — validates caregiver arrival within 200m, notifies family)
+var gpsCheckin_1 = require("./agents/gpsCheckin");
+Object.defineProperty(exports, "submitGpsCheckin", { enumerable: true, get: function () { return gpsCheckin_1.submitGpsCheckin; } });
+// 1099 TAX NOTIFICATIONS (Jan 31 — notifies eligible caregivers of earnings summary)
+var taxReminder_1 = require("./scheduled/taxReminder");
+Object.defineProperty(exports, "send1099Notifications", { enumerable: true, get: function () { return taxReminder_1.send1099Notifications; } });
+// MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
+__exportStar(require("./migrations/migrateSeniorsToHousehold"), exports);
 // ── chatWithCara — web callable: routes authenticated web users through qaAgent ─
 // Bridges Firebase Auth UID → phone → agent_sessions so web users get the same
 // Cara experience (memory, tool use, booking) as Linq iMessage users.

@@ -53,6 +53,7 @@ const bereavement_1 = require("../agents/bereavement");
 const caraAgent_1 = require("../agents/caraAgent");
 const jobPostingFlow_1 = require("../agents/jobPostingFlow");
 const modifyScheduleFlow_1 = require("../agents/modifyScheduleFlow");
+const refundHandler_1 = require("../agents/refundHandler");
 const sessionState_1 = require("../utils/sessionState");
 const dndGuard_1 = require("../utils/dndGuard");
 const feedback_1 = require("../ai/feedback");
@@ -602,7 +603,7 @@ async function handleRecurringResume(phone, chatId, session) {
 }
 // ── Main inbound handler ──────────────────────────────────────────────────────
 async function handleInbound(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98, _99, _100, _101, _102, _103, _104, _105, _106, _107, _108, _109, _110, _111, _112, _113, _114, _115, _116, _117, _118, _119, _120, _121, _122, _123, _124, _125;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98, _99, _100, _101, _102, _103, _104, _105, _106, _107, _108, _109, _110, _111, _112, _113, _114, _115, _116, _117, _118, _119, _120, _121, _122, _123, _124, _125, _126, _127, _128, _129, _130;
     const ev = event;
     const phone = (_b = (_a = ev.data) === null || _a === void 0 ? void 0 : _a.sender_handle) === null || _b === void 0 ? void 0 : _b.value;
     const text = ((_f = (_e = (_d = (_c = ev.data) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.value) !== null && _f !== void 0 ? _f : "");
@@ -797,7 +798,7 @@ async function handleInbound(event) {
             });
             isExit = ((_z = res.content[0].text) !== null && _z !== void 0 ? _z : "").trim().toUpperCase().startsWith("Y");
         }
-        catch (_126) {
+        catch (_131) {
             isExit = false;
         }
         if (isExit) {
@@ -1176,7 +1177,7 @@ async function handleInbound(event) {
                 });
                 timeList = JSON.parse((_40 = parsed.content[0].text) !== null && _40 !== void 0 ? _40 : "[]");
             }
-            catch ( /* fall through — use raw text below */_127) { /* fall through — use raw text below */ }
+            catch ( /* fall through — use raw text below */_132) { /* fall through — use raw text below */ }
             const timesText = timeList.length > 0 ? timeList.join(", ") : text;
             // Find the relevant interview request
             const caregiverId = (_41 = session.caregiverId) !== null && _41 !== void 0 ? _41 : "";
@@ -1349,10 +1350,24 @@ async function handleInbound(event) {
         }
         return;
     }
+    // ── Refund self-service flow (multi-step state machine) ───────────────────
+    if (session.refundStep) {
+        if (session.service === "iMessage" && !session.groupChatId)
+            await (0, client_1.startTyping)(chatId).catch(() => { });
+        try {
+            const refundClientId = ((_50 = session.userId) !== null && _50 !== void 0 ? _50 : phone);
+            await (0, refundHandler_1.handleRefundRequest)(refundClientId, text, session, (msg) => (0, client_1.sendMessage)(chatId, msg));
+        }
+        finally {
+            if (session.service === "iMessage" && !session.groupChatId)
+                await (0, client_1.stopTyping)(chatId).catch(() => { });
+        }
+        return;
+    }
     // ── Pending rematching after interview cancelled due to availability change ──
     if (session.pendingRematch && (norm === "YES" || norm === "Y")) {
         await db.collection("agent_sessions").doc(phone).update({ pendingRematch: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete() });
-        const sd = (_50 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _50 !== void 0 ? _50 : {};
+        const sd = (_51 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _51 !== void 0 ? _51 : {};
         const { runMatchingForClient: rmfcPendingRematch } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
         await rmfcPendingRematch(phone, chatId, sd, sd);
         return;
@@ -1387,7 +1402,7 @@ async function handleInbound(event) {
                     console.error("executeBookings failed (BOOKING_CONFIRM):", err);
                     await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
                     await (0, client_1.sendMessage)(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
-                    const sd = (_51 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _51 !== void 0 ? _51 : {};
+                    const sd = (_52 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _52 !== void 0 ? _52 : {};
                     const { runMatchingForClient: rmfc } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
                     await rmfc(phone, chatId, sd, sd).catch(() => { });
                 }
@@ -1405,7 +1420,7 @@ async function handleInbound(event) {
                     const appt = apptSnap.data();
                     await apptRef.update({ status: "cancelled_by_client", cancelledAt: new Date().toISOString() });
                     const cgSnap = await db.collection("caregivers").doc(appt.caregiverId).get();
-                    const cgPhone = (_52 = cgSnap.data()) === null || _52 === void 0 ? void 0 : _52.phone;
+                    const cgPhone = (_53 = cgSnap.data()) === null || _53 === void 0 ? void 0 : _53.phone;
                     if (cgPhone) {
                         const cgSess = await (await Promise.resolve().then(() => __importStar(require("./client")))).getOrCreateSession(cgPhone);
                         await (0, client_1.sendMessage)(cgSess.chatId, `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`);
@@ -1436,7 +1451,7 @@ async function handleInbound(event) {
                 const pending = session.pendingInterviewConfirm;
                 await db.collection("agent_sessions").doc(phone).update({ pendingInterviewConfirm: admin.firestore.FieldValue.delete() });
                 const reqSnap = await db.collection("interview_requests").doc(pending.docId).get();
-                const availability = ((_54 = (_53 = reqSnap.data()) === null || _53 === void 0 ? void 0 : _53.caregiverAvailability) !== null && _54 !== void 0 ? _54 : []);
+                const availability = ((_55 = (_54 = reqSnap.data()) === null || _54 === void 0 ? void 0 : _54.caregiverAvailability) !== null && _55 !== void 0 ? _55 : []);
                 const remaining = availability.filter(t => t !== pending.mutualTime);
                 if (remaining.length > 0) {
                     const timesList = remaining.map((t, i) => `${i + 1}. ${t}`).join("\n");
@@ -1464,12 +1479,12 @@ async function handleInbound(event) {
         if (intent === "HIRE_CAREGIVER") {
             const pending = session.pendingInterviewOutcome;
             if (pending) {
-                let caregiverId = (_55 = pending.caregiverId) !== null && _55 !== void 0 ? _55 : "";
+                let caregiverId = (_56 = pending.caregiverId) !== null && _56 !== void 0 ? _56 : "";
                 if (!caregiverId && pending.interviewId) {
                     const reqSnap = await db.collection("interview_requests")
                         .where("interviewId", "==", pending.interviewId).limit(1).get();
                     if (!reqSnap.empty)
-                        caregiverId = (_56 = reqSnap.docs[0].data().caregiverId) !== null && _56 !== void 0 ? _56 : "";
+                        caregiverId = (_57 = reqSnap.docs[0].data().caregiverId) !== null && _57 !== void 0 ? _57 : "";
                 }
                 await db.collection("agent_sessions").doc(phone).update({
                     hireMode: { caregiverName: pending.caregiverName, caregiverId },
@@ -1477,7 +1492,7 @@ async function handleInbound(event) {
                     stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
                 });
                 if (caregiverId)
-                    (0, interviewAgent_1.writeInterviewOutcomeSignal)((_57 = session.userId) !== null && _57 !== void 0 ? _57 : phone, caregiverId, "hire").catch(() => { });
+                    (0, interviewAgent_1.writeInterviewOutcomeSignal)((_58 = session.userId) !== null && _58 !== void 0 ? _58 : phone, caregiverId, "hire").catch(() => { });
                 await (0, client_1.sendMessage)(chatId, `${pending.caregiverName} sounds like a great fit. When would you like care to start?`);
                 return;
             }
@@ -1509,7 +1524,7 @@ async function handleInbound(event) {
                     console.error("executeBookings failed (YES):", err);
                     await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
                     await (0, client_1.sendMessage)(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
-                    const sd = (_58 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _58 !== void 0 ? _58 : {};
+                    const sd = (_59 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _59 !== void 0 ? _59 : {};
                     const { runMatchingForClient: rmfc4 } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
                     await rmfc4(phone, chatId, sd, sd).catch(() => { });
                 }
@@ -1529,7 +1544,7 @@ async function handleInbound(event) {
                     await apptRef.update({ status: "cancelled_by_client", cancelledAt: new Date().toISOString() });
                     // Notify caregiver
                     const cgSnap = await db.collection("caregivers").doc(appt.caregiverId).get();
-                    const cgPhone = (_59 = cgSnap.data()) === null || _59 === void 0 ? void 0 : _59.phone;
+                    const cgPhone = (_60 = cgSnap.data()) === null || _60 === void 0 ? void 0 : _60.phone;
                     if (cgPhone) {
                         const cgSess = await (await Promise.resolve().then(() => __importStar(require("./client")))).getOrCreateSession(cgPhone);
                         await (0, client_1.sendMessage)(cgSess.chatId, `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`);
@@ -1570,7 +1585,7 @@ async function handleInbound(event) {
                 });
                 // Check if caregiver offered more times
                 const reqSnap = await db.collection("interview_requests").doc(pending.docId).get();
-                const availability = ((_61 = (_60 = reqSnap.data()) === null || _60 === void 0 ? void 0 : _60.caregiverAvailability) !== null && _61 !== void 0 ? _61 : []);
+                const availability = ((_62 = (_61 = reqSnap.data()) === null || _61 === void 0 ? void 0 : _61.caregiverAvailability) !== null && _62 !== void 0 ? _62 : []);
                 // Remove the time we just rejected
                 const remaining = availability.filter(t => t !== pending.mutualTime);
                 if (remaining.length > 0) {
@@ -1622,7 +1637,7 @@ async function handleInbound(event) {
                         "or PASS (negative, concerns, didn't click). Reply with one word only.",
                     messages: [{ role: "user", content: text }],
                 });
-                const classified = ((_62 = _r.content[0].text) !== null && _62 !== void 0 ? _62 : "").trim().toUpperCase();
+                const classified = ((_63 = _r.content[0].text) !== null && _63 !== void 0 ? _63 : "").trim().toUpperCase();
                 if (classified === "HIRE" || classified === "MAYBE" || classified === "PASS") {
                     // Re-enter with classified keyword — will be picked up by the checks below
                     text; // text is const; shadow norm instead
@@ -1630,12 +1645,12 @@ async function handleInbound(event) {
                     // Override norm for the blocks below
                     const resolvedNorm = classified;
                     if (resolvedNorm === "HIRE") {
-                        let caregiverId = (_63 = pendingOutcome.caregiverId) !== null && _63 !== void 0 ? _63 : "";
+                        let caregiverId = (_64 = pendingOutcome.caregiverId) !== null && _64 !== void 0 ? _64 : "";
                         if (!caregiverId && pendingOutcome.interviewId) {
                             const reqSnap = await db.collection("interview_requests")
                                 .doc(pendingOutcome.interviewId).get();
                             if (reqSnap.exists)
-                                caregiverId = (_65 = (_64 = reqSnap.data()) === null || _64 === void 0 ? void 0 : _64.caregiverId) !== null && _65 !== void 0 ? _65 : "";
+                                caregiverId = (_66 = (_65 = reqSnap.data()) === null || _65 === void 0 ? void 0 : _65.caregiverId) !== null && _66 !== void 0 ? _66 : "";
                         }
                         await db.collection("agent_sessions").doc(phone).update({
                             hireMode: { caregiverName: pendingOutcome.caregiverName, caregiverId },
@@ -1643,7 +1658,7 @@ async function handleInbound(event) {
                             stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
                         });
                         if (caregiverId) {
-                            (0, interviewAgent_1.writeInterviewOutcomeSignal)((_66 = session.userId) !== null && _66 !== void 0 ? _66 : phone, caregiverId, "hire").catch(() => { });
+                            (0, interviewAgent_1.writeInterviewOutcomeSignal)((_67 = session.userId) !== null && _67 !== void 0 ? _67 : phone, caregiverId, "hire").catch(() => { });
                         }
                         await (0, client_1.sendMessage)(chatId, `${pendingOutcome.caregiverName} sounds like a great fit. When would you like care to start?`);
                     }
@@ -1663,7 +1678,7 @@ async function handleInbound(event) {
                         };
                         if (pendingOutcome.caregiverId) {
                             updates.rejectedCaregiverIds = admin.firestore.FieldValue.arrayUnion(pendingOutcome.caregiverId);
-                            (0, interviewAgent_1.writeInterviewOutcomeSignal)((_67 = session.userId) !== null && _67 !== void 0 ? _67 : phone, pendingOutcome.caregiverId, "pass").catch(() => { });
+                            (0, interviewAgent_1.writeInterviewOutcomeSignal)((_68 = session.userId) !== null && _68 !== void 0 ? _68 : phone, pendingOutcome.caregiverId, "pass").catch(() => { });
                         }
                         await db.collection("agent_sessions").doc(phone).update(updates);
                         await (0, client_1.sendMessage)(chatId, `Understood. Want me to search for more caregivers? Reply YES and I'll get started.`);
@@ -1680,13 +1695,13 @@ async function handleInbound(event) {
             const pending = session.pendingInterviewOutcome;
             if (pending) {
                 // Resolve caregiverId from interview_requests if not already on pending
-                let caregiverId = (_68 = pending.caregiverId) !== null && _68 !== void 0 ? _68 : "";
+                let caregiverId = (_69 = pending.caregiverId) !== null && _69 !== void 0 ? _69 : "";
                 if (!caregiverId && pending.interviewId) {
                     const reqSnap = await db.collection("interview_requests")
                         .where("interviewId", "==", pending.interviewId)
                         .limit(1).get();
                     if (!reqSnap.empty)
-                        caregiverId = (_69 = reqSnap.docs[0].data().caregiverId) !== null && _69 !== void 0 ? _69 : "";
+                        caregiverId = (_70 = reqSnap.docs[0].data().caregiverId) !== null && _70 !== void 0 ? _70 : "";
                 }
                 await db.collection("agent_sessions").doc(phone).update({
                     hireMode: { caregiverName: pending.caregiverName, caregiverId },
@@ -1694,7 +1709,7 @@ async function handleInbound(event) {
                     stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
                 });
                 if (caregiverId) {
-                    (0, interviewAgent_1.writeInterviewOutcomeSignal)((_70 = session.userId) !== null && _70 !== void 0 ? _70 : phone, caregiverId, "hire").catch(() => { });
+                    (0, interviewAgent_1.writeInterviewOutcomeSignal)((_71 = session.userId) !== null && _71 !== void 0 ? _71 : phone, caregiverId, "hire").catch(() => { });
                 }
                 await (0, client_1.sendMessage)(chatId, `${pending.caregiverName} sounds like a great fit. When would you like care to start?`);
                 return;
@@ -1713,7 +1728,7 @@ async function handleInbound(event) {
                 if (pending.caregiverId) {
                     updates.rejectedCaregiverIds = admin.firestore.FieldValue.arrayUnion(pending.caregiverId);
                     if (norm === "PASS") {
-                        (0, interviewAgent_1.writeInterviewOutcomeSignal)((_71 = session.userId) !== null && _71 !== void 0 ? _71 : phone, pending.caregiverId, "pass").catch(() => { });
+                        (0, interviewAgent_1.writeInterviewOutcomeSignal)((_72 = session.userId) !== null && _72 !== void 0 ? _72 : phone, pending.caregiverId, "pass").catch(() => { });
                     }
                 }
                 await db.collection("agent_sessions").doc(phone).update(updates);
@@ -1727,7 +1742,7 @@ async function handleInbound(event) {
             }
         }
         // ── Caregiver selection (numbers after match presentation) ────────────────
-        if (((_72 = session.pendingMatches) === null || _72 === void 0 ? void 0 : _72.length) > 0 && /[123]|all/i.test(text)) {
+        if (((_73 = session.pendingMatches) === null || _73 === void 0 ? void 0 : _73.length) > 0 && /[123]|all/i.test(text)) {
             await (0, interviewAgent_1.handleInterviewSelection)(phone, chatId, text, session);
             return;
         }
@@ -1749,15 +1764,15 @@ async function handleInbound(event) {
         }
         // ── Permission update ─────────────────────────────────────────────────────
         if (intent === "PERMISSION_UPDATE") {
-            const userId = (_74 = (_73 = session.userId) !== null && _73 !== void 0 ? _73 : session.caregiverId) !== null && _74 !== void 0 ? _74 : phone;
-            const userType = (_75 = session.userType) !== null && _75 !== void 0 ? _75 : "client";
+            const userId = (_75 = (_74 = session.userId) !== null && _74 !== void 0 ? _74 : session.caregiverId) !== null && _75 !== void 0 ? _75 : phone;
+            const userType = (_76 = session.userType) !== null && _76 !== void 0 ? _76 : "client";
             await (0, permissionsConversation_1.updatePermissionFromText)(userId, userType, phone, chatId, text);
             return;
         }
         if (intent === "MEMORY_QUERY") {
             const zepUserId = (0, zepClient_1.getZepUserId)(phone);
             const zepFacts = await (0, zepClient_1.searchZepMemory)(zepUserId, text).catch(() => "");
-            const memUserId = (_77 = (_76 = session.userId) !== null && _76 !== void 0 ? _76 : session.caregiverId) !== null && _77 !== void 0 ? _77 : phone;
+            const memUserId = (_78 = (_77 = session.userId) !== null && _77 !== void 0 ? _77 : session.caregiverId) !== null && _78 !== void 0 ? _78 : phone;
             const { handleMemoryQuery } = await Promise.resolve().then(() => __importStar(require("../memory/memoryFiles")));
             await handleMemoryQuery(memUserId, chatId, client_1.sendMessage, zepFacts || undefined);
             return;
@@ -1774,11 +1789,11 @@ async function handleInbound(event) {
             let memberName = null;
             let memberPhone = null;
             try {
-                const parsed = JSON.parse((_78 = extraction.content[0].text) !== null && _78 !== void 0 ? _78 : "{}");
-                memberName = (_79 = parsed.name) !== null && _79 !== void 0 ? _79 : null;
-                memberPhone = (_80 = parsed.phone) !== null && _80 !== void 0 ? _80 : null;
+                const parsed = JSON.parse((_79 = extraction.content[0].text) !== null && _79 !== void 0 ? _79 : "{}");
+                memberName = (_80 = parsed.name) !== null && _80 !== void 0 ? _80 : null;
+                memberPhone = (_81 = parsed.phone) !== null && _81 !== void 0 ? _81 : null;
             }
-            catch ( /* */_128) { /* */ }
+            catch ( /* */_133) { /* */ }
             if (!memberPhone) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch a phone number — please include it (e.g. 'add my sister Sarah at +1 555 000 1234').");
                 return;
@@ -1792,7 +1807,7 @@ async function handleInbound(event) {
                 primaryPhone: phone,
                 memberPhone,
                 memberName: memberName !== null && memberName !== void 0 ? memberName : "Family member",
-                userId: (_81 = session.userId) !== null && _81 !== void 0 ? _81 : phone,
+                userId: (_82 = session.userId) !== null && _82 !== void 0 ? _82 : phone,
                 addedAt: new Date().toISOString(),
             });
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
@@ -1815,11 +1830,11 @@ async function handleInbound(event) {
             let targetName = null;
             let targetPhone = null;
             try {
-                const parsed = JSON.parse((_82 = extraction.content[0].text) !== null && _82 !== void 0 ? _82 : "{}");
-                targetName = (_83 = parsed.name) !== null && _83 !== void 0 ? _83 : null;
-                targetPhone = (_84 = parsed.phone) !== null && _84 !== void 0 ? _84 : null;
+                const parsed = JSON.parse((_83 = extraction.content[0].text) !== null && _83 !== void 0 ? _83 : "{}");
+                targetName = (_84 = parsed.name) !== null && _84 !== void 0 ? _84 : null;
+                targetPhone = (_85 = parsed.phone) !== null && _85 !== void 0 ? _85 : null;
             }
-            catch ( /* */_129) { /* */ }
+            catch ( /* */_134) { /* */ }
             // If no phone provided, try to resolve by name from family_group_members
             if (!targetPhone && targetName) {
                 const memberSnap = await db.collection("family_group_members")
@@ -1834,7 +1849,7 @@ async function handleInbound(event) {
                 return;
             }
             // Look up seniorId from session
-            const seniorId = (_86 = (_85 = session.seniorId) !== null && _85 !== void 0 ? _85 : session.userId) !== null && _86 !== void 0 ? _86 : phone;
+            const seniorId = (_87 = (_86 = session.seniorId) !== null && _86 !== void 0 ? _86 : session.userId) !== null && _87 !== void 0 ? _87 : phone;
             const { removeMemberFromGroup } = await Promise.resolve().then(() => __importStar(require("../agents/familyGroupManager")));
             const result = await removeMemberFromGroup(seniorId, targetPhone);
             if (result.removed) {
@@ -1873,16 +1888,16 @@ async function handleInbound(event) {
             });
             let schedule = null;
             try {
-                schedule = JSON.parse((_87 = parsedSchedule.content[0].text) !== null && _87 !== void 0 ? _87 : "null");
+                schedule = JSON.parse((_88 = parsedSchedule.content[0].text) !== null && _88 !== void 0 ? _88 : "null");
             }
-            catch ( /* */_130) { /* */ }
-            if (!schedule || !((_88 = schedule.days) === null || _88 === void 0 ? void 0 : _88.length)) {
+            catch ( /* */_135) { /* */ }
+            if (!schedule || !((_89 = schedule.days) === null || _89 === void 0 ? void 0 : _89.length)) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch that — could you try again? (e.g. '3 days, Mon/Wed/Fri, 9am–1pm')");
                 return;
             }
             // Fetch actual hourly rate from caregiver doc
             const cgDoc = await db.collection("caregivers").doc(hire.caregiverId).get();
-            const hourlyRate = ((_90 = (_89 = cgDoc.data()) === null || _89 === void 0 ? void 0 : _89.hourlyRate) !== null && _90 !== void 0 ? _90 : 20);
+            const hourlyRate = ((_91 = (_90 = cgDoc.data()) === null || _90 === void 0 ? void 0 : _90.hourlyRate) !== null && _91 !== void 0 ? _91 : 20);
             // Build one appointment per day starting from the hire date's week
             const startDate = new Date(dateStr + "T12:00:00Z");
             const dayIndexMap = {
@@ -1890,7 +1905,7 @@ async function handleInbound(event) {
             };
             const appointments = [];
             for (const day of schedule.days) {
-                const target = (_91 = dayIndexMap[day]) !== null && _91 !== void 0 ? _91 : -1;
+                const target = (_92 = dayIndexMap[day]) !== null && _92 !== void 0 ? _92 : -1;
                 if (target < 0)
                     continue;
                 const d = new Date(startDate);
@@ -1903,7 +1918,7 @@ async function handleInbound(event) {
                     durationHours: schedule.durationHours,
                 });
             }
-            const clientId = (_92 = session.userId) !== null && _92 !== void 0 ? _92 : phone;
+            const clientId = (_93 = session.userId) !== null && _93 !== void 0 ? _93 : phone;
             const taskId = await (0, bookingExecutor_1.createBookingTask)({
                 clientPhone: phone,
                 clientId,
@@ -1916,7 +1931,7 @@ async function handleInbound(event) {
                 hireMode: admin.firestore.FieldValue.delete(),
                 hireModeDate: admin.firestore.FieldValue.delete(),
             });
-            const perms = await (0, permissionsConversation_1.getPermissions)((_93 = session.userId) !== null && _93 !== void 0 ? _93 : phone).catch(() => null);
+            const perms = await (0, permissionsConversation_1.getPermissions)((_94 = session.userId) !== null && _94 !== void 0 ? _94 : phone).catch(() => null);
             if (perms === null || perms === void 0 ? void 0 : perms.canBookAutomatically) {
                 try {
                     await (0, bookingExecutor_1.executeBookings)(taskId, phone);
@@ -1925,7 +1940,7 @@ async function handleInbound(event) {
                     console.error("executeBookings failed (hireMode):", err);
                     await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
                     await (0, client_1.sendMessage)(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
-                    const sd = (_94 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _94 !== void 0 ? _94 : {};
+                    const sd = (_95 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _95 !== void 0 ? _95 : {};
                     const { runMatchingForClient: rmfc2 } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
                     await rmfc2(phone, chatId, sd, sd).catch(() => { });
                 }
@@ -1948,7 +1963,7 @@ async function handleInbound(event) {
                     "The user is choosing a start date for care. Reply with only a YYYY-MM-DD date string, nothing else.",
                 messages: [{ role: "user", content: text }],
             });
-            const dateStr = ((_95 = parsedDate.content[0].text) !== null && _95 !== void 0 ? _95 : "").trim();
+            const dateStr = ((_96 = parsedDate.content[0].text) !== null && _96 !== void 0 ? _96 : "").trim();
             if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch that date — could you try again? (e.g. \"next Monday\" or \"May 19\")");
                 return;
@@ -1973,7 +1988,7 @@ async function handleInbound(event) {
             }
             // Parse which time the family chose
             const reqSnap = await db.collection("interview_requests").doc(sel.interviewRequestId).get();
-            const availability = ((_97 = (_96 = reqSnap.data()) === null || _96 === void 0 ? void 0 : _96.caregiverAvailability) !== null && _97 !== void 0 ? _97 : []);
+            const availability = ((_98 = (_97 = reqSnap.data()) === null || _97 === void 0 ? void 0 : _97.caregiverAvailability) !== null && _98 !== void 0 ? _98 : []);
             const Anthropic = (await Promise.resolve().then(() => __importStar(require("@anthropic-ai/sdk")))).default;
             const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
             const parsed = await claude.messages.create({
@@ -1983,7 +1998,7 @@ async function handleInbound(event) {
                     "The user picked one of these times. Reply with only the exact string from the list that best matches their reply, or 'NONE' if no match.",
                 messages: [{ role: "user", content: text }],
             });
-            const chosen = ((_98 = parsed.content[0].text) !== null && _98 !== void 0 ? _98 : "").trim();
+            const chosen = ((_99 = parsed.content[0].text) !== null && _99 !== void 0 ? _99 : "").trim();
             if (chosen === "NONE" || !availability.includes(chosen)) {
                 await (0, client_1.sendMessage)(chatId, `I didn't catch that — which of these works for you?\n\n${availability.join("\n")}\n\nOr reply PASS to find someone else.`);
                 return;
@@ -1998,7 +2013,7 @@ async function handleInbound(event) {
         }
         // ── CANCEL intent — cancel a visit, NOT an opt-out ────────────────────────
         if (intent === "CANCEL_REQUEST" || norm === "CANCEL") {
-            const clientId = (_99 = session.userId) !== null && _99 !== void 0 ? _99 : phone;
+            const clientId = (_100 = session.userId) !== null && _100 !== void 0 ? _100 : phone;
             const upcoming = await db.collection("appointments")
                 .where("clientId", "==", clientId)
                 .where("status", "==", "confirmed")
@@ -2027,12 +2042,12 @@ async function handleInbound(event) {
                     "The user is choosing a date for a care visit. Reply with only a YYYY-MM-DD date string, nothing else.",
                 messages: [{ role: "user", content: text }],
             });
-            const dateStr = ((_100 = parsedDate.content[0].text) !== null && _100 !== void 0 ? _100 : "").trim();
+            const dateStr = ((_101 = parsedDate.content[0].text) !== null && _101 !== void 0 ? _101 : "").trim();
             if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch that date — could you try again? (e.g. \"May 19\" or \"next Monday\")");
                 return;
             }
-            const clientId = (_101 = session.userId) !== null && _101 !== void 0 ? _101 : phone;
+            const clientId = (_102 = session.userId) !== null && _102 !== void 0 ? _102 : phone;
             const taskId = await (0, bookingExecutor_1.createBookingTask)({
                 clientPhone: phone,
                 clientId,
@@ -2042,7 +2057,7 @@ async function handleInbound(event) {
                 hourlyRate: 20,
             });
             await db.collection("agent_sessions").doc(phone).update({ pendingRebook: admin.firestore.FieldValue.delete() });
-            const perms = await (0, permissionsConversation_1.getPermissions)((_102 = session.userId) !== null && _102 !== void 0 ? _102 : phone).catch(() => null);
+            const perms = await (0, permissionsConversation_1.getPermissions)((_103 = session.userId) !== null && _103 !== void 0 ? _103 : phone).catch(() => null);
             if (perms === null || perms === void 0 ? void 0 : perms.canBookAutomatically) {
                 try {
                     await (0, bookingExecutor_1.executeBookings)(taskId, phone);
@@ -2051,7 +2066,7 @@ async function handleInbound(event) {
                     console.error("executeBookings failed (rebook):", err);
                     await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
                     await (0, client_1.sendMessage)(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
-                    const sd = (_103 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _103 !== void 0 ? _103 : {};
+                    const sd = (_104 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _104 !== void 0 ? _104 : {};
                     const { runMatchingForClient: rmfc3 } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
                     await rmfc3(phone, chatId, sd, sd).catch(() => { });
                 }
@@ -2067,7 +2082,7 @@ async function handleInbound(event) {
         }
         // ── Rebook request ────────────────────────────────────────────────────────
         if (intent === "REBOOK_REQUEST") {
-            const clientId = (_104 = session.userId) !== null && _104 !== void 0 ? _104 : phone;
+            const clientId = (_105 = session.userId) !== null && _105 !== void 0 ? _105 : phone;
             const lastApptSnap = await db.collection("appointments")
                 .where("clientId", "==", clientId)
                 .where("status", "==", "confirmed")
@@ -2081,7 +2096,7 @@ async function handleInbound(event) {
             const caregiverName = last.caregiverName;
             const startTime = last.startTime;
             const endTime = last.endTime;
-            const durationHours = ((_105 = last.durationHours) !== null && _105 !== void 0 ? _105 : 4);
+            const durationHours = ((_106 = last.durationHours) !== null && _106 !== void 0 ? _106 : 4);
             await db.collection("agent_sessions").doc(phone).update({
                 pendingRebook: { caregiverId, caregiverName, startTime, endTime, durationHours },
                 stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
@@ -2122,8 +2137,8 @@ async function handleInbound(event) {
                 text,
                 phone,
                 chatId,
-                userId: (_106 = session.userId) !== null && _106 !== void 0 ? _106 : "",
-                seniorId: (_108 = (_107 = session.seniorId) !== null && _107 !== void 0 ? _107 : session.userId) !== null && _108 !== void 0 ? _108 : "",
+                userId: (_107 = session.userId) !== null && _107 !== void 0 ? _107 : "",
+                seniorId: (_109 = (_108 = session.seniorId) !== null && _108 !== void 0 ? _108 : session.userId) !== null && _109 !== void 0 ? _109 : "",
                 userType: "client",
                 caregiverId: session.caregiverId,
                 zepThreadId: session.zepThreadId,
@@ -2144,7 +2159,7 @@ async function handleInbound(event) {
         }
         // ── UPDATE_PAYMENT_METHOD — generate Stripe billing portal link ───────────
         if (intent === "UPDATE_PAYMENT_METHOD" && session.userType !== "caregiver") {
-            const clientId = (_109 = session.userId) !== null && _109 !== void 0 ? _109 : phone;
+            const clientId = (_110 = session.userId) !== null && _110 !== void 0 ? _110 : phone;
             try {
                 const { handleToolCall } = await Promise.resolve().then(() => __importStar(require("../mcp/server")));
                 const result = await handleToolCall("get_payment_update_link", { clientId });
@@ -2162,6 +2177,35 @@ async function handleInbound(event) {
             }
             return;
         }
+        // ── REQUEST_REFUND — start the refund self-service state machine ─────────
+        if (intent === "REQUEST_REFUND" && session.userType !== "caregiver") {
+            const refundClientId = ((_111 = session.userId) !== null && _111 !== void 0 ? _111 : phone);
+            // Initialise the state machine by calling with step = "identify_visit"
+            await (0, refundHandler_1.handleRefundRequest)(refundClientId, text, session, (msg) => (0, client_1.sendMessage)(chatId, msg));
+            return;
+        }
+        // ── VIEW_INVOICE / VIEW_CARE_PLAN_HISTORY — routed to QA agent ───────────
+        if ((intent === "VIEW_INVOICE" && session.userType !== "caregiver") ||
+            (intent === "VIEW_CARE_PLAN_HISTORY" && session.userType !== "caregiver")) {
+            const qaReplyInvoice = await (0, qaAgent_1.runQaAgent)({
+                text,
+                phone,
+                chatId,
+                userId: (_112 = session.userId) !== null && _112 !== void 0 ? _112 : "",
+                seniorId: (_114 = (_113 = session.seniorId) !== null && _113 !== void 0 ? _113 : session.userId) !== null && _114 !== void 0 ? _114 : "",
+                userType: "client",
+                caregiverId: session.caregiverId,
+                zepThreadId: session.zepThreadId,
+                session: session,
+            });
+            await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+                content: qaReplyInvoice,
+                urgency: "standard",
+                sourceAgent: "qa",
+                canDrop: false,
+            });
+            return;
+        }
         // ── Platform-action intents — routed to QA agent with new MCP tools ─────
         if (intent === "VIEW_MY_JOBS" ||
             intent === "VIEW_APPLICANTS" ||
@@ -2174,9 +2218,9 @@ async function handleInbound(event) {
                 text,
                 phone,
                 chatId,
-                userId: (_110 = session.userId) !== null && _110 !== void 0 ? _110 : "",
-                seniorId: (_112 = (_111 = session.seniorId) !== null && _111 !== void 0 ? _111 : session.userId) !== null && _112 !== void 0 ? _112 : "",
-                userType: (_113 = session.userType) !== null && _113 !== void 0 ? _113 : "client",
+                userId: (_115 = session.userId) !== null && _115 !== void 0 ? _115 : "",
+                seniorId: (_117 = (_116 = session.seniorId) !== null && _116 !== void 0 ? _116 : session.userId) !== null && _117 !== void 0 ? _117 : "",
+                userType: (_118 = session.userType) !== null && _118 !== void 0 ? _118 : "client",
                 caregiverId: session.caregiverId,
                 zepThreadId: session.zepThreadId,
                 session: session,
@@ -2195,8 +2239,8 @@ async function handleInbound(event) {
                 text,
                 phone,
                 chatId,
-                userId: (_114 = session.userId) !== null && _114 !== void 0 ? _114 : "",
-                seniorId: (_116 = (_115 = session.seniorId) !== null && _115 !== void 0 ? _115 : session.userId) !== null && _116 !== void 0 ? _116 : "",
+                userId: (_119 = session.userId) !== null && _119 !== void 0 ? _119 : "",
+                seniorId: (_121 = (_120 = session.seniorId) !== null && _120 !== void 0 ? _120 : session.userId) !== null && _121 !== void 0 ? _121 : "",
                 userType: "client",
                 caregiverId: session.caregiverId,
                 zepThreadId: session.zepThreadId,
@@ -2214,7 +2258,7 @@ async function handleInbound(event) {
         if (intent === "FIND_CAREGIVER" && session.userType !== "caregiver") {
             const { runMatchingForClient } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
             const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();
-            const sessionData = (_117 = sessionSnap2.data()) !== null && _117 !== void 0 ? _117 : {};
+            const sessionData = (_122 = sessionSnap2.data()) !== null && _122 !== void 0 ? _122 : {};
             await runMatchingForClient(phone, chatId, sessionData, sessionData);
             return;
         }
@@ -2222,8 +2266,8 @@ async function handleInbound(event) {
         if (intent === "FACT_CORRECTION") {
             const { detectAndApplyCorrection } = await Promise.resolve().then(() => __importStar(require("../memory/learnedFacts")));
             const factUserId = session.userType === "caregiver"
-                ? ((_119 = (_118 = session.caregiverId) !== null && _118 !== void 0 ? _118 : session.userId) !== null && _119 !== void 0 ? _119 : phone)
-                : ((_120 = session.userId) !== null && _120 !== void 0 ? _120 : phone);
+                ? ((_124 = (_123 = session.caregiverId) !== null && _123 !== void 0 ? _123 : session.userId) !== null && _124 !== void 0 ? _124 : phone)
+                : ((_125 = session.userId) !== null && _125 !== void 0 ? _125 : phone);
             const zepUserId2 = session.zepThreadId ? phone.replace(/\D/g, "") : undefined;
             const applied = await detectAndApplyCorrection(factUserId, text, zepUserId2).catch(() => false);
             if (applied) {
@@ -2238,7 +2282,7 @@ async function handleInbound(event) {
             (0, zepClient_1.addUserMessageToZep)({
                 threadId: zepThreadId,
                 content: text,
-                userName: (_121 = session.firstName) !== null && _121 !== void 0 ? _121 : "Family",
+                userName: (_126 = session.firstName) !== null && _126 !== void 0 ? _126 : "Family",
                 sentAt: new Date(),
             }).catch(console.error);
         }
@@ -2246,9 +2290,9 @@ async function handleInbound(event) {
             text,
             phone,
             chatId,
-            userId: (_122 = session.userId) !== null && _122 !== void 0 ? _122 : "",
-            seniorId: (_124 = (_123 = session.seniorId) !== null && _123 !== void 0 ? _123 : session.userId) !== null && _124 !== void 0 ? _124 : "",
-            userType: (_125 = session.userType) !== null && _125 !== void 0 ? _125 : "client",
+            userId: (_127 = session.userId) !== null && _127 !== void 0 ? _127 : "",
+            seniorId: (_129 = (_128 = session.seniorId) !== null && _128 !== void 0 ? _128 : session.userId) !== null && _129 !== void 0 ? _129 : "",
+            userType: (_130 = session.userType) !== null && _130 !== void 0 ? _130 : "client",
             caregiverId: session.caregiverId,
             zepThreadId,
             session: session,

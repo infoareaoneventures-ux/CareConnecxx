@@ -1447,11 +1447,18 @@ export const dbService = {
     getSeniorProfile: async (uid: string): Promise<Senior | null> => {
         if (isConfigured && db) {
             try {
+                // First try direct doc lookup (works for old 1:1 model where seniorId === clientUID)
                 const docSnap = await db.collection('senior_profiles').doc(uid).get();
                 if (docSnap.exists) {
                     return { id: 0, uid: docSnap.id, ...docSnap.data() } as unknown as Senior;
                 }
-                // Try reading from user doc if profile missing
+                // Backward-compat fallback: query by clientId field (new multi-senior model)
+                const querySnap = await db.collection('senior_profiles').where('clientId', '==', uid).limit(1).get();
+                if (!querySnap.empty) {
+                    const qDoc = querySnap.docs[0];
+                    return { id: 0, uid: qDoc.id, ...qDoc.data() } as unknown as Senior;
+                }
+                // Last resort: read from user doc if no senior profile exists at all
                 const userDoc = await db.collection('users').doc(uid).get();
                 if (userDoc.exists) {
                     const userData = userDoc.data() as any;
@@ -1465,6 +1472,56 @@ export const dbService = {
             }
         }
         return null;
+    },
+
+    /**
+     * Creates a new senior_profiles doc with an auto-generated ID (multi-senior model).
+     * Sets the clientId back-reference and registers the new seniorId on the user doc.
+     * Returns the new senior doc ID.
+     */
+    createSeniorProfile: async (clientId: string, data: Partial<Senior>): Promise<string> => {
+        if (!isConfigured || !db) throw new Error("Service not configured.");
+        const newRef = db.collection('senior_profiles').doc();
+        const newSeniorId = newRef.id;
+        const batch = db.batch();
+        batch.set(newRef, {
+            ...data,
+            clientId,
+            personality: data.personality ?? 'Introvert',
+            needs: data.needs ?? [],
+            familyMembers: data.familyMembers ?? [],
+            createdAt: new Date().toISOString(),
+        });
+        batch.update(db.collection('users').doc(clientId), {
+            seniorIds: firebase.firestore.FieldValue.arrayUnion(newSeniorId),
+        });
+        await batch.commit();
+        return newSeniorId;
+    },
+
+    /**
+     * Lists all seniors in a client's household.
+     * Queries senior_profiles where clientId == clientId (new model).
+     * Falls back to the old 1:1 model (senior_profiles/{clientId}) for legacy accounts.
+     */
+    listHouseholdSeniors: async (clientId: string): Promise<Senior[]> => {
+        if (!isConfigured || !db) return [];
+        try {
+            const querySnap = await db.collection('senior_profiles').where('clientId', '==', clientId).get();
+            if (!querySnap.empty) {
+                return querySnap.docs.map(d => ({ id: 0, uid: d.id, ...d.data() } as unknown as Senior));
+            }
+            // Old-model fallback: single senior whose doc ID === clientId
+            const legacySnap = await db.collection('senior_profiles').doc(clientId).get();
+            if (legacySnap.exists) {
+                return [{ id: 0, uid: legacySnap.id, ...legacySnap.data() } as unknown as Senior];
+            }
+            return [];
+        } catch (e: any) {
+            if (e.code === 'permission-denied') return [];
+            console.warn("Error listing household seniors", e);
+            return [];
+        }
     },
 
     subscribeToThreads: (userType: 'client' | 'caregiver', onUpdate: (threads: Thread[]) => void) => {

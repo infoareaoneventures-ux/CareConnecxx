@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
+import { isUSFederalHoliday } from "../utils/holidays";
 
 const db = admin.firestore();
 
@@ -12,6 +13,7 @@ export interface RecurringSchedule {
   caregiverName:     string;
   clientPhone:       string;
   seniorName:        string;
+  seniorId?:         string;         // Multi-senior: explicit reference to senior_profiles doc
   days:              string[];       // ["Mon", "Wed", "Fri"]
   startTime:         string;         // "09:00"
   endTime:           string;         // "13:00"
@@ -24,6 +26,8 @@ export interface RecurringSchedule {
   weeksBookedAhead:  number;
   lastExtendedAt:    string;
   createdAt:         string;
+  holidayBehavior?:  "skip" | "reschedule_next_day" | "keep";
+  excludeDates?:     string[];       // YYYY-MM-DD dates to always skip
 }
 
 // ── Date generation (mirrors matching.ts generateRecurringDates) ──────────────
@@ -56,6 +60,38 @@ export function generateRecurringDates(
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// ── Holiday + exclude-date filters ───────────────────────────────────────────
+
+function applyHolidayFilter(
+  dates: Array<{ date: string }>,
+  behavior: RecurringSchedule["holidayBehavior"]
+): Array<{ date: string }> {
+  if (!behavior || behavior === "keep") return dates;
+  const result: Array<{ date: string }> = [];
+  for (const entry of dates) {
+    if (!isUSFederalHoliday(entry.date)) {
+      result.push(entry);
+      continue;
+    }
+    if (behavior === "skip") continue;
+    if (behavior === "reschedule_next_day") {
+      const next = new Date(entry.date);
+      next.setDate(next.getDate() + 1);
+      result.push({ date: next.toISOString().split("T")[0] });
+    }
+  }
+  return result;
+}
+
+function applyExcludeDates(
+  dates: Array<{ date: string }>,
+  excludeDates?: string[]
+): Array<{ date: string }> {
+  if (!excludeDates?.length) return dates;
+  const excluded = new Set(excludeDates);
+  return dates.filter(d => !excluded.has(d.date));
+}
+
 // ── Core extension logic ──────────────────────────────────────────────────────
 
 export async function extendRecurringScheduleById(scheduleId: string): Promise<void> {
@@ -85,7 +121,9 @@ async function extendSchedule(
   // Only extend if less than 2 weeks of appointments remain
   if (weeksRemaining > 2) return;
 
-  const newDates = generateRecurringDates(latestDate.toISOString().split("T")[0], schedule.days, 4);
+  let newDates = generateRecurringDates(latestDate.toISOString().split("T")[0], schedule.days, 4);
+  newDates = applyHolidayFilter(newDates, schedule.holidayBehavior);
+  newDates = applyExcludeDates(newDates, schedule.excludeDates);
   if (newDates.length === 0) return;
 
   const batch = db.batch();

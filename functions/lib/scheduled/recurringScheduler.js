@@ -38,6 +38,7 @@ exports.generateRecurringDates = generateRecurringDates;
 exports.extendRecurringScheduleById = extendRecurringScheduleById;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
+const holidays_1 = require("../utils/holidays");
 const db = admin.firestore();
 // ── Date generation (mirrors matching.ts generateRecurringDates) ──────────────
 function generateRecurringDates(fromDate, days, weeks) {
@@ -64,6 +65,32 @@ function generateRecurringDates(fromDate, days, weeks) {
     return [...new Map(results.map((r) => [r.date, r])).values()]
         .sort((a, b) => a.date.localeCompare(b.date));
 }
+// ── Holiday + exclude-date filters ───────────────────────────────────────────
+function applyHolidayFilter(dates, behavior) {
+    if (!behavior || behavior === "keep")
+        return dates;
+    const result = [];
+    for (const entry of dates) {
+        if (!(0, holidays_1.isUSFederalHoliday)(entry.date)) {
+            result.push(entry);
+            continue;
+        }
+        if (behavior === "skip")
+            continue;
+        if (behavior === "reschedule_next_day") {
+            const next = new Date(entry.date);
+            next.setDate(next.getDate() + 1);
+            result.push({ date: next.toISOString().split("T")[0] });
+        }
+    }
+    return result;
+}
+function applyExcludeDates(dates, excludeDates) {
+    if (!(excludeDates === null || excludeDates === void 0 ? void 0 : excludeDates.length))
+        return dates;
+    const excluded = new Set(excludeDates);
+    return dates.filter(d => !excluded.has(d.date));
+}
 // ── Core extension logic ──────────────────────────────────────────────────────
 async function extendRecurringScheduleById(scheduleId) {
     const snap = await db.collection("recurring_schedules").doc(scheduleId).get();
@@ -87,7 +114,9 @@ async function extendSchedule(scheduleId, schedule) {
     // Only extend if less than 2 weeks of appointments remain
     if (weeksRemaining > 2)
         return;
-    const newDates = generateRecurringDates(latestDate.toISOString().split("T")[0], schedule.days, 4);
+    let newDates = generateRecurringDates(latestDate.toISOString().split("T")[0], schedule.days, 4);
+    newDates = applyHolidayFilter(newDates, schedule.holidayBehavior);
+    newDates = applyExcludeDates(newDates, schedule.excludeDates);
     if (newDates.length === 0)
         return;
     const batch = db.batch();

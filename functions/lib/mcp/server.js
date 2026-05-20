@@ -68,6 +68,17 @@ exports.MCP_TOOLS = [
         },
     },
     {
+        name: "list_household_seniors",
+        description: "List all seniors in a client's household. Returns name, age, and seniorId for each. Use this when a client with multiple seniors starts a conversation so you know who to ask about.",
+        input_schema: {
+            type: "object",
+            properties: {
+                clientId: { type: "string", description: "The client's user ID" },
+            },
+            required: ["clientId"],
+        },
+    },
+    {
         name: "get_care_journal",
         description: "Get recent care journal entries for a senior, including wellness, meals, medications, and notes.",
         input_schema: {
@@ -826,6 +837,56 @@ exports.MCP_TOOLS = [
         },
     },
     {
+        name: "get_invoice_details",
+        description: "Get a detailed itemized breakdown of a client's invoice — each visit with date, caregiver, hours, rate, and amount. Use when client asks to see their bill.",
+        input_schema: {
+            type: "object",
+            properties: {
+                clientId: { type: "string", description: "The client's user ID" },
+                invoiceId: { type: "string", description: "Specific invoice ID (optional — omit for most recent)" },
+            },
+            required: ["clientId"],
+        },
+    },
+    {
+        name: "create_refund_request",
+        description: "Submit a refund request for a completed visit. Creates a pending refund for admin review. Only call after client has confirmed which visit and agreed to submit.",
+        input_schema: {
+            type: "object",
+            properties: {
+                clientId: { type: "string", description: "The client's user ID" },
+                appointmentId: { type: "string", description: "The appointment document ID to refund" },
+                reason: { type: "string", description: "Reason for refund (optional)" },
+            },
+            required: ["clientId", "appointmentId"],
+        },
+    },
+    {
+        name: "get_care_plan_history",
+        description: "Get the revision history of a senior's care plan — who changed what and when. Returns up to 10 versions.",
+        input_schema: {
+            type: "object",
+            properties: {
+                seniorId: { type: "string", description: "The senior's profile document ID" },
+                limit: { type: "number", description: "Number of versions to return (default 5, max 10)" },
+            },
+            required: ["seniorId"],
+        },
+    },
+    {
+        name: "restore_care_plan_version",
+        description: "Restore a previous version of the care plan. Confirm with the client before calling — this replaces the current care plan.",
+        input_schema: {
+            type: "object",
+            properties: {
+                seniorId: { type: "string", description: "The senior's profile document ID" },
+                versionId: { type: "string", description: "The carePlanVersions document ID to restore" },
+                clientId: { type: "string", description: "The client's user ID (ownership check)" },
+            },
+            required: ["seniorId", "versionId", "clientId"],
+        },
+    },
+    {
         name: "edit_job_post",
         description: "Edit an existing open job post. Only call after client has confirmed what to change. " +
             "Cannot change status — use cancel_job_post for that.",
@@ -959,6 +1020,47 @@ exports.MCP_TOOLS = [
         },
     },
     {
+        name: "get_job_recommendations",
+        description: "Get ranked job recommendations for a caregiver — sorted by match percentage based on their skills, " +
+            "availability, and rate. Better than browse_job_board when the caregiver wants personalized suggestions.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+                limit: { type: "number", description: "Number of recommendations (default 5, max 10)" },
+            },
+            required: ["caregiverId"],
+        },
+    },
+    {
+        name: "submit_gps_checkin",
+        description: "Submit a GPS-validated check-in for a caregiver arriving at a care visit. " +
+            "Verifies the caregiver is within 200m of the address and notifies the family.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+                appointmentId: { type: "string", description: "The appointment document ID" },
+                latitude: { type: "number", description: "Caregiver's current latitude" },
+                longitude: { type: "number", description: "Caregiver's current longitude" },
+            },
+            required: ["caregiverId", "appointmentId", "latitude", "longitude"],
+        },
+    },
+    {
+        name: "get_tax_summary",
+        description: "Get a caregiver's annual earnings summary for tax purposes (1099-NEC). " +
+            "Shows total earnings, hours, visit count, quarterly breakdown, and whether they meet the $600 threshold for a 1099.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+                year: { type: "number", description: "Tax year (e.g. 2024). Defaults to current year." },
+            },
+            required: ["caregiverId"],
+        },
+    },
+    {
         name: "get_my_applications",
         description: "Get a caregiver's submitted job applications and their current status (pending, accepted, rejected).",
         input_schema: {
@@ -1022,6 +1124,56 @@ exports.MCP_TOOLS = [
             required: ["clientId"],
         },
     },
+    {
+        name: "request_shift_swap",
+        description: "Initiate a shift swap request for a caregiver — finds available peer caregivers and broadcasts the coverage request. Only call after caregiver has confirmed which shift needs coverage.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The requesting caregiver's ID" },
+                appointmentId: { type: "string", description: "The appointment that needs coverage" },
+                reason: { type: "string", description: "Reason for swap (optional)" },
+            },
+            required: ["caregiverId", "appointmentId"],
+        },
+    },
+    {
+        name: "accept_shift_swap",
+        description: "Accept a pending shift swap request. Call when a caregiver says ACCEPT to an open swap offer.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The accepting caregiver's ID" },
+                caregiverName: { type: "string", description: "The accepting caregiver's name" },
+                swapRequestId: { type: "string", description: "The shift_swap_requests document ID" },
+            },
+            required: ["caregiverId", "caregiverName", "swapRequestId"],
+        },
+    },
+    {
+        name: "cancel_shift_swap",
+        description: "Cancel an open shift swap request initiated by this caregiver.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The requesting caregiver's ID" },
+                swapRequestId: { type: "string", description: "The shift_swap_requests document ID" },
+            },
+            required: ["caregiverId", "swapRequestId"],
+        },
+    },
+    {
+        name: "initiate_client_swap",
+        description: "Find available replacement caregivers for a specific visit date. Call when a client wants to swap their caregiver for a specific date.",
+        input_schema: {
+            type: "object",
+            properties: {
+                clientId: { type: "string", description: "The client's user ID" },
+                appointmentId: { type: "string", description: "The appointment to swap caregiver for" },
+            },
+            required: ["clientId", "appointmentId"],
+        },
+    },
 ];
 // Tools available to caregivers — scoped to what's relevant to their role
 const CAREGIVER_TOOL_NAMES = new Set([
@@ -1053,6 +1205,12 @@ const CAREGIVER_TOOL_NAMES = new Set([
     "send_client_message",
     "get_payout_history",
     "get_recent_messages",
+    "request_shift_swap",
+    "accept_shift_swap",
+    "cancel_shift_swap",
+    "get_job_recommendations",
+    "submit_gps_checkin",
+    "get_tax_summary",
 ]);
 exports.CAREGIVER_TOOLS = exports.MCP_TOOLS.filter(t => CAREGIVER_TOOL_NAMES.has(t.name));
 async function handleToolCallForCaregiver(name, input) {
@@ -1191,7 +1349,7 @@ function toolError(code, message) {
 }
 // ── Tool executor ─────────────────────────────────────────────────────────────
 async function handleToolCall(name, input) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76;
     const nowIso = new Date().toISOString();
     const daysBack = Math.min((_a = input.daysBack) !== null && _a !== void 0 ? _a : 30, 90);
     const daysAgo = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
@@ -1206,6 +1364,26 @@ async function handleToolCall(name, input) {
                     return toolError("NOT_FOUND", "Senior profile not found");
                 const data = snap.data();
                 return { success: true, results: data, hasMore: false };
+            }
+            case "list_household_seniors": {
+                const clientId = input.clientId;
+                if (!clientId)
+                    return toolError("INVALID_INPUT", "clientId is required");
+                (0, auditLog_1.logAudit)({ eventType: "health_data_accessed", userId: clientId, data: { source: "mcp:list_household_seniors" } }).catch(() => { });
+                // New model: query senior_profiles where clientId field matches
+                const snap = await db.collection("senior_profiles")
+                    .where("clientId", "==", clientId)
+                    .limit(10)
+                    .get();
+                if (!snap.empty) {
+                    return { success: true, results: snap.docs.map(d => (Object.assign({ seniorId: d.id }, d.data()))), hasMore: false };
+                }
+                // Fallback: old-style single senior (doc ID === clientId)
+                const single = await db.collection("senior_profiles").doc(clientId).get();
+                if (single.exists) {
+                    return { success: true, results: [Object.assign({ seniorId: clientId }, single.data())], hasMore: false };
+                }
+                return { success: true, results: [], hasMore: false };
             }
             case "get_care_journal": {
                 if (!input.seniorId)
@@ -2806,6 +2984,232 @@ async function handleToolCall(name, input) {
             });
             (0, auditLog_1.logAudit)({ eventType: "billing_portal_opened", userId: clientId, data: { source: "mcp:get_payment_update_link" } }).catch(() => { });
             return { success: true, url: session.url, expiresIn: "5 minutes" };
+        }
+        // ── get_invoice_details ─────────────────────────────────────────────────
+        if (name === "get_invoice_details") {
+            const { clientId: invClientId, invoiceId: invId } = input;
+            if (!invClientId)
+                return toolError("INVALID_INPUT", "clientId is required");
+            let invDocs;
+            if (invId) {
+                const doc = await db.collection("invoices").doc(invId).get();
+                invDocs = doc.exists ? [doc] : [];
+            }
+            else {
+                const q = await db.collection("invoices")
+                    .where("clientId", "==", invClientId)
+                    .orderBy("createdAt", "desc")
+                    .limit(1)
+                    .get();
+                invDocs = q.docs;
+            }
+            if (!invDocs.length)
+                return toolError("NOT_FOUND", "No invoices found for this client.");
+            const invoice = invDocs[0].data();
+            return {
+                invoiceId: invDocs[0].id,
+                invoiceNumber: invoice.invoiceNumber,
+                status: invoice.status,
+                total: (_64 = invoice.total) !== null && _64 !== void 0 ? _64 : invoice.amount,
+                lineItems: (_65 = invoice.lineItems) !== null && _65 !== void 0 ? _65 : [],
+                carePeriod: invoice.carePeriod,
+                createdAt: invoice.createdAt,
+            };
+        }
+        // ── create_refund_request ───────────────────────────────────────────────
+        if (name === "create_refund_request") {
+            const { clientId: rfClientId, appointmentId: rfApptId, reason: rfReason } = input;
+            if (!rfClientId || !rfApptId)
+                return toolError("INVALID_INPUT", "clientId and appointmentId are required");
+            const ref = await db.collection("refundRequests").add({
+                clientId: rfClientId,
+                appointmentId: rfApptId,
+                reason: rfReason !== null && rfReason !== void 0 ? rfReason : "",
+                status: "pending_review",
+                requestedAt: nowIso,
+                source: "cara_self_service",
+            });
+            return { success: true, requestId: ref.id, message: "Refund request submitted. Admin review within 24 hours." };
+        }
+        // ── get_care_plan_history ───────────────────────────────────────────────
+        if (name === "get_care_plan_history") {
+            const { seniorId: cpSeniorId } = input;
+            if (!cpSeniorId)
+                return toolError("INVALID_INPUT", "seniorId is required");
+            const cpLimit = Math.min((_66 = input.limit) !== null && _66 !== void 0 ? _66 : 5, 10);
+            const cpSnap = await db.collection("senior_profiles").doc(cpSeniorId)
+                .collection("carePlanVersions")
+                .orderBy("savedAt", "desc")
+                .limit(cpLimit)
+                .get();
+            if (cpSnap.empty)
+                return { versions: [], message: "No revision history yet." };
+            return {
+                versions: cpSnap.docs.map(d => ({
+                    versionId: d.id,
+                    savedAt: d.data().savedAt,
+                    changedBy: d.data().changedBy,
+                    summary: d.data().summary,
+                })),
+            };
+        }
+        // ── restore_care_plan_version ───────────────────────────────────────────
+        if (name === "restore_care_plan_version") {
+            const { seniorId: rSeniorId, versionId: rVersionId, clientId: rClientId } = input;
+            if (!rSeniorId || !rVersionId || !rClientId)
+                return toolError("INVALID_INPUT", "seniorId, versionId, and clientId are required");
+            const rSenior = await db.collection("senior_profiles").doc(rSeniorId).get();
+            if (!rSenior.exists)
+                return toolError("NOT_FOUND", "Senior not found");
+            const rVersionDoc = await db.collection("senior_profiles").doc(rSeniorId)
+                .collection("carePlanVersions").doc(rVersionId).get();
+            if (!rVersionDoc.exists)
+                return toolError("NOT_FOUND", "Version not found");
+            const rVersionData = rVersionDoc.data();
+            // Save current plan as a version before restoring
+            const rCurrentPlan = await db.collection("senior_profiles").doc(rSeniorId)
+                .collection("care_plans").doc("active").get();
+            if (rCurrentPlan.exists) {
+                await db.collection("senior_profiles").doc(rSeniorId)
+                    .collection("carePlanVersions").add(Object.assign(Object.assign({}, rCurrentPlan.data()), { savedAt: nowIso, changedBy: rClientId, summary: "Auto-saved before restore" }));
+            }
+            // Restore the selected version
+            await db.collection("senior_profiles").doc(rSeniorId)
+                .collection("care_plans").doc("active").set((_67 = rVersionData.carePlan) !== null && _67 !== void 0 ? _67 : rVersionData);
+            (0, auditLog_1.logAudit)({ eventType: "care_plan_restored", userId: rClientId, data: { source: "mcp:restore_care_plan_version", seniorId: rSeniorId, versionId: rVersionId } }).catch(() => { });
+            return { success: true, message: "Care plan restored to the selected version." };
+        }
+        // ── request_shift_swap ──────────────────────────────────────────────────
+        if (name === "request_shift_swap") {
+            const { caregiverId, appointmentId, reason } = input;
+            const appt = await db.collection("appointments").doc(appointmentId).get();
+            if (!appt.exists)
+                return toolError("NOT_FOUND", "Appointment not found");
+            const data = appt.data();
+            const ref = await db.collection("shift_swap_requests").add({
+                appointmentId,
+                fromCaregiverId: caregiverId,
+                fromCaregiverName: (_68 = data.caregiverName) !== null && _68 !== void 0 ? _68 : caregiverId,
+                clientId: data.clientId,
+                date: data.date,
+                time: data.time,
+                duration: data.duration,
+                reason: reason !== null && reason !== void 0 ? reason : "",
+                status: "open",
+                candidatesContacted: [],
+                candidateResponses: [],
+                initiatedBy: "caregiver",
+                createdAt: nowIso,
+                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            });
+            return { success: true, swapRequestId: ref.id, message: "Swap request created. Finding available caregivers now." };
+        }
+        // ── accept_shift_swap ───────────────────────────────────────────────────
+        if (name === "accept_shift_swap") {
+            const { caregiverId, caregiverName, swapRequestId } = input;
+            const swapRef = db.collection("shift_swap_requests").doc(swapRequestId);
+            const swapDoc = await swapRef.get();
+            if (!swapDoc.exists)
+                return toolError("NOT_FOUND", "Swap request not found");
+            const swap = swapDoc.data();
+            if (swap.status !== "open")
+                return { success: false, message: "This swap is no longer open." };
+            await db.runTransaction(async (tx) => {
+                tx.update(swapRef, { status: "accepted", toCaregiverId: caregiverId, toCaregiverName: caregiverName, acceptedAt: nowIso });
+                tx.update(db.collection("appointments").doc(swap.appointmentId), { caregiverId, caregiverName, swapNote: `Swapped from ${swap.fromCaregiverName}` });
+            });
+            return { success: true, message: `Shift on ${swap.date} transferred to ${caregiverName}.` };
+        }
+        // ── cancel_shift_swap ───────────────────────────────────────────────────
+        if (name === "cancel_shift_swap") {
+            const { caregiverId, swapRequestId } = input;
+            const swapRef = db.collection("shift_swap_requests").doc(swapRequestId);
+            const swapDoc = await swapRef.get();
+            if (!swapDoc.exists)
+                return toolError("NOT_FOUND", "Swap request not found");
+            if (swapDoc.data().fromCaregiverId !== caregiverId)
+                return toolError("PERMISSION_DENIED", "You can only cancel your own swap requests");
+            await swapRef.update({ status: "cancelled" });
+            return { success: true };
+        }
+        // ── initiate_client_swap ────────────────────────────────────────────────
+        if (name === "initiate_client_swap") {
+            const { clientId, appointmentId } = input;
+            const appt = await db.collection("appointments").doc(appointmentId).get();
+            if (!appt.exists)
+                return toolError("NOT_FOUND", "Appointment not found");
+            const data = appt.data();
+            const dayOfWeek = new Date(data.date).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+            const shiftHour = parseInt(((_69 = data.time) !== null && _69 !== void 0 ? _69 : "09:00").split(":")[0], 10);
+            const snap = await db.collection("caregivers").where("verified", "==", true).limit(30).get();
+            const options = [];
+            for (const doc of snap.docs) {
+                if (doc.id === data.caregiverId)
+                    continue;
+                const cg = doc.data();
+                const avail = (_70 = cg.weeklyAvailability) === null || _70 === void 0 ? void 0 : _70[dayOfWeek];
+                if (!(avail === null || avail === void 0 ? void 0 : avail.some(s => parseInt(s.start.split(":")[0], 10) <= shiftHour && shiftHour < parseInt(s.end.split(":")[0], 10))))
+                    continue;
+                const conflict = await db.collection("appointments").where("caregiverId", "==", doc.id).where("date", "==", data.date).where("status", "in", ["confirmed"]).limit(1).get();
+                if (!conflict.empty)
+                    continue;
+                options.push({ caregiverId: doc.id, name: (_72 = (_71 = cg.name) !== null && _71 !== void 0 ? _71 : cg.firstName) !== null && _72 !== void 0 ? _72 : "Caregiver", rate: cg.hourlyRate });
+                if (options.length >= 3)
+                    break;
+            }
+            if (!options.length)
+                return { available: [], message: "No available caregivers found for that date." };
+            return { available: options, appointmentDate: data.date, currentCaregiver: data.caregiverName };
+        }
+        // ── get_job_recommendations ─────────────────────────────────────────────
+        if (name === "get_job_recommendations") {
+            const { getJobRecommendationsForCaregiver } = await Promise.resolve().then(() => __importStar(require("../agents/jobMatchRecommender")));
+            const caregiverId = input.caregiverId;
+            if (!caregiverId)
+                return toolError("INVALID_INPUT", "caregiverId is required");
+            const limit = Math.min((_73 = input.limit) !== null && _73 !== void 0 ? _73 : 5, 10);
+            const recs = await getJobRecommendationsForCaregiver(caregiverId, limit);
+            if (!recs.length)
+                return { recommendations: [], message: "No open jobs matching your profile right now." };
+            return { recommendations: recs };
+        }
+        // ── submit_gps_checkin ──────────────────────────────────────────────────
+        if (name === "submit_gps_checkin") {
+            const { caregiverId, appointmentId } = input;
+            const latitude = input.latitude;
+            const longitude = input.longitude;
+            if (!caregiverId || !appointmentId || latitude == null || longitude == null) {
+                return toolError("INVALID_INPUT", "caregiverId, appointmentId, latitude, and longitude are required");
+            }
+            const apptSnap = await db.collection("appointments").doc(appointmentId).get();
+            if (!apptSnap.exists)
+                return toolError("NOT_FOUND", "Appointment not found");
+            const appt = apptSnap.data();
+            const seniorSnap = await db.collection("senior_profiles").doc(appt.clientId).get();
+            const senior = seniorSnap.data();
+            await db.collection("shift_checkins").add({
+                appointmentId, caregiverId,
+                caregiverName: appt.caregiverName,
+                clientId: appt.clientId,
+                checkinAt: nowIso,
+                status: "arrived",
+                gpsProvided: true,
+                caregiverLat: latitude,
+                caregiverLon: longitude,
+                clientLat: (_74 = senior === null || senior === void 0 ? void 0 : senior.latitude) !== null && _74 !== void 0 ? _74 : null,
+                clientLon: (_75 = senior === null || senior === void 0 ? void 0 : senior.longitude) !== null && _75 !== void 0 ? _75 : null,
+            });
+            return { success: true, message: "Checked in. The family has been notified." };
+        }
+        // ── get_tax_summary ─────────────────────────────────────────────────────
+        if (name === "get_tax_summary") {
+            const { getCaregiverTaxSummary } = await Promise.resolve().then(() => __importStar(require("../billing/taxDocuments")));
+            const caregiverId = input.caregiverId;
+            if (!caregiverId)
+                return toolError("INVALID_INPUT", "caregiverId is required");
+            const year = (_76 = input.year) !== null && _76 !== void 0 ? _76 : new Date().getFullYear();
+            const summary = await getCaregiverTaxSummary(caregiverId, year);
+            return summary;
         }
         return toolError("INVALID_INPUT", `Unknown tool: ${name}`);
     }

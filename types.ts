@@ -42,6 +42,7 @@ export type ViewType =
 export interface Senior {
   id: number;
   uid?: string;
+  clientId?: string;
   name: string;
   age: number;
   imageUrl?: string;
@@ -63,6 +64,20 @@ export interface Senior {
   adls?: string[];
   firstName?: string;
   lastName?: string;
+}
+
+/**
+ * Client user document stored in Firestore users/{clientUID}.
+ * seniorIds references all senior_profiles docs for this household.
+ */
+export interface ClientUser {
+  uid: string;
+  userType: 'client';
+  seniorIds?: string[];
+  name?: string;
+  email?: string;
+  phone?: string;
+  createdAt?: string;
 }
 
 export interface FamilyMember {
@@ -445,6 +460,9 @@ export interface Appointment {
   address?: string;
   notes?: string;
   seniorName?: string;
+
+  // Multi-senior household: explicit seniorId (was implicit = clientId in old model)
+  seniorId?: string;
 }
 
 // --- SHIFT HOURS (per-appointment caregiver hours submission + client approval) ---
@@ -669,7 +687,7 @@ export interface Invoice {
   dueDate: string;
   createdAt: string;
   carePeriod?: { start: string; end: string };
-  lineItems?: Array<{ description: string; hours: number; rate: number; total: number; date?: string; tasks?: string[] }>;
+  lineItems?: Array<{ description: string; hours: number; rate: number; total: number; date?: string; tasks?: string[]; seniorId?: string; seniorName?: string }>;
   notes?: string;
   paidAt?: string;
   pdfUrl?: string;

@@ -120,8 +120,23 @@ export { onDisputeCreated, checkDisputeSLAs } from './triggers/disputeResolution
 // Refund auto-processing (executes Stripe refund when status → "approved")
 export { onRefundRequestWrite } from './triggers/refundProcessor';
 
+// CARE PLAN HISTORY trigger (saves version on every care plan write)
+export * from './triggers/carePlanHistory';
+
 // AI proxy — secure server-side Anthropic calls (auth-gated, rate-limited)
 export { aiProxy } from "./aiProxy";
+
+// JOB MATCH NOTIFICATIONS (daily 10am — texts caregivers about high-match new jobs)
+export { sendJobMatchNotifications } from './scheduled/jobMatchNotifications';
+
+// GPS CHECK-IN (callable — validates caregiver arrival within 200m, notifies family)
+export { submitGpsCheckin } from './agents/gpsCheckin';
+
+// 1099 TAX NOTIFICATIONS (Jan 31 — notifies eligible caregivers of earnings summary)
+export { send1099Notifications } from './scheduled/taxReminder';
+
+// MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
+export * from './migrations/migrateSeniorsToHousehold';
 
 // ── chatWithCara — web callable: routes authenticated web users through qaAgent ─
 // Bridges Firebase Auth UID → phone → agent_sessions so web users get the same

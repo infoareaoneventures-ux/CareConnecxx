@@ -32,7 +32,12 @@ export type Intent =
   | "BROWSE_JOB_BOARD"
   | "RESCHEDULE_REQUEST"
   | "MODIFY_SCHEDULE"
-  | "UPDATE_PAYMENT_METHOD";
+  | "UPDATE_PAYMENT_METHOD"
+  | "REQUEST_REFUND"
+  | "VIEW_INVOICE"
+  | "VIEW_CARE_PLAN_HISTORY"
+  | "SWAP_REQUEST"
+  | "CLIENT_SWAP_REQUEST";
 
 const VALID_INTENTS = new Set<Intent>([
   "STOP", "TASK_REPLY", "PERMISSION_UPDATE", "REBOOK_REQUEST",
@@ -43,6 +48,8 @@ const VALID_INTENTS = new Set<Intent>([
   "POST_JOB", "VIEW_MY_JOBS", "VIEW_APPLICANTS", "VIEW_JOURNAL",
   "APPROVE_TIMESHEET", "VIEW_EARNINGS", "UPDATE_AVAILABILITY", "BROWSE_JOB_BOARD",
   "RESCHEDULE_REQUEST", "MODIFY_SCHEDULE", "UPDATE_PAYMENT_METHOD",
+  "REQUEST_REFUND", "VIEW_INVOICE", "VIEW_CARE_PLAN_HISTORY",
+  "SWAP_REQUEST", "CLIENT_SWAP_REQUEST",
 ]);
 
 let _client: Anthropic | null = null;
@@ -72,7 +79,7 @@ export async function classifyIntent(
       max_tokens: 10,
       system:
         "You classify a message sent to an AI care assistant named Cara. " +
-        "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, QUESTION.\n" +
+        "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, REQUEST_REFUND, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, SWAP_REQUEST, CLIENT_SWAP_REQUEST, QUESTION.\n" +
         "STOP = opting out of all messages.\n" +
         "TASK_REPLY = responding to a numbered list (1, 2, or 3).\n" +
         "BOOKING_CONFIRM = confirming or approving a booking, schedule, or action (e.g. 'yes', 'sure', 'sounds good', 'let's do it', 'book it', 'go ahead', 'that works', 'perfect', 'confirmed', 'ok', 'yep').\n" +
@@ -103,6 +110,11 @@ export async function classifyIntent(
         "RESCHEDULE_REQUEST = a client wanting to move an existing appointment to a different date or time (e.g. 'reschedule Wednesday to Friday', 'move tomorrow\\'s visit to next week', 'can we switch the Monday appointment to Tuesday', 'change the appointment time').\n" +
         "MODIFY_SCHEDULE = a client wanting to change the days or times of their recurring care schedule — NOT a one-time appointment (e.g. 'change my recurring Mondays to Tuesdays', 'move weekly care from morning to afternoon', 'swap my Thursday visits to Fridays going forward', 'change the schedule days').\n" +
         "UPDATE_PAYMENT_METHOD = a client wanting to update or change their billing or payment method (e.g. 'update my card', 'change my credit card', 'my card expired', 'update billing', 'add a new payment method', 'my payment failed').\n" +
+        "REQUEST_REFUND = a client asking for a refund on a visit (e.g. 'I want a refund', 'can I get my money back for Tuesday', 'charge me back for last visit', 'request refund for Wednesday visit').\n" +
+        "VIEW_INVOICE = a client asking to see their bill or invoice details (e.g. 'show my bill', 'what was I charged for', 'see my invoice', 'itemized bill', 'what did I pay for', 'show my billing details').\n" +
+        "VIEW_CARE_PLAN_HISTORY = a client asking about changes to the care plan or wanting to see past versions (e.g. 'what changed in the care plan', 'show care plan history', 'who updated the care plan', 'restore old care plan', 'show previous care plan').\n" +
+        "SWAP_REQUEST = a caregiver wanting to swap, transfer, or find coverage for one of their shifts (e.g. 'can someone cover my Tuesday shift', 'I need someone to take my Wednesday visit', 'looking for coverage', 'can\\'t make Thursday need swap', 'swap my shift with someone').\n" +
+        "CLIENT_SWAP_REQUEST = a client asking if a different caregiver can cover a specific date or visit (e.g. 'can someone else cover Thursday', 'I want a different caregiver for Friday', 'swap the caregiver for next Tuesday', 'can Maria cover instead of David').\n" +
         "QUESTION = anything else.",
       messages: [{ role: "user", content: text }],
     }, { timeoutMs: 8_000, maxAttempts: 3 });

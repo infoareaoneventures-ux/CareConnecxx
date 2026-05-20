@@ -550,6 +550,12 @@ export async function runQaAgent(params: {
   // DND check — skip if user has quiet hours enabled
   const prefs = await getPreferences(userId).catch(() => null);
   if (prefs && isInDND(prefs)) {
+    if (!skipSend) {
+      // Don't leave the family in silence — acknowledge the message respectfully
+      await sendSplit(chatId,
+        "You're in quiet hours right now. I'll hold your message and follow up when they end."
+      ).catch(() => {});
+    }
     return "";
   }
 

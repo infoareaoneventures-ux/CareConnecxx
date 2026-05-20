@@ -59,7 +59,7 @@ export async function detectHealthSignals(
       max_tokens: 300,
       system:     SYSTEM_PROMPT,
       messages:   [{ role: "user", content: contextText }],
-    });
+    }, { signal: AbortSignal.timeout(8_000) });
 
     const raw = ((response.content[0] as { text: string }).text ?? "").trim();
     const parsed = JSON.parse(raw) as HealthSignalResult;

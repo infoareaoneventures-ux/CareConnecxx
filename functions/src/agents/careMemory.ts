@@ -68,5 +68,15 @@ export async function generateCareMemoryKeepsake(
     expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
   });
 
+  // Persist the URL and GCS path to Firestore so we can re-generate the signed URL
+  // after it expires without losing the keepsake content.
+  await db.collection("care_keepsakes").doc(userId).set({
+    seniorId,
+    userId,
+    storagePath: path,
+    url,
+    generatedAt: new Date().toISOString(),
+  }, { merge: true }).catch(() => {});
+
   return url;
 }

@@ -185,8 +185,8 @@ async function executeBookings(taskId, clientPhone) {
             const firstAppt = task.appointments[0];
             const dayOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(firstAppt.date).getDay()];
             const schedDesc = `${dayOfWeek}s ${firstAppt.startTime}–${firstAppt.endTime}`;
-            await (0, client_1.sendMessage)(sessionSnap.data().chatId, `Want me to set this up as a weekly recurring schedule — ${schedDesc} every week with ${task.caregiverName}? ` +
-                `I'll handle the bookings automatically.\n\nReply YES to set it up, or NO to keep it one visit at a time.`);
+            // Write session flag BEFORE sending the message to avoid a race where a fast
+            // YES reply arrives before the Firestore write lands.
             await db.collection("agent_sessions").doc(clientPhone).update({
                 awaitingRecurringConfirmation: true,
                 pendingRecurringSchedule: {
@@ -203,6 +203,8 @@ async function executeBookings(taskId, clientPhone) {
                     })(),
                 },
             }).catch(() => { });
+            await (0, client_1.sendMessage)(sessionSnap.data().chatId, `Want me to set this up as a weekly recurring schedule — ${schedDesc} every week with ${task.caregiverName}? ` +
+                `I'll handle the bookings automatically.\n\nReply YES to set it up, or NO to keep it one visit at a time.`);
         }
         // Post-crisis emotional anchoring — only for emergency replacements
         if (task.isEmergencyReplacement) {

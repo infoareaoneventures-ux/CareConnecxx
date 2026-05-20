@@ -337,7 +337,9 @@ export async function runMatchingForClient(
     let agentId: string;
 
     if (existingAgent) {
-      await updateExecutionAgentContext(existingAgent.id, { matchData, seniorName, careNeeds: needs }, agentSystemPrompt, true);
+      // Keep history so the family can reference previous caregivers discussed;
+      // only update the system prompt + context with the fresh match data.
+      await updateExecutionAgentContext(existingAgent.id, { matchData, seniorName, careNeeds: needs }, agentSystemPrompt, false);
       agentId = existingAgent.id;
     } else {
       agentId = await spawnExecutionAgent({
@@ -349,9 +351,16 @@ export async function runMatchingForClient(
       });
     }
 
-    // First agent turn generates the intro message
+    // First agent turn generates the intro message — route through interaction agent
+    // so it gets supervisor lint, DND respect, and proper chunking.
     const introMessage = await runExecutionAgentTurn(agentId, "Introduce these caregivers to the family now.");
-    await sendMessage(chatId, introMessage || `Here are ${top3.length} caregivers I found for ${seniorName}. Which would you like to meet?`);
+    const { sendViaInteractionAgent } = await import("./caraAgent");
+    await sendViaInteractionAgent(phone, {
+      content:     introMessage || `Here are ${top3.length} caregivers I found for ${seniorName}. Which would you like to meet?`,
+      urgency:     "immediate",
+      sourceAgent: "matching",
+      canDrop:     false,
+    });
 
     // Store match list in session for follow-up; embed active goal context so
     // interview selection can pre-populate booking dates without re-prompting the family

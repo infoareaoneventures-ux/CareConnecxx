@@ -73,7 +73,15 @@ async function handleCaregiverSwapRequest(caregiverId, caregiverName, caregiverP
         return;
     }
     if (step === "confirm_shift") {
-        const candidates = JSON.parse((_b = session.swapCandidates) !== null && _b !== void 0 ? _b : "[]");
+        let candidates = [];
+        try {
+            candidates = JSON.parse((_b = session.swapCandidates) !== null && _b !== void 0 ? _b : "[]");
+        }
+        catch (_c) {
+            await (0, client_1.sendMessage)(chatId, "Something went wrong — let me start over. Which shift do you need covered?");
+            await db.collection("agent_sessions").doc(caregiverPhone).update({ swapStep: "identify_shift", swapCandidates: admin.firestore.FieldValue.delete() });
+            return;
+        }
         const pick = parseInt(text.trim(), 10);
         const shift = candidates.find((s) => s.index === pick);
         if (!shift) {

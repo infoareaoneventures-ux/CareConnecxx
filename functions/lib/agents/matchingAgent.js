@@ -295,7 +295,9 @@ async function runMatchingForClient(phone, chatId, intake, session) {
         const existingAgent = await (0, executionAgent_1.getActiveAgentForUser)(phone, "matching");
         let agentId;
         if (existingAgent) {
-            await (0, executionAgent_1.updateExecutionAgentContext)(existingAgent.id, { matchData, seniorName, careNeeds: needs }, agentSystemPrompt, true);
+            // Keep history so the family can reference previous caregivers discussed;
+            // only update the system prompt + context with the fresh match data.
+            await (0, executionAgent_1.updateExecutionAgentContext)(existingAgent.id, { matchData, seniorName, careNeeds: needs }, agentSystemPrompt, false);
             agentId = existingAgent.id;
         }
         else {
@@ -307,9 +309,16 @@ async function runMatchingForClient(phone, chatId, intake, session) {
                 context: { matchData, seniorName, careNeeds: needs },
             });
         }
-        // First agent turn generates the intro message
+        // First agent turn generates the intro message — route through interaction agent
+        // so it gets supervisor lint, DND respect, and proper chunking.
         const introMessage = await (0, executionAgent_1.runExecutionAgentTurn)(agentId, "Introduce these caregivers to the family now.");
-        await (0, client_1.sendMessage)(chatId, introMessage || `Here are ${top3.length} caregivers I found for ${seniorName}. Which would you like to meet?`);
+        const { sendViaInteractionAgent } = await Promise.resolve().then(() => __importStar(require("./caraAgent")));
+        await sendViaInteractionAgent(phone, {
+            content: introMessage || `Here are ${top3.length} caregivers I found for ${seniorName}. Which would you like to meet?`,
+            urgency: "immediate",
+            sourceAgent: "matching",
+            canDrop: false,
+        });
         // Store match list in session for follow-up; embed active goal context so
         // interview selection can pre-populate booking dates without re-prompting the family
         const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();

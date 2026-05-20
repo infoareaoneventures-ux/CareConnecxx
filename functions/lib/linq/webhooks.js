@@ -1157,7 +1157,7 @@ async function handleInbound(event) {
                 const avg = (energy + stress + satisfaction) / 3;
                 const reply = avg < 3
                     ? `Thank you for being honest 💙 Your scores tell me you might need some support. Would you like to:\n\n1. Adjust your schedule\n2. Talk to our support team\n3. Get info on mental health resources\n\nReply 1, 2, or 3 — or just ignore this if you're okay.`
-                    : `Thanks for checking in! Glad things are going well 😊 Keep up the great work — your clients are lucky to have you.`;
+                    : `Checked in. Sounds like things are going well — your clients are in good hands.`;
                 await (0, client_1.sendMessage)(chatId, reply);
                 return;
             }

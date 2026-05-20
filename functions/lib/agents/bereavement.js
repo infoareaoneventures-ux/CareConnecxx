@@ -103,8 +103,11 @@ async function activateBereavementMode(userId, chatId, phone, seniorName) {
     const seniorId = (_b = (_a = seniorSnap.data()) === null || _a === void 0 ? void 0 : _a.seniorId) !== null && _b !== void 0 ? _b : userId;
     (0, careMemory_1.generateCareMemoryKeepsake)(seniorId, userId)
         .then(async (url) => {
-        if (!url)
+        if (!url) {
+            // Keepsake generation failed — send a compassionate fallback so family isn't left in silence.
+            await (0, client_1.sendMessage)(chatId, `I'll put together a care memory for ${seniorName} — a record of their journey and all the love that surrounded them. I'll send it to you shortly. 💙`).catch(() => { });
             return;
+        }
         await (0, client_1.sendMessage)(chatId, `I've put together a care memory for you — a record of ${seniorName}'s journey and all the love that surrounded them. 💙`);
         await (0, client_1.sendMessage)(chatId, { parts: [{ type: "link", value: url }] });
     })

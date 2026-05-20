@@ -48,7 +48,14 @@ export async function handleClientSwapRequest(
   }
 
   if (step === "select_appointment") {
-    const visits = JSON.parse((session.clientSwapVisits as string) ?? "[]");
+    let visits: Array<{ index: number; id: string; date: string; time: string; caregiverName: string; caregiverId: string; duration: number }> = [];
+    try {
+      visits = JSON.parse((session.clientSwapVisits as string) ?? "[]");
+    } catch {
+      await sendMessage(chatId, "Something went wrong — let me start over. Which visit do you want to swap the caregiver for?");
+      await db.collection("agent_sessions").doc(clientPhone).update({ clientSwapStep: "identify_appointment", clientSwapVisits: admin.firestore.FieldValue.delete() });
+      return;
+    }
     const pick = parseInt(text.trim(), 10);
     const visit = visits.find((v: any) => v.index === pick);
     if (!visit) {
@@ -112,7 +119,14 @@ export async function handleClientSwapRequest(
       return;
     }
 
-    const options = JSON.parse((session.clientSwapOptions as string) ?? "[]");
+    let options: Array<{ id: string; name: string; rate?: number }> = [];
+    try {
+      options = JSON.parse((session.clientSwapOptions as string) ?? "[]");
+    } catch {
+      await sendMessage(chatId, "Something went wrong — let me start over. Which visit do you want to swap the caregiver for?");
+      await db.collection("agent_sessions").doc(clientPhone).update({ clientSwapStep: "identify_appointment", clientSwapOptions: admin.firestore.FieldValue.delete() });
+      return;
+    }
     const pick = parseInt(text.trim(), 10);
     const chosen = options[pick - 1];
     if (!chosen) {

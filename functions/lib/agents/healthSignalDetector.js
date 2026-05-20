@@ -50,7 +50,7 @@ async function detectHealthSignals(notes, wellness, activities) {
             max_tokens: 300,
             system: SYSTEM_PROMPT,
             messages: [{ role: "user", content: contextText }],
-        });
+        }, { signal: AbortSignal.timeout(8000) });
         const raw = ((_b = response.content[0].text) !== null && _b !== void 0 ? _b : "").trim();
         const parsed = JSON.parse(raw);
         if (!["none", "watch", "flag"].includes(parsed.severity)) {

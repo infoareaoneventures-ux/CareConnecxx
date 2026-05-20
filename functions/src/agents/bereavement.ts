@@ -76,7 +76,13 @@ export async function activateBereavementMode(
 
   generateCareMemoryKeepsake(seniorId, userId)
     .then(async (url) => {
-      if (!url) return;
+      if (!url) {
+        // Keepsake generation failed — send a compassionate fallback so family isn't left in silence.
+        await sendMessage(chatId,
+          `I'll put together a care memory for ${seniorName} — a record of their journey and all the love that surrounded them. I'll send it to you shortly. 💙`
+        ).catch(() => {});
+        return;
+      }
       await sendMessage(chatId,
         `I've put together a care memory for you — a record of ${seniorName}'s journey and all the love that surrounded them. 💙`
       );

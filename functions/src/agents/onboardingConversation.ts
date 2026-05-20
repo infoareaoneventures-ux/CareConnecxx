@@ -150,7 +150,7 @@ export async function handleOnboardingStep(
   // Route to the appropriate step handler
   switch (step) {
     case "ask_role":              return handleAskRole(phone, chatId, text);
-    case "client_ask_name":       return handleClientAskName(phone, chatId, text);
+    case "client_ask_name":       return handleClientAskName(phone, chatId, text, session);
     case "client_ask_senior":     return handleClientAskSenior(phone, chatId, text, session);
     case "client_ask_needs":      return handleClientAskNeeds(phone, chatId, text, session);
     case "client_ask_location":   return handleClientAskLocation(phone, chatId, text, session);
@@ -244,15 +244,26 @@ async function handleAskRole(phone: string, chatId: string, text: string): Promi
 
 // ── CLIENT FLOW ───────────────────────────────────────────────────────────────
 
-async function handleClientAskName(phone: string, chatId: string, text: string): Promise<void> {
+async function handleClientAskName(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "What's your name?");
+    return;
+  }
   const firstName = await parseWithClaude(
-    "Extract only the first name from this message. Reply with just the first name, nothing else.",
+    "Extract only the first name from this message. Reply with just the first name, nothing else. If you cannot find a name, reply: unknown",
     text
   );
-  await mergeOnboardingData(phone, { firstName });
+  const safeName = (!firstName || firstName === "__parse_error__" || firstName === "unknown") ? "there" : firstName;
+  if (safeName === "there") {
+    await sendMessage(chatId, "I didn't catch your name — could you share it?");
+    return;
+  }
+  await mergeOnboardingData(phone, { firstName: safeName });
   await updateSession(phone, { onboardingStep: "client_ask_senior" });
   await sendMessage(chatId,
-    `Nice to meet you, ${firstName}. Who are we caring for?`
+    `Nice to meet you, ${safeName}. Who are we caring for?`
   );
 }
 
@@ -310,6 +321,12 @@ async function handleClientAskNeeds(phone: string, chatId: string, text: string,
 }
 
 async function handleClientAskLocation(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "What city and zip code are you in? (e.g. \"Austin, TX 78701\")");
+    return;
+  }
   const raw = await parseWithClaude(
     'Extract city and zipCode from this address text. Reply in JSON: {"city":"...","zipCode":"..."}',
     text
@@ -337,6 +354,13 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
 }
 
 async function handleClientAskSchedule(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    const d = session.onboardingData ?? {};
+    await sendMessage(chatId, `How often does ${d.seniorName ?? "they"} need someone, and what times of day work best?`);
+    return;
+  }
   const raw = await parseWithClaude(
     'Extract daysPerWeek (number), timeOfDay (morning/afternoon/evening/all-day), and hoursPerDay (number) from this message. Reply in JSON: {"daysPerWeek":0,"timeOfDay":"","hoursPerDay":0}',
     text

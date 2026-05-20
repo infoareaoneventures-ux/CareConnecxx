@@ -63,6 +63,21 @@ exports.STATE_MACHINE_FLAGS = [
     // Recurring schedule modification flow
     "modifyScheduleStep",
     "modifyScheduleData",
+    // Caregiver shift swap flow
+    "swapStep",
+    "swapCandidates",
+    "swapShiftId",
+    "swapShiftDate",
+    "swapClientId",
+    // Swap acceptance (for caregivers contacted about covering a shift)
+    "pendingSwapRequestId",
+    "pendingSwapFromName",
+    // Client caregiver swap flow
+    "clientSwapStep",
+    "clientSwapVisits",
+    "clientSwapAppointmentId",
+    "clientSwapDate",
+    "clientSwapOptions",
     // Onboarding resume checkpoint (NOT cleared — intentionally kept for resume)
 ];
 async function clearAllStateFlags(phone, db) {

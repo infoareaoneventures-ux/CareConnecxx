@@ -30,6 +30,8 @@ import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { handleJobPostingStep, startJobPostingFlow } from "../agents/jobPostingFlow";
 import { startModifyScheduleFlow, handleModifyScheduleStep } from "../agents/modifyScheduleFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
+import { handleCaregiverSwapRequest, handleSwapAcceptance } from "../agents/caregiverSwapHandler";
+import { handleClientSwapRequest } from "../agents/clientSwapRequestHandler";
 import { STATE_MACHINE_FLAGS, clearAllStateFlags } from "../utils/sessionState";
 import { sendIfNotDND } from "../utils/dndGuard";
 import { writeFeedbackSignal } from "../ai/feedback";
@@ -1058,6 +1060,60 @@ async function handleInbound(event: unknown): Promise<void> {
 
   // ── Caregiver keyword handling ──────────────────────────────────────────────
   if (session.userType === "caregiver") {
+    // ── Swap acceptance/decline — when another caregiver was asked to cover ──
+    if ((session as any).pendingSwapRequestId) {
+      const swapRequestId  = (session as any).pendingSwapRequestId as string;
+      const fromName       = (session as any).pendingSwapFromName as string ?? "A caregiver";
+      const Anthropic      = (await import("@anthropic-ai/sdk")).default;
+      const _swapClaude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const _swapRes       = await _swapClaude.messages.create({
+        model:      "claude-haiku-4-5-20251001",
+        max_tokens: 10,
+        system:
+          "The caregiver is responding to a shift-swap request. " +
+          "Reply ACCEPT if they agree to cover the shift. " +
+          "Reply DECLINE if they refuse. " +
+          "Reply UNSURE if it is unclear. " +
+          "Reply with exactly one word.",
+        messages: [{ role: "user", content: text }],
+      });
+      const swapDecision = ((_swapRes.content[0] as { text: string }).text ?? "").trim().toUpperCase();
+
+      if (swapDecision === "ACCEPT") {
+        const cgName = session.caregiverId
+          ? (await db.collection("caregivers").doc(session.caregiverId).get()).data()?.name ?? "Caregiver"
+          : "Caregiver";
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingSwapRequestId: admin.firestore.FieldValue.delete(),
+          pendingSwapFromName:  admin.firestore.FieldValue.delete(),
+        });
+        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+        try {
+          await handleSwapAcceptance(session.caregiverId ?? phone, cgName, swapRequestId, chatId);
+        } finally {
+          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+        }
+        return;
+      }
+
+      if (swapDecision === "DECLINE") {
+        await db.collection("shift_swap_requests").doc(swapRequestId).update({
+          candidateResponses: admin.firestore.FieldValue.arrayUnion({
+            caregiverId: session.caregiverId ?? phone,
+            response:    "declined",
+            at:          new Date().toISOString(),
+          }),
+        }).catch(() => {});
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingSwapRequestId: admin.firestore.FieldValue.delete(),
+          pendingSwapFromName:  admin.firestore.FieldValue.delete(),
+        });
+        await sendMessage(chatId, `No problem — thanks for letting ${fromName}'s coordinator know!`);
+        return;
+      }
+      // UNSURE — fall through to normal routing so Claude can answer the message
+    }
+
     const KEYWORDS: Record<string, () => Promise<void>> = {
       ARRIVED:    () => handleArrived(phone, chatId, session),
       DONE:       () => handleDone(phone, chatId, session),
@@ -1379,6 +1435,56 @@ async function handleInbound(event: unknown): Promise<void> {
       finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
       return;
     }
+
+    // ── Caregiver shift swap — multi-step state machine ───────────────────
+    if ((session as any).swapStep) {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try {
+        const cgDoc = session.caregiverId
+          ? await db.collection("caregivers").doc(session.caregiverId).get()
+          : null;
+        await handleCaregiverSwapRequest(
+          session.caregiverId ?? phone,
+          cgDoc?.data()?.name ?? "Caregiver",
+          phone,
+          text,
+          session as Record<string, unknown>,
+          chatId
+        );
+      } finally {
+        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+      }
+      return;
+    }
+
+    // ── Caregiver NLU fallback — handle natural-language keyword variants ──
+    // Runs only when no exact keyword matched and no state machine is active.
+    // Catches "I just arrived", "I'm done now", "running about 10 min late", etc.
+    {
+      const Anthropic   = (await import("@anthropic-ai/sdk")).default;
+      const _nluClaude  = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const _nluRes     = await _nluClaude.messages.create({
+        model:      "claude-haiku-4-5-20251001",
+        max_tokens: 15,
+        system:
+          "Classify this caregiver message as one of: ARRIVED, DONE, LATE, ISSUE, CONFIRM, RESCHEDULE, NONE. " +
+          "ARRIVED = caregiver arrived at or is entering a care visit. " +
+          "DONE = caregiver has finished a care visit. " +
+          "LATE = caregiver is running late to a visit. " +
+          "ISSUE = caregiver is reporting a problem or concern during a visit. " +
+          "CONFIRM = caregiver is confirming an upcoming appointment. " +
+          "RESCHEDULE = caregiver wants to change the time of an appointment. " +
+          "NONE = does not fit any of the above. " +
+          "Reply with exactly one word.",
+        messages: [{ role: "user", content: text }],
+      });
+      const nluAction = ((_nluRes.content[0] as { text: string }).text ?? "").trim().toUpperCase();
+      if (nluAction in KEYWORDS) {
+        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+        try { await KEYWORDS[nluAction](); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
+        return;
+      }
+    }
   }
 
   // ── Emergency contact capture — family replies with EC name + phone ──────────
@@ -1518,6 +1624,23 @@ async function handleInbound(event: unknown): Promise<void> {
     return;
   }
 
+  // ── Client caregiver swap flow — multi-step state machine ───────────────
+  if ((session as any).clientSwapStep) {
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      await handleClientSwapRequest(
+        session.userId ?? phone,
+        phone,
+        text,
+        session as Record<string, unknown>,
+        chatId
+      );
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+    return;
+  }
+
   // ── Pending rematching after interview cancelled due to availability change ──
   if ((session as any).pendingRematch && (norm === "YES" || norm === "Y")) {
     await db.collection("agent_sessions").doc(phone).update({ pendingRematch: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete() });
@@ -1620,8 +1743,22 @@ async function handleInbound(event: unknown): Promise<void> {
           });
           await sendMessage(chatId, `No problem! ${pending.caregiverName} also offered:\n\n${timesList}\n\nReply with which time works, or PASS to find someone else.`);
         } else {
-          // No more times — mark request client_declined and check if all candidates exhausted
+          // No more times — mark request client_declined
           await db.collection("interview_requests").doc(pending.docId).update({ status: "client_declined", clientDeclinedAt: new Date().toISOString() }).catch(() => {});
+          // Notify the caregiver so they aren't left waiting
+          const _bdReqSnap  = await db.collection("interview_requests").doc(pending.docId).get().catch(() => null);
+          const _bdCgId     = _bdReqSnap?.data()?.caregiverId as string | undefined;
+          if (_bdCgId) {
+            const _bdCgSnap  = await db.collection("caregivers").doc(_bdCgId).get().catch(() => null);
+            const _bdCgPhone = _bdCgSnap?.data()?.phone as string | undefined;
+            if (_bdCgPhone) {
+              const _bdCgSess = await (await import("./client")).getOrCreateSession(_bdCgPhone);
+              await sendMessage(_bdCgSess.chatId,
+                `Hi ${pending.caregiverName}, the family was not able to find a time that works right now. ` +
+                `Thank you for your interest — I'll be in touch when there's a new opening that fits.`
+              ).catch(() => {});
+            }
+          }
           const { checkAndTriggerRematching } = await import("../triggers/triggerEngine");
           await checkAndTriggerRematching(phone, "").catch(() => {});
         }
@@ -1852,6 +1989,17 @@ async function handleInbound(event: unknown): Promise<void> {
             if (pendingOutcome.caregiverId) {
               (updates as any).rejectedCaregiverIds = admin.firestore.FieldValue.arrayUnion(pendingOutcome.caregiverId);
               writeInterviewOutcomeSignal(session.userId ?? phone, pendingOutcome.caregiverId, "pass").catch(() => {});
+              // Notify caregiver of the outcome
+              db.collection("caregivers").doc(pendingOutcome.caregiverId).get().then(async cgSnap => {
+                const cgPhone = cgSnap.data()?.phone as string | undefined;
+                const cgName  = cgSnap.data()?.name ?? "Caregiver";
+                if (!cgPhone) return;
+                const cgSess = await (await import("./client")).getOrCreateSession(cgPhone);
+                await sendMessage(cgSess.chatId,
+                  `Hi ${cgName}, the family has decided not to move forward at this time. ` +
+                  `Thank you for interviewing — I'll reach out when there's a new opportunity that's a great fit.`
+                );
+              }).catch(() => {});
             }
             await db.collection("agent_sessions").doc(phone).update(updates);
             await sendMessage(chatId, `Understood. Want me to search for more caregivers? Reply YES and I'll get started.`);
@@ -1906,6 +2054,17 @@ async function handleInbound(event: unknown): Promise<void> {
           (updates as any).rejectedCaregiverIds = admin.firestore.FieldValue.arrayUnion(pending.caregiverId);
           if (norm === "PASS") {
             writeInterviewOutcomeSignal(session.userId ?? phone, pending.caregiverId, "pass").catch(() => {});
+            // Notify caregiver of the outcome so they aren't left waiting
+            db.collection("caregivers").doc(pending.caregiverId).get().then(async cgSnap => {
+              const cgPhone = cgSnap.data()?.phone as string | undefined;
+              const cgName  = cgSnap.data()?.name ?? "Caregiver";
+              if (!cgPhone) return;
+              const cgSess = await (await import("./client")).getOrCreateSession(cgPhone);
+              await sendMessage(cgSess.chatId,
+                `Hi ${cgName}, the family has decided not to move forward at this time. ` +
+                `Thank you for interviewing — I'll reach out when there's a new opportunity that's a great fit.`
+              );
+            }).catch(() => {});
           }
         }
         await db.collection("agent_sessions").doc(phone).update(updates);
@@ -2389,6 +2548,46 @@ async function handleInbound(event: unknown): Promise<void> {
     // ── MODIFY_SCHEDULE — change days/times of recurring care schedule ────────
     if (intent === "MODIFY_SCHEDULE" && session.userType !== "caregiver") {
       await startModifyScheduleFlow(phone, chatId, session);
+      return;
+    }
+
+    // ── SWAP_REQUEST — caregiver looking for coverage on one of their shifts ──
+    if (intent === "SWAP_REQUEST" && session.userType === "caregiver") {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try {
+        const cgDoc = session.caregiverId
+          ? await db.collection("caregivers").doc(session.caregiverId).get()
+          : null;
+        await handleCaregiverSwapRequest(
+          session.caregiverId ?? phone,
+          cgDoc?.data()?.name ?? "Caregiver",
+          phone,
+          text,
+          // Session has no swapStep yet — handler defaults to "identify_shift"
+          session as Record<string, unknown>,
+          chatId
+        );
+      } finally {
+        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+      }
+      return;
+    }
+
+    // ── CLIENT_SWAP_REQUEST — client wants a different caregiver for a visit ──
+    if (intent === "CLIENT_SWAP_REQUEST" && session.userType !== "caregiver") {
+      if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+      try {
+        await handleClientSwapRequest(
+          session.userId ?? phone,
+          phone,
+          text,
+          // Session has no clientSwapStep yet — handler defaults to "identify_appointment"
+          session as Record<string, unknown>,
+          chatId
+        );
+      } finally {
+        if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+      }
       return;
     }
 

@@ -602,7 +602,7 @@ async function handleRecurringResume(phone, chatId, session) {
 }
 // ── Main inbound handler ──────────────────────────────────────────────────────
 async function handleInbound(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98, _99, _100, _101, _102, _103, _104, _105, _106, _107, _108, _109, _110, _111, _112, _113, _114, _115, _116, _117, _118, _119, _120, _121, _122, _123;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98, _99, _100, _101, _102, _103, _104, _105, _106, _107, _108, _109, _110, _111, _112, _113, _114, _115, _116, _117, _118, _119, _120, _121, _122, _123, _124, _125;
     const ev = event;
     const phone = (_b = (_a = ev.data) === null || _a === void 0 ? void 0 : _a.sender_handle) === null || _b === void 0 ? void 0 : _b.value;
     const text = ((_f = (_e = (_d = (_c = ev.data) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.value) !== null && _f !== void 0 ? _f : "");
@@ -797,7 +797,7 @@ async function handleInbound(event) {
             });
             isExit = ((_z = res.content[0].text) !== null && _z !== void 0 ? _z : "").trim().toUpperCase().startsWith("Y");
         }
-        catch (_124) {
+        catch (_126) {
             isExit = false;
         }
         if (isExit) {
@@ -1163,21 +1163,20 @@ async function handleInbound(event) {
         }
         // Caregiver rescheduling — parse new times and notify family
         if (session.caregiverRescheduling) {
-            await db.collection("agent_sessions").doc(phone).update({ caregiverRescheduling: admin.firestore.FieldValue.delete() });
             const Anthropic = (await Promise.resolve().then(() => __importStar(require("@anthropic-ai/sdk")))).default;
             const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-            const parsed = await claude.messages.create({
-                model: "claude-haiku-4-5-20251001",
-                max_tokens: 100,
-                system: "Extract interview time proposals from this message as a JSON array of human-readable strings. " +
-                    "Reply with only a JSON array, e.g. [\"Tuesday 2pm\",\"Wednesday 10am\"]. Keep them short.",
-                messages: [{ role: "user", content: text }],
-            });
             let timeList = [];
             try {
+                const parsed = await claude.messages.create({
+                    model: "claude-haiku-4-5-20251001",
+                    max_tokens: 100,
+                    system: "Extract interview time proposals from this message as a JSON array of human-readable strings. " +
+                        "Reply with only a JSON array, e.g. [\"Tuesday 2pm\",\"Wednesday 10am\"]. Keep them short.",
+                    messages: [{ role: "user", content: text }],
+                });
                 timeList = JSON.parse((_40 = parsed.content[0].text) !== null && _40 !== void 0 ? _40 : "[]");
             }
-            catch ( /* */_125) { /* */ }
+            catch ( /* fall through — use raw text below */_127) { /* fall through — use raw text below */ }
             const timesText = timeList.length > 0 ? timeList.join(", ") : text;
             // Find the relevant interview request
             const caregiverId = (_41 = session.caregiverId) !== null && _41 !== void 0 ? _41 : "";
@@ -1203,6 +1202,8 @@ async function handleInbound(event) {
                 }
                 await reqSnap.docs[0].ref.update({ status: "awaiting_client_confirmation", caregiverAvailability: timeList });
             }
+            // Clear the flag only after the family has been notified successfully
+            await db.collection("agent_sessions").doc(phone).update({ caregiverRescheduling: admin.firestore.FieldValue.delete() });
             await (0, client_1.sendMessage)(chatId, "Got it — I've sent those times to the family. I'll let you know once they confirm.");
             return;
         }
@@ -1777,7 +1778,7 @@ async function handleInbound(event) {
                 memberName = (_79 = parsed.name) !== null && _79 !== void 0 ? _79 : null;
                 memberPhone = (_80 = parsed.phone) !== null && _80 !== void 0 ? _80 : null;
             }
-            catch ( /* */_126) { /* */ }
+            catch ( /* */_128) { /* */ }
             if (!memberPhone) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch a phone number — please include it (e.g. 'add my sister Sarah at +1 555 000 1234').");
                 return;
@@ -1818,7 +1819,7 @@ async function handleInbound(event) {
                 targetName = (_83 = parsed.name) !== null && _83 !== void 0 ? _83 : null;
                 targetPhone = (_84 = parsed.phone) !== null && _84 !== void 0 ? _84 : null;
             }
-            catch ( /* */_127) { /* */ }
+            catch ( /* */_129) { /* */ }
             // If no phone provided, try to resolve by name from family_group_members
             if (!targetPhone && targetName) {
                 const memberSnap = await db.collection("family_group_members")
@@ -1874,7 +1875,7 @@ async function handleInbound(event) {
             try {
                 schedule = JSON.parse((_87 = parsedSchedule.content[0].text) !== null && _87 !== void 0 ? _87 : "null");
             }
-            catch ( /* */_128) { /* */ }
+            catch ( /* */_130) { /* */ }
             if (!schedule || !((_88 = schedule.days) === null || _88 === void 0 ? void 0 : _88.length)) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch that — could you try again? (e.g. '3 days, Mon/Wed/Fri, 9am–1pm')");
                 return;
@@ -2106,6 +2107,15 @@ async function handleInbound(event) {
             await (0, jobPostingFlow_1.startJobPostingFlow)(phone, chatId, session);
             return;
         }
+        // ── RESCHEDULE_REQUEST (caregiver) — natural language reschedule, mirrors RESCHEDULE keyword ──
+        if (intent === "RESCHEDULE_REQUEST" && session.userType === "caregiver") {
+            await db.collection("agent_sessions").doc(phone).update({
+                caregiverRescheduling: true,
+                stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+            });
+            await (0, client_1.sendMessage)(chatId, "No problem — text me 2–3 times that work for you and I'll let the family know right away.");
+            return;
+        }
         // ── RESCHEDULE_REQUEST — move an existing appointment to a new date/time ──
         if (intent === "RESCHEDULE_REQUEST" && session.userType !== "caregiver") {
             const qaReplyReschedule = await (0, qaAgent_1.runQaAgent)({
@@ -2209,10 +2219,13 @@ async function handleInbound(event) {
             return;
         }
         // ── Fact correction — user is correcting a known fact ────────────────────
-        if (intent === "FACT_CORRECTION" && session.userType !== "caregiver") {
+        if (intent === "FACT_CORRECTION") {
             const { detectAndApplyCorrection } = await Promise.resolve().then(() => __importStar(require("../memory/learnedFacts")));
+            const factUserId = session.userType === "caregiver"
+                ? ((_119 = (_118 = session.caregiverId) !== null && _118 !== void 0 ? _118 : session.userId) !== null && _119 !== void 0 ? _119 : phone)
+                : ((_120 = session.userId) !== null && _120 !== void 0 ? _120 : phone);
             const zepUserId2 = session.zepThreadId ? phone.replace(/\D/g, "") : undefined;
-            const applied = await detectAndApplyCorrection((_118 = session.userId) !== null && _118 !== void 0 ? _118 : phone, text, zepUserId2).catch(() => false);
+            const applied = await detectAndApplyCorrection(factUserId, text, zepUserId2).catch(() => false);
             if (applied) {
                 await (0, client_1.sendMessage)(chatId, "Got it — I've updated that.");
                 return;
@@ -2225,7 +2238,7 @@ async function handleInbound(event) {
             (0, zepClient_1.addUserMessageToZep)({
                 threadId: zepThreadId,
                 content: text,
-                userName: (_119 = session.firstName) !== null && _119 !== void 0 ? _119 : "Family",
+                userName: (_121 = session.firstName) !== null && _121 !== void 0 ? _121 : "Family",
                 sentAt: new Date(),
             }).catch(console.error);
         }
@@ -2233,9 +2246,9 @@ async function handleInbound(event) {
             text,
             phone,
             chatId,
-            userId: (_120 = session.userId) !== null && _120 !== void 0 ? _120 : "",
-            seniorId: (_122 = (_121 = session.seniorId) !== null && _121 !== void 0 ? _121 : session.userId) !== null && _122 !== void 0 ? _122 : "",
-            userType: (_123 = session.userType) !== null && _123 !== void 0 ? _123 : "client",
+            userId: (_122 = session.userId) !== null && _122 !== void 0 ? _122 : "",
+            seniorId: (_124 = (_123 = session.seniorId) !== null && _123 !== void 0 ? _123 : session.userId) !== null && _124 !== void 0 ? _124 : "",
+            userType: (_125 = session.userType) !== null && _125 !== void 0 ? _125 : "client",
             caregiverId: session.caregiverId,
             zepThreadId,
             session: session,

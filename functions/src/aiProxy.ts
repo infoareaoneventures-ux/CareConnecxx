@@ -51,12 +51,18 @@ export const aiProxy = functions.https.onCall(async (data, context) => {
     );
   }
 
-  const response = await getClaude().messages.create({
-    model,
-    max_tokens: Math.min(maxTokens, 2000),
-    system,
-    messages: [{ role: "user", content: user }],
-  });
+  let response: Awaited<ReturnType<Anthropic["messages"]["create"]>>;
+  try {
+    response = await getClaude().messages.create({
+      model,
+      max_tokens: Math.min(maxTokens, 2000),
+      system,
+      messages: [{ role: "user", content: user }],
+    });
+  } catch (err) {
+    console.error("aiProxy: Anthropic API error", err);
+    throw new functions.https.HttpsError("internal", "AI service unavailable. Please try again.");
+  }
 
   return { text: (response.content[0] as { text: string }).text ?? "" };
 });

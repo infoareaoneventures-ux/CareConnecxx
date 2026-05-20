@@ -434,7 +434,7 @@ async function handleInvoicePaymentFailed(invoice) {
                 content: "There was an issue processing your Cara membership payment. " +
                     "To keep your care coordination uninterrupted, please update your billing at cara.app/billing. " +
                     "Reply HELP if you need assistance.",
-                urgency: "high",
+                urgency: "immediate",
                 sourceAgent: "billing",
                 canDrop: false,
             });

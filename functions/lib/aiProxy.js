@@ -70,12 +70,19 @@ exports.aiProxy = functions.https.onCall(async (data, context) => {
     if (!rateResult.allowed) {
         throw new functions.https.HttpsError("resource-exhausted", "Rate limit exceeded. Try again in a minute.");
     }
-    const response = await getClaude().messages.create({
-        model,
-        max_tokens: Math.min(maxTokens, 2000),
-        system,
-        messages: [{ role: "user", content: user }],
-    });
+    let response;
+    try {
+        response = await getClaude().messages.create({
+            model,
+            max_tokens: Math.min(maxTokens, 2000),
+            system,
+            messages: [{ role: "user", content: user }],
+        });
+    }
+    catch (err) {
+        console.error("aiProxy: Anthropic API error", err);
+        throw new functions.https.HttpsError("internal", "AI service unavailable. Please try again.");
+    }
     return { text: (_b = response.content[0].text) !== null && _b !== void 0 ? _b : "" };
 });
 //# sourceMappingURL=aiProxy.js.map

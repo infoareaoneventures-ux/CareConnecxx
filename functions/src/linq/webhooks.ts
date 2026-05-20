@@ -1301,19 +1301,20 @@ async function handleInbound(event: unknown): Promise<void> {
 
     // Caregiver rescheduling — parse new times and notify family
     if ((session as any).caregiverRescheduling) {
-      await db.collection("agent_sessions").doc(phone).update({ caregiverRescheduling: admin.firestore.FieldValue.delete() });
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
       const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const parsed    = await claude.messages.create({
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 100,
-        system:
-          "Extract interview time proposals from this message as a JSON array of human-readable strings. " +
-          "Reply with only a JSON array, e.g. [\"Tuesday 2pm\",\"Wednesday 10am\"]. Keep them short.",
-        messages: [{ role: "user", content: text }],
-      });
       let timeList: string[] = [];
-      try { timeList = JSON.parse((parsed.content[0] as { text: string }).text ?? "[]") as string[]; } catch { /* */ }
+      try {
+        const parsed = await claude.messages.create({
+          model:      "claude-haiku-4-5-20251001",
+          max_tokens: 100,
+          system:
+            "Extract interview time proposals from this message as a JSON array of human-readable strings. " +
+            "Reply with only a JSON array, e.g. [\"Tuesday 2pm\",\"Wednesday 10am\"]. Keep them short.",
+          messages: [{ role: "user", content: text }],
+        });
+        timeList = JSON.parse((parsed.content[0] as { text: string }).text ?? "[]") as string[];
+      } catch { /* fall through — use raw text below */ }
       const timesText = timeList.length > 0 ? timeList.join(", ") : text;
 
       // Find the relevant interview request
@@ -1343,6 +1344,9 @@ async function handleInbound(event: unknown): Promise<void> {
         }
         await reqSnap.docs[0].ref.update({ status: "awaiting_client_confirmation", caregiverAvailability: timeList });
       }
+
+      // Clear the flag only after the family has been notified successfully
+      await db.collection("agent_sessions").doc(phone).update({ caregiverRescheduling: admin.firestore.FieldValue.delete() });
       await sendMessage(chatId, "Got it — I've sent those times to the family. I'll let you know once they confirm.");
       return;
     }
@@ -2332,6 +2336,16 @@ async function handleInbound(event: unknown): Promise<void> {
       return;
     }
 
+    // ── RESCHEDULE_REQUEST (caregiver) — natural language reschedule, mirrors RESCHEDULE keyword ──
+    if (intent === "RESCHEDULE_REQUEST" && session.userType === "caregiver") {
+      await db.collection("agent_sessions").doc(phone).update({
+        caregiverRescheduling: true,
+        stateExpiresAt:        new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      });
+      await sendMessage(chatId, "No problem — text me 2–3 times that work for you and I'll let the family know right away.");
+      return;
+    }
+
     // ── RESCHEDULE_REQUEST — move an existing appointment to a new date/time ──
     if (intent === "RESCHEDULE_REQUEST" && session.userType !== "caregiver") {
       const qaReplyReschedule = await runQaAgent({
@@ -2447,14 +2461,13 @@ async function handleInbound(event: unknown): Promise<void> {
     }
 
     // ── Fact correction — user is correcting a known fact ────────────────────
-    if (intent === "FACT_CORRECTION" && session.userType !== "caregiver") {
+    if (intent === "FACT_CORRECTION") {
       const { detectAndApplyCorrection } = await import("../memory/learnedFacts");
+      const factUserId = session.userType === "caregiver"
+        ? (session.caregiverId ?? session.userId ?? phone)
+        : (session.userId ?? phone);
       const zepUserId2 = (session as any).zepThreadId ? phone.replace(/\D/g, "") : undefined;
-      const applied = await detectAndApplyCorrection(
-        session.userId ?? phone,
-        text,
-        zepUserId2
-      ).catch(() => false);
+      const applied = await detectAndApplyCorrection(factUserId, text, zepUserId2).catch(() => false);
 
       if (applied) {
         await sendMessage(chatId, "Got it — I've updated that.");

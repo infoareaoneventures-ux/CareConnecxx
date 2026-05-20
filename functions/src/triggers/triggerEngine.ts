@@ -812,7 +812,7 @@ async function handleCaregiverCheckinEscalation(appointmentId: string): Promise<
       content:
         `Heads-up — ${caregiverName} hasn't confirmed today's visit at ${startTime} with ${seniorName}. ` +
         `I'm following up with them now. I'll let you know as soon as I hear back.`,
-      urgency:     "high",
+      urgency:     "immediate",
       sourceAgent: "caregiver_checkin",
       canDrop:     false,
     });

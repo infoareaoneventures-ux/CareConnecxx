@@ -18,6 +18,7 @@ export const CaregiverFamiliesPage: React.FC = () => {
   const [filter, setFilter] = useState<FamilyFilter>('favorites');
   const [query, setQuery] = useState('');
   const [favorites, setFavorites] = useState<FamilyEntry[]>([]);
+  const [contacted, setContacted] = useState<FamilyEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -25,23 +26,45 @@ export const CaregiverFamiliesPage: React.FC = () => {
     (async () => {
       if (!currentUser?.uid) { setLoading(false); return; }
       try {
-        const snap = await (db as any)
-          .collection('users')
-          .where('savedCaregivers', 'array-contains', currentUser.uid)
-          .get();
-        const entries: FamilyEntry[] = [];
-        snap.forEach((doc: any) => {
+        const [favSnap, reqSnap] = await Promise.all([
+          (db as any)
+            .collection('users')
+            .where('savedCaregivers', 'array-contains', currentUser.uid)
+            .get(),
+          (db as any)
+            .collection('interview_requests')
+            .where('caregiverId', '==', currentUser.uid)
+            .get(),
+        ]);
+
+        const favEntries: FamilyEntry[] = [];
+        favSnap.forEach((doc: any) => {
           const d = doc.data();
-          entries.push({
+          favEntries.push({
             clientId: doc.id,
             name: d.displayName || d.name || 'Family',
             photoURL: d.photoURL,
             source: 'favorite',
           });
         });
-        if (active) setFavorites(entries);
+        if (active) setFavorites(favEntries);
+
+        const contactedMap = new Map<string, FamilyEntry>();
+        reqSnap.forEach((doc: any) => {
+          const d = doc.data();
+          const clientId = d.clientId || d.clientPhone || doc.id;
+          if (!contactedMap.has(clientId)) {
+            contactedMap.set(clientId, {
+              clientId,
+              name: d.clientName || d.clientDisplayName || 'Family',
+              photoURL: d.clientPhotoURL,
+              source: 'contacted',
+            });
+          }
+        });
+        if (active) setContacted(Array.from(contactedMap.values()));
       } catch (e) {
-        console.warn('Favorites query failed', e);
+        console.warn('Families query failed', e);
       } finally {
         if (active) setLoading(false);
       }
@@ -69,23 +92,23 @@ export const CaregiverFamiliesPage: React.FC = () => {
   const all: FamilyEntry[] = useMemo(() => {
     const seen = new Set<string>();
     const out: FamilyEntry[] = [];
-    [...favorites, ...workedWith].forEach(e => {
+    [...favorites, ...workedWith, ...contacted].forEach(e => {
       if (!seen.has(e.clientId)) { seen.add(e.clientId); out.push(e); }
     });
     return out;
-  }, [favorites, workedWith]);
+  }, [favorites, workedWith, contacted]);
 
   const filtered = useMemo(() => {
     let list: FamilyEntry[];
     switch (filter) {
-      case 'favorites': list = favorites; break;
+      case 'favorites':   list = favorites; break;
       case 'worked-with': list = workedWith; break;
-      case 'contacted': list = []; break; // TODO: chat room aggregation
-      case 'all': list = all; break;
+      case 'contacted':   list = contacted; break;
+      case 'all':         list = all; break;
     }
     const q = query.trim().toLowerCase();
     return q ? list.filter(f => f.name.toLowerCase().includes(q)) : list;
-  }, [filter, favorites, workedWith, all, query]);
+  }, [filter, favorites, workedWith, contacted, all, query]);
 
   return (
     <div className="min-h-screen bg-slate-50 pb-24">

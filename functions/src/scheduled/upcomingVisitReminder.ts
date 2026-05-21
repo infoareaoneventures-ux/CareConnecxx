@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -34,13 +35,25 @@ export const upcomingVisitReminder = functions.pubsub
         const session = sessionSnap.data()!;
         if (session.optedOut) continue;
 
-        const cgName = (appt.caregiverName ?? "Your caregiver") as string;
-        const time   = (appt.startTime    ?? appt.time ?? "") as string;
+        const cgName    = (appt.caregiverName ?? "Your caregiver") as string;
+        const time      = (appt.startTime    ?? appt.time ?? "") as string;
+        const seniorName = (appt.seniorName ?? appt.clientName ?? "") as string;
 
-        await sendViaInteractionAgent(phone, {
-          content:
+        const reminderMsg = await generateCaraMessage({
+          audience: "family",
+          context:
+            `Send a brief upcoming visit reminder to a family. ` +
+            `Caregiver: ${cgName}. Visit time: ${time || "today"}.` +
+            (seniorName ? ` Senior: ${seniorName}.` : "") +
+            " Let them know the visit is confirmed and to reply CANCEL if plans change.",
+          fallback:
             `Just a heads up — ${cgName} is confirmed for your ${time} visit today. ` +
             `Reply CANCEL if plans change and I'll handle it.`,
+          maxTokens: 80,
+        });
+
+        await sendViaInteractionAgent(phone, {
+          content:     reminderMsg,
           urgency:     "standard",
           sourceAgent: "upcoming_visit_reminder",
           canDrop:     false,

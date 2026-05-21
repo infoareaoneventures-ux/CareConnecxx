@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import Anthropic from "@anthropic-ai/sdk";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -63,7 +64,13 @@ export async function handleRefundRequest(
       .get();
 
     if (apptSnap.empty) {
-      await sendMessage("I don't see any recent visits to refund. If you think this is a mistake, I can create a support ticket for you.");
+      const msgR1 = await generateCaraMessage({
+        audience: "family",
+        context: "A family member asked Cara for a refund, but Cara doesn't see any recent completed visits to refund. Let them know gently, and mention that if they think it's a mistake, Cara can create a support ticket for them.",
+        fallback: "I don't see any recent visits to refund. If you think this is a mistake, I can create a support ticket for you.",
+        maxTokens: 80,
+      });
+      await sendMessage(msgR1);
       await db.collection("agent_sessions").doc(clientId).update({ refundStep: admin.firestore.FieldValue.delete() });
       return;
     }
@@ -87,7 +94,13 @@ export async function handleRefundRequest(
     const list = visits
       .map(v => `${v.index}. ${v.date} with ${v.caregiverName} — $${v.cost ?? "?"}`)
       .join("\n");
-    await sendMessage(`Which visit would you like a refund for?\n${list}\n\nJust tell me which one (e.g. "the first one" or "the May 10th visit").`);
+    const msgR2opener = await generateCaraMessage({
+      audience: "family",
+      context: "A family member wants a refund and Cara found recent visits. Ask them which visit they'd like a refund for.",
+      fallback: "Which visit would you like a refund for?",
+      maxTokens: 80,
+    });
+    await sendMessage(`${msgR2opener}\n${list}\n\nJust tell me which one (e.g. "the first one" or "the May 10th visit").`);
     return;
   }
 
@@ -129,8 +142,14 @@ export async function handleRefundRequest(
       refundVisitDescription: visitDesc,
     });
 
+    const msgR3opener = await generateCaraMessage({
+      audience: "family",
+      context: `A family member selected the visit on ${visitDesc} for their refund request. Acknowledge the visit warmly and ask them to briefly explain why they'd like a refund.`,
+      fallback: `Got it — the ${visitDesc}. Can you tell me briefly why you'd like a refund?`,
+      maxTokens: 80,
+    });
     await sendMessage(
-      `Got it — the ${visitDesc}. Can you tell me briefly why you'd like a refund? ` +
+      `${msgR3opener} ` +
       `(e.g. caregiver no-show, unsatisfactory service, billing error)`
     );
     return;
@@ -154,8 +173,14 @@ export async function handleRefundRequest(
       refundReason: reason,
     });
 
+    const msgR4opener = await generateCaraMessage({
+      audience: "family",
+      context: `Cara is about to ask a family member to confirm their refund request for the visit "${desc}" with reason: "${reason}". Write a warm one-line intro asking them to confirm the details below.`,
+      fallback: `To confirm — you'd like a refund for ${desc} because: "${reason}".`,
+      maxTokens: 80,
+    });
     await sendMessage(
-      `To confirm — you'd like a refund for ${desc} because: "${reason}".\n\n` +
+      `${msgR4opener}\n\nVisit: ${desc}\nReason: "${reason}"\n\n` +
       `Reply YES to submit the request, or NO to cancel.`
     );
     return;
@@ -171,7 +196,13 @@ export async function handleRefundRequest(
     );
 
     if (norm.toUpperCase() !== "YES") {
-      await sendMessage("No problem — refund request cancelled. Let me know if you need anything else.");
+      const msgR5 = await generateCaraMessage({
+        audience: "family",
+        context: "A family member decided to cancel their refund request. Acknowledge the cancellation warmly and let them know Cara is there if they need anything else.",
+        fallback: "No problem — refund request cancelled. Let me know if you need anything else.",
+        maxTokens: 80,
+      });
+      await sendMessage(msgR5);
       await db.collection("agent_sessions").doc(clientId).update({
         refundStep:             admin.firestore.FieldValue.delete(),
         refundAppointmentId:    admin.firestore.FieldValue.delete(),
@@ -202,8 +233,14 @@ export async function handleRefundRequest(
       refundVisitDescription: admin.firestore.FieldValue.delete(),
     });
 
+    const msgR6opener = await generateCaraMessage({
+      audience: "family",
+      context: "A family member just submitted a refund request through Cara. Acknowledge the submission warmly and let them know what happens next.",
+      fallback: "Your refund request has been submitted.",
+      maxTokens: 80,
+    });
     await sendMessage(
-      "Your refund request has been submitted. An admin will review it within 24 hours and you'll hear back via text. " +
+      `${msgR6opener} An admin will review it within 24 hours and you'll hear back via text. ` +
       "If approved, it typically takes 3–5 business days to appear on your statement."
     );
   }

@@ -45,6 +45,7 @@ const permissionsConversation_1 = require("../agents/permissionsConversation");
 const server_1 = require("../mcp/server");
 const memoryFiles_1 = require("../memory/memoryFiles");
 const learnedFacts_1 = require("../memory/learnedFacts");
+const caraMessage_1 = require("../utils/caraMessage");
 const db = admin.firestore();
 let _client = null;
 function getClient() {
@@ -216,10 +217,18 @@ async function runWeeklyDigests() {
             const cgSnap = await db.collection("caregivers").doc(cgSession.caregiverId).get();
             const cgName = (_d = (_c = (_b = cgSnap.data()) === null || _b === void 0 ? void 0 : _b.name) === null || _c === void 0 ? void 0 : _c.split(" ")[0]) !== null && _d !== void 0 ? _d : "there";
             const visitLines = visits.slice(0, 5).map(v => { var _a, _b; return `· ${(_a = v.date) !== null && _a !== void 0 ? _a : "this week"} — $${(((_b = v.amountCents) !== null && _b !== void 0 ? _b : 0) / 100).toFixed(2)}`; }).join("\n");
-            const earningsMsg = `Morning ${cgName}. ${visits.length} visit${visits.length !== 1 ? "s" : ""} this week, ${totalStr} on its way to you.\n\n` +
-                `${visitLines}\n\n` +
-                `That's real work. Thank you for taking care of these families.\n\n` +
-                `Payments hit within 2 business days.`;
+            const earningsMsg = await (0, caraMessage_1.generateCaraMessage)({
+                audience: "caregiver",
+                context: `Caregiver first name: ${cgName}. ` +
+                    `This week's earnings summary: ${visits.length} visit${visits.length !== 1 ? "s" : ""}, ${totalStr} total, on its way. ` +
+                    `Visit breakdown:\n${visitLines}\n` +
+                    "Write a warm morning earnings summary. Express genuine appreciation for the work they do for these families. " +
+                    "Mention that payments hit within 2 business days.",
+                fallback: `Morning ${cgName}. ${visits.length} visit${visits.length !== 1 ? "s" : ""} this week, ${totalStr} on its way to you.\n\n` +
+                    `${visitLines}\n\n` +
+                    `That's real work. Thank you for taking care of these families.\n\n` +
+                    `Payments hit within 2 business days.`,
+            });
             await (0, caraAgent_1.sendViaInteractionAgent)(cgPhone, {
                 content: earningsMsg,
                 urgency: "standard",

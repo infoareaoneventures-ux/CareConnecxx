@@ -37,6 +37,7 @@ exports.runNoVisitCheck = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const caraAgent_1 = require("../agents/caraAgent");
+const caraMessage_1 = require("../utils/caraMessage");
 const db = admin.firestore();
 exports.runNoVisitCheck = functions.pubsub
     .schedule("0 14 * * *") // 9am ET / 14:00 UTC daily
@@ -92,9 +93,19 @@ exports.runNoVisitCheck = functions.pubsub
             const clientPhone = clientSessionSnap.docs[0].id;
             const seniorName = (_a = clientSessionSnap.docs[0].data().seniorName) !== null && _a !== void 0 ? _a : "your loved one";
             const cgName = (_b = schedule.caregiverName) !== null && _b !== void 0 ? _b : "your caregiver";
-            await (0, caraAgent_1.sendViaInteractionAgent)(clientPhone, {
-                content: `Just noticed ${seniorName} hasn't had a visit in the past 7 days. ` +
+            const noVisitMsg = await (0, caraMessage_1.generateCaraMessage)({
+                audience: "family",
+                context: `Senior: ${seniorName}. ` +
+                    (cgName !== "your caregiver" ? `Their regular caregiver: ${cgName}. ` : "") +
+                    `${seniorName} hasn't had a visit in the past 7 days. ` +
+                    "Gently flag this to the family and offer to check the caregiver's availability to book something this week. " +
+                    "Keep it caring and helpful, not alarming.",
+                fallback: `Just noticed ${seniorName} hasn't had a visit in the past 7 days. ` +
                     `Want me to check ${cgName}'s availability and book something this week?`,
+                maxTokens: 80,
+            });
+            await (0, caraAgent_1.sendViaInteractionAgent)(clientPhone, {
+                content: noVisitMsg,
                 urgency: "standard",
                 sourceAgent: "no_visit_check",
                 canDrop: true,

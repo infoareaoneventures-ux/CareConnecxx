@@ -46,6 +46,7 @@ const server_1 = require("../mcp/server");
 const learnedFacts_1 = require("../memory/learnedFacts");
 const memoryFiles_1 = require("../memory/memoryFiles");
 const preferences_1 = require("../memory/preferences");
+const caraMessage_1 = require("../utils/caraMessage");
 let _client = null;
 function getClient() {
     if (!_client)
@@ -213,9 +214,17 @@ async function checkCaregiverWorkloads() {
             const cgPhone = cgData.phone;
             if (!cgPhone)
                 continue;
-            await (0, caraAgent_1.sendViaInteractionAgent)(cgPhone, {
-                content: `You're scheduled for ${Math.round(data.hours)} hours this week — that's a full load. ` +
+            const workloadMsg = await (0, caraMessage_1.generateCaraMessage)({
+                audience: "caregiver",
+                context: `This caregiver is scheduled for ${Math.round(data.hours)} hours this week — that's a heavy load. ` +
+                    "Send them a warm, caring heads-up to pace themselves and take care of their own health. " +
+                    "Let them know they can reply SCHEDULE to see their week. Keep it brief and genuinely caring, not corporate.",
+                fallback: `You're scheduled for ${Math.round(data.hours)} hours this week — that's a full load. ` +
                     `Make sure you're taking care of yourself too. Reply SCHEDULE to see your week.`,
+                maxTokens: 80,
+            });
+            await (0, caraAgent_1.sendViaInteractionAgent)(cgPhone, {
+                content: workloadMsg,
                 urgency: "standard",
                 sourceAgent: "workload_check",
                 canDrop: true,
@@ -316,11 +325,18 @@ async function sendFamilyMorningBriefings(today, apptDocs) {
                     throw new Error("empty");
             }
             catch (_g) {
-                // Fallback template
+                // Fallback via generateCaraMessage
                 const noteLine = topFacts.length > 0
                     ? ` Keep in mind: ${topFacts[0].toLowerCase()}.`
                     : "";
-                content = `Good morning! ${caregiverName} is scheduled to arrive ${schedule} for ${seniorName}.${noteLine}`;
+                content = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "family",
+                    context: `Write a brief morning text to a family member letting them know their caregiver is coming today. ` +
+                        `Caregiver: ${caregiverName}, arriving ${schedule}. Senior: ${seniorName}.` +
+                        (noteLine ? ` Care note: ${noteLine.trim()}` : ""),
+                    fallback: `Good morning! ${caregiverName} is scheduled to arrive ${schedule} for ${seniorName}.${noteLine}`,
+                    maxTokens: 80,
+                });
             }
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
                 content,

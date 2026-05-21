@@ -37,6 +37,7 @@ exports.submitGpsCheckin = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
+const caraMessage_1 = require("../utils/caraMessage");
 const db = admin.firestore();
 function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
     const R = 6371000; // Earth radius in meters
@@ -101,10 +102,14 @@ exports.submitGpsCheckin = functions.https.onCall(async (data, context) => {
         const distStr = withinRadius
             ? `${Math.round(distanceMeters)}m from the address`
             : `${Math.round((distanceMeters / 1000) * 10) / 10}km from the address`;
-        const msg = withinRadius
-            ? `${appt.caregiverName} has arrived for today's visit.`
+        const arrivedMsg = withinRadius
+            ? await (0, caraMessage_1.generateCaraMessage)({
+                audience: "family",
+                context: `Cara is notifying the family that their caregiver ${appt.caregiverName} just arrived for today's visit with their loved one.`,
+                fallback: `${appt.caregiverName} has arrived for today's visit.`,
+            })
             : `${appt.caregiverName} has checked in but appears to be ${distStr}. They may be parking.`;
-        await (0, client_1.sendMessage)(clientSnap.data().chatId, msg);
+        await (0, client_1.sendMessage)(clientSnap.data().chatId, arrivedMsg);
     }
     return {
         validated: withinRadius,

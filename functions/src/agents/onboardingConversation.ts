@@ -8,6 +8,7 @@ import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../no
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
 import { pushOnboardingDataToZep, addBusinessDataToZep, getZepUserId } from "../memory/zepClient";
 import { buildAndSaveJobPost } from "./buildJobPost";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -157,9 +158,16 @@ export async function handleOnboardingStep(
     case "client_ask_schedule":   return handleClientAskSchedule(phone, chatId, text, session);
     case "client_ask_plan":       return handleClientPlanReply(phone, chatId, text, session);
     case "client_send_payment":   return handleClientSendPayment(phone, chatId, session);
-    case "client_awaiting_identity":
-      await sendMessage(chatId, "Still verifying — I'll send your caregiver options as soon as it clears.");
+    case "client_awaiting_identity": {
+      const msgIdentity = await generateCaraMessage({
+        audience: "family",
+        context: "A family member texted Cara while their identity verification is still in progress. Reassure them it's still being verified and that Cara will send their caregiver options as soon as it clears.",
+        fallback: "Still verifying — I'll send your caregiver options as soon as it clears.",
+        maxTokens: 80,
+      });
+      await sendMessage(chatId, msgIdentity);
       return;
+    }
     case "client_awaiting_payment":
       await sendMessage(chatId, "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳");
       return;
@@ -201,9 +209,16 @@ export async function handleOnboardingStep(
       await handleCaregiverResendMembership(phone, chatId, session);
       return;
     case "caregiver_send_bgcheck":    return handleCaregiverSendBgcheck(phone, chatId, session);
-    case "caregiver_awaiting_bgcheck":
-      await sendMessage(chatId, "Your background check is still processing — usually 1–3 days. I'll text you the moment results are in.");
+    case "caregiver_awaiting_bgcheck": {
+      const msgBgcheck = await generateCaraMessage({
+        audience: "caregiver",
+        context: "A caregiver texted Cara while their background check is still processing. Let them know it's still in progress, that it usually takes 1–3 days, and that Cara will text them the moment results are in.",
+        fallback: "Your background check is still processing — usually 1–3 days. I'll text you the moment results are in.",
+        maxTokens: 80,
+      });
+      await sendMessage(chatId, msgBgcheck);
       return;
+    }
     case "caregiver_send_stripe_connect": return handleCaregiverSendStripeConnect(phone, chatId, session);
     case "caregiver_awaiting_stripe":
       await sendMessage(chatId, "Tap the link I sent to set up your payout account so you can get paid after each visit.");
@@ -226,14 +241,24 @@ async function handleAskRole(phone: string, chatId: string, text: string): Promi
   );
   if (raw === "client") {
     await updateSession(phone, { onboardingStep: "client_ask_name", userType: "client" });
-    await sendMessage(chatId, "I'd love to help. What's your name?");
+    const msg1 = await generateCaraMessage({
+      audience: "family",
+      context: "Cara is greeting a new family member who just said they're looking for care for a loved one. Ask for their name warmly.",
+      fallback: "I'd love to help. What's your name?",
+      maxTokens: 80,
+    });
+    await sendMessage(chatId, msg1);
     return;
   }
   if (raw === "caregiver") {
     await updateSession(phone, { onboardingStep: "caregiver_ask_name", userType: "caregiver" });
-    await sendMessage(chatId,
-      "Great — let's get your profile set up. Takes about 5 minutes and everything happens right here.\n\nWhat's your name?"
-    );
+    const msg2 = await generateCaraMessage({
+      audience: "caregiver",
+      context: "Cara is greeting a new caregiver who just said they're looking for work. Let them know profile setup takes about 5 minutes and everything happens right here over text. Then ask for their name.",
+      fallback: "Great — let's get your profile set up. Takes about 5 minutes and everything happens right here.\n\nWhat's your name?",
+      maxTokens: 80,
+    });
+    await sendMessage(chatId, msg2);
     return;
   }
   await sendMessage(chatId,
@@ -262,9 +287,13 @@ async function handleClientAskName(phone: string, chatId: string, text: string, 
   }
   await mergeOnboardingData(phone, { firstName: safeName });
   await updateSession(phone, { onboardingStep: "client_ask_senior" });
-  await sendMessage(chatId,
-    `Nice to meet you, ${safeName}. Who are we caring for?`
-  );
+  const msg3 = await generateCaraMessage({
+    audience: "family",
+    context: `Cara just learned the client's name is ${safeName}. Greet them warmly by name and ask who they're looking for care for (name and relationship to them, e.g. "my mom Dorothy").`,
+    fallback: `Nice to meet you, ${safeName}. Who are we caring for?`,
+    maxTokens: 80,
+  });
+  await sendMessage(chatId, msg3);
 }
 
 async function handleClientAskSenior(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
@@ -287,9 +316,13 @@ async function handleClientAskSenior(phone: string, chatId: string, text: string
 
   await mergeOnboardingData(phone, { seniorName, relationship });
   await updateSession(phone, { onboardingStep: "client_ask_needs" });
-  await sendMessage(chatId,
-    `Got it. How old is ${seniorName}, and what do they need help with these days?`
-  );
+  const msg4 = await generateCaraMessage({
+    audience: "family",
+    context: `Cara is onboarding a family. They just said they're looking for care for ${seniorName} (their ${relationship}). Ask how old ${seniorName} is and what kind of help they need these days.`,
+    fallback: `Got it. How old is ${seniorName}, and what do they need help with these days?`,
+    maxTokens: 80,
+  });
+  await sendMessage(chatId, msg4);
 }
 
 async function handleClientAskNeeds(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
@@ -317,7 +350,13 @@ async function handleClientAskNeeds(phone: string, chatId: string, text: string,
   await mergeOnboardingData(phone, { age, careNeeds, conditions });
   await updateSession(phone, { onboardingStep: "client_ask_location" });
   const seniorName = session.onboardingData?.seniorName;
-  await sendMessage(chatId, `And where does ${seniorName ?? "they"} live?`);
+  const msg5 = await generateCaraMessage({
+    audience: "family",
+    context: `Cara is collecting onboarding info for a family. They just shared care needs for ${seniorName ?? "their loved one"}. Ask what city and zip code ${seniorName ?? "they"} lives in.`,
+    fallback: `And where does ${seniorName ?? "they"} live?`,
+    maxTokens: 80,
+  });
+  await sendMessage(chatId, msg5);
 }
 
 async function handleClientAskLocation(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
@@ -348,9 +387,13 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
   await mergeOnboardingData(phone, { city, zipCode });
   await updateSession(phone, { onboardingStep: "client_ask_schedule" });
   const d = session.onboardingData ?? {};
-  await sendMessage(chatId,
-    `How often does ${d.seniorName ?? "they"} need someone, and what times of day work best?`
-  );
+  const msg6 = await generateCaraMessage({
+    audience: "family",
+    context: `Cara is onboarding a family. They just gave the location where ${d.seniorName ?? "their loved one"} lives. Ask how often ${d.seniorName ?? "they"} needs a caregiver and what times of day work best.`,
+    fallback: `How often does ${d.seniorName ?? "they"} need someone, and what times of day work best?`,
+    maxTokens: 80,
+  });
+  await sendMessage(chatId, msg6);
 }
 
 async function handleClientAskSchedule(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
@@ -520,11 +563,13 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
   }
 
   await updateSession(phone, { onboardingStep: "client_awaiting_payment" });
-  await sendMessage(chatId,
-    `Perfect — I have everything I need to start finding caregivers for ${d.seniorName ?? "your loved one"}.\n\n` +
-    `One last step: add a payment method so caregivers know you're ready to book.\n` +
-    `Takes about 30 seconds:`
-  );
+  const msg7 = await generateCaraMessage({
+    audience: "family",
+    context: `Cara has collected everything needed to start finding caregivers for ${d.seniorName ?? "a loved one"}. Let the family know warmly, then tell them the one last step is to add a payment method so caregivers know they're ready to book, and that it takes about 30 seconds.`,
+    fallback: `Perfect — I have everything I need to start finding caregivers for ${d.seniorName ?? "your loved one"}.\n\nOne last step: add a payment method so caregivers know you're ready to book.\nTakes about 30 seconds:`,
+    maxTokens: 100,
+  });
+  await sendMessage(chatId, msg7);
   await sendMessage(chatId, { parts: [{ type: "link", url: checkoutUrl, value: "💳 Add Payment Method →" }] });
   await sendMessage(chatId, "I'll start searching while you set that up.");
 }
@@ -538,7 +583,13 @@ async function handleCaregiverAskName(phone: string, chatId: string, text: strin
   );
   await mergeOnboardingData(phone, { name });
   await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
-  await sendMessage(chatId, `Hi ${name} — what city and zip code do you work in?`);
+  const msg9 = await generateCaraMessage({
+    audience: "caregiver",
+    context: `Cara just learned the caregiver's name is ${name}. Greet them by name and ask what city and zip code they work in.`,
+    fallback: `Hi ${name} — what city and zip code do you work in?`,
+    maxTokens: 80,
+  });
+  await sendMessage(chatId, msg9);
 }
 
 async function handleCaregiverAskLocation(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
@@ -552,9 +603,14 @@ async function handleCaregiverAskLocation(phone: string, chatId: string, text: s
   await mergeOnboardingData(phone, { city, zipCode });
   await updateSession(phone, { onboardingStep: "caregiver_ask_experience" });
   const d = session.onboardingData ?? {};
+  const msg10intro = await generateCaraMessage({
+    audience: "caregiver",
+    context: `Cara is onboarding caregiver ${d.name ?? ""}. They just shared their city and zip code. Ask how many years of caregiving experience they have and whether they hold any certifications. Keep it warm and encouraging.`,
+    fallback: `Great, ${d.name ?? ""}! How many years of caregiving experience do you have, and do you hold any certifications?`,
+    maxTokens: 80,
+  });
   await sendMessage(chatId,
-    `Great, ${d.name ?? ""}! How many years of caregiving experience do you have, and do you hold any certifications?\n\n` +
-    `For example: "5 years, CNA and CPR" or "2 years, no certifications".`
+    `${msg10intro}\n\nFor example: "5 years, CNA and CPR" or "2 years, no certifications".`
   );
 }
 
@@ -568,9 +624,14 @@ async function handleCaregiverAskExperience(phone: string, chatId: string, text:
 
   await mergeOnboardingData(phone, { yearsExperience, certifications });
   await updateSession(phone, { onboardingStep: "caregiver_ask_specialties" });
+  const msg11intro = await generateCaraMessage({
+    audience: "caregiver",
+    context: "Cara is onboarding a caregiver. They just shared their years of experience and certifications. Ask what types of care they specialize in.",
+    fallback: "What types of care do you specialize in?",
+    maxTokens: 80,
+  });
   await sendMessage(chatId,
-    "What types of care do you specialize in?\n\n" +
-    "For example: dementia, Alzheimer's, mobility assistance, post-surgery, companionship, medication management..."
+    `${msg11intro}\n\nFor example: dementia, Alzheimer's, mobility assistance, post-surgery, companionship, medication management...`
   );
 }
 
@@ -584,7 +645,13 @@ async function handleCaregiverAskSpecialties(phone: string, chatId: string, text
 
   await mergeOnboardingData(phone, { specialties });
   await updateSession(phone, { onboardingStep: "caregiver_ask_availability" });
-  await sendMessage(chatId, "What days and hours are you generally available to work?");
+  const msg12 = await generateCaraMessage({
+    audience: "caregiver",
+    context: "Cara is onboarding a caregiver. They just described their care specialties. Ask what days and hours they're generally available to work.",
+    fallback: "What days and hours are you generally available to work?",
+    maxTokens: 80,
+  });
+  await sendMessage(chatId, msg12);
 }
 
 async function handleCaregiverAskAvailability(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {

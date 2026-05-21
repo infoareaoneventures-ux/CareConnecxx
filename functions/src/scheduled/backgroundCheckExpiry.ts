@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -86,10 +87,20 @@ export const checkBackgroundCheckExpiry = functions.pubsub
             if (!cgSessionSnap.empty) {
               const cgPhone = cgSessionSnap.docs[0].id;
 
-              await sendViaInteractionAgent(cgPhone, {
-                content:
+              const expiredMsg = await generateCaraMessage({
+                audience: "caregiver",
+                context:
+                  "A caregiver's background check has expired. Let them know clearly that new bookings are paused until it's renewed. " +
+                  "Tell them to reply RENEW and you'll send them a new link. " +
+                  "Be direct but not harsh — explain the situation matter-of-factly.",
+                fallback:
                   "Your background check has expired. New bookings are paused until it's renewed. " +
                   "Reply RENEW and I'll send you a new link.",
+                maxTokens: 80,
+              });
+
+              await sendViaInteractionAgent(cgPhone, {
+                content:     expiredMsg,
                 urgency:     "standard",
                 sourceAgent: "bg_check_expiry",
                 canDrop:     false,
@@ -126,10 +137,19 @@ export const checkBackgroundCheckExpiry = functions.pubsub
             if (!cgSessionSnap.empty) {
               const cgPhone = cgSessionSnap.docs[0].id;
 
-              await sendViaInteractionAgent(cgPhone, {
-                content:
+              const expiringMsg = await generateCaraMessage({
+                audience: "caregiver",
+                context:
+                  "A caregiver's background check expires in about 30 days. Give them a heads-up and let them know they should reply RENEW to stay verified and keep getting booked. " +
+                  "Keep the tone proactive and encouraging, not urgent or scary.",
+                fallback:
                   "Your background check expires in about 30 days. " +
                   "Reply RENEW to stay verified and keep getting booked.",
+                maxTokens: 80,
+              });
+
+              await sendViaInteractionAgent(cgPhone, {
+                content:     expiringMsg,
                 urgency:     "standard",
                 sourceAgent: "bg_check_expiry",
                 canDrop:     false,

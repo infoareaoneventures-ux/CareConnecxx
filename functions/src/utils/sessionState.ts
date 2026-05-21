@@ -27,6 +27,12 @@ export const STATE_MACHINE_FLAGS = [
   // Recurring schedule modification flow
   "modifyScheduleStep",
   "modifyScheduleData",
+  // Mid-shift task acknowledgment flow
+  "awaitingTaskAck",
+  // Pre-shift family task check-in
+  "awaitingPreShiftUpdate",
+  // Day-before shift confirmation from caregiver
+  "pendingShiftConfirmation",
   // Caregiver shift swap flow
   "swapStep",
   "swapCandidates",

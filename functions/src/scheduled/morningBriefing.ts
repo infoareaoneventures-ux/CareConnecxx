@@ -6,6 +6,7 @@ import { handlePromptGet } from "../mcp/server";
 import { getRelevantFacts } from "../memory/learnedFacts";
 import { getMemoryContext } from "../memory/memoryFiles";
 import { getPreferences, isInDND } from "../memory/preferences";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 let _client: Anthropic | null = null;
 function getClient(): Anthropic {
@@ -194,10 +195,20 @@ export async function checkCaregiverWorkloads(): Promise<void> {
       const cgPhone = cgData.phone as string | undefined;
       if (!cgPhone) continue;
 
-      await sendViaInteractionAgent(cgPhone, {
-        content:
+      const workloadMsg = await generateCaraMessage({
+        audience: "caregiver",
+        context:
+          `This caregiver is scheduled for ${Math.round(data.hours)} hours this week — that's a heavy load. ` +
+          "Send them a warm, caring heads-up to pace themselves and take care of their own health. " +
+          "Let them know they can reply SCHEDULE to see their week. Keep it brief and genuinely caring, not corporate.",
+        fallback:
           `You're scheduled for ${Math.round(data.hours)} hours this week — that's a full load. ` +
           `Make sure you're taking care of yourself too. Reply SCHEDULE to see your week.`,
+        maxTokens: 80,
+      });
+
+      await sendViaInteractionAgent(cgPhone, {
+        content:     workloadMsg,
         urgency:     "standard",
         sourceAgent: "workload_check",
         canDrop:     true,
@@ -306,11 +317,19 @@ async function sendFamilyMorningBriefings(
         content = ((resp.content[0] as { text: string }).text ?? "").trim();
         if (!content) throw new Error("empty");
       } catch {
-        // Fallback template
+        // Fallback via generateCaraMessage
         const noteLine = topFacts.length > 0
           ? ` Keep in mind: ${topFacts[0].toLowerCase()}.`
           : "";
-        content = `Good morning! ${caregiverName} is scheduled to arrive ${schedule} for ${seniorName}.${noteLine}`;
+        content = await generateCaraMessage({
+          audience: "family",
+          context:
+            `Write a brief morning text to a family member letting them know their caregiver is coming today. ` +
+            `Caregiver: ${caregiverName}, arriving ${schedule}. Senior: ${seniorName}.` +
+            (noteLine ? ` Care note: ${noteLine.trim()}` : ""),
+          fallback: `Good morning! ${caregiverName} is scheduled to arrive ${schedule} for ${seniorName}.${noteLine}`,
+          maxTokens: 80,
+        });
       }
 
       await sendViaInteractionAgent(phone, {

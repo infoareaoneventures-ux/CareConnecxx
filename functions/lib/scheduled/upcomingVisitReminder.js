@@ -37,11 +37,12 @@ exports.upcomingVisitReminder = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const caraAgent_1 = require("../agents/caraAgent");
+const caraMessage_1 = require("../utils/caraMessage");
 const db = admin.firestore();
 exports.upcomingVisitReminder = functions.pubsub
     .schedule("*/30 * * * *")
     .onRun(async () => {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f;
     const now = new Date();
     const nowIso = now.toISOString();
     const plus90min = new Date(now.getTime() + 90 * 60 * 1000).toISOString();
@@ -69,9 +70,19 @@ exports.upcomingVisitReminder = functions.pubsub
                 continue;
             const cgName = ((_b = appt.caregiverName) !== null && _b !== void 0 ? _b : "Your caregiver");
             const time = ((_d = (_c = appt.startTime) !== null && _c !== void 0 ? _c : appt.time) !== null && _d !== void 0 ? _d : "");
-            await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
-                content: `Just a heads up — ${cgName} is confirmed for your ${time} visit today. ` +
+            const seniorName = ((_f = (_e = appt.seniorName) !== null && _e !== void 0 ? _e : appt.clientName) !== null && _f !== void 0 ? _f : "");
+            const reminderMsg = await (0, caraMessage_1.generateCaraMessage)({
+                audience: "family",
+                context: `Send a brief upcoming visit reminder to a family. ` +
+                    `Caregiver: ${cgName}. Visit time: ${time || "today"}.` +
+                    (seniorName ? ` Senior: ${seniorName}.` : "") +
+                    " Let them know the visit is confirmed and to reply CANCEL if plans change.",
+                fallback: `Just a heads up — ${cgName} is confirmed for your ${time} visit today. ` +
                     `Reply CANCEL if plans change and I'll handle it.`,
+                maxTokens: 80,
+            });
+            await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+                content: reminderMsg,
                 urgency: "standard",
                 sourceAgent: "upcoming_visit_reminder",
                 canDrop: false,

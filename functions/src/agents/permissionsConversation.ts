@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import Anthropic from "@anthropic-ai/sdk";
 import { sendMessage, AgentSession } from "../linq/client";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 let _claude: Anthropic | null = null;
 function getClaude(): Anthropic {
@@ -83,12 +84,12 @@ export async function sendClientPermissionsFlow(
     permissionsContext: "client",
   });
 
-  await sendMessage(chatId,
-    `I'm already searching for caregivers for ${d.seniorName ?? "your loved one"}.\n\n` +
-    `Before I send you matches, two quick questions so I know how to best help you.\n\n` +
-    `Can I reach out to caregivers on your behalf to schedule interviews once you select someone?\n\n` +
-    `Reply YES or NO`
-  );
+  const msgPerm1 = await generateCaraMessage({
+    audience: "family",
+    context: `Cara has already started searching for caregivers for ${d.seniorName ?? "a loved one"}. Before sending matches, Cara needs to ask a couple of quick questions. Introduce this warmly and ask if Cara can reach out to caregivers on the family's behalf to schedule interviews once they select someone.`,
+    fallback: `I'm already searching for caregivers for ${d.seniorName ?? "your loved one"}. Before I send you matches, two quick questions so I know how to best help you.\n\nCan I reach out to caregivers on your behalf to schedule interviews once you select someone?`,
+  });
+  await sendMessage(chatId, `${msgPerm1}\n\nReply YES or NO`);
 }
 
 export async function handleClientPermissionsReply(
@@ -108,12 +109,12 @@ export async function handleClientPermissionsReply(
       canScheduleInterviews: isYes,
     });
     await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "client_permissions_booking" });
-    await sendMessage(chatId,
-      `Got it.\n\n` +
-      `Once you've approved a caregiver after an interview, can I book their first visits for you?\n` +
-      `I'll always show you exactly what I'm booking and wait for your confirmation before anything is scheduled.\n\n` +
-      `Reply YES or NO`
-    );
+    const msgPerm2 = await generateCaraMessage({
+      audience: "family",
+      context: "Cara just received the family's answer about scheduling interviews. Acknowledge their reply, then ask: once they've approved a caregiver after an interview, can Cara book the first visits for them? Mention that Cara will always show exactly what's being booked and wait for confirmation before scheduling anything.",
+      fallback: "Got it.\n\nOnce you've approved a caregiver after an interview, can I book their first visits for you? I'll always show you exactly what I'm booking and wait for your confirmation before anything is scheduled.",
+    });
+    await sendMessage(chatId, `${msgPerm2}\n\nReply YES or NO`);
     return;
   }
 
@@ -125,10 +126,13 @@ export async function handleClientPermissionsReply(
       canSendHealthAlerts:       true,
     });
     await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "client_permissions_autobook" });
+    const msgPerm3 = await generateCaraMessage({
+      audience: "family",
+      context: "Cara just received the family's answer about booking visits. Acknowledge, then ask: for recurring visits with a caregiver they've already approved, can Cara book automatically without checking each time?",
+      fallback: "Got it.\n\nOne more thing — for recurring visits with a caregiver you've already approved, can I go ahead and book automatically without checking each time?",
+    });
     await sendMessage(chatId,
-      `Got it.\n\n` +
-      `One more thing — for recurring visits with a caregiver you've already approved, ` +
-      `can I go ahead and book automatically without checking each time?\n\n` +
+      `${msgPerm3}\n\n` +
       `1️⃣ Yes, book automatically\n` +
       `2️⃣ No, always ask me first`
     );
@@ -143,11 +147,12 @@ export async function handleClientPermissionsReply(
       onboardingStep: "complete",
       optedIn:        true,
     });
-    await sendMessage(chatId,
-      `Perfect. I'll handle all the coordination${isYes ? " and book automatically" : " — you make the final calls"}.\n\n` +
-      `I'm still searching for caregivers — I'll text you the top matches within the hour.\n\n` +
-      `Questions? Just text me anytime.`
-    );
+    const msgPerm4 = await generateCaraMessage({
+      audience: "family",
+      context: `Cara just finished the permissions setup for a family. They ${isYes ? "said YES to automatic booking" : "said NO — they want to make final calls themselves"}. Send a warm closing message acknowledging their choice, let them know Cara is still searching and will text the top caregiver matches within the hour, and invite them to text anytime with questions.`,
+      fallback: `Perfect. I'll handle all the coordination${isYes ? " and book automatically" : " — you make the final calls"}.\n\nI'm still searching for caregivers — I'll text you the top matches within the hour.\n\nQuestions? Just text me anytime.`,
+    });
+    await sendMessage(chatId, msgPerm4);
 
     // Kick off matching
     const { runMatchingForClient } = await import("./matchingAgent");
@@ -177,12 +182,12 @@ export async function sendCaregiverPermissionsFlow(
   await db.collection("agent_sessions").doc(phone).update({
     onboardingStep: "caregiver_permissions_decline",
   });
-  await sendMessage(chatId,
-    `A couple of quick questions so I can work best for you, ${caregiverName}:\n\n` +
-    `Can I automatically decline job requests that are outside your stated availability?\n` +
-    `(Saves you time on requests you can't take)\n\n` +
-    `Reply YES or NO`
-  );
+  const msgPerm5 = await generateCaraMessage({
+    audience: "caregiver",
+    context: `Cara is starting the permissions setup for caregiver ${caregiverName}. Ask a couple of quick questions so Cara can work best for them. First question: can Cara automatically decline job requests that are outside their stated availability? Mention it saves them time on requests they can't take.`,
+    fallback: `A couple of quick questions so I can work best for you, ${caregiverName}:\n\nCan I automatically decline job requests that are outside your stated availability?\n(Saves you time on requests you can't take)`,
+  });
+  await sendMessage(chatId, `${msgPerm5}\n\nReply YES or NO`);
 }
 
 export async function handleCaregiverPermissionsReply(
@@ -202,12 +207,12 @@ export async function handleCaregiverPermissionsReply(
       canDeclineJobsAutomatically: isYes,
     });
     await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "caregiver_permissions_arrival" });
-    await sendMessage(chatId,
-      `Got it.\n\n` +
-      `When you arrive at a client's home, want me to automatically notify the family?\n` +
-      `They love knowing their caregiver has arrived.\n\n` +
-      `Reply YES or NO`
-    );
+    const msgPerm6 = await generateCaraMessage({
+      audience: "caregiver",
+      context: "Cara just received a caregiver's answer about auto-declining jobs. Acknowledge it, then ask: when they arrive at a client's home, would they like Cara to automatically notify the family? Families love knowing their caregiver has arrived.",
+      fallback: "Got it.\n\nWhen you arrive at a client's home, want me to automatically notify the family?\nThey love knowing their caregiver has arrived.",
+    });
+    await sendMessage(chatId, `${msgPerm6}\n\nReply YES or NO`);
     return;
   }
 
@@ -225,13 +230,12 @@ export async function handleCaregiverPermissionsReply(
     const name    = d.name    ? `, ${d.name as string}` : "";
     const city    = d.city    ? ` in ${d.city as string}` : "";
 
-    await sendMessage(chatId,
-      `You're all set${name}! 🎉\n\n` +
-      `Your profile is live and you're ready to be matched with families${city}.\n\n` +
-      `When a family needs someone with your skills, I'll text you the job details — ` +
-      `including the care plan and directions before every visit.\n\n` +
-      `View your profile: ${appUrl}/caregiver/${caregiverId}`
-    );
+    const msgPerm7 = await generateCaraMessage({
+      audience: "caregiver",
+      context: `Caregiver ${d.name ? String(d.name) : ""}${city ? ` based${city}` : ""} just completed onboarding and permissions setup. Their profile is now live and they're ready to be matched with families. Celebrate this warmly, let them know what happens next (Cara will text job details when a family needs someone with their skills, including the care plan and directions before every visit).`,
+      fallback: `You're all set${name}! Your profile is live and you're ready to be matched with families${city}.\n\nWhen a family needs someone with your skills, I'll text you the job details — including the care plan and directions before every visit.`,
+    });
+    await sendMessage(chatId, `${msgPerm7}\n\nView your profile: ${appUrl}/caregiver/${caregiverId}`);
 
     // Notify admin for final review
     await db.collection("admin_alerts").add({

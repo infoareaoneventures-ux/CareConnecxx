@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { sendMessage } from "../linq/client";
 import { generateCareMemoryKeepsake } from "./careMemory";
 import { logAudit } from "../observability/auditLog";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -65,10 +66,13 @@ export async function activateBereavementMode(
   }
 
   // 3. Send compassionate opening message
-  await sendMessage(chatId,
-    `I'm so sorry for the loss of ${seniorName}. 💙\n\n` +
-    `Please take all the time you need. I'm here whenever you're ready.`
-  );
+  const condolenceMsg = await generateCaraMessage({
+    audience: "family",
+    context: `Cara just learned that ${seniorName} has passed away. Send heartfelt condolences to the family. The tone should be warm, gentle, and compassionate — not clinical. Cara may use a heart emoji (💙) if appropriate.`,
+    fallback: `I'm so sorry for the loss of ${seniorName}. 💙\n\nPlease take all the time you need. I'm here whenever you're ready.`,
+    maxTokens: 100,
+  });
+  await sendMessage(chatId, condolenceMsg);
 
   // 4. Generate care memory keepsake (non-blocking — takes a moment)
   const seniorSnap = await db.collection("users").doc(userId).get();
@@ -78,14 +82,22 @@ export async function activateBereavementMode(
     .then(async (url) => {
       if (!url) {
         // Keepsake generation failed — send a compassionate fallback so family isn't left in silence.
-        await sendMessage(chatId,
-          `I'll put together a care memory for ${seniorName} — a record of their journey and all the love that surrounded them. I'll send it to you shortly. 💙`
-        ).catch(() => {});
+        const keepsakePromiseMsg = await generateCaraMessage({
+          audience: "family",
+          context: `Cara is promising to create a care memory keepsake for ${seniorName} — a record of their journey and all the love that surrounded them. The tone should be warm, gentle, and compassionate — not clinical. Cara may use a heart emoji (💙) if appropriate.`,
+          fallback: `I'll put together a care memory for ${seniorName} — a record of their journey and all the love that surrounded them. I'll send it to you shortly. 💙`,
+          maxTokens: 100,
+        });
+        await sendMessage(chatId, keepsakePromiseMsg).catch(() => {});
         return;
       }
-      await sendMessage(chatId,
-        `I've put together a care memory for you — a record of ${seniorName}'s journey and all the love that surrounded them. 💙`
-      );
+      const keepsakeDeliveryMsg = await generateCaraMessage({
+        audience: "family",
+        context: `Cara is delivering the care memory keepsake for ${seniorName} — a record of their journey and all the love that surrounded them. The tone should be warm, gentle, and compassionate — not clinical. Cara may use a heart emoji (💙) if appropriate.`,
+        fallback: `I've put together a care memory for you — a record of ${seniorName}'s journey and all the love that surrounded them. 💙`,
+        maxTokens: 100,
+      });
+      await sendMessage(chatId, keepsakeDeliveryMsg);
       await sendMessage(chatId, { parts: [{ type: "link" as const, value: url }] } as any);
     })
     .catch((err) => console.error("bereavement keepsake error:", err));

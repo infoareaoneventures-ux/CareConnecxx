@@ -2,6 +2,7 @@ import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { getJobRecommendationsForCaregiver } from "../agents/jobMatchRecommender";
 import { sendMessage } from "../linq/client";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -43,9 +44,19 @@ export const sendJobMatchNotifications = functions.pubsub
 
         const chatId = cg.chatId ?? cg.phone;
         const top = highMatch[0];
-        const msg =
-          `New job match for you! ${top.careTypes.join(", ")} — ${top.schedule}, ` +
-          `$${top.rate}/hr (${top.matchScore}% match). Reply "jobs" to see details.`;
+        const msg = await generateCaraMessage({
+          audience: "caregiver",
+          context:
+            `A new job came in that's a great match for this caregiver. ` +
+            `Care types: ${top.careTypes.join(", ")}. Schedule: ${top.schedule}. ` +
+            `Rate: $${top.rate}/hr. Match score: ${top.matchScore}%. ` +
+            `Let them know about it and invite them to reply "jobs" to see the details. ` +
+            `Keep the tone excited but natural.`,
+          fallback:
+            `New job match for you! ${top.careTypes.join(", ")} — ${top.schedule}, ` +
+            `$${top.rate}/hr (${top.matchScore}% match). Reply "jobs" to see details.`,
+          maxTokens: 80,
+        });
         await sendMessage(chatId, msg);
         console.log(`[sendJobMatchNotifications] Notified ${cgDoc.id} — ${top.matchScore}% match`);
       } catch (e) {

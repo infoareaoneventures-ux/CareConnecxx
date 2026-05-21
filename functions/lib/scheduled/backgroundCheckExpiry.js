@@ -37,6 +37,7 @@ exports.checkBackgroundCheckExpiry = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const caraAgent_1 = require("../agents/caraAgent");
+const caraMessage_1 = require("../utils/caraMessage");
 const db = admin.firestore();
 // Background checks expire after 2 years (730 days).
 // Warning window: 23–24 months old (30-day warning before expiry).
@@ -105,9 +106,17 @@ exports.checkBackgroundCheckExpiry = functions.pubsub
                         .get();
                     if (!cgSessionSnap.empty) {
                         const cgPhone = cgSessionSnap.docs[0].id;
-                        await (0, caraAgent_1.sendViaInteractionAgent)(cgPhone, {
-                            content: "Your background check has expired. New bookings are paused until it's renewed. " +
+                        const expiredMsg = await (0, caraMessage_1.generateCaraMessage)({
+                            audience: "caregiver",
+                            context: "A caregiver's background check has expired. Let them know clearly that new bookings are paused until it's renewed. " +
+                                "Tell them to reply RENEW and you'll send them a new link. " +
+                                "Be direct but not harsh — explain the situation matter-of-factly.",
+                            fallback: "Your background check has expired. New bookings are paused until it's renewed. " +
                                 "Reply RENEW and I'll send you a new link.",
+                            maxTokens: 80,
+                        });
+                        await (0, caraAgent_1.sendViaInteractionAgent)(cgPhone, {
+                            content: expiredMsg,
                             urgency: "standard",
                             sourceAgent: "bg_check_expiry",
                             canDrop: false,
@@ -138,9 +147,16 @@ exports.checkBackgroundCheckExpiry = functions.pubsub
                         .get();
                     if (!cgSessionSnap.empty) {
                         const cgPhone = cgSessionSnap.docs[0].id;
-                        await (0, caraAgent_1.sendViaInteractionAgent)(cgPhone, {
-                            content: "Your background check expires in about 30 days. " +
+                        const expiringMsg = await (0, caraMessage_1.generateCaraMessage)({
+                            audience: "caregiver",
+                            context: "A caregiver's background check expires in about 30 days. Give them a heads-up and let them know they should reply RENEW to stay verified and keep getting booked. " +
+                                "Keep the tone proactive and encouraging, not urgent or scary.",
+                            fallback: "Your background check expires in about 30 days. " +
                                 "Reply RENEW to stay verified and keep getting booked.",
+                            maxTokens: 80,
+                        });
+                        await (0, caraAgent_1.sendViaInteractionAgent)(cgPhone, {
+                            content: expiringMsg,
                             urgency: "standard",
                             sourceAgent: "bg_check_expiry",
                             canDrop: false,

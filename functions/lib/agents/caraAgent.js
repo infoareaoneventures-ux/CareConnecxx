@@ -63,6 +63,10 @@ const GROUP_SOURCE_AGENTS = new Set([
     "emergency_replacement",
     "arrival_notification",
     "weekly_digest",
+    "shift_end_family_update",
+    "shift_task_family_update",
+    "pre_shift_checkin",
+    "shift_confirm_family_update",
 ]);
 // ── Wait tool — decides whether to send a non-immediate message ───────────────
 async function shouldSend(output, phone, prefs, session) {

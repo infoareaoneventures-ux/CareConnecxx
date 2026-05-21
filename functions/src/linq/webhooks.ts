@@ -34,6 +34,7 @@ import { handleRefundRequest } from "../agents/refundHandler";
 import { handleCaregiverSwapRequest, handleSwapAcceptance } from "../agents/caregiverSwapHandler";
 import { handleClientSwapRequest } from "../agents/clientSwapRequestHandler";
 import { STATE_MACHINE_FLAGS, clearAllStateFlags } from "../utils/sessionState";
+import { generateCaraMessage } from "../utils/caraMessage";
 import { sendIfNotDND } from "../utils/dndGuard";
 import { writeFeedbackSignal } from "../ai/feedback";
 import { handleJobResponse, handleAvailabilityConfirmation } from "../triggers/jobNotifications";
@@ -150,7 +151,12 @@ async function handleArrived(phone: string, chatId: string, session: AgentSessio
     .limit(1).get();
 
   if (snap.empty) {
-    await sendMessage(chatId, "I don't see a scheduled visit for you today. Let me know if something looks wrong.");
+    const noVisitMsg = await generateCaraMessage({
+      audience: "caregiver",
+      context: "Caregiver texted ARRIVED but no active appointment was found for them today. Let them know and invite them to flag if something looks wrong.",
+      fallback: "I don't see a scheduled visit for you today. Let me know if something looks wrong.",
+    });
+    await sendMessage(chatId, noVisitMsg);
     return;
   }
 
@@ -197,7 +203,379 @@ async function handleArrived(phone: string, chatId: string, session: AgentSessio
     }, "high");
   }
 
-  await sendMessage(chatId, "Got it — I've let the family know you're there. Have a good visit.");
+  const arrivedAckMsg = await generateCaraMessage({
+    audience: "caregiver",
+    context: `Caregiver just arrived at the client's home${apptData.clientName ? ` for ${apptData.clientName}` : ""}. The family has been notified. Wish them a good visit.`,
+    fallback: "Got it — I've let the family know you're there. Have a good visit.",
+  });
+  await sendMessage(chatId, arrivedAckMsg);
+
+  // Send caregiver a care plan task overview for the shift (fire-and-forget)
+  sendArrivalCarePlanBriefing(chatId, apptData).catch(() => {});
+}
+
+// ── Day-before shift confirmation handler ────────────────────────────────────
+
+async function handleShiftConfirmation(
+  phone:   string,
+  chatId:  string,
+  text:    string,
+  session: AgentSession
+): Promise<void> {
+  const info = (session as any).pendingShiftConfirmation as {
+    appointmentId:   string;
+    appointmentDate: string;
+    clientId:        string;
+    seniorName:      string;
+    startTime:       string;
+    caregiverName:   string;
+  };
+
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  // Parse YES / NO / question
+  const parseRes = await claude.messages.create({
+    model:      "claude-haiku-4-5-20251001",
+    max_tokens: 10,
+    system:
+      "The caregiver is responding to a shift confirmation request for tomorrow. " +
+      "Reply CONFIRM if they said yes, they'll be there. " +
+      "Reply CANCEL if they said no, they can't make it. " +
+      "Reply QUESTION if it is a question or unclear. " +
+      "Reply with exactly one word.",
+    messages: [{ role: "user", content: text }],
+  }).catch(() => null);
+
+  const decision = ((parseRes?.content[0] as { text: string } | undefined)?.text ?? "")
+    .trim().toUpperCase();
+
+  // Always clear the state flag
+  await db.collection("agent_sessions").doc(phone).update({
+    pendingShiftConfirmation: admin.firestore.FieldValue.delete(),
+    stateExpiresAt:           admin.firestore.FieldValue.delete(),
+  });
+
+  const cgFirstName  = info.caregiverName.split(" ")[0] || "Your caregiver";
+  const displayDate  = (info as any).appointmentDisplay || info.appointmentDate;
+
+  if (decision === "CONFIRM") {
+    await db.collection("appointments").doc(info.appointmentId).update({
+      caregiverDayBeforeConfirmed:   true,
+      caregiverDayBeforeConfirmedAt: new Date().toISOString(),
+    });
+
+    const confirmMsg = await generateCaraMessage({
+      audience: "caregiver",
+      context:
+        `${cgFirstName} just confirmed they'll be at ${info.seniorName}'s shift ` +
+        `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. ` +
+        `Write a warm, brief thank-you confirming you've got them set. Sound genuinely grateful.`,
+      fallback:
+        `You're all set — thanks for confirming, ${cgFirstName}! See you at ${info.seniorName}'s on ${displayDate}.`,
+    });
+    await sendMessage(chatId, confirmMsg);
+
+    // Notify family
+    const clientPhone = await getClientPhoneByClientId(info.clientId);
+    if (clientPhone) {
+      const familyMsg = await generateCaraMessage({
+        audience: "family",
+        context:
+          `${cgFirstName} just confirmed they'll be at ${info.seniorName}'s care visit ` +
+          `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. ` +
+          `Write a warm, reassuring message letting the family know everything's confirmed. ` +
+          `Sound like a coordinator who genuinely cares about their peace of mind.`,
+        fallback:
+          `Great news! ${cgFirstName} has confirmed they'll be there for ${info.seniorName}'s visit ` +
+          `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. You're all set — no action needed!`,
+      });
+      await sendViaInteractionAgent(clientPhone, {
+        content:     familyMsg,
+        urgency:     "standard",
+        sourceAgent: "shift_confirm_family_update",
+        canDrop:     true,
+      });
+    }
+
+  } else if (decision === "CANCEL") {
+    await db.collection("appointments").doc(info.appointmentId).update({
+      caregiverDayBeforeCancelled:   true,
+      caregiverDayBeforeCancelledAt: new Date().toISOString(),
+    });
+
+    const cancelMsg = await generateCaraMessage({
+      audience: "caregiver",
+      context:
+        `${cgFirstName} just let you know they can't make ${info.seniorName}'s shift on ${displayDate}. ` +
+        `Write a brief, understanding response — acknowledge the situation without judgment, ` +
+        `let them know the family will be notified and you'll take care of it from here. ` +
+        `Be warm, not cold.`,
+      fallback:
+        `Understood, ${cgFirstName} — I'll let the family know and start working on coverage for ${displayDate}. ` +
+        `I appreciate you letting me know ahead of time.`,
+    });
+    await sendMessage(chatId, cancelMsg);
+
+    // Alert family with urgency
+    const clientPhone = await getClientPhoneByClientId(info.clientId);
+    if (clientPhone) {
+      const alertMsg = await generateCaraMessage({
+        audience: "family",
+        context:
+          `Unfortunately ${cgFirstName} just let us know they can't make ${info.seniorName}'s visit ` +
+          `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. ` +
+          `Write an urgent but calm message to the family alerting them. ` +
+          `Let them know we're already working on finding a replacement. ` +
+          `Tell them to reply HELP if they need immediate support. ` +
+          `Be direct but not alarming — this is being handled.`,
+        fallback:
+          `Heads up — ${cgFirstName} won't be able to make ${info.seniorName}'s visit on ${displayDate}. ` +
+          `I'm already working on finding coverage. Reply HELP if you need anything in the meantime.`,
+      });
+      await sendViaInteractionAgent(clientPhone, {
+        content:     alertMsg,
+        urgency:     "immediate",
+        sourceAgent: "shift_confirm_family_update",
+        canDrop:     false,
+      });
+    }
+
+    // Trigger replacement agent (fire-and-forget)
+    import("../agents/replacementAgent").then(({ findReplacement }) => {
+      if (typeof findReplacement === "function") {
+        findReplacement({
+          appointmentId: info.appointmentId,
+          clientId:      info.clientId,
+          date:          info.appointmentDate,
+          startTime:     info.startTime,
+          seniorName:    info.seniorName,
+        } as any).catch(() => {});
+      }
+    }).catch(() => {});
+
+  } else {
+    // QUESTION or unclear — let caraAgent answer, then re-ask
+    await sendViaInteractionAgent(phone, {
+      content:     text,
+      urgency:     "standard",
+      sourceAgent: "shift_confirm_question",
+      canDrop:     true,
+    });
+    // Re-set the flag and re-ask
+    await db.collection("agent_sessions").doc(phone).update({
+      pendingShiftConfirmation: info,
+      stateExpiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+    });
+    await sendMessage(chatId,
+      `By the way — can you confirm you'll be at ${info.seniorName}'s shift on ${info.appointmentDate}? Reply YES or NO.`
+    );
+  }
+}
+
+// ── Pre-shift family task check-in handler ───────────────────────────────────
+
+async function handlePreShiftUpdate(
+  phone:   string,
+  chatId:  string,
+  text:    string,
+  session: AgentSession
+): Promise<void> {
+  const info = (session as any).awaitingPreShiftUpdate as {
+    appointmentId: string;
+    caregiverName: string;
+    seniorName:    string;
+  };
+
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  // isQuestionOrOther check — CLAUDE.md requirement
+  const questionRes = await claude.messages.create({
+    model:      "claude-haiku-4-5-20251001",
+    max_tokens: 5,
+    system:
+      "Is this message a question unrelated to adding care tasks, or is it about something completely different? " +
+      "Reply only YES or NO.",
+    messages: [{ role: "user", content: text }],
+  }).catch(() => null);
+
+  const isQuestion = ((questionRes?.content[0] as { text: string } | undefined)?.text ?? "")
+    .trim().toUpperCase().startsWith("Y");
+
+  if (isQuestion) {
+    await sendViaInteractionAgent(phone, {
+      content:     text,
+      urgency:     "standard",
+      sourceAgent: "pre_shift_question",
+      canDrop:     true,
+    });
+    await sendMessage(chatId,
+      `By the way — did you want to add any tasks for ${info.seniorName}'s visit today?`
+    );
+    return;
+  }
+
+  // Parse action: decline or new tasks
+  const parseRes = await claude.messages.create({
+    model:      "claude-haiku-4-5-20251001",
+    max_tokens: 200,
+    system:
+      "The family was asked if they want to add tasks to today's care visit. " +
+      "Extract their response. Reply JSON only: " +
+      '{"action":"decline"|"addTasks","tasks":["task description 1","task description 2"]}. ' +
+      '"decline" means they said no, nothing to add, or the plan is fine. ' +
+      '"addTasks" means they listed one or more things they want done.',
+    messages: [{ role: "user", content: text }],
+  }).catch(() => null);
+
+  let action = "decline";
+  let tasks: string[] = [];
+  try {
+    const raw    = (parseRes?.content[0] as { text: string } | undefined)?.text ?? "{}";
+    const parsed = JSON.parse(raw);
+    action = (parsed.action ?? "decline") as string;
+    tasks  = Array.isArray(parsed.tasks) ? (parsed.tasks as string[]).filter(Boolean) : [];
+  } catch { /* default to decline */ }
+
+  // Clear state regardless of action
+  await db.collection("agent_sessions").doc(phone).update({
+    awaitingPreShiftUpdate: admin.firestore.FieldValue.delete(),
+    stateExpiresAt:         admin.firestore.FieldValue.delete(),
+  });
+
+  if (action === "addTasks" && tasks.length > 0) {
+    // Store on the appointment as dayOfVisitTasks
+    await db.collection("appointments").doc(info.appointmentId).update({
+      dayOfVisitTasks: admin.firestore.FieldValue.arrayUnion(...tasks),
+    });
+
+    const cgFirstName = info.caregiverName.split(" ")[0] || info.caregiverName;
+    const taskList    = tasks.map(t => `• ${t}`).join("\n");
+    const addMsg = await generateCaraMessage({
+      audience: "family",
+      context:
+        `The family just added ${tasks.length} task${tasks.length > 1 ? "s" : ""} to ` +
+        `${info.seniorName}'s care visit today: ${tasks.join(", ")}. ` +
+        `${cgFirstName} will be notified when they check in. ` +
+        `Write a warm 2-sentence confirmation back to the family. ` +
+        `List what was added and reassure them ${cgFirstName} will have it.`,
+      fallback:
+        `Got it — I've added ${tasks.length === 1 ? "that" : "those"} to today's plan:\n\n` +
+        `${taskList}\n\n` +
+        `${cgFirstName} will see ${tasks.length === 1 ? "it" : "them"} when they check in.`,
+    });
+    await sendMessage(chatId, addMsg);
+  } else {
+    const declineMsg = await generateCaraMessage({
+      audience: "family",
+      context:
+        `The family said no additional tasks for ${info.seniorName}'s care visit today — ` +
+        `the regular care plan is all set. Write a brief, warm 1-sentence confirmation back to them.`,
+      fallback: `Perfect — the regular care plan is all set for today's visit!`,
+      maxTokens: 60,
+    });
+    await sendMessage(chatId, declineMsg);
+  }
+}
+
+// ── Care plan briefing sent to caregiver at arrival ───────────────────────────
+
+async function sendArrivalCarePlanBriefing(
+  chatId:   string,
+  apptData: admin.firestore.DocumentData
+): Promise<void> {
+  const clientId = (apptData.clientId ?? "") as string;
+  const seniorId = (apptData.seniorId ?? clientId) as string;
+  const seniorName = (apptData.clientName ?? "your client") as string;
+
+  // Load care plan (same dual-path as shiftTaskNudges)
+  let dailyRoutine: Array<{ id: string; time: string; description: string; category: string }> = [];
+  let medications:  Array<{ name: string; dosage: string; frequency: string }> = [];
+
+  for (const [collection, docId] of [
+    ["senior_profiles", seniorId],
+    ["senior_profiles", clientId],
+  ] as [string, string][]) {
+    if (!docId) continue;
+    const snap = await db.collection(collection).doc(docId)
+      .collection("care_plans").doc("default").get().catch(() => null);
+    if (snap?.exists) {
+      const d = snap.data()!;
+      dailyRoutine = (d.dailyRoutine ?? []) as typeof dailyRoutine;
+      medications  = (d.medications  ?? []) as typeof medications;
+      break;
+    }
+  }
+  if (!dailyRoutine.length && !medications.length) {
+    // Try legacy flat collection
+    const snap = await db.collection("care_plans").doc(clientId).get().catch(() => null);
+    if (snap?.exists) {
+      const d = snap.data()!;
+      dailyRoutine = (d.dailyRoutine ?? []) as typeof dailyRoutine;
+      medications  = (d.medications  ?? []) as typeof medications;
+    }
+  }
+
+  // Day-of tasks added by family (via pre-shift check-in)
+  const dayOfVisitTasks = (apptData.dayOfVisitTasks ?? []) as string[];
+
+  if (!dailyRoutine.length && !medications.length && !dayOfVisitTasks.length) return;
+
+  // Sort tasks by time (unparseable times go to end)
+  const sorted = [...dailyRoutine].sort((a, b) => {
+    const toMin = (t: string): number => {
+      const m = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (m) {
+        let h = parseInt(m[1], 10);
+        if (m[3].toUpperCase() === "AM" && h === 12) h = 0;
+        if (m[3].toUpperCase() === "PM" && h !== 12) h += 12;
+        return h * 60 + parseInt(m[2], 10);
+      }
+      const h24 = t.match(/^(\d{1,2}):(\d{2})$/);
+      return h24 ? parseInt(h24[1], 10) * 60 + parseInt(h24[2], 10) : 9999;
+    };
+    return toMin(a.time) - toMin(b.time);
+  });
+
+  const lines = sorted.map(t => `• ${t.time} — ${t.description}`);
+
+  if (medications.length > 0) {
+    const medLine = medications
+      .slice(0, 3)
+      .map(m => `${m.name} ${m.dosage} (${m.frequency})`)
+      .join(", ");
+    lines.push(`\nMedications: ${medLine}`);
+  }
+
+  // Day-of tasks added by family today (highest priority — show first)
+  let dayOfSection = "";
+  if (dayOfVisitTasks.length > 0) {
+    const dayOfLines = dayOfVisitTasks.map(t => `• ${t}`).join("\n");
+    dayOfSection = `Added for today's visit by the family:\n${dayOfLines}\n\n`;
+  }
+
+  const planSection = lines.length > 0
+    ? `Regular care plan:\n${lines.join("\n")}`
+    : "";
+
+  const cgFirstName = ((apptData.caregiverName ?? "") as string).split(" ")[0] || "there";
+  const opening = await generateCaraMessage({
+    audience: "caregiver",
+    context:
+      `Write one warm, brief opening line (1 sentence) welcoming ${cgFirstName} to ${seniorName}'s visit. ` +
+      `${dayOfVisitTasks.length > 0 ? "Mention there are some family additions to the plan today." : "Keep it encouraging."}`,
+    fallback: `You're checked in — here's the plan for ${seniorName}'s visit today!`,
+    maxTokens: 60,
+  });
+
+  const body =
+    `${opening}\n\n` +
+    dayOfSection +
+    planSection +
+    `\n\nReply DONE when the visit is complete, or ISSUE if anything comes up.`;
+
+  await sendMessage(chatId, body);
 }
 
 async function handleDone(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -211,6 +589,8 @@ async function handleDone(phone: string, chatId: string, session: AgentSession):
     .where("status",      "==", "in-progress")
     .limit(1).get();
 
+  const apptData = snap.empty ? null : snap.docs[0].data();
+
   if (!snap.empty) {
     await snap.docs[0].ref.update({ completedAt: new Date().toISOString() });
   }
@@ -222,9 +602,30 @@ async function handleDone(phone: string, chatId: string, session: AgentSession):
     stateExpiresAt:    new Date(Date.now() + 30 * 60 * 1000).toISOString(),
   });
 
-  await sendMessage(chatId,
-    "How did the visit go? Tell me in your own words — I'll handle the notes."
-  );
+  const seniorName  = (apptData?.clientName ?? apptData?.seniorName ?? "your client") as string;
+  const cgFirstName = session.caregiverId
+    ? ((await db.collection("caregivers").doc(session.caregiverId).get().catch(() => null))
+        ?.data()?.name ?? "").split(" ")[0]
+    : "";
+
+  const doneMessage = await generateCaraMessage({
+    audience: "caregiver",
+    context:
+      `${cgFirstName ? cgFirstName + " just" : "The caregiver just"} finished their shift with ${seniorName}. ` +
+      `Write a warm, celebratory wrap-up message asking them to share how the visit went. ` +
+      `Ask them to mention: what they did with ${seniorName}, how ${seniorName} was feeling/acting, ` +
+      `notes on any tasks completed, and anything ${seniorName} asked for that wasn't in the regular plan. ` +
+      `Tell them you'll put together a nice update for the family. ` +
+      `Sound genuinely appreciative of their work — like a coordinator who cares.`,
+    fallback:
+      `Amazing work today${cgFirstName ? ", " + cgFirstName : ""}! 🙌 ` +
+      `Before I send the family an update — tell me how it went with ${seniorName}. ` +
+      `What did you two get up to, how was ${seniorName} feeling, and anything special to note? ` +
+      `I'll take it from there.`,
+    maxTokens: 200,
+  });
+
+  await sendMessage(chatId, doneMessage);
 }
 
 async function handleRunningLate(phone: string, chatId: string): Promise<void> {
@@ -232,7 +633,13 @@ async function handleRunningLate(phone: string, chatId: string): Promise<void> {
     awaitingLateMinutes: true,
     stateExpiresAt:      new Date(Date.now() + 30 * 60 * 1000).toISOString(),
   });
-  await sendMessage(chatId, "How late do you think you'll be?");
+  const howLateMsg = await generateCaraMessage({
+    audience: "caregiver",
+    context: "Caregiver said they're running late. Cara is asking how late they expect to be.",
+    fallback: "How late do you think you'll be?",
+    maxTokens: 60,
+  });
+  await sendMessage(chatId, howLateMsg);
 }
 
 async function handleIssue(phone: string, chatId: string): Promise<void> {
@@ -240,7 +647,13 @@ async function handleIssue(phone: string, chatId: string): Promise<void> {
     awaitingIssueDescription: true,
     stateExpiresAt:           new Date(Date.now() + 30 * 60 * 1000).toISOString(),
   });
-  await sendMessage(chatId, "I'm sorry to hear that. Can you describe what's happening?");
+  const issuePromptMsg = await generateCaraMessage({
+    audience: "caregiver",
+    context: "Caregiver reported an issue during a visit. Cara is asking them to describe what's happening.",
+    fallback: "I'm sorry to hear that. Can you describe what's happening?",
+    maxTokens: 80,
+  });
+  await sendMessage(chatId, issuePromptMsg);
 }
 
 async function getClientPhoneForAppt(appt: admin.firestore.DocumentData): Promise<string | null> {
@@ -250,6 +663,288 @@ async function getClientPhoneForAppt(appt: admin.firestore.DocumentData): Promis
     .where("userId", "==", clientId).limit(1).get();
   if (snap.empty) return null;
   return (snap.docs[0].data() as any).phone ?? snap.docs[0].id;
+}
+
+async function getClientPhoneByClientId(clientId: string): Promise<string | null> {
+  if (!clientId) return null;
+  const snap = await db.collection("agent_sessions")
+    .where("userId", "==", clientId).limit(1).get();
+  if (snap.empty) return null;
+  return (snap.docs[0].data() as any).phone ?? snap.docs[0].id;
+}
+
+// ── Mid-shift family micro-update (task completed) ────────────────────────────
+
+async function sendFamilyTaskUpdate(params: {
+  taskDescription: string;
+  taskCategory:    string;
+  notes:           string;
+  clientId:        string;
+  seniorId:        string;
+  clientPhone:     string;
+  caregiverId:     string;
+}): Promise<void> {
+  const { taskDescription, taskCategory, notes, clientId, seniorId, clientPhone, caregiverId } = params;
+
+  // Resolve names
+  let seniorName = "";
+  if (seniorId) {
+    const snap = await db.collection("senior_profiles").doc(seniorId).get().catch(() => null);
+    seniorName = (snap?.data()?.name ?? "") as string;
+  }
+  if (!seniorName && clientId) {
+    const snap = await db.collection("users").doc(clientId).get().catch(() => null);
+    seniorName = (snap?.data()?.seniorName ?? "") as string;
+  }
+  if (!seniorName) seniorName = "your loved one";
+
+  let cgFirstName = "";
+  if (caregiverId) {
+    const snap = await db.collection("caregivers").doc(caregiverId).get().catch(() => null);
+    const name = (snap?.data()?.name ?? "") as string;
+    cgFirstName = name.split(" ")[0] || name;
+  }
+  if (!cgFirstName) cgFirstName = "Your caregiver";
+
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  let content: string;
+  try {
+    const resp = await claude.messages.create({
+      model:      "claude-haiku-4-5-20251001",
+      max_tokens: 120,
+      system:
+        "You write a brief 1-2 sentence real-time care update for a family member.\n" +
+        "Tone: warm, direct, reassuring. From Cara (a care coordinator), not the caregiver.\n" +
+        "Keep it short — this is a mid-shift task update. No emoji. Output only the message text.",
+      messages: [{
+        role:    "user",
+        content:
+          `Task just completed: ${taskDescription}\n` +
+          `Category: ${taskCategory}\n` +
+          `Caregiver notes: ${notes || "no additional notes"}\n` +
+          `Senior: ${seniorName}\n` +
+          `Caregiver: ${cgFirstName}`,
+      }],
+    });
+    content = ((resp.content[0] as { text: string }).text ?? "").trim();
+    if (!content) throw new Error("empty");
+  } catch {
+    content = `${cgFirstName} just completed ${taskDescription} for ${seniorName}.${notes ? " " + notes : ""}`;
+  }
+
+  await sendViaInteractionAgent(clientPhone, {
+    content,
+    urgency:     "standard",
+    sourceAgent: "shift_task_family_update",
+    canDrop:     true,
+  });
+}
+
+// ── Shift-end family update (after care notes parsed) ────────────────────────
+
+async function sendFamilyShiftEndUpdate(params: {
+  caregiverName: string;
+  clientId:      string;
+  seniorId:      string;
+  apptData:      admin.firestore.DocumentData | null;
+  entry:         Record<string, unknown>;
+}): Promise<void> {
+  const { caregiverName, clientId, seniorId, apptData, entry } = params;
+
+  const clientPhone = await getClientPhoneByClientId(clientId);
+  if (!clientPhone) return;
+
+  // Resolve senior name
+  let seniorName = (apptData?.clientName ?? "") as string;
+  if (!seniorName && seniorId) {
+    const snap = await db.collection("senior_profiles").doc(seniorId).get().catch(() => null);
+    seniorName = (snap?.data()?.name ?? "") as string;
+  }
+  if (!seniorName) seniorName = "your loved one";
+
+  const cgFirstName        = caregiverName.split(" ")[0] || caregiverName;
+  const mood               = (entry.mood               ?? "")  as string;
+  const appetite           = (entry.appetite           ?? "")  as string;
+  const activities         = (entry.activities         ?? [])  as string[];
+  const observations       = (entry.observations       ?? "")  as string;
+  const notes              = (entry.notes              ?? "")  as string;
+  const unplannedActivities = (entry.unplannedActivities ?? []) as string[];
+  const taskNotes          = (entry.taskNotes          ?? "")  as string;
+
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  let content: string;
+  try {
+    const unplannedLine = unplannedActivities.length > 0
+      ? `Unplanned activities (requested by senior): ${unplannedActivities.join(", ")}`
+      : "No unplanned activities";
+
+    const resp = await claude.messages.create({
+      model:      "claude-haiku-4-5-20251001",
+      max_tokens: 280,
+      system:
+        "You write a warm, personal text message to a family member after their loved one's care visit.\n" +
+        "Tone: warm and reassuring, like a trusted care coordinator. From Cara, not the caregiver.\n" +
+        "Structure: 1) Start with the visit wrapping up and overall mood/meals. " +
+        "2) Mention planned tasks completed with any notes. " +
+        "3) If the senior asked for anything outside the plan, mention it clearly. " +
+        "4) End with whether there are any concerns.\n" +
+        "Keep it to 4-5 sentences. No bullet points. No emoji. Output only the message text, no greeting or sign-off.",
+      messages: [{
+        role:    "user",
+        content:
+          `Senior: ${seniorName}\n` +
+          `Caregiver: ${cgFirstName}\n` +
+          `Mood: ${mood || "not reported"}\n` +
+          `Appetite: ${appetite || "not reported"}\n` +
+          `Activities completed: ${activities.length > 0 ? activities.join(", ") : "not reported"}\n` +
+          `Notes on completed tasks: ${taskNotes || "none"}\n` +
+          `${unplannedLine}\n` +
+          `Observations: ${observations || "none"}\n` +
+          `Additional notes: ${notes || "none"}`,
+      }],
+    });
+    content = ((resp.content[0] as { text: string }).text ?? "").trim();
+    if (!content) throw new Error("empty");
+  } catch {
+    const moodLine      = mood       ? ` ${seniorName} was in a ${mood} mood.` : "";
+    const ateLine       = appetite   ? ` Appetite was ${appetite}.` : "";
+    const actLine       = activities.length > 0 ? ` Activities: ${activities.slice(0, 2).join(" and ")}.` : "";
+    const unplannedNote = unplannedActivities.length > 0
+      ? ` ${seniorName} also asked for: ${unplannedActivities.join(", ")}.`
+      : "";
+    const obsLine       = observations ? ` ${observations}` : "";
+    content =
+      `${cgFirstName} just finished their visit with ${seniorName}.` +
+      moodLine + ateLine + actLine + unplannedNote + obsLine +
+      " No concerns to flag.";
+  }
+
+  await sendViaInteractionAgent(clientPhone, {
+    content,
+    urgency:     "standard",
+    sourceAgent: "shift_end_family_update",
+    canDrop:     true,
+  });
+}
+
+// ── Task acknowledgment handler ───────────────────────────────────────────────
+
+async function handleTaskAck(
+  phone:   string,
+  chatId:  string,
+  text:    string,
+  session: AgentSession
+): Promise<void> {
+  const taskInfo = (session as any).awaitingTaskAck as {
+    taskId:          string;
+    taskDescription: string;
+    taskCategory:    string;
+    appointmentId:   string;
+    clientId:        string;
+    seniorId:        string;
+    seniorName:      string;
+  };
+
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  // isQuestionOrOther check — CLAUDE.md requirement
+  const questionRes = await claude.messages.create({
+    model:      "claude-haiku-4-5-20251001",
+    max_tokens: 5,
+    system:
+      "Is this message a question or completely unrelated to completing a care task? " +
+      "Reply only YES or NO.",
+    messages: [{ role: "user", content: text }],
+  }).catch(() => null);
+
+  const isQuestion = ((questionRes?.content[0] as { text: string } | undefined)?.text ?? "")
+    .trim().toUpperCase().startsWith("Y");
+
+  if (isQuestion) {
+    // Let the normal caraAgent handle the question, then re-ask about the task
+    await sendViaInteractionAgent(phone, {
+      content:     text,
+      urgency:     "standard",
+      sourceAgent: "task_ack_question",
+      canDrop:     true,
+    });
+    await sendMessage(chatId, `By the way — did you complete ${taskInfo.taskDescription}?`);
+    return;
+  }
+
+  // Parse completion + any brief notes
+  const ackRes = await claude.messages.create({
+    model:      "claude-haiku-4-5-20251001",
+    max_tokens: 80,
+    system:
+      "Did the caregiver confirm completing the task? Also extract any brief notes about how it went. " +
+      'Reply JSON only: {"completed":"YES"|"NO"|"UNCLEAR","notes":"brief detail or empty string"}',
+    messages: [{ role: "user", content: text }],
+  }).catch(() => null);
+
+  let completed = true; // default to trusting the caregiver
+  let notes = "";
+  try {
+    const raw = (ackRes?.content[0] as { text: string } | undefined)?.text ?? "{}";
+    const parsed = JSON.parse(raw);
+    completed = (parsed.completed ?? "YES") !== "NO";
+    notes = ((parsed.notes ?? "") as string).trim();
+  } catch { /* keep defaults */ }
+
+  if (completed) {
+    // Mark task done on appointment doc
+    await db.collection("appointments").doc(taskInfo.appointmentId).update({
+      completedTaskIds: admin.firestore.FieldValue.arrayUnion(taskInfo.taskId),
+    }).catch(() => {});
+
+    // Send family micro-update
+    const clientPhone = await getClientPhoneByClientId(taskInfo.clientId);
+    if (clientPhone) {
+      sendFamilyTaskUpdate({
+        taskDescription: taskInfo.taskDescription,
+        taskCategory:    taskInfo.taskCategory,
+        notes,
+        clientId:    taskInfo.clientId,
+        seniorId:    taskInfo.seniorId,
+        clientPhone,
+        caregiverId: session.caregiverId ?? "",
+      }).catch(err => console.error("[handleTaskAck] sendFamilyTaskUpdate error:", err));
+    }
+
+    const ackMsg = await generateCaraMessage({
+      audience: "caregiver",
+      context: notes
+        ? `The caregiver just confirmed completing "${taskInfo.taskDescription}" for ${taskInfo.seniorName} ` +
+          `and added a brief note: "${notes}". Write a warm 1-sentence acknowledgment — thank them and ` +
+          `mention you'll pass the update along to the family.`
+        : `The caregiver just confirmed completing "${taskInfo.taskDescription}" for ${taskInfo.seniorName}. ` +
+          `Write a warm, brief 1-sentence acknowledgment.`,
+      fallback: notes ? `Got it — I'll let the family know!` : `Got it — great work!`,
+      maxTokens: 60,
+    });
+    await sendMessage(chatId, ackMsg);
+  } else {
+    const notDoneMsg = await generateCaraMessage({
+      audience: "caregiver",
+      context: `The caregiver said they haven't completed "${taskInfo.taskDescription}" for ` +
+        `${taskInfo.seniorName} yet. Write a gentle, understanding 1-sentence reply — ` +
+        `no pressure, Cara will follow up with them again soon.`,
+      fallback: `No worries — I'll check back with you soon!`,
+      maxTokens: 60,
+    });
+    await sendMessage(chatId, notDoneMsg);
+  }
+
+  // Clear state
+  await db.collection("agent_sessions").doc(phone).update({
+    awaitingTaskAck: admin.firestore.FieldValue.delete(),
+    stateExpiresAt:  admin.firestore.FieldValue.delete(),
+  });
 }
 
 // ── Caregiver voice/text → structured journal ─────────────────────────────────
@@ -270,7 +965,7 @@ async function handleCareNotes(
       "Convert this caregiver note into a structured care journal entry. " +
       'Reply in JSON: {"overallWellness":1,"mood":"happy|neutral|agitated|confused|tired",' +
       '"appetite":"good|fair|poor|refused","activities":[],"medications":[],' +
-      '"observations":"","notes":""}',
+      '"observations":"","notes":"","unplannedActivities":[],"taskNotes":""}',
     messages: [{ role: "user", content: text }],
   });
 
@@ -295,7 +990,13 @@ async function handleCareNotes(
     const validStatuses = ["in-progress", "completed", "confirmed"];
     if (apptData && !validStatuses.includes(apptData.status ?? "")) {
       await db.collection("agent_sessions").doc(phone).update({ awaitingCareNotes: false, careNotesApptId: "" });
-      await sendMessage(chatId, "I wasn't able to save those notes — it looks like that visit was cancelled.");
+      const cancelledNotesMsg = await generateCaraMessage({
+        audience: "caregiver",
+        context: "Caregiver submitted care notes but the visit was cancelled so notes cannot be saved. Let them know apologetically.",
+        fallback: "I wasn't able to save those notes — it looks like that visit was cancelled.",
+        maxTokens: 80,
+      });
+      await sendMessage(chatId, cancelledNotesMsg);
       return;
     }
 
@@ -334,7 +1035,13 @@ async function handleCareNotes(
 
     if (alreadyExists) {
       await db.collection("agent_sessions").doc(phone).update({ awaitingCareNotes: false, careNotesApptId: "" });
-      await sendMessage(chatId, "Notes for this visit are already saved.");
+      const notesAlreadySavedMsg = await generateCaraMessage({
+        audience: "caregiver",
+        context: "Caregiver tried to submit notes but notes for this visit are already saved. Let them know briefly.",
+        fallback: "Notes for this visit are already saved.",
+        maxTokens: 60,
+      });
+      await sendMessage(chatId, notesAlreadySavedMsg);
       return;
     }
   } else {
@@ -365,6 +1072,18 @@ async function handleCareNotes(
     : null;
   const durationHours = apptSnap?.data()?.durationHours ?? 4;
   const pay = (hourlyRate * durationHours).toFixed(2);
+
+  // Fire shift-end family update (fire-and-forget — alreadyExists early-returns above, so if we
+  // reach here the journal entry was newly written)
+  if (apptId && clientId) {
+    sendFamilyShiftEndUpdate({
+      caregiverName: cgSnap.data()?.name ?? "Your caregiver",
+      clientId,
+      seniorId,
+      apptData:      apptSnap?.data() ?? null,
+      entry,
+    }).catch(err => console.error("[handleCareNotes] family update error:", err));
+  }
 
   // Fire visit billing (fire-and-forget so it doesn't block caregiver confirmation)
   if (apptId && clientId) {
@@ -931,7 +1650,13 @@ async function handleInbound(event: unknown): Promise<void> {
     }
     if (isExit) {
       await db.collection("agent_sessions").doc(phone).update({ bereavementMode: admin.firestore.FieldValue.delete() });
-      await sendMessage(chatId, "Of course. I'm here whenever you need me. What can I help you with?");
+      const bereavementExitMsg = await generateCaraMessage({
+        audience: "family",
+        context: "Family asked to exit bereavement support mode. Cara is gently transitioning back to normal and offering help.",
+        fallback: "Of course. I'm here whenever you need me. What can I help you with?",
+        maxTokens: 80,
+      });
+      await sendMessage(chatId, bereavementExitMsg);
     } else {
       // After 30 days, gently offer to resume — don't trap them forever
       const activatedAt = (session as any).bereavementActivatedAt as string | undefined;
@@ -939,11 +1664,21 @@ async function handleInbound(event: unknown): Promise<void> {
         ? (Date.now() - new Date(activatedAt).getTime()) / (1000 * 60 * 60 * 24)
         : 0;
       if (daysSince > 30) {
-        await sendMessage(chatId,
-          "I'm here with you. 💙 Whenever you're ready to arrange care again, just let me know."
-        );
+        const bereavementCheckinMsg = await generateCaraMessage({
+          audience: "family",
+          context: "30-day bereavement check-in — Cara is gently reaching out to see if the family is ready to think about care again. Tone should be warm and not pushy.",
+          fallback: "I'm here with you. 💙 Whenever you're ready to arrange care again, just let me know.",
+          maxTokens: 80,
+        });
+        await sendMessage(chatId, bereavementCheckinMsg);
       } else {
-        await sendMessage(chatId, "I'm here with you. 💙 Take all the time you need.");
+        const bereavementSupportMsg = await generateCaraMessage({
+          audience: "family",
+          context: "Family is in bereavement mode and has messaged. Cara is being supportive and not rushing them.",
+          fallback: "I'm here with you. 💙 Take all the time you need.",
+          maxTokens: 60,
+        });
+        await sendMessage(chatId, bereavementSupportMsg);
       }
     }
     return;
@@ -1109,7 +1844,13 @@ async function handleInbound(event: unknown): Promise<void> {
           pendingSwapRequestId: admin.firestore.FieldValue.delete(),
           pendingSwapFromName:  admin.firestore.FieldValue.delete(),
         });
-        await sendMessage(chatId, `No problem — thanks for letting ${fromName}'s coordinator know!`);
+        const swapDeclineMsg = await generateCaraMessage({
+          audience: "caregiver",
+          context: `Caregiver declined a shift swap request from ${fromName}. Cara is acknowledging the decline and thanking them for letting the coordinator know.`,
+          fallback: `No problem — thanks for letting ${fromName}'s coordinator know!`,
+          maxTokens: 60,
+        });
+        await sendMessage(chatId, swapDeclineMsg);
         return;
       }
       // UNSURE — fall through to normal routing so Claude can answer the message
@@ -1156,7 +1897,13 @@ async function handleInbound(event: unknown): Promise<void> {
           caregiverRescheduling: true,
           stateExpiresAt:        new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         });
-        await sendMessage(chatId, "No problem — text me 2–3 times that work for you and I'll let the family know right away.");
+        const rescheduleMsg = await generateCaraMessage({
+          audience: "caregiver",
+          context: "Caregiver wants to reschedule a visit. Cara is asking them to suggest 2–3 times that work and will relay them to the family.",
+          fallback: "No problem — text me 2–3 times that work for you and I'll let the family know right away.",
+          maxTokens: 80,
+        });
+        await sendMessage(chatId, rescheduleMsg);
       },
       PASS:       async () => {
         await handleCaregiverAvailabilityReply(phone, session.caregiverId ?? "", "", chatId, "PASS");
@@ -1186,13 +1933,54 @@ async function handleInbound(event: unknown): Promise<void> {
         if (task && task.status === "awaiting_approval") {
           if (norm === "YES") {
             await candidateSnap.docs[0].ref.update({ status: "available", respondedAt: new Date().toISOString() });
-            await sendMessage(chatId, "Got it — we'll confirm with the family and follow up shortly.");
+            const jobConfirmMsg = await generateCaraMessage({
+              audience: "caregiver",
+              context: "Caregiver indicated availability for a job. Cara will confirm with the family and follow up shortly.",
+              fallback: "Got it — we'll confirm with the family and follow up shortly.",
+              maxTokens: 60,
+            });
+            await sendMessage(chatId, jobConfirmMsg);
           } else {
             await candidateSnap.docs[0].ref.update({ status: "declined", respondedAt: new Date().toISOString() });
-            await sendMessage(chatId, "No worries — thanks for letting us know!");
+            const jobDeclineMsg = await generateCaraMessage({
+              audience: "caregiver",
+              context: "Caregiver declined a job offer. Cara is acknowledging gracefully.",
+              fallback: "No worries — thanks for letting us know!",
+              maxTokens: 60,
+            });
+            await sendMessage(chatId, jobDeclineMsg);
           }
           return;
         }
+      }
+    }
+
+    // Day-before shift confirmation reply
+    if ((session as any).pendingShiftConfirmation) {
+      const scExpiry = (session as any).stateExpiresAt as string | undefined;
+      if (scExpiry && new Date(scExpiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingShiftConfirmation: admin.firestore.FieldValue.delete(),
+          stateExpiresAt:           admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+        // fall through to normal routing
+      } else {
+        await handleShiftConfirmation(phone, chatId, text, session);
+        return;
+      }
+    }
+
+    // Awaiting task acknowledgment after a mid-shift nudge
+    if ((session as any).awaitingTaskAck) {
+      const taskAckExpiry = (session as any).stateExpiresAt as string | undefined;
+      if (taskAckExpiry && new Date(taskAckExpiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({
+          awaitingTaskAck: admin.firestore.FieldValue.delete(),
+          stateExpiresAt:  admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+      } else {
+        await handleTaskAck(phone, chatId, text, session);
+        return;
       }
     }
 
@@ -1256,7 +2044,13 @@ async function handleInbound(event: unknown): Promise<void> {
             canDrop:     false,
           }, "high");
         }
-        await sendMessage(chatId, "I've notified the family. Drive safe.");
+        const driveMsg = await generateCaraMessage({
+          audience: "caregiver",
+          context: "Caregiver said how late they'll be and Cara has already notified the family. Send a brief acknowledgment and wish them a safe drive.",
+          fallback: "I've notified the family. Drive safe.",
+          maxTokens: 60,
+        });
+        await sendMessage(chatId, driveMsg);
         return;
       }
     }
@@ -1309,7 +2103,13 @@ async function handleInbound(event: unknown): Promise<void> {
         });
       });
 
-      await sendMessage(chatId, "I've flagged this for our team and notified the family. Thank you for letting me know.");
+      const issueFlaggedMsg = await generateCaraMessage({
+        audience: "caregiver",
+        context: "Caregiver reported an issue during a visit. Cara has escalated it to the team and notified the family. Thank them for letting Cara know.",
+        fallback: "I've flagged this for our team and notified the family. Thank you for letting me know.",
+        maxTokens: 80,
+      });
+      await sendMessage(chatId, issueFlaggedMsg);
       return;
       } // end stateExpiresAt else
     }
@@ -1325,9 +2125,21 @@ async function handleInbound(event: unknown): Promise<void> {
         await db.collection("issue_log").doc(issueLogId).update({
           resolvedAt: new Date().toISOString(),
         }).catch(() => {});
-        await sendMessage(chatId, "Good to hear — glad everything's okay.");
+        const issueResolvedMsg = await generateCaraMessage({
+          audience: "caregiver",
+          context: "Caregiver confirmed the issue from a prior visit is resolved. Cara is glad to hear it and wraps up the check-in.",
+          fallback: "Good to hear — glad everything's okay.",
+          maxTokens: 60,
+        });
+        await sendMessage(chatId, issueResolvedMsg);
       } else {
-        await sendMessage(chatId, "Thanks for the update — I've noted it. Let me know if anything changes.");
+        const issueUpdateMsg = await generateCaraMessage({
+          audience: "caregiver",
+          context: "Caregiver gave an update on an ongoing issue rather than confirming it's resolved. Cara acknowledges the update and notes it.",
+          fallback: "Thanks for the update — I've noted it. Let me know if anything changes.",
+          maxTokens: 60,
+        });
+        await sendMessage(chatId, issueUpdateMsg);
       }
       return;
     }
@@ -1485,6 +2297,20 @@ async function handleInbound(event: unknown): Promise<void> {
         try { await KEYWORDS[nluAction](); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
         return;
       }
+    }
+  }
+
+  // ── Pre-shift family task check-in reply ────────────────────────────────────
+  if ((session as any).awaitingPreShiftUpdate) {
+    const psExpiry = (session as any).stateExpiresAt as string | undefined;
+    if (psExpiry && new Date(psExpiry) < new Date()) {
+      await db.collection("agent_sessions").doc(phone).update({
+        awaitingPreShiftUpdate: admin.firestore.FieldValue.delete(),
+        stateExpiresAt:         admin.firestore.FieldValue.delete(),
+      }).catch(() => {});
+    } else {
+      await handlePreShiftUpdate(phone, chatId, text, session);
+      return;
     }
   }
 
@@ -1705,11 +2531,23 @@ async function handleInbound(event: unknown): Promise<void> {
           const cgPhone = cgSnap.data()?.phone as string | undefined;
           if (cgPhone) {
             const cgSess = await (await import("./client")).getOrCreateSession(cgPhone);
-            await sendMessage(cgSess.chatId, `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`);
+            const cancelNotifMsgA = await generateCaraMessage({
+              audience: "caregiver",
+              context: `The family has cancelled the visit on ${appt.date}. Notify the caregiver and apologize for the inconvenience.`,
+              fallback: `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`,
+              maxTokens: 80,
+            });
+            await sendMessage(cgSess.chatId, cancelNotifMsgA);
           }
         }
         await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() });
-        await sendMessage(chatId, "Cancelled. Want me to find a replacement for that day?");
+        const cancelConfirmMsgA = await generateCaraMessage({
+          audience: "family",
+          context: "Visit has been cancelled. Cara is confirming and offering to find a replacement for that day.",
+          fallback: "Cancelled. Want me to find a replacement for that day?",
+          maxTokens: 60,
+        });
+        await sendMessage(chatId, cancelConfirmMsgA);
         return;
       }
     }
@@ -1789,7 +2627,13 @@ async function handleInbound(event: unknown): Promise<void> {
           stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         });
         if (caregiverId) writeInterviewOutcomeSignal(session.userId ?? phone, caregiverId, "hire").catch(() => {});
-        await sendMessage(chatId, `${pending.caregiverName} sounds like a great fit. When would you like care to start?`);
+        const hireMsgA = await generateCaraMessage({
+          audience: "family",
+          context: `Family wants to hire caregiver ${pending.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
+          fallback: `${pending.caregiverName} sounds like a great fit. When would you like care to start?`,
+          maxTokens: 80,
+        });
+        await sendMessage(chatId, hireMsgA);
         return;
       }
       await sendMessage(chatId, "Who would you like to hire? Reply with their name and I'll set it up.");
@@ -1801,7 +2645,13 @@ async function handleInbound(event: unknown): Promise<void> {
       if ((session as any).pendingJobId) {
         await handleJobResponse(phone, "NO", chatId, session as any);
       } else {
-        await sendMessage(chatId, "No worries — I'll reach out when something comes up.");
+        const noJobMsg = await generateCaraMessage({
+          audience: "caregiver",
+          context: "Caregiver responded to a job offer but there was no pending job in session. Cara acknowledges and lets them know it will reach out when something comes up.",
+          fallback: "No worries — I'll reach out when something comes up.",
+          maxTokens: 60,
+        });
+        await sendMessage(chatId, noJobMsg);
       }
       return;
     }
@@ -1843,15 +2693,25 @@ async function handleInbound(event: unknown): Promise<void> {
           const cgPhone = cgSnap.data()?.phone as string | undefined;
           if (cgPhone) {
             const cgSess = await (await import("./client")).getOrCreateSession(cgPhone);
-            await sendMessage(cgSess.chatId,
-              `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`
-            );
+            const cancelNotifMsgB = await generateCaraMessage({
+              audience: "caregiver",
+              context: `The family has cancelled the visit on ${appt.date}. Notify the caregiver and apologize for the inconvenience.`,
+              fallback: `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`,
+              maxTokens: 80,
+            });
+            await sendMessage(cgSess.chatId, cancelNotifMsgB);
           }
         }
         await db.collection("agent_sessions").doc(phone).update({
           pendingCancelConfirm: admin.firestore.FieldValue.delete(),
         });
-        await sendMessage(chatId, "Cancelled. Want me to find a replacement for that day?");
+        const cancelConfirmMsgB = await generateCaraMessage({
+          audience: "family",
+          context: "Visit has been cancelled. Cara is confirming and offering to find a replacement for that day.",
+          fallback: "Cancelled. Want me to find a replacement for that day?",
+          maxTokens: 60,
+        });
+        await sendMessage(chatId, cancelConfirmMsgB);
         return;
       }
     }
@@ -1971,9 +2831,13 @@ async function handleInbound(event: unknown): Promise<void> {
             if (caregiverId) {
               writeInterviewOutcomeSignal(session.userId ?? phone, caregiverId, "hire").catch(() => {});
             }
-            await sendMessage(chatId,
-              `${pendingOutcome.caregiverName} sounds like a great fit. When would you like care to start?`
-            );
+            const hireMsgB = await generateCaraMessage({
+              audience: "family",
+              context: `Family wants to hire caregiver ${pendingOutcome.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
+              fallback: `${pendingOutcome.caregiverName} sounds like a great fit. When would you like care to start?`,
+              maxTokens: 80,
+            });
+            await sendMessage(chatId, hireMsgB);
           } else if (resolvedNorm === "MAYBE") {
             const updates: Record<string, unknown> = {
               pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
@@ -2033,9 +2897,13 @@ async function handleInbound(event: unknown): Promise<void> {
         if (caregiverId) {
           writeInterviewOutcomeSignal(session.userId ?? phone, caregiverId, "hire").catch(() => {});
         }
-        await sendMessage(chatId,
-          `${pending.caregiverName} sounds like a great fit. When would you like care to start?`
-        );
+        const hireMsgC = await generateCaraMessage({
+          audience: "family",
+          context: `Family wants to hire caregiver ${pending.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
+          fallback: `${pending.caregiverName} sounds like a great fit. When would you like care to start?`,
+          maxTokens: 80,
+        });
+        await sendMessage(chatId, hireMsgC);
         return;
       }
       // No pending outcome — ask who
@@ -2520,7 +3388,13 @@ async function handleInbound(event: unknown): Promise<void> {
         caregiverRescheduling: true,
         stateExpiresAt:        new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       });
-      await sendMessage(chatId, "No problem — text me 2–3 times that work for you and I'll let the family know right away.");
+      const rescheduleNlMsg = await generateCaraMessage({
+        audience: "caregiver",
+        context: "Caregiver wants to reschedule a visit. Cara is asking them to suggest 2–3 times that work and will relay them to the family.",
+        fallback: "No problem — text me 2–3 times that work for you and I'll let the family know right away.",
+        maxTokens: 80,
+      });
+      await sendMessage(chatId, rescheduleNlMsg);
       return;
     }
 

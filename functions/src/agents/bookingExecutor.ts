@@ -4,6 +4,7 @@ import { notifyAdminBookingConfirmed } from "../notifications";
 import { logBookingCreated } from "../observability/auditLog";
 import { closeJobPost } from "../triggers/jobNotifications";
 import type { RecurringSchedule } from "../scheduled/recurringScheduler";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 async function hasConflict(
   caregiverId: string,
@@ -79,10 +80,13 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
   if (didExpire) {
     const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
     if (sessionSnap.exists) {
-      await sendMessage(sessionSnap.data()!.chatId,
-        `The booking for ${(task as BookingTask).caregiverName} timed out. Those expire after 2 hours to keep availability current.\n\n` +
-        `Want me to start it again? Reply YES and I'll pull up where we left off.`
-      );
+      const timeoutMsg = await generateCaraMessage({
+        audience: "family",
+        context:  `The booking for ${(task as BookingTask).caregiverName} has timed out. Bookings expire after 2 hours to keep availability current. Offer to restart it and tell them to reply YES to pick up where they left off.`,
+        fallback: `The booking for ${(task as BookingTask).caregiverName} timed out. Those expire after 2 hours to keep availability current.\n\nWant me to start it again? Reply YES and I'll pull up where we left off.`,
+        maxTokens: 80,
+      });
+      await sendMessage(sessionSnap.data()!.chatId, timeoutMsg);
     }
     return;
   }
@@ -131,9 +135,13 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
       if (sessionSnap.exists) {
         const sessionData = sessionSnap.data()!;
-        await sendMessage(sessionData.chatId,
-          `${task.caregiverName} already has a visit at that time — finding someone else for ${appt.date}.`
-        );
+        const conflictMsg = await generateCaraMessage({
+          audience: "family",
+          context:  `${task.caregiverName} has a scheduling conflict and already has a visit at that time on ${appt.date}. Let the family know and tell them you're finding someone else for that date.`,
+          fallback: `${task.caregiverName} already has a visit at that time — finding someone else for ${appt.date}.`,
+          maxTokens: 80,
+        });
+        await sendMessage(sessionData.chatId, conflictMsg);
         // Auto-retry matching immediately — family sees results without replying
         const { runMatchingForClient } = await import("./matchingAgent");
         await runMatchingForClient(clientPhone, sessionData.chatId, sessionData, sessionData).catch((err) =>
@@ -209,8 +217,14 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       `${a.date} · ${a.startTime}–${a.endTime} · ${task.caregiverName}`
     ).join("\n");
 
+    const bookingConfirmOpener = await generateCaraMessage({
+      audience: "family",
+      context:  `You just confirmed ${task.appointments.length} ${task.appointments.length === 1 ? "visit" : "visits"} with ${task.caregiverName} for a total of $${task.totalCost.toFixed(2)}. Write a warm 1-sentence opening celebrating that the booking is confirmed.`,
+      fallback: "All booked! Here's your confirmed schedule:",
+      maxTokens: 80,
+    });
     await sendMessage(sessionSnap.data()!.chatId,
-      `All booked! Here's your confirmed schedule:\n\n` +
+      `${bookingConfirmOpener}\n\n` +
       `${lines}\n\n` +
       `I'll text you when ${task.caregiverName} arrives for the first visit.\n` +
       `View your schedule: ${appUrl}/client/calendar\n\n` +
@@ -241,10 +255,13 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
         },
       }).catch(() => {});
 
-      await sendMessage(sessionSnap.data()!.chatId,
-        `Want me to set this up as a weekly recurring schedule — ${schedDesc} every week with ${task.caregiverName}? ` +
-        `I'll handle the bookings automatically.\n\nReply YES to set it up, or NO to keep it one visit at a time.`
-      );
+      const recurringOfferMsg = await generateCaraMessage({
+        audience: "family",
+        context:  `The family just booked a single visit with ${task.caregiverName} on ${schedDesc}. Offer to set it up as a weekly recurring schedule — same time every week — and explain you'll handle the bookings automatically. Tell them to reply YES to set it up, or NO to keep it one visit at a time.`,
+        fallback: `Want me to set this up as a weekly recurring schedule — ${schedDesc} every week with ${task.caregiverName}? I'll handle the bookings automatically.\n\nReply YES to set it up, or NO to keep it one visit at a time.`,
+        maxTokens: 80,
+      });
+      await sendMessage(sessionSnap.data()!.chatId, recurringOfferMsg);
     }
 
     // Post-crisis emotional anchoring — only for emergency replacements
@@ -253,9 +270,13 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       await db.collection("agent_tasks_active").doc(clientPhone).delete().catch(() => {});
 
       await new Promise(r => setTimeout(r, 3000));
-      await sendMessage(sessionSnap.data()!.chatId,
-        `Last-minute coverage is one of the hardest parts of care. That's exactly what I'm here for. 💙`
-      );
+      const emergencyAnchorMsg = await generateCaraMessage({
+        audience: "family",
+        context:  "A family just had last-minute care coverage sorted out after an emergency replacement situation. Send a brief, heartfelt message acknowledging how stressful last-minute care can be and that this is exactly what Cara is here for.",
+        fallback: "Last-minute coverage is one of the hardest parts of care. That's exactly what I'm here for.",
+        maxTokens: 80,
+      });
+      await sendMessage(sessionSnap.data()!.chatId, emergencyAnchorMsg);
     }
 
     // Check if client has a payment method — if not, send a Stripe setup link
@@ -308,8 +329,14 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     const firstAppt  = task.appointments[0];
     const visitPay   = ((caregiverSnap.data()?.hourlyRate ?? 20) * firstAppt.durationHours).toFixed(2);
     const clientLabel = seniorName ? `with ${seniorName as string}` : "with your client";
+    const cgBookingOpener = await generateCaraMessage({
+      audience: "caregiver",
+      context:  `Write a warm 1-sentence opener congratulating the caregiver on their new booking — they're starting ${clientLabel} on ${firstAppt.date} at ${firstAppt.startTime}, earning $${visitPay} per visit.`,
+      fallback: `You're booked ${clientLabel} starting ${firstAppt.date} at ${firstAppt.startTime}.`,
+      maxTokens: 80,
+    });
     await sendMessage(cgSession.chatId,
-      `You're booked ${clientLabel} starting ${firstAppt.date} at ${firstAppt.startTime}.\n\n` +
+      `${cgBookingOpener}\n\n` +
       `$${visitPay} per visit, paid automatically after each one.\n\n` +
       `I'll text you the care plan and directions the morning of every visit.`
     );
@@ -338,11 +365,16 @@ export async function createBookingTask(params: {
     const sessionSnap = await db.collection("agent_sessions").doc(params.clientPhone).get();
     const chatId      = sessionSnap.data()?.chatId as string | undefined;
     if (chatId) {
-      await sendMessage(chatId,
-        `${params.caregiverName}'s background check is still in progress ` +
-        `(${daysInReview > 0 ? `${daysInReview} day${daysInReview !== 1 ? "s" : ""} in review` : "just submitted"}).\n\n` +
-        `I'll notify you the moment it clears so you can book. Want me to find another available caregiver in the meantime?`
-      );
+      const reviewDaysLabel = daysInReview > 0
+        ? `${daysInReview} day${daysInReview !== 1 ? "s" : ""} in review`
+        : "just submitted";
+      const bgCheckMsg = await generateCaraMessage({
+        audience: "family",
+        context:  `The family tried to book ${params.caregiverName} but their background check is still in progress (${reviewDaysLabel}). Explain the situation warmly, promise to notify them the moment it clears, and offer to find another available caregiver in the meantime.`,
+        fallback: `${params.caregiverName}'s background check is still in progress (${reviewDaysLabel}).\n\nI'll notify you the moment it clears so you can book. Want me to find another available caregiver in the meantime?`,
+        maxTokens: 80,
+      });
+      await sendMessage(chatId, bgCheckMsg);
     }
     return ""; // Early return — no booking written
   }

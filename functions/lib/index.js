@@ -36,7 +36,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.zepSetup = exports.chatWithCara = exports.send1099Notifications = exports.submitGpsCheckin = exports.sendJobMatchNotifications = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
+exports.zepSetup = exports.chatWithCara = exports.send1099Notifications = exports.submitGpsCheckin = exports.sendJobMatchNotifications = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.sendThirtyMinShiftReminders = exports.sendDayBeforeShiftReminders = exports.sendPreShiftFamilyCheckin = exports.sendShiftTaskNudges = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions"));
 // Initialize Admin globally if not already done
@@ -128,6 +128,14 @@ var recurringScheduler_1 = require("./scheduled/recurringScheduler");
 Object.defineProperty(exports, "extendRecurringSchedules", { enumerable: true, get: function () { return recurringScheduler_1.extendRecurringSchedules; } });
 var upcomingVisitReminder_1 = require("./scheduled/upcomingVisitReminder");
 Object.defineProperty(exports, "upcomingVisitReminder", { enumerable: true, get: function () { return upcomingVisitReminder_1.upcomingVisitReminder; } });
+var shiftTaskNudges_1 = require("./scheduled/shiftTaskNudges");
+Object.defineProperty(exports, "sendShiftTaskNudges", { enumerable: true, get: function () { return shiftTaskNudges_1.sendShiftTaskNudges; } });
+var preShiftFamilyCheckin_1 = require("./scheduled/preShiftFamilyCheckin");
+Object.defineProperty(exports, "sendPreShiftFamilyCheckin", { enumerable: true, get: function () { return preShiftFamilyCheckin_1.sendPreShiftFamilyCheckin; } });
+var dayBeforeShiftReminder_1 = require("./scheduled/dayBeforeShiftReminder");
+Object.defineProperty(exports, "sendDayBeforeShiftReminders", { enumerable: true, get: function () { return dayBeforeShiftReminder_1.sendDayBeforeShiftReminders; } });
+var thirtyMinShiftReminder_1 = require("./scheduled/thirtyMinShiftReminder");
+Object.defineProperty(exports, "sendThirtyMinShiftReminders", { enumerable: true, get: function () { return thirtyMinShiftReminder_1.sendThirtyMinShiftReminders; } });
 var dndQueueProcessor_1 = require("./scheduled/dndQueueProcessor");
 Object.defineProperty(exports, "processDndQueue", { enumerable: true, get: function () { return dndQueueProcessor_1.processDndQueue; } });
 var feedbackExpiry_1 = require("./scheduled/feedbackExpiry");

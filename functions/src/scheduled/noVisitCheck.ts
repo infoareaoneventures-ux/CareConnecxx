@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -62,10 +63,22 @@ export const runNoVisitCheck = functions.pubsub
         const seniorName   = (clientSessionSnap.docs[0].data() as any).seniorName ?? "your loved one";
         const cgName       = schedule.caregiverName ?? "your caregiver";
 
-        await sendViaInteractionAgent(clientPhone, {
-          content:
+        const noVisitMsg = await generateCaraMessage({
+          audience: "family",
+          context:
+            `Senior: ${seniorName}. ` +
+            (cgName !== "your caregiver" ? `Their regular caregiver: ${cgName}. ` : "") +
+            `${seniorName} hasn't had a visit in the past 7 days. ` +
+            "Gently flag this to the family and offer to check the caregiver's availability to book something this week. " +
+            "Keep it caring and helpful, not alarming.",
+          fallback:
             `Just noticed ${seniorName} hasn't had a visit in the past 7 days. ` +
             `Want me to check ${cgName}'s availability and book something this week?`,
+          maxTokens: 80,
+        });
+
+        await sendViaInteractionAgent(clientPhone, {
+          content:     noVisitMsg,
           urgency:     "standard",
           sourceAgent: "no_visit_check",
           canDrop:     true,

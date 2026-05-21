@@ -38,6 +38,7 @@ const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const jobMatchRecommender_1 = require("../agents/jobMatchRecommender");
 const client_1 = require("../linq/client");
+const caraMessage_1 = require("../utils/caraMessage");
 const db = admin.firestore();
 // Runs daily — texts caregivers when a new job has >75% match
 exports.sendJobMatchNotifications = functions.pubsub
@@ -73,8 +74,17 @@ exports.sendJobMatchNotifications = functions.pubsub
                 continue;
             const chatId = (_a = cg.chatId) !== null && _a !== void 0 ? _a : cg.phone;
             const top = highMatch[0];
-            const msg = `New job match for you! ${top.careTypes.join(", ")} — ${top.schedule}, ` +
-                `$${top.rate}/hr (${top.matchScore}% match). Reply "jobs" to see details.`;
+            const msg = await (0, caraMessage_1.generateCaraMessage)({
+                audience: "caregiver",
+                context: `A new job came in that's a great match for this caregiver. ` +
+                    `Care types: ${top.careTypes.join(", ")}. Schedule: ${top.schedule}. ` +
+                    `Rate: $${top.rate}/hr. Match score: ${top.matchScore}%. ` +
+                    `Let them know about it and invite them to reply "jobs" to see the details. ` +
+                    `Keep the tone excited but natural.`,
+                fallback: `New job match for you! ${top.careTypes.join(", ")} — ${top.schedule}, ` +
+                    `$${top.rate}/hr (${top.matchScore}% match). Reply "jobs" to see details.`,
+                maxTokens: 80,
+            });
             await (0, client_1.sendMessage)(chatId, msg);
             console.log(`[sendJobMatchNotifications] Notified ${cgDoc.id} — ${top.matchScore}% match`);
         }

@@ -45,6 +45,7 @@ const admin = __importStar(require("firebase-admin"));
 const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
 const client_1 = require("../linq/client");
 const feedback_1 = require("../ai/feedback");
+const caraMessage_1 = require("../utils/caraMessage");
 let _claude = null;
 function getClaude() {
     if (!_claude)
@@ -133,7 +134,13 @@ async function handleInterviewSelection(phone, chatId, text, session) {
     var _a, _b, _c, _d, _e, _f;
     const matches = (_a = session.pendingMatches) !== null && _a !== void 0 ? _a : [];
     if (matches.length === 0) {
-        await (0, client_1.sendMessage)(chatId, "I don't have any pending matches right now. Let me search again — I'll text you shortly.");
+        const noMatchesMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "family",
+            context: "The family asked to select a caregiver for an interview, but there are no pending matches in the system right now. Let them know you'll search again and text them shortly.",
+            fallback: "I don't have any pending matches right now. Let me search again — I'll text you shortly.",
+            maxTokens: 80,
+        });
+        await (0, client_1.sendMessage)(chatId, noMatchesMsg);
         return;
     }
     const selected = await parseSelection(text, matches.length);
@@ -144,8 +151,13 @@ async function handleInterviewSelection(phone, chatId, text, session) {
     // Check permission to contact caregivers on family's behalf
     const perms = await (0, permissionsConversation_1.getPermissions)((_b = session.userId) !== null && _b !== void 0 ? _b : phone).catch(() => null);
     if (perms && !perms.canContactCaregivers) {
-        await (0, client_1.sendMessage)(chatId, "I need your permission to reach out to caregivers on your behalf.\n\n" +
-            "Reply ALLOW to give me permission, or visit the app to update your settings.");
+        const permissionMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "family",
+            context: "The family wants to reach out to caregivers for an interview, but Cara doesn't yet have their permission to contact caregivers on their behalf. Ask them to reply ALLOW to grant permission, or visit the app to update their settings.",
+            fallback: "I need your permission to reach out to caregivers on your behalf.\n\nReply ALLOW to give me permission, or visit the app to update your settings.",
+            maxTokens: 80,
+        });
+        await (0, client_1.sendMessage)(chatId, permissionMsg);
         return;
     }
     // Get senior name for context
@@ -177,14 +189,20 @@ async function handleInterviewSelection(phone, chatId, text, session) {
         if (!caregiverPhone)
             continue;
         const caregiverSession = await (0, client_1.getOrCreateSession)(caregiverPhone, { caregiverId: match.id });
-        await (0, client_1.sendMessage)(caregiverSession.chatId, `Hi ${match.name} — I'm Cara, your care coordinator.\n\n` +
-            `A family is interested in meeting you for a care position for their ${relationship}, ` +
-            `${age ? `${age}-year-old ` : ""}${seniorName}.\n\n` +
-            `Are you available for a 20-minute video call this week?\n\n` +
-            `Reply with 2–3 times that work for you, or PASS to decline.`);
+        const caregiverReachOutMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "caregiver",
+            context: `Introduce yourself as Cara, the care coordinator, and let ${match.name} know that a family is interested in meeting them for a care position. The senior is ${seniorName}, who is a ${relationship}${age ? ` and is ${age} years old` : ""}. Ask if they're available for a 20-minute video call this week. Tell them to reply with 2–3 times that work, or PASS to decline.`,
+            fallback: `Hi ${match.name} — I'm Cara, your care coordinator.\n\nA family is interested in meeting you for a care position for their ${relationship}, ${age ? `${age}-year-old ` : ""}${seniorName}.\n\nAre you available for a 20-minute video call this week?\n\nReply with 2–3 times that work for you, or PASS to decline.`,
+        });
+        await (0, client_1.sendMessage)(caregiverSession.chatId, caregiverReachOutMsg);
     }
-    await (0, client_1.sendMessage)(chatId, `I've reached out to ${selected.length === 1 ? "that caregiver" : "those caregivers"} on your behalf.\n\n` +
-        `I'll text you as soon as I hear back with their availability.`);
+    const reachedOutMsg = await (0, caraMessage_1.generateCaraMessage)({
+        audience: "family",
+        context: `Cara just contacted ${selected.length} ${selected.length === 1 ? "caregiver" : "caregivers"} on the family's behalf. Let them know and say you'll text as soon as you hear back with availability.`,
+        fallback: `I've reached out to ${selected.length === 1 ? "that caregiver" : "those caregivers"} on your behalf.\n\nI'll text you as soon as I hear back with their availability.`,
+        maxTokens: 80,
+    });
+    await (0, client_1.sendMessage)(chatId, reachedOutMsg);
 }
 // ── Handle caregiver replying with availability ───────────────────────────────
 async function handleCaregiverAvailabilityReply(caregiverPhone, caregiverId, caregiverName, chatId, text) {
@@ -204,15 +222,26 @@ async function handleCaregiverAvailabilityReply(caregiverPhone, caregiverId, car
                 .where("phone", "==", reqData.clientPhone).limit(1).get();
             if (!familySnap.empty) {
                 const familySession = familySnap.docs[0].data();
-                await (0, client_1.sendMessage)(familySession.chatId, `${caregiverName} isn't available right now.\n\n` +
-                    `Want me to reach out to the next best match? Reply YES and I'll get on it.`);
+                const caregiverUnavailableMsg = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "family",
+                    context: `${caregiverName} just declined the interview request and isn't available right now. Ask the family if they'd like you to reach out to the next best match, and tell them to reply YES if so.`,
+                    fallback: `${caregiverName} isn't available right now.\n\nWant me to reach out to the next best match? Reply YES and I'll get on it.`,
+                    maxTokens: 80,
+                });
+                await (0, client_1.sendMessage)(familySession.chatId, caregiverUnavailableMsg);
                 // Remember this caregiver was declined so matching won't re-present them
                 await db.collection("agent_sessions").doc(reqData.clientPhone).update({
                     rejectedCaregiverIds: admin.firestore.FieldValue.arrayUnion(caregiverId),
                 });
             }
         }
-        await (0, client_1.sendMessage)(chatId, "No problem — I'll let the family know.");
+        const caregiverDeclinedAckMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "caregiver",
+            context: "The caregiver just declined an interview request by replying PASS. Acknowledge their decision warmly and let them know you'll pass the message to the family.",
+            fallback: "No problem — I'll let the family know.",
+            maxTokens: 80,
+        });
+        await (0, client_1.sendMessage)(chatId, caregiverDeclinedAckMsg);
         return;
     }
     const proposedTimes = await parseAvailability(text);
@@ -228,7 +257,13 @@ async function handleCaregiverAvailabilityReply(caregiverPhone, caregiverId, car
         .orderBy("createdAt", "desc").limit(1).get();
     if (snap.empty) {
         // Request expired or already filled — let the caregiver know and close gracefully
-        await (0, client_1.sendMessage)(chatId, "That interview request has already been filled or expired. I'll reach out when there's a new opening that fits your availability.");
+        const expiredMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "caregiver",
+            context: "The caregiver sent in their availability, but the interview request they were responding to has already been filled or has expired. Let them know gracefully and tell them you'll reach out when there's a new opening that fits their availability.",
+            fallback: "That interview request has already been filled or expired. I'll reach out when there's a new opening that fits your availability.",
+            maxTokens: 80,
+        });
+        await (0, client_1.sendMessage)(chatId, expiredMsg);
         return;
     }
     const doc = snap.docs[0];
@@ -250,15 +285,25 @@ async function handleCaregiverAvailabilityReply(caregiverPhone, caregiverId, car
         .doc(reqData.clientPhone).get();
     if (familySnap.exists) {
         const familySession = familySnap.data();
-        await (0, client_1.sendMessage)(familySession.chatId, `${caregiverName} is available for an interview.\n\n` +
-            `${formatted}\n\n` +
-            `Confirm this time? Reply YES to schedule.`);
+        const caregiverAvailableMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "family",
+            context: `${caregiverName} is available for an interview. The proposed time is ${formatted}. Ask the family to confirm by replying YES to schedule.`,
+            fallback: `${caregiverName} is available for an interview.\n\n${formatted}\n\nConfirm this time? Reply YES to schedule.`,
+            maxTokens: 80,
+        });
+        await (0, client_1.sendMessage)(familySession.chatId, `${caregiverAvailableMsg}\n\n${formatted}\n\nReply YES to schedule.`);
         // Store pending confirmation
         await db.collection("agent_sessions").doc(reqData.clientPhone).update({
             pendingInterviewConfirm: { docId: doc.id, caregiverName, mutualTime, formatted },
         });
     }
-    await (0, client_1.sendMessage)(chatId, `I've sent those times to the family. I'll let you know once they confirm.`);
+    const timesSentMsg = await (0, caraMessage_1.generateCaraMessage)({
+        audience: "caregiver",
+        context: "The caregiver just sent their available times for an interview. Cara has forwarded those times to the family. Let the caregiver know and tell them you'll reach out once the family confirms.",
+        fallback: "I've sent those times to the family. I'll let you know once they confirm.",
+        maxTokens: 80,
+    });
+    await (0, client_1.sendMessage)(chatId, timesSentMsg);
 }
 // ── Handle family confirming interview ────────────────────────────────────────
 async function handleInterviewConfirm(phone, chatId, session) {
@@ -335,8 +380,13 @@ async function handleInterviewConfirm(phone, chatId, session) {
     if (icsUrl) {
         await (0, client_1.sendMessage)(chatId, { parts: [{ type: "media", url: icsUrl }] });
     }
-    await (0, client_1.sendMessage)(chatId, `Interview set for ${pending.formatted}.\n\n` +
-        `Tap the ${isIMessage ? "FaceTime" : "Meet"} link above to join. Calendar invite included, with a 30-minute reminder.`);
+    const interviewConfirmFamilyMsg = await (0, caraMessage_1.generateCaraMessage)({
+        audience: "family",
+        context: `The interview with ${pending.caregiverName} is now officially scheduled for ${pending.formatted}. Tell the family to tap the ${isIMessage ? "FaceTime" : "Google Meet"} link above to join, and let them know a calendar invite was included with a 30-minute reminder.`,
+        fallback: `Interview set for ${pending.formatted}.\n\nTap the ${isIMessage ? "FaceTime" : "Meet"} link above to join. Calendar invite included, with a 30-minute reminder.`,
+        maxTokens: 80,
+    });
+    await (0, client_1.sendMessage)(chatId, interviewConfirmFamilyMsg);
     // Text the caregiver
     const reqSnap = await db.collection("interview_requests").doc(pending.docId).get();
     const caregiverId = (_c = reqSnap.data()) === null || _c === void 0 ? void 0 : _c.caregiverId;
@@ -353,9 +403,13 @@ async function handleInterviewConfirm(phone, chatId, session) {
             if (icsUrl) {
                 await (0, client_1.sendMessage)(cgSession.chatId, { parts: [{ type: "media", url: icsUrl }] });
             }
-            await (0, client_1.sendMessage)(cgSession.chatId, `Interview confirmed. ${pending.formatted}.\n\n` +
-                `${cgIsIMessa ? "FaceTime" : "Meet"} link above. Calendar invite included, with a 30-minute reminder.\n\n` +
-                `Reply RESCHEDULE if you need to change the time.`);
+            const interviewConfirmCaregiverMsg = await (0, caraMessage_1.generateCaraMessage)({
+                audience: "caregiver",
+                context: `The interview has been confirmed for ${pending.formatted}. Tell them the ${cgIsIMessa ? "FaceTime" : "Google Meet"} link is above, a calendar invite was included with a 30-minute reminder, and to reply RESCHEDULE if they need to change the time.`,
+                fallback: `Interview confirmed. ${pending.formatted}.\n\n${cgIsIMessa ? "FaceTime" : "Meet"} link above. Calendar invite included, with a 30-minute reminder.\n\nReply RESCHEDULE if you need to change the time.`,
+                maxTokens: 80,
+            });
+            await (0, client_1.sendMessage)(cgSession.chatId, interviewConfirmCaregiverMsg);
         }
     }
     // Schedule 1h-before reminders and a post-interview follow-up trigger
@@ -418,7 +472,13 @@ async function sendPostInterviewFollowUp(interviewId) {
     const data = snap.data();
     const clientSnap = await db.collection("agent_sessions").doc(data.clientPhone).get();
     if (clientSnap.exists) {
-        await (0, client_1.sendMessage)(clientSnap.data().chatId, `How did it go with ${data.caregiverName}?\n\nJust tell me what you thought.`);
+        const followUpMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "family",
+            context: `The interview with ${data.caregiverName} just finished (about 75 minutes ago). Check in warmly and ask how it went — invite them to share their honest thoughts.`,
+            fallback: `How did it go with ${data.caregiverName}?\n\nJust tell me what you thought.`,
+            maxTokens: 80,
+        });
+        await (0, client_1.sendMessage)(clientSnap.data().chatId, followUpMsg);
         // Look up caregiverId so HIRE flow can fetch hourly rate + rejection memory
         const reqSnap = await db.collection("interview_requests")
             .where("interviewId", "==", interviewId).limit(1).get();

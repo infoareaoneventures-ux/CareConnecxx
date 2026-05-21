@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -55,8 +56,19 @@ export const checkCaregiverInactivity = functions.pubsub
             if (!cgSessionSnap.empty) {
               const cgPhone = cgSessionSnap.docs[0].id;
 
+              const inactivityMsg = await generateCaraMessage({
+                audience: "caregiver",
+                context:
+                  `Caregiver first name: ${firstName}. ` +
+                  "They haven't had any visits in the last 14 days. Send a warm, low-pressure check-in. " +
+                  "Ask if everything's okay and let them know they can reply if they want to pick up more shifts or if anything's come up. " +
+                  "Don't be pushy — just genuinely caring.",
+                fallback: `Hey ${firstName} — we haven't seen you for any visits lately. All good? Reply if you want to pick up more shifts or if anything's come up.`,
+                maxTokens: 80,
+              });
+
               await sendViaInteractionAgent(cgPhone, {
-                content: `Hey ${firstName} — we haven't seen you for any visits lately. All good? Reply if you want to pick up more shifts or if anything's come up.`,
+                content:     inactivityMsg,
                 urgency:     "low",
                 sourceAgent: "inactivity_check",
                 canDrop:     true,
@@ -83,8 +95,18 @@ export const checkCaregiverInactivity = functions.pubsub
               const clientPhone   = sched.clientPhone as string | undefined;
               const lastWarnedAt  = sched.inactivityWarnedAt as string | undefined;
               if (clientPhone && (!lastWarnedAt || lastWarnedAt < sevenDaysAgo)) {
+                const familyInactivityMsg = await generateCaraMessage({
+                  audience: "family",
+                  context:
+                    `The family's regular caregiver (${caregiverName}) hasn't had any recent visits. ` +
+                    "Gently let the family know and ask if they'd like help finding a backup caregiver for their upcoming scheduled visits. " +
+                    "Keep the tone reassuring, not alarming.",
+                  fallback: `Your regular caregiver ${caregiverName} hasn't had any recent visits. Want me to find a backup for your upcoming scheduled visits?`,
+                  maxTokens: 80,
+                });
+
                 await sendViaInteractionAgent(clientPhone, {
-                  content: `Your regular caregiver ${caregiverName} hasn't had any recent visits. Want me to find a backup for your upcoming scheduled visits?`,
+                  content:     familyInactivityMsg,
                   urgency:     "standard",
                   sourceAgent: "inactivity_check",
                   canDrop:     true,

@@ -58,6 +58,7 @@ const refundHandler_1 = require("../agents/refundHandler");
 const caregiverSwapHandler_1 = require("../agents/caregiverSwapHandler");
 const clientSwapRequestHandler_1 = require("../agents/clientSwapRequestHandler");
 const sessionState_1 = require("../utils/sessionState");
+const caraMessage_1 = require("../utils/caraMessage");
 const dndGuard_1 = require("../utils/dndGuard");
 const feedback_1 = require("../ai/feedback");
 const jobNotifications_1 = require("../triggers/jobNotifications");
@@ -152,7 +153,12 @@ async function handleArrived(phone, chatId, session) {
         .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
         .limit(1).get();
     if (snap.empty) {
-        await (0, client_1.sendMessage)(chatId, "I don't see a scheduled visit for you today. Let me know if something looks wrong.");
+        const noVisitMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "caregiver",
+            context: "Caregiver texted ARRIVED but no active appointment was found for them today. Let them know and invite them to flag if something looks wrong.",
+            fallback: "I don't see a scheduled visit for you today. Let me know if something looks wrong.",
+        });
+        await (0, client_1.sendMessage)(chatId, noVisitMsg);
         return;
     }
     const appt = snap.docs[0];
@@ -195,9 +201,308 @@ async function handleArrived(phone, chatId, session) {
             canDrop: false,
         }, "high");
     }
-    await (0, client_1.sendMessage)(chatId, "Got it — I've let the family know you're there. Have a good visit.");
+    const arrivedAckMsg = await (0, caraMessage_1.generateCaraMessage)({
+        audience: "caregiver",
+        context: `Caregiver just arrived at the client's home${apptData.clientName ? ` for ${apptData.clientName}` : ""}. The family has been notified. Wish them a good visit.`,
+        fallback: "Got it — I've let the family know you're there. Have a good visit.",
+    });
+    await (0, client_1.sendMessage)(chatId, arrivedAckMsg);
+    // Send caregiver a care plan task overview for the shift (fire-and-forget)
+    sendArrivalCarePlanBriefing(chatId, apptData).catch(() => { });
+}
+// ── Day-before shift confirmation handler ────────────────────────────────────
+async function handleShiftConfirmation(phone, chatId, text, session) {
+    var _a, _b;
+    const info = session.pendingShiftConfirmation;
+    const Anthropic = (await Promise.resolve().then(() => __importStar(require("@anthropic-ai/sdk")))).default;
+    const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    // Parse YES / NO / question
+    const parseRes = await claude.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 10,
+        system: "The caregiver is responding to a shift confirmation request for tomorrow. " +
+            "Reply CONFIRM if they said yes, they'll be there. " +
+            "Reply CANCEL if they said no, they can't make it. " +
+            "Reply QUESTION if it is a question or unclear. " +
+            "Reply with exactly one word.",
+        messages: [{ role: "user", content: text }],
+    }).catch(() => null);
+    const decision = ((_b = (_a = parseRes === null || parseRes === void 0 ? void 0 : parseRes.content[0]) === null || _a === void 0 ? void 0 : _a.text) !== null && _b !== void 0 ? _b : "")
+        .trim().toUpperCase();
+    // Always clear the state flag
+    await db.collection("agent_sessions").doc(phone).update({
+        pendingShiftConfirmation: admin.firestore.FieldValue.delete(),
+        stateExpiresAt: admin.firestore.FieldValue.delete(),
+    });
+    const cgFirstName = info.caregiverName.split(" ")[0] || "Your caregiver";
+    const displayDate = info.appointmentDisplay || info.appointmentDate;
+    if (decision === "CONFIRM") {
+        await db.collection("appointments").doc(info.appointmentId).update({
+            caregiverDayBeforeConfirmed: true,
+            caregiverDayBeforeConfirmedAt: new Date().toISOString(),
+        });
+        const confirmMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "caregiver",
+            context: `${cgFirstName} just confirmed they'll be at ${info.seniorName}'s shift ` +
+                `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. ` +
+                `Write a warm, brief thank-you confirming you've got them set. Sound genuinely grateful.`,
+            fallback: `You're all set — thanks for confirming, ${cgFirstName}! See you at ${info.seniorName}'s on ${displayDate}.`,
+        });
+        await (0, client_1.sendMessage)(chatId, confirmMsg);
+        // Notify family
+        const clientPhone = await getClientPhoneByClientId(info.clientId);
+        if (clientPhone) {
+            const familyMsg = await (0, caraMessage_1.generateCaraMessage)({
+                audience: "family",
+                context: `${cgFirstName} just confirmed they'll be at ${info.seniorName}'s care visit ` +
+                    `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. ` +
+                    `Write a warm, reassuring message letting the family know everything's confirmed. ` +
+                    `Sound like a coordinator who genuinely cares about their peace of mind.`,
+                fallback: `Great news! ${cgFirstName} has confirmed they'll be there for ${info.seniorName}'s visit ` +
+                    `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. You're all set — no action needed!`,
+            });
+            await (0, caraAgent_1.sendViaInteractionAgent)(clientPhone, {
+                content: familyMsg,
+                urgency: "standard",
+                sourceAgent: "shift_confirm_family_update",
+                canDrop: true,
+            });
+        }
+    }
+    else if (decision === "CANCEL") {
+        await db.collection("appointments").doc(info.appointmentId).update({
+            caregiverDayBeforeCancelled: true,
+            caregiverDayBeforeCancelledAt: new Date().toISOString(),
+        });
+        const cancelMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "caregiver",
+            context: `${cgFirstName} just let you know they can't make ${info.seniorName}'s shift on ${displayDate}. ` +
+                `Write a brief, understanding response — acknowledge the situation without judgment, ` +
+                `let them know the family will be notified and you'll take care of it from here. ` +
+                `Be warm, not cold.`,
+            fallback: `Understood, ${cgFirstName} — I'll let the family know and start working on coverage for ${displayDate}. ` +
+                `I appreciate you letting me know ahead of time.`,
+        });
+        await (0, client_1.sendMessage)(chatId, cancelMsg);
+        // Alert family with urgency
+        const clientPhone = await getClientPhoneByClientId(info.clientId);
+        if (clientPhone) {
+            const alertMsg = await (0, caraMessage_1.generateCaraMessage)({
+                audience: "family",
+                context: `Unfortunately ${cgFirstName} just let us know they can't make ${info.seniorName}'s visit ` +
+                    `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. ` +
+                    `Write an urgent but calm message to the family alerting them. ` +
+                    `Let them know we're already working on finding a replacement. ` +
+                    `Tell them to reply HELP if they need immediate support. ` +
+                    `Be direct but not alarming — this is being handled.`,
+                fallback: `Heads up — ${cgFirstName} won't be able to make ${info.seniorName}'s visit on ${displayDate}. ` +
+                    `I'm already working on finding coverage. Reply HELP if you need anything in the meantime.`,
+            });
+            await (0, caraAgent_1.sendViaInteractionAgent)(clientPhone, {
+                content: alertMsg,
+                urgency: "immediate",
+                sourceAgent: "shift_confirm_family_update",
+                canDrop: false,
+            });
+        }
+        // Trigger replacement agent (fire-and-forget)
+        Promise.resolve().then(() => __importStar(require("../agents/replacementAgent"))).then(({ findReplacement }) => {
+            if (typeof findReplacement === "function") {
+                findReplacement({
+                    appointmentId: info.appointmentId,
+                    clientId: info.clientId,
+                    date: info.appointmentDate,
+                    startTime: info.startTime,
+                    seniorName: info.seniorName,
+                }).catch(() => { });
+            }
+        }).catch(() => { });
+    }
+    else {
+        // QUESTION or unclear — let caraAgent answer, then re-ask
+        await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+            content: text,
+            urgency: "standard",
+            sourceAgent: "shift_confirm_question",
+            canDrop: true,
+        });
+        // Re-set the flag and re-ask
+        await db.collection("agent_sessions").doc(phone).update({
+            pendingShiftConfirmation: info,
+            stateExpiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+        });
+        await (0, client_1.sendMessage)(chatId, `By the way — can you confirm you'll be at ${info.seniorName}'s shift on ${info.appointmentDate}? Reply YES or NO.`);
+    }
+}
+// ── Pre-shift family task check-in handler ───────────────────────────────────
+async function handlePreShiftUpdate(phone, chatId, text, session) {
+    var _a, _b, _c, _d, _e;
+    const info = session.awaitingPreShiftUpdate;
+    const Anthropic = (await Promise.resolve().then(() => __importStar(require("@anthropic-ai/sdk")))).default;
+    const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    // isQuestionOrOther check — CLAUDE.md requirement
+    const questionRes = await claude.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 5,
+        system: "Is this message a question unrelated to adding care tasks, or is it about something completely different? " +
+            "Reply only YES or NO.",
+        messages: [{ role: "user", content: text }],
+    }).catch(() => null);
+    const isQuestion = ((_b = (_a = questionRes === null || questionRes === void 0 ? void 0 : questionRes.content[0]) === null || _a === void 0 ? void 0 : _a.text) !== null && _b !== void 0 ? _b : "")
+        .trim().toUpperCase().startsWith("Y");
+    if (isQuestion) {
+        await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+            content: text,
+            urgency: "standard",
+            sourceAgent: "pre_shift_question",
+            canDrop: true,
+        });
+        await (0, client_1.sendMessage)(chatId, `By the way — did you want to add any tasks for ${info.seniorName}'s visit today?`);
+        return;
+    }
+    // Parse action: decline or new tasks
+    const parseRes = await claude.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 200,
+        system: "The family was asked if they want to add tasks to today's care visit. " +
+            "Extract their response. Reply JSON only: " +
+            '{"action":"decline"|"addTasks","tasks":["task description 1","task description 2"]}. ' +
+            '"decline" means they said no, nothing to add, or the plan is fine. ' +
+            '"addTasks" means they listed one or more things they want done.',
+        messages: [{ role: "user", content: text }],
+    }).catch(() => null);
+    let action = "decline";
+    let tasks = [];
+    try {
+        const raw = (_d = (_c = parseRes === null || parseRes === void 0 ? void 0 : parseRes.content[0]) === null || _c === void 0 ? void 0 : _c.text) !== null && _d !== void 0 ? _d : "{}";
+        const parsed = JSON.parse(raw);
+        action = ((_e = parsed.action) !== null && _e !== void 0 ? _e : "decline");
+        tasks = Array.isArray(parsed.tasks) ? parsed.tasks.filter(Boolean) : [];
+    }
+    catch ( /* default to decline */_f) { /* default to decline */ }
+    // Clear state regardless of action
+    await db.collection("agent_sessions").doc(phone).update({
+        awaitingPreShiftUpdate: admin.firestore.FieldValue.delete(),
+        stateExpiresAt: admin.firestore.FieldValue.delete(),
+    });
+    if (action === "addTasks" && tasks.length > 0) {
+        // Store on the appointment as dayOfVisitTasks
+        await db.collection("appointments").doc(info.appointmentId).update({
+            dayOfVisitTasks: admin.firestore.FieldValue.arrayUnion(...tasks),
+        });
+        const cgFirstName = info.caregiverName.split(" ")[0] || info.caregiverName;
+        const taskList = tasks.map(t => `• ${t}`).join("\n");
+        const addMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "family",
+            context: `The family just added ${tasks.length} task${tasks.length > 1 ? "s" : ""} to ` +
+                `${info.seniorName}'s care visit today: ${tasks.join(", ")}. ` +
+                `${cgFirstName} will be notified when they check in. ` +
+                `Write a warm 2-sentence confirmation back to the family. ` +
+                `List what was added and reassure them ${cgFirstName} will have it.`,
+            fallback: `Got it — I've added ${tasks.length === 1 ? "that" : "those"} to today's plan:\n\n` +
+                `${taskList}\n\n` +
+                `${cgFirstName} will see ${tasks.length === 1 ? "it" : "them"} when they check in.`,
+        });
+        await (0, client_1.sendMessage)(chatId, addMsg);
+    }
+    else {
+        const declineMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "family",
+            context: `The family said no additional tasks for ${info.seniorName}'s care visit today — ` +
+                `the regular care plan is all set. Write a brief, warm 1-sentence confirmation back to them.`,
+            fallback: `Perfect — the regular care plan is all set for today's visit!`,
+            maxTokens: 60,
+        });
+        await (0, client_1.sendMessage)(chatId, declineMsg);
+    }
+}
+// ── Care plan briefing sent to caregiver at arrival ───────────────────────────
+async function sendArrivalCarePlanBriefing(chatId, apptData) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j;
+    const clientId = ((_a = apptData.clientId) !== null && _a !== void 0 ? _a : "");
+    const seniorId = ((_b = apptData.seniorId) !== null && _b !== void 0 ? _b : clientId);
+    const seniorName = ((_c = apptData.clientName) !== null && _c !== void 0 ? _c : "your client");
+    // Load care plan (same dual-path as shiftTaskNudges)
+    let dailyRoutine = [];
+    let medications = [];
+    for (const [collection, docId] of [
+        ["senior_profiles", seniorId],
+        ["senior_profiles", clientId],
+    ]) {
+        if (!docId)
+            continue;
+        const snap = await db.collection(collection).doc(docId)
+            .collection("care_plans").doc("default").get().catch(() => null);
+        if (snap === null || snap === void 0 ? void 0 : snap.exists) {
+            const d = snap.data();
+            dailyRoutine = ((_d = d.dailyRoutine) !== null && _d !== void 0 ? _d : []);
+            medications = ((_e = d.medications) !== null && _e !== void 0 ? _e : []);
+            break;
+        }
+    }
+    if (!dailyRoutine.length && !medications.length) {
+        // Try legacy flat collection
+        const snap = await db.collection("care_plans").doc(clientId).get().catch(() => null);
+        if (snap === null || snap === void 0 ? void 0 : snap.exists) {
+            const d = snap.data();
+            dailyRoutine = ((_f = d.dailyRoutine) !== null && _f !== void 0 ? _f : []);
+            medications = ((_g = d.medications) !== null && _g !== void 0 ? _g : []);
+        }
+    }
+    // Day-of tasks added by family (via pre-shift check-in)
+    const dayOfVisitTasks = ((_h = apptData.dayOfVisitTasks) !== null && _h !== void 0 ? _h : []);
+    if (!dailyRoutine.length && !medications.length && !dayOfVisitTasks.length)
+        return;
+    // Sort tasks by time (unparseable times go to end)
+    const sorted = [...dailyRoutine].sort((a, b) => {
+        const toMin = (t) => {
+            const m = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+            if (m) {
+                let h = parseInt(m[1], 10);
+                if (m[3].toUpperCase() === "AM" && h === 12)
+                    h = 0;
+                if (m[3].toUpperCase() === "PM" && h !== 12)
+                    h += 12;
+                return h * 60 + parseInt(m[2], 10);
+            }
+            const h24 = t.match(/^(\d{1,2}):(\d{2})$/);
+            return h24 ? parseInt(h24[1], 10) * 60 + parseInt(h24[2], 10) : 9999;
+        };
+        return toMin(a.time) - toMin(b.time);
+    });
+    const lines = sorted.map(t => `• ${t.time} — ${t.description}`);
+    if (medications.length > 0) {
+        const medLine = medications
+            .slice(0, 3)
+            .map(m => `${m.name} ${m.dosage} (${m.frequency})`)
+            .join(", ");
+        lines.push(`\nMedications: ${medLine}`);
+    }
+    // Day-of tasks added by family today (highest priority — show first)
+    let dayOfSection = "";
+    if (dayOfVisitTasks.length > 0) {
+        const dayOfLines = dayOfVisitTasks.map(t => `• ${t}`).join("\n");
+        dayOfSection = `Added for today's visit by the family:\n${dayOfLines}\n\n`;
+    }
+    const planSection = lines.length > 0
+        ? `Regular care plan:\n${lines.join("\n")}`
+        : "";
+    const cgFirstName = ((_j = apptData.caregiverName) !== null && _j !== void 0 ? _j : "").split(" ")[0] || "there";
+    const opening = await (0, caraMessage_1.generateCaraMessage)({
+        audience: "caregiver",
+        context: `Write one warm, brief opening line (1 sentence) welcoming ${cgFirstName} to ${seniorName}'s visit. ` +
+            `${dayOfVisitTasks.length > 0 ? "Mention there are some family additions to the plan today." : "Keep it encouraging."}`,
+        fallback: `You're checked in — here's the plan for ${seniorName}'s visit today!`,
+        maxTokens: 60,
+    });
+    const body = `${opening}\n\n` +
+        dayOfSection +
+        planSection +
+        `\n\nReply DONE when the visit is complete, or ISSUE if anything comes up.`;
+    await (0, client_1.sendMessage)(chatId, body);
 }
 async function handleDone(phone, chatId, session) {
+    var _a, _b, _c, _d, _e;
     const caregiverId = session.caregiverId;
     if (!caregiverId)
         return;
@@ -207,6 +512,7 @@ async function handleDone(phone, chatId, session) {
         .where("date", "==", today)
         .where("status", "==", "in-progress")
         .limit(1).get();
+    const apptData = snap.empty ? null : snap.docs[0].data();
     if (!snap.empty) {
         await snap.docs[0].ref.update({ completedAt: new Date().toISOString() });
     }
@@ -216,21 +522,51 @@ async function handleDone(phone, chatId, session) {
         careNotesApptId: snap.empty ? "" : snap.docs[0].id,
         stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
-    await (0, client_1.sendMessage)(chatId, "How did the visit go? Tell me in your own words — I'll handle the notes.");
+    const seniorName = ((_b = (_a = apptData === null || apptData === void 0 ? void 0 : apptData.clientName) !== null && _a !== void 0 ? _a : apptData === null || apptData === void 0 ? void 0 : apptData.seniorName) !== null && _b !== void 0 ? _b : "your client");
+    const cgFirstName = session.caregiverId
+        ? ((_e = (_d = (_c = (await db.collection("caregivers").doc(session.caregiverId).get().catch(() => null))) === null || _c === void 0 ? void 0 : _c.data()) === null || _d === void 0 ? void 0 : _d.name) !== null && _e !== void 0 ? _e : "").split(" ")[0]
+        : "";
+    const doneMessage = await (0, caraMessage_1.generateCaraMessage)({
+        audience: "caregiver",
+        context: `${cgFirstName ? cgFirstName + " just" : "The caregiver just"} finished their shift with ${seniorName}. ` +
+            `Write a warm, celebratory wrap-up message asking them to share how the visit went. ` +
+            `Ask them to mention: what they did with ${seniorName}, how ${seniorName} was feeling/acting, ` +
+            `notes on any tasks completed, and anything ${seniorName} asked for that wasn't in the regular plan. ` +
+            `Tell them you'll put together a nice update for the family. ` +
+            `Sound genuinely appreciative of their work — like a coordinator who cares.`,
+        fallback: `Amazing work today${cgFirstName ? ", " + cgFirstName : ""}! 🙌 ` +
+            `Before I send the family an update — tell me how it went with ${seniorName}. ` +
+            `What did you two get up to, how was ${seniorName} feeling, and anything special to note? ` +
+            `I'll take it from there.`,
+        maxTokens: 200,
+    });
+    await (0, client_1.sendMessage)(chatId, doneMessage);
 }
 async function handleRunningLate(phone, chatId) {
     await db.collection("agent_sessions").doc(phone).update({
         awaitingLateMinutes: true,
         stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
-    await (0, client_1.sendMessage)(chatId, "How late do you think you'll be?");
+    const howLateMsg = await (0, caraMessage_1.generateCaraMessage)({
+        audience: "caregiver",
+        context: "Caregiver said they're running late. Cara is asking how late they expect to be.",
+        fallback: "How late do you think you'll be?",
+        maxTokens: 60,
+    });
+    await (0, client_1.sendMessage)(chatId, howLateMsg);
 }
 async function handleIssue(phone, chatId) {
     await db.collection("agent_sessions").doc(phone).update({
         awaitingIssueDescription: true,
         stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
-    await (0, client_1.sendMessage)(chatId, "I'm sorry to hear that. Can you describe what's happening?");
+    const issuePromptMsg = await (0, caraMessage_1.generateCaraMessage)({
+        audience: "caregiver",
+        context: "Caregiver reported an issue during a visit. Cara is asking them to describe what's happening.",
+        fallback: "I'm sorry to hear that. Can you describe what's happening?",
+        maxTokens: 80,
+    });
+    await (0, client_1.sendMessage)(chatId, issuePromptMsg);
 }
 async function getClientPhoneForAppt(appt) {
     var _a;
@@ -243,9 +579,245 @@ async function getClientPhoneForAppt(appt) {
         return null;
     return (_a = snap.docs[0].data().phone) !== null && _a !== void 0 ? _a : snap.docs[0].id;
 }
+async function getClientPhoneByClientId(clientId) {
+    var _a;
+    if (!clientId)
+        return null;
+    const snap = await db.collection("agent_sessions")
+        .where("userId", "==", clientId).limit(1).get();
+    if (snap.empty)
+        return null;
+    return (_a = snap.docs[0].data().phone) !== null && _a !== void 0 ? _a : snap.docs[0].id;
+}
+// ── Mid-shift family micro-update (task completed) ────────────────────────────
+async function sendFamilyTaskUpdate(params) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const { taskDescription, taskCategory, notes, clientId, seniorId, clientPhone, caregiverId } = params;
+    // Resolve names
+    let seniorName = "";
+    if (seniorId) {
+        const snap = await db.collection("senior_profiles").doc(seniorId).get().catch(() => null);
+        seniorName = ((_b = (_a = snap === null || snap === void 0 ? void 0 : snap.data()) === null || _a === void 0 ? void 0 : _a.name) !== null && _b !== void 0 ? _b : "");
+    }
+    if (!seniorName && clientId) {
+        const snap = await db.collection("users").doc(clientId).get().catch(() => null);
+        seniorName = ((_d = (_c = snap === null || snap === void 0 ? void 0 : snap.data()) === null || _c === void 0 ? void 0 : _c.seniorName) !== null && _d !== void 0 ? _d : "");
+    }
+    if (!seniorName)
+        seniorName = "your loved one";
+    let cgFirstName = "";
+    if (caregiverId) {
+        const snap = await db.collection("caregivers").doc(caregiverId).get().catch(() => null);
+        const name = ((_f = (_e = snap === null || snap === void 0 ? void 0 : snap.data()) === null || _e === void 0 ? void 0 : _e.name) !== null && _f !== void 0 ? _f : "");
+        cgFirstName = name.split(" ")[0] || name;
+    }
+    if (!cgFirstName)
+        cgFirstName = "Your caregiver";
+    const Anthropic = (await Promise.resolve().then(() => __importStar(require("@anthropic-ai/sdk")))).default;
+    const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    let content;
+    try {
+        const resp = await claude.messages.create({
+            model: "claude-haiku-4-5-20251001",
+            max_tokens: 120,
+            system: "You write a brief 1-2 sentence real-time care update for a family member.\n" +
+                "Tone: warm, direct, reassuring. From Cara (a care coordinator), not the caregiver.\n" +
+                "Keep it short — this is a mid-shift task update. No emoji. Output only the message text.",
+            messages: [{
+                    role: "user",
+                    content: `Task just completed: ${taskDescription}\n` +
+                        `Category: ${taskCategory}\n` +
+                        `Caregiver notes: ${notes || "no additional notes"}\n` +
+                        `Senior: ${seniorName}\n` +
+                        `Caregiver: ${cgFirstName}`,
+                }],
+        });
+        content = ((_g = resp.content[0].text) !== null && _g !== void 0 ? _g : "").trim();
+        if (!content)
+            throw new Error("empty");
+    }
+    catch (_h) {
+        content = `${cgFirstName} just completed ${taskDescription} for ${seniorName}.${notes ? " " + notes : ""}`;
+    }
+    await (0, caraAgent_1.sendViaInteractionAgent)(clientPhone, {
+        content,
+        urgency: "standard",
+        sourceAgent: "shift_task_family_update",
+        canDrop: true,
+    });
+}
+// ── Shift-end family update (after care notes parsed) ────────────────────────
+async function sendFamilyShiftEndUpdate(params) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+    const { caregiverName, clientId, seniorId, apptData, entry } = params;
+    const clientPhone = await getClientPhoneByClientId(clientId);
+    if (!clientPhone)
+        return;
+    // Resolve senior name
+    let seniorName = ((_a = apptData === null || apptData === void 0 ? void 0 : apptData.clientName) !== null && _a !== void 0 ? _a : "");
+    if (!seniorName && seniorId) {
+        const snap = await db.collection("senior_profiles").doc(seniorId).get().catch(() => null);
+        seniorName = ((_c = (_b = snap === null || snap === void 0 ? void 0 : snap.data()) === null || _b === void 0 ? void 0 : _b.name) !== null && _c !== void 0 ? _c : "");
+    }
+    if (!seniorName)
+        seniorName = "your loved one";
+    const cgFirstName = caregiverName.split(" ")[0] || caregiverName;
+    const mood = ((_d = entry.mood) !== null && _d !== void 0 ? _d : "");
+    const appetite = ((_e = entry.appetite) !== null && _e !== void 0 ? _e : "");
+    const activities = ((_f = entry.activities) !== null && _f !== void 0 ? _f : []);
+    const observations = ((_g = entry.observations) !== null && _g !== void 0 ? _g : "");
+    const notes = ((_h = entry.notes) !== null && _h !== void 0 ? _h : "");
+    const unplannedActivities = ((_j = entry.unplannedActivities) !== null && _j !== void 0 ? _j : []);
+    const taskNotes = ((_k = entry.taskNotes) !== null && _k !== void 0 ? _k : "");
+    const Anthropic = (await Promise.resolve().then(() => __importStar(require("@anthropic-ai/sdk")))).default;
+    const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    let content;
+    try {
+        const unplannedLine = unplannedActivities.length > 0
+            ? `Unplanned activities (requested by senior): ${unplannedActivities.join(", ")}`
+            : "No unplanned activities";
+        const resp = await claude.messages.create({
+            model: "claude-haiku-4-5-20251001",
+            max_tokens: 280,
+            system: "You write a warm, personal text message to a family member after their loved one's care visit.\n" +
+                "Tone: warm and reassuring, like a trusted care coordinator. From Cara, not the caregiver.\n" +
+                "Structure: 1) Start with the visit wrapping up and overall mood/meals. " +
+                "2) Mention planned tasks completed with any notes. " +
+                "3) If the senior asked for anything outside the plan, mention it clearly. " +
+                "4) End with whether there are any concerns.\n" +
+                "Keep it to 4-5 sentences. No bullet points. No emoji. Output only the message text, no greeting or sign-off.",
+            messages: [{
+                    role: "user",
+                    content: `Senior: ${seniorName}\n` +
+                        `Caregiver: ${cgFirstName}\n` +
+                        `Mood: ${mood || "not reported"}\n` +
+                        `Appetite: ${appetite || "not reported"}\n` +
+                        `Activities completed: ${activities.length > 0 ? activities.join(", ") : "not reported"}\n` +
+                        `Notes on completed tasks: ${taskNotes || "none"}\n` +
+                        `${unplannedLine}\n` +
+                        `Observations: ${observations || "none"}\n` +
+                        `Additional notes: ${notes || "none"}`,
+                }],
+        });
+        content = ((_l = resp.content[0].text) !== null && _l !== void 0 ? _l : "").trim();
+        if (!content)
+            throw new Error("empty");
+    }
+    catch (_m) {
+        const moodLine = mood ? ` ${seniorName} was in a ${mood} mood.` : "";
+        const ateLine = appetite ? ` Appetite was ${appetite}.` : "";
+        const actLine = activities.length > 0 ? ` Activities: ${activities.slice(0, 2).join(" and ")}.` : "";
+        const unplannedNote = unplannedActivities.length > 0
+            ? ` ${seniorName} also asked for: ${unplannedActivities.join(", ")}.`
+            : "";
+        const obsLine = observations ? ` ${observations}` : "";
+        content =
+            `${cgFirstName} just finished their visit with ${seniorName}.` +
+                moodLine + ateLine + actLine + unplannedNote + obsLine +
+                " No concerns to flag.";
+    }
+    await (0, caraAgent_1.sendViaInteractionAgent)(clientPhone, {
+        content,
+        urgency: "standard",
+        sourceAgent: "shift_end_family_update",
+        canDrop: true,
+    });
+}
+// ── Task acknowledgment handler ───────────────────────────────────────────────
+async function handleTaskAck(phone, chatId, text, session) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const taskInfo = session.awaitingTaskAck;
+    const Anthropic = (await Promise.resolve().then(() => __importStar(require("@anthropic-ai/sdk")))).default;
+    const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    // isQuestionOrOther check — CLAUDE.md requirement
+    const questionRes = await claude.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 5,
+        system: "Is this message a question or completely unrelated to completing a care task? " +
+            "Reply only YES or NO.",
+        messages: [{ role: "user", content: text }],
+    }).catch(() => null);
+    const isQuestion = ((_b = (_a = questionRes === null || questionRes === void 0 ? void 0 : questionRes.content[0]) === null || _a === void 0 ? void 0 : _a.text) !== null && _b !== void 0 ? _b : "")
+        .trim().toUpperCase().startsWith("Y");
+    if (isQuestion) {
+        // Let the normal caraAgent handle the question, then re-ask about the task
+        await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+            content: text,
+            urgency: "standard",
+            sourceAgent: "task_ack_question",
+            canDrop: true,
+        });
+        await (0, client_1.sendMessage)(chatId, `By the way — did you complete ${taskInfo.taskDescription}?`);
+        return;
+    }
+    // Parse completion + any brief notes
+    const ackRes = await claude.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 80,
+        system: "Did the caregiver confirm completing the task? Also extract any brief notes about how it went. " +
+            'Reply JSON only: {"completed":"YES"|"NO"|"UNCLEAR","notes":"brief detail or empty string"}',
+        messages: [{ role: "user", content: text }],
+    }).catch(() => null);
+    let completed = true; // default to trusting the caregiver
+    let notes = "";
+    try {
+        const raw = (_d = (_c = ackRes === null || ackRes === void 0 ? void 0 : ackRes.content[0]) === null || _c === void 0 ? void 0 : _c.text) !== null && _d !== void 0 ? _d : "{}";
+        const parsed = JSON.parse(raw);
+        completed = ((_e = parsed.completed) !== null && _e !== void 0 ? _e : "YES") !== "NO";
+        notes = ((_f = parsed.notes) !== null && _f !== void 0 ? _f : "").trim();
+    }
+    catch ( /* keep defaults */_h) { /* keep defaults */ }
+    if (completed) {
+        // Mark task done on appointment doc
+        await db.collection("appointments").doc(taskInfo.appointmentId).update({
+            completedTaskIds: admin.firestore.FieldValue.arrayUnion(taskInfo.taskId),
+        }).catch(() => { });
+        // Send family micro-update
+        const clientPhone = await getClientPhoneByClientId(taskInfo.clientId);
+        if (clientPhone) {
+            sendFamilyTaskUpdate({
+                taskDescription: taskInfo.taskDescription,
+                taskCategory: taskInfo.taskCategory,
+                notes,
+                clientId: taskInfo.clientId,
+                seniorId: taskInfo.seniorId,
+                clientPhone,
+                caregiverId: (_g = session.caregiverId) !== null && _g !== void 0 ? _g : "",
+            }).catch(err => console.error("[handleTaskAck] sendFamilyTaskUpdate error:", err));
+        }
+        const ackMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "caregiver",
+            context: notes
+                ? `The caregiver just confirmed completing "${taskInfo.taskDescription}" for ${taskInfo.seniorName} ` +
+                    `and added a brief note: "${notes}". Write a warm 1-sentence acknowledgment — thank them and ` +
+                    `mention you'll pass the update along to the family.`
+                : `The caregiver just confirmed completing "${taskInfo.taskDescription}" for ${taskInfo.seniorName}. ` +
+                    `Write a warm, brief 1-sentence acknowledgment.`,
+            fallback: notes ? `Got it — I'll let the family know!` : `Got it — great work!`,
+            maxTokens: 60,
+        });
+        await (0, client_1.sendMessage)(chatId, ackMsg);
+    }
+    else {
+        const notDoneMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "caregiver",
+            context: `The caregiver said they haven't completed "${taskInfo.taskDescription}" for ` +
+                `${taskInfo.seniorName} yet. Write a gentle, understanding 1-sentence reply — ` +
+                `no pressure, Cara will follow up with them again soon.`,
+            fallback: `No worries — I'll check back with you soon!`,
+            maxTokens: 60,
+        });
+        await (0, client_1.sendMessage)(chatId, notDoneMsg);
+    }
+    // Clear state
+    await db.collection("agent_sessions").doc(phone).update({
+        awaitingTaskAck: admin.firestore.FieldValue.delete(),
+        stateExpiresAt: admin.firestore.FieldValue.delete(),
+    });
+}
 // ── Caregiver voice/text → structured journal ─────────────────────────────────
 async function handleCareNotes(phone, chatId, text, session) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _s, _t;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _s, _t, _u, _v, _w;
     const Anthropic = (await Promise.resolve().then(() => __importStar(require("@anthropic-ai/sdk")))).default;
     const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const structured = await claude.messages.create({
@@ -254,14 +826,14 @@ async function handleCareNotes(phone, chatId, text, session) {
         system: "Convert this caregiver note into a structured care journal entry. " +
             'Reply in JSON: {"overallWellness":1,"mood":"happy|neutral|agitated|confused|tired",' +
             '"appetite":"good|fair|poor|refused","activities":[],"medications":[],' +
-            '"observations":"","notes":""}',
+            '"observations":"","notes":"","unplannedActivities":[],"taskNotes":""}',
         messages: [{ role: "user", content: text }],
     });
     let entry = {};
     try {
         entry = JSON.parse((_a = structured.content[0].text) !== null && _a !== void 0 ? _a : "{}");
     }
-    catch (_u) {
+    catch (_x) {
         entry = { notes: text };
     }
     const apptId = (_b = session.careNotesApptId) !== null && _b !== void 0 ? _b : "";
@@ -278,7 +850,13 @@ async function handleCareNotes(phone, chatId, text, session) {
         const validStatuses = ["in-progress", "completed", "confirmed"];
         if (apptData && !validStatuses.includes((_f = apptData.status) !== null && _f !== void 0 ? _f : "")) {
             await db.collection("agent_sessions").doc(phone).update({ awaitingCareNotes: false, careNotesApptId: "" });
-            await (0, client_1.sendMessage)(chatId, "I wasn't able to save those notes — it looks like that visit was cancelled.");
+            const cancelledNotesMsg = await (0, caraMessage_1.generateCaraMessage)({
+                audience: "caregiver",
+                context: "Caregiver submitted care notes but the visit was cancelled so notes cannot be saved. Let them know apologetically.",
+                fallback: "I wasn't able to save those notes — it looks like that visit was cancelled.",
+                maxTokens: 80,
+            });
+            await (0, client_1.sendMessage)(chatId, cancelledNotesMsg);
             return;
         }
         // Dedup + write in a single transaction to prevent duplicate journal entries if
@@ -315,7 +893,13 @@ async function handleCareNotes(phone, chatId, text, session) {
         });
         if (alreadyExists) {
             await db.collection("agent_sessions").doc(phone).update({ awaitingCareNotes: false, careNotesApptId: "" });
-            await (0, client_1.sendMessage)(chatId, "Notes for this visit are already saved.");
+            const notesAlreadySavedMsg = await (0, caraMessage_1.generateCaraMessage)({
+                audience: "caregiver",
+                context: "Caregiver tried to submit notes but notes for this visit are already saved. Let them know briefly.",
+                fallback: "Notes for this visit are already saved.",
+                maxTokens: 60,
+            });
+            await (0, client_1.sendMessage)(chatId, notesAlreadySavedMsg);
             return;
         }
     }
@@ -345,6 +929,17 @@ async function handleCareNotes(phone, chatId, text, session) {
         : null;
     const durationHours = (_p = (_o = apptSnap === null || apptSnap === void 0 ? void 0 : apptSnap.data()) === null || _o === void 0 ? void 0 : _o.durationHours) !== null && _p !== void 0 ? _p : 4;
     const pay = (hourlyRate * durationHours).toFixed(2);
+    // Fire shift-end family update (fire-and-forget — alreadyExists early-returns above, so if we
+    // reach here the journal entry was newly written)
+    if (apptId && clientId) {
+        sendFamilyShiftEndUpdate({
+            caregiverName: (_s = (_q = cgSnap.data()) === null || _q === void 0 ? void 0 : _q.name) !== null && _s !== void 0 ? _s : "Your caregiver",
+            clientId,
+            seniorId,
+            apptData: (_t = apptSnap === null || apptSnap === void 0 ? void 0 : apptSnap.data()) !== null && _t !== void 0 ? _t : null,
+            entry,
+        }).catch(err => console.error("[handleCareNotes] family update error:", err));
+    }
     // Fire visit billing (fire-and-forget so it doesn't block caregiver confirmation)
     if (apptId && clientId) {
         const { createVisitPayment } = await Promise.resolve().then(() => __importStar(require("../billing/visitBilling")));
@@ -353,7 +948,7 @@ async function handleCareNotes(phone, chatId, text, session) {
             clientId,
             clientPhone: "", // Family phone looked up inside createVisitPayment if needed
             caregiverId,
-            caregiverName: (_s = (_q = cgSnap.data()) === null || _q === void 0 ? void 0 : _q.name) !== null && _s !== void 0 ? _s : "Your caregiver",
+            caregiverName: (_v = (_u = cgSnap.data()) === null || _u === void 0 ? void 0 : _u.name) !== null && _v !== void 0 ? _v : "Your caregiver",
             caregiverPhone: phone,
             durationHours,
             hourlyRate,
@@ -370,7 +965,7 @@ async function handleCareNotes(phone, chatId, text, session) {
         .orderBy("date", "asc").limit(1).get();
     const nextLine = nextSnap.empty
         ? "No upcoming visits scheduled yet."
-        : `Next visit: ${nextSnap.docs[0].data().date} at ${(_t = nextSnap.docs[0].data().startTime) !== null && _t !== void 0 ? _t : ""}`;
+        : `Next visit: ${nextSnap.docs[0].data().date} at ${(_w = nextSnap.docs[0].data().startTime) !== null && _w !== void 0 ? _w : ""}`;
     await (0, client_1.sendMessage)(chatId, `Got it — notes saved.\n\n` +
         `Your payment of $${pay} will be processed tonight.\n` +
         `${nextLine}\n\n` +
@@ -806,7 +1401,13 @@ async function handleInbound(event) {
         }
         if (isExit) {
             await db.collection("agent_sessions").doc(phone).update({ bereavementMode: admin.firestore.FieldValue.delete() });
-            await (0, client_1.sendMessage)(chatId, "Of course. I'm here whenever you need me. What can I help you with?");
+            const bereavementExitMsg = await (0, caraMessage_1.generateCaraMessage)({
+                audience: "family",
+                context: "Family asked to exit bereavement support mode. Cara is gently transitioning back to normal and offering help.",
+                fallback: "Of course. I'm here whenever you need me. What can I help you with?",
+                maxTokens: 80,
+            });
+            await (0, client_1.sendMessage)(chatId, bereavementExitMsg);
         }
         else {
             // After 30 days, gently offer to resume — don't trap them forever
@@ -815,10 +1416,22 @@ async function handleInbound(event) {
                 ? (Date.now() - new Date(activatedAt).getTime()) / (1000 * 60 * 60 * 24)
                 : 0;
             if (daysSince > 30) {
-                await (0, client_1.sendMessage)(chatId, "I'm here with you. 💙 Whenever you're ready to arrange care again, just let me know.");
+                const bereavementCheckinMsg = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "family",
+                    context: "30-day bereavement check-in — Cara is gently reaching out to see if the family is ready to think about care again. Tone should be warm and not pushy.",
+                    fallback: "I'm here with you. 💙 Whenever you're ready to arrange care again, just let me know.",
+                    maxTokens: 80,
+                });
+                await (0, client_1.sendMessage)(chatId, bereavementCheckinMsg);
             }
             else {
-                await (0, client_1.sendMessage)(chatId, "I'm here with you. 💙 Take all the time you need.");
+                const bereavementSupportMsg = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "family",
+                    context: "Family is in bereavement mode and has messaged. Cara is being supportive and not rushing them.",
+                    fallback: "I'm here with you. 💙 Take all the time you need.",
+                    maxTokens: 60,
+                });
+                await (0, client_1.sendMessage)(chatId, bereavementSupportMsg);
             }
         }
         return;
@@ -973,7 +1586,13 @@ async function handleInbound(event) {
                     pendingSwapRequestId: admin.firestore.FieldValue.delete(),
                     pendingSwapFromName: admin.firestore.FieldValue.delete(),
                 });
-                await (0, client_1.sendMessage)(chatId, `No problem — thanks for letting ${fromName}'s coordinator know!`);
+                const swapDeclineMsg = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "caregiver",
+                    context: `Caregiver declined a shift swap request from ${fromName}. Cara is acknowledging the decline and thanking them for letting the coordinator know.`,
+                    fallback: `No problem — thanks for letting ${fromName}'s coordinator know!`,
+                    maxTokens: 60,
+                });
+                await (0, client_1.sendMessage)(chatId, swapDeclineMsg);
                 return;
             }
             // UNSURE — fall through to normal routing so Claude can answer the message
@@ -1019,7 +1638,13 @@ async function handleInbound(event) {
                     caregiverRescheduling: true,
                     stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
                 });
-                await (0, client_1.sendMessage)(chatId, "No problem — text me 2–3 times that work for you and I'll let the family know right away.");
+                const rescheduleMsg = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "caregiver",
+                    context: "Caregiver wants to reschedule a visit. Cara is asking them to suggest 2–3 times that work and will relay them to the family.",
+                    fallback: "No problem — text me 2–3 times that work for you and I'll let the family know right away.",
+                    maxTokens: 80,
+                });
+                await (0, client_1.sendMessage)(chatId, rescheduleMsg);
             },
             PASS: async () => {
                 var _a;
@@ -1053,14 +1678,55 @@ async function handleInbound(event) {
                 if (task && task.status === "awaiting_approval") {
                     if (norm === "YES") {
                         await candidateSnap.docs[0].ref.update({ status: "available", respondedAt: new Date().toISOString() });
-                        await (0, client_1.sendMessage)(chatId, "Got it — we'll confirm with the family and follow up shortly.");
+                        const jobConfirmMsg = await (0, caraMessage_1.generateCaraMessage)({
+                            audience: "caregiver",
+                            context: "Caregiver indicated availability for a job. Cara will confirm with the family and follow up shortly.",
+                            fallback: "Got it — we'll confirm with the family and follow up shortly.",
+                            maxTokens: 60,
+                        });
+                        await (0, client_1.sendMessage)(chatId, jobConfirmMsg);
                     }
                     else {
                         await candidateSnap.docs[0].ref.update({ status: "declined", respondedAt: new Date().toISOString() });
-                        await (0, client_1.sendMessage)(chatId, "No worries — thanks for letting us know!");
+                        const jobDeclineMsg = await (0, caraMessage_1.generateCaraMessage)({
+                            audience: "caregiver",
+                            context: "Caregiver declined a job offer. Cara is acknowledging gracefully.",
+                            fallback: "No worries — thanks for letting us know!",
+                            maxTokens: 60,
+                        });
+                        await (0, client_1.sendMessage)(chatId, jobDeclineMsg);
                     }
                     return;
                 }
+            }
+        }
+        // Day-before shift confirmation reply
+        if (session.pendingShiftConfirmation) {
+            const scExpiry = session.stateExpiresAt;
+            if (scExpiry && new Date(scExpiry) < new Date()) {
+                await db.collection("agent_sessions").doc(phone).update({
+                    pendingShiftConfirmation: admin.firestore.FieldValue.delete(),
+                    stateExpiresAt: admin.firestore.FieldValue.delete(),
+                }).catch(() => { });
+                // fall through to normal routing
+            }
+            else {
+                await handleShiftConfirmation(phone, chatId, text, session);
+                return;
+            }
+        }
+        // Awaiting task acknowledgment after a mid-shift nudge
+        if (session.awaitingTaskAck) {
+            const taskAckExpiry = session.stateExpiresAt;
+            if (taskAckExpiry && new Date(taskAckExpiry) < new Date()) {
+                await db.collection("agent_sessions").doc(phone).update({
+                    awaitingTaskAck: admin.firestore.FieldValue.delete(),
+                    stateExpiresAt: admin.firestore.FieldValue.delete(),
+                }).catch(() => { });
+            }
+            else {
+                await handleTaskAck(phone, chatId, text, session);
+                return;
             }
         }
         // Awaiting care notes after DONE
@@ -1122,7 +1788,13 @@ async function handleInbound(event) {
                         canDrop: false,
                     }, "high");
                 }
-                await (0, client_1.sendMessage)(chatId, "I've notified the family. Drive safe.");
+                const driveMsg = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "caregiver",
+                    context: "Caregiver said how late they'll be and Cara has already notified the family. Send a brief acknowledgment and wish them a safe drive.",
+                    fallback: "I've notified the family. Drive safe.",
+                    maxTokens: 60,
+                });
+                await (0, client_1.sendMessage)(chatId, driveMsg);
                 return;
             }
         }
@@ -1172,7 +1844,13 @@ async function handleInbound(event) {
                         createdAt: new Date().toISOString(), resolved: false,
                     });
                 });
-                await (0, client_1.sendMessage)(chatId, "I've flagged this for our team and notified the family. Thank you for letting me know.");
+                const issueFlaggedMsg = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "caregiver",
+                    context: "Caregiver reported an issue during a visit. Cara has escalated it to the team and notified the family. Thank them for letting Cara know.",
+                    fallback: "I've flagged this for our team and notified the family. Thank you for letting me know.",
+                    maxTokens: 80,
+                });
+                await (0, client_1.sendMessage)(chatId, issueFlaggedMsg);
                 return;
             } // end stateExpiresAt else
         }
@@ -1187,10 +1865,22 @@ async function handleInbound(event) {
                 await db.collection("issue_log").doc(issueLogId).update({
                     resolvedAt: new Date().toISOString(),
                 }).catch(() => { });
-                await (0, client_1.sendMessage)(chatId, "Good to hear — glad everything's okay.");
+                const issueResolvedMsg = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "caregiver",
+                    context: "Caregiver confirmed the issue from a prior visit is resolved. Cara is glad to hear it and wraps up the check-in.",
+                    fallback: "Good to hear — glad everything's okay.",
+                    maxTokens: 60,
+                });
+                await (0, client_1.sendMessage)(chatId, issueResolvedMsg);
             }
             else {
-                await (0, client_1.sendMessage)(chatId, "Thanks for the update — I've noted it. Let me know if anything changes.");
+                const issueUpdateMsg = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "caregiver",
+                    context: "Caregiver gave an update on an ongoing issue rather than confirming it's resolved. Cara acknowledges the update and notes it.",
+                    fallback: "Thanks for the update — I've noted it. Let me know if anything changes.",
+                    maxTokens: 60,
+                });
+                await (0, client_1.sendMessage)(chatId, issueUpdateMsg);
             }
             return;
         }
@@ -1344,6 +2034,20 @@ async function handleInbound(event) {
                 }
                 return;
             }
+        }
+    }
+    // ── Pre-shift family task check-in reply ────────────────────────────────────
+    if (session.awaitingPreShiftUpdate) {
+        const psExpiry = session.stateExpiresAt;
+        if (psExpiry && new Date(psExpiry) < new Date()) {
+            await db.collection("agent_sessions").doc(phone).update({
+                awaitingPreShiftUpdate: admin.firestore.FieldValue.delete(),
+                stateExpiresAt: admin.firestore.FieldValue.delete(),
+            }).catch(() => { });
+        }
+        else {
+            await handlePreShiftUpdate(phone, chatId, text, session);
+            return;
         }
     }
     // ── Emergency contact capture — family replies with EC name + phone ──────────
@@ -1542,11 +2246,23 @@ async function handleInbound(event) {
                     const cgPhone = (_64 = cgSnap.data()) === null || _64 === void 0 ? void 0 : _64.phone;
                     if (cgPhone) {
                         const cgSess = await (await Promise.resolve().then(() => __importStar(require("./client")))).getOrCreateSession(cgPhone);
-                        await (0, client_1.sendMessage)(cgSess.chatId, `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`);
+                        const cancelNotifMsgA = await (0, caraMessage_1.generateCaraMessage)({
+                            audience: "caregiver",
+                            context: `The family has cancelled the visit on ${appt.date}. Notify the caregiver and apologize for the inconvenience.`,
+                            fallback: `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`,
+                            maxTokens: 80,
+                        });
+                        await (0, client_1.sendMessage)(cgSess.chatId, cancelNotifMsgA);
                     }
                 }
                 await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() });
-                await (0, client_1.sendMessage)(chatId, "Cancelled. Want me to find a replacement for that day?");
+                const cancelConfirmMsgA = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "family",
+                    context: "Visit has been cancelled. Cara is confirming and offering to find a replacement for that day.",
+                    fallback: "Cancelled. Want me to find a replacement for that day?",
+                    maxTokens: 60,
+                });
+                await (0, client_1.sendMessage)(chatId, cancelConfirmMsgA);
                 return;
             }
         }
@@ -1624,7 +2340,13 @@ async function handleInbound(event) {
                 });
                 if (caregiverId)
                     (0, interviewAgent_1.writeInterviewOutcomeSignal)((_71 = session.userId) !== null && _71 !== void 0 ? _71 : phone, caregiverId, "hire").catch(() => { });
-                await (0, client_1.sendMessage)(chatId, `${pending.caregiverName} sounds like a great fit. When would you like care to start?`);
+                const hireMsgA = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "family",
+                    context: `Family wants to hire caregiver ${pending.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
+                    fallback: `${pending.caregiverName} sounds like a great fit. When would you like care to start?`,
+                    maxTokens: 80,
+                });
+                await (0, client_1.sendMessage)(chatId, hireMsgA);
                 return;
             }
             await (0, client_1.sendMessage)(chatId, "Who would you like to hire? Reply with their name and I'll set it up.");
@@ -1636,7 +2358,13 @@ async function handleInbound(event) {
                 await (0, jobNotifications_1.handleJobResponse)(phone, "NO", chatId, session);
             }
             else {
-                await (0, client_1.sendMessage)(chatId, "No worries — I'll reach out when something comes up.");
+                const noJobMsg = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "caregiver",
+                    context: "Caregiver responded to a job offer but there was no pending job in session. Cara acknowledges and lets them know it will reach out when something comes up.",
+                    fallback: "No worries — I'll reach out when something comes up.",
+                    maxTokens: 60,
+                });
+                await (0, client_1.sendMessage)(chatId, noJobMsg);
             }
             return;
         }
@@ -1678,13 +2406,25 @@ async function handleInbound(event) {
                     const cgPhone = (_73 = cgSnap.data()) === null || _73 === void 0 ? void 0 : _73.phone;
                     if (cgPhone) {
                         const cgSess = await (await Promise.resolve().then(() => __importStar(require("./client")))).getOrCreateSession(cgPhone);
-                        await (0, client_1.sendMessage)(cgSess.chatId, `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`);
+                        const cancelNotifMsgB = await (0, caraMessage_1.generateCaraMessage)({
+                            audience: "caregiver",
+                            context: `The family has cancelled the visit on ${appt.date}. Notify the caregiver and apologize for the inconvenience.`,
+                            fallback: `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`,
+                            maxTokens: 80,
+                        });
+                        await (0, client_1.sendMessage)(cgSess.chatId, cancelNotifMsgB);
                     }
                 }
                 await db.collection("agent_sessions").doc(phone).update({
                     pendingCancelConfirm: admin.firestore.FieldValue.delete(),
                 });
-                await (0, client_1.sendMessage)(chatId, "Cancelled. Want me to find a replacement for that day?");
+                const cancelConfirmMsgB = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "family",
+                    context: "Visit has been cancelled. Cara is confirming and offering to find a replacement for that day.",
+                    fallback: "Cancelled. Want me to find a replacement for that day?",
+                    maxTokens: 60,
+                });
+                await (0, client_1.sendMessage)(chatId, cancelConfirmMsgB);
                 return;
             }
         }
@@ -1791,7 +2531,13 @@ async function handleInbound(event) {
                         if (caregiverId) {
                             (0, interviewAgent_1.writeInterviewOutcomeSignal)((_80 = session.userId) !== null && _80 !== void 0 ? _80 : phone, caregiverId, "hire").catch(() => { });
                         }
-                        await (0, client_1.sendMessage)(chatId, `${pendingOutcome.caregiverName} sounds like a great fit. When would you like care to start?`);
+                        const hireMsgB = await (0, caraMessage_1.generateCaraMessage)({
+                            audience: "family",
+                            context: `Family wants to hire caregiver ${pendingOutcome.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
+                            fallback: `${pendingOutcome.caregiverName} sounds like a great fit. When would you like care to start?`,
+                            maxTokens: 80,
+                        });
+                        await (0, client_1.sendMessage)(chatId, hireMsgB);
                     }
                     else if (resolvedNorm === "MAYBE") {
                         const updates = {
@@ -1853,7 +2599,13 @@ async function handleInbound(event) {
                 if (caregiverId) {
                     (0, interviewAgent_1.writeInterviewOutcomeSignal)((_84 = session.userId) !== null && _84 !== void 0 ? _84 : phone, caregiverId, "hire").catch(() => { });
                 }
-                await (0, client_1.sendMessage)(chatId, `${pending.caregiverName} sounds like a great fit. When would you like care to start?`);
+                const hireMsgC = await (0, caraMessage_1.generateCaraMessage)({
+                    audience: "family",
+                    context: `Family wants to hire caregiver ${pending.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
+                    fallback: `${pending.caregiverName} sounds like a great fit. When would you like care to start?`,
+                    maxTokens: 80,
+                });
+                await (0, client_1.sendMessage)(chatId, hireMsgC);
                 return;
             }
             // No pending outcome — ask who
@@ -2281,7 +3033,13 @@ async function handleInbound(event) {
                 caregiverRescheduling: true,
                 stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
             });
-            await (0, client_1.sendMessage)(chatId, "No problem — text me 2–3 times that work for you and I'll let the family know right away.");
+            const rescheduleNlMsg = await (0, caraMessage_1.generateCaraMessage)({
+                audience: "caregiver",
+                context: "Caregiver wants to reschedule a visit. Cara is asking them to suggest 2–3 times that work and will relay them to the family.",
+                fallback: "No problem — text me 2–3 times that work for you and I'll let the family know right away.",
+                maxTokens: 80,
+            });
+            await (0, client_1.sendMessage)(chatId, rescheduleNlMsg);
             return;
         }
         // ── RESCHEDULE_REQUEST — move an existing appointment to a new date/time ──

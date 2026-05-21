@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -88,10 +89,14 @@ export const submitGpsCheckin = functions.https.onCall(async (data, context) => 
     const distStr = withinRadius
       ? `${Math.round(distanceMeters)}m from the address`
       : `${Math.round((distanceMeters / 1000) * 10) / 10}km from the address`;
-    const msg = withinRadius
-      ? `${appt.caregiverName} has arrived for today's visit.`
+    const arrivedMsg = withinRadius
+      ? await generateCaraMessage({
+          audience: "family",
+          context: `Cara is notifying the family that their caregiver ${appt.caregiverName} just arrived for today's visit with their loved one.`,
+          fallback: `${appt.caregiverName} has arrived for today's visit.`,
+        })
       : `${appt.caregiverName} has checked in but appears to be ${distStr}. They may be parking.`;
-    await sendMessage(clientSnap.data()!.chatId, msg);
+    await sendMessage(clientSnap.data()!.chatId, arrivedMsg);
   }
 
   return {

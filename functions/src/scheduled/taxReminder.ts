@@ -2,6 +2,7 @@ import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { getCaregiverTaxSummary } from "../billing/taxDocuments";
 import { sendMessage } from "../linq/client";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -26,10 +27,19 @@ export const send1099Notifications = functions.pubsub
         if (!summary.eligibleFor1099) continue;
 
         const chatId = cg.chatId ?? cg.phone;
-        const msg =
-          `Your ${year} tax summary is ready! You earned $${summary.totalEarnings.toFixed(2)} ` +
-          `across ${summary.visitCount} visits. You may receive a 1099-NEC. ` +
-          `Text "tax summary" for your full breakdown.`;
+        const msg = await generateCaraMessage({
+          audience: "caregiver",
+          context:
+            `The caregiver's ${year} tax summary is ready. ` +
+            `They earned $${summary.totalEarnings.toFixed(2)} across ${summary.visitCount} visits and may receive a 1099-NEC. ` +
+            `Let them know their tax summary is ready and that they can text "tax summary" for the full breakdown. ` +
+            "Keep the tone positive and informative — this is good news about their hard work.",
+          fallback:
+            `Your ${year} tax summary is ready! You earned $${summary.totalEarnings.toFixed(2)} ` +
+            `across ${summary.visitCount} visits. You may receive a 1099-NEC. ` +
+            `Text "tax summary" for your full breakdown.`,
+          maxTokens: 80,
+        });
         await sendMessage(chatId, msg);
         console.log(`[send1099Notifications] Notified ${cgDoc.id} — $${summary.totalEarnings}`);
       } catch (e) {

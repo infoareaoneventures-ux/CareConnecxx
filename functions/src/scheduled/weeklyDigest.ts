@@ -7,6 +7,7 @@ import { getPermissions } from "../agents/permissionsConversation";
 import { handlePromptGet } from "../mcp/server";
 import { getMemoryContext } from "../memory/memoryFiles";
 import { getRelevantFacts } from "../memory/learnedFacts";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -208,11 +209,20 @@ async function runWeeklyDigests(): Promise<number> {
         `· ${v.date ?? "this week"} — $${((v.amountCents ?? 0) / 100).toFixed(2)}`
       ).join("\n");
 
-      const earningsMsg =
-        `Morning ${cgName}. ${visits.length} visit${visits.length !== 1 ? "s" : ""} this week, ${totalStr} on its way to you.\n\n` +
-        `${visitLines}\n\n` +
-        `That's real work. Thank you for taking care of these families.\n\n` +
-        `Payments hit within 2 business days.`;
+      const earningsMsg = await generateCaraMessage({
+        audience: "caregiver",
+        context:
+          `Caregiver first name: ${cgName}. ` +
+          `This week's earnings summary: ${visits.length} visit${visits.length !== 1 ? "s" : ""}, ${totalStr} total, on its way. ` +
+          `Visit breakdown:\n${visitLines}\n` +
+          "Write a warm morning earnings summary. Express genuine appreciation for the work they do for these families. " +
+          "Mention that payments hit within 2 business days.",
+        fallback:
+          `Morning ${cgName}. ${visits.length} visit${visits.length !== 1 ? "s" : ""} this week, ${totalStr} on its way to you.\n\n` +
+          `${visitLines}\n\n` +
+          `That's real work. Thank you for taking care of these families.\n\n` +
+          `Payments hit within 2 business days.`,
+      });
 
       await sendViaInteractionAgent(cgPhone, {
         content:     earningsMsg,

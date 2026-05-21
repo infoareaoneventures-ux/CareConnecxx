@@ -46,6 +46,7 @@ const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
 const admin = __importStar(require("firebase-admin"));
 const caraAgent_1 = require("./caraAgent");
 const client_1 = require("../linq/client");
+const caraMessage_1 = require("../utils/caraMessage");
 const db = admin.firestore();
 // Fast keyword pre-check before Claude call
 const EMERGENCY_KEYWORDS = [
@@ -124,9 +125,15 @@ async function handleCaregiverIssue(params) {
         return; // No escalation schedule for 911 — direct path
     }
     // Non-911 path
-    const familyMsg = classification.severity === "urgent"
-        ? `${caregiverName} flagged a concern during today's visit with ${seniorName}: ${classification.summary}. Our team is aware. Reply with any questions.`
-        : `Quick note from ${caregiverName} — ${classification.summary}. Nothing urgent, wanted to keep you informed.`;
+    const familyMsg = await (0, caraMessage_1.generateCaraMessage)({
+        audience: "family",
+        context: classification.severity === "urgent"
+            ? `Caregiver ${caregiverName} flagged an urgent concern during today's visit with ${seniorName}: ${classification.summary}. Let the family know the team is aware and invite them to reply with questions.`
+            : `Caregiver ${caregiverName} noted a routine update during today's visit with ${seniorName}: ${classification.summary}. Keep the family informed in a calm, reassuring tone — nothing urgent.`,
+        fallback: classification.severity === "urgent"
+            ? `${caregiverName} flagged a concern during today's visit with ${seniorName}: ${classification.summary}. Our team is aware. Reply with any questions.`
+            : `Quick note from ${caregiverName} — ${classification.summary}. Nothing urgent, wanted to keep you informed.`,
+    });
     if (clientPhone) {
         await (0, caraAgent_1.sendViaInteractionAgent)(clientPhone, {
             content: familyMsg,
@@ -315,8 +322,13 @@ async function sendIssueFollowUp(issueLogId) {
     const seniorName = (_a = issue.seniorName) !== null && _a !== void 0 ? _a : "your loved one";
     // Message to family
     if (issue.clientPhone) {
+        const familyFollowUpMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "family",
+            context: `Cara is following up the day after a care concern was reported involving ${seniorName}. Gently check in to see how ${seniorName} is doing today and whether everything is okay.`,
+            fallback: `Just checking in — how is ${seniorName} doing today after yesterday's concern?\n\nEverything okay?`,
+        });
         await (0, caraAgent_1.sendViaInteractionAgent)(issue.clientPhone, {
-            content: `Just checking in — how is ${seniorName} doing today after yesterday's concern?\n\nEverything okay?`,
+            content: familyFollowUpMsg,
             urgency: "standard",
             sourceAgent: "issue_followup",
             canDrop: false,
@@ -324,8 +336,13 @@ async function sendIssueFollowUp(issueLogId) {
     }
     // Closure check to caregiver
     if (issue.caregiverPhone) {
+        const caregiverFollowUpMsg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "caregiver",
+            context: "Cara is sending a follow-up closure check to the caregiver the day after they reported a concern during a visit. Ask if the concern was resolved and remind them to reply YES if everything's okay or give an update if not.",
+            fallback: "Quick check-in: was the concern from yesterday's visit resolved? Reply YES if everything's okay, or give me an update if not.",
+        });
         await (0, caraAgent_1.sendViaInteractionAgent)(issue.caregiverPhone, {
-            content: "Quick check-in: was the concern from yesterday's visit resolved? Reply YES if everything's okay, or give me an update if not.",
+            content: caregiverFollowUpMsg,
             urgency: "standard",
             sourceAgent: "issue_followup",
             canDrop: false,

@@ -37,7 +37,11 @@ export type Intent =
   | "VIEW_INVOICE"
   | "VIEW_CARE_PLAN_HISTORY"
   | "SWAP_REQUEST"
-  | "CLIENT_SWAP_REQUEST";
+  | "CLIENT_SWAP_REQUEST"
+  | "FIND_NEARBY_PROVIDER"
+  | "BOOK_DOCTOR_APPOINTMENT"
+  | "PRESCRIPTION_REFILL"
+  | "NEW_PRESCRIPTION";
 
 const VALID_INTENTS = new Set<Intent>([
   "STOP", "TASK_REPLY", "PERMISSION_UPDATE", "REBOOK_REQUEST",
@@ -50,6 +54,8 @@ const VALID_INTENTS = new Set<Intent>([
   "RESCHEDULE_REQUEST", "MODIFY_SCHEDULE", "UPDATE_PAYMENT_METHOD",
   "REQUEST_REFUND", "VIEW_INVOICE", "VIEW_CARE_PLAN_HISTORY",
   "SWAP_REQUEST", "CLIENT_SWAP_REQUEST",
+  "FIND_NEARBY_PROVIDER", "BOOK_DOCTOR_APPOINTMENT",
+  "PRESCRIPTION_REFILL", "NEW_PRESCRIPTION",
 ]);
 
 let _client: Anthropic | null = null;
@@ -79,7 +85,7 @@ export async function classifyIntent(
       max_tokens: 10,
       system:
         "You classify a message sent to an AI care assistant named Cara. " +
-        "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, REQUEST_REFUND, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, SWAP_REQUEST, CLIENT_SWAP_REQUEST, QUESTION.\n" +
+        "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, REQUEST_REFUND, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, SWAP_REQUEST, CLIENT_SWAP_REQUEST, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, QUESTION.\n" +
         "STOP = opting out of all messages.\n" +
         "TASK_REPLY = responding to a numbered list (1, 2, or 3).\n" +
         "BOOKING_CONFIRM = confirming or approving a booking, schedule, or action (e.g. 'yes', 'sure', 'sounds good', 'let's do it', 'book it', 'go ahead', 'that works', 'perfect', 'confirmed', 'ok', 'yep').\n" +
@@ -115,6 +121,10 @@ export async function classifyIntent(
         "VIEW_CARE_PLAN_HISTORY = a client asking about changes to the care plan or wanting to see past versions (e.g. 'what changed in the care plan', 'show care plan history', 'who updated the care plan', 'restore old care plan', 'show previous care plan').\n" +
         "SWAP_REQUEST = a caregiver wanting to swap, transfer, or find coverage for one of their shifts (e.g. 'can someone cover my Tuesday shift', 'I need someone to take my Wednesday visit', 'looking for coverage', 'can\\'t make Thursday need swap', 'swap my shift with someone').\n" +
         "CLIENT_SWAP_REQUEST = a client asking if a different caregiver can cover a specific date or visit (e.g. 'can someone else cover Thursday', 'I want a different caregiver for Friday', 'swap the caregiver for next Tuesday', 'can Maria cover instead of David').\n" +
+        "FIND_NEARBY_PROVIDER = asking to find or locate a nearby doctor, clinic, hospital, pharmacy, urgent care, dentist, or specialist (e.g. 'find a cardiologist near me', 'closest pharmacy to mom', 'any urgent care nearby', 'find a clinic in Atlanta', 'where can I find a dermatologist close by').\n" +
+        "BOOK_DOCTOR_APPOINTMENT = asking Cara to book or schedule a doctor appointment on their behalf (e.g. 'book an appointment with Dr. Smith', 'schedule a checkup for mom', 'can you make an appointment with my doctor', 'book me in with Dr. Johnson next week', 'I need to see a doctor — can you book it').\n" +
+        "PRESCRIPTION_REFILL = asking Cara to refill or renew an existing prescription at a pharmacy (e.g. 'refill mom's blood pressure medication', 'can you renew my prescription at CVS', 'I need a refill on Lisinopril', 'refill my prescription', 'request a refill at Walgreens', 'renew dad's medication').\n" +
+        "NEW_PRESCRIPTION = asking for a brand new prescription for a new condition or medication not previously prescribed (e.g. 'I need a prescription for anxiety', 'get me a prescription for something for the pain', 'mom needs a prescription for her new diagnosis', 'can you help me get a new prescription').\n" +
         "QUESTION = anything else.",
       messages: [{ role: "user", content: text }],
     }, { timeoutMs: 8_000, maxAttempts: 3 });

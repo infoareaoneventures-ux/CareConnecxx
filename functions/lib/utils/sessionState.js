@@ -84,6 +84,9 @@ exports.STATE_MACHINE_FLAGS = [
     "clientSwapAppointmentId",
     "clientSwapDate",
     "clientSwapOptions",
+    // Healthcare agentic flows (provider search, appointment booking, Rx refill, new Rx)
+    "healthcareFlowStep",
+    "healthcareFlowData",
     // Onboarding resume checkpoint (NOT cleared — intentionally kept for resume)
 ];
 async function clearAllStateFlags(phone, db) {

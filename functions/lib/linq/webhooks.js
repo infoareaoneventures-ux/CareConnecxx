@@ -2160,6 +2160,20 @@ async function handleInbound(event) {
         }
         return;
     }
+    // ── Healthcare agentic flow — provider search, appt booking, Rx refill ────
+    if (session.healthcareFlowStep && session.userType !== "caregiver") {
+        if (session.service === "iMessage" && !session.groupChatId)
+            await (0, client_1.startTyping)(chatId).catch(() => { });
+        try {
+            const { resumeHealthcareFlow } = await Promise.resolve().then(() => __importStar(require("../agents/healthcareHandler")));
+            await resumeHealthcareFlow(phone, chatId, text, session, (msg) => (0, client_1.sendMessage)(chatId, msg));
+        }
+        finally {
+            if (session.service === "iMessage" && !session.groupChatId)
+                await (0, client_1.stopTyping)(chatId).catch(() => { });
+        }
+        return;
+    }
     // ── Refund self-service flow (multi-step state machine) ───────────────────
     if (session.refundStep) {
         if (session.service === "iMessage" && !session.groupChatId)
@@ -3204,6 +3218,24 @@ async function handleInbound(event) {
             const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();
             const sessionData = (_139 = sessionSnap2.data()) !== null && _139 !== void 0 ? _139 : {};
             await runMatchingForClient(phone, chatId, sessionData, sessionData);
+            return;
+        }
+        // ── Healthcare intents — provider search, appointment booking, Rx ────────
+        if ((intent === "FIND_NEARBY_PROVIDER" ||
+            intent === "BOOK_DOCTOR_APPOINTMENT" ||
+            intent === "PRESCRIPTION_REFILL" ||
+            intent === "NEW_PRESCRIPTION") &&
+            session.userType !== "caregiver") {
+            if (session.service === "iMessage" && !session.groupChatId)
+                await (0, client_1.startTyping)(chatId).catch(() => { });
+            try {
+                const { startHealthcareFlow } = await Promise.resolve().then(() => __importStar(require("../agents/healthcareHandler")));
+                await startHealthcareFlow(phone, chatId, text, session, intent, (msg) => (0, client_1.sendMessage)(chatId, msg));
+            }
+            finally {
+                if (session.service === "iMessage" && !session.groupChatId)
+                    await (0, client_1.stopTyping)(chatId).catch(() => { });
+            }
             return;
         }
         // ── Fact correction — user is correcting a known fact ────────────────────

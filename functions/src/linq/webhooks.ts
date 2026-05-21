@@ -2434,6 +2434,18 @@ async function handleInbound(event: unknown): Promise<void> {
     return;
   }
 
+  // ── Healthcare agentic flow — provider search, appt booking, Rx refill ────
+  if ((session as any).healthcareFlowStep && session.userType !== "caregiver") {
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      const { resumeHealthcareFlow } = await import("../agents/healthcareHandler");
+      await resumeHealthcareFlow(phone, chatId, text, session, (msg) => sendMessage(chatId, msg));
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+    return;
+  }
+
   // ── Refund self-service flow (multi-step state machine) ───────────────────
   if ((session as any).refundStep) {
     if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
@@ -3587,6 +3599,31 @@ async function handleInbound(event: unknown): Promise<void> {
       const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();
       const sessionData  = sessionSnap2.data() ?? {};
       await runMatchingForClient(phone, chatId, sessionData, sessionData);
+      return;
+    }
+
+    // ── Healthcare intents — provider search, appointment booking, Rx ────────
+    if (
+      (intent === "FIND_NEARBY_PROVIDER" ||
+       intent === "BOOK_DOCTOR_APPOINTMENT" ||
+       intent === "PRESCRIPTION_REFILL" ||
+       intent === "NEW_PRESCRIPTION") &&
+      session.userType !== "caregiver"
+    ) {
+      if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+      try {
+        const { startHealthcareFlow } = await import("../agents/healthcareHandler");
+        await startHealthcareFlow(
+          phone,
+          chatId,
+          text,
+          session,
+          intent,
+          (msg) => sendMessage(chatId, msg)
+        );
+      } finally {
+        if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+      }
       return;
     }
 

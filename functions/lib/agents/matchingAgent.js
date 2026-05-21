@@ -97,7 +97,7 @@ function computeRuleSignals(caregiver, intake) {
     return { ruleScore, signals };
 }
 async function runMatchingForClient(phone, chatId, intake, session) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w;
     try {
         const zip = ((_a = intake.zipCode) !== null && _a !== void 0 ? _a : "");
         const city = ((_b = intake.city) !== null && _b !== void 0 ? _b : "");
@@ -273,9 +273,8 @@ async function runMatchingForClient(phone, chatId, intake, session) {
             }
         }
         const seniorName = ((_s = intake.seniorName) !== null && _s !== void 0 ? _s : "your loved one");
-        const needs = ((_t = intake.careNeeds) !== null && _t !== void 0 ? _t : []);
-        const appUrl = (_u = process.env.APP_URL) !== null && _u !== void 0 ? _u : "https://cara.app";
-        const userId = (_v = session === null || session === void 0 ? void 0 : session.userId) !== null && _v !== void 0 ? _v : phone;
+        const appUrl = (_t = process.env.APP_URL) !== null && _t !== void 0 ? _t : "https://cara.app";
+        const userId = (_u = session === null || session === void 0 ? void 0 : session.userId) !== null && _u !== void 0 ? _u : phone;
         // Surface remembered client preferences so Cara can reference them naturally
         const learnedFacts = await (0, learnedFacts_1.getRelevantFacts)(userId).catch(() => []);
         const factsContext = learnedFacts.length > 0
@@ -381,7 +380,7 @@ async function runMatchingForClient(phone, chatId, intake, session) {
         // Store match list in session for follow-up; embed active goal context so
         // interview selection can pre-populate booking dates without re-prompting the family
         const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();
-        const goalContext = ((_x = (_w = sessionSnap2.data()) === null || _w === void 0 ? void 0 : _w.activeGoal) === null || _x === void 0 ? void 0 : _x.type) === "booking"
+        const goalContext = ((_w = (_v = sessionSnap2.data()) === null || _v === void 0 ? void 0 : _v.activeGoal) === null || _w === void 0 ? void 0 : _w.type) === "booking"
             ? sessionSnap2.data().activeGoal.context
             : null;
         await db.collection("agent_sessions").doc(phone).update({

@@ -323,7 +323,6 @@ export async function runMatchingForClient(
     }
 
     const seniorName = (intake.seniorName ?? "your loved one") as string;
-    const needs      = (intake.careNeeds ?? []) as string[];
     const appUrl     = process.env.APP_URL ?? "https://cara.app";
     const userId     = (session as any)?.userId ?? phone;
 

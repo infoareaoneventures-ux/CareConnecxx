@@ -90,8 +90,8 @@ async function shouldSend(
       }, { timeoutMs: 5_000, maxAttempts: 2 });
       return ((result.content[0] as { text: string }).text ?? "").trim().toUpperCase() === "SEND";
     } catch {
-      console.warn("shouldSend Claude timeout — defaulting to SEND");
-      return true; // default open on failure
+      console.warn("shouldSend Claude timeout — holding message to prevent spam");
+      return false; // safe default: hold on timeout, not send
     }
   }
 

@@ -31,6 +31,9 @@ import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { handleJobPostingStep, startJobPostingFlow } from "../agents/jobPostingFlow";
 import { startModifyScheduleFlow, handleModifyScheduleStep } from "../agents/modifyScheduleFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
+import { handleTimesheetApproval } from "../agents/timesheetHandler";
+import { handleEarningsView } from "../agents/earningsHandler";
+import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
 import { handleCaregiverSwapRequest, handleSwapAcceptance } from "../agents/caregiverSwapHandler";
 import { handleClientSwapRequest } from "../agents/clientSwapRequestHandler";
 import { STATE_MACHINE_FLAGS, clearAllStateFlags } from "../utils/sessionState";
@@ -2463,6 +2466,40 @@ async function handleInbound(event: unknown): Promise<void> {
     return;
   }
 
+  // ── Timesheet approval flow (multi-step state machine) ───────────────────
+  if ((session as any).timesheetStep) {
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      await handleTimesheetApproval(
+        (session.userId ?? phone) as string,
+        phone,
+        text,
+        session as Record<string, unknown>,
+        (msg: string) => sendMessage(chatId, msg)
+      );
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+    return;
+  }
+
+  // ── Availability update flow (multi-step state machine) ──────────────────
+  if ((session as any).availabilityStep) {
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      await handleAvailabilityUpdate(
+        (session.caregiverId ?? session.userId ?? phone) as string,
+        phone,
+        text,
+        session as Record<string, unknown>,
+        (msg: string) => sendMessage(chatId, msg)
+      );
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+    return;
+  }
+
   // ── Client caregiver swap flow — multi-step state machine ───────────────
   if ((session as any).clientSwapStep) {
     if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
@@ -3541,14 +3578,58 @@ async function handleInbound(event: unknown): Promise<void> {
       return;
     }
 
+    // ── APPROVE_TIMESHEET — client approves shift hours via dedicated handler ─
+    if (intent === "APPROVE_TIMESHEET" && session.userType !== "caregiver") {
+      if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+      try {
+        await handleTimesheetApproval(
+          (session.userId ?? phone) as string,
+          phone,
+          text,
+          { ...session as Record<string, unknown>, timesheetStep: "start" },
+          (msg: string) => sendMessage(chatId, msg)
+        );
+      } finally {
+        if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+      }
+      return;
+    }
+
+    // ── VIEW_EARNINGS — caregiver views their pay summary ────────────────────
+    if (intent === "VIEW_EARNINGS" && session.userType === "caregiver") {
+      if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+      try {
+        const cgId = (session.caregiverId ?? session.userId ?? phone) as string;
+        await handleEarningsView(cgId, (msg: string) => sendMessage(chatId, msg));
+      } finally {
+        if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+      }
+      return;
+    }
+
+    // ── UPDATE_AVAILABILITY — caregiver updates their schedule ───────────────
+    if (intent === "UPDATE_AVAILABILITY" && session.userType === "caregiver") {
+      if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+      try {
+        const cgId = (session.caregiverId ?? session.userId ?? phone) as string;
+        await handleAvailabilityUpdate(
+          cgId,
+          phone,
+          text,
+          { ...session as Record<string, unknown>, availabilityStep: "start" },
+          (msg: string) => sendMessage(chatId, msg)
+        );
+      } finally {
+        if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+      }
+      return;
+    }
+
     // ── Platform-action intents — routed to QA agent with new MCP tools ─────
     if (
-      intent === "VIEW_MY_JOBS"        ||
-      intent === "VIEW_APPLICANTS"     ||
-      intent === "VIEW_JOURNAL"        ||
-      intent === "APPROVE_TIMESHEET"   ||
-      intent === "VIEW_EARNINGS"       ||
-      intent === "UPDATE_AVAILABILITY" ||
+      intent === "VIEW_MY_JOBS"    ||
+      intent === "VIEW_APPLICANTS" ||
+      intent === "VIEW_JOURNAL"    ||
       intent === "BROWSE_JOB_BOARD"
     ) {
       const qaReplyPlatform = await runQaAgent({

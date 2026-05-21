@@ -1,4 +1,23 @@
 import { Caregiver, Senior, MatchFeedback } from '../types';
+
+export interface ObjectiveSignals {
+  distanceMiles: number;
+  skillsCoveragePercent: number;
+  scheduleOverlapPercent: number;
+  rating: number;
+  reviewCount: number;
+  yearsExperience: number;
+  isVerified: boolean;
+  reliabilityScore: number;
+  retentionRate: number;
+  certifications: string[];
+  languages: string[];
+  personalityTags: string[];
+  hourlyRate: number;
+  hasDementiaCert: boolean;
+  hasMedicalCred: boolean;
+  feedbackSummary: string;
+}
 import { availabilityService } from './availabilityService';
 import { getPredictiveFactors, generatePredictiveReasoning, getBatchPredictiveFactors } from './predictiveMatchingOptimized';
 
@@ -506,9 +525,9 @@ export const matchService = {
         insights: string[];
     }> => {
         const factors = await getPredictiveFactors(caregiver, senior, requestedDate instanceof Date ? requestedDate.toISOString() : requestedDate, requestedTime);
-        
+
         const insights: string[] = [];
-        
+
         if (factors.similarSeniorsScore >= 75) {
             insights.push(`Seniors similar to ${senior.name || 'your loved one'} have given ${caregiver.name} excellent reviews`);
         }
@@ -532,3 +551,88 @@ export const matchService = {
         };
     }
 };
+
+/**
+ * Compute objective, numerical signals for a caregiver-senior pair.
+ * These are fed as structured context to Claude for intelligent scoring.
+ */
+export function computeObjectiveSignals(
+    caregiver: Caregiver,
+    senior: Senior,
+    feedbackHistory: MatchFeedback[] = []
+): ObjectiveSignals {
+    // Distance
+    let distanceMiles = caregiver.distance ?? 999;
+    if (senior.latitude && senior.longitude && caregiver.latitude && caregiver.longitude) {
+        distanceMiles = calculateDistance(
+            senior.latitude, senior.longitude,
+            caregiver.latitude, caregiver.longitude
+        );
+    }
+
+    // Skills coverage
+    const neededSkills = senior.needs || [];
+    const caregiverSkills = [
+        ...(caregiver.medicalSkills || []),
+        ...(caregiver.skills || []),
+        ...(caregiver.certifications || [])
+    ];
+    const skillsCoveragePercent = neededSkills.length > 0
+        ? Math.round(
+            (neededSkills.filter(need =>
+                caregiverSkills.some(skill =>
+                    skill.toLowerCase().includes(need.toLowerCase()) ||
+                    need.toLowerCase().includes(skill.toLowerCase())
+                )
+            ).length / neededSkills.length) * 100
+        )
+        : 70;
+
+    // Schedule overlap
+    const neededSchedule = senior.scheduleNeeded || [];
+    const availableTimes = caregiver.availability || [];
+    const scheduleOverlapPercent = neededSchedule.length > 0
+        ? Math.round(
+            (neededSchedule.filter(time => availableTimes.includes(time)).length / neededSchedule.length) * 100
+        )
+        : 80;
+
+    // Certification flags
+    const allCerts = [
+        ...(caregiver.certifications || []),
+        ...(caregiver.medicalSkills || []),
+        ...(caregiver.skills || [])
+    ].map(c => c.toLowerCase());
+    const hasDementiaCert = allCerts.some(c =>
+        c.includes('dementia') || c.includes('alzheimer') || c.includes('memory care')
+    );
+    const hasMedicalCred = allCerts.some(c =>
+        c.includes('cna') || c.includes('lvn') || c.includes('rn') || c.includes('nurse')
+    );
+
+    // Feedback summary
+    const hiredCount = feedbackHistory.filter(f => f.caregiverId === caregiver.id && f.action === 'hired').length;
+    const rejectedCount = feedbackHistory.filter(f => f.caregiverId === caregiver.id && f.action === 'rejected').length;
+    const feedbackSummary = (hiredCount > 0 || rejectedCount > 0)
+        ? `hired ${hiredCount} time${hiredCount !== 1 ? 's' : ''}, rejected ${rejectedCount} time${rejectedCount !== 1 ? 's' : ''} by this family`
+        : 'no prior history with this family';
+
+    return {
+        distanceMiles: Math.round(distanceMiles * 10) / 10,
+        skillsCoveragePercent,
+        scheduleOverlapPercent,
+        rating: caregiver.rating || 0,
+        reviewCount: caregiver.reviewCount || 0,
+        yearsExperience: caregiver.experience || 0,
+        isVerified: caregiver.verified || false,
+        reliabilityScore: caregiver.reliabilityScore || 80,
+        retentionRate: caregiver.retentionRate || 0,
+        certifications: [...(caregiver.certifications || []), ...(caregiver.medicalSkills || [])],
+        languages: caregiver.languages || [],
+        personalityTags: caregiver.personalityTags || [],
+        hourlyRate: caregiver.hourlyRate || 0,
+        hasDementiaCert,
+        hasMedicalCred,
+        feedbackSummary
+    };
+}

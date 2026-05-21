@@ -9,7 +9,7 @@ const _callAiProxy = httpsCallable<
   { text: string }
 >(getFunctions(), "aiProxy");
 
-async function askClaude(
+export async function askClaude(
   system: string,
   user: string,
   model: "claude-haiku-4-5-20251001" | "claude-sonnet-4-6" = "claude-haiku-4-5-20251001",

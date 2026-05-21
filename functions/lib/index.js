@@ -36,7 +36,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.zepSetup = exports.chatWithCara = exports.send1099Notifications = exports.submitGpsCheckin = exports.sendJobMatchNotifications = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.sendThirtyMinShiftReminders = exports.sendDayBeforeShiftReminders = exports.sendPreShiftFamilyCheckin = exports.sendShiftTaskNudges = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
+exports.zepSetup = exports.chatWithCara = exports.send1099Notifications = exports.submitGpsCheckin = exports.sendJobMatchNotifications = exports.getMatchPatterns = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.sendThirtyMinShiftReminders = exports.sendDayBeforeShiftReminders = exports.sendPreShiftFamilyCheckin = exports.sendShiftTaskNudges = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions"));
 // Initialize Admin globally if not already done
@@ -169,6 +169,16 @@ __exportStar(require("./triggers/carePlanHistory"), exports);
 // AI proxy — secure server-side Anthropic calls (auth-gated, rate-limited)
 var aiProxy_1 = require("./aiProxy");
 Object.defineProperty(exports, "aiProxy", { enumerable: true, get: function () { return aiProxy_1.aiProxy; } });
+// MATCH PATTERNS — returns aggregated hire/reject outcome data for frontend Claude prompts
+exports.getMatchPatterns = functions.https.onCall(async (_data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated", "Must be signed in.");
+    }
+    const db = admin.firestore();
+    const { getOutcomePatternSummary } = await Promise.resolve().then(() => __importStar(require("./ai/outcomeAnalytics")));
+    const patterns = await getOutcomePatternSummary(db);
+    return { patterns };
+});
 // JOB MATCH NOTIFICATIONS (daily 10am — texts caregivers about high-match new jobs)
 var jobMatchNotifications_1 = require("./scheduled/jobMatchNotifications");
 Object.defineProperty(exports, "sendJobMatchNotifications", { enumerable: true, get: function () { return jobMatchNotifications_1.sendJobMatchNotifications; } });

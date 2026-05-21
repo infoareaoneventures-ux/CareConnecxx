@@ -38,74 +38,66 @@ const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
 const executionAgent_1 = require("./executionAgent");
 const learnedFacts_1 = require("../memory/learnedFacts");
+const claudeMatching_1 = require("../ai/claudeMatching");
+const outcomeAnalytics_1 = require("../ai/outcomeAnalytics");
 const db = admin.firestore();
-function computeMatchScore(caregiver, intake) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q;
+/** Compute rule-based signals as a pre-filter before calling Claude. */
+function computeRuleSignals(caregiver, intake) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
     const needs = ((_a = intake.careNeeds) !== null && _a !== void 0 ? _a : []);
     const intakeCity = ((_b = intake.city) !== null && _b !== void 0 ? _b : "").toLowerCase();
     const intakeZip = ((_c = intake.zipCode) !== null && _c !== void 0 ? _c : "");
     const intakeDays = ((_d = intake.daysPerWeek) !== null && _d !== void 0 ? _d : 0);
-    const intakeTimeOfDay = ((_e = intake.timeOfDay) !== null && _e !== void 0 ? _e : "").toLowerCase();
-    const genderPref = ((_f = intake.genderPreference) !== null && _f !== void 0 ? _f : "").toLowerCase();
-    // Skills match (0-100): % of care needs matched by specialties
-    const matchedNeeds = needs.filter((n) => { var _a; return (_a = caregiver.specialties) === null || _a === void 0 ? void 0 : _a.some((s) => s.toLowerCase().includes(n.toLowerCase())); });
-    const skillsMatch = needs.length > 0
-        ? Math.round((matchedNeeds.length / needs.length) * 100)
-        : 70;
-    // Distance score (0-100): exact city = 100, zip prefix match = 70, no match = 30
-    const cgCity = ((_g = caregiver.city) !== null && _g !== void 0 ? _g : "").toLowerCase();
-    const cgZip = ((_h = caregiver.zipCode) !== null && _h !== void 0 ? _h : "");
-    let distanceScore = 30;
+    const intakeTod = ((_e = intake.timeOfDay) !== null && _e !== void 0 ? _e : "").toLowerCase();
+    const allSkills = [
+        ...((_f = caregiver.specialties) !== null && _f !== void 0 ? _f : []),
+        ...((_g = caregiver.certifications) !== null && _g !== void 0 ? _g : []),
+    ];
+    const skillsCoverage = (0, claudeMatching_1.computeSkillsCoverage)(allSkills, needs);
+    // Simple distance proxy from city/zip (no lat/lng in this flow)
+    const cgCity = ((_h = caregiver.city) !== null && _h !== void 0 ? _h : "").toLowerCase();
+    const cgZip = ((_j = caregiver.zipCode) !== null && _j !== void 0 ? _j : "");
+    let distanceMiles;
     if (cgCity === intakeCity)
-        distanceScore = 100;
+        distanceMiles = 2;
     else if (intakeZip && cgZip && intakeZip.slice(0, 3) === cgZip.slice(0, 3))
-        distanceScore = 70;
-    // Availability match (0-100): simplified — overlap on time of day
-    const cgHours = ((_k = (_j = caregiver.availability) === null || _j === void 0 ? void 0 : _j.hours) !== null && _k !== void 0 ? _k : "").toLowerCase();
-    let availabilityMatch = 60;
-    if (cgHours.includes(intakeTimeOfDay) || intakeTimeOfDay === "")
-        availabilityMatch = 90;
+        distanceMiles = 12;
+    else
+        distanceMiles = 22;
+    const cgHours = ((_l = (_k = caregiver.availability) === null || _k === void 0 ? void 0 : _k.hours) !== null && _l !== void 0 ? _l : "").toLowerCase();
+    let scheduleOverlap = 60;
+    if (cgHours.includes(intakeTod) || intakeTod === "")
+        scheduleOverlap = 90;
     if (intakeDays > 5 && !cgHours.includes("weekend"))
-        availabilityMatch = Math.min(availabilityMatch, 70);
-    // Rating score (0-100): 5-star → 100
-    const ratingScore = Math.min(Math.round(((_l = caregiver.rating) !== null && _l !== void 0 ? _l : 3.5) / 5 * 100), 100);
-    // Personality / gender preference (0-100)
-    let personalityMatch = 75;
-    if (genderPref && caregiver.gender) {
-        personalityMatch = caregiver.gender.toLowerCase() === genderPref ? 95 : 55;
-    }
-    // Experience-weighted rebooking proxy (0-100)
-    const rebookingRate = Math.min(Math.round(50 + ((_m = caregiver.yearsExperience) !== null && _m !== void 0 ? _m : 0) * 5 + ((_o = caregiver.rating) !== null && _o !== void 0 ? _o : 3) * 5), 100);
-    // Weighted average: skills 35%, distance 20%, rating 20%, availability 15%, personality 10%
-    const overallScore = Math.round(skillsMatch * 0.35 +
-        distanceScore * 0.20 +
-        ratingScore * 0.20 +
-        availabilityMatch * 0.15 +
-        personalityMatch * 0.10);
-    // Build reasoning list
-    const reasoning = [];
-    if (matchedNeeds.length > 0)
-        reasoning.push(`Specializes in ${matchedNeeds.slice(0, 2).join(" and ")}`);
-    if (distanceScore === 100)
-        reasoning.push(`Located in ${intake.city}`);
-    if (((_p = caregiver.rating) !== null && _p !== void 0 ? _p : 0) >= 4.8)
-        reasoning.push("Top-rated by families");
-    if (((_q = caregiver.yearsExperience) !== null && _q !== void 0 ? _q : 0) >= 5)
-        reasoning.push(`${caregiver.yearsExperience} years of experience`);
-    if (availabilityMatch >= 90)
-        reasoning.push("Available at your preferred times");
-    if (reasoning.length === 0)
-        reasoning.push("Available and local");
-    const confidence = overallScore >= 80 ? "high" : overallScore >= 65 ? "medium" : "low";
-    return {
-        overallScore,
-        breakdown: { skillsMatch, availabilityMatch, personalityMatch, distanceScore, ratingScore, rebookingRate },
-        reasoning,
-        confidence,
+        scheduleOverlap = Math.min(scheduleOverlap, 70);
+    // Quick rule-based score for pre-filtering only (not the final score)
+    const ruleScore = Math.round(skillsCoverage * 0.35 +
+        (distanceMiles <= 5 ? 100 : distanceMiles <= 15 ? 70 : 30) * 0.20 +
+        Math.min(Math.round(((_m = caregiver.rating) !== null && _m !== void 0 ? _m : 3.5) / 5 * 100), 100) * 0.20 +
+        scheduleOverlap * 0.15 +
+        75 * 0.10 // personality placeholder
+    );
+    const signals = {
+        caregiverId: caregiver.id,
+        name: caregiver.name,
+        distanceMiles,
+        skillsCoveragePercent: skillsCoverage,
+        scheduleOverlapPercent: scheduleOverlap,
+        rating: caregiver.rating,
+        yearsExperience: caregiver.yearsExperience,
+        isVerified: !caregiver.pendingBackgroundCheck,
+        certifications: caregiver.certifications,
+        personalityTags: [],
+        hourlyRate: caregiver.hourlyRate,
+        hasDementiaCert: (0, claudeMatching_1.detectDementiaCert)(allSkills),
+        hasMedicalCred: (0, claudeMatching_1.detectMedicalCred)(allSkills),
+        feedbackSummary: "no prior history with this family",
+        ruleScore,
     };
+    return { ruleScore, signals };
 }
 async function runMatchingForClient(phone, chatId, intake, session) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
     try {
         const zip = ((_a = intake.zipCode) !== null && _a !== void 0 ? _a : "");
         const city = ((_b = intake.city) !== null && _b !== void 0 ? _b : "");
@@ -138,24 +130,91 @@ async function runMatchingForClient(phone, chatId, intake, session) {
                 .map((d) => (Object.assign({ id: d.id }, d.data())))
                 .filter((c) => !rejectedIds.includes(c.id));
         }
-        const scoredCaregivers = caregivers
-            .map((c) => ({ c, matchScore: computeMatchScore(c, intake) }))
+        // Step 1: compute rule-based signals for pre-filtering
+        const withSignals = caregivers.map(c => (Object.assign({ c }, computeRuleSignals(c, intake))));
+        // Step 2: take top 15 by rule score to send to Claude
+        const topCandidates = withSignals
+            .sort((a, b) => b.ruleScore - a.ruleScore)
+            .slice(0, 15);
+        // Step 3: Claude Sonnet scores all top candidates holistically
+        const outcomePatterns = await (0, outcomeAnalytics_1.getOutcomePatternSummary)(db).catch(() => "");
+        const systemPrompt = (0, claudeMatching_1.buildMatchingSystemPrompt)(outcomePatterns);
+        const needs = ((_f = intake.careNeeds) !== null && _f !== void 0 ? _f : []);
+        const senior = {
+            needs,
+            genderPreference: ((_g = intake.genderPreference) !== null && _g !== void 0 ? _g : ""),
+            languagePreference: ((_h = intake.languagePreference) !== null && _h !== void 0 ? _h : ""),
+            personality: ((_j = intake.seniorPersonality) !== null && _j !== void 0 ? _j : ""),
+            name: ((_k = intake.seniorName) !== null && _k !== void 0 ? _k : ""),
+        };
+        let claudeScores;
+        try {
+            claudeScores = await (0, claudeMatching_1.scoreWithClaude)(topCandidates.map(x => x.signals), senior, systemPrompt, 3000);
+        }
+        catch (err) {
+            console.warn("[matchingAgent] Claude scoring failed, falling back to rule scores:", err);
+            // Fallback: convert rule signals to MatchScoreResult shape
+            claudeScores = new Map(topCandidates.map(x => {
+                var _a, _b, _c;
+                return [x.c.id, {
+                        caregiverId: x.c.id,
+                        overallScore: x.ruleScore,
+                        confidence: x.ruleScore >= 80 ? "high" : x.ruleScore >= 65 ? "medium" : "low",
+                        reasoning: [
+                            x.signals.skillsCoveragePercent > 60
+                                ? `Covers ${x.signals.skillsCoveragePercent}% of care needs` : "Available caregiver",
+                        ],
+                        redFlags: [],
+                        factors: {
+                            skillsMatch: (_a = x.signals.skillsCoveragePercent) !== null && _a !== void 0 ? _a : 50,
+                            availability: (_b = x.signals.scheduleOverlapPercent) !== null && _b !== void 0 ? _b : 60,
+                            distance: x.signals.distanceMiles != null
+                                ? Math.max(0, 100 - x.signals.distanceMiles * 3) : 50,
+                            experience: Math.min(100, ((_c = x.signals.yearsExperience) !== null && _c !== void 0 ? _c : 0) * 10),
+                            personalityFit: 75,
+                            languageMatch: 75,
+                        },
+                    }];
+            }));
+        }
+        // Step 4: build MatchScoreResult objects from Claude output
+        const scoredCaregivers = topCandidates
+            .map(({ c }) => {
+            const claude = claudeScores.get(c.id);
+            if (!claude)
+                return null;
+            const ms = {
+                overallScore: claude.overallScore,
+                confidence: claude.confidence,
+                reasoning: claude.reasoning,
+                breakdown: {
+                    skillsMatch: claude.factors.skillsMatch,
+                    availabilityMatch: claude.factors.availability,
+                    personalityMatch: claude.factors.personalityFit,
+                    distanceScore: claude.factors.distance,
+                    ratingScore: claude.factors.experience,
+                    rebookingRate: 70,
+                },
+            };
+            return { c, matchScore: ms };
+        })
+            .filter(Boolean)
             .sort((a, b) => b.matchScore.overallScore - a.matchScore.overallScore);
         const top3 = scoredCaregivers.slice(0, 3).map((x) => x.c);
         const top3Scores = scoredCaregivers.slice(0, 3).map((x) => x.matchScore);
         if (top3.length === 0) {
             // Read and increment the failure counter on the client's session
             const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
-            const prevFailures = ((_g = (_f = sessionSnap.data()) === null || _f === void 0 ? void 0 : _f.consecutiveMatchFailures) !== null && _g !== void 0 ? _g : 0);
+            const prevFailures = ((_m = (_l = sessionSnap.data()) === null || _l === void 0 ? void 0 : _l.consecutiveMatchFailures) !== null && _m !== void 0 ? _m : 0);
             const failureCount = prevFailures + 1;
             await db.collection("agent_sessions").doc(phone).update({ consecutiveMatchFailures: failureCount });
-            const intakeCareNeeds = ((_h = intake.careNeeds) !== null && _h !== void 0 ? _h : []);
+            const intakeCareNeeds = ((_o = intake.careNeeds) !== null && _o !== void 0 ? _o : []);
             const severity = failureCount >= 2 ? "urgent" : "high";
             await db.collection("admin_alerts").add({
                 type: "no_match_found",
                 clientPhone: phone,
-                city: ((_j = intake.city) !== null && _j !== void 0 ? _j : ""),
-                zipCode: ((_k = intake.zipCode) !== null && _k !== void 0 ? _k : ""),
+                city: ((_p = intake.city) !== null && _p !== void 0 ? _p : ""),
+                zipCode: ((_q = intake.zipCode) !== null && _q !== void 0 ? _q : ""),
                 careNeeds: intakeCareNeeds,
                 failureCount,
                 createdAt: new Date().toISOString(),
@@ -207,16 +266,16 @@ async function runMatchingForClient(phone, chatId, intake, session) {
                     caregiverId: c.id,
                     caregiverName: c.name,
                     clientPhone: phone,
-                    clientId: (_l = session === null || session === void 0 ? void 0 : session.userId) !== null && _l !== void 0 ? _l : phone,
+                    clientId: (_r = session === null || session === void 0 ? void 0 : session.userId) !== null && _r !== void 0 ? _r : phone,
                     status: "pending_bg_clear",
                     createdAt: new Date().toISOString(),
                 });
             }
         }
-        const seniorName = ((_m = intake.seniorName) !== null && _m !== void 0 ? _m : "your loved one");
-        const needs = ((_o = intake.careNeeds) !== null && _o !== void 0 ? _o : []);
-        const appUrl = (_p = process.env.APP_URL) !== null && _p !== void 0 ? _p : "https://cara.app";
-        const userId = (_q = session === null || session === void 0 ? void 0 : session.userId) !== null && _q !== void 0 ? _q : phone;
+        const seniorName = ((_s = intake.seniorName) !== null && _s !== void 0 ? _s : "your loved one");
+        const needs = ((_t = intake.careNeeds) !== null && _t !== void 0 ? _t : []);
+        const appUrl = (_u = process.env.APP_URL) !== null && _u !== void 0 ? _u : "https://cara.app";
+        const userId = (_v = session === null || session === void 0 ? void 0 : session.userId) !== null && _v !== void 0 ? _v : phone;
         // Surface remembered client preferences so Cara can reference them naturally
         const learnedFacts = await (0, learnedFacts_1.getRelevantFacts)(userId).catch(() => []);
         const factsContext = learnedFacts.length > 0
@@ -322,7 +381,7 @@ async function runMatchingForClient(phone, chatId, intake, session) {
         // Store match list in session for follow-up; embed active goal context so
         // interview selection can pre-populate booking dates without re-prompting the family
         const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();
-        const goalContext = ((_s = (_r = sessionSnap2.data()) === null || _r === void 0 ? void 0 : _r.activeGoal) === null || _s === void 0 ? void 0 : _s.type) === "booking"
+        const goalContext = ((_x = (_w = sessionSnap2.data()) === null || _w === void 0 ? void 0 : _w.activeGoal) === null || _x === void 0 ? void 0 : _x.type) === "booking"
             ? sessionSnap2.data().activeGoal.context
             : null;
         await db.collection("agent_sessions").doc(phone).update({

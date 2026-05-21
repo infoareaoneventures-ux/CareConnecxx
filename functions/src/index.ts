@@ -132,6 +132,17 @@ export * from './triggers/carePlanHistory';
 // AI proxy — secure server-side Anthropic calls (auth-gated, rate-limited)
 export { aiProxy } from "./aiProxy";
 
+// MATCH PATTERNS — returns aggregated hire/reject outcome data for frontend Claude prompts
+export const getMatchPatterns = functions.https.onCall(async (_data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Must be signed in.");
+  }
+  const db = admin.firestore();
+  const { getOutcomePatternSummary } = await import("./ai/outcomeAnalytics");
+  const patterns = await getOutcomePatternSummary(db);
+  return { patterns };
+});
+
 // JOB MATCH NOTIFICATIONS (daily 10am — texts caregivers about high-match new jobs)
 export { sendJobMatchNotifications } from './scheduled/jobMatchNotifications';
 

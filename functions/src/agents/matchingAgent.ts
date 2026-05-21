@@ -7,6 +7,16 @@ import {
   updateExecutionAgentContext,
 } from "./executionAgent";
 import { getRelevantFacts } from "../memory/learnedFacts";
+import {
+  buildMatchingSystemPrompt,
+  scoreWithClaude,
+  computeSkillsCoverage,
+  detectDementiaCert,
+  detectMedicalCred,
+  CandidateSignals,
+  ClaudeScoredMatch,
+} from "../ai/claudeMatching";
+import { getOutcomePatternSummary } from "../ai/outcomeAnalytics";
 
 const db = admin.firestore();
 
@@ -42,80 +52,65 @@ interface MatchScoreResult {
   confidence:   "high" | "medium" | "low";
 }
 
-function computeMatchScore(
+/** Compute rule-based signals as a pre-filter before calling Claude. */
+function computeRuleSignals(
   caregiver: CaregiverCandidate,
   intake: Record<string, unknown>
-): MatchScoreResult {
-  const needs          = (intake.careNeeds ?? []) as string[];
-  const intakeCity     = ((intake.city ?? "") as string).toLowerCase();
-  const intakeZip      = ((intake.zipCode ?? "") as string);
-  const intakeDays     = (intake.daysPerWeek ?? 0) as number;
-  const intakeTimeOfDay = ((intake.timeOfDay ?? "") as string).toLowerCase();
-  const genderPref     = ((intake.genderPreference ?? "") as string).toLowerCase();
+): { ruleScore: number; signals: CandidateSignals } {
+  const needs       = (intake.careNeeds ?? []) as string[];
+  const intakeCity  = ((intake.city  ?? "") as string).toLowerCase();
+  const intakeZip   = ((intake.zipCode ?? "") as string);
+  const intakeDays  = (intake.daysPerWeek ?? 0) as number;
+  const intakeTod   = ((intake.timeOfDay ?? "") as string).toLowerCase();
 
-  // Skills match (0-100): % of care needs matched by specialties
-  const matchedNeeds = needs.filter((n) =>
-    caregiver.specialties?.some((s) => s.toLowerCase().includes(n.toLowerCase()))
-  );
-  const skillsMatch = needs.length > 0
-    ? Math.round((matchedNeeds.length / needs.length) * 100)
-    : 70;
+  const allSkills = [
+    ...(caregiver.specialties  ?? []),
+    ...(caregiver.certifications ?? []),
+  ];
 
-  // Distance score (0-100): exact city = 100, zip prefix match = 70, no match = 30
+  const skillsCoverage = computeSkillsCoverage(allSkills, needs);
+
+  // Simple distance proxy from city/zip (no lat/lng in this flow)
   const cgCity = (caregiver.city ?? "").toLowerCase();
   const cgZip  = ((caregiver as any).zipCode ?? "") as string;
-  let distanceScore = 30;
-  if (cgCity === intakeCity) distanceScore = 100;
-  else if (intakeZip && cgZip && intakeZip.slice(0, 3) === cgZip.slice(0, 3)) distanceScore = 70;
+  let distanceMiles: number | undefined;
+  if (cgCity === intakeCity) distanceMiles = 2;
+  else if (intakeZip && cgZip && intakeZip.slice(0, 3) === cgZip.slice(0, 3)) distanceMiles = 12;
+  else distanceMiles = 22;
 
-  // Availability match (0-100): simplified — overlap on time of day
   const cgHours = (caregiver.availability?.hours ?? "").toLowerCase();
-  let availabilityMatch = 60;
-  if (cgHours.includes(intakeTimeOfDay) || intakeTimeOfDay === "") availabilityMatch = 90;
-  if (intakeDays > 5 && !cgHours.includes("weekend")) availabilityMatch = Math.min(availabilityMatch, 70);
+  let scheduleOverlap = 60;
+  if (cgHours.includes(intakeTod) || intakeTod === "") scheduleOverlap = 90;
+  if (intakeDays > 5 && !cgHours.includes("weekend")) scheduleOverlap = Math.min(scheduleOverlap, 70);
 
-  // Rating score (0-100): 5-star → 100
-  const ratingScore = Math.min(Math.round((caregiver.rating ?? 3.5) / 5 * 100), 100);
-
-  // Personality / gender preference (0-100)
-  let personalityMatch = 75;
-  if (genderPref && caregiver.gender) {
-    personalityMatch = caregiver.gender.toLowerCase() === genderPref ? 95 : 55;
-  }
-
-  // Experience-weighted rebooking proxy (0-100)
-  const rebookingRate = Math.min(
-    Math.round(50 + (caregiver.yearsExperience ?? 0) * 5 + (caregiver.rating ?? 3) * 5),
-    100
+  // Quick rule-based score for pre-filtering only (not the final score)
+  const ruleScore = Math.round(
+    skillsCoverage                             * 0.35 +
+    (distanceMiles <= 5 ? 100 : distanceMiles <= 15 ? 70 : 30) * 0.20 +
+    Math.min(Math.round((caregiver.rating ?? 3.5) / 5 * 100), 100) * 0.20 +
+    scheduleOverlap                            * 0.15 +
+    75                                         * 0.10  // personality placeholder
   );
 
-  // Weighted average: skills 35%, distance 20%, rating 20%, availability 15%, personality 10%
-  const overallScore = Math.round(
-    skillsMatch       * 0.35 +
-    distanceScore     * 0.20 +
-    ratingScore       * 0.20 +
-    availabilityMatch * 0.15 +
-    personalityMatch  * 0.10
-  );
-
-  // Build reasoning list
-  const reasoning: string[] = [];
-  if (matchedNeeds.length > 0) reasoning.push(`Specializes in ${matchedNeeds.slice(0, 2).join(" and ")}`);
-  if (distanceScore === 100) reasoning.push(`Located in ${intake.city}`);
-  if ((caregiver.rating ?? 0) >= 4.8) reasoning.push("Top-rated by families");
-  if ((caregiver.yearsExperience ?? 0) >= 5) reasoning.push(`${caregiver.yearsExperience} years of experience`);
-  if (availabilityMatch >= 90) reasoning.push("Available at your preferred times");
-  if (reasoning.length === 0) reasoning.push("Available and local");
-
-  const confidence: "high" | "medium" | "low" =
-    overallScore >= 80 ? "high" : overallScore >= 65 ? "medium" : "low";
-
-  return {
-    overallScore,
-    breakdown: { skillsMatch, availabilityMatch, personalityMatch, distanceScore, ratingScore, rebookingRate },
-    reasoning,
-    confidence,
+  const signals: CandidateSignals = {
+    caregiverId:           caregiver.id,
+    name:                  caregiver.name,
+    distanceMiles,
+    skillsCoveragePercent: skillsCoverage,
+    scheduleOverlapPercent: scheduleOverlap,
+    rating:                caregiver.rating,
+    yearsExperience:       caregiver.yearsExperience,
+    isVerified:            !caregiver.pendingBackgroundCheck,
+    certifications:        caregiver.certifications,
+    personalityTags:       [],
+    hourlyRate:            caregiver.hourlyRate,
+    hasDementiaCert:       detectDementiaCert(allSkills),
+    hasMedicalCred:        detectMedicalCred(allSkills),
+    feedbackSummary:       "no prior history with this family",
+    ruleScore,
   };
+
+  return { ruleScore, signals };
 }
 
 export async function runMatchingForClient(
@@ -165,9 +160,84 @@ export async function runMatchingForClient(
         .filter((c) => !rejectedIds.includes(c.id));
     }
 
-    const scoredCaregivers = caregivers
-      .map((c) => ({ c, matchScore: computeMatchScore(c, intake) }))
-      .sort((a, b) => b.matchScore.overallScore - a.matchScore.overallScore);
+    // Step 1: compute rule-based signals for pre-filtering
+    const withSignals = caregivers.map(c => ({
+      c,
+      ...computeRuleSignals(c, intake),
+    }));
+
+    // Step 2: take top 15 by rule score to send to Claude
+    const topCandidates = withSignals
+      .sort((a, b) => b.ruleScore - a.ruleScore)
+      .slice(0, 15);
+
+    // Step 3: Claude Sonnet scores all top candidates holistically
+    const outcomePatterns = await getOutcomePatternSummary(db).catch(() => "");
+    const systemPrompt = buildMatchingSystemPrompt(outcomePatterns);
+
+    const needs = (intake.careNeeds ?? []) as string[];
+    const senior = {
+      needs,
+      genderPreference:   (intake.genderPreference ?? "") as string,
+      languagePreference: (intake.languagePreference ?? "") as string,
+      personality:        (intake.seniorPersonality ?? "") as string,
+      name:               (intake.seniorName ?? "") as string,
+    };
+
+    let claudeScores: Map<string, ClaudeScoredMatch>;
+    try {
+      claudeScores = await scoreWithClaude(
+        topCandidates.map(x => x.signals),
+        senior,
+        systemPrompt,
+        3000
+      );
+    } catch (err) {
+      console.warn("[matchingAgent] Claude scoring failed, falling back to rule scores:", err);
+      // Fallback: convert rule signals to MatchScoreResult shape
+      claudeScores = new Map(topCandidates.map(x => [x.c.id, {
+        caregiverId:  x.c.id,
+        overallScore: x.ruleScore,
+        confidence:   x.ruleScore >= 80 ? "high" as const : x.ruleScore >= 65 ? "medium" as const : "low" as const,
+        reasoning:    [
+          x.signals.skillsCoveragePercent > 60
+            ? `Covers ${x.signals.skillsCoveragePercent}% of care needs` : "Available caregiver",
+        ],
+        redFlags: [],
+        factors:  {
+          skillsMatch:    x.signals.skillsCoveragePercent ?? 50,
+          availability:   x.signals.scheduleOverlapPercent ?? 60,
+          distance:       x.signals.distanceMiles != null
+            ? Math.max(0, 100 - x.signals.distanceMiles * 3) : 50,
+          experience:     Math.min(100, (x.signals.yearsExperience ?? 0) * 10),
+          personalityFit: 75,
+          languageMatch:  75,
+        },
+      }]));
+    }
+
+    // Step 4: build MatchScoreResult objects from Claude output
+    const scoredCaregivers = topCandidates
+      .map(({ c }) => {
+        const claude = claudeScores.get(c.id);
+        if (!claude) return null;
+        const ms: MatchScoreResult = {
+          overallScore: claude.overallScore,
+          confidence:   claude.confidence,
+          reasoning:    claude.reasoning,
+          breakdown: {
+            skillsMatch:       claude.factors.skillsMatch,
+            availabilityMatch: claude.factors.availability,
+            personalityMatch:  claude.factors.personalityFit,
+            distanceScore:     claude.factors.distance,
+            ratingScore:       claude.factors.experience,
+            rebookingRate:     70,
+          },
+        };
+        return { c, matchScore: ms };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b!.matchScore.overallScore - a!.matchScore.overallScore) as Array<{ c: CaregiverCandidate; matchScore: MatchScoreResult }>;
 
     const top3 = scoredCaregivers.slice(0, 3).map((x) => x.c);
     const top3Scores = scoredCaregivers.slice(0, 3).map((x) => x.matchScore);

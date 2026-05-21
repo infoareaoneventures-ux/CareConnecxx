@@ -55,7 +55,7 @@ export const aiProxy = functions.https.onCall(async (data, context) => {
   try {
     response = await getClaude().messages.create({
       model,
-      max_tokens: Math.min(maxTokens, 2000),
+      max_tokens: Math.min(maxTokens, 4000),
       system,
       messages: [{ role: "user", content: user }],
     });

@@ -102,8 +102,8 @@ async function shouldSend(output, phone, prefs, session) {
             return ((_a = result.content[0].text) !== null && _a !== void 0 ? _a : "").trim().toUpperCase() === "SEND";
         }
         catch (_b) {
-            console.warn("shouldSend Claude timeout — defaulting to SEND");
-            return true; // default open on failure
+            console.warn("shouldSend Claude timeout — holding message to prevent spam");
+            return false; // safe default: hold on timeout, not send
         }
     }
     return true;

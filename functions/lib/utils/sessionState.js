@@ -87,6 +87,20 @@ exports.STATE_MACHINE_FLAGS = [
     // Healthcare agentic flows (provider search, appointment booking, Rx refill, new Rx)
     "healthcareFlowStep",
     "healthcareFlowData",
+    // Timesheet approval flow
+    "timesheetStep",
+    "pendingTimesheetId",
+    "pendingTimesheetDesc",
+    "pendingTimesheetQueue",
+    // Availability update flow
+    "availabilityStep",
+    "pendingAvailability",
+    // Refund flow
+    "refundStep",
+    "refundCandidates",
+    "refundAppointmentId",
+    "refundVisitDescription",
+    "refundReason",
     // Onboarding resume checkpoint (NOT cleared — intentionally kept for resume)
 ];
 async function clearAllStateFlags(phone, db) {

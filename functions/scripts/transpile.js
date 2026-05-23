@@ -23,7 +23,12 @@ function walkTs(dir, results = []) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       walkTs(full, results);
-    } else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) {
+    } else if (
+      entry.name.endsWith(".ts") &&
+      !entry.name.endsWith(".d.ts") &&
+      !entry.name.endsWith(".test.ts") &&
+      !entry.name.endsWith(".spec.ts")
+    ) {
       results.push(full);
     }
   }

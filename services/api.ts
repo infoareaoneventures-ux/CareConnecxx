@@ -2,7 +2,6 @@ import { stripeService as externalStripeService } from './stripeService';
 import { checkRateLimit, checkSignupRateLimit, RATE_LIMITS } from './rateLimit';
 
 import firebase, { auth, db, functions, isConfigured, googleProvider } from '../lib/firebase';
-import { getStorage, ref as storageRef, deleteObject } from 'firebase/storage';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
 
 // ==========================================
@@ -136,11 +135,11 @@ function dedupePromise<T>(key: string, factory: () => Promise<T>): Promise<T> {
     pendingPromises.set(key, promise);
     return promise;
 }
-import { Caregiver, Appointment, Review, Thread, DirectMessage, Senior, CarePlan, SupportTicket, AppNotification, BackgroundCheckData, AdminUser, MatchFeedback, EmergencyAlert, FamilyMember, JobPost, CareJournalEntry } from '../types';
+import { Caregiver, Appointment, Review, Thread, DirectMessage, Senior, CarePlan, SupportTicket, AppNotification, BackgroundCheckData, AdminUser, MatchFeedback, EmergencyAlert, FamilyMember, JobPost } from '../types';
 import { errorHandler } from './errorHandler';
 import { validators, validateSignup, validateLogin, isFirebaseError, getSafeErrorMessage, normalizePhoneNumber, sanitizeString } from '../utils/validation';
 import { sanitizeMessage, sanitizeName, sanitizeBio, sanitizePlainText } from '../utils/sanitize';
-import { notifyFamilyOfCheckIn, notifyFamilyOfArrival } from './notificationService';
+import { notifyFamilyOfArrival } from './notificationService';
 import { storageService } from './storageService';
 
 export const dbService = {
@@ -565,7 +564,7 @@ export const dbService = {
         if (isConfigured && db) {
             try {
                 let query = db.collection('caregivers')
-                    .orderBy('name')
+                    .where('onboardingStatus', '==', 'profile_complete')
                     .limit(limitSize);
 
                 if (lastDoc) {
@@ -2129,207 +2128,6 @@ export const dbService = {
      */
 
 
-    // Care Journal Functions - Family Command Center
-    createCareJournalEntry: async (entry: CareJournalEntry) => {
-        if (!isConfigured || !db) {
-            throw new Error("Database not connected");
-        }
-
-        try {
-            await db.collection('care_journal').doc(entry.id).set({
-                ...entry,
-                createdAt: new Date().toISOString()
-            });
-
-            // Also update appointment to mark as checked in
-            await db.collection('appointments').doc(entry.appointmentId).update({
-                hasJournalEntry: true,
-                lastJournalEntryAt: new Date().toISOString()
-            });
-
-            // Send notification to family
-            await dbService.notifyFamilyOfCheckIn(entry);
-
-            return entry;
-        } catch (error) {
-            console.error('Failed to create care journal entry:', error);
-            throw new Error('Failed to save care journal entry. Please try again.');
-        }
-    },
-
-    getHealthSignalsForEntries: async (entryIds: string[]): Promise<Record<string, { severity: string; signals: string[] }>> => {
-        if (!isConfigured || !db || entryIds.length === 0) return {};
-        try {
-            const snap = await db.collection('health_signals')
-                .where('journalEntryId', 'in', entryIds.slice(0, 10))
-                .get();
-            const result: Record<string, { severity: string; signals: string[] }> = {};
-            snap.docs.forEach(doc => {
-                const d = doc.data();
-                if (d.journalEntryId) {
-                    result[d.journalEntryId] = { severity: d.severity, signals: d.signals ?? [] };
-                }
-            });
-            return result;
-        } catch {
-            return {};
-        }
-    },
-
-    updateCareJournalEntry: async (
-        entryId: string,
-        updates: Partial<Pick<CareJournalEntry, 'notes' | 'wellness' | 'activities'>>
-    ) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        await db.collection('care_journal').doc(entryId).update({
-            ...updates,
-            updatedAt: new Date().toISOString(),
-        });
-    },
-
-    deleteCareJournalEntry: async (entryId: string, photoUrls: string[]) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        // Best-effort photo deletion — don't fail if URLs are not real Storage paths
-        const storage = getStorage();
-        await Promise.allSettled(
-            photoUrls.map(url =>
-                deleteObject(storageRef(storage, url)).catch(() => {})
-            )
-        );
-        await db.collection('care_journal').doc(entryId).delete();
-    },
-
-    getCareJournalEntries: async (seniorId: string, limit: number = 30) => {
-        if (!isConfigured || !db) {
-            return [];
-        }
-
-        try {
-            const snapshot = await db.collection('care_journal')
-                .where('seniorId', '==', seniorId)
-                .orderBy('timestamp', 'desc')
-                .limit(limit)
-                .get();
-
-            return snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            })) as CareJournalEntry[];
-        } catch (error) {
-            console.error('Failed to fetch care journal:', error);
-            return [];
-        }
-    },
-
-    subscribeToCareJournal: (seniorId: string, onUpdate: (entries: CareJournalEntry[]) => void) => {
-        if (!isConfigured || !db) {
-            return () => {};
-        }
-
-        // Log view access for HIPAA audit
-        const currentUser = auth?.currentUser;
-        if (currentUser) {
-            db.collection('care_journal_views').add({
-                seniorId,
-                viewerId: currentUser.uid,
-                viewerEmail: currentUser.email,
-                viewType: 'subscription',
-                timestamp: new Date().toISOString(),
-                userAgent: navigator.userAgent
-            }).catch(err => console.error('Failed to log view:', err));
-        }
-
-        return db.collection('care_journal')
-            .where('seniorId', '==', seniorId)
-            .orderBy('timestamp', 'desc')
-            .limit(50)
-            .onSnapshot(snapshot => {
-                const entries = snapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                })) as CareJournalEntry[];
-                onUpdate(entries);
-            }, error => {
-                console.error('Care journal subscription error:', error);
-            });
-    },
-
-    /**
-     * Log individual entry view for HIPAA audit
-     */
-    logCareJournalView: async (entryId: string, seniorId: string) => {
-        if (!isConfigured || !db || !auth?.currentUser) return;
-
-        try {
-            await db.collection('care_journal_views').add({
-                entryId,
-                seniorId,
-                viewerId: auth.currentUser.uid,
-                viewerEmail: auth.currentUser.email,
-                viewType: 'individual',
-                timestamp: new Date().toISOString(),
-                userAgent: navigator.userAgent
-            });
-        } catch (error) {
-            console.error('Failed to log care journal view:', error);
-        }
-    },
-
-    notifyFamilyOfCheckIn: async (entry: CareJournalEntry) => {
-        // Get senior's profile for name and family members
-        const seniorDoc = await db?.collection('senior_profiles').doc(entry.seniorId).get();
-        if (!seniorDoc?.exists) return;
-
-        const seniorData = seniorDoc.data() as { 
-            name?: string; 
-            familyMembers?: { email: string; name: string; phone?: string; userId?: string }[] 
-        };
-        const seniorName = seniorData?.name || 'Your Loved One';
-        const familyMembers = seniorData?.familyMembers || [];
-
-        if (familyMembers.length === 0) return;
-
-        // Get caregiver info
-        const caregiverDoc = await db?.collection('caregivers').doc(entry.caregiverId).get();
-        const caregiverName = caregiverDoc?.exists 
-            ? (caregiverDoc.data() as { name?: string })?.name || 'Caregiver'
-            : 'Caregiver';
-
-        // Create in-app notifications
-        for (const member of familyMembers) {
-            await db?.collection('notifications').add({
-                userId: member.userId || member.email,
-                type: 'caregiver_check_in',
-                title: `${caregiverName} Completed Visit`,
-                message: `${caregiverName} checked in after visiting ${seniorName}. ${entry.wellness?.mood === 'great' ? 'Everything went well!' : 'View details for more info.'}`,
-                entryId: entry.id,
-                seniorId: entry.seniorId,
-                timestamp: new Date().toISOString(),
-                read: false
-            });
-        }
-
-        // Send SMS, Email, and Push notifications
-        await notifyFamilyOfCheckIn(familyMembers, {
-            type: 'caregiver_check_in',
-            seniorId: entry.seniorId,
-            seniorName,
-            caregiverName,
-            message: entry.wellness?.mood === 'great' 
-                ? 'Everything went well!'
-                : 'View the app for more details.',
-            data: {
-                mood: entry.wellness?.mood,
-                activities: entry.activities,
-                notes: entry.notes,
-                photos: entry.photos,
-                entryId: entry.id,
-                appUrl: `${window.location.origin}/client`,
-                preferencesUrl: `${window.location.origin}/client-profile`
-            }
-        });
-    },
-
     notifyFamilyOfArrival: async (seniorId: string, caregiverId: string, appointmentTime: string) => {
         // Get senior's profile
         const seniorDoc = await db?.collection('senior_profiles').doc(seniorId).get();
@@ -2354,38 +2152,8 @@ export const dbService = {
         await notifyFamilyOfArrival(familyMembers, seniorName, caregiverName, appointmentTime);
     },
 
-    sendWeeklyDigest: async (seniorId: string, email: string) => {
-        // Get senior info
-        const seniorDoc = await db?.collection('senior_profiles').doc(seniorId).get();
-        if (!seniorDoc?.exists) return;
-
-        const seniorName = (seniorDoc.data() as { name?: string })?.name || 'Your Loved One';
-
-        // Get last 7 days of entries
-        const weekAgo = new Date();
-        weekAgo.setDate(weekAgo.getDate() - 7);
-
-        const snapshot = await db?.collection('care_journal')
-            .where('seniorId', '==', seniorId)
-            .where('timestamp', '>=', weekAgo.toISOString())
-            .orderBy('timestamp', 'desc')
-            .get();
-
-        const entries = snapshot?.docs.map(doc => doc.data()) as CareJournalEntry[] || [];
-
-        if (entries.length === 0) return;
-
-        // Calculate stats
-        const { sendWeeklyDigest } = await import('./notificationService');
-        await sendWeeklyDigest(email, seniorName, {
-            visitsCount: entries.length,
-            totalHours: Math.round(entries.length * 3), // Estimate 3 hours per visit
-            avgMood: entries[0]?.wellness?.mood || 'good',
-            highlights: entries.slice(0, 3).map(e => 
-                `${e.activities?.join(', ') || 'Care visit'} - ${e.wellness?.mood === 'great' ? 'Great day!' : 'Good care provided'}`
-            ),
-            photosCount: entries.reduce((sum, e) => sum + (e.photos?.length || 0), 0)
-        });
+    sendWeeklyDigest: async (_seniorId: string, _email: string) => {
+        // Care journal removed — weekly digest no longer supported
     },
 
     /**

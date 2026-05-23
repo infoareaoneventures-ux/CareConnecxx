@@ -75,6 +75,7 @@ export const Step1PersonalInfo: React.FC<Step1Props> = ({
 
     if (!firstName.trim()) e.firstName = 'First name is required';
     if (!lastName.trim()) e.lastName = 'Last name is required';
+    if (/[~*/\[\]]/.test(firstName) || /[~*/\[\]]/.test(lastName)) e.firstName = 'Names cannot contain special characters like / * [ ]';
 
     const month = parseInt(dobMonth);
     const day = parseInt(dobDay);

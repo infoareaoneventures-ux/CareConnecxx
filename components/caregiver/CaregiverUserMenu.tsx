@@ -66,7 +66,7 @@ export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile })
   const avatar = profile?.photo || profile?.imageUrl || (currentUser as any)?.photoURL;
 
   const items: Array<{ label: string; onClick: () => void; icon: React.ReactNode; divider?: boolean }> = [
-    { label: 'Your families', onClick: () => go('/caregiver/families'), icon: <Users className="w-4 h-4" /> },
+    { label: 'My Families', onClick: () => go('/caregiver/families'), icon: <Users className="w-4 h-4" /> },
     { label: 'Settings', onClick: () => go('/caregiver/settings'), icon: <Settings className="w-4 h-4" />, divider: true },
     { label: 'Payout and payment', onClick: () => go('/caregiver/payout'), icon: <Banknote className="w-4 h-4" /> },
     { label: 'Transactions', onClick: () => go('/caregiver/transactions'), icon: <ListOrdered className="w-4 h-4" /> },

@@ -1019,31 +1019,63 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                         {iv.notes && <p className="text-xs text-slate-500 italic bg-slate-50 rounded-lg px-3 py-2 mb-3 break-words">"{iv.notes}"</p>}
 
                                         {/* Footer: Details + Accept/Decline */}
-                                        <div className="flex items-center justify-between mt-3">
-                                            {iv.jobId ? (
-                                                <button onClick={() => handleViewJobDetails(iv.jobId!)} className="text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] font-medium text-sm">
-                                                    Details
-                                                </button>
-                                            ) : <span />}
-                                            {iv.status === 'pending' ? (
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        onClick={() => handleDeclineInterview(iv)}
-                                                        disabled={submittingInterview === iv.id}
-                                                        className="px-4 py-1.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50"
-                                                    >
-                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Decline'}
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleAcceptInterview(iv)}
-                                                        disabled={submittingInterview === iv.id}
-                                                        className="px-4 py-1.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-semibold disabled:opacity-50"
-                                                    >
-                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Accept'}
-                                                    </button>
+                                        {(() => {
+                                            const hasPaid = !!(
+                                                (profile as any)?.membershipPaid === true ||
+                                                ((profile as any)?.membershipStatus && (profile as any)?.membershipStatus !== 'none' && (profile as any)?.membershipStatus !== 'inactive')
+                                            );
+                                            const bgStatus = (profile as any)?.verificationStatus;
+                                            const bgOk = ['checkr_clear', 'approved'].includes(bgStatus) ||
+                                                (profile as any)?.backgroundCheckStatus === 'clear' ||
+                                                (profile as any)?.backgroundCheckComplete === true;
+                                            const canRespond = hasPaid && bgOk;
+                                            return (
+                                                <div className="mt-3">
+                                                    {iv.status === 'pending' && !canRespond ? (
+                                                        <div className="flex items-center justify-between">
+                                                            {iv.jobId ? (
+                                                                <button onClick={() => handleViewJobDetails(iv.jobId!)} className="text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] font-medium text-sm">
+                                                                    Details
+                                                                </button>
+                                                            ) : <span />}
+                                                            <a
+                                                                href="/caregiver/dashboard"
+                                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors"
+                                                            >
+                                                                <Lock className="w-3 h-3" />
+                                                                Complete verification to respond
+                                                            </a>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex items-center justify-between">
+                                                            {iv.jobId ? (
+                                                                <button onClick={() => handleViewJobDetails(iv.jobId!)} className="text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] font-medium text-sm">
+                                                                    Details
+                                                                </button>
+                                                            ) : <span />}
+                                                            {iv.status === 'pending' ? (
+                                                                <div className="flex gap-2">
+                                                                    <button
+                                                                        onClick={() => handleDeclineInterview(iv)}
+                                                                        disabled={submittingInterview === iv.id}
+                                                                        className="px-4 py-1.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50"
+                                                                    >
+                                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Decline'}
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleAcceptInterview(iv)}
+                                                                        disabled={submittingInterview === iv.id}
+                                                                        className="px-4 py-1.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-semibold disabled:opacity-50"
+                                                                    >
+                                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Accept'}
+                                                                    </button>
+                                                                </div>
+                                                            ) : <span />}
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            ) : <span />}
-                                        </div>
+                                            );
+                                        })()}
                                     </div>
                                 );
                             })}

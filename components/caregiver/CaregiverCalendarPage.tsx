@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Calendar as CalendarIcon, ChevronLeft, ChevronRight, MessageSquare, X,
-  Video, Phone, Home, Loader2, User, MapPin,
+  Video, Phone, Home, Loader2, User, MapPin, CheckCircle, Clock,
 } from 'lucide-react';
+import firebase from 'firebase/compat/app';
 import { auth, db } from '../../lib/firebase';
 import { CaregiverTopNav } from './CaregiverTopNav';
 
@@ -35,7 +36,14 @@ interface Shift {
   status: 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
   address?: string;
   notes?: string;
+  completionNotes?: string;
   tasksCompleted?: string[];
+  careNeeds?: string[];
+  lifestylePreferences?: string[];
+  bookingRequestId?: string;
+  startedAt?: any;
+  completedAt?: any;
+  rate?: number | null;
 }
 
 interface InterviewEvent {
@@ -206,6 +214,54 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     } catch {}
   };
 
+  const handleStartShift = async (shiftId: string) => {
+    if (!db) return;
+    await db.collection('shifts').doc(shiftId).update({
+      status: 'in-progress',
+      startedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    setSelectedShift(prev => prev ? { ...prev, status: 'in-progress' } : prev);
+    fetchShifts();
+  };
+
+  const handleEndShift = async (shiftId: string, notes?: string) => {
+    if (!db) return;
+    const update: Record<string, any> = {
+      status: 'completed',
+      completedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    };
+    if (notes?.trim()) update.completionNotes = notes.trim();
+    await db.collection('shifts').doc(shiftId).update(update);
+    setSelectedShift(null);
+    fetchShifts();
+  };
+
+  const handleCancelShift = async (shiftId: string) => {
+    if (!confirm('Cancel this shift? The client will be notified.')) return;
+    if (!db || !user) return;
+    const shift = shifts.find(s => s.id === shiftId);
+    await db.collection('shifts').doc(shiftId).update({
+      status: 'cancelled',
+      cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+      cancelledBy: 'caregiver',
+    });
+    // Notify client
+    if (shift?.clientId) {
+      await db.collection('users').doc(shift.clientId).collection('notifications').add({
+        userId: shift.clientId,
+        type: 'shift_cancelled',
+        title: 'Shift Cancelled',
+        message: `Your caregiver cancelled the shift on ${shift.date}.`,
+        read: false,
+        isRead: false,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+    setSelectedShift(null);
+    fetchShifts();
+  };
+
+
   const saveAvailability = useCallback(async () => {
     if (!user || !db) return;
     setSaving(true);
@@ -335,40 +391,357 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
 
   const activeDetail = selectedShift ? 'shift' : selectedInterview ? 'interview' : null;
 
-  const ShiftDetail = ({ shift, onClose }: { shift: Shift; onClose: () => void }) => (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-      <div className="flex items-start justify-between mb-4">
-        <div>
-          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${statusBadge(shift.status)}`}>
-            {shift.status.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-          </span>
-          <h3 className="font-bold text-slate-900 mt-2">{shift.clientName || 'Client'}</h3>
-          <p className="text-sm text-slate-500">{shift.date} · {shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+  const ShiftDetail = ({ shift, onClose }: { shift: Shift; onClose: () => void }) => {
+    const now = new Date();
+    const shiftStart = new Date(`${shift.date}T${shift.startTime}`);
+    const shiftEnd   = new Date(`${shift.date}T${shift.endTime || shift.startTime}`);
+    const minUntilStart = (shiftStart.getTime() - now.getTime()) / 60000;
+    const shiftEnded    = shiftEnd <= now;
+
+    // Which actions are available
+    const canStart  = shift.status === 'scheduled' && minUntilStart <= 30;
+    const canEnd    = shift.status === 'in-progress';
+    const canCancel = shift.status === 'scheduled';
+
+    const householdInfo = shift.lifestylePreferences || [];
+
+    // Actual start/end/duration helpers
+    const tsToDate = (ts: any): Date | null => {
+      if (!ts) return null;
+      if (ts?.toDate) return ts.toDate();
+      if (ts?.seconds) return new Date(ts.seconds * 1000);
+      return null;
+    };
+    const fmtTs = (ts: any) => {
+      const d = tsToDate(ts);
+      return d ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : null;
+    };
+    const actualStart = fmtTs(shift.startedAt);
+    const actualEnd   = fmtTs(shift.completedAt);
+    const duration = (() => {
+      const s = tsToDate(shift.startedAt); const e = tsToDate(shift.completedAt);
+      if (!s || !e) return null;
+      const mins = Math.round((e.getTime() - s.getTime()) / 60000);
+      if (mins <= 0) return null;
+      const h = Math.floor(mins / 60); const m = mins % 60;
+      return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+    })();
+
+    // Care tasks — from shift directly, or fetch from booking as fallback
+    const [careNeeds, setCareNeeds] = React.useState<string[]>(shift.careNeeds || []);
+    const [tasksCompleted, setTasksCompleted] = React.useState<string[]>(shift.tasksCompleted || []);
+    const [fetchingTasks, setFetchingTasks] = React.useState(false);
+
+    // End shift notes flow
+    const [endingShift, setEndingShift] = React.useState(false);
+    const [endNotes, setEndNotes] = React.useState('');
+
+    // Booking details
+    const [bookingData, setBookingData] = React.useState<any>(null);
+
+    React.useEffect(() => {
+      if (!shift.bookingRequestId || !db) return;
+      if (careNeeds.length === 0) setFetchingTasks(true);
+      db.collection('booking_requests').doc(shift.bookingRequestId).get()
+        .then(doc => {
+          const data = doc.data() || {};
+          if (careNeeds.length === 0) setCareNeeds(data.careNeeds || []);
+          setBookingData(data);
+        })
+        .catch(() => {})
+        .finally(() => setFetchingTasks(false));
+    }, [shift.id]);
+
+    const handleToggleTask = async (task: string) => {
+      if (!db) return;
+      const updated = tasksCompleted.includes(task)
+        ? tasksCompleted.filter(t => t !== task)
+        : [...tasksCompleted, task];
+      setTasksCompleted(updated);
+      await db.collection('shifts').doc(shift.id).update({ tasksCompleted: updated }).catch(() => {});
+    };
+
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        {/* Header */}
+        <div className="p-5 pb-3">
+          <div className="flex items-start justify-between mb-3">
+            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${statusBadge(shift.status)}`}>
+              {shift.status === 'in-progress' ? '● In Progress' : shift.status.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+            </span>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg font-bold leading-none">×</button>
+          </div>
+          <h3 className="font-bold text-slate-900 text-base">{shift.clientName || 'Client'}</h3>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {new Date(shift.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+            {' · '}{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}
+          </p>
+          {shift.rate && (
+            <p className="text-xs text-slate-400 mt-0.5">${shift.rate}/hr</p>
+          )}
         </div>
-        <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg font-bold">×</button>
-      </div>
-      <div className="space-y-2 text-sm mb-4">
-        {shift.address && (
-          <div className="flex items-start gap-2 text-slate-600">
-            <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-slate-400" />
-            <span>{shift.address}</span>
+
+        {/* Info: address + household badges */}
+        <div className="px-5 space-y-2 text-sm mb-3">
+          {shift.address && (
+            <div>
+              <div className="flex items-start gap-2 text-slate-600">
+                <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-slate-400" />
+                <span className="text-xs">{shift.address}</span>
+              </div>
+              {householdInfo.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-1.5 ml-6">
+                  {householdInfo.map((pref, i) => (
+                    <span key={i} className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-xs font-medium">
+                      {pref}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {shift.notes && (
+            <div className="p-3 bg-slate-50 rounded-xl text-slate-600 text-xs">{shift.notes}</div>
+          )}
+        </div>
+
+        {/* Actual time worked */}
+        {(actualStart || actualEnd) && (
+          <div className="px-5 mb-3">
+            <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-xl border border-slate-200">
+              <Clock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+              <div className="text-xs text-slate-600 flex flex-wrap gap-x-2">
+                {actualStart && <span>Started: <span className="font-medium text-slate-800">{actualStart}</span></span>}
+                {actualEnd   && <span>Ended: <span className="font-medium text-slate-800">{actualEnd}</span></span>}
+                {duration    && <span className="text-slate-400">· {duration}</span>}
+              </div>
+            </div>
           </div>
         )}
-        {shift.notes && <div className="p-3 bg-slate-50 rounded-xl text-slate-600">{shift.notes}</div>}
-        {shift.tasksCompleted && shift.tasksCompleted.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-2">
-            {shift.tasksCompleted.map((t, i) => (
-              <span key={i} className="text-xs bg-primary-50 text-primary-700 border border-primary-200 px-2 py-0.5 rounded-full">{t}</span>
-            ))}
+
+        {/* Tasks — grouped by recipient when booking data available */}
+        {(careNeeds.length > 0 || fetchingTasks || (bookingData?.careRecipients?.length ?? 0) > 0) && (
+          <div className="px-5 mb-4">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tasks</p>
+            {fetchingTasks && !bookingData ? (
+              <p className="text-xs text-slate-400">Loading tasks…</p>
+            ) : bookingData?.careRecipients?.length > 0 ? (
+              <div className="space-y-3">
+                {bookingData.careRecipients.map((r: any, ri: number) => {
+                  const recipientTasks: string[] = r.careNeeds || [];
+                  if (recipientTasks.length === 0) return null;
+                  const isCompleted = shift.status === 'completed' || shift.status === 'cancelled';
+                  return (
+                    <div key={ri}>
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        {r.photoURL
+                          ? <img src={r.photoURL} className="w-5 h-5 rounded-full object-cover shrink-0" alt="" />
+                          : <div className="w-5 h-5 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 text-[10px] font-bold shrink-0">{(r.name || r.firstName || '?')[0].toUpperCase()}</div>
+                        }
+                        <span className="text-xs font-semibold text-slate-700">{r.name || r.firstName}</span>
+                        {r.relationship && <span className="text-xs text-slate-400">· {r.relationship}{r.age ? ` · Age ${r.age}` : ''}</span>}
+                      </div>
+                      <div className="space-y-1">
+                        {recipientTasks.map((task, i) => {
+                          const done = tasksCompleted.includes(task);
+                          if (isCompleted) return (
+                            <div key={i} className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border text-xs font-medium ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                              <CheckCircle className={`w-4 h-4 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-200'}`} />
+                              {task}
+                            </div>
+                          );
+                          return (
+                            <button key={i} onClick={() => handleToggleTask(task)}
+                              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border text-left text-xs font-medium transition-colors ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'}`}>
+                              <CheckCircle className={`w-4 h-4 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                              {task}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {/* Lifestyle & Preferences inline under tasks */}
+                      {r.lifestyle?.favoriteActivities?.length > 0 && (
+                        <div className="mt-2">
+                          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Lifestyle & Preferences</p>
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] text-slate-400 mr-0.5">Enjoys</span>
+                            {r.lifestyle.favoriteActivities.map((a: string, ai: number) => (
+                              <span key={ai} className="text-[10px] bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">{a}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {careNeeds.map((task, i) => {
+                  const done = tasksCompleted.includes(task);
+                  const isCompleted = shift.status === 'completed' || shift.status === 'cancelled';
+                  if (isCompleted) return (
+                    <div key={i} className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border text-xs font-medium ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                      <CheckCircle className={`w-4 h-4 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-200'}`} />
+                      {task}
+                    </div>
+                  );
+                  return (
+                    <button key={i} onClick={() => handleToggleTask(task)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border text-left text-xs font-medium transition-colors ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'}`}>
+                      <CheckCircle className={`w-4 h-4 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                      {task}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="px-5 pb-3 space-y-2">
+          {/* Scheduled: not yet startable */}
+          {shift.status === 'scheduled' && !canStart && !shiftEnded && (
+            <p className="text-xs text-slate-400 text-center py-1">
+              Start available 30 min before shift
+            </p>
+          )}
+
+          {/* Scheduled + within 30 min: Start Shift */}
+          {canStart && (
+            <button
+              onClick={() => handleStartShift(shift.id)}
+              className="w-full py-2.5 bg-accent-500 hover:bg-accent-600 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              Start Shift
+            </button>
+          )}
+
+          {/* In Progress: End Shift (two-step with notes) */}
+          {canEnd && !endingShift && (
+            <button
+              onClick={() => setEndingShift(true)}
+              className="w-full py-2.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <CheckCircle className="w-4 h-4" />End Shift
+            </button>
+          )}
+          {canEnd && endingShift && (
+            <div className="space-y-2">
+              <textarea
+                value={endNotes}
+                onChange={e => setEndNotes(e.target.value)}
+                placeholder="Add shift notes (optional)…"
+                rows={3}
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-green-200 resize-none"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setEndingShift(false)}
+                  className="flex-1 py-2 border border-slate-200 rounded-xl text-slate-600 text-sm hover:bg-slate-50"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={() => handleEndShift(shift.id, endNotes)}
+                  className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5"
+                >
+                  <CheckCircle className="w-4 h-4" />Complete
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Scheduled but shift time already passed (forgot to start): still allow end */}
+          {shift.status === 'scheduled' && shiftEnded && !endingShift && (
+            <button
+              onClick={() => setEndingShift(true)}
+              className="w-full py-2.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <CheckCircle className="w-4 h-4" />Mark Complete
+            </button>
+          )}
+          {shift.status === 'scheduled' && shiftEnded && endingShift && (
+            <div className="space-y-2">
+              <textarea
+                value={endNotes}
+                onChange={e => setEndNotes(e.target.value)}
+                placeholder="Add shift notes (optional)…"
+                rows={3}
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-green-200 resize-none"
+              />
+              <div className="flex gap-2">
+                <button onClick={() => setEndingShift(false)} className="flex-1 py-2 border border-slate-200 rounded-xl text-slate-600 text-sm hover:bg-slate-50">Back</button>
+                <button onClick={() => handleEndShift(shift.id, endNotes)} className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5">
+                  <CheckCircle className="w-4 h-4" />Complete
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Completed */}
+          {shift.status === 'completed' && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-center gap-1.5 py-2 text-green-700 text-sm font-semibold bg-green-50 rounded-xl border border-green-200">
+                <CheckCircle className="w-4 h-4" /> Shift Completed
+              </div>
+              {shift.completionNotes && (
+                <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-600 border border-slate-200">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shift Notes</p>
+                  {shift.completionNotes}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Cancelled */}
+          {shift.status === 'cancelled' && (
+            <div className="flex items-center justify-center gap-1.5 py-2 text-red-500 text-sm font-semibold bg-red-50 rounded-xl border border-red-200">
+              Shift Cancelled
+            </div>
+          )}
+
+          {/* Bottom row: Message + Cancel */}
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() => onNavigate(`/caregiver/messages?client=${shift.clientId}`)}
+              className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 flex items-center justify-center gap-1.5 text-sm"
+            >
+              <MessageSquare className="w-4 h-4" />Message
+            </button>
+            {canCancel && (
+              <button
+                onClick={() => handleCancelShift(shift.id)}
+                className="px-3 py-2 border border-red-200 rounded-xl hover:bg-red-50 text-red-500 text-sm font-medium"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Emergency Contact — always visible */}
+        {bookingData?.emergencyContact?.name && (
+          <div className="px-5 pb-5">
+            <div className="p-3 bg-red-50 border border-red-100 rounded-xl">
+              <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-1">Emergency Contact</p>
+              <p className="text-xs text-red-700 font-medium">
+                {bookingData.emergencyContact.name}
+                {bookingData.emergencyContact.relationship && (
+                  <span className="text-red-400 font-normal"> · {bookingData.emergencyContact.relationship}</span>
+                )}
+              </p>
+              {bookingData.emergencyContact.phone && (
+                <p className="text-xs text-red-600 mt-0.5">📞 {bookingData.emergencyContact.phone}</p>
+              )}
+            </div>
           </div>
         )}
       </div>
-      <button onClick={() => onNavigate(`/caregiver/messages?client=${shift.clientId}`)}
-        className="px-3 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600">
-        <MessageSquare className="w-4 h-4" />
-      </button>
-    </div>
-  );
+    );
+  };
 
   const InterviewDetail = ({ interview, onClose }: { interview: InterviewEvent; onClose: () => void }) => {
     const TypeIcon  = interview.interviewType === 'phone' ? Phone : interview.interviewType === 'in-person' ? Home : Video;
@@ -450,6 +823,15 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
 
       <main className="max-w-6xl mx-auto px-4 py-6">
 
+        {/* ── Shared legend (all views) ── */}
+        <div className="flex items-center gap-5 px-4 py-2.5 mb-4 bg-white rounded-xl border border-slate-200 text-xs text-slate-500 flex-wrap">
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-100 border border-primary-200 inline-block" />Available</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-500 inline-block" />Scheduled</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-accent-500 inline-block" />In Progress</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" />Completed</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-purple-500 inline-block" />Interviews</span>
+        </div>
+
         {/* ── Week view ── */}
         {view === 'week' && (
           <div className="flex flex-col gap-4">
@@ -461,13 +843,6 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
             </div>
             <div className="flex gap-4">
               <div className="flex-1 min-w-0 bg-white rounded-2xl border border-slate-200 overflow-hidden">
-                <div className="flex items-center gap-5 px-4 py-2.5 border-b border-slate-100 bg-slate-50 text-xs text-slate-500 flex-wrap">
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-100 border border-primary-200 inline-block" />Available</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-500 inline-block" />Scheduled</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-accent-500 inline-block" />In Progress</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" />Completed</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-purple-500 inline-block" />Interviews</span>
-                </div>
                 <div className="overflow-x-auto">
                   <div style={{ minWidth: 520 }}>
                     <div className="grid border-b border-slate-200 bg-slate-50" style={{ gridTemplateColumns: '52px repeat(7, 1fr)' }}>
@@ -686,6 +1061,13 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
             </div>
 
             <div className="space-y-4">
+              {/* If a shift is selected, show the detail panel instead of day summary */}
+              {activeDetail === 'shift' && selectedShift && (
+                <ShiftDetail shift={selectedShift} onClose={() => setSelectedShift(null)} />
+              )}
+              {activeDetail === 'interview' && selectedInterview && (
+                <InterviewDetail interview={selectedInterview} onClose={() => setSelectedInterview(null)} />
+              )}
               <div className="bg-white rounded-2xl border border-slate-200 p-5">
                 <h3 className="font-bold text-slate-900 mb-4">
                   {new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
@@ -698,7 +1080,11 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                 ) : (
                   <div className="space-y-3">
                     {selectedDateShifts.map(shift => (
-                      <div key={shift.id} className="border border-slate-200 rounded-xl p-4">
+                      <div
+                        key={shift.id}
+                        onClick={() => { setSelectedShift(shift); setSelectedInterview(null); }}
+                        className="border border-slate-200 rounded-xl p-4 cursor-pointer hover:border-primary-300 hover:shadow-sm transition-all"
+                      >
                         <div className="flex justify-between items-center mb-2">
                           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
                             {shift.status.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
@@ -711,6 +1097,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                           </div>
                           <p className="font-medium text-slate-900 text-sm">{shift.clientName || 'Client'}</p>
                         </div>
+                        <p className="text-xs text-primary-500 mt-2 font-medium">Tap to manage →</p>
                       </div>
                     ))}
                     {selectedDateInterviews.map(iv => {

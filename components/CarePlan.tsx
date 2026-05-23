@@ -72,7 +72,9 @@ interface RecipientPlanData {
 interface RecipientEntry { firstName: string; lastName: string; name: string; relationship: string; age?: string; photoURL?: string; }
 
 const getKey = (firstName: string, lastName: string) =>
-  `${firstName.toLowerCase()}_${(lastName || 'noname').toLowerCase()}`.replace(/\s+/g, '_');
+  `${firstName.toLowerCase()}_${(lastName || 'noname').toLowerCase()}`
+    .replace(/\s+/g, '_')
+    .replace(/[~*/\[\].]/g, '');
 
 const emptyLocation = (): LocationEntry => ({ street: '', city: '', state: '', zipCode: '' });
 
@@ -573,6 +575,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
   const saveNewRecipient = async () => {
     if (!newRecipient.firstName.trim()) { onShowToast('First name is required', 'error'); return; }
+    if (/[~*/\[\]]/.test(newRecipient.firstName) || /[~*/\[\]]/.test(newRecipient.lastName)) {
+      onShowToast('Names cannot contain special characters like / * [ ]', 'error'); return;
+    }
     if (!newRecipient.relationship) { onShowToast('Please select a relationship', 'error'); return; }
     if (newRecipient.relationship.toLowerCase() === 'myself' && recipients.some(r => r.relationship?.toLowerCase() === 'myself')) {
       onShowToast('You can only add yourself once', 'error'); return;

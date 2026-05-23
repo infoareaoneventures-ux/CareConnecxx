@@ -20,7 +20,11 @@ interface Shift {
   status: 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
   address?: string;
   notes?: string;
+  completionNotes?: string;
+  careNeeds?: string[];
   tasksCompleted?: string[];
+  startedAt?: any;
+  completedAt?: any;
   paid?: boolean;
   rate?: number | null;
   paymentMethod?: string | null;
@@ -49,6 +53,25 @@ interface Shift {
     } | null;
   }>;
   emergencyContact?: { name?: string; phone?: string; relationship?: string } | null;
+}
+
+function tsToDate(ts: any): Date | null {
+  if (!ts) return null;
+  if (ts?.toDate) return ts.toDate();
+  if (ts?.seconds) return new Date(ts.seconds * 1000);
+  return null;
+}
+function fmtTs(ts: any): string | null {
+  const d = tsToDate(ts);
+  return d ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : null;
+}
+function fmtDuration(startTs: any, endTs: any): string | null {
+  const s = tsToDate(startTs); const e = tsToDate(endTs);
+  if (!s || !e) return null;
+  const mins = Math.round((e.getTime() - s.getTime()) / 60000);
+  if (mins <= 0) return null;
+  const h = Math.floor(mins / 60); const m = mins % 60;
+  return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
 }
 
 function fmtDate(dateStr: string): string {
@@ -408,6 +431,7 @@ interface PastVisitGroupCardProps {
 const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigate }) => {
   const base = shifts[0];
   const [expanded, setExpanded] = useState(false);
+  const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
   const sorted = [...shifts].sort((a, b) => b.date.localeCompare(a.date));
 
   const completedCount = shifts.filter(s => s.status === 'completed').length;
@@ -455,37 +479,97 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
 
       {/* Shift history rows */}
       <div className="border-t border-slate-100 divide-y divide-slate-50">
-        {preview.map(s => (
-          <div key={s.id} className="px-5 py-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="text-center shrink-0 w-10">
-                <p className="text-xs font-bold text-slate-400 leading-tight">
-                  {new Date(s.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })}
-                </p>
-                <p className="text-sm font-semibold text-slate-600 leading-tight">
-                  {new Date(s.date + 'T12:00:00').getDate()}
-                </p>
+        {preview.map(s => {
+          const isCompleted = s.status === 'completed';
+          const isOpen = expandedShiftId === s.id;
+          const actualStart = fmtTs(s.startedAt);
+          const actualEnd   = fmtTs(s.completedAt);
+          const duration    = fmtDuration(s.startedAt, s.completedAt);
+          const allTasks    = s.careNeeds || [];
+          const doneTasks   = s.tasksCompleted || [];
+          const notDone     = allTasks.filter(t => !doneTasks.includes(t));
+          return (
+            <div key={s.id}>
+              <div
+                className={`px-5 py-3 flex items-center justify-between gap-3 ${isCompleted ? 'cursor-pointer hover:bg-slate-50' : ''}`}
+                onClick={() => isCompleted && setExpandedShiftId(isOpen ? null : s.id)}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="text-center shrink-0 w-10">
+                    <p className="text-xs font-bold text-slate-400 leading-tight">
+                      {new Date(s.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })}
+                    </p>
+                    <p className="text-sm font-semibold text-slate-600 leading-tight">
+                      {new Date(s.date + 'T12:00:00').getDate()}
+                    </p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm text-slate-600">{fmtDate(s.date)}</p>
+                    <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
+                      <Clock className="w-3 h-3" />
+                      {actualStart && actualEnd
+                        ? `${actualStart} – ${actualEnd}${duration ? ` · ${duration}` : ''}`
+                        : `${fmtTime(s.startTime)}${s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}`}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {s.paid && (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">
+                      <CheckCircle className="w-3 h-3" /> Paid
+                    </span>
+                  )}
+                  <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusColor(s.status)}`}>
+                    {statusLabel(s.status)}
+                  </span>
+                  {isCompleted && (
+                    <span className="text-slate-400 text-xs">{isOpen ? '▲' : '▼'}</span>
+                  )}
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="text-sm text-slate-600">{fmtDate(s.date)}</p>
-                <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                  <Clock className="w-3 h-3" />
-                  {fmtTime(s.startTime)}{s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {s.paid && (
-                <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">
-                  <CheckCircle className="w-3 h-3" /> Paid
-                </span>
+              {isCompleted && isOpen && (
+                <div className="px-5 pb-4 space-y-3 bg-slate-50 border-t border-slate-100">
+                  {/* Actual time worked */}
+                  {(actualStart || actualEnd || duration) && (
+                    <div className="pt-3 flex items-center gap-4 text-xs text-slate-600">
+                      <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      {actualStart && <span><span className="text-slate-400">Started</span> <span className="font-semibold">{actualStart}</span></span>}
+                      {actualEnd && <span><span className="text-slate-400">Ended</span> <span className="font-semibold">{actualEnd}</span></span>}
+                      {duration && <span className="font-semibold text-primary-600">{duration}</span>}
+                    </div>
+                  )}
+                  {/* Tasks — show completed tasks even if full list unavailable */}
+                  {(doneTasks.length > 0 || allTasks.length > 0) && (
+                    <div className={actualStart || actualEnd ? '' : 'pt-3'}>
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tasks</p>
+                      <div className="space-y-1">
+                        {doneTasks.map((t, i) => (
+                          <div key={i} className="flex items-center gap-2 text-xs text-green-700">
+                            <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                            {t}
+                          </div>
+                        ))}
+                        {notDone.map((t, i) => (
+                          <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
+                            <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />
+                            {t}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Caregiver notes */}
+                  {s.completionNotes && (
+                    <div className="p-3 bg-white border border-slate-200 rounded-xl">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Caregiver Notes</p>
+                      <p className="text-xs text-slate-600">{s.completionNotes}</p>
+                    </div>
+                  )}
+                </div>
               )}
-              <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusColor(s.status)}`}>
-                {statusLabel(s.status)}
-              </span>
             </div>
-          </div>
-        ))}
+          );
+        })}
         {sorted.length > 4 && (
           <button
             onClick={() => setExpanded(v => !v)}

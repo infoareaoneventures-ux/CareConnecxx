@@ -3,5 +3,20 @@
     "allow": [
       "Bash(npx firebase *)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(* firebase deploy *)|Bash(* npm run deploy *)|Bash(firebase deploy*)|Bash(npm run deploy*)|PowerShell(* firebase deploy *)|PowerShell(* npm run deploy *)",
+            "command": "echo '{\"systemMessage\": \"⚠️  HEALTHCARE FLOW REMINDER: Before deploying, decide whether to include the healthcare flow (prescription refills, doctor appointment booking, provider search). This feature has HIPAA implications and is currently LIVE in linqWebhook. If you want to remove it, talk to your partner first or ask Claude to revert commit 6357599.\"}'",
+            "shell": "powershell"
+          }
+        ]
+      }
+    ]
   }
 }

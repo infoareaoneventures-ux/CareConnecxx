@@ -407,11 +407,17 @@ export const PostsPage: React.FC = () => {
     const unsub = db.collection('booking_requests')
       .where('clientId', '==', currentUser.uid)
       .onSnapshot(snap => {
+        const STATUS_PRIORITY: Record<string, number> = { accepted: 4, pending: 3, declined: 2, cancelled: 1 };
         const map: Record<string, { id: string; status: 'pending' | 'accepted' | 'declined' | 'cancelled' }> = {};
         snap.docs.forEach(d => {
           const data = d.data();
           const key = `${data.caregiverId}_${data.jobId || data.interviewId || ''}`;
-          map[key] = { id: d.id, status: data.status };
+          const existing = map[key];
+          const newPriority = STATUS_PRIORITY[data.status] ?? 0;
+          const existingPriority = existing ? (STATUS_PRIORITY[existing.status] ?? 0) : -1;
+          if (newPriority > existingPriority) {
+            map[key] = { id: d.id, status: data.status };
+          }
         });
         setBookingStatuses(map);
       }, () => {});
@@ -419,7 +425,9 @@ export const PostsPage: React.FC = () => {
   }, [currentUser?.uid]);
 
   const getRecipientKey = (firstName: string, lastName: string) =>
-    `${firstName.toLowerCase()}_${(lastName || 'noname').toLowerCase()}`.replace(/\s+/g, '_');
+    `${firstName.toLowerCase()}_${(lastName || 'noname').toLowerCase()}`
+      .replace(/\s+/g, '_')
+      .replace(/[~*/\[\].]/g, '');
 
   const openSendBookingModal = async (interview: Interview) => {
     setSendBookingFor(interview);
@@ -561,7 +569,10 @@ export const PostsPage: React.FC = () => {
         shiftEndDate: prevSchedule?.ongoing ? '' : (prevSchedule?.endDate || postForDraft?.endDate || ''),
         shiftOngoing: prevSchedule?.endDate ? false : true,
         dayShiftTimes: prevDayShiftTimes ?? Object.fromEntries(
-          (postForDraft?.daysOfWeek || []).map((day: string) => [day, [{ label: '', start: '', end: '' }]])
+          (postForDraft?.daysOfWeek || []).map((day: string) => {
+            const normalized = day.trim().charAt(0).toUpperCase() + day.trim().slice(1, 3).toLowerCase();
+            return [normalized, [{ label: '', start: '', end: '' }]];
+          })
         ),
         agreedRate: prevBookingData?.rate ?? null,
         paymentMethod: prevBookingData?.paymentMethod || (postForDraft as any)?.paymentMethod || '',
@@ -629,15 +640,22 @@ export const PostsPage: React.FC = () => {
           phone: bookingDraft.emergencyContactPhone,
           relationship: bookingDraft.emergencyContactRelation,
         } : null,
-        schedule: {
-          days: Object.keys(bookingDraft.dayShiftTimes).length > 0
-            ? Object.keys(bookingDraft.dayShiftTimes).sort((a, b) => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(a) - ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(b))
-            : post?.daysOfWeek || [],
-          startDate: bookingDraft.shiftStartDate || post?.startDate || (post as any)?.date || null,
-          endDate: bookingDraft.shiftOngoing ? null : (bookingDraft.shiftEndDate || post?.endDate || null),
-          ongoing: bookingDraft.shiftOngoing,
-          dayShiftTimes: bookingDraft.dayShiftTimes,
-        },
+        schedule: (() => {
+          const DAY_ORDER = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+          const normDay = (d: string) => d.trim().charAt(0).toUpperCase() + d.trim().slice(1,3).toLowerCase();
+          const normalizedDST = Object.fromEntries(
+            Object.entries(bookingDraft.dayShiftTimes).map(([k, v]) => [normDay(k), v])
+          );
+          return {
+            days: Object.keys(normalizedDST).length > 0
+              ? Object.keys(normalizedDST).sort((a, b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b))
+              : (post?.daysOfWeek || []).map(normDay),
+            startDate: bookingDraft.shiftStartDate || post?.startDate || (post as any)?.date || null,
+            endDate: bookingDraft.shiftOngoing ? null : (bookingDraft.shiftEndDate || post?.endDate || null),
+            ongoing: bookingDraft.shiftOngoing,
+            dayShiftTimes: normalizedDST,
+          };
+        })(),
         notes: bookingDraft.note.trim() || null,
         interviewId: interview.id,
       };

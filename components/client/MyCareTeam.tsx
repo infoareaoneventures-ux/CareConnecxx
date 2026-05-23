@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Phone, MessageCircle, Star, Award, MapPin, Calendar, Clock, Shield, Heart, MessageSquare, Mail, Headphones } from 'lucide-react';
+import { Star, Calendar, Clock, Shield, Heart, MessageSquare, User, Search } from 'lucide-react';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import { Button } from '../ui/Button';
 import { ClientNavigation } from './ClientNavigation';
@@ -10,36 +10,36 @@ import { authService } from '../../services/api';
 import { IdentityGateModal } from './IdentityGateModal';
 import { chatService } from '../../services/chatService';
 
-interface Caregiver {
+interface TeamCaregiver {
   id: string;
+  bookingId: string;
+  bookingStatus: string;
   name: string;
   imageUrl?: string;
   rating: number;
   yearsExperience: number;
   hourlyRate: number;
+  bookingRate?: number | null;
   isTopRated?: boolean;
   specialties?: string[];
   location?: string;
+  scheduleDays?: string[];
   nextShift?: string;
+  careRecipients?: Array<{ firstName?: string; lastName?: string; name?: string; [key: string]: any }>;
+  verified?: boolean;
+  backgroundCheckStatus?: string;
 }
 
-interface CareConnexTeamMember {
-  id: string;
-  name: string;
-  role: string;
-  imageUrl?: string;
-  phone?: string;
-  email?: string;
-}
 
 export const MyCareTeam: React.FC = () => {
   const navigate = useNavigate();
   const { addToast } = useCareConnex();
-  const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
-  const [careConnexTeam, setCareConnexTeam] = useState<CareConnexTeamMember[]>([]);
+  const [activeTab, setActiveTab] = useState<'active' | 'past'>('active');
+  const [query, setQuery] = useState('');
+  const [activeCaregivers, setActiveCaregivers] = useState<TeamCaregiver[]>([]);
+  const [pastCaregivers, setPastCaregivers] = useState<TeamCaregiver[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showIdentityGate, setShowIdentityGate] = useState(false);
-  const [pendingMessageTarget, setPendingMessageTarget] = useState<{ id: string; name: string } | null>(null);
   const [identityStatus, setIdentityStatus] = useState<string>('not_started');
 
   useEffect(() => {
@@ -49,74 +49,122 @@ export const MyCareTeam: React.FC = () => {
         const uid = authService.getCurrentUser()?.uid;
         if (!uid) { setIsLoading(false); return; }
 
-        // Find caregivers the client has confirmed appointments with
-        const apptSnap = await db.collection('appointments')
+        // Query booking_requests: Active = accepted, Past = cancelled/completed
+        const allBookingsSnap = await db.collection('booking_requests')
           .where('clientId', '==', uid)
-          .where('status', 'in', ['confirmed', 'completed', 'in-progress'])
-          .orderBy('isoDate', 'desc')
-          .limit(50)
+          .limit(100)
           .get();
 
-        // Collect unique caregiver IDs
-        const caregiverMap = new Map<string, { id: string; nextShift?: string }>();
-        apptSnap.docs.forEach(doc => {
-          const d = doc.data();
-          if (d.caregiverId && !caregiverMap.has(d.caregiverId)) {
-            caregiverMap.set(d.caregiverId, {
-              id: d.caregiverId,
-              nextShift: d.status === 'confirmed' ? `${d.date || ''} ${d.time || ''}`.trim() : undefined,
+        const activeDocs = allBookingsSnap.docs.filter(d => d.data().status === 'accepted');
+        const pastDocs   = allBookingsSnap.docs.filter(d => ['cancelled', 'completed'].includes(d.data().status));
+
+        const buildCaregiverList = async (
+          docs: any[],
+        ): Promise<TeamCaregiver[]> => {
+          // Deduplicate by caregiverId (keep first/most-recent booking per caregiver)
+          const seenCaregivers = new Map<string, { bookingId: string; bookingData: any }>();
+          docs.forEach(doc => {
+            const d = doc.data();
+            if (d.caregiverId && !seenCaregivers.has(d.caregiverId)) {
+              seenCaregivers.set(d.caregiverId, { bookingId: doc.id, bookingData: d });
+            }
+          });
+
+          const list: TeamCaregiver[] = [];
+          for (const [cgId, { bookingId, bookingData }] of seenCaregivers) {
+            // Fetch full caregiver profile for extra details
+            const cgDoc = await db.collection('caregivers').doc(cgId).get().catch(() => null);
+            const cgData = cgDoc?.data() || {};
+
+            const fullName =
+              bookingData.caregiverName ||
+              cgData.name ||
+              `${cgData.firstName || ''} ${cgData.lastName || ''}`.trim() ||
+              'Caregiver';
+
+            const imageUrl =
+              bookingData.caregiverPhotoURL ||
+              cgData.photoURL ||
+              cgData.photo ||
+              cgData.profilePhoto ||
+              cgData.imageUrl;
+
+            const scheduleDays: string[] = (() => {
+              const dst = bookingData.schedule?.dayShiftTimes;
+              if (dst && typeof dst === 'object') return Object.keys(dst);
+              return bookingData.schedule?.days || [];
+            })();
+
+            // Compute next shift — shows "In progress", "Today", or next date
+            const nextShift: string | undefined = (() => {
+              if (!scheduleDays.length) return undefined;
+              const ALL_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+              const normDay = (d: string) =>
+                d.trim().charAt(0).toUpperCase() + d.trim().slice(1, 3).toLowerCase();
+              const now = new Date();
+              const todayNorm = ALL_DAYS[now.getDay()];
+              const normalizedDays = scheduleDays.map(normDay);
+
+              if (normalizedDays.includes(todayNorm)) {
+                // Check if a shift block is currently in progress
+                const todayBlocks: Array<{ start: string; end: string }> =
+                  bookingData.schedule?.dayShiftTimes?.[todayNorm] || [];
+                const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                const inProgress = todayBlocks.some(b => b.start && b.end && hhmm >= b.start && hhmm <= b.end);
+                return inProgress ? 'In progress' : 'Today';
+              }
+
+              // Find the nearest upcoming scheduled day
+              let earliest: Date | null = null;
+              scheduleDays.forEach(day => {
+                const target = ALL_DAYS.indexOf(normDay(day));
+                if (target === -1) return;
+                const diff = (target - now.getDay() + 7) % 7 || 7;
+                const next = new Date(now);
+                next.setDate(now.getDate() + diff);
+                if (!earliest || next < earliest) earliest = next;
+              });
+              if (!earliest) return undefined;
+              return (earliest as Date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            })();
+
+            const city = cgData.city || '';
+            const state = cgData.state || '';
+
+            list.push({
+              id: cgId,
+              bookingId,
+              bookingStatus: bookingData.status,
+              name: fullName,
+              imageUrl,
+              rating: cgData.rating ?? 0,
+              yearsExperience: cgData.yearsExperience ?? 0,
+              hourlyRate: cgData.hourlyRate ?? 0,
+              bookingRate: bookingData.rate ?? null,
+              isTopRated: (cgData.rating ?? 0) >= 4.8,
+              specialties: cgData.specializations || cgData.specialties || [],
+              location: city ? `${city}${state ? `, ${state}` : ''}` : (cgData.location || ''),
+              scheduleDays,
+              nextShift,
+              careRecipients: bookingData.careRecipients || [],
+              verified: cgData.verificationStatus === 'approved' || cgData.verificationStatus === 'checkr_clear',
+              backgroundCheckStatus: cgData.verificationStatus,
             });
           }
-        });
+          return list;
+        };
 
-        // Fetch caregiver profiles
-        const caregiverList: Caregiver[] = [];
-        for (const [cgId, meta] of caregiverMap) {
-          const cgDoc = await db.collection('caregivers').doc(cgId).get();
-          if (!cgDoc.exists) continue;
-          const d = cgDoc.data()!;
-          const fullName = d.name || `${d.firstName || ''} ${d.lastName || ''}`.trim() || 'Caregiver';
-          const city = d.city || '';
-          const state = d.state || '';
-          caregiverList.push({
-            id: cgId,
-            name: fullName,
-            imageUrl: d.photoURL || d.imageUrl,
-            rating: d.rating ?? 0,
-            yearsExperience: d.yearsExperience ?? 0,
-            hourlyRate: d.hourlyRate ?? 0,
-            isTopRated: (d.rating ?? 0) >= 4.8,
-            specialties: d.specializations || d.specialties || [],
-            location: city ? `${city}${state ? `, ${state}` : ''}` : (d.location || ''),
-            nextShift: meta.nextShift,
-          });
-        }
-
-        // CareConnex support team (loaded from Firestore or default)
-        let teamList: CareConnexTeamMember[] = [];
-        const teamSnap = await db.collection('teamMembers').where('isActive', '==', true).get();
-        if (!teamSnap.empty) {
-          teamSnap.docs.forEach(doc => {
-            const d = doc.data();
-            teamList.push({ id: doc.id, name: d.name, role: d.role, imageUrl: d.imageUrl, phone: d.phone, email: d.email });
-          });
-        } else {
-          // Default support contact
-          teamList = [{
-            id: 'support',
-            name: 'CareConnex Support',
-            role: 'Care Coordination Team',
-            phone: '',
-            email: 'support@careconnex.com',
-          }];
-        }
+        const [activeList, pastList] = await Promise.all([
+          buildCaregiverList(activeDocs),
+          buildCaregiverList(pastDocs),
+        ]);
 
         if (!isMounted) return;
-        setCaregivers(caregiverList);
-        setCareConnexTeam(teamList);
-      } catch (err) {
-        console.error('Error loading care team:', err);
-        if (isMounted) addToast('Could not load your care team. Please refresh.', 'error');
+        setActiveCaregivers(activeList);
+        setPastCaregivers(pastList);
+      } catch (err: any) {
+        console.error('MyCareTeam: error loading care team:', err?.message || err);
+        if (isMounted) addToast(`Could not load your care team: ${err?.message || 'unknown error'}`, 'error');
       } finally {
         if (isMounted) setIsLoading(false);
       }
@@ -143,15 +191,15 @@ export const MyCareTeam: React.FC = () => {
 
   const handleMessage = async (caregiverId: string, caregiverName: string) => {
     if (!bypass && identityStatus !== 'verified') {
-      setPendingMessageTarget({ id: caregiverId, name: caregiverName });
       setShowIdentityGate(true);
       return;
     }
     try {
       const currentUid = authService.getCurrentUser()?.uid;
-      const currentName = authService.getCurrentUser()?.displayName
-        || authService.getCurrentUser()?.email?.split('@')[0]
-        || 'Client';
+      const currentName =
+        authService.getCurrentUser()?.displayName ||
+        authService.getCurrentUser()?.email?.split('@')[0] ||
+        'Client';
       if (currentUid) {
         const roomId = await chatService.getOrCreateChatRoom(currentUid, currentName, caregiverId, caregiverName);
         navigate(`/client/inbox?room=${roomId}`);
@@ -163,25 +211,10 @@ export const MyCareTeam: React.FC = () => {
     }
   };
 
-  const handleCall = (caregiverName: string) => {
-    addToast(`Calling ${caregiverName}...`, 'info');
-    // In production, this would initiate a call
-  };
-
-  const handleTeamMemberCall = (phone: string, name: string) => {
-    window.location.href = `tel:${phone}`;
-    addToast(`Calling ${name}...`, 'info');
-  };
-
-  const handleTeamMemberEmail = (email: string, name: string) => {
-    window.location.href = `mailto:${email}`;
-    addToast(`Opening email to ${name}...`, 'info');
-  };
 
   const renderStars = (rating: number) => {
     const fullStars = Math.floor(rating);
     const hasHalfStar = rating % 1 >= 0.5;
-    
     return (
       <div className="flex items-center space-x-0.5">
         {[...Array(5)].map((_, i) => (
@@ -196,10 +229,160 @@ export const MyCareTeam: React.FC = () => {
             }`}
           />
         ))}
-        <span className="ml-1 text-sm font-semibold text-gray-700">{rating}</span>
+        {rating > 0 && <span className="ml-1 text-sm font-semibold text-gray-700">{rating}</span>}
       </div>
     );
   };
+
+  const renderCaregiverCard = (caregiver: TeamCaregiver) => (
+    <div
+      key={caregiver.id + caregiver.bookingId}
+      className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
+    >
+      <div className="p-6">
+        {/* Top Section: Photo and Basic Info */}
+        <div className="flex items-start space-x-4">
+          <div className="relative">
+            <img
+              src={
+                caregiver.imageUrl ||
+                `https://ui-avatars.com/api/?name=${encodeURIComponent(caregiver.name)}&background=random`
+              }
+              alt={caregiver.name}
+              className="w-20 h-20 rounded-full object-cover border-4 border-white shadow-md"
+            />
+            {caregiver.isTopRated && (
+              <div className="absolute -bottom-1 -right-1 bg-gradient-to-r from-yellow-400 to-accent-500 text-white text-xs font-bold px-2 py-0.5 rounded-full shadow-sm">
+                Top rated
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1">
+            <h2 className="text-xl font-bold text-gray-900">{caregiver.name}</h2>
+            <p className="text-sm text-gray-500 mb-2">Caregiver</p>
+            {renderStars(caregiver.rating)}
+            <CaregiverVerificationBadges
+              verified={caregiver.verified}
+              backgroundCheckStatus={caregiver.backgroundCheckStatus}
+              className="mt-2"
+            />
+          </div>
+        </div>
+
+        {/* Stats Row */}
+        <div className="flex items-center space-x-6 mt-5 pt-4 border-t border-gray-100">
+          {caregiver.yearsExperience > 0 && (
+            <div className="flex items-center space-x-2">
+              <Calendar className="w-4 h-4 text-primary-600" />
+              <span className="text-sm text-gray-600">
+                <span className="font-semibold text-gray-900">{caregiver.yearsExperience}</span> yrs exp.
+              </span>
+            </div>
+          )}
+          {(caregiver.bookingRate || caregiver.hourlyRate) ? (
+            <div className="flex items-center space-x-1">
+              <span className="text-lg font-bold text-primary-600">
+                ${caregiver.bookingRate ?? caregiver.hourlyRate}
+              </span>
+              <span className="text-sm text-gray-500">/hr</span>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Schedule Days */}
+        {caregiver.scheduleDays && caregiver.scheduleDays.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-4">
+            {caregiver.scheduleDays.map(day => (
+              <span
+                key={day}
+                className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700"
+              >
+                {day}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Specialties */}
+        {caregiver.specialties && caregiver.specialties.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-3">
+            {caregiver.specialties.slice(0, 3).map(specialty => (
+              <span
+                key={specialty}
+                className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-primary-50 text-primary-700"
+              >
+                <Shield className="w-3 h-3 mr-1" />
+                {specialty}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Caring for */}
+        {caregiver.careRecipients && caregiver.careRecipients.length > 0 && (
+          <div className="flex items-center space-x-2 mt-4 text-sm text-gray-600">
+            <Heart className="w-4 h-4 text-rose-400 flex-shrink-0" />
+            <span>
+              Caring for:{' '}
+              <span className="font-medium text-gray-900">
+                {caregiver.careRecipients
+                  .map((r: any) => r.firstName || r.name || 'Recipient')
+                  .join(', ')}
+              </span>
+            </span>
+          </div>
+        )}
+
+        {/* Next Shift / In Progress / Today */}
+        {caregiver.nextShift && caregiver.bookingStatus === 'accepted' && (
+          caregiver.nextShift === 'In progress' ? (
+            <div className="flex items-center space-x-2 mt-3 text-sm">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+              </span>
+              <span className="font-semibold text-green-600">Shift in progress</span>
+            </div>
+          ) : caregiver.nextShift === 'Today' ? (
+            <div className="flex items-center space-x-2 mt-3 text-sm text-gray-600">
+              <Clock className="w-4 h-4 text-primary-500" />
+              <span>Shift <span className="font-semibold text-primary-600">today</span></span>
+            </div>
+          ) : (
+            <div className="flex items-center space-x-2 mt-3 text-sm text-gray-600">
+              <Clock className="w-4 h-4 text-gray-400" />
+              <span>Next shift: <span className="font-medium text-gray-900">{caregiver.nextShift}</span></span>
+            </div>
+          )
+        )}
+
+        {/* Past booking note */}
+        {caregiver.bookingStatus === 'cancelled' && (
+          <div className="mt-4 text-xs text-gray-400 italic">Booking ended</div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="flex mt-6">
+          <Button
+            onClick={() => handleMessage(caregiver.id, caregiver.name)}
+            className="flex-1 bg-primary-600 hover:bg-primary-700 text-white"
+          >
+            <MessageSquare className="w-4 h-4 mr-2" />
+            Message
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => navigate(`/client/caregiver/${caregiver.id}`)}
+            className="flex-1 border-gray-300 text-gray-700 hover:bg-gray-50"
+          >
+            <User className="w-4 h-4 mr-2" />
+            Profile
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 
   if (isLoading) {
     return (
@@ -212,201 +395,97 @@ export const MyCareTeam: React.FC = () => {
     );
   }
 
+  const baseList = activeTab === 'active' ? activeCaregivers : pastCaregivers;
+  const displayedCaregivers = query.trim()
+    ? baseList.filter(c => c.name.toLowerCase().includes(query.trim().toLowerCase()))
+    : baseList;
+
   return (
     <div className="min-h-screen bg-gray-50">
       <ClientNavigation />
-      
+
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-32">
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">My Care Team</h1>
-          <p className="text-gray-600 mt-2">
-            Your dedicated caregivers who provide compassionate care for your loved ones
-          </p>
         </div>
 
-        {/* CareConnex Team Section */}
-        <div className="mb-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">CareConnex Team</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {careConnexTeam.map((member) => (
-              <div
-                key={member.id}
-                className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 flex items-center space-x-4 hover:shadow-md transition-shadow"
-              >
-                {/* Profile Photo */}
-                <img
-                  src={member.imageUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(member.name)}&background=random`}
-                  alt={member.name}
-                  className="w-14 h-14 rounded-full object-cover border-2 border-white shadow-sm"
-                />
-                
-                {/* Name and Role */}
-                <div className="flex-1">
-                  <h3 className="font-semibold text-gray-900">{member.name}</h3>
-                  <p className="text-sm text-primary-600">{member.role}</p>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex space-x-2">
-                  {member.phone && (
-                    <button
-                      onClick={() => handleTeamMemberCall(member.phone!, member.name)}
-                      className="p-2 rounded-full bg-primary-50 text-primary-600 hover:bg-primary-100 transition-colors"
-                      title={`Call ${member.name}`}
-                    >
-                      <Phone className="w-5 h-5" />
-                    </button>
-                  )}
-                  {member.email && (
-                    <button
-                      onClick={() => handleTeamMemberEmail(member.email!, member.name)}
-                      className="p-2 rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
-                      title={`Email ${member.name}`}
-                    >
-                      <Mail className="w-5 h-5" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Caregiver Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {caregivers.map((caregiver) => (
-            <div
-              key={caregiver.id}
-              className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
+        {/* Active / Past Tabs + Search */}
+        <div className="flex flex-wrap items-center gap-4 mb-6">
+        <div className="flex space-x-1 bg-gray-100 rounded-xl p-1 w-fit">
+          {(['active', 'past'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${
+                activeTab === tab
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
             >
-              <div className="p-6">
-                {/* Top Section: Photo and Basic Info */}
-                <div className="flex items-start space-x-4">
-                  {/* Profile Photo */}
-                  <div className="relative">
-                    <img
-                      src={caregiver.imageUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(caregiver.name)}&background=random`}
-                      alt={caregiver.name}
-                      className="w-20 h-20 rounded-full object-cover border-4 border-white shadow-md"
-                    />
-                    {caregiver.isTopRated && (
-                      <div className="absolute -bottom-1 -right-1 bg-gradient-to-r from-yellow-400 to-accent-500 text-white text-xs font-bold px-2 py-0.5 rounded-full shadow-sm">
-                        Top rated
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Name and Details */}
-                  <div className="flex-1">
-                    <h2 className="text-xl font-bold text-gray-900">{caregiver.name}</h2>
-                    <p className="text-sm text-gray-500 mb-2">Caregiver</p>
-
-                    {/* Rating */}
-                    {renderStars(caregiver.rating)}
-                    <CaregiverVerificationBadges verified={(caregiver as any).verified} backgroundCheckStatus={(caregiver as any).backgroundCheckStatus} className="mt-2" />
-                  </div>
-                </div>
-
-                {/* Stats Row */}
-                <div className="flex items-center space-x-6 mt-5 pt-4 border-t border-gray-100">
-                  <div className="flex items-center space-x-2">
-                    <Calendar className="w-4 h-4 text-primary-600" />
-                    <span className="text-sm text-gray-600">
-                      <span className="font-semibold text-gray-900">{caregiver.yearsExperience}</span> years exp.
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-lg font-bold text-primary-600">${caregiver.hourlyRate}</span>
-                    <span className="text-sm text-gray-500">/hr</span>
-                  </div>
-                </div>
-
-                {/* Specialties */}
-                {caregiver.specialties && caregiver.specialties.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-4">
-                    {caregiver.specialties.map((specialty) => (
-                      <span
-                        key={specialty}
-                        className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-primary-50 text-primary-700"
-                      >
-                        <Shield className="w-3 h-3 mr-1" />
-                        {specialty}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {/* Next Shift */}
-                {caregiver.nextShift && (
-                  <div className="flex items-center space-x-2 mt-4 text-sm text-gray-600">
-                    <Clock className="w-4 h-4 text-gray-400" />
-                    <span>Next shift: <span className="font-medium text-gray-900">{caregiver.nextShift}</span></span>
-                  </div>
-                )}
-
-                {/* Action Buttons */}
-                <div className="flex space-x-3 mt-6">
-                  <Button
-                    onClick={() => handleMessage(caregiver.id, caregiver.name)}
-                    className="flex-1 bg-primary-600 hover:bg-primary-700 text-white"
-                  >
-                    <MessageSquare className="w-4 h-4 mr-2" />
-                    Message
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => handleCall(caregiver.name)}
-                    className="flex-1 border-gray-300 text-gray-700 hover:bg-gray-50"
-                  >
-                    <Phone className="w-4 h-4 mr-2" />
-                    Call
-                  </Button>
-                </div>
-              </div>
-            </div>
+              {tab === 'active' ? 'Active' : 'Past'}
+              {tab === 'active' && activeCaregivers.length > 0 && (
+                <span className="ml-2 bg-primary-100 text-primary-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+                  {activeCaregivers.length}
+                </span>
+              )}
+            </button>
           ))}
         </div>
 
-        {/* Empty State */}
-        {caregivers.length === 0 && (
+        {/* Search */}
+        <div className="flex-1 min-w-[200px] relative">
+          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search by name…"
+            className="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-300"
+          />
+        </div>
+        </div>
+
+        {/* Caregiver Cards Grid */}
+        {displayedCaregivers.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {displayedCaregivers.map(renderCaregiverCard)}
+          </div>
+        ) : (
           <div className="text-center py-16">
             <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <Heart className="w-10 h-10 text-gray-400" />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">No caregivers assigned yet</h3>
-            <p className="text-gray-600 mb-6">Your care team will appear here once caregivers are assigned to you.</p>
-            <Button onClick={() => navigate('/client/dashboard')}>
-              Back to Dashboard
-            </Button>
+            {activeTab === 'active' ? (
+              <>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No active caregivers</h3>
+                <p className="text-gray-600 mb-6">
+                  Your care team will appear here once a caregiver accepts your booking.
+                </p>
+                <Button onClick={() => navigate('/client/dashboard')}>
+                  Find a Caregiver
+                </Button>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No past caregivers</h3>
+                <p className="text-gray-600">Past or ended bookings will appear here.</p>
+              </>
+            )}
           </div>
         )}
 
-        {/* Info Card */}
-        <div className="mt-8 bg-gradient-to-r from-primary-50 to-blue-50 rounded-2xl p-6 border border-primary-100">
-          <div className="flex items-start space-x-4">
-            <div className="w-10 h-10 bg-primary-100 rounded-xl flex items-center justify-center flex-shrink-0">
-              <Award className="w-5 h-5 text-primary-600" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-900 mb-1">Quality Care You Can Trust</h3>
-              <p className="text-sm text-gray-600">
-                All our caregivers are thoroughly vetted, background-checked, and continuously trained 
-                to provide the highest quality care for your loved ones.
-              </p>
-            </div>
-          </div>
-        </div>
-      {showIdentityGate && (
-        <IdentityGateModal
-          onClose={() => { setShowIdentityGate(false); setPendingMessageTarget(null); }}
-          onGetVerified={() => {
-            setShowIdentityGate(false);
-            navigate('/client/account');
-            addToast('Complete identity verification in Account Settings', 'info');
-          }}
-        />
-      )}
+
+
+        {showIdentityGate && (
+          <IdentityGateModal
+            onClose={() => { setShowIdentityGate(false); }}
+            onGetVerified={() => {
+              setShowIdentityGate(false);
+              navigate('/client/account');
+              addToast('Complete identity verification in Account Settings', 'info');
+            }}
+          />
+        )}
       </main>
     </div>
   );

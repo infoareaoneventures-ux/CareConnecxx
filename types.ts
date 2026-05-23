@@ -15,7 +15,6 @@ export type ViewType =
   | 'client-inbox'
   | 'client-intake'
   | 'care-plan'
-  | 'care-journal'
   | 'caregiver'
   | 'caregiver-profile'
   | 'caregiver-inbox'
@@ -537,28 +536,6 @@ export interface ToastMessage {
 }
 
 export type AddToastFunction = (message: string, type: ToastType) => void;
-
-// Care Journal Types - Family Command Center
-export interface CareJournalEntry {
-  id: string;
-  appointmentId: string;
-  caregiverId: string;
-  seniorId: string;
-  timestamp: string;
-  checkInTime: string;
-  checkOutTime?: string;
-  photos: string[];
-  notes: string;
-  wellness: {
-    ateWell: boolean;
-    tookMeds: boolean;
-    wasActive: boolean;
-    sleptWell?: boolean;
-    mood: 'great' | 'good' | 'ok' | 'poor';
-  };
-  activities: string[];
-  updatedAt?: string;
-}
 
 // AI Matching Types
 export interface MatchScore {

@@ -78,7 +78,7 @@ interface Shift {
   date: string;
   startTime: string;
   endTime?: string;
-  status: 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
+  status: 'pending' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
   address?: string;
   lifestylePreferences?: string[];
   schedule?: {
@@ -99,6 +99,10 @@ interface Shift {
   }>;
   emergencyContact?: { name?: string; phone?: string; relationship?: string } | null;
   tasksCompleted?: string[];
+  completionNotes?: string;
+  careNeeds?: string[];
+  startedAt?: any;
+  completedAt?: any;
   paid?: boolean;
   rate?: number | null;
   paymentMethod?: string | null;
@@ -106,16 +110,56 @@ interface Shift {
   bookingRequestId?: string;
 }
 
+interface BookingAmendment {
+  id: string;
+  bookingRequestId: string | null;
+  clientId: string;
+  clientName: string;
+  caregiverId: string;
+  caregiverName: string;
+  status: 'pending' | 'accepted' | 'declined';
+  type: 'add_recurring_days';
+  newDays: Record<string, Array<{ start: string; end: string }>>;
+  notes: string;
+  startDate?: string;
+  endDate?: string | null;
+  ongoing?: boolean;
+  createdAt: any;
+}
+
 const ALL_DAYS_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // Returns the date string (YYYY-MM-DD) of the first occurrence of dayName on or after startDate
+function normDay(day: string): string {
+  const d = day.trim();
+  return d.charAt(0).toUpperCase() + d.slice(1, 3).toLowerCase();
+}
 function nextOccurrence(startDate: string, dayName: string): string {
-  const target = ALL_DAYS_ORDER.indexOf(dayName);
+  const target = ALL_DAYS_ORDER.indexOf(normDay(dayName));
   if (target === -1) return startDate;
   const base = new Date(startDate + 'T12:00:00');
   const diff = (target - base.getDay() + 7) % 7;
   base.setDate(base.getDate() + diff);
   return base.toISOString().split('T')[0];
+}
+
+function tsToDate(ts: any): Date | null {
+  if (!ts) return null;
+  if (ts?.toDate) return ts.toDate();
+  if (ts?.seconds) return new Date(ts.seconds * 1000);
+  return null;
+}
+function fmtTs(ts: any): string | null {
+  const d = tsToDate(ts);
+  return d ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : null;
+}
+function fmtDuration(startTs: any, endTs: any): string | null {
+  const s = tsToDate(startTs); const e = tsToDate(endTs);
+  if (!s || !e) return null;
+  const mins = Math.round((e.getTime() - s.getTime()) / 60000);
+  if (mins <= 0) return null;
+  const h = Math.floor(mins / 60); const m = mins % 60;
+  return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
 }
 
 function fmtDate(d: string) {
@@ -498,9 +542,11 @@ const RequestCard: React.FC<{
 
 const BookingGroupCard: React.FC<{
   shifts: Shift[];
+  amendments: BookingAmendment[];
   onCancel: (id: string) => void;
-}> = ({ shifts, onCancel }) => {
+}> = ({ shifts, amendments, onCancel }) => {
   const navigate = useNavigate();
+  const { addToast } = useCareConnex();
   const base = shifts[0];
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandedShift, setExpandedShift] = useState<string | null>(null);
@@ -508,6 +554,8 @@ const BookingGroupCard: React.FC<{
     () => Object.fromEntries(shifts.map(s => [s.id, s.tasksCompleted || []]))
   );
   const [submitting, setSubmitting] = useState<string | null>(null);
+  const [endingShiftId, setEndingShiftId] = useState<string | null>(null);
+  const [endNotesByShift, setEndNotesByShift] = useState<Record<string, string>>({});
 
   const handleStart = async (shiftId: string) => {
     if (!db) return;
@@ -519,14 +567,17 @@ const BookingGroupCard: React.FC<{
     }).catch(() => {}).finally(() => setSubmitting(null));
   };
 
-  const handleEnd = async (shiftId: string) => {
+  const handleEnd = async (shiftId: string, notes?: string) => {
     if (!db) return;
     setSubmitting(shiftId);
-    await db.collection('shifts').doc(shiftId).update({
+    setEndingShiftId(null);
+    const update: any = {
       status: 'completed',
-      endedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      completedAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => {}).finally(() => setSubmitting(null));
+    };
+    if (notes?.trim()) update.completionNotes = notes.trim();
+    await db.collection('shifts').doc(shiftId).update(update).catch(() => {}).finally(() => setSubmitting(null));
   };
 
   const handleCancelShift = async (shiftId: string) => {
@@ -545,6 +596,106 @@ const BookingGroupCard: React.FC<{
     const next = prev.includes(key) ? prev.filter(t => t !== key) : [...prev, key];
     setTasksByShift(p => ({ ...p, [shiftId]: next }));
     if (db) await db.collection('shifts').doc(shiftId).update({ tasksCompleted: next }).catch(() => {});
+  };
+
+  const handleAcceptAmendment = async (amendment: BookingAmendment) => {
+    try {
+      const addDaysLocal = (dateStr: string, days: number) => {
+        const d = new Date(dateStr + 'T12:00:00');
+        d.setDate(d.getDate() + days);
+        return d.toISOString().split('T')[0];
+      };
+      const today = new Date().toISOString().split('T')[0];
+      // Use the client-specified start date (or today if not set)
+      const generateFrom = amendment.startDate && amendment.startDate >= today ? amendment.startDate : today;
+      const generateTo = addDaysLocal(generateFrom, 27);
+
+      if (amendment.bookingRequestId) {
+        const bookingSnap = await db.collection('booking_requests').doc(amendment.bookingRequestId).get();
+        if (bookingSnap.exists) {
+          const booking = bookingSnap.data()!;
+          // Merge new days into existing dayShiftTimes
+          const currentDST: Record<string, Array<{ start: string; end: string }>> = booking.schedule?.dayShiftTimes || {};
+          const mergedDST: Record<string, Array<{ start: string; end: string }>> = { ...currentDST };
+          for (const [day, blocks] of Object.entries(amendment.newDays)) {
+            if (!mergedDST[day]) mergedDST[day] = [];
+            mergedDST[day] = [...mergedDST[day], ...(blocks as Array<{ start: string; end: string }>)];
+          }
+          await db.collection('booking_requests').doc(amendment.bookingRequestId).update({
+            'schedule.dayShiftTimes': mergedDST,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          });
+
+          // Generate shifts for new days — respect amendment's end date / ongoing setting
+          const endDate: string | null = amendment.ongoing
+            ? null
+            : (amendment.endDate || (booking.schedule?.ongoing ? null : booking.schedule?.endDate || null));
+          const shiftBase = {
+            clientId: booking.clientId || amendment.clientId,
+            clientName: booking.clientName || amendment.clientName,
+            clientPhotoURL: booking.clientPhotoURL || null,
+            caregiverId: amendment.caregiverId,
+            caregiverName: booking.caregiverName || amendment.caregiverName,
+            status: 'scheduled',
+            address: booking.address || '',
+            careNeeds: booking.careNeeds || [],
+            lifestylePreferences: booking.lifestylePreferences || [],
+            rate: booking.rate ?? null,
+            paymentMethod: booking.paymentMethod || null,
+            notes: booking.notes || '',
+            careRecipients: booking.careRecipients || [],
+            emergencyContact: booking.emergencyContact || null,
+            schedule: { ...(booking.schedule || {}), dayShiftTimes: mergedDST },
+            bookingRequestId: amendment.bookingRequestId,
+            recurringWeekly: true,
+            tasksCompleted: [],
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          };
+
+          const batch = db.batch();
+          let count = 0;
+          for (const [day, blocks] of Object.entries(amendment.newDays)) {
+            for (const block of blocks as Array<{ start: string; end: string }>) {
+              let dateStr = nextOccurrence(generateFrom, day);
+              while (dateStr <= generateTo && count < 490) {
+                if (endDate && dateStr > endDate) break;
+                batch.set(db.collection('shifts').doc(), {
+                  ...shiftBase,
+                  date: dateStr,
+                  startTime: block.start,
+                  endTime: block.end,
+                });
+                count++;
+                const d = new Date(dateStr + 'T12:00:00');
+                d.setDate(d.getDate() + 7);
+                dateStr = d.toISOString().split('T')[0];
+              }
+            }
+          }
+          if (count > 0) await batch.commit();
+
+          // Notify client
+          await db.collection('users').doc(amendment.clientId).collection('notifications').add({
+            userId: amendment.clientId,
+            type: 'recurring_visit_accepted',
+            title: 'Recurring Visit Accepted',
+            message: `${amendment.caregiverName} accepted your request to add ${Object.keys(amendment.newDays).join(', ')} to your regular schedule.`,
+            read: false, isRead: false,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+          }).catch(() => {});
+        }
+      }
+
+      await db.collection('booking_amendments').doc(amendment.id).update({
+        status: 'accepted',
+        respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      addToast('Schedule updated — new visits added.', 'success');
+    } catch (e) {
+      console.error('handleAcceptAmendment error', e);
+      addToast('Failed to accept request', 'error');
+    }
   };
 
   const recipients = base.careRecipients || [];
@@ -726,10 +877,100 @@ const BookingGroupCard: React.FC<{
         </div>
       )}
 
+      {/* ── Recurring schedule amendment requests ── */}
+      {amendments.map(amendment => (
+        <div key={amendment.id} className="border-t border-violet-100 bg-violet-50 px-5 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-1">Recurring Schedule Request</p>
+              <div className="space-y-0.5 mb-1">
+                {ALL_DAYS_ORDER.filter(d => amendment.newDays[d]?.length).map(day => (
+                  <p key={day} className="text-xs text-slate-700">
+                    <span className="font-semibold">{day}</span>
+                    {' · '}
+                    {amendment.newDays[day].map(b => `${fmtTime(b.start)} – ${fmtTime(b.end)}`).join(', ')}
+                  </p>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                {amendment.startDate
+                  ? `Starts ${fmtDate(amendment.startDate)}`
+                  : 'Starts immediately'}
+                {amendment.ongoing
+                  ? ' · Ongoing'
+                  : amendment.endDate
+                    ? ` → ${fmtDate(amendment.endDate)}`
+                    : ''}
+              </p>
+              {amendment.notes && <p className="text-xs text-slate-400 italic mt-0.5">{amendment.notes}</p>}
+            </div>
+            <div className="flex gap-2 shrink-0 mt-0.5">
+              <button
+                onClick={() => handleAcceptAmendment(amendment)}
+                className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1 transition-colors"
+              >
+                <CheckCircle className="w-3.5 h-3.5" /> Accept
+              </button>
+              <button
+                onClick={async () => {
+                  await db.collection('booking_amendments').doc(amendment.id).update({
+                    status: 'declined',
+                    respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                  }).catch(() => {});
+                }}
+                className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl transition-colors"
+              >
+                Decline
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {/* ── Pending extra visit requests ── */}
+      {shifts.filter(s => s.status === 'pending').map(shift => (
+        <div key={shift.id} className="border-t border-amber-100 bg-amber-50 px-5 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-0.5">Extra Visit Requested</p>
+              <p className="text-sm font-semibold text-slate-800">{fmtDate(shift.date)}</p>
+              <p className="text-xs text-slate-500">{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}</p>
+              {shift.notes && <p className="text-xs text-slate-400 mt-1 italic">{shift.notes}</p>}
+            </div>
+            <div className="flex gap-2 shrink-0 mt-0.5">
+              <button
+                onClick={async () => {
+                  if (!db) return;
+                  await db.collection('shifts').doc(shift.id).update({
+                    status: 'scheduled',
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                  }).catch(() => {});
+                }}
+                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1"
+              >
+                <CheckCircle className="w-3.5 h-3.5" /> Accept
+              </button>
+              <button
+                onClick={async () => {
+                  if (!db) return;
+                  await db.collection('shifts').doc(shift.id).update({
+                    status: 'cancelled',
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                  }).catch(() => {});
+                }}
+                className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl"
+              >
+                Decline
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+
       {/* ── Upcoming shifts ── */}
       <div className="border-t border-slate-100">
         <p className="px-5 pt-3 pb-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Upcoming Shifts</p>
-        {shifts.map(shift => {
+        {shifts.filter(s => s.status !== 'pending').map(shift => {
           const inProgress = shift.status === 'in-progress';
           const completed = tasksByShift[shift.id] || [];
           const totalTasks = recipients.reduce((sum, r) => {
@@ -791,9 +1032,9 @@ const BookingGroupCard: React.FC<{
                       Start
                     </button>
                   )}
-                  {shift.status === 'in-progress' && (
+                  {shift.status === 'in-progress' && endingShiftId !== shift.id && (
                     <button
-                      onClick={() => handleEnd(shift.id)}
+                      onClick={() => setEndingShiftId(shift.id)}
                       disabled={submitting === shift.id}
                       className="inline-flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-semibold disabled:opacity-50 transition-colors"
                     >
@@ -871,6 +1112,35 @@ const BookingGroupCard: React.FC<{
                   {!inProgress && <p className="text-xs text-slate-400 italic">Start the shift to check off tasks</p>}
                 </div>
               )}
+
+              {/* End shift notes step */}
+              {shift.status === 'in-progress' && endingShiftId === shift.id && (
+                <div className="px-5 pb-4 space-y-2">
+                  <textarea
+                    value={endNotesByShift[shift.id] || ''}
+                    onChange={e => setEndNotesByShift(p => ({ ...p, [shift.id]: e.target.value }))}
+                    placeholder="Add shift notes (optional)…"
+                    rows={3}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-green-200 resize-none"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setEndingShiftId(null)}
+                      className="flex-1 py-2 border border-slate-200 rounded-xl text-slate-600 text-sm hover:bg-slate-50"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={() => handleEnd(shift.id, endNotesByShift[shift.id])}
+                      disabled={submitting === shift.id}
+                      className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      {submitting === shift.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                      Complete
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -900,6 +1170,8 @@ const ShiftCard: React.FC<{
   const [expanded, setExpanded] = useState(false);
   const [localCompleted, setLocalCompleted] = useState<string[]>(shift.tasksCompleted || []);
   const [submitting, setSubmitting] = useState(false);
+  const [endingShift, setEndingShift] = useState(false);
+  const [endNotes, setEndNotes] = useState('');
 
   const inProgress = shift.status === 'in-progress';
 
@@ -913,14 +1185,17 @@ const ShiftCard: React.FC<{
     }).catch(() => {}).finally(() => setSubmitting(false));
   };
 
-  const handleEndShift = async () => {
+  const handleEndShift = async (notes?: string) => {
     if (!db) return;
     setSubmitting(true);
-    await db.collection('shifts').doc(shift.id).update({
+    setEndingShift(false);
+    const update: any = {
       status: 'completed',
-      endedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      completedAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => {}).finally(() => setSubmitting(false));
+    };
+    if (notes?.trim()) update.completionNotes = notes.trim();
+    await db.collection('shifts').doc(shift.id).update(update).catch(() => {}).finally(() => setSubmitting(false));
   };
 
   const toggleTask = async (taskKey: string) => {
@@ -1272,17 +1547,45 @@ const ShiftCard: React.FC<{
           </>
         )}
 
-        {shift.status === 'in-progress' && (
+        {shift.status === 'in-progress' && !endingShift && (
           <button
-            onClick={handleEndShift}
+            onClick={() => setEndingShift(true)}
             disabled={submitting}
             className="inline-flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors ml-auto"
           >
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-            End Shift
+            <CheckCircle className="w-4 h-4" /> End Shift
           </button>
         )}
       </div>
+
+      {/* End shift — notes step */}
+      {shift.status === 'in-progress' && endingShift && (
+        <div className="px-5 pb-4 space-y-2 border-t border-slate-100 pt-3">
+          <textarea
+            value={endNotes}
+            onChange={e => setEndNotes(e.target.value)}
+            placeholder="Add shift notes (optional)…"
+            rows={3}
+            className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-green-200 resize-none"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => setEndingShift(false)}
+              className="flex-1 py-2 border border-slate-200 rounded-xl text-slate-600 text-sm hover:bg-slate-50"
+            >
+              Back
+            </button>
+            <button
+              onClick={() => handleEndShift(endNotes)}
+              disabled={submitting}
+              className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+              Complete
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );
@@ -1293,6 +1596,7 @@ const ShiftCard: React.FC<{
 const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
   const base = shifts[0];
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
   const recipients = base.careRecipients || [];
   const ec = base.emergencyContact;
 
@@ -1410,17 +1714,79 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
       {/* Shift history */}
       <div className="border-t border-slate-100">
         <p className="px-5 pt-3 pb-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Shift History</p>
-        {shifts.map(shift => (
-          <div key={shift.id} className="border-t border-slate-100 px-5 py-3 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-slate-700">{fmtDate(shift.date)}</p>
-              <p className="text-xs text-slate-400">{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}</p>
+        {shifts.map(shift => {
+          const isCompleted = shift.status === 'completed';
+          const isOpen = expandedShiftId === shift.id;
+          const actualStart = fmtTs(shift.startedAt);
+          const actualEnd   = fmtTs(shift.completedAt);
+          const duration    = fmtDuration(shift.startedAt, shift.completedAt);
+          const allTasks    = shift.careNeeds || [];
+          const doneTasks   = shift.tasksCompleted || [];
+          const notDone     = allTasks.filter(t => !doneTasks.includes(t));
+          return (
+            <div key={shift.id}>
+              <div
+                className={`border-t border-slate-100 px-5 py-3 flex items-center justify-between gap-3 ${isCompleted ? 'cursor-pointer hover:bg-slate-50' : ''}`}
+                onClick={() => isCompleted && setExpandedShiftId(isOpen ? null : shift.id)}
+              >
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">{fmtDate(shift.date)}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {actualStart && actualEnd
+                      ? `${actualStart} – ${actualEnd}${duration ? ` · ${duration}` : ''}`
+                      : `${fmtTime(shift.startTime)}${shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
+                    {shift.status === 'completed' ? 'Completed' : 'Cancelled'}
+                  </span>
+                  {isCompleted && <span className="text-slate-400 text-xs">{isOpen ? '▲' : '▼'}</span>}
+                </div>
+              </div>
+              {isCompleted && isOpen && (
+                <div className="px-5 pb-4 space-y-3 bg-slate-50 border-t border-slate-100">
+                  {/* Actual time worked */}
+                  {(actualStart || actualEnd || duration) && (
+                    <div className="pt-3 flex items-center gap-4 text-xs text-slate-600">
+                      <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      {actualStart && <span><span className="text-slate-400">Started</span> <span className="font-semibold">{actualStart}</span></span>}
+                      {actualEnd && <span><span className="text-slate-400">Ended</span> <span className="font-semibold">{actualEnd}</span></span>}
+                      {duration && <span className="font-semibold text-primary-600">{duration}</span>}
+                    </div>
+                  )}
+                  {/* Tasks — show completed tasks even if full list unavailable */}
+                  {(doneTasks.length > 0 || allTasks.length > 0) && (
+                    <div className={actualStart || actualEnd ? '' : 'pt-3'}>
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tasks</p>
+                      <div className="space-y-1">
+                        {doneTasks.map((t, i) => (
+                          <div key={i} className="flex items-center gap-2 text-xs text-green-700">
+                            <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                            {t}
+                          </div>
+                        ))}
+                        {notDone.map((t, i) => (
+                          <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
+                            <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />
+                            {t}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Caregiver notes */}
+                  {shift.completionNotes && (
+                    <div className="p-3 bg-white border border-slate-200 rounded-xl">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shift Notes</p>
+                      <p className="text-xs text-slate-600">{shift.completionNotes}</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-            <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
-              {shift.status === 'completed' ? 'Completed' : 'Cancelled'}
-            </span>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
     </div>
@@ -1455,6 +1821,8 @@ export const CaregiverBookingsPage: React.FC = () => {
   const [pastShifts, setPastShifts] = useState<Shift[]>([]);
   const [pastLoading, setPastLoading] = useState(true);
 
+  const [amendments, setAmendments] = useState<BookingAmendment[]>([]);
+
   const uid = currentUser?.uid;
 
   // Fetch booking requests
@@ -1475,12 +1843,24 @@ export const CaregiverBookingsPage: React.FC = () => {
     if (!uid || !db) { setActiveLoading(false); return; }
     const unsub = db.collection('shifts')
       .where('caregiverId', '==', uid)
-      .where('status', 'in', ['scheduled', 'in-progress'])
+      .where('status', 'in', ['pending', 'scheduled', 'in-progress'])
       .orderBy('date', 'asc')
       .onSnapshot(snap => {
         setActiveShifts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Shift)));
         setActiveLoading(false);
       }, () => setActiveLoading(false));
+    return () => unsub();
+  }, [uid]);
+
+  // Fetch pending booking amendments (recurring schedule requests from client)
+  useEffect(() => {
+    if (!uid || !db) return;
+    const unsub = db.collection('booking_amendments')
+      .where('caregiverId', '==', uid)
+      .where('status', '==', 'pending')
+      .onSnapshot(snap => {
+        setAmendments(snap.docs.map(d => ({ id: d.id, ...d.data() } as BookingAmendment)));
+      }, () => {});
     return () => unsub();
   }, [uid]);
 
@@ -1657,6 +2037,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                   <BookingGroupCard
                     key={key}
                     shifts={groupShifts}
+                    amendments={amendments.filter(a => a.bookingRequestId === key)}
                     onCancel={handleCancelShift}
                   />
                 ));

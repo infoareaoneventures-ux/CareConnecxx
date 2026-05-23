@@ -87,7 +87,6 @@ __exportStar(require("./paymentMethods"), exports);
 __exportStar(require("./linq/webhooks"), exports);
 __exportStar(require("./triggers/userCreated"), exports);
 // Linq Sprint 2 — proactive care alerts + emergency replacement
-__exportStar(require("./triggers/journalCreated"), exports);
 __exportStar(require("./triggers/appointmentUpdated"), exports);
 var checkinAlert_1 = require("./triggers/checkinAlert");
 Object.defineProperty(exports, "onCheckinCreated", { enumerable: true, get: function () { return checkinAlert_1.onCheckinCreated; } });

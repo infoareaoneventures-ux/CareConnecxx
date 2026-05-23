@@ -119,7 +119,7 @@ export const CaregiverTopNav: React.FC = () => {
                   { icon: <BookOpen className="w-4 h-4" />, label: 'Bookings', path: '/caregiver/bookings' },
                   { icon: <User className="w-4 h-4" />, label: 'Profile', path: '/caregiver/profile' },
                   { icon: <Settings className="w-4 h-4" />, label: 'Settings', path: '/caregiver/settings' },
-                  { icon: <Users className="w-4 h-4" />, label: 'Your families', path: '/caregiver/families' },
+                  { icon: <Users className="w-4 h-4" />, label: 'My Families', path: '/caregiver/families' },
                   { icon: <CreditCard className="w-4 h-4" />, label: 'Payout and payment', path: '/caregiver/payout' },
                   { icon: <Receipt className="w-4 h-4" />, label: 'Transactions', path: '/caregiver/transactions' },
                 ].map(item => (

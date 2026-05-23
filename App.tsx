@@ -38,7 +38,6 @@ const StripeCallback = lazy(() => import('./components/StripeCallback').then(mod
 const PaymentSuccess = lazy(() => import('./components/PaymentSuccess').then(module => ({ default: module.PaymentSuccess })));
 const PaymentCancel = lazy(() => import('./components/PaymentCancel').then(module => ({ default: module.PaymentCancel })));
 const CarePlan = lazy(() => import('./components/CarePlan').then(module => ({ default: module.CarePlan })));
-const CareJournalFeed = lazy(() => import('./components/client/CareJournalFeed').then(module => ({ default: module.CareJournalFeed })));
 const HowItWorks = lazy(() => import('./components/HowItWorks').then(module => ({ default: module.HowItWorks })));
 const LoginPage = lazy(() => import('./components/LoginPage').then(module => ({ default: module.LoginPage })));
 const Subscription = lazy(() => import('./components/Subscription').then(module => ({ default: module.Subscription })));
@@ -217,7 +216,6 @@ const AppContent: React.FC = () => {
       case 'client-profile': navigate('/client/profile'); break;
       case 'client-inbox': navigate('/client/inbox'); break;
       case 'care-plan': navigate('/client/care-plan'); break;
-        case 'care-journal': navigate('/client/care-journal'); break;
       case 'caregiver': navigate('/caregiver/dashboard'); break;
       case 'caregiver-profile': navigate('/caregiver/profile'); break;
       case 'caregiver-inbox': navigate('/caregiver/inbox'); break;
@@ -361,11 +359,6 @@ const AppContent: React.FC = () => {
               targetUserId={viewingClientId}
             />
           } />
-        <Route path="/client/care-journal" element={
-          <CareJournalFeed
-            onNavigate={handleNavigation}
-          />
-        } />
 
           <Route path="/admin" element={<AdminRoute element={<AdminView onBack={() => navigate('/')} />} />} />
           <Route path="/admin/audit" element={<AdminRoute element={<AuditDashboard />} />} />

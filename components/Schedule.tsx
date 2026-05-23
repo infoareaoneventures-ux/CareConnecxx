@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Calendar as CalendarIcon, MapPin, User, CheckCircle,
+  Calendar as CalendarIcon, MapPin, User,
   XCircle, Plus, MessageSquare, ChevronLeft, ChevronRight, DollarSign,
-  Video, Phone, Home,
+  Video, Phone, Home, CheckCircle,
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
@@ -21,6 +21,7 @@ interface Shift {
   status: 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
   address: string;
   notes?: string;
+  completionNotes?: string;
   tasksCompleted?: string[];
   createdBy: 'client' | 'caregiver';
   paid?: boolean;
@@ -66,6 +67,17 @@ const MONTH_NAMES = [
   'January','February','March','April','May','June',
   'July','August','September','October','November','December',
 ];
+
+// 15-minute-interval time options for the visit time pickers
+const TIME_OPTIONS: Array<{ value: string; label: string }> = Array.from({ length: 96 }, (_, i) => {
+  const h = Math.floor(i / 4);
+  const m = (i % 4) * 15;
+  const value = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const period = h < 12 ? 'AM' : 'PM';
+  const dh = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  const label = `${dh}:${String(m).padStart(2, '0')} ${period}`;
+  return { value, label };
+});
 
 function parseH(t?: string): number {
   if (!t) return 9;
@@ -121,18 +133,132 @@ export default function Schedule() {
   const [shifts,     setShifts]     = useState<Shift[]>([]);
   const [interviews, setInterviews] = useState<InterviewEvent[]>([]);
   const [loading,    setLoading]    = useState(true);
-  const [caregivers, setCaregivers] = useState<{ id: string; name: string }[]>([]);
+  const [caregivers, setCaregivers] = useState<{ id: string; name: string; address?: string; bookingId?: string; schedule?: Record<string, Array<{ start: string; end: string }>> }[]>([]);
 
   const [selectedShift,     setSelectedShift]     = useState<Shift | null>(null);
   const [selectedInterview, setSelectedInterview] = useState<InterviewEvent | null>(null);
   const [selectedDay,       setSelectedDay]       = useState(localDate(new Date()));
   const [showAddModal,      setShowAddModal]      = useState(false);
-  const [newShift, setNewShift] = useState({
-    caregiverId: '', date: '', startTime: '09:00', endTime: '13:00', notes: '',
-  });
+  const [visitType,          setVisitType]          = useState<'once' | 'recurring'>('once');
+  const [visitCaregiverId,   setVisitCaregiverId]   = useState('');
+  const [selectedDays,       setSelectedDays]       = useState<string[]>([]);
+  const [dayTimes,           setDayTimes]           = useState<Record<string, { date: string; start: string; end: string }>>({});
+  const [visitNotes,         setVisitNotes]         = useState('');
+  const [recurringStartDate, setRecurringStartDate] = useState('');
+  const [recurringEndOption, setRecurringEndOption] = useState<'ongoing' | 'end_date'>('ongoing');
+  const [recurringEndDate,   setRecurringEndDate]   = useState('');
+  const [onceDate,           setOnceDate]           = useState('');
+  const [onceStart,          setOnceStart]          = useState('09:00');
+  const [onceEnd,            setOnceEnd]            = useState('13:00');
 
   useEffect(() => { fetchShifts(); }, [monthDate]);
-  useEffect(() => { fetchHiredCaregivers(); fetchInterviews(); }, []);
+  useEffect(() => { fetchHiredCaregivers(); fetchInterviews(); generateMissingShifts(); }, []);
+
+  // If no shifts exist for an accepted booking, generate 4 weeks client-side.
+  // This runs once on mount and acts as a safety net when the Cloud Function hasn't fired yet.
+  const generateMissingShifts = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      const bookingsSnap = await db.collection('booking_requests')
+        .where('clientId', '==', user.uid)
+        .where('status', '==', 'accepted')
+        .get();
+      if (bookingsSnap.empty) return;
+
+      const ALL_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const normDay = (d: string) => d.trim().charAt(0).toUpperCase() + d.trim().slice(1, 3).toLowerCase();
+      const addDays = (dateStr: string, days: number) => {
+        const d = new Date(dateStr + 'T12:00:00');
+        d.setDate(d.getDate() + days);
+        return d.toISOString().split('T')[0];
+      };
+      const nextOccurrence = (fromDate: string, dayName: string) => {
+        const target = ALL_DAYS.indexOf(normDay(dayName));
+        if (target === -1) return fromDate;
+        const base = new Date(fromDate + 'T12:00:00');
+        const diff = (target - base.getDay() + 7) % 7;
+        base.setDate(base.getDate() + diff);
+        return base.toISOString().split('T')[0];
+      };
+
+      const today = new Date().toISOString().split('T')[0];
+      const generateTo = addDays(today, 27);
+
+      for (const bookingDoc of bookingsSnap.docs) {
+        const booking = bookingDoc.data();
+        const bookingId = bookingDoc.id;
+
+        // Check if shifts already exist for this booking
+        const existingSnap = await db.collection('shifts')
+          .where('bookingRequestId', '==', bookingId)
+          .where('status', '==', 'scheduled')
+          .limit(1)
+          .get();
+        if (!existingSnap.empty) continue; // already has shifts
+
+        const dayShiftTimes: Record<string, Array<{ start: string; end: string }>> =
+          booking.schedule?.dayShiftTimes || {};
+        if (Object.keys(dayShiftTimes).length === 0) continue;
+
+        const startDate: string = booking.schedule?.startDate || today;
+        const generateFrom = startDate >= today ? startDate : today;
+        const endDate: string | null = booking.schedule?.ongoing ? null : (booking.schedule?.endDate || null);
+        if (endDate && generateFrom > endDate) continue;
+
+        const shiftBase = {
+          clientId: user.uid,
+          clientName: booking.clientName || '',
+          caregiverId: booking.caregiverId || '',
+          caregiverName: booking.caregiverName || '',
+          caregiverPhotoURL: booking.caregiverPhotoURL || null,
+          status: 'scheduled' as const,
+          address: booking.address || '',
+          rate: booking.rate ?? null,
+          notes: booking.notes || '',
+          careRecipients: booking.careRecipients || [],
+          bookingRequestId: bookingId,
+          recurringWeekly: true,
+          tasksCompleted: [],
+        };
+
+        const batch = db.batch();
+        let count = 0;
+
+        Object.entries(dayShiftTimes).forEach(([day, blocks]) => {
+          (blocks as Array<{ start: string; end: string }>)
+            .filter(b => b.start && b.end)
+            .forEach(b => {
+              let dateStr = nextOccurrence(generateFrom, day);
+              while (dateStr <= generateTo) {
+                if (endDate && dateStr > endDate) break;
+                if (count < 490) { // stay under Firestore batch limit
+                  batch.set(db.collection('shifts').doc(), {
+                    ...shiftBase,
+                    date: dateStr,
+                    startTime: b.start,
+                    endTime: b.end,
+                  });
+                  count++;
+                }
+                dateStr = addDays(dateStr, 7);
+              }
+            });
+        });
+
+        if (count > 0) {
+          await batch.commit();
+          console.log(`generateMissingShifts: created ${count} shifts for booking ${bookingId}`);
+        }
+      }
+
+      // Refresh the calendar after generating
+      fetchShifts();
+    } catch (e) {
+      console.error('generateMissingShifts error:', e);
+    }
+  };
 
   const fetchShifts = async () => {
     try {
@@ -180,48 +306,122 @@ export default function Schedule() {
     try {
       const user = auth.currentUser;
       if (!user) return;
-      const snap = await db.collection('connections')
+      const snap = await db.collection('booking_requests')
         .where('clientId', '==', user.uid)
-        .where('status', '==', 'active')
+        .where('status', '==', 'accepted')
         .get();
-      const list: { id: string; name: string }[] = [];
-      snap.forEach(doc => list.push({ id: doc.data().caregiverId, name: doc.data().caregiverName }));
+      const seen = new Set<string>();
+      const list: { id: string; name: string; address?: string; bookingId?: string; schedule?: Record<string, Array<{ start: string; end: string }>> }[] = [];
+      snap.forEach(doc => {
+        const d = doc.data();
+        if (d.caregiverId && !seen.has(d.caregiverId)) {
+          seen.add(d.caregiverId);
+          list.push({
+            id: d.caregiverId,
+            name: d.caregiverName || 'Caregiver',
+            address: d.address || '',
+            bookingId: doc.id,
+            schedule: d.schedule?.dayShiftTimes || {},
+          });
+        }
+      });
       setCaregivers(list);
     } catch (e) { console.error(e); }
+  };
+
+  const resetVisitModal = () => {
+    setVisitType('once');
+    setVisitCaregiverId('');
+    setSelectedDays([]);
+    setDayTimes({});
+    setVisitNotes('');
+    setRecurringStartDate('');
+    setRecurringEndOption('ongoing');
+    setRecurringEndDate('');
+    setOnceDate('');
+    setOnceStart('09:00');
+    setOnceEnd('13:00');
   };
 
   const handleAddShift = async () => {
     try {
       const user = auth.currentUser;
       if (!user) return;
-      const cg = caregivers.find(c => c.id === newShift.caregiverId);
-      await db.collection('shifts').add({
-        clientId: user.uid,
-        caregiverId: newShift.caregiverId,
-        caregiverName: cg?.name || 'Unknown',
-        date: newShift.date, startTime: newShift.startTime, endTime: newShift.endTime,
-        status: 'scheduled', address: 'Client Address', notes: newShift.notes,
-        tasksCompleted: [], createdBy: 'client',
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-      await db.collection('notifications').add({
-        userId: newShift.caregiverId, type: 'new_shift',
-        title: 'New Shift Scheduled',
-        message: `New shift on ${newShift.date} at ${newShift.startTime}`,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(), read: false,
-      });
-      setShowAddModal(false);
-      setNewShift({ caregiverId: '', date: '', startTime: '09:00', endTime: '13:00', notes: '' });
-      fetchShifts();
-    } catch (e) { console.error(e); addToast('Failed to add shift. Please try again.', 'error'); }
-  };
+      const cg = caregivers.find(c => c.id === visitCaregiverId);
 
-  const handleComplete = async (id: string) => {
-    await db.collection('shifts').doc(id).update({
-      status: 'completed', completedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    });
-    setSelectedShift(null);
-    fetchShifts();
+      if (visitType === 'once') {
+        // Create a single pending shift for the selected date/time
+        await db.collection('shifts').add({
+          clientId: user.uid,
+          caregiverId: visitCaregiverId,
+          caregiverName: cg?.name || 'Unknown',
+          date: onceDate,
+          startTime: onceStart,
+          endTime: onceEnd,
+          status: 'pending',
+          address: cg?.address || '',
+          notes: visitNotes,
+          bookingRequestId: cg?.bookingId || null,
+          tasksCompleted: [],
+          createdBy: 'client',
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        const dateLabel = new Date(onceDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        await db.collection('users').doc(visitCaregiverId).collection('notifications').add({
+          userId: visitCaregiverId,
+          type: 'extra_visit_request',
+          title: 'Extra Visit Requested',
+          message: `Your client requested an extra visit on ${dateLabel}.`,
+          read: false,
+          isRead: false,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+      } else {
+        // Recurring: create a booking_amendment document
+        const newDays: Record<string, Array<{ start: string; end: string }>> = {};
+        for (const day of selectedDays) {
+          const times = dayTimes[day];
+          if (!times?.start || !times?.end) continue;
+          if (!newDays[day]) newDays[day] = [];
+          newDays[day].push({ start: times.start, end: times.end });
+        }
+        const todayStr = new Date().toISOString().split('T')[0];
+        await db.collection('booking_amendments').add({
+          bookingRequestId: cg?.bookingId || null,
+          clientId: user.uid,
+          clientName: user.displayName || '',
+          caregiverId: visitCaregiverId,
+          caregiverName: cg?.name || 'Unknown',
+          status: 'pending',
+          type: 'add_recurring_days',
+          newDays,
+          notes: visitNotes,
+          startDate: recurringStartDate || todayStr,
+          endDate: recurringEndOption === 'end_date' ? recurringEndDate : null,
+          ongoing: recurringEndOption === 'ongoing',
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        await db.collection('users').doc(visitCaregiverId).collection('notifications').add({
+          userId: visitCaregiverId,
+          type: 'recurring_visit_request',
+          title: 'Recurring Visit Request',
+          message: `Your client wants to add ${selectedDays.join(', ')} to your regular schedule.`,
+          read: false,
+          isRead: false,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+
+      setShowAddModal(false);
+      resetVisitModal();
+      addToast('Visit request sent — waiting for caregiver to accept.', 'success');
+      fetchShifts();
+    } catch (e) {
+      console.error(e);
+      addToast('Failed to send request. Please try again.', 'error');
+    }
   };
 
   const handleCancel = async (id: string) => {
@@ -353,17 +553,20 @@ export default function Schedule() {
             ))}
           </div>
         )}
+        {shift.completionNotes && (
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shift Notes</p>
+            <p className="text-xs text-slate-600">{shift.completionNotes}</p>
+          </div>
+        )}
       </div>
       {shift.status === 'scheduled' && (
         <div className="flex gap-2">
-          <button onClick={() => handleComplete(shift.id)} className="flex-1 py-2 bg-green-600 text-white text-sm font-semibold rounded-xl hover:bg-green-700">
-            <CheckCircle className="w-4 h-4 inline mr-1" />Mark Complete
+          <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center justify-center gap-1.5">
+            <MessageSquare className="w-4 h-4" />Message
           </button>
-          <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="px-3 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600">
-            <MessageSquare className="w-4 h-4" />
-          </button>
-          <button onClick={() => handleCancel(shift.id)} className="px-3 py-2 border border-red-200 rounded-xl hover:bg-red-50 text-red-500">
-            <XCircle className="w-4 h-4" />
+          <button onClick={() => handleCancel(shift.id)} className="flex-1 py-2 border border-red-200 rounded-xl hover:bg-red-50 text-red-500 text-sm font-medium flex items-center justify-center gap-1.5">
+            <XCircle className="w-4 h-4" />Cancel
           </button>
         </div>
       )}
@@ -451,7 +654,7 @@ export default function Schedule() {
                 ))}
               </div>
               <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 transition-colors">
-                <Plus className="w-4 h-4" />Add Shift
+                <Plus className="w-4 h-4" />Request Visit
               </button>
             </div>
           </div>
@@ -459,6 +662,15 @@ export default function Schedule() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6">
+
+        {/* ── Shared legend (all views) ─────────────────────────────────── */}
+        <div className="flex items-center gap-5 px-4 py-2.5 mb-4 bg-white rounded-xl border border-slate-200 text-xs text-slate-500 flex-wrap">
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-500 inline-block" />Scheduled</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-accent-500 inline-block" />In Progress</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" />Completed</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-400 inline-block" />Cancelled</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-purple-500 inline-block" />Interviews</span>
+        </div>
 
         {/* ── Week view ──────────────────────────────────────────────────── */}
         {view === 'week' && (
@@ -472,14 +684,6 @@ export default function Schedule() {
 
             <div className="flex gap-4">
               <div className="flex-1 min-w-0 bg-white rounded-2xl border border-slate-200 overflow-hidden">
-                {/* Legend */}
-                <div className="flex items-center gap-5 px-4 py-2.5 border-b border-slate-100 bg-slate-50 text-xs text-slate-500 flex-wrap">
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-500 inline-block" />Scheduled</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-accent-500 inline-block" />In Progress</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" />Completed</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-400 inline-block" />Cancelled</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-purple-500 inline-block" />Interviews</span>
-                </div>
 
                 <div className="overflow-x-auto">
                   <div style={{ minWidth: 520 }}>
@@ -743,8 +947,8 @@ export default function Schedule() {
                         </div>
                         {shift.status === 'scheduled' && (
                           <div className="flex gap-2 mt-3">
-                            <button onClick={() => handleComplete(shift.id)} className="flex-1 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-lg hover:bg-green-700">Mark Complete</button>
-                            <button onClick={() => handleCancel(shift.id)} className="px-2.5 py-1.5 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 text-xs">Cancel</button>
+                            <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="flex-1 py-1.5 border border-slate-200 text-slate-600 text-xs font-medium rounded-lg hover:bg-slate-50">Message</button>
+                            <button onClick={() => handleCancel(shift.id)} className="flex-1 py-1.5 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 text-xs">Cancel</button>
                           </div>
                         )}
                       </div>
@@ -923,54 +1127,303 @@ export default function Schedule() {
         )}
       </main>
 
-      {/* ── Add Shift Modal ───────────────────────────────────────────────── */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">Schedule a Shift</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Caregiver</label>
-                <select value={newShift.caregiverId} onChange={e => setNewShift({ ...newShift, caregiverId: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200">
-                  <option value="">Select caregiver</option>
-                  {caregivers.map(cg => <option key={cg.id} value={cg.id}>{cg.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Date</label>
-                <input type="date" value={newShift.date} onChange={e => setNewShift({ ...newShift, date: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Start</label>
-                  <input type="time" value={newShift.startTime} onChange={e => setNewShift({ ...newShift, startTime: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200" />
+      {/* ── Request Extra Visit Modal ─────────────────────────────────────── */}
+      {showAddModal && (() => {
+        const selectedCg = caregivers.find(c => c.id === visitCaregiverId);
+        const schedule = selectedCg?.schedule || {};
+        const DAY_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const VISIT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const scheduledDays = DAY_ORDER.filter(d => schedule[d]?.some(b => b.start && b.end));
+        const canSubmit = !!visitCaregiverId && (
+          visitType === 'once'
+            ? !!onceDate
+            : selectedDays.length > 0 && (recurringEndOption === 'ongoing' || !!recurringEndDate)
+        );
+        const getEndOptions = (startVal: string) => {
+          const [sh, sm] = (startVal || '09:00').split(':').map(Number);
+          const startMins = sh * 60 + sm;
+          return TIME_OPTIONS.filter(opt => {
+            const [oh, om] = opt.value.split(':').map(Number);
+            return oh * 60 + om > startMins;
+          });
+        };
+        return (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] flex flex-col">
+
+              {/* Header + toggle */}
+              <div className="px-6 pt-6 pb-4 border-b border-slate-100 shrink-0">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">Request Extra Visit</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Add a visit outside your regular schedule</p>
+                  </div>
+                  <button onClick={() => { setShowAddModal(false); resetVisitModal(); }}
+                    className="text-slate-400 hover:text-slate-600 p-1 -mr-1 -mt-1 text-xl font-bold leading-none">×</button>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">End</label>
-                  <input type="time" value={newShift.endTime} onChange={e => setNewShift({ ...newShift, endTime: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200" />
+                {/* One-time / Recurring toggle */}
+                <div className="flex items-center gap-0.5 bg-slate-100 rounded-xl p-0.5">
+                  {(['once', 'recurring'] as const).map(type => (
+                    <button key={type} onClick={() => setVisitType(type)}
+                      className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${
+                        visitType === type ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
+                      }`}>
+                      {type === 'once' ? 'One-time' : 'Recurring'}
+                    </button>
+                  ))}
                 </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Notes (optional)</label>
-                <textarea value={newShift.notes} onChange={e => setNewShift({ ...newShift, notes: e.target.value })}
-                  placeholder="Any special instructions…"
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 h-20 resize-none" />
+
+              {/* Scrollable body */}
+              <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
+
+                {/* Caregiver */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Caregiver</label>
+                  <select value={visitCaregiverId} onChange={e => setVisitCaregiverId(e.target.value)}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white">
+                    <option value="">Select caregiver</option>
+                    {caregivers.map(cg => <option key={cg.id} value={cg.id}>{cg.name}</option>)}
+                  </select>
+                </div>
+
+                {/* Regular schedule preview */}
+                {selectedCg && scheduledDays.length > 0 && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Regular Schedule</p>
+                    <div className="space-y-0.5">
+                      {scheduledDays.map(day =>
+                        (schedule[day] || []).filter(b => b.start && b.end).map((b, i) => (
+                          <div key={`${day}-${i}`} className="flex items-center gap-2 text-xs text-slate-600">
+                            <span className="font-semibold w-8">{day}</span>
+                            <span>{fmtH(parseH(b.start))} – {fmtH(parseH(b.end))}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Context hint */}
+                <div className="text-xs text-slate-500 bg-primary-50 border border-primary-100 rounded-xl px-3 py-2 leading-relaxed">
+                  {visitType === 'once'
+                    ? 'Pick a date and time for the extra visit. Your caregiver will confirm before it\'s added to the calendar.'
+                    : 'Select which days to add and set times. Your caregiver will add these to your regular weekly schedule.'}
+                </div>
+
+                {/* ── ONE-TIME: single date + start/end ── */}
+                {visitType === 'once' && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+                    <div>
+                      <label className="text-xs text-slate-500 block mb-1">Date</label>
+                      <input
+                        type="date"
+                        value={onceDate}
+                        onChange={e => setOnceDate(e.target.value)}
+                        min={new Date().toISOString().split('T')[0]}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-slate-500 block mb-1">Start time</label>
+                        <select
+                          value={onceStart}
+                          onChange={e => {
+                            const newStart = e.target.value;
+                            const [sh, sm] = newStart.split(':').map(Number);
+                            const startMins = sh * 60 + sm;
+                            const [eh, em] = onceEnd.split(':').map(Number);
+                            const endMins = eh * 60 + em;
+                            const newEnd = endMins > startMins
+                              ? onceEnd
+                              : TIME_OPTIONS.find(o => {
+                                  const [oh, om] = o.value.split(':').map(Number);
+                                  return oh * 60 + om > startMins;
+                                })?.value || '13:00';
+                            setOnceStart(newStart);
+                            setOnceEnd(newEnd);
+                          }}
+                          className="w-full px-2 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                        >
+                          {TIME_OPTIONS.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-500 block mb-1">End time</label>
+                        <select
+                          value={onceEnd}
+                          onChange={e => setOnceEnd(e.target.value)}
+                          className="w-full px-2 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                        >
+                          {getEndOptions(onceStart).map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── RECURRING: day chips + per-day times ── */}
+                {visitType === 'recurring' && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Add recurring day(s)</label>
+                      <div className="flex flex-wrap gap-2">
+                        {VISIT_DAYS.map(day => {
+                          const isSelected = selectedDays.includes(day);
+                          return (
+                            <button key={day}
+                              onClick={() => {
+                                if (isSelected) {
+                                  setSelectedDays(prev => prev.filter(d => d !== day));
+                                  setDayTimes(prev => { const next = { ...prev }; delete next[day]; return next; });
+                                } else {
+                                  setSelectedDays(prev => [...prev, day]);
+                                  setDayTimes(prev => ({ ...prev, [day]: { date: '', start: '09:00', end: '13:00' } }));
+                                }
+                              }}
+                              className={`px-3 py-1.5 text-xs font-semibold rounded-full border transition-colors ${
+                                isSelected
+                                  ? 'bg-primary-600 border-primary-600 text-white'
+                                  : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300 hover:text-primary-600'
+                              }`}>
+                              {day}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {selectedDays.length > 0 && (
+                      <div className="space-y-3">
+                        {selectedDays.map(day => (
+                          <div key={day} className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                            <p className="text-xs font-semibold text-slate-700 mb-2.5">{day}</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-xs text-slate-500 block mb-1">Start</label>
+                                <select
+                                  value={dayTimes[day]?.start || '09:00'}
+                                  onChange={e => {
+                                    const newStart = e.target.value;
+                                    const [sh, sm] = newStart.split(':').map(Number);
+                                    const startMins = sh * 60 + sm;
+                                    const [eh, em] = (dayTimes[day]?.end || '13:00').split(':').map(Number);
+                                    const endMins = eh * 60 + em;
+                                    const newEnd = endMins > startMins
+                                      ? dayTimes[day]?.end || '13:00'
+                                      : TIME_OPTIONS.find(o => {
+                                          const [oh, om] = o.value.split(':').map(Number);
+                                          return oh * 60 + om > startMins;
+                                        })?.value || '13:00';
+                                    setDayTimes(prev => ({ ...prev, [day]: { ...prev[day], start: newStart, end: newEnd } }));
+                                  }}
+                                  className="w-full px-2 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                                >
+                                  {TIME_OPTIONS.map(opt => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-xs text-slate-500 block mb-1">End</label>
+                                <select
+                                  value={dayTimes[day]?.end || '13:00'}
+                                  onChange={e => setDayTimes(prev => ({ ...prev, [day]: { ...prev[day], end: e.target.value } }))}
+                                  className="w-full px-2 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                                >
+                                  {getEndOptions(dayTimes[day]?.start || '09:00').map(opt => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Recurring: start date + end/ongoing */}
+                {visitType === 'recurring' && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Schedule dates</p>
+                    <div>
+                      <label className="text-xs text-slate-500 block mb-1">Start date</label>
+                      <input
+                        type="date"
+                        value={recurringStartDate}
+                        onChange={e => setRecurringStartDate(e.target.value)}
+                        min={new Date().toISOString().split('T')[0]}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 block mb-2">Ends</label>
+                      <div className="flex items-center gap-2 mb-2">
+                        {(['ongoing', 'end_date'] as const).map(opt => (
+                          <button key={opt}
+                            onClick={() => setRecurringEndOption(opt)}
+                            className={`px-3 py-1.5 text-xs font-semibold rounded-full border transition-colors ${
+                              recurringEndOption === opt
+                                ? 'bg-primary-600 border-primary-600 text-white'
+                                : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300'
+                            }`}>
+                            {opt === 'ongoing' ? 'Ongoing' : 'On a date'}
+                          </button>
+                        ))}
+                      </div>
+                      {recurringEndOption === 'end_date' && (
+                        <input
+                          type="date"
+                          value={recurringEndDate}
+                          onChange={e => setRecurringEndDate(e.target.value)}
+                          min={recurringStartDate || new Date().toISOString().split('T')[0]}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Notes */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Notes (optional)</label>
+                  <textarea value={visitNotes} onChange={e => setVisitNotes(e.target.value)}
+                    placeholder="Any special instructions…"
+                    rows={2}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 resize-none" />
+                </div>
               </div>
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button onClick={() => setShowAddModal(false)} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
-              <button onClick={handleAddShift} disabled={!newShift.caregiverId || !newShift.date}
-                className="flex-1 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                Add Shift
-              </button>
+
+              {/* Footer */}
+              <div className="px-6 pb-6 pt-4 border-t border-slate-100 shrink-0">
+                <div className="flex gap-3">
+                  <button onClick={() => { setShowAddModal(false); resetVisitModal(); }}
+                    className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50">
+                    Cancel
+                  </button>
+                  <button onClick={handleAddShift} disabled={!canSubmit}
+                    className="flex-1 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                    Send Request
+                  </button>
+                </div>
+                <p className="text-xs text-slate-400 text-center mt-2">
+                  {visitType === 'recurring'
+                    ? 'Your caregiver will need to accept before these visits are added to the schedule.'
+                    : 'Your caregiver will need to accept before this visit is confirmed.'}
+                </p>
+              </div>
+
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

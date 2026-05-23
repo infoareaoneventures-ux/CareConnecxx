@@ -109,6 +109,7 @@ export default function ClientCaregiverProfile({
   const [loading, setLoading] = useState(!passedData);
   const [showInterviewModal, setShowInterviewModal] = useState(false);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
+  const [isBooked, setIsBooked] = useState(false);
   const { gate, Modals: GateModals } = useAccessGates();
   const { addToast } = useCareConnex();
 
@@ -121,6 +122,16 @@ export default function ClientCaregiverProfile({
       dbService.getJobPostsByClient(uid).then(posts => {
         setClientOpenPosts(posts.filter((p: any) => p.status === 'open').map((p: any) => ({ id: p.id, title: p.title, startDate: p.startDate || p.date })));
       }).catch(() => {});
+
+      // Check for an existing accepted booking with this caregiver
+      db!.collection('booking_requests')
+        .where('clientId', '==', uid)
+        .where('caregiverId', '==', caregiverId)
+        .where('status', '==', 'accepted')
+        .limit(1)
+        .get()
+        .then(snap => setIsBooked(!snap.empty))
+        .catch(() => {});
     }
   }, [caregiverId]);
 
@@ -292,12 +303,18 @@ export default function ClientCaregiverProfile({
               >
                 <MessageSquare className="w-4 h-4" /> Message
               </button>
-              <button
-                onClick={handleInterview}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 rounded-full bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700"
-              >
-                <Video className="w-4 h-4" /> Request Interview
-              </button>
+              {isBooked ? (
+                <div className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 rounded-full bg-green-50 border border-green-200 text-green-700 text-sm font-semibold">
+                  <CheckCircle className="w-4 h-4" /> Active Booking
+                </div>
+              ) : (
+                <button
+                  onClick={handleInterview}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 rounded-full bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700"
+                >
+                  <Video className="w-4 h-4" /> Request Interview
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -451,12 +468,18 @@ export default function ClientCaregiverProfile({
           {/* Sidebar */}
           <div className="lg:w-64 mt-4 lg:mt-0 space-y-4 flex-shrink-0 lg:sticky lg:top-20 lg:self-start">
             <div className="bg-white border border-slate-200 rounded-2xl p-5">
-              <button
-                onClick={handleInterview}
-                className="w-full py-2.5 bg-primary-600 text-white font-semibold rounded-full hover:bg-primary-700 transition-colors flex items-center justify-center gap-2 text-sm mb-2"
-              >
-                <Video className="w-4 h-4" /> Request Interview
-              </button>
+              {isBooked ? (
+                <div className="w-full py-2.5 bg-green-50 border border-green-200 text-green-700 font-semibold rounded-full flex items-center justify-center gap-2 text-sm mb-2">
+                  <CheckCircle className="w-4 h-4" /> Active Booking
+                </div>
+              ) : (
+                <button
+                  onClick={handleInterview}
+                  className="w-full py-2.5 bg-primary-600 text-white font-semibold rounded-full hover:bg-primary-700 transition-colors flex items-center justify-center gap-2 text-sm mb-2"
+                >
+                  <Video className="w-4 h-4" /> Request Interview
+                </button>
+              )}
               <button
                 onClick={handleMessage}
                 className="w-full py-2.5 border border-slate-200 text-slate-700 font-semibold rounded-full hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-sm"

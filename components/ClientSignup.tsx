@@ -176,6 +176,9 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
     if (!formData.firstName.trim() || !formData.lastName.trim()) {
       onShowToast('Please enter your first and last name.', 'error'); return;
     }
+    if (/[~*/\[\]]/.test(formData.firstName) || /[~*/\[\]]/.test(formData.lastName)) {
+      onShowToast('Names cannot contain special characters like / * [ ]', 'error'); return;
+    }
     if (!formData.email) {
       onShowToast('Please enter your email address.', 'error'); return;
     }

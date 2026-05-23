@@ -71,7 +71,6 @@ export * from './linq/webhooks';
 export * from './triggers/userCreated';
 
 // Linq Sprint 2 — proactive care alerts + emergency replacement
-export * from './triggers/journalCreated';
 export * from './triggers/appointmentUpdated';
 export { onCheckinCreated } from './triggers/checkinAlert';
 export { triggerFamilyEmergency } from './triggers/familyEmergency';

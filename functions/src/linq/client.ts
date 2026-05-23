@@ -125,6 +125,9 @@ async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
           continue;
         }
       }
+      // Never retry on ETIMEDOUT — the Linq API is not responding; fail fast.
+      if ((err as NodeJS.ErrnoException)?.code === "ETIMEDOUT" ||
+          (err as NodeJS.ErrnoException)?.code === "ECONNABORTED") throw err;
       const isTransient = (status === 500 || status === 503 || status === 504) ||
                           (typeof code === "number" && code >= 3000 && code < 4000);
       if (!isTransient || i === attempts - 1) throw err;
@@ -147,12 +150,12 @@ export async function checkCapability(
       axios.post(
         `${cfg().baseUrl}/capability/check_imessage`,
         body,
-        { headers: headers() }
+        { headers: headers(), timeout: 10000 }
       ),
       axios.post(
         `${cfg().baseUrl}/capability/check_rcs`,
         body,
-        { headers: headers() }
+        { headers: headers(), timeout: 10000 }
       ),
     ]);
     const iMessage = imsgRes.status === "fulfilled" ? !!imsgRes.value.data?.available : false;
@@ -177,12 +180,15 @@ export async function createChat(
         to:      [phone],
         message: { ...message, idempotency_key: message.idempotency_key ?? uuidv4() },
       },
-      { headers: headers() }
+      { headers: headers(), timeout: 15000 }
     )
   );
   const traceId = res.headers["x-trace-id"] as string | undefined;
   if (traceId) console.info("Linq createChat trace_id:", traceId);
-  return { chat_id: res.data.chat_id ?? res.data.id, service: res.data.service ?? "SMS" };
+  return {
+    chat_id: res.data.chat_id ?? res.data.id ?? res.data.chat?.id,
+    service:  res.data.service ?? res.data.chat?.service ?? "SMS",
+  };
 }
 
 export async function sendMessage(
@@ -194,13 +200,28 @@ export async function sendMessage(
       ? { parts: [{ type: "text", value: textOrMessage }] }
       : textOrMessage;
 
-  const res = await withRetry(() =>
-    axios.post(
-      `${cfg().baseUrl}/chats/${chatId}/messages`,
-      { ...message, idempotency_key: message.idempotency_key ?? uuidv4() },
-      { headers: headers() }
-    )
-  );
+  // Linq v3 POST /chats/{id}/messages requires the message nested under a "message" key.
+  // Top-level parts (without the wrapper) returns error 1005 "at least one part required".
+  const body = { message: { ...message, idempotency_key: message.idempotency_key ?? uuidv4() } };
+
+  let res: Awaited<ReturnType<typeof axios.post>>;
+  try {
+    res = await withRetry(() =>
+      axios.post(
+        `${cfg().baseUrl}/chats/${chatId}/messages`,
+        body,
+        { headers: headers(), timeout: 15000 }
+      )
+    );
+  } catch (err) {
+    const axErr = err as AxiosError;
+    console.error("Linq sendMessage failed", {
+      chatId,
+      status: axErr?.response?.status,
+      data:   JSON.stringify(axErr?.response?.data ?? {}),
+    });
+    throw err;
+  }
   const traceId = res.headers["x-trace-id"] as string | undefined;
   if (traceId) console.info("Linq sendMessage trace_id:", traceId, "chatId:", chatId);
   return { message_id: res.data.id ?? res.data.message_id ?? "" };
@@ -412,9 +433,22 @@ export async function updateChatIcon(chatId: string, iconUrl: string): Promise<v
 }
 
 export async function markChatRead(chatId: string): Promise<void> {
-  await axios
-    .post(`${cfg().baseUrl}/chats/${chatId}/mark_as_read`, {}, { headers: headers() })
-    .catch(() => {/* non-critical */});
+  // Linq API path is /chats/{id}/read (returns 204 No Content).
+  // Docs page slug says "mark_as_read" but the actual endpoint is /read.
+  try {
+    await axios.post(
+      `${cfg().baseUrl}/chats/${chatId}/read`,
+      {},
+      { headers: headers(), timeout: 5000 }
+    );
+  } catch (err) {
+    const e = err as AxiosError;
+    console.warn("markChatRead failed", {
+      chatId,
+      status: e.response?.status,
+      msg:    e.message,
+    });
+  }
 }
 
 export async function addParticipant(chatId: string, phone: string): Promise<void> {
@@ -442,39 +476,110 @@ export async function getOrCreateSession(
   phone: string,
   meta?: Partial<Omit<AgentSession, "chatId" | "service" | "optedOut" | "createdAt">>
 ): Promise<AgentSession> {
-  const ref  = db.collection("agent_sessions").doc(phone);
-  const snap = await ref.get();
+  const ref = db.collection("agent_sessions").doc(phone);
 
-  if (snap.exists) {
-    return snap.data() as AgentSession;
-  }
+  // Atomically claim the creation slot so concurrent calls don't each create a separate Linq chat.
+  let isCreator = false;
+  let existingSession: AgentSession | null = null;
 
-  const capability = await checkCapability(phone);
-  const service: LinqService = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
-
-  // First message is a silent thread-opener; real content comes from the caller.
-  // Per best-practices: no links or media in first message.
-  const { chat_id } = await createChat(phone, {
-    parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists) {
+      const data = snap.data()!;
+      if (data.chatId) {
+        existingSession = data as AgentSession;
+      }
+      // else: _creating sentinel is present — another invocation owns creation
+    } else {
+      tx.set(ref, { _creating: true, phone, createdAt: new Date().toISOString() });
+      isCreator = true;
+    }
   });
 
-  const session: AgentSession = {
-    chatId:    chat_id,
-    service,
-    optedOut:  false,
-    createdAt: new Date().toISOString(),
-    phone,
-    ...meta,
-  };
+  if (existingSession) return existingSession;
 
-  await ref.set(session);
-
-  // Best-practice: share contact card once after first outbound (non-blocking)
-  if (service === "iMessage") {
-    shareContactCard(chat_id).catch(() => {});
+  if (!isCreator) {
+    // Another concurrent invocation is creating the session — wait briefly for it to finish
+    await new Promise<void>((r) => setTimeout(r, 2000));
+    const retry = (await ref.get()).data() as AgentSession | undefined;
+    if (retry?.chatId) return retry;
+    throw new Error(`getOrCreateSession: concurrent creation timed out for ${phone}`);
   }
 
-  return session;
+  // We won the race — make external API calls outside the transaction
+  try {
+    const capability = await checkCapability(phone);
+    const service: LinqService = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
+
+    // First message is a silent thread-opener; real content comes from the caller.
+    // Per best-practices: no links or media in first message.
+    const { chat_id } = await createChat(phone, {
+      parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
+    });
+
+    const session: AgentSession = {
+      chatId:    chat_id,
+      service,
+      optedOut:  false,
+      createdAt: new Date().toISOString(),
+      phone,
+      ...meta,
+    };
+
+    await ref.set(session);
+
+    // Best-practice: share contact card once after first outbound (non-blocking)
+    if (service === "iMessage") {
+      shareContactCard(chat_id).catch(() => {});
+    }
+
+    return session;
+  } catch (err) {
+    // Remove sentinel so the next call can retry rather than hanging
+    await ref.delete().catch(() => {});
+    throw err;
+  }
+}
+
+// ── Circuit breaker — checked before every supervised send ───────────────────
+// State is written by handlePhoneNumberStatusUpdated when the line is FLAGGED or CRITICAL.
+// Cached in-process for 60s to avoid a Firestore read on every message.
+
+let _cbCache: { open: boolean; cachedAt: number } = { open: false, cachedAt: 0 };
+
+async function isCircuitOpen(): Promise<boolean> {
+  if (Date.now() - _cbCache.cachedAt < 60_000) return _cbCache.open;
+  try {
+    const snap = await db.collection("system_config").doc("linq_circuit_breaker").get();
+    const open = snap.exists && snap.data()?.status === "open";
+    _cbCache = { open, cachedAt: Date.now() };
+    return open;
+  } catch {
+    return false; // fail open — don't block sends on Firestore errors
+  }
+}
+
+// ── Per-pair rate limiter (Linq cap: 30 messages per 60s per sender-recipient) ─
+
+async function checkPairRateLimit(chatId: string): Promise<boolean> {
+  const windowMs  = 60_000;
+  const maxPerMin = 28; // stay under Linq's 30 hard cap with a 2-message buffer
+  const now       = Date.now();
+  const windowKey = Math.floor(now / windowMs);
+  const ref       = db.collection("linq_pair_rate").doc(`${chatId}:${windowKey}`);
+
+  try {
+    const count = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const cur  = (snap.data()?.count as number) ?? 0;
+      if (cur >= maxPerMin) return cur;
+      tx.set(ref, { count: cur + 1, expiresAt: now + windowMs * 2 }, { merge: true });
+      return cur + 1;
+    });
+    return count <= maxPerMin;
+  } catch {
+    return true; // fail open — don't block sends on Firestore errors
+  }
 }
 
 // ── safeSend — lints + supervises then sends ─────────────────────────────────
@@ -484,6 +589,15 @@ export async function safeSend(
   message: string | LinqMessage,
   context: SuperviseContext
 ): Promise<void> {
+  if (await isCircuitOpen()) {
+    console.warn("safeSend: circuit breaker open (line FLAGGED/CRITICAL), dropping message", { chatId });
+    return;
+  }
+  if (!(await checkPairRateLimit(chatId))) {
+    console.warn("safeSend: per-pair rate limit reached, dropping message", { chatId });
+    return;
+  }
+
   let finalText = "";
 
   if (typeof message === "string") {
@@ -518,6 +632,11 @@ export async function sendToPhone(
   phone: string,
   textOrMessage: string | LinqMessage
 ): Promise<void> {
+  if (await isCircuitOpen()) {
+    console.warn("sendToPhone: circuit breaker open, dropping message", { phone });
+    return;
+  }
+
   const ref  = db.collection("agent_sessions").doc(phone);
   const snap = await ref.get();
 

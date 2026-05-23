@@ -1,18 +1,12 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { handlePromptGet } from "../mcp/server";
 import { getRelevantFacts } from "../memory/learnedFacts";
 import { getMemoryContext } from "../memory/memoryFiles";
 import { getPreferences, isInDND } from "../memory/preferences";
 import { generateCaraMessage } from "../utils/caraMessage";
-
-let _client: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!_client) _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _client;
-}
 
 const db = admin.firestore();
 
@@ -107,7 +101,7 @@ export const sendMorningBriefings = functions.pubsub
             medLine:       medLine ?? "",
             verifiedNote:  verifiedNote ?? "",
           });
-          const aiResponse = await getClient().messages.create({
+          const aiResponse = await getSharedClient().messages.create({
             model:    "claude-haiku-4-5-20251001",
             max_tokens: 200,
             messages: [{ role: "user", content: briefingPrompt }],
@@ -297,7 +291,7 @@ async function sendFamilyMorningBriefings(
           : "";
         const memLine = memCtx ? memCtx.slice(0, 300) : "";
 
-        const resp = await getClient().messages.create({
+        const resp = await getSharedClient().messages.create({
           model:      "claude-haiku-4-5-20251001",
           max_tokens: 180,
           system:

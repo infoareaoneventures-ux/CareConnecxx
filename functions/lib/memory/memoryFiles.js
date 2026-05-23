@@ -32,9 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.readMemoryFile = readMemoryFile;
 exports.writeMemoryFile = writeMemoryFile;
@@ -44,15 +41,10 @@ exports.initializeMemoryFiles = initializeMemoryFiles;
 exports.handleMemoryQuery = handleMemoryQuery;
 exports.consolidateMemoryForUser = consolidateMemoryForUser;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
+const jsonUtils_1 = require("../utils/jsonUtils");
 const storage = admin.storage();
 const db = admin.firestore();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 const ALL_FILES = ["profile", "health", "family", "recent_episodes", "procedural"];
 function filePath(userId, file) {
     return `memory/${userId}/${file}.md`;
@@ -129,7 +121,7 @@ async function handleMemoryQuery(userId, chatId, sendMessage, zepContext) {
         await sendMessage(chatId, "I'm still building up my picture of your situation. The more we talk, the more I'll know.");
         return;
     }
-    const result = await getClaude().messages.create({
+    const result = await (0, claudeClient_1.getSharedClient)().messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 220,
         system: "You are Cara, a care assistant. Summarize what you know about this family's care situation " +
@@ -143,7 +135,7 @@ async function handleMemoryQuery(userId, chatId, sendMessage, zepContext) {
 // Consolidate last 7 days of actual conversation messages into memory files.
 // `phone` is optional — if omitted, we look it up from agent_sessions using userId.
 async function consolidateMemoryForUser(userId, phone) {
-    var _a, _b;
+    var _a, _b, _c;
     // Resolve phone → agent_conversations doc key
     let conversationKey = phone !== null && phone !== void 0 ? phone : userId;
     if (!phone) {
@@ -177,7 +169,7 @@ async function consolidateMemoryForUser(userId, phone) {
     if (!events)
         return;
     const existingContext = await getMemoryContext(userId);
-    const result = await getClaude().messages.create({
+    const result = await (0, claudeClient_1.getSharedClient)().messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 600,
         system: "You maintain memory files for a caregiving AI assistant named Cara. " +
@@ -191,13 +183,10 @@ async function consolidateMemoryForUser(userId, phone) {
                 content: `Existing memory:\n${existingContext}\n\nRecent events:\n${events}`,
             }],
     });
-    let updates = [];
-    try {
-        updates = JSON.parse((_a = result.content[0].text) !== null && _a !== void 0 ? _a : "[]");
-    }
-    catch (_c) {
+    const raw = ((_a = result.content[0].text) !== null && _a !== void 0 ? _a : "").trim();
+    const updates = (_b = (0, jsonUtils_1.safeParseJson)(raw, "memoryFiles.consolidate", [], "array")) !== null && _b !== void 0 ? _b : [];
+    if (updates.length === 0)
         return;
-    }
     const appliedUpdates = [];
     for (const { file, append } of updates) {
         if (ALL_FILES.includes(file) && append) {
@@ -222,14 +211,14 @@ async function consolidateMemoryForUser(userId, phone) {
     // Trim recent_episodes.md if it exceeds 8000 chars
     const episodes = await readMemoryFile(userId, "recent_episodes");
     if (episodes.length > 8000) {
-        const trimResult = await getClaude().messages.create({
+        const trimResult = await (0, claudeClient_1.getSharedClient)().messages.create({
             model: "claude-haiku-4-5-20251001",
             max_tokens: 400,
             system: "Summarize the oldest entries in this care episode log into a brief paragraph. " +
                 "Keep the most recent entries verbatim. Reply with only the revised markdown content.",
             messages: [{ role: "user", content: episodes }],
         });
-        const trimmed = ((_b = trimResult.content[0].text) !== null && _b !== void 0 ? _b : "").trim();
+        const trimmed = ((_c = trimResult.content[0].text) !== null && _c !== void 0 ? _c : "").trim();
         if (trimmed) {
             await writeMemoryFile(userId, "recent_episodes", trimmed);
             // Keep Zep in sync with the trimmed version so context injection stays consistent.

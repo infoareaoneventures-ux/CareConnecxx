@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 import { haversineMiles } from "../ai/scoring";
 import { sendMessage, startTyping, getOrCreateSession } from "../linq/client";
 import { sendViaInteractionAgent, AgentOutput } from "../agents/caraAgent";
@@ -462,8 +462,7 @@ async function parseAvailabilityConfirmation(text: string): Promise<boolean> {
   if (["YES", "YEP", "YEA", "YEAH", "YUP", "CONFIRMED", "CONFIRM", "WORKS", "GOOD"].includes(upper)) return true;
   if (["NO", "NOPE", "CANT", "CAN'T", "UNAVAILABLE", "PASS"].includes(upper)) return false;
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const resp   = await client.messages.create({
+  const resp   = await getSharedClient().messages.create({
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 20,
     system:

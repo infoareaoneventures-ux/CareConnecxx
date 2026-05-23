@@ -32,24 +32,15 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.aiProxy = void 0;
 const functions = __importStar(require("firebase-functions"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("./utils/claudeClient");
 const rateLimit_1 = require("./rateLimit");
 const ALLOWED_MODELS = new Set([
     "claude-haiku-4-5-20251001",
     "claude-sonnet-4-6",
 ]);
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 exports.aiProxy = functions.https.onCall(async (data, context) => {
     var _a, _b;
     if (!((_a = context.auth) === null || _a === void 0 ? void 0 : _a.uid)) {
@@ -72,7 +63,7 @@ exports.aiProxy = functions.https.onCall(async (data, context) => {
     }
     let response;
     try {
-        response = await getClaude().messages.create({
+        response = await (0, claudeClient_1.getSharedClient)().messages.create({
             model,
             max_tokens: Math.min(maxTokens, 4000),
             system,

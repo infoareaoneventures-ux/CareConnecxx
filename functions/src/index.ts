@@ -96,8 +96,10 @@ export { generateRollingShifts, onBookingAccepted } from './scheduled/shiftGener
 export { markTaskComplete } from './agents/onboardingAgent';
 
 // Cara scheduled jobs
+export { dailyContactCardShare } from './scheduled/dailyContactCardShare';
 export { sendMorningBriefings } from './scheduled/morningBriefing';
 export { sendStaleSessionNudges } from './scheduled/staleSessionNudge';
+export { familySilenceCheckinJob } from './scheduled/familySilenceCheckin';
 export { consolidateMemoryNightly } from './scheduled/nightlyMemory';
 export { extendRecurringSchedules } from './scheduled/recurringScheduler';
 export { upcomingVisitReminder } from './scheduled/upcomingVisitReminder';
@@ -154,6 +156,117 @@ export { send1099Notifications } from './scheduled/taxReminder';
 
 // MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
 export * from './migrations/migrateSeniorsToHousehold';
+
+// ── initiateCara — unauthenticated callable: proactively sends Cara's greeting ──
+// Called from the web "Continue with Phone" screen so desktop users receive an
+// outbound SMS rather than relying on the sms: URI (which silently fails on desktop).
+export const initiateCara = functions.https.onCall(async (data) => {
+  const phone = (data.phone as string | undefined)?.trim();
+  const role  = (data.role  as string | undefined) === "caregiver" ? "caregiver" : "client";
+
+  // Basic E.164 validation (US/CA +1 only for now)
+  if (!phone || !/^\+1\d{10}$/.test(phone)) {
+    throw new functions.https.HttpsError("invalid-argument", "A valid US/CA phone number is required.");
+  }
+
+  const { sendMessage, createChat, getOrCreateSession } = await import("./linq/client");
+
+  const db = admin.firestore();
+
+  const sessionRef  = db.collection("agent_sessions").doc(phone);
+  const sessionSnap = await sessionRef.get();
+
+  if (sessionSnap.exists) {
+    const existing = sessionSnap.data() as Record<string, unknown>;
+
+    // If the session has userId, it's a known user — try sending to the existing chatId.
+    // This avoids creating a new Linq chat (which is slow and can hang).
+    // If the existing chatId is stale, the send will fail fast (15s timeout added to axios).
+    if (existing.userId && existing.chatId) {
+      const greeting = "Hi! I'm Cara, your care assistant. I'm here whenever you need help with your care.";
+      const sent = await sendMessage(existing.chatId as string, greeting).then(() => true).catch(() => false);
+
+      if (!sent) {
+        // Existing chatId is stale — open a fresh Linq thread.
+        const { chat_id } = await createChat(phone, {
+          parts: [{ type: "text", value: greeting }],
+        });
+        await sessionRef.update({ chatId: chat_id });
+      }
+    } else {
+      // Session exists but is missing userId — restore from users collection.
+      const userQuery = await db.collection("users").where("phone", "==", phone).limit(1).get();
+      if (!userQuery.empty) {
+        const userDoc   = userQuery.docs[0];
+        const userData  = userDoc.data();
+        const userId    = userDoc.id;
+        const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
+        const seniorId  = (userData.seniorId  as string | undefined) ?? seniorIds[0] ?? "";
+
+        const greeting = "Hi! I'm Cara, your care assistant. I'm here whenever you need help.";
+        // Try sending to current chatId; open fresh chat if it fails.
+        const chatId = existing.chatId as string | undefined;
+        let finalChatId = chatId ?? "";
+        if (chatId) {
+          const sent = await sendMessage(chatId, greeting).then(() => true).catch(() => false);
+          if (!sent) {
+            const { chat_id } = await createChat(phone, { parts: [{ type: "text", value: greeting }] });
+            finalChatId = chat_id;
+          }
+        } else {
+          const { chat_id } = await createChat(phone, { parts: [{ type: "text", value: greeting }] });
+          finalChatId = chat_id;
+        }
+
+        await sessionRef.update({
+          chatId:         finalChatId,
+          userId,
+          seniorId,
+          onboardingStep: "complete",
+          userType:       (existing.userType as string | undefined) ?? role,
+        });
+      } else {
+        // No user account — just open a fresh Linq chat for onboarding.
+        const { chat_id } = await createChat(phone, {
+          parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
+        });
+        await sessionRef.update({ chatId: chat_id, onboardingStep: "ask_role" });
+      }
+    }
+  } else {
+    // No session — look up the user's account data to pre-fill and skip re-onboarding.
+    const userQuery = await db.collection("users").where("phone", "==", phone).limit(1).get();
+    if (!userQuery.empty) {
+      const userDoc   = userQuery.docs[0];
+      const userData  = userDoc.data();
+      const userId    = userDoc.id;
+      const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
+      const seniorId  = (userData.seniorId  as string | undefined) ?? seniorIds[0] ?? "";
+
+      const { chat_id } = await createChat(phone, {
+        parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
+      });
+
+      await sessionRef.set({
+        chatId:         chat_id,
+        service:        "iMessage",
+        phone,
+        userType:       role,
+        userId,
+        seniorId,
+        onboardingStep: "complete",
+        optedIn:        true,
+        optedOut:       false,
+        createdAt:      new Date().toISOString(),
+      });
+    } else {
+      // No user account yet — minimal session for fresh onboarding.
+      await getOrCreateSession(phone, { userType: role });
+    }
+  }
+
+  return { success: true };
+});
 
 // ── chatWithCara — web callable: routes authenticated web users through qaAgent ─
 // Bridges Firebase Auth UID → phone → agent_sessions so web users get the same

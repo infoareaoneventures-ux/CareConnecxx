@@ -1,13 +1,7 @@
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { quickComplete } from "../utils/openaiClient";
 
 const db = admin.firestore();
-
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
 
 export type FactCategory = "medical" | "preference" | "routine" | "family";
 
@@ -31,6 +25,20 @@ function normalizeFact(fact: string): string {
   return fact.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+// Strip common LLM JSON wrappers (markdown code fences, leading prose).
+// gpt-4o-mini and Claude both occasionally return JSON wrapped in ```json ... ```
+// or with a stray sentence before the array; we extract the JSON substring.
+function unwrapJson(raw: string): string {
+  let s = (raw ?? "").trim();
+  // Strip leading/trailing markdown code fences
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  // If extra prose precedes the array, find the first '[' and last ']'
+  const start = s.indexOf("[");
+  const end   = s.lastIndexOf("]");
+  if (start >= 0 && end > start) s = s.slice(start, end + 1);
+  return s;
+}
+
 export async function extractAndStoreFacts(
   userId:     string,
   text:       string,
@@ -40,19 +48,20 @@ export async function extractAndStoreFacts(
 
   let extracted: Array<{ fact: string; category: FactCategory }> = [];
   try {
-    const result = await getClaude().messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 300,
-      system:
-        "Extract persistent, reusable facts about the user's care situation from this message. " +
+    const raw = await quickComplete(
+      "Extract persistent, reusable facts about the user's care situation from this message. " +
         "Categories: medical (diagnoses, meds, allergies), preference (likes/dislikes, habits), " +
         "routine (schedule, recurring activities), family (relationships, names). " +
         "Only extract facts that are clearly stated and would be useful in future conversations. " +
-        "Reply with only a JSON array: [{\"fact\": \"...\", \"category\": \"medical|preference|routine|family\"}]. " +
+        "Reply with ONLY a raw JSON array (no markdown, no prose): " +
+        "[{\"fact\": \"...\", \"category\": \"medical|preference|routine|family\"}]. " +
         "Return [] if nothing worth storing.",
-      messages: [{ role: "user", content: text }],
-    });
-    extracted = JSON.parse((result.content[0] as { text: string }).text ?? "[]");
+      text,
+      { maxTokens: 300 },
+    );
+    const cleaned = unwrapJson(raw);
+    if (!cleaned) return;
+    extracted = JSON.parse(cleaned);
   } catch (err) {
     console.warn("[learnedFacts] extractAndStoreFacts failed:", err instanceof Error ? err.message : err, { userId });
     return;
@@ -216,22 +225,17 @@ export async function detectAndApplyCorrection(
 
   let raw: string;
   try {
-    const result = await getClaude().messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 200,
-      system:
-        "The user may be correcting previously stated information about their care situation. " +
+    raw = await quickComplete(
+      "The user may be correcting previously stated information about their care situation. " +
         "You are given a numbered list of known facts and the user's message. " +
-        "If the message directly corrects one of the known facts, reply with JSON only: " +
+        "If the message directly corrects one of the known facts, reply with JSON only (no markdown fences): " +
         "{\"corrects\": <index>, \"newFact\": \"<corrected text>\", \"category\": \"medical|preference|routine|family\"}. " +
         "If the message retracts a fact without replacement: {\"corrects\": <index>, \"newFact\": null}. " +
         "If this is NOT a correction of a known fact, reply with the single word: null",
-      messages: [{
-        role:    "user",
-        content: `Known facts:\n${factsJson}\n\nUser message: "${text}"`,
-      }],
-    });
-    raw = ((result.content[0] as { text: string }).text ?? "").trim();
+      `Known facts:\n${factsJson}\n\nUser message: "${text}"`,
+      { maxTokens: 200 },
+    );
+    raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
   } catch {
     return false;
   }

@@ -447,6 +447,9 @@ export async function runMatchingForClient(
         agentId,
         ...(goalContext ? { goalContext } : {}),
       })),
+      // Used by webhooks.ts to detect stale state — selection prompts older
+      // than 2 hours are treated as expired and cleared on next inbound.
+      pendingMatchesSetAt: new Date().toISOString(),
     });
   } catch (err) {
     console.error("runMatchingForClient error:", err);

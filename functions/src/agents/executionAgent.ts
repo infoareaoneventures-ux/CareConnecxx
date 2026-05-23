@@ -1,13 +1,7 @@
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 
 const db = admin.firestore();
-
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
 
 export type ExecutionAgentType = "matching" | "emergency_replacement" | "care_research";
 
@@ -92,7 +86,7 @@ export async function runExecutionAgentTurn(
     { role: "user", content: input },
   ];
 
-  const response = await getClaude().messages.create({
+  const response = await getSharedClient().messages.create({
     model:      "claude-sonnet-4-6",
     max_tokens: 800,
     system:     agent.systemPrompt,

@@ -93,6 +93,7 @@ async function handleTimesheetApproval(clientId, phone, text, session, sendMessa
             pendingTimesheetId: first.id,
             pendingTimesheetDesc: JSON.stringify(first),
             pendingTimesheetQueue: restIds,
+            pendingTimesheetSetAt: new Date().toISOString(),
         });
         const opener = await (0, caraMessage_1.generateCaraMessage)({
             audience: "family",
@@ -209,6 +210,7 @@ async function handleTimesheetApproval(clientId, phone, text, session, sendMessa
                     pendingTimesheetId: next.id,
                     pendingTimesheetDesc: JSON.stringify(next),
                     pendingTimesheetQueue: queue.slice(1),
+                    pendingTimesheetSetAt: new Date().toISOString(),
                 });
                 const timeRange2 = next.clockIn && next.clockOut ? ` (${next.clockIn} – ${next.clockOut})` : "";
                 await sendMessage(`You have one more to review:\n\n` +

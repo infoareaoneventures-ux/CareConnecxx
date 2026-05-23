@@ -1,16 +1,11 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 import { consolidateMemoryForUser } from "../memory/memoryFiles";
 import { cleanupStaleExecutionAgents } from "../agents/executionAgent";
 
 const db = admin.firestore();
-
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
 
 // ── Conversation compression ──────────────────────────────────────────────────
 
@@ -35,7 +30,7 @@ async function compressConversationForPhone(phone: string): Promise<void> {
     ? [`Existing summary:\n${existingSummary}\n\nNew messages to incorporate:\n${newMessages}`]
     : [`Conversation:\n${newMessages}`];
 
-  const response = await getClaude().messages.create({
+  const response = await getSharedClient().messages.create({
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 400,
     system:     "You are summarizing a caregiving conversation for an AI assistant named Cara. Write 3-5 sentences covering: care needs mentioned, decisions made, key facts about the senior, and emotional context. Be specific — include names, dates, and care details if present. Begin your response with \"<summary>\".",

@@ -1,14 +1,9 @@
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, getOrCreateSession, AgentSession } from "../linq/client";
 import { writeFeedbackSignal } from "../ai/feedback";
 import { generateCaraMessage } from "../utils/caraMessage";
 
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
 import { getPermissions } from "./permissionsConversation";
 import { notifyAdminInterviewScheduled } from "../notifications";
 import { generateCallLink, generateICSFile, uploadICSToStorage } from "./interviewLinks";
@@ -22,7 +17,7 @@ async function parseSelection(text: string, matchCount: number): Promise<number[
   const norm  = text.trim().toLowerCase();
   if (norm === "all") return Array.from({ length: matchCount }, (_, i) => i + 1);
 
-  const result = await getClaude().messages.create({
+  const result = await getSharedClient().messages.create({
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 30,
     system:
@@ -41,7 +36,7 @@ async function parseSelection(text: string, matchCount: number): Promise<number[
 // ── Parse caregiver availability from text ────────────────────────────────────
 
 async function parseAvailability(text: string): Promise<string[]> {
-  const result = await getClaude().messages.create({
+  const result = await getSharedClient().messages.create({
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
@@ -215,8 +210,9 @@ export async function handleCaregiverAvailabilityReply(
           maxTokens: 80,
         });
         await sendMessage(familySession.chatId, caregiverUnavailableMsg);
-        // Remember this caregiver was declined so matching won't re-present them
+        // Clear the pending interview confirmation and remember this caregiver was declined
         await db.collection("agent_sessions").doc(reqData.clientPhone).update({
+          pendingInterviewConfirm:  admin.firestore.FieldValue.delete(),
           rejectedCaregiverIds: admin.firestore.FieldValue.arrayUnion(caregiverId),
         });
       }

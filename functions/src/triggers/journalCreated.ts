@@ -1,6 +1,6 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, sendToPhone, AgentSession } from "../linq/client";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { detectHealthSignals } from "../agents/healthSignalDetector";
@@ -10,12 +10,6 @@ import { sendCareJournalToZep } from "../memory/zepClient";
 import { scheduleTrigger } from "./triggerEngine";
 import { writeFeedbackSignal } from "../ai/feedback";
 
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
-
 async function generateVisitSummary(
   caregiverName: string,
   seniorName: string | null,
@@ -23,7 +17,7 @@ async function generateVisitSummary(
   wellness: Record<string, unknown>
 ): Promise<string | null> {
   try {
-    const resp = await getClaude().messages.create({
+    const resp = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 120,
       system:
@@ -208,14 +202,35 @@ export const onJournalCreated = functions.firestore
         });
       }
 
+      // First-occurrence observations — surface a specific "I noticed X" call-out
+      // rather than burying it in the general visit summary. Fires on the first
+      // occurrence of a watch/flag signal so the family knows fast, not after
+      // a 3-in-7-day pattern. Dedup is handled above (skips if same signalType
+      // was alerted in past 24h).
+      const seniorDocForObs = await db.collection("users").doc(seniorId).get();
+      const seniorNameForObs = (seniorDocForObs.data()?.seniorName ?? seniorDocForObs.data()?.displayName ?? "your loved one") as string;
+      const observationSent = await maybeSendObservation({
+        phone,
+        seniorId,
+        seniorName: seniorNameForObs,
+        signals,
+        severity,
+        nowIso,
+      });
+
       // Follow-up for flagged health signals
       if (severity === "flag" && signals.length > 0) {
-        await sendViaInteractionAgent(phone, {
-          content:     `Worth keeping an eye on. If you notice the same thing at the next visit, it might be worth mentioning to their doctor.`,
-          urgency:     "standard",
-          sourceAgent: "health_watch",
-          canDrop:     true,
-        });
+        // Only send the generic "worth keeping an eye on" if we didn't already
+        // send a specific observation above — avoid double-messaging the family.
+        if (!observationSent) {
+          const signalList = signals.slice(0, 2).join(" and ");
+          await sendViaInteractionAgent(phone, {
+            content:     `Worth keeping an eye on — if ${signalList} comes up again, it's worth a quick mention to their doctor.`,
+            urgency:     "standard",
+            sourceAgent: "health_watch",
+            canDrop:     true,
+          });
+        }
 
         // Schedule 24h escalation to emergency contact if family doesn't acknowledge
         const alertLogRef = await db.collection("health_alerts_pending").add({
@@ -303,3 +318,45 @@ export const onJournalCreated = functions.firestore
       console.error("onJournalCreated error:", err);
     }
   });
+
+// Send a concrete "I noticed X today" observation to the family on the first
+// occurrence of a watch or flag signal. Returns true if a message was sent so
+// the caller can skip the generic flag follow-up.
+//
+// Dedup is already enforced upstream (skips if same signalType alerted in 24h).
+// Skips silently for severity "none" or empty signals.
+async function maybeSendObservation(params: {
+  phone:      string;
+  seniorId:   string;
+  seniorName: string;
+  signals:    string[];
+  severity:   "none" | "watch" | "flag";
+  nowIso:     string;
+}): Promise<boolean> {
+  const { phone, seniorId, seniorName, signals, severity, nowIso } = params;
+  if (severity === "none" || signals.length === 0) return false;
+
+  const signalText = signals.slice(0, 2).join(" and ");
+  const content = severity === "flag"
+    ? `Heads up — ${seniorName}'s caregiver noted ${signalText} today. Wanted to flag it for you so you're not the last to know. Want to talk it through?`
+    : `Quick observation — ${seniorName}'s caregiver mentioned ${signalText} today. Not concerning on its own, but I'll keep an eye on it.`;
+
+  await sendViaInteractionAgent(phone, {
+    content,
+    urgency:     severity === "flag" ? "immediate" : "standard",
+    sourceAgent: "health_watch",
+    canDrop:     severity === "watch", // family must see flag-level observations
+  });
+
+  await db.collection("agent_alerts_log").add({
+    type:       "first_occurrence_observation",
+    seniorId,
+    clientId:   seniorId,
+    phone,
+    signals,
+    severity,
+    sentAt:     nowIso,
+  }).catch(() => {});
+
+  return true;
+}

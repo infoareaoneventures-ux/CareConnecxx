@@ -66,6 +66,7 @@ async function handleTaskApproval(taskDoc, choice, session, chatId) {
             caregiverId: (_d = selected.caregiverId) !== null && _d !== void 0 ? _d : "",
             time: (_e = task.time) !== null && _e !== void 0 ? _e : "",
         },
+        pendingTaskConfirmSetAt: new Date().toISOString(),
     }).catch(() => { });
     await (0, client_1.sendMessage)(chatId, `Got it — ${selected.name} for your ${(_f = task.time) !== null && _f !== void 0 ? _f : "upcoming"} visit.\n\n` +
         `Reply CONFIRM to book, or SKIP to choose someone else.`);

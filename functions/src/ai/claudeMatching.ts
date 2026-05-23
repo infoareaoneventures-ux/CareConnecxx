@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 
 /**
  * Shared Claude-powered scoring engine.
@@ -86,12 +86,6 @@ function stripFences(text: string): string {
   return text.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "");
 }
 
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
-
 /**
  * Score a batch of candidates against a senior profile using Claude Sonnet.
  * Returns a map of caregiverId → ClaudeScoredMatch.
@@ -110,7 +104,7 @@ export async function scoreWithClaude(
     candidates,
   })}`;
 
-  const response = await getClaude().messages.create({
+  const response = await getSharedClient().messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: maxTokens,
     system: systemPrompt,

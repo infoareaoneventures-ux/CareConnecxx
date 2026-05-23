@@ -1,17 +1,11 @@
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
 
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
-
 async function askClaude(system: string, userText: string): Promise<string> {
   try {
-    const res = await getClaude().messages.create({
+    const res = await getSharedClient().messages.create({
       model: "claude-haiku-4-5-20251001", max_tokens: 100,
       system, messages: [{ role: "user", content: userText }],
     });

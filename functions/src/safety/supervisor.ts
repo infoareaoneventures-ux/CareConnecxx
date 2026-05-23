@@ -1,15 +1,9 @@
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 import { lintMessage } from "./linter";
 import { CONSTITUTION_RULES } from "./constitution";
 
 const db = admin.firestore();
-
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
 
 export interface SuperviseContext {
   phone: string;
@@ -27,7 +21,7 @@ export async function supervise(
   let checked = linted;
   try {
     const rulesText = CONSTITUTION_RULES.map((r, i) => `${i + 1}. ${r}`).join("\n");
-    const result = await getClaude().messages.create({
+    const result = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 300,
       system:

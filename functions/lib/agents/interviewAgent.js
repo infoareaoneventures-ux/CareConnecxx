@@ -32,9 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleInterviewSelection = handleInterviewSelection;
 exports.handleCaregiverAvailabilityReply = handleCaregiverAvailabilityReply;
@@ -42,16 +39,10 @@ exports.handleInterviewConfirm = handleInterviewConfirm;
 exports.writeInterviewOutcomeSignal = writeInterviewOutcomeSignal;
 exports.sendPostInterviewFollowUp = sendPostInterviewFollowUp;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const client_1 = require("../linq/client");
 const feedback_1 = require("../ai/feedback");
 const caraMessage_1 = require("../utils/caraMessage");
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 const permissionsConversation_1 = require("./permissionsConversation");
 const notifications_1 = require("../notifications");
 const interviewLinks_1 = require("./interviewLinks");
@@ -63,7 +54,7 @@ async function parseSelection(text, matchCount) {
     const norm = text.trim().toLowerCase();
     if (norm === "all")
         return Array.from({ length: matchCount }, (_, i) => i + 1);
-    const result = await getClaude().messages.create({
+    const result = await (0, claudeClient_1.getSharedClient)().messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 30,
         system: `The user is selecting from a numbered list of ${matchCount} caregivers. ` +
@@ -81,7 +72,7 @@ async function parseSelection(text, matchCount) {
 // ── Parse caregiver availability from text ────────────────────────────────────
 async function parseAvailability(text) {
     var _a;
-    const result = await getClaude().messages.create({
+    const result = await (0, claudeClient_1.getSharedClient)().messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 100,
         system: "Extract interview time proposals from this message as an array of ISO datetime strings. " +
@@ -229,8 +220,9 @@ async function handleCaregiverAvailabilityReply(caregiverPhone, caregiverId, car
                     maxTokens: 80,
                 });
                 await (0, client_1.sendMessage)(familySession.chatId, caregiverUnavailableMsg);
-                // Remember this caregiver was declined so matching won't re-present them
+                // Clear the pending interview confirmation and remember this caregiver was declined
                 await db.collection("agent_sessions").doc(reqData.clientPhone).update({
+                    pendingInterviewConfirm: admin.firestore.FieldValue.delete(),
                     rejectedCaregiverIds: admin.firestore.FieldValue.arrayUnion(caregiverId),
                 });
             }

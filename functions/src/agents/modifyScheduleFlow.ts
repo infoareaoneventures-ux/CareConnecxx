@@ -1,24 +1,13 @@
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { quickComplete } from "../utils/openaiClient";
+import { safeParseJson } from "../utils/jsonUtils";
 import { sendMessage, AgentSession } from "../linq/client";
 
 const db = admin.firestore();
 
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
-
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
-    const res = await getClaude().messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 200,
-      system:     prompt,
-      messages:   [{ role: "user", content: userText }],
-    });
-    return ((res.content[0] as { text: string }).text ?? "").trim();
+    return await quickComplete(prompt, userText, { maxTokens: 200 });
   } catch {
     return "__parse_error__";
   }
@@ -165,10 +154,8 @@ async function handleMsAskDays(
   );
 
   let newDays: string[] = [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) newDays = parsed;
-  } catch { /**/ }
+  const parsed = safeParseJson<string[]>(raw, "modifyScheduleFlow.days", null, "array");
+  if (Array.isArray(parsed) && parsed.length > 0) newDays = parsed;
 
   if (newDays.length === 0) {
     await sendMessage(chatId,

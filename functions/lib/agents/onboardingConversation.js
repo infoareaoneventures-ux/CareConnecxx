@@ -41,7 +41,8 @@ exports.handleOnboardingStep = handleOnboardingStep;
 exports.resendStuckStep = resendStuckStep;
 exports.advanceOnboardingStep = advanceOnboardingStep;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const openaiClient_1 = require("../utils/openaiClient");
+const jsonUtils_1 = require("../utils/jsonUtils");
 const axios_1 = __importDefault(require("axios"));
 const stripe_1 = __importDefault(require("stripe"));
 const client_1 = require("../linq/client");
@@ -52,12 +53,6 @@ const zepClient_1 = require("../memory/zepClient");
 const buildJobPost_1 = require("./buildJobPost");
 const caraMessage_1 = require("../utils/caraMessage");
 const db = admin.firestore();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 let _stripe = null;
 function getStripe() {
     var _a;
@@ -78,21 +73,24 @@ async function mergeOnboardingData(phone, data) {
         onboardingData: Object.assign(Object.assign({}, existing), data),
     });
 }
+// Local single-shot parser used by onboarding step handlers. Powered by
+// gpt-4o-mini under the hood for speed and lower rate-limit pressure.
+// Strips markdown code fences from the response so JSON.parse callers don't
+// fail when the model wraps the answer in ```json … ```.
 async function parseWithClaude(prompt, userText) {
-    var _a;
     try {
-        const response = await getClaude().messages.create({
-            model: "claude-haiku-4-5-20251001",
-            max_tokens: 200,
-            system: prompt,
-            messages: [{ role: "user", content: userText }],
-        });
-        return ((_a = response.content[0].text) !== null && _a !== void 0 ? _a : "").trim();
+        const raw = await (0, openaiClient_1.quickComplete)(prompt, userText, { maxTokens: 200 });
+        // Strip fences only — leaves plain-text answers untouched but cleans
+        // up wrapped JSON. Callers that JSON.parse() the return value get a
+        // clean string.
+        return raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
     }
-    catch (_b) {
+    catch (_a) {
         return "__parse_error__";
     }
 }
+// Use unwrapJson where a JSON-shaped answer is needed and prose may sneak in
+void jsonUtils_1.unwrapJson;
 async function isQuestionOrOther(text) {
     const result = await parseWithClaude('Reply YES if this is a general question or off-topic comment. Reply NO if it is an answer to the question asked. Only reply YES or NO.', text);
     return result.toUpperCase().startsWith("Y");
@@ -124,9 +122,86 @@ async function createFirebaseAuthAccount(phone, displayName) {
     }
 }
 // ── Main dispatcher ───────────────────────────────────────────────────────────
+// Ordered step flow for client onboarding — used by the auto-skip logic so
+// any step whose target field is already in onboardingData is silently
+// advanced past instead of re-asking the user. Stops at client_ask_schedule
+// because what follows is identity verification + plan selection — those have
+// side effects (Stripe identity session, plan display) that can't be skipped
+// based on cached fields. Caregiver flow has document uploads + payment
+// redirects that can't be skipped, so we don't auto-skip caregiver steps either.
+const CLIENT_STEP_ORDER = [
+    "client_ask_name",
+    "client_ask_senior",
+    "client_ask_needs",
+    "client_ask_location",
+    "client_ask_schedule",
+];
+// Maps a client step to the onboardingData field(s) it collects. If the
+// field is already present and non-empty, the step is skipped.
+const CLIENT_STEP_FIELD = {
+    client_ask_name: "firstName",
+    client_ask_senior: "seniorName",
+    client_ask_needs: "age",
+    client_ask_location: "city",
+    client_ask_schedule: "schedule",
+};
+function isFieldFilled(value) {
+    if (value === undefined || value === null)
+        return false;
+    if (typeof value === "string")
+        return value.trim().length > 0;
+    if (typeof value === "number")
+        return value > 0;
+    if (Array.isArray(value))
+        return value.length > 0;
+    if (typeof value === "object")
+        return Object.keys(value).length > 0;
+    return true;
+}
+/**
+ * Scan an inbound message for ANY client onboarding fields and return only
+ * the ones not already saved. Lets a family say "Mom Dorothy, 82, dementia,
+ * 3 mornings/week in Atlanta 30301" once and have all fields captured in
+ * a single turn — instead of being asked five questions.
+ *
+ * Conservative: returns `{}` on parse error so the regular step handlers
+ * still run and ask explicitly.
+ */
+async function absorbClientFields(text, existing) {
+    const raw = await parseWithClaude("You are extracting onboarding details from one message a family sent to Cara. " +
+        "Return JSON only with the fields you can confidently extract. Omit fields not present. " +
+        "Schema: " +
+        `{"firstName":"family member first name (the person texting, not the senior)",` +
+        `"seniorName":"senior's first name",` +
+        `"relationship":"family relationship to senior (mother, father, etc.)",` +
+        `"age":number,` +
+        `"careNeeds":["short need phrase"],` +
+        `"conditions":["short condition phrase"],` +
+        `"city":"city name",` +
+        `"zip":"5-digit US zip code",` +
+        `"schedule":"plain-English schedule like '3 mornings a week'"}. ` +
+        "Be conservative — only include a field if it is unambiguously stated. Reply with raw JSON, no markdown.", text).catch(() => "{}");
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch (_a) {
+        return {};
+    }
+    // Only return fields that are actually new
+    const out = {};
+    for (const [k, v] of Object.entries(parsed)) {
+        if (!isFieldFilled(v))
+            continue;
+        if (isFieldFilled(existing[k]))
+            continue;
+        out[k] = v;
+    }
+    return out;
+}
 async function handleOnboardingStep(phone, chatId, text, session) {
-    var _a, _b;
-    const step = (_a = session.onboardingStep) !== null && _a !== void 0 ? _a : "";
+    var _a, _b, _c, _d;
+    let step = (_a = session.onboardingStep) !== null && _a !== void 0 ? _a : "";
     const norm = text.trim().toUpperCase();
     // Global: "start over" resets
     if (norm === "START OVER" || norm === "RESTART") {
@@ -136,6 +211,39 @@ async function handleOnboardingStep(phone, chatId, text, session) {
             "1️⃣  I need care for someone\n" +
             "2️⃣  I'm a caregiver looking for work");
         return;
+    }
+    // ── Multi-field absorption (client flow only) ───────────────────────────────
+    // For any client step, scan the user's message for ALL fields present, save
+    // them, and auto-skip any subsequent steps whose target field is already
+    // collected. Lets users front-load their answers without being re-asked.
+    // Skipped fields are filled in onboardingData; the dispatcher lands on the
+    // first still-unfilled step.
+    const isClientStep = step === "ask_role" || step.startsWith("client_ask_");
+    if (isClientStep && step !== "ask_role" && session.userType !== "caregiver") {
+        const existing = ((_b = session.onboardingData) !== null && _b !== void 0 ? _b : {});
+        const absorbed = await absorbClientFields(text, existing).catch(() => ({}));
+        if (Object.keys(absorbed).length > 0) {
+            await mergeOnboardingData(phone, absorbed);
+            session.onboardingData = Object.assign(Object.assign({}, existing), absorbed);
+        }
+        // Auto-advance past any client step whose target field is now filled.
+        while (CLIENT_STEP_FIELD[step]) {
+            const field = CLIENT_STEP_FIELD[step];
+            const value = (_c = session.onboardingData) === null || _c === void 0 ? void 0 : _c[field];
+            if (!isFieldFilled(value))
+                break;
+            const idx = CLIENT_STEP_ORDER.indexOf(step);
+            const nextStep = idx >= 0 && idx < CLIENT_STEP_ORDER.length - 1
+                ? CLIENT_STEP_ORDER[idx + 1]
+                : null;
+            if (!nextStep)
+                break;
+            step = nextStep;
+        }
+        if (step !== session.onboardingStep) {
+            await updateSession(phone, { onboardingStep: step });
+            session.onboardingStep = step;
+        }
     }
     // Mid-flow correction: "actually my name is X", "sorry, my city is Y"
     // Only applies once user has started answering (not on ask_role)
@@ -165,7 +273,7 @@ async function handleOnboardingStep(phone, chatId, text, session) {
                 caregiver_ask_rate: "What's your hourly rate?",
                 caregiver_ask_email: "What's your email address?",
             };
-            const repeat = (_b = stepMessages[step]) !== null && _b !== void 0 ? _b : "Could you continue where we left off?";
+            const repeat = (_d = stepMessages[step]) !== null && _d !== void 0 ? _d : "Could you continue where we left off?";
             await (0, client_1.sendMessage)(chatId, `Got it — updated.\n\n${repeat}`);
             return;
         }
@@ -549,6 +657,10 @@ async function handleClientSendPayment(phone, chatId, session) {
 // ── CAREGIVER FLOW ────────────────────────────────────────────────────────────
 async function handleCaregiverAskName(phone, chatId, text) {
     const name = await parseWithClaude("Extract the full name from this message. Reply with just the name, nothing else.", text);
+    if (name === "__parse_error__" || !name) {
+        await (0, client_1.sendMessage)(chatId, "I didn't catch your name — could you share it?");
+        return;
+    }
     await mergeOnboardingData(phone, { name });
     await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
     const msg9 = await (0, caraMessage_1.generateCaraMessage)({
@@ -887,6 +999,10 @@ async function advanceOnboardingStep(phone, task, taskData) {
         return;
     const session = snap.data();
     const chatId = session.chatId;
+    if (!chatId) {
+        console.error(`advanceOnboardingStep: missing chatId for phone=${phone}`);
+        return;
+    }
     // Idempotency: skip if this task was already processed for this session
     const processedTasks = (_a = session.processedWebhookTasks) !== null && _a !== void 0 ? _a : [];
     if (processedTasks.includes(task)) {
@@ -1466,18 +1582,12 @@ async function handleJobConfirmPost(phone, chatId, text, session) {
 }
 // ── Mid-flow question answering ───────────────────────────────────────────────
 async function answerQuestionMidFlow(text, session) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c;
     const d = (_a = session.onboardingData) !== null && _a !== void 0 ? _a : {};
-    const response = await getClaude().messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 100,
-        system: "You are Cara, an AI care assistant. " +
-            "A user is in the middle of signing up and has a question. " +
-            `Context: they are ${session.userType === "caregiver" ? "a caregiver looking for work" : "a family member looking for care"}. ` +
-            `Name: ${((_c = (_b = d.name) !== null && _b !== void 0 ? _b : d.firstName) !== null && _c !== void 0 ? _c : "")}. ` +
-            "Answer briefly (1–2 sentences). Be warm and helpful.",
-        messages: [{ role: "user", content: text }],
-    });
-    return ((_d = response.content[0].text) !== null && _d !== void 0 ? _d : "").trim();
+    return (await (0, openaiClient_1.quickComplete)("You are Cara, an AI care assistant. " +
+        "A user is in the middle of signing up and has a question. " +
+        `Context: they are ${session.userType === "caregiver" ? "a caregiver looking for work" : "a family member looking for care"}. ` +
+        `Name: ${((_c = (_b = d.name) !== null && _b !== void 0 ? _b : d.firstName) !== null && _c !== void 0 ? _c : "")}. ` +
+        "Answer briefly (1–2 sentences). Be warm and helpful.", text, { maxTokens: 100 })).trim();
 }
 //# sourceMappingURL=onboardingConversation.js.map

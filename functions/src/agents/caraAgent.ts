@@ -1,21 +1,14 @@
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { quickComplete } from "../utils/openaiClient";
 import { AgentSession, sendMessage } from "../linq/client";
 import { runMatchingForClient } from "./matchingAgent";
 import { executeBookings } from "./bookingExecutor";
 import { getPreferences, isInDND, isActiveHour, CaraPreferences } from "../memory/preferences";
 import { supervise } from "../safety/supervisor";
 import { logAudit } from "../observability/auditLog";
-import { callClaudeWithRetry } from "../utils/claudeRetry";
 import { classifyIntent, Intent } from "./intentClassifier";
 
 const db = admin.firestore();
-
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
 
 // Sources that route to the family group thread when groupChatId exists
 const GROUP_SOURCE_AGENTS = new Set([
@@ -73,24 +66,21 @@ async function shouldSend(
   // LLM judgment for standard urgency
   if (output.urgency === "standard") {
     try {
-      const result = await callClaudeWithRetry(getClaude(), {
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 5,
-        system:
-          "You decide if a care update should be sent to a family right now.\n" +
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5_000);
+      const raw = await quickComplete(
+        "You decide if a care update should be sent to a family right now.\n" +
           "Consider: Is this new info? Is it timely? Would a human coordinator send this now?\n" +
           "Reply SEND or WAIT — one word only.",
-        messages: [{
-          role:    "user",
-          content:
-            `Message: "${output.content.slice(0, 200)}"\n` +
-            `Last sent: ${lastSentAt ?? "never"}\n` +
-            `Current UTC hour: ${new Date().getUTCHours()}`,
-        }],
-      }, { timeoutMs: 5_000, maxAttempts: 2 });
-      return ((result.content[0] as { text: string }).text ?? "").trim().toUpperCase() === "SEND";
+        `Message: "${output.content.slice(0, 200)}"\n` +
+          `Last sent: ${lastSentAt ?? "never"}\n` +
+          `Current UTC hour: ${new Date().getUTCHours()}`,
+        { maxTokens: 5, signal: controller.signal },
+      );
+      clearTimeout(timer);
+      return raw.trim().toUpperCase() === "SEND";
     } catch {
-      console.warn("shouldSend Claude timeout — holding message to prevent spam");
+      console.warn("shouldSend timeout — holding message to prevent spam");
       return false; // safe default: hold on timeout, not send
     }
   }

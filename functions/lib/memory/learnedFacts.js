@@ -32,45 +32,49 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.extractAndStoreFacts = extractAndStoreFacts;
 exports.getRelevantFacts = getRelevantFacts;
 exports.updateOrRetractFact = updateOrRetractFact;
 exports.detectAndApplyCorrection = detectAndApplyCorrection;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const openaiClient_1 = require("../utils/openaiClient");
 const db = admin.firestore();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 // Normalize a fact string for deduplication comparison
 function normalizeFact(fact) {
     return fact.toLowerCase().replace(/\s+/g, " ").trim();
 }
+// Strip common LLM JSON wrappers (markdown code fences, leading prose).
+// gpt-4o-mini and Claude both occasionally return JSON wrapped in ```json ... ```
+// or with a stray sentence before the array; we extract the JSON substring.
+function unwrapJson(raw) {
+    let s = (raw !== null && raw !== void 0 ? raw : "").trim();
+    // Strip leading/trailing markdown code fences
+    s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+    // If extra prose precedes the array, find the first '[' and last ']'
+    const start = s.indexOf("[");
+    const end = s.lastIndexOf("]");
+    if (start >= 0 && end > start)
+        s = s.slice(start, end + 1);
+    return s;
+}
 async function extractAndStoreFacts(userId, text, zepUserId) {
-    var _a, _b;
+    var _a;
     if (!text || text.length < 10)
         return;
     let extracted = [];
     try {
-        const result = await getClaude().messages.create({
-            model: "claude-haiku-4-5-20251001",
-            max_tokens: 300,
-            system: "Extract persistent, reusable facts about the user's care situation from this message. " +
-                "Categories: medical (diagnoses, meds, allergies), preference (likes/dislikes, habits), " +
-                "routine (schedule, recurring activities), family (relationships, names). " +
-                "Only extract facts that are clearly stated and would be useful in future conversations. " +
-                "Reply with only a JSON array: [{\"fact\": \"...\", \"category\": \"medical|preference|routine|family\"}]. " +
-                "Return [] if nothing worth storing.",
-            messages: [{ role: "user", content: text }],
-        });
-        extracted = JSON.parse((_a = result.content[0].text) !== null && _a !== void 0 ? _a : "[]");
+        const raw = await (0, openaiClient_1.quickComplete)("Extract persistent, reusable facts about the user's care situation from this message. " +
+            "Categories: medical (diagnoses, meds, allergies), preference (likes/dislikes, habits), " +
+            "routine (schedule, recurring activities), family (relationships, names). " +
+            "Only extract facts that are clearly stated and would be useful in future conversations. " +
+            "Reply with ONLY a raw JSON array (no markdown, no prose): " +
+            "[{\"fact\": \"...\", \"category\": \"medical|preference|routine|family\"}]. " +
+            "Return [] if nothing worth storing.", text, { maxTokens: 300 });
+        const cleaned = unwrapJson(raw);
+        if (!cleaned)
+            return;
+        extracted = JSON.parse(cleaned);
     }
     catch (err) {
         console.warn("[learnedFacts] extractAndStoreFacts failed:", err instanceof Error ? err.message : err, { userId });
@@ -92,7 +96,7 @@ async function extractAndStoreFacts(userId, text, zepUserId) {
             .get();
         const activeExisting = existing.docs.find((d) => !d.data().supersededAt);
         if (activeExisting) {
-            const currentWeight = (_b = activeExisting.data().weight) !== null && _b !== void 0 ? _b : 1;
+            const currentWeight = (_a = activeExisting.data().weight) !== null && _a !== void 0 ? _a : 1;
             await activeExisting.ref.update({
                 weight: Math.min(currentWeight + 1, 10),
                 lastMentionedAt: nowIso,
@@ -194,7 +198,7 @@ async function updateOrRetractFact(userId, oldDocId, newFact, zepUserId) {
 // Detect if the user's message corrects a known fact, and apply the correction.
 // Returns true if a correction was found and applied.
 async function detectAndApplyCorrection(userId, text, zepUserId) {
-    var _a, _b;
+    var _a;
     // Fast pre-filter — only run if message looks like a correction or an update to known information.
     // Deliberately broad: false positives are cheap (one Haiku call); false negatives silently corrupt memory.
     if (!/actually|wait,?|sorry|i meant|meant to say|no,?\s*it'?s|that'?s wrong|wrong,?\s*it'?s|not\s+\d+|his\s+(doctor|nurse|med|name|age|condition)|her\s+(doctor|nurse|med|name|age|condition)|they?\s+(changed|switched|stopped|started|now\s+takes?|no\s+longer)|update|correction|forgot\s+to\s+mention|should\s+be|it'?s\s+actually|the\s+(new|correct|right)\s+(doctor|medication|med|number|address|diagnosis)/i.test(text)) {
@@ -208,23 +212,15 @@ async function detectAndApplyCorrection(userId, text, zepUserId) {
         .join("\n");
     let raw;
     try {
-        const result = await getClaude().messages.create({
-            model: "claude-haiku-4-5-20251001",
-            max_tokens: 200,
-            system: "The user may be correcting previously stated information about their care situation. " +
-                "You are given a numbered list of known facts and the user's message. " +
-                "If the message directly corrects one of the known facts, reply with JSON only: " +
-                "{\"corrects\": <index>, \"newFact\": \"<corrected text>\", \"category\": \"medical|preference|routine|family\"}. " +
-                "If the message retracts a fact without replacement: {\"corrects\": <index>, \"newFact\": null}. " +
-                "If this is NOT a correction of a known fact, reply with the single word: null",
-            messages: [{
-                    role: "user",
-                    content: `Known facts:\n${factsJson}\n\nUser message: "${text}"`,
-                }],
-        });
-        raw = ((_a = result.content[0].text) !== null && _a !== void 0 ? _a : "").trim();
+        raw = await (0, openaiClient_1.quickComplete)("The user may be correcting previously stated information about their care situation. " +
+            "You are given a numbered list of known facts and the user's message. " +
+            "If the message directly corrects one of the known facts, reply with JSON only (no markdown fences): " +
+            "{\"corrects\": <index>, \"newFact\": \"<corrected text>\", \"category\": \"medical|preference|routine|family\"}. " +
+            "If the message retracts a fact without replacement: {\"corrects\": <index>, \"newFact\": null}. " +
+            "If this is NOT a correction of a known fact, reply with the single word: null", `Known facts:\n${factsJson}\n\nUser message: "${text}"`, { maxTokens: 200 });
+        raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
     }
-    catch (_c) {
+    catch (_b) {
         return false;
     }
     if (raw === "null" || !raw.startsWith("{"))
@@ -233,14 +229,14 @@ async function detectAndApplyCorrection(userId, text, zepUserId) {
     try {
         parsed = JSON.parse(raw);
     }
-    catch (_d) {
+    catch (_c) {
         return false;
     }
     const targetFact = currentFacts[parsed.corrects];
     if (!targetFact)
         return false;
     await updateOrRetractFact(userId, targetFact._docId, parsed.newFact
-        ? { fact: parsed.newFact, category: (_b = parsed.category) !== null && _b !== void 0 ? _b : targetFact.category }
+        ? { fact: parsed.newFact, category: (_a = parsed.category) !== null && _a !== void 0 ? _a : targetFact.category }
         : undefined, zepUserId);
     return true;
 }

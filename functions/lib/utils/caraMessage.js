@@ -1,16 +1,7 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.generateCaraMessage = generateCaraMessage;
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
-let _client = null;
-function getClient() {
-    if (!_client)
-        _client = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _client;
-}
+const claudeClient_1 = require("./claudeClient");
 // Cara's voice for messages to caregivers
 const CAREGIVER_VOICE = "You are Cara, a warm and attentive care coordinator who texts caregivers like a real person — not a system alert. " +
     "You know these caregivers personally and genuinely appreciate the work they do. " +
@@ -28,7 +19,7 @@ const FAMILY_VOICE = "You are Cara, a warm and trusted care coordinator who text
 async function generateCaraMessage(opts) {
     var _a, _b;
     try {
-        const resp = await getClient().messages.create({
+        const resp = await (0, claudeClient_1.getSharedClient)().messages.create({
             model: "claude-haiku-4-5-20251001",
             max_tokens: (_a = opts.maxTokens) !== null && _a !== void 0 ? _a : 180,
             system: opts.audience === "caregiver" ? CAREGIVER_VOICE : FAMILY_VOICE,

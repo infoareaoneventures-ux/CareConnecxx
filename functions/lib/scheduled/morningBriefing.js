@@ -32,27 +32,18 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendMorningBriefings = void 0;
 exports.checkCaregiverWorkloads = checkCaregiverWorkloads;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const caraAgent_1 = require("../agents/caraAgent");
 const server_1 = require("../mcp/server");
 const learnedFacts_1 = require("../memory/learnedFacts");
 const memoryFiles_1 = require("../memory/memoryFiles");
 const preferences_1 = require("../memory/preferences");
 const caraMessage_1 = require("../utils/caraMessage");
-let _client = null;
-function getClient() {
-    if (!_client)
-        _client = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _client;
-}
 const db = admin.firestore();
 // Runs every day at 7am local (12:00 UTC covers most US time zones at 7am)
 exports.sendMorningBriefings = functions.pubsub
@@ -134,7 +125,7 @@ exports.sendMorningBriefings = functions.pubsub
                     medLine: medLine !== null && medLine !== void 0 ? medLine : "",
                     verifiedNote: verifiedNote !== null && verifiedNote !== void 0 ? verifiedNote : "",
                 });
-                const aiResponse = await getClient().messages.create({
+                const aiResponse = await (0, claudeClient_1.getSharedClient)().messages.create({
                     model: "claude-haiku-4-5-20251001",
                     max_tokens: 200,
                     messages: [{ role: "user", content: briefingPrompt }],
@@ -305,7 +296,7 @@ async function sendFamilyMorningBriefings(today, apptDocs) {
                     ? `Care priorities on file: ${topFacts.join("; ")}.`
                     : "";
                 const memLine = memCtx ? memCtx.slice(0, 300) : "";
-                const resp = await getClient().messages.create({
+                const resp = await (0, claudeClient_1.getSharedClient)().messages.create({
                     model: "claude-haiku-4-5-20251001",
                     max_tokens: 180,
                     system: "You write a brief morning text for a family member whose loved one has a caregiver visit today.\n" +

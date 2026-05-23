@@ -149,30 +149,25 @@ exports.MCP_TOOLS = [
     },
     {
         name: "find_replacement_caregivers",
-        description: "Search for available caregivers matching the client's care needs.",
+        description: "Search for available caregivers matching the client's care needs. Session context (phone, chatId, clientId) is injected automatically — do NOT ask the user for these.",
         input_schema: {
             type: "object",
-            properties: {
-                clientId: { type: "string", description: "The client's user ID" },
-                phone: { type: "string", description: "The client's phone number" },
-                chatId: { type: "string", description: "The client's chat ID for sending results" },
-            },
-            required: ["clientId", "phone", "chatId"],
+            properties: {},
+            required: [],
         },
     },
     {
         name: "request_booking",
-        description: "Create a booking request for a caregiver. Returns the booking task ID.",
+        description: "Create a booking request for a caregiver. Returns the booking task ID. clientId is injected automatically — do NOT ask the user for it.",
         input_schema: {
             type: "object",
             properties: {
-                clientId: { type: "string" },
                 caregiverId: { type: "string" },
                 dates: { type: "array", items: { type: "string" }, description: "ISO date strings (YYYY-MM-DD)" },
                 startTime: { type: "string", description: "e.g. '09:00'" },
                 endTime: { type: "string", description: "e.g. '17:00'" },
             },
-            required: ["clientId", "caregiverId", "dates", "startTime", "endTime"],
+            required: ["caregiverId", "dates", "startTime", "endTime"],
         },
     },
     {

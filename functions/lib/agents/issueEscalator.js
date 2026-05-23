@@ -32,9 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.classifyIssue = classifyIssue;
 exports.handleCaregiverIssue = handleCaregiverIssue;
@@ -42,7 +39,7 @@ exports.escalateIssue = escalateIssue;
 exports.escalateIssueFinal = escalateIssueFinal;
 exports.resolveIssue = resolveIssue;
 exports.sendIssueFollowUp = sendIssueFollowUp;
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const admin = __importStar(require("firebase-admin"));
 const caraAgent_1 = require("./caraAgent");
 const client_1 = require("../linq/client");
@@ -66,9 +63,8 @@ async function classifyIssue(text) {
             summary: "Potential emergency situation reported",
         };
     }
-    const client = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
     try {
-        const resp = await client.messages.create({
+        const resp = await (0, claudeClient_1.getSharedClient)().messages.create({
             model: "claude-haiku-4-5-20251001",
             max_tokens: 200,
             system: 'You are a care coordinator reviewing an issue from a caregiver. Classify it. Reply JSON only:\n' +

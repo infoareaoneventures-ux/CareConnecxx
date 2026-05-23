@@ -32,33 +32,18 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleRefundRequest = handleRefundRequest;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const openaiClient_1 = require("../utils/openaiClient");
 const caraMessage_1 = require("../utils/caraMessage");
 const db = admin.firestore();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 async function parseWithClaude(prompt, userText) {
-    var _a;
     try {
-        const response = await getClaude().messages.create({
-            model: "claude-haiku-4-5-20251001",
-            max_tokens: 200,
-            system: prompt,
-            messages: [{ role: "user", content: userText }],
-        });
-        return ((_a = response.content[0].text) !== null && _a !== void 0 ? _a : "").trim();
+        const raw = await (0, openaiClient_1.quickComplete)(prompt, userText, { maxTokens: 200 });
+        return raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
     }
-    catch (_b) {
+    catch (_a) {
         return "__parse_error__";
     }
 }
@@ -67,15 +52,8 @@ async function isQuestionOrOther(text) {
     return result.toUpperCase().startsWith("Y");
 }
 async function answerQuestionMidFlow(text) {
-    var _a;
-    const response = await getClaude().messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 120,
-        system: "You are Cara, an AI care assistant. A client is in the middle of requesting a refund. " +
-            "Answer their question briefly (1–2 sentences). Be helpful and warm.",
-        messages: [{ role: "user", content: text }],
-    });
-    return ((_a = response.content[0].text) !== null && _a !== void 0 ? _a : "").trim();
+    return (await (0, openaiClient_1.quickComplete)("You are Cara, an AI care assistant. A client is in the middle of requesting a refund. " +
+        "Answer their question briefly (1–2 sentences). Be helpful and warm.", text, { maxTokens: 120 })).trim();
 }
 // State flow: identify_visit → select_visit → confirm → submitted
 async function handleRefundRequest(clientId, text, session, sendMessage) {

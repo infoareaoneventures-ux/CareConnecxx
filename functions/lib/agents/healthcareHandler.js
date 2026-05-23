@@ -32,36 +32,21 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.startHealthcareFlow = startHealthcareFlow;
 exports.resumeHealthcareFlow = resumeHealthcareFlow;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const openaiClient_1 = require("../utils/openaiClient");
+const jsonUtils_1 = require("../utils/jsonUtils");
 const caraMessage_1 = require("../utils/caraMessage");
 const careWebActions_1 = require("../browser/careWebActions");
 const credentialVault_1 = require("../browser/credentialVault");
 const db = admin.firestore();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 async function parseWithClaude(prompt, userText) {
-    var _a;
     try {
-        const response = await getClaude().messages.create({
-            model: "claude-haiku-4-5-20251001",
-            max_tokens: 200,
-            system: prompt,
-            messages: [{ role: "user", content: userText }],
-        });
-        return ((_a = response.content[0].text) !== null && _a !== void 0 ? _a : "").trim();
+        return await (0, openaiClient_1.quickComplete)(prompt, userText, { maxTokens: 200 });
     }
-    catch (_b) {
+    catch (_a) {
         return "__parse_error__";
     }
 }
@@ -71,15 +56,8 @@ async function isQuestionOrOther(text) {
     return result.toUpperCase().startsWith("Y");
 }
 async function answerMidFlow(text, context) {
-    var _a;
-    const response = await getClaude().messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 120,
-        system: `You are Cara, a warm AI care assistant. A client is in the middle of a healthcare request. ` +
-            `Context: ${context}. Answer their question briefly (1–2 sentences).`,
-        messages: [{ role: "user", content: text }],
-    });
-    return ((_a = response.content[0].text) !== null && _a !== void 0 ? _a : "").trim();
+    return (await (0, openaiClient_1.quickComplete)(`You are Cara, a warm AI care assistant. A client is in the middle of a healthcare request. ` +
+        `Context: ${context}. Answer their question briefly (1–2 sentences).`, text, { maxTokens: 120 })).trim();
 }
 // ── Firestore state helpers ───────────────────────────────────────────────────
 async function setFlowState(phone, step, data, ttlMs = 20 * 60 * 1000) {
@@ -226,13 +204,12 @@ Reply as JSON only: {"providerType":"...","specialty":"...","location":"..."}`, 
         let providerType = "doctor";
         let specialty = "";
         let location = "";
-        try {
-            const p = JSON.parse(parsed);
+        const p = (0, jsonUtils_1.safeParseJson)(parsed, "healthcareHandler.providerSearch", null, "object");
+        if (p) {
             providerType = p.providerType || "doctor";
             specialty = p.specialty || "";
             location = p.location || "";
         }
-        catch ( /* keep defaults */_b) { /* keep defaults */ }
         const data = {
             intent,
             query: specialty || providerType,
@@ -267,14 +244,13 @@ Reply as JSON only: {"doctorName":"...","appointmentType":"...","preferredDate":
         let appointmentType = "";
         let preferredDate = "";
         let portalService = "";
-        try {
-            const p = JSON.parse(parsed);
+        const p = (0, jsonUtils_1.safeParseJson)(parsed, "healthcareHandler.appointment", null, "object");
+        if (p) {
             doctorName = p.doctorName || "";
             appointmentType = p.appointmentType || "";
             preferredDate = p.preferredDate || "";
             portalService = p.portalService || "";
         }
-        catch ( /* keep defaults */_c) { /* keep defaults */ }
         const data = { intent, doctorName, appointmentType, preferredDate, portalService };
         if (!doctorName) {
             await setFlowState(phone, "hc_appt_doctor", data);
@@ -322,13 +298,12 @@ Reply as JSON only: {"pharmacyService":"...","medicationName":"...","rxNumber":"
         let pharmacyService = "";
         let medicationName = "";
         let rxNumber = "";
-        try {
-            const p = JSON.parse(parsed);
+        const p = (0, jsonUtils_1.safeParseJson)(parsed, "healthcareHandler.refill", null, "object");
+        if (p) {
             pharmacyService = p.pharmacyService || "";
             medicationName = p.medicationName || "";
             rxNumber = p.rxNumber || "";
         }
-        catch ( /* keep defaults */_d) { /* keep defaults */ }
         const data = { intent, pharmacyService, medicationName, rxNumber };
         if (!pharmacyService) {
             await setFlowState(phone, "hc_rx_pharmacy", data);

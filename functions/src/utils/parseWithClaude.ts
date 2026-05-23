@@ -1,18 +1,19 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { quickComplete } from "./openaiClient";
 
 /**
- * Shared Claude Haiku parser for extracting structured values from free-form user text.
- * Retries up to 3 times on parse errors before giving up.
- * Replaces the inline parseWithClaude defined in individual handler files.
+ * Shared structured-extraction helper for Cara handlers.
+ *
+ * **The function name is historical** — the underlying model is now
+ * `gpt-4o-mini` for speed and lower rate-limit pressure. Public API
+ * is unchanged so every caller continues to work without edits.
+ *
+ * Returns the trimmed assistant text, or `__parse_error__` after
+ * MAX_ATTEMPTS unsuccessful tries. Callers should validate the return
+ * value against their expected set of allowed answers.
  */
 
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
-
 const MAX_ATTEMPTS = 3;
+const PER_ATTEMPT_TIMEOUT_MS = 8_000;
 
 export async function parseWithClaude(
   systemPrompt: string,
@@ -20,23 +21,25 @@ export async function parseWithClaude(
   maxTokens = 200
 ): Promise<string> {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PER_ATTEMPT_TIMEOUT_MS);
+
     try {
-      const response = await getClaude().messages.create({
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: maxTokens,
-        system:     systemPrompt,
-        messages:   [{ role: "user", content: userText }],
+      const text = await quickComplete(systemPrompt, userText, {
+        maxTokens,
+        signal: controller.signal,
       });
-      const text = ((response.content[0] as { text: string }).text ?? "").trim();
+      clearTimeout(timer);
+
       if (text && text !== "__parse_error__") return text;
 
-      // On __parse_error__, retry with a clarifying hint
       if (attempt < MAX_ATTEMPTS) {
-        await new Promise(r => setTimeout(r, 300 * attempt));
+        await new Promise((r) => setTimeout(r, 300 * attempt));
       }
     } catch {
+      clearTimeout(timer);
       if (attempt === MAX_ATTEMPTS) return "__parse_error__";
-      await new Promise(r => setTimeout(r, 300 * attempt));
+      await new Promise((r) => setTimeout(r, 300 * attempt));
     }
   }
   return "__parse_error__";

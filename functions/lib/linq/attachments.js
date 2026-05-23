@@ -6,7 +6,8 @@
  *   - Direct URL  (≤ 10 MB): embed HTTPS URL in media part — no pre-upload needed
  *   - Pre-upload  (> 10 MB, up to 100 MB): get presigned URL → PUT binary → send attachment_id
  *
- * Uploaded attachments never expire and are bound to the creating partner account.
+ * Uploaded attachments persist until explicitly deleted (default). Ephemeral 24h auto-delete
+ * is available as an account-level setting via your Linq rep — recommended for PHI content.
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -73,7 +74,9 @@ async function withRetry(fn, attempts = 3) {
         catch (err) {
             lastErr = err;
             const status = (_a = err === null || err === void 0 ? void 0 : err.response) === null || _a === void 0 ? void 0 : _a.status;
-            if (status === 500 && i < attempts - 1) {
+            // Retry on transient server errors and network failures (no response object = connection error)
+            const isRetryable = !status || status === 429 || status === 500 || status === 503 || status === 504;
+            if (isRetryable && i < attempts - 1) {
                 await new Promise((r) => setTimeout(r, Math.pow(2, i) * 1000));
                 continue;
             }

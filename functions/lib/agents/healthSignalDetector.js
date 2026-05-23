@@ -1,16 +1,8 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.detectHealthSignals = detectHealthSignals;
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
-let _client = null;
-function getClient() {
-    if (!_client)
-        _client = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _client;
-}
+const openaiClient_1 = require("../utils/openaiClient");
+const jsonUtils_1 = require("../utils/jsonUtils");
 const SYSTEM_PROMPT = `You are a health signal detector reviewing a caregiver's visit notes for a senior.
 
 Extract any concerning health observations and classify severity.
@@ -29,7 +21,7 @@ Severity guide:
 
 Never diagnose. Never use clinical language. Write summary as if texting a caring friend.`;
 async function detectHealthSignals(notes, wellness, activities) {
-    var _a, _b;
+    var _a;
     const fallback = {
         signals: [],
         severity: "none",
@@ -45,17 +37,21 @@ async function detectHealthSignals(notes, wellness, activities) {
         .filter(Boolean)
         .join("\n");
     try {
-        const response = await getClient().messages.create({
-            model: "claude-haiku-4-5-20251001",
-            max_tokens: 300,
-            system: SYSTEM_PROMPT,
-            messages: [{ role: "user", content: contextText }],
-        }, { signal: AbortSignal.timeout(8000) });
-        const raw = ((_b = response.content[0].text) !== null && _b !== void 0 ? _b : "").trim();
-        const parsed = JSON.parse(raw);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        const raw = await (0, openaiClient_1.quickComplete)(SYSTEM_PROMPT, contextText, {
+            maxTokens: 300,
+            signal: controller.signal,
+        });
+        clearTimeout(timer);
+        const parsed = (0, jsonUtils_1.safeParseJson)(raw, "detectHealthSignals", null, "object");
+        if (!parsed)
+            return fallback;
         if (!["none", "watch", "flag"].includes(parsed.severity)) {
             parsed.severity = "none";
         }
+        parsed.signals = Array.isArray(parsed.signals) ? parsed.signals : [];
+        parsed.summary = typeof parsed.summary === "string" ? parsed.summary : "";
         return parsed;
     }
     catch (err) {

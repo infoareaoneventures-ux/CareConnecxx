@@ -32,14 +32,11 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const caraAgent_1 = require("../agents/caraAgent");
 const permissionsConversation_1 = require("../agents/permissionsConversation");
 const server_1 = require("../mcp/server");
@@ -47,12 +44,6 @@ const memoryFiles_1 = require("../memory/memoryFiles");
 const learnedFacts_1 = require("../memory/learnedFacts");
 const caraMessage_1 = require("../utils/caraMessage");
 const db = admin.firestore();
-let _client = null;
-function getClient() {
-    if (!_client)
-        _client = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _client;
-}
 // ── Data loaders ──────────────────────────────────────────────────────────────
 async function getWeekData(seniorId, userId) {
     var _a, _b, _c, _d, _e, _f, _g;
@@ -132,7 +123,7 @@ async function generateDigest(data, userId) {
         memoryContext: memLine,
     });
     try {
-        const response = await getClient().messages.create({
+        const response = await (0, claudeClient_1.getSharedClient)().messages.create({
             model: "claude-sonnet-4-6",
             max_tokens: 400,
             messages: [{ role: "user", content: prompt }],

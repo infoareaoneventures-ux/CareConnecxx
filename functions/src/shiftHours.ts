@@ -165,6 +165,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
           amount,
           caregiverName: caregiverData.name ?? "Caregiver",
         },
+        pendingShiftApprovalSetAt: new Date().toISOString(),
       });
     }
   } catch (err) {

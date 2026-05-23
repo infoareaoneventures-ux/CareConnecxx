@@ -32,9 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createJobPost = createJobPost;
 exports.notifyAreaCaregivers = notifyAreaCaregivers;
@@ -43,7 +40,7 @@ exports.handleAvailabilityConfirmation = handleAvailabilityConfirmation;
 exports.closeJobPost = closeJobPost;
 const admin = __importStar(require("firebase-admin"));
 const firestore_1 = require("firebase-admin/firestore");
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const scoring_1 = require("../ai/scoring");
 const client_1 = require("../linq/client");
 const caraAgent_1 = require("../agents/caraAgent");
@@ -425,8 +422,7 @@ async function parseAvailabilityConfirmation(text) {
         return true;
     if (["NO", "NOPE", "CANT", "CAN'T", "UNAVAILABLE", "PASS"].includes(upper))
         return false;
-    const client = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const resp = await client.messages.create({
+    const resp = await (0, claudeClient_1.getSharedClient)().messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 20,
         system: "The user is a caregiver confirming or declining availability for a care job. " +

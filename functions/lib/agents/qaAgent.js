@@ -32,14 +32,14 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.setActiveGoal = setActiveGoal;
 exports.clearActiveGoal = clearActiveGoal;
 exports.runQaAgent = runQaAgent;
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+exports.runQuickReply = runQuickReply;
+exports.isTrivialQuickReply = isTrivialQuickReply;
+const claudeClient_1 = require("../utils/claudeClient");
+const openaiClient_1 = require("../utils/openaiClient");
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
 const supervisor_1 = require("../safety/supervisor");
@@ -51,16 +51,11 @@ const server_1 = require("../mcp/server");
 const claudeRetry_1 = require("../utils/claudeRetry");
 const executionAgent_1 = require("./executionAgent");
 const db = admin.firestore();
-let _client = null;
-function getClient() {
-    if (!_client) {
-        _client = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    }
-    return _client;
-}
 // ── Context loaders ───────────────────────────────────────────────────────────
 async function getSeniorProfile(seniorId) {
     var _a;
+    if (!seniorId)
+        return null;
     const snap = await db.collection("seniors").doc(seniorId).get();
     return (_a = snap.data()) !== null && _a !== void 0 ? _a : null;
 }
@@ -226,8 +221,20 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         ? `\n${bookingPatterns}\n`
         : "";
     return [
-        `You are Cara — an AI care assistant texting with a family member caring for ${seniorName}.`,
+        `You ARE Cara — an AI care assistant texting with a family member caring for ${seniorName}.`,
+        `IDENTITY (non-negotiable): Speak in first person ("I", "me"). Never refer to yourself as "Cara" in the third person. Never tell the family to "reach out to Cara", "contact Cara", "message Cara", or that "a Cara team member will help" or "the Cara team will follow up" — you ARE Cara. Phrases like these are banned. If they want to connect with a caregiver, YOU connect them by calling schedule_interview or request_booking — don't tell them to reach out elsewhere.`,
         `You act; you don't describe what you could do. When you can do something, do it and report back.`,
+        ``,
+        `PROMISES MUST BE ACTIONS (non-negotiable): If you say "let me pull up", "let me find", "I'll check", "let me look that up", "give me a moment", "I'll get back to you with X", or any phrase implying deferred work, you MUST call the relevant tool IN THE SAME TURN. Never end your reply with a promise to do work without having already called the tool that does it. The user gets the text reply and any tool calls as one atomic turn; if the tool isn't called now, the work never happens.`,
+        `Examples:`,
+        `- BAD: "Got it, I'll find caregivers — let me pull up options." (no tool call → user waits forever)`,
+        `- GOOD: call find_replacement_caregivers, then in your text reply say what you found or that you're pulling matches now (the tool fires before your text is sent).`,
+        `- BAD: "Let me check your next visit." (no tool call)`,
+        `- GOOD: call get_upcoming_appointments, then reply with the actual answer.`,
+        `If you need more info from the family before you can call the tool (e.g. you don't know what they want), ASK a concrete question — don't say "let me check" first.`,
+        ``,
+        `CAREGIVER SEARCH — when the family asks for caregivers, options, or "give me names", call find_replacement_caregivers IMMEDIATELY. Do not re-ask about care needs if you already have them in the cached context above. The matching tool handles the search itself; you only need to invoke it. After invoking, your reply should briefly say what you're matching on ("I'm looking for caregivers near you who can help with bathing and meds — coming up.") — never "Let me pull up options" with no tool call.`,
+        `When a family member expresses interest in a specific caregiver (e.g. "yes let's connect", "let's go with him", "I like her"), proactively call schedule_interview to set up an intro, or ask them for their preferred time if you don't have one yet. Do not punt them to a website or "team".`,
         ``,
         `Care needs: ${needs.join(", ") || "none recorded"}.`,
         zepSection,
@@ -302,6 +309,27 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         `CREDENTIAL FLOW: if the tool returns status "collecting_credentials", credentials are being collected via iMessage. Do NOT ask for passwords yourself. Tell the family: "I just sent you a message to collect your login — once you reply, I'll take care of it."`,
         `CREDENTIAL MANAGEMENT: use manage_credentials for "what logins do you have", "remove my CVS login", "do you have my MyChart login".`,
         ``,
+        `PROACTIVE FOLLOW-UPS — call schedule_followup whenever the family mentions a future event you should check in on. Don't ask permission; just confirm what you're doing.`,
+        `Examples that should trigger schedule_followup (followed by a natural acknowledgment, NOT "want me to follow up?"):`,
+        `- "Mom has a cardiology appointment Thursday" → schedule_followup for Friday morning. Say: "Got it. I'll check in Friday to see how it went."`,
+        `- "We're trying a new medication starting today" → schedule_followup for 3 days from now. Say: "I'll check back in a few days to see how she's tolerating it."`,
+        `- "My sister is flying in this weekend to visit" → schedule_followup for Monday. Say: "Hope you have a great visit. I'll check in Monday."`,
+        `- "He's having a tough day" → schedule_followup for tomorrow. Say: "Thinking of you both. I'll check in tomorrow."`,
+        `One follow-up per event. Schedule silently if the family didn't ask — just say what you're doing as a passing acknowledgment.`,
+        ``,
+        `LEARN OUT LOUD — when the family shares something durable about ${seniorName} (a preference, a routine, a medical update, a person in their life, what works/doesn't work), do two things in the same turn:`,
+        `1) Call update_memory_file to save it. Pick the right file: profile (basic facts, personality), health (conditions, meds, doctors), family (relationships, contacts), procedural (rules, do's/don'ts), recent_episodes (notable events).`,
+        `2) Acknowledge in plain language that you're remembering it. Examples:`,
+        `   - "Got it — I'll remember she prefers morning visits."`,
+        `   - "Noted. I'll keep that in mind for next time you book."`,
+        `   - "Good to know — I won't forget about her shellfish allergy."`,
+        `Never silently log new facts. Tell the family you're noting it. This builds trust.`,
+        `Skip the acknowledgment when the info is throwaway ("she's having coffee right now") or already on file.`,
+        ``,
+        `LEAD, DON'T ASK — when the family says hi or sends a generic open, don't ask "what do you need?". Surface the most relevant context from the cached data above (next visit, pending task, recent journal note, active matching) and offer to act. If you genuinely have nothing relevant to surface, a warm one-line hello is fine — never "what can I help you with?".`,
+        ``,
+        `SMART DEFAULTS — when the family asks to book a visit or hire a caregiver, look at the "Booking history" section above first. If there's a clear pattern ("Monday 9am, 4h"), propose it as the default instead of asking open-ended ("Next Monday at your usual 9am?"). Only ask for date/time if there's no pattern or they explicitly want something different.`,
+        ``,
         `Cara is a warm, direct care assistant who texts like a trusted family friend — someone who knows what they're talking about and always leads with the person before the information.`,
         ``,
         `She is not a chatbot. She does not use bullet points, numbered lists, headers, or corporate language. She keeps messages short because she respects people's time.`,
@@ -317,6 +345,7 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         `MESSAGE LENGTH: Match the family's message length. If they send two words, reply in two sentences or fewer. If they write a paragraph, you can write a paragraph. Never pad a short question with a long answer.`,
         ``,
         `She never says: "I'm happy to help", "Certainly!", "Of course!", "Great question", "As I mentioned", "Is there anything else I can help you with?", "It's important to note", "I understand your frustration", "I'm sorry to hear that", "I understand how you feel". These phrases are banned.`,
+        `She also never refers to herself in the third person — banned phrases include "reach out to Cara", "contact Cara", "message Cara", "Cara directly", "Cara team", "Cara team member", "the team will help", "our team will reach out", "Cara will help facilitate", "I'd recommend reaching out". Cara is the one talking. When facilitation is needed, she does it herself by calling the right tool.`,
         ``,
         `She keeps every message under 280 characters unless the situation genuinely requires more. She never uses markdown.`,
         ``,
@@ -339,7 +368,8 @@ function buildCaregiverSystemPrompt(caregiver, todayAppt, zepContext) {
         : "No visits scheduled for today.";
     const zepSection = zepContext ? `\n${zepContext}\n` : "";
     return [
-        `You are Cara — an AI care assistant texting with ${name}, one of our caregivers.`,
+        `You ARE Cara — an AI care assistant texting with ${name}, one of our caregivers.`,
+        `IDENTITY: Speak in first person. Never refer to yourself as "Cara" in the third person. Never say "reach out to Cara", "the Cara team will help", or anything that treats Cara as a separate entity. You ARE Cara.`,
         `You act; you don't describe what you could do. When you can do something, do it and report back.`,
         ``,
         apptLine,
@@ -477,7 +507,7 @@ async function resumeActiveGoal(phone, session) {
 }
 // ── Main QA function ──────────────────────────────────────────────────────────
 async function runQaAgent(params) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q;
     const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, sourceChannel } = params;
     // Tag the input so Claude can apply different judgment per channel.
     // [USER] messages may require a reply; [TRIGGER] / [AGENT] inputs may not.
@@ -494,15 +524,20 @@ async function runQaAgent(params) {
     }
     let systemPrompt;
     let history;
+    // 4s hard cap on Zep — past calls have hung 30s+ when Zep is unhealthy.
+    const withZepTimeout = (p) => Promise.race([
+        p,
+        new Promise((r) => setTimeout(() => r(""), 4000)),
+    ]);
     if (userType === "caregiver" && caregiverId) {
         const [caregiver, todayAppt, hist, cgZepContext] = await Promise.all([
             getCaregiverProfile(caregiverId),
             getCaregiverTodayAppointment(caregiverId),
             getConversationHistory(phone),
-            zepThreadId ? (0, zepClient_1.getZepContext)(zepThreadId).catch((err) => {
+            zepThreadId ? withZepTimeout((0, zepClient_1.getZepContext)(zepThreadId).catch((err) => {
                 console.warn("qaAgent: Zep context unavailable (caregiver)", err instanceof Error ? err.message : err);
                 return "";
-            }) : Promise.resolve(""),
+            })) : Promise.resolve(""),
         ]);
         systemPrompt = buildCaregiverSystemPrompt(caregiver, todayAppt, cgZepContext || undefined);
         history = hist;
@@ -532,20 +567,42 @@ async function runQaAgent(params) {
             const { detectAndApplyCorrection } = await Promise.resolve().then(() => __importStar(require("../memory/learnedFacts")));
             correctionApplied = await detectAndApplyCorrection(userId, text, zepThreadId ? phone.replace(/\D/g, "") : undefined);
         }
-        catch (_g) {
+        catch (_r) {
             // Non-critical
         }
         // Load Zep context, memory files, learned facts, active visit, and booking patterns in parallel
         const [zepContext, memoryContext, facts, activeVisit, bookingPatterns] = await Promise.all([
-            zepThreadId ? (0, zepClient_1.getZepContext)(zepThreadId).catch((err) => {
+            zepThreadId ? withZepTimeout((0, zepClient_1.getZepContext)(zepThreadId).catch((err) => {
                 console.warn("qaAgent: Zep context unavailable (client)", err instanceof Error ? err.message : err);
                 return "";
-            }) : Promise.resolve(""),
+            })) : Promise.resolve(""),
             (0, memoryFiles_1.getMemoryContext)(userId).catch(() => ""),
             (0, learnedFacts_1.getRelevantFacts)(userId).catch(() => []),
             getActiveVisit(userId).catch(() => null),
             getBookingPatterns(userId),
         ]);
+        // Lazy-bootstrap memory files for users who completed onboarding before the
+        // memory-files code shipped, or whose initial write silently failed. Runs
+        // once per user (idempotent — initializeMemoryFiles overwrites if needed
+        // but next turn memoryContext will be non-empty and this branch is skipped).
+        if (!memoryContext && userId) {
+            const sd = (_a = session === null || session === void 0 ? void 0 : session.onboardingData) !== null && _a !== void 0 ? _a : {};
+            const seniorDoc = senior;
+            const initData = {
+                seniorName: ((_b = sd.seniorName) !== null && _b !== void 0 ? _b : seniorDoc === null || seniorDoc === void 0 ? void 0 : seniorDoc.name),
+                seniorAge: ((_c = sd.age) !== null && _c !== void 0 ? _c : seniorDoc === null || seniorDoc === void 0 ? void 0 : seniorDoc.age),
+                conditions: ((_e = (_d = sd.conditions) !== null && _d !== void 0 ? _d : seniorDoc === null || seniorDoc === void 0 ? void 0 : seniorDoc.conditions) !== null && _e !== void 0 ? _e : []),
+                careNeeds: ((_g = (_f = sd.careNeeds) !== null && _f !== void 0 ? _f : seniorDoc === null || seniorDoc === void 0 ? void 0 : seniorDoc.needs) !== null && _g !== void 0 ? _g : []),
+                city: ((_h = sd.city) !== null && _h !== void 0 ? _h : ""),
+                clientName: ((_j = sd.firstName) !== null && _j !== void 0 ? _j : ""),
+                relationship: ((_k = sd.relationship) !== null && _k !== void 0 ? _k : ""),
+            };
+            if (initData.seniorName || initData.conditions || initData.careNeeds) {
+                // Fire-and-forget — next conversation turn will read populated files
+                const { initializeMemoryFiles } = await Promise.resolve().then(() => __importStar(require("../memory/memoryFiles")));
+                initializeMemoryFiles(userId, initData).catch((err) => console.warn("qaAgent: lazy initializeMemoryFiles failed", err instanceof Error ? err.message : err));
+            }
+        }
         const factsText = facts.length
             ? facts.map((f) => `- ${f.fact} (${f.category})`).join("\n")
             : undefined;
@@ -555,6 +612,9 @@ async function runQaAgent(params) {
             console.info("qaAgent: fact correction applied before prompt build", { userId });
         }
     }
+    // Inject session identifiers — Claude must never ask the user for clientId, userId, or phone.
+    // These are always known from the session and are also auto-injected into every tool call.
+    systemPrompt += `\n\nSESSION (do not ask the user for these — use them when tools require clientId, userId, or phone):\nclientId = "${userId}" | userId = "${userId}" | phone = "${phone}"`;
     // Inject active goal context if present
     if (session) {
         const { goalContext } = await resumeActiveGoal(phone, session);
@@ -573,7 +633,7 @@ async function runQaAgent(params) {
     if (userType !== "caregiver") {
         const activeAgent = await (0, executionAgent_1.getActiveAgentForUser)(phone).catch(() => null);
         if (activeAgent) {
-            const lastAction = (_c = (_b = (_a = activeAgent.operationalLog) === null || _a === void 0 ? void 0 : _a.at(-1)) === null || _b === void 0 ? void 0 : _b.result) !== null && _c !== void 0 ? _c : "none";
+            const lastAction = (_o = (_m = (_l = activeAgent.operationalLog) === null || _l === void 0 ? void 0 : _l.at(-1)) === null || _m === void 0 ? void 0 : _m.result) !== null && _o !== void 0 ? _o : "none";
             systemPrompt +=
                 `\n\nACTIVE EXECUTION AGENT:\nType: ${activeAgent.type}\nAgent ID: ${activeAgent.id}\n` +
                     `Last action: ${lastAction}\n` +
@@ -610,15 +670,24 @@ async function runQaAgent(params) {
             { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
         ];
         let reply = "";
-        for (let iteration = 0; iteration < 8; iteration++) {
-            const response = await (0, claudeRetry_1.callClaudeWithRetry)(getClient(), {
+        // Budget guard: cap wall-clock at ~60s so users never wait 3+ min while the
+        // tool loop iterates. Each Claude call gets a tight timeout; we exit early
+        // once the running total exceeds the budget.
+        const TURN_BUDGET_MS = 60000;
+        const turnStart = Date.now();
+        for (let iteration = 0; iteration < 5; iteration++) {
+            if (Date.now() - turnStart > TURN_BUDGET_MS) {
+                console.warn("qaAgent: turn budget exceeded, exiting tool loop", { userId, iteration });
+                break;
+            }
+            const response = await (0, claudeRetry_1.callClaudeWithRetry)((0, claudeClient_1.getSharedClient)(), {
                 model: "claude-sonnet-4-6",
                 max_tokens: 600,
                 system: cachedSystem,
                 tools: activeTools,
                 tool_choice: { type: "auto" },
                 messages,
-            }, { timeoutMs: 25000, maxAttempts: 2 });
+            }, { timeoutMs: 15000, maxAttempts: 1 });
             if (response.stop_reason === "tool_use") {
                 // Execute all tool calls in this turn
                 const toolResults = [];
@@ -629,16 +698,20 @@ async function runQaAgent(params) {
                         // the family knows something is happening and doesn't think Cara went silent.
                         if (!skipSend &&
                             block.name === "perform_web_action" &&
-                            (((_d = block.input) === null || _d === void 0 ? void 0 : _d.actionType) === "browse" || ((_e = block.input) === null || _e === void 0 ? void 0 : _e.loginAction))) {
+                            (((_p = block.input) === null || _p === void 0 ? void 0 : _p.actionType) === "browse" || ((_q = block.input) === null || _q === void 0 ? void 0 : _q.loginAction))) {
                             await sendSplit(chatId, "On it — give me a moment.").catch(() => { });
                         }
                         const toolHandler = userType === "caregiver" ? server_1.handleToolCallForCaregiver : server_1.handleToolCall;
-                        const result = await toolHandler(block.name, block.input)
+                        // Auto-inject session identifiers so Claude never needs to ask the user for them.
+                        // Only inject non-empty values — an empty string is falsy and fails tool validation.
+                        const enrichedInput = Object.assign(Object.assign(Object.assign({}, block.input), { phone,
+                            chatId }), (userId ? { clientId: userId, userId } : {}));
+                        const result = await toolHandler(block.name, enrichedInput)
                             .catch((err) => {
                             console.error(`qaAgent: tool call failed [${block.name}]`, err);
                             return {
                                 _toolError: true,
-                                message: "Tool unavailable — answer from what you already know or say you don't have that information right now.",
+                                message: "Tool unavailable — tell the user you don't have that information right now and offer to try again.",
                             };
                         });
                         toolResults.push({
@@ -663,7 +736,8 @@ async function runQaAgent(params) {
         if (!reply) {
             console.warn("qaAgent: tool-use loop exhausted without text reply", { userId, isRetry, preview: text.slice(0, 80) });
             if (!isRetry) {
-                // Schedule a retry in 30 seconds via the trigger engine
+                // Schedule a retry in 30 seconds via the trigger engine — the retry
+                // will reply with the real answer when it succeeds.
                 db.collection("proactive_triggers").add({
                     userId,
                     phone,
@@ -674,10 +748,11 @@ async function runQaAgent(params) {
                     cancelledAt: null,
                     createdAt: new Date().toISOString(),
                 }).catch(() => { });
-                reply = "I'm looking into that — I'll get back to you in a moment.";
+                reply = "Give me a moment on that — I'm pulling it up.";
             }
             else {
-                // Retry also exhausted — escalate to admin
+                // Retry also exhausted — escalate to admin silently. User-facing
+                // message is natural and warm, not "broken".
                 db.collection("admin_alerts").add({
                     type: "qa_loop_exhausted",
                     userId,
@@ -687,7 +762,7 @@ async function runQaAgent(params) {
                     createdAt: new Date().toISOString(),
                     resolved: false,
                 }).catch(() => { });
-                reply = "I wasn't able to get a complete answer — our team has been notified and will follow up.";
+                reply = "Let me come back to you on that one shortly.";
             }
         }
         // Grounding revision — when medical claims + hedging co-occur, ask Claude to strip speculation
@@ -702,20 +777,17 @@ async function runQaAgent(params) {
                 groundingTriggered: true,
             }).catch(() => { });
             try {
-                const groundedResponse = await (0, claudeRetry_1.callClaudeWithRetry)(getClient(), {
-                    model: "claude-haiku-4-5-20251001",
-                    max_tokens: 300,
-                    system: "You are a grounding editor. Revise the message below to remove all speculation, hedging, " +
-                        "and probabilistic language about medical or health topics. " +
-                        "Replace hedged claims with 'I don't have that information' or attribute them to documented sources. " +
-                        "Keep the same warm tone and length. Output only the revised message.",
-                    messages: [{ role: "user", content: reply }],
-                }, { timeoutMs: 8000, maxAttempts: 1 });
-                const grounded = ((_f = groundedResponse.content[0].text) !== null && _f !== void 0 ? _f : "").trim();
-                if (grounded)
-                    reply = grounded;
+                const groundedController = new AbortController();
+                const groundedTimer = setTimeout(() => groundedController.abort(), 8000);
+                const grounded = await (0, openaiClient_1.quickComplete)("You are a grounding editor. Revise the message below to remove all speculation, hedging, " +
+                    "and probabilistic language about medical or health topics. " +
+                    "Replace hedged claims with 'I don't have that information' or attribute them to documented sources. " +
+                    "Keep the same warm tone and length. Output only the revised message.", reply, { maxTokens: 300, signal: groundedController.signal });
+                clearTimeout(groundedTimer);
+                if (grounded.trim())
+                    reply = grounded.trim();
             }
-            catch (_h) {
+            catch (_s) {
                 // Non-critical — proceed with original reply
             }
         }
@@ -738,10 +810,163 @@ async function runQaAgent(params) {
         console.error("qaAgent error:", err);
         if (skipSend)
             throw err;
-        const errMsg = "I'm having a little trouble right now. For urgent questions, contact your caregiver directly " +
-            "or reach our support team. For emergencies, call 911.";
+        // Don't broadcast brokenness. Send a natural-sounding deflection that
+        // doesn't tell the user Cara is failing, and create an admin alert so
+        // the team can follow up if needed.
+        const errMsg = "Give me a few minutes on that — I'll come back to you shortly.";
         await (0, client_1.sendMessage)(chatId, errMsg).catch(() => { });
+        db.collection("admin_alerts").add({
+            type: "qa_agent_failure",
+            phone,
+            userId,
+            question: text.slice(0, 300),
+            error: err instanceof Error ? err.message : String(err),
+            severity: "medium",
+            createdAt: new Date().toISOString(),
+            resolved: false,
+        }).catch(() => { });
         return errMsg;
     }
+}
+// ── runQuickReply — gpt-4o-mini fast path for trivial messages ─────────────────
+//
+// Bypasses the full tool-use loop, MCP context, Zep, etc. Suitable only when:
+//   - intent classified as QUESTION (Cara's default fallback bucket)
+//   - text is short (≤ 30 chars)
+//   - text has no entity markers (digits, @, mid-sentence proper nouns)
+//
+// Caller in webhooks.ts decides eligibility and falls through to runQaAgent
+// when any condition fails. Saves ~3–5s on simple greetings.
+async function runQuickReply(params) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+    const { text, phone, chatId, userId, seniorId, userType = "client" } = params;
+    // Pre-fetch lightweight context in parallel — used to make greetings smart.
+    // Each loader is wrapped so a single failure doesn't break the reply.
+    const [history, nextAppt, pendingTask, pendingTimesheets, activeAgent, seniorProfile] = await Promise.all([
+        getConversationHistory(phone).catch(() => []),
+        userType === "client" && userId ? getNextAppointment(userId).catch(() => null) : Promise.resolve(null),
+        userType === "client"
+            ? db.collection("agent_tasks")
+                .where("clientPhone", "==", phone)
+                .where("status", "==", "awaiting_approval")
+                .orderBy("createdAt", "desc")
+                .limit(1)
+                .get()
+                .then(s => s.empty ? null : s.docs[0].data())
+                .catch(() => null)
+            : Promise.resolve(null),
+        userType === "client" && userId
+            ? db.collection("shift_hours")
+                .where("clientId", "==", userId)
+                .where("status", "==", "submitted")
+                .limit(1)
+                .get()
+                .then(s => s.empty ? 0 : s.size)
+                .catch(() => 0)
+            : Promise.resolve(0),
+        (0, executionAgent_1.getActiveAgentForUser)(phone).catch(() => null),
+        userType === "client" && seniorId ? getSeniorProfile(seniorId).catch(() => null) : Promise.resolve(null),
+    ]);
+    const recent = history.slice(-4);
+    // Build a context snippet listing the most relevant fact Cara could lead with.
+    // Cara picks one (or none) to mention naturally — she doesn't list them all.
+    const contextLines = [];
+    const seniorName = (_a = seniorProfile === null || seniorProfile === void 0 ? void 0 : seniorProfile.name) !== null && _a !== void 0 ? _a : "your loved one";
+    if (activeAgent) {
+        const goal = (_c = (_b = activeAgent.goal) === null || _b === void 0 ? void 0 : _b.description) !== null && _c !== void 0 ? _c : "an open task";
+        contextLines.push(`OPEN GOAL: You're in the middle of "${goal}" with this family — pick up where you left off.`);
+    }
+    if (pendingTask) {
+        contextLines.push(`PENDING APPROVAL: There's a booking/task awaiting their reply ("${(_e = (_d = pendingTask.summary) !== null && _d !== void 0 ? _d : pendingTask.type) !== null && _e !== void 0 ? _e : "action needed"}").`);
+    }
+    if (pendingTimesheets > 0) {
+        contextLines.push(`PENDING TIMESHEETS: ${pendingTimesheets} caregiver shift hours waiting for their approval.`);
+    }
+    if (nextAppt) {
+        const caregiverName = (_f = nextAppt.caregiverName) !== null && _f !== void 0 ? _f : "their caregiver";
+        const date = (_g = nextAppt.date) !== null && _g !== void 0 ? _g : "soon";
+        const time = nextAppt.startTime ? ` at ${nextAppt.startTime}` : "";
+        contextLines.push(`NEXT VISIT: ${caregiverName} is coming on ${date}${time}.`);
+    }
+    const contextSection = contextLines.length
+        ? `\n\nKnown context (use ONE of these naturally if relevant; do NOT list them; do NOT mention items you weren't asked about unless they directly help right now):\n${contextLines.map(l => `- ${l}`).join("\n")}`
+        : "";
+    const persona = userType === "caregiver"
+        ? `You ARE Cara. Speak in first person. Never refer to yourself as "Cara" in the third person, and never tell the user to "reach out to Cara" or that "a Cara team member will help" — you are Cara. You are texting a caregiver as their care-team coordinator. Keep replies short (under 200 chars), conversational, no bullet points, no emoji unless they used one first. Acknowledge briefly and move forward. If they ask for something you can't handle in this quick reply (booking, schedule changes, payments), say you're pulling that up — don't fake an answer.`
+        : `You ARE Cara — an AI care assistant texting with a family caring for ${seniorName}. Speak in first person. Never refer to yourself as "Cara" in the third person, and never tell the user to "reach out to Cara" or that "a Cara team member will help" — you are Cara. Keep replies short (under 200 chars), conversational, warm. No bullet points, no headers, no markdown.\n\nWhen the family sends a pure greeting ("hi", "hey", "thanks"), DO NOT reply with "what can I help you with?" or any open-ended ask. Instead, open with the most relevant context item below if there is one — naturally, like a friend would. If there's no context to lead with, give a warm short hello like "Hey! How's everything?" — never a generic "what do you need?".\n\nExamples of good context-led greetings:\n- (after "hi" with NEXT VISIT context) "Hey! Maria's coming Thursday at 3 — anything you want me to pass along?"\n- (after "hi" with PENDING APPROVAL context) "Hey! Quick heads up — you still have that booking waiting for your yes/no. Want me to pull it up?"\n- (after "thanks" with no special context) "Anytime. 💙"${contextSection}`;
+    const messages = [
+        { role: "system", content: persona },
+        ...recent.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user", content: text },
+    ];
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    let reply;
+    try {
+        const res = await (0, openaiClient_1.getOpenAIClient)().chat.completions.create({
+            model: "gpt-4o-mini",
+            max_tokens: 150,
+            messages,
+        }, { signal: controller.signal });
+        clearTimeout(timer);
+        reply = ((_k = (_j = (_h = res.choices[0]) === null || _h === void 0 ? void 0 : _h.message) === null || _j === void 0 ? void 0 : _j.content) !== null && _k !== void 0 ? _k : "").trim();
+    }
+    catch (err) {
+        clearTimeout(timer);
+        console.warn("runQuickReply error — falling back to context-aware default", err instanceof Error ? err.message : err);
+        // Context-aware fallback: lead with the most useful known fact instead of
+        // a generic "what can I help you with" (which is on Cara's banned list).
+        if (pendingTask)
+            reply = "Hey! You still have that booking waiting on a yes/no — want me to pull it up?";
+        else if (pendingTimesheets > 0)
+            reply = `Hey! ${pendingTimesheets > 1 ? `${pendingTimesheets} timesheets are` : "A timesheet is"} waiting for your approval whenever you're ready.`;
+        else if (nextAppt) {
+            const cg = (_l = nextAppt.caregiverName) !== null && _l !== void 0 ? _l : "your caregiver";
+            const d = (_m = nextAppt.date) !== null && _m !== void 0 ? _m : "soon";
+            reply = `Hey! ${cg} is coming ${d} — anything you want me to pass along?`;
+        }
+        else if (activeAgent)
+            reply = "Hey! Picking up where we left off — give me a sec.";
+        else
+            reply = "Hey! How's everything going?";
+    }
+    if (!reply)
+        reply = "Hey! How's everything going?";
+    await saveConversationTurn(phone, text, reply);
+    await (0, client_1.sendMessage)(chatId, reply).catch(() => { });
+    return reply;
+}
+// Trivial-message eligibility check used by the webhook before runQaAgent.
+// Returns true when text qualifies for the runQuickReply fast path.
+//
+// Conservative: only true for pure social pleasantries. Any hint of an
+// action verb, a request for data, or an entity reference falls through to
+// the full QA agent — which has tools to actually do things.
+//
+// Action verbs include words like "connect", "book", "schedule", "call",
+// "hire", "find", "show", "tell" — these are all things Cara needs tools
+// to do, so the bypass would just produce a generic "I'll look into it"
+// reply (which is wrong; users want Cara to actually act).
+const ACTION_VERBS = /\b(connect|book|schedule|call|hire|find|show|tell|send|cancel|reschedule|rebook|reschedule|approve|deny|reject|accept|update|change|set up|setup|set\s+up|search|look|check|get|give|need|want|add|remove|delete|fix|help|pay|refill|reorder|order|forward|share)\b/i;
+const REQUEST_PATTERNS = /\b(yes\s+(let|please|do|go|sure|ok)|let'?s|can\s+you|could\s+you|would\s+you|please|i\s+(need|want|would)|tell\s+(me|him|her|them))\b/i;
+function isTrivialQuickReply(text) {
+    const t = text.trim();
+    if (!t || t.length > 30)
+        return false;
+    // Any digit or @ → likely contains entity data; use full QA agent
+    if (/[\d@]/.test(t))
+        return false;
+    // Action verb or request pattern → user wants something done; use full QA agent
+    if (ACTION_VERBS.test(t) || REQUEST_PATTERNS.test(t))
+        return false;
+    // Proper noun in the middle (after the first word) suggests names/places.
+    // First word can be capitalized (sentence start); subsequent ones flag it.
+    const words = t.split(/\s+/);
+    for (let i = 1; i < words.length; i++) {
+        const w = words[i].replace(/[.,!?]/g, "");
+        if (w.length > 1 && /^[A-Z][a-z]+$/.test(w))
+            return false;
+    }
+    return true;
 }
 //# sourceMappingURL=qaAgent.js.map

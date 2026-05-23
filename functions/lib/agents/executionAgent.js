@@ -32,9 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.spawnExecutionAgent = spawnExecutionAgent;
 exports.getActiveAgentForUser = getActiveAgentForUser;
@@ -43,14 +40,8 @@ exports.markExecutionAgentComplete = markExecutionAgentComplete;
 exports.cleanupStaleExecutionAgents = cleanupStaleExecutionAgents;
 exports.updateExecutionAgentContext = updateExecutionAgentContext;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const db = admin.firestore();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 // ── Spawn a new persistent execution agent ───────────────────────────────────
 async function spawnExecutionAgent(params) {
     const now = new Date().toISOString();
@@ -99,7 +90,7 @@ async function runExecutionAgentTurn(agentId, input) {
         ...((_a = agent.conversationHistory) !== null && _a !== void 0 ? _a : []),
         { role: "user", content: input },
     ];
-    const response = await getClaude().messages.create({
+    const response = await (0, claudeClient_1.getSharedClient)().messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 800,
         system: agent.systemPrompt,

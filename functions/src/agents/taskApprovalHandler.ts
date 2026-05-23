@@ -41,6 +41,7 @@ export async function handleTaskApproval(
       caregiverId:   selected.caregiverId ?? "",
       time:          task.time ?? "",
     },
+    pendingTaskConfirmSetAt: new Date().toISOString(),
   }).catch(() => {});
 
   await sendMessage(chatId,

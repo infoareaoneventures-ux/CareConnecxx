@@ -1,17 +1,12 @@
 import * as functions from "firebase-functions";
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "./utils/claudeClient";
 import { checkRateLimit } from "./rateLimit";
 
 const ALLOWED_MODELS = new Set([
   "claude-haiku-4-5-20251001",
   "claude-sonnet-4-6",
 ]);
-
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
 
 export const aiProxy = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
@@ -53,7 +48,7 @@ export const aiProxy = functions.https.onCall(async (data, context) => {
 
   let response: Awaited<ReturnType<Anthropic["messages"]["create"]>>;
   try {
-    response = await getClaude().messages.create({
+    response = await getSharedClient().messages.create({
       model,
       max_tokens: Math.min(maxTokens, 4000),
       system,

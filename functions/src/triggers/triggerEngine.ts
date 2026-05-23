@@ -1,14 +1,8 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { sendToPhone } from "../linq/client";
-
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
 
 const db = admin.firestore();
 
@@ -66,7 +60,7 @@ async function generateTriggerMessage(
   memoryContext: string
 ): Promise<string> {
   try {
-    const resp = await getClaude().messages.create({
+    const resp = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 120,
       system:
@@ -105,7 +99,7 @@ async function shouldFireTrigger(
     .join("\n");
 
   try {
-    const resp = await getClaude().messages.create({
+    const resp = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 5,
       system:

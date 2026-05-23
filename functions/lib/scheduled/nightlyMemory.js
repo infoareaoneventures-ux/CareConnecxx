@@ -32,24 +32,15 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.consolidateMemoryNightly = void 0;
 exports.analyzeBookingPatterns = analyzeBookingPatterns;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const memoryFiles_1 = require("../memory/memoryFiles");
 const executionAgent_1 = require("../agents/executionAgent");
 const db = admin.firestore();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 // ── Conversation compression ──────────────────────────────────────────────────
 async function compressConversationForPhone(phone) {
     var _a, _b;
@@ -69,7 +60,7 @@ async function compressConversationForPhone(phone) {
     const promptParts = existingSummary
         ? [`Existing summary:\n${existingSummary}\n\nNew messages to incorporate:\n${newMessages}`]
         : [`Conversation:\n${newMessages}`];
-    const response = await getClaude().messages.create({
+    const response = await (0, claudeClient_1.getSharedClient)().messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 400,
         system: "You are summarizing a caregiving conversation for an AI assistant named Cara. Write 3-5 sentences covering: care needs mentioned, decisions made, key facts about the senior, and emotional context. Be specific — include names, dates, and care details if present. Begin your response with \"<summary>\".",

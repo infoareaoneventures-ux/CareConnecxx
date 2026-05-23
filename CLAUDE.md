@@ -112,11 +112,18 @@ Firebase config is typically embedded via `lib/firebase.ts` (check for hardcoded
 
 ## Cara — AI-Agentic Rules (MANDATORY)
 
-Cara is a fully AI-agentic assistant powered by Claude. Every piece of code that touches Cara MUST follow these rules:
+Cara is a fully AI-agentic assistant. Every piece of code that touches Cara MUST follow these rules.
 
-### Always use Claude AI for user input understanding
+### Hybrid LLM architecture
+Cara uses two providers, chosen by latency profile, NOT by capability:
+- **OpenAI gpt-4o-mini** (~500ms) for ALL short single-shot calls: intent classification, YES/NO decisions, structured extraction, parseWithClaude calls, the trivial-greeting bypass. Routes through `functions/src/utils/openaiClient.ts` (`getOpenAIClient`, `quickComplete`).
+- **Claude Sonnet 4.6** stays for the QA agent's multi-turn tool-use loop in `functions/src/agents/qaAgent.ts` only. Routes through `getSharedClient()` + `callClaudeWithRetry()`. Don't replace this — the 83-tool MCP loop works best on Sonnet.
+
+Both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` must be set in the function env.
+
+### Always use an LLM for user input understanding
 - **NEVER** use regex, hardcoded keyword arrays, `.includes()`, or string equality to parse the MEANING or INTENT of free-form user SMS text
-- **ALWAYS** call `parseWithClaude(systemPrompt, userText)` (Claude Haiku) to extract structured values from any natural language input
+- **ALWAYS** call `parseWithClaude(systemPrompt, userText)` to extract structured values from any natural language input. (Despite the name, this helper now uses gpt-4o-mini under the hood — public API and behavior unchanged.)
 - **ALWAYS** add an `isQuestionOrOther(text)` check at the top of every conversational handler so Cara can answer mid-flow questions before re-asking the current question
 
 ### The `parseWithClaude` pattern (use this in every handler)
@@ -128,11 +135,14 @@ const raw = await parseWithClaude(
 const validated = ["basic","family","premium"].includes(raw) ? raw : "basic";
 ```
 
-### What IS allowed without Claude
+For new ad-hoc single-shot calls (not via parseWithClaude), use `quickComplete(systemPrompt, userText, { maxTokens })` from `utils/openaiClient.ts`. Do NOT call `getSharedClient().messages.create()` for new fast-path code — that pathway is reserved for the QA agent.
+
+### What IS allowed without an LLM
 - `norm === "YES" || norm === "NO"` when the system explicitly said "Reply YES or NO" (strict binary SMS protocol)
 - Email format regex for validation (not intent parsing)
 - STOP/UNSUBSCRIBE/QUIT keywords (SMS carrier opt-out protocol requirement)
-- Safety/crisis keyword fast-path in `crisisDetector.ts` (speed is life-critical; Claude can't be the only gate)
+- Safety/crisis keyword fast-path in `crisisDetector.ts` (speed is life-critical; the LLM can't be the only gate)
+- `isTrivialQuickReply(text)` heuristic in qaAgent.ts (length + entity-marker check used to choose between runQuickReply and runQaAgent — not intent parsing)
 
 ### New Cara handlers checklist
 Every new conversational step handler must have:
@@ -141,6 +151,7 @@ Every new conversational step handler must have:
 3. Conversational acknowledgment of what the user said before moving to the next question
 4. `sendMessage` with the next question
 
-### Model to use
-- **Claude Haiku** (`claude-haiku-4-5-20251001`) for all `parseWithClaude` calls — fast and cheap
-- **Claude Sonnet** for QA, complex reasoning, or multi-step decisions
+### Model selection cheat-sheet
+- Single-shot classify / YES-NO / JSON extraction → `quickComplete` or `parseWithClaude` (gpt-4o-mini)
+- Multi-turn reasoning with MCP tools → `runQaAgent` (Claude Sonnet 4.6)
+- Trivial greeting / acknowledgment fast path → `runQuickReply` (gpt-4o-mini, no tools)

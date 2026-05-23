@@ -1,24 +1,13 @@
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
-
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
-    const response = await getClaude().messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 200,
-      system:     prompt,
-      messages:   [{ role: "user", content: userText }],
-    });
-    return ((response.content[0] as { text: string }).text ?? "").trim();
+    const raw = await quickComplete(prompt, userText, { maxTokens: 200 });
+    return raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
   } catch {
     return "__parse_error__";
   }
@@ -33,15 +22,12 @@ async function isQuestionOrOther(text: string): Promise<boolean> {
 }
 
 async function answerQuestionMidFlow(text: string): Promise<string> {
-  const response = await getClaude().messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 120,
-    system:
-      "You are Cara, an AI care assistant. A client is in the middle of requesting a refund. " +
+  return (await quickComplete(
+    "You are Cara, an AI care assistant. A client is in the middle of requesting a refund. " +
       "Answer their question briefly (1–2 sentences). Be helpful and warm.",
-    messages: [{ role: "user", content: text }],
-  });
-  return ((response.content[0] as { text: string }).text ?? "").trim();
+    text,
+    { maxTokens: 120 },
+  )).trim();
 }
 
 // State flow: identify_visit → select_visit → confirm → submitted

@@ -32,22 +32,13 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const client_1 = require("../linq/client");
 const db = admin.firestore();
-let _client = null;
-function getClient() {
-    if (!_client)
-        _client = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _client;
-}
 // ── Data loader — 90 days of journal entries ──────────────────────────────────
 async function load90Days(seniorId, userId) {
     var _a, _b, _c, _d;
@@ -121,7 +112,7 @@ async function analyzeTrends(data) {
         `}`,
     ].join("\n");
     try {
-        const response = await getClient().messages.create({
+        const response = await (0, claudeClient_1.getSharedClient)().messages.create({
             model: "claude-sonnet-4-6",
             max_tokens: 500,
             messages: [{ role: "user", content: prompt }],

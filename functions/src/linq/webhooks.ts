@@ -2,11 +2,11 @@ import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import * as crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
-import { sendMessage, startTyping, stopTyping, shareContactCard, createOrUpdateContactCard, checkCapability, AgentSession, LinqService } from "./client";
+import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability, markChatRead, AgentSession, LinqService } from "./client";
 import { classifyIntent } from "../agents/intentClassifier";
-import { runQaAgent } from "../agents/qaAgent";
+import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { handleTaskApproval, finalizeTaskApproval } from "../agents/taskApprovalHandler";
-import { optOutPhoneNumber } from "../sms";
+import { optOutPhoneNumber, setupCaraContactCard } from "../sms";
 import {
   handleOnboardingStep,
 } from "../agents/onboardingConversation";
@@ -49,6 +49,8 @@ import {
   searchZepMemory,
   getZepUserId,
 } from "../memory/zepClient";
+import { quickComplete } from "../utils/openaiClient";
+import { extractVoiceMemoPart, transcribeVoiceMemo } from "../utils/voiceTranscription";
 
 const db = admin.firestore();
 
@@ -80,13 +82,17 @@ function verifySignature(
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 
+// Per-phone hourly rate limit — only triggers on runaway scripts / abuse,
+// not legitimate active conversations. A normal care/onboarding flow can
+// easily run 30+ messages in an hour. Linq's per-pair rate limit (28 msgs
+// per 60s in client.ts) handles outbound spam separately.
 async function isRateLimited(phone: string): Promise<boolean> {
   const rateRef = db.collection("agent_rate").doc(phone);
   const snap    = await rateRef.get();
   const now     = Date.now();
   const hourAgo = now - 60 * 60 * 1000;
   const calls   = ((snap.data()?.calls ?? []) as number[]).filter((t) => t > hourAgo);
-  if (calls.length >= 10) return true;
+  if (calls.length >= 120) return true; // ~2 msgs/min sustained for an hour = clearly automated
   await rateRef.set({ calls: [...calls, now] });
   return false;
 }
@@ -234,24 +240,19 @@ async function handleShiftConfirmation(
     caregiverName:   string;
   };
 
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   // Parse YES / NO / question
-  const parseRes = await claude.messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 10,
-    system:
-      "The caregiver is responding to a shift confirmation request for tomorrow. " +
+  const parseRaw = await quickComplete(
+    "The caregiver is responding to a shift confirmation request for tomorrow. " +
       "Reply CONFIRM if they said yes, they'll be there. " +
       "Reply CANCEL if they said no, they can't make it. " +
       "Reply QUESTION if it is a question or unclear. " +
       "Reply with exactly one word.",
-    messages: [{ role: "user", content: text }],
-  }).catch(() => null);
+    text,
+    { maxTokens: 10 },
+  ).catch(() => "");
 
-  const decision = ((parseRes?.content[0] as { text: string } | undefined)?.text ?? "")
-    .trim().toUpperCase();
+  const decision = parseRaw.trim().toUpperCase();
 
   // Always clear the state flag
   await db.collection("agent_sessions").doc(phone).update({
@@ -390,21 +391,16 @@ async function handlePreShiftUpdate(
     seniorName:    string;
   };
 
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   // isQuestionOrOther check — CLAUDE.md requirement
-  const questionRes = await claude.messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 5,
-    system:
-      "Is this message a question unrelated to adding care tasks, or is it about something completely different? " +
+  const questionRaw = await quickComplete(
+    "Is this message a question unrelated to adding care tasks, or is it about something completely different? " +
       "Reply only YES or NO.",
-    messages: [{ role: "user", content: text }],
-  }).catch(() => null);
+    text,
+    { maxTokens: 5 },
+  ).catch(() => "");
 
-  const isQuestion = ((questionRes?.content[0] as { text: string } | undefined)?.text ?? "")
-    .trim().toUpperCase().startsWith("Y");
+  const isQuestion = questionRaw.trim().toUpperCase().startsWith("Y");
 
   if (isQuestion) {
     await sendViaInteractionAgent(phone, {
@@ -420,23 +416,20 @@ async function handlePreShiftUpdate(
   }
 
   // Parse action: decline or new tasks
-  const parseRes = await claude.messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 200,
-    system:
-      "The family was asked if they want to add tasks to today's care visit. " +
+  const parseRaw = await quickComplete(
+    "The family was asked if they want to add tasks to today's care visit. " +
       "Extract their response. Reply JSON only: " +
       '{"action":"decline"|"addTasks","tasks":["task description 1","task description 2"]}. ' +
       '"decline" means they said no, nothing to add, or the plan is fine. ' +
       '"addTasks" means they listed one or more things they want done.',
-    messages: [{ role: "user", content: text }],
-  }).catch(() => null);
+    text,
+    { maxTokens: 200 },
+  ).catch(() => "{}");
 
   let action = "decline";
   let tasks: string[] = [];
   try {
-    const raw    = (parseRes?.content[0] as { text: string } | undefined)?.text ?? "{}";
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(parseRaw || "{}");
     action = (parsed.action ?? "decline") as string;
     tasks  = Array.isArray(parsed.tasks) ? (parsed.tasks as string[]).filter(Boolean) : [];
   } catch { /* default to decline */ }
@@ -709,29 +702,21 @@ async function sendFamilyTaskUpdate(params: {
   }
   if (!cgFirstName) cgFirstName = "Your caregiver";
 
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   let content: string;
   try {
-    const resp = await claude.messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 120,
-      system:
-        "You write a brief 1-2 sentence real-time care update for a family member.\n" +
+    const raw = await quickComplete(
+      "You write a brief 1-2 sentence real-time care update for a family member.\n" +
         "Tone: warm, direct, reassuring. From Cara (a care coordinator), not the caregiver.\n" +
         "Keep it short — this is a mid-shift task update. No emoji. Output only the message text.",
-      messages: [{
-        role:    "user",
-        content:
-          `Task just completed: ${taskDescription}\n` +
-          `Category: ${taskCategory}\n` +
-          `Caregiver notes: ${notes || "no additional notes"}\n` +
-          `Senior: ${seniorName}\n` +
-          `Caregiver: ${cgFirstName}`,
-      }],
-    });
-    content = ((resp.content[0] as { text: string }).text ?? "").trim();
+      `Task just completed: ${taskDescription}\n` +
+        `Category: ${taskCategory}\n` +
+        `Caregiver notes: ${notes || "no additional notes"}\n` +
+        `Senior: ${seniorName}\n` +
+        `Caregiver: ${cgFirstName}`,
+      { maxTokens: 120 },
+    );
+    content = raw.trim();
     if (!content) throw new Error("empty");
   } catch {
     content = `${cgFirstName} just completed ${taskDescription} for ${seniorName}.${notes ? " " + notes : ""}`;
@@ -776,8 +761,6 @@ async function sendFamilyShiftEndUpdate(params: {
   const unplannedActivities = (entry.unplannedActivities ?? []) as string[];
   const taskNotes          = (entry.taskNotes          ?? "")  as string;
 
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   let content: string;
   try {
@@ -785,32 +768,26 @@ async function sendFamilyShiftEndUpdate(params: {
       ? `Unplanned activities (requested by senior): ${unplannedActivities.join(", ")}`
       : "No unplanned activities";
 
-    const resp = await claude.messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 280,
-      system:
-        "You write a warm, personal text message to a family member after their loved one's care visit.\n" +
+    const raw = await quickComplete(
+      "You write a warm, personal text message to a family member after their loved one's care visit.\n" +
         "Tone: warm and reassuring, like a trusted care coordinator. From Cara, not the caregiver.\n" +
         "Structure: 1) Start with the visit wrapping up and overall mood/meals. " +
         "2) Mention planned tasks completed with any notes. " +
         "3) If the senior asked for anything outside the plan, mention it clearly. " +
         "4) End with whether there are any concerns.\n" +
         "Keep it to 4-5 sentences. No bullet points. No emoji. Output only the message text, no greeting or sign-off.",
-      messages: [{
-        role:    "user",
-        content:
-          `Senior: ${seniorName}\n` +
-          `Caregiver: ${cgFirstName}\n` +
-          `Mood: ${mood || "not reported"}\n` +
-          `Appetite: ${appetite || "not reported"}\n` +
-          `Activities completed: ${activities.length > 0 ? activities.join(", ") : "not reported"}\n` +
-          `Notes on completed tasks: ${taskNotes || "none"}\n` +
-          `${unplannedLine}\n` +
-          `Observations: ${observations || "none"}\n` +
-          `Additional notes: ${notes || "none"}`,
-      }],
-    });
-    content = ((resp.content[0] as { text: string }).text ?? "").trim();
+      `Senior: ${seniorName}\n` +
+        `Caregiver: ${cgFirstName}\n` +
+        `Mood: ${mood || "not reported"}\n` +
+        `Appetite: ${appetite || "not reported"}\n` +
+        `Activities completed: ${activities.length > 0 ? activities.join(", ") : "not reported"}\n` +
+        `Notes on completed tasks: ${taskNotes || "none"}\n` +
+        `${unplannedLine}\n` +
+        `Observations: ${observations || "none"}\n` +
+        `Additional notes: ${notes || "none"}`,
+      { maxTokens: 280 },
+    );
+    content = raw.trim();
     if (!content) throw new Error("empty");
   } catch {
     const moodLine      = mood       ? ` ${seniorName} was in a ${mood} mood.` : "";
@@ -852,21 +829,16 @@ async function handleTaskAck(
     seniorName:      string;
   };
 
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   // isQuestionOrOther check — CLAUDE.md requirement
-  const questionRes = await claude.messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 5,
-    system:
-      "Is this message a question or completely unrelated to completing a care task? " +
+  const questionRaw = await quickComplete(
+    "Is this message a question or completely unrelated to completing a care task? " +
       "Reply only YES or NO.",
-    messages: [{ role: "user", content: text }],
-  }).catch(() => null);
+    text,
+    { maxTokens: 5 },
+  ).catch(() => "");
 
-  const isQuestion = ((questionRes?.content[0] as { text: string } | undefined)?.text ?? "")
-    .trim().toUpperCase().startsWith("Y");
+  const isQuestion = questionRaw.trim().toUpperCase().startsWith("Y");
 
   if (isQuestion) {
     // Let the normal caraAgent handle the question, then re-ask about the task
@@ -881,20 +853,17 @@ async function handleTaskAck(
   }
 
   // Parse completion + any brief notes
-  const ackRes = await claude.messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 80,
-    system:
-      "Did the caregiver confirm completing the task? Also extract any brief notes about how it went. " +
+  const ackRaw = await quickComplete(
+    "Did the caregiver confirm completing the task? Also extract any brief notes about how it went. " +
       'Reply JSON only: {"completed":"YES"|"NO"|"UNCLEAR","notes":"brief detail or empty string"}',
-    messages: [{ role: "user", content: text }],
-  }).catch(() => null);
+    text,
+    { maxTokens: 80 },
+  ).catch(() => "{}");
 
   let completed = true; // default to trusting the caregiver
   let notes = "";
   try {
-    const raw = (ackRes?.content[0] as { text: string } | undefined)?.text ?? "{}";
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(ackRaw || "{}");
     completed = (parsed.completed ?? "YES") !== "NO";
     notes = ((parsed.notes ?? "") as string).trim();
   } catch { /* keep defaults */ }
@@ -958,23 +927,19 @@ async function handleCareNotes(
   text:     string,
   session:  AgentSession
 ): Promise<void> {
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  const structured = await claude.messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 300,
-    system:
-      "Convert this caregiver note into a structured care journal entry. " +
+  const structuredRaw = await quickComplete(
+    "Convert this caregiver note into a structured care journal entry. " +
       'Reply in JSON: {"overallWellness":1,"mood":"happy|neutral|agitated|confused|tired",' +
       '"appetite":"good|fair|poor|refused","activities":[],"medications":[],' +
       '"observations":"","notes":"","unplannedActivities":[],"taskNotes":""}',
-    messages: [{ role: "user", content: text }],
-  });
+    text,
+    { maxTokens: 300 },
+  ).catch(() => "{}");
 
   let entry: Record<string, unknown> = {};
   try {
-    entry = JSON.parse((structured.content[0] as { text: string }).text ?? "{}");
+    entry = JSON.parse(structuredRaw || "{}");
   } catch { entry = { notes: text }; }
 
   const apptId = (session as any).careNotesApptId ?? "";
@@ -1010,10 +975,11 @@ async function handleCareNotes(
     const sessionRef  = db.collection("agent_sessions").doc(phone);
 
     await db.runTransaction(async (t) => {
-      const existingSnap = await db.collection("care_journal")
-        .where("appointmentId", "==", apptId)
-        .limit(1)
-        .get();
+      const existingSnap = await t.get(
+        db.collection("care_journal")
+          .where("appointmentId", "==", apptId)
+          .limit(1)
+      );
       if (!existingSnap.empty) {
         alreadyExists = true;
         return;
@@ -1131,18 +1097,14 @@ async function classifyFeedbackSentiment(
   text: string
 ): Promise<"positive" | "negative" | "neutral"> {
   try {
-    const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const res = await claude.messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 10,
-      system:
-        "Classify this feedback about a home care visit as positive, negative, or neutral. " +
+    const raw = await quickComplete(
+      "Classify this feedback about a home care visit as positive, negative, or neutral. " +
         "Consider tone, context, and nuance — not just keywords. " +
         "Reply with one word: POSITIVE, NEGATIVE, or NEUTRAL.",
-      messages: [{ role: "user", content: text }],
-    });
-    const label = ((res.content[0] as { text: string }).text ?? "").trim().toUpperCase();
+      text,
+      { maxTokens: 10 },
+    );
+    const label = raw.trim().toUpperCase();
     if (label === "POSITIVE") return "positive";
     if (label === "NEGATIVE") return "negative";
   } catch (err) {
@@ -1420,17 +1382,75 @@ async function handleRecurringResume(phone: string, chatId: string, session: Age
 async function handleInbound(event: unknown): Promise<void> {
   const ev      = event as any;
   const phone   = ev.data?.sender_handle?.handle as string | undefined;
-  const text    = (ev.data?.parts?.[0]?.value ?? "") as string;
   const chatId  = ev.data?.chat?.id as string | undefined;
   const service = (ev.data?.service ?? ev.data?.chat?.service ?? "SMS") as string;
 
   if (!phone || !chatId) return;
 
+  // Collect text from all text-type parts (handles multi-part messages).
+  // Non-text parts (sticker, audio, media) have no value — detect media-only messages.
+  const inboundParts = (ev.data?.parts ?? []) as Array<Record<string, unknown>>;
+  let text = inboundParts
+    .filter((p) => p.type === "text" && p.value)
+    .map((p) => String(p.value))
+    .join(" ")
+    .trim();
+  let isMediaOnly = text === "" && inboundParts.length > 0;
+
+  // Mark the inbound as read so iMessage shows the "Read" receipt immediately —
+  // this is what surfaces the blue "Read" indicator under the user's bubble.
+  markChatRead(chatId).catch(() => {/* non-critical */});
+
   // Fire typing indicator immediately — before any async work — so the family
   // never sees silence during the ~200ms session load + routing decisions.
+  // For voice memos this matters even more: Whisper takes a few seconds.
   if (service === "iMessage") startTyping(chatId).catch(() => {});
 
+  // ── Voice memo → Whisper transcription ─────────────────────────────────────
+  // Users who can't easily type tap-and-hold to send a voice memo. Transcribe
+  // it and fall through to normal text processing so the rest of Cara doesn't
+  // need to care that the input was spoken.
+  if (text === "") {
+    const voicePart = extractVoiceMemoPart(inboundParts);
+    if (voicePart) {
+      try {
+        const transcript = await transcribeVoiceMemo(voicePart);
+        if (transcript) {
+          text = transcript;
+          isMediaOnly = false;
+          console.info("voiceMemo transcribed", {
+            phone,
+            chatId,
+            chars: transcript.length,
+            duration_ms: voicePart.duration_ms,
+          });
+        }
+      } catch (err) {
+        console.error("voiceMemo transcription failed", {
+          phone,
+          chatId,
+          err: (err as Error)?.message,
+        });
+      }
+    }
+  }
+
   const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
+
+  // Track last-inbound time so the silence detector (scheduled function) can
+  // find users who haven't messaged in 3+ days and send a gentle check-in.
+  // Also keep session chatId in sync with the actual Linq thread (Linq webhook
+  // delivers on the chat where the user replied, which may differ from the
+  // chatId we created — replying to a stale chatId returns 400).
+  if (sessionSnap.exists) {
+    const stored = sessionSnap.data() as AgentSession & { chatId?: string };
+    const update: Record<string, unknown> = { lastInboundAt: new Date().toISOString() };
+    if (stored.chatId && stored.chatId !== chatId) {
+      update.chatId  = chatId;
+      update.service = service;
+    }
+    await db.collection("agent_sessions").doc(phone).update(update).catch(() => {});
+  }
 
   // ── New user — texted first (MO consent) ────────────────────────────────────
   if (!sessionSnap.exists) {
@@ -1445,11 +1465,15 @@ async function handleInbound(event: unknown): Promise<void> {
       const primarySession = groupSnap.docs[0].data() as AgentSession;
       const primaryPhone   = groupSnap.docs[0].id;
 
+      // Detect messaging capability so session reflects real service (SMS vs iMessage vs RCS)
+      const secondaryCap = await checkCapability(phone);
+      const secondaryService: LinqService = secondaryCap.iMessage ? "iMessage" : secondaryCap.RCS ? "RCS" : "SMS";
+
       // Create a lightweight session for this member pointing to the primary
       await db.collection("agent_sessions").doc(phone).set({
         chatId,
         phone,
-        service:        "iMessage",
+        service:        secondaryService,
         userType:       "client",
         onboardingStep: "complete",
         optedIn:        true,
@@ -1476,10 +1500,8 @@ async function handleInbound(event: unknown): Promise<void> {
 
     const capability = await checkCapability(phone);
     const service: LinqService = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
-    const linqPhone = process.env.LINQ_PHONE_NUMBER ?? "";
 
-    await createOrUpdateContactCard({ phone_number: linqPhone, first_name: "Cara" }).catch(() => {/* non-critical */});
-    await shareContactCard(chatId).catch(() => {/* non-critical */});
+    await setupCaraContactCard().catch(() => {/* non-critical */});
 
     await db.collection("agent_sessions").doc(phone).set({
       chatId,
@@ -1505,14 +1527,50 @@ async function handleInbound(event: unknown): Promise<void> {
       `1️⃣ I need care for someone\n` +
       `2️⃣ I'm a caregiver`
     );
+    // Share contact card AFTER the first outbound message — Linq requires at least
+    // one outbound message in history before the share endpoint accepts the call.
+    if (service === "iMessage") shareContactCard(chatId).catch(() => {/* non-critical */});
     return;
   }
 
   const session  = sessionSnap.data() as AgentSession;
   const norm     = text.trim().toUpperCase();
-  const stopWords = new Set(["STOP", "UNSUBSCRIBE", "QUIT", "END"]);
+  const stopWords = new Set(["STOP", "UNSUBSCRIBE", "QUIT", "END", "OPTOUT"]);
+
+  // ── Chat health gate — pause outbound on CRITICAL, honour OPTED_OUT ──────────
+  const chatHealth = (ev.data?.chat?.health_status?.status ?? "HEALTHY") as string;
+  if (chatHealth === "OPTED_OUT" && !session.optedOut) {
+    await db.collection("agent_sessions").doc(phone).update({ optedOut: true }).catch(() => {});
+    return;
+  }
+  if (chatHealth === "CRITICAL") {
+    console.warn("handleInbound: chat health CRITICAL — skipping outbound response", { phone, chatId });
+    return;
+  }
 
   if (session.optedOut) return;
+
+  // ── Sticker / voice memo / media-only — no text to process ──────────────────
+  // Stickers are inbound-only (API doesn't support sending them). Voice memos
+  // are transcribed above; if that failed we still land here. Other media
+  // parts have no value field — react warmly and exit before the intent
+  // classifier receives an empty string.
+  if (isMediaOnly) {
+    await stopTyping(chatId).catch(() => {});
+    const partTypes = inboundParts.map((p) => String(p.type ?? "").toLowerCase());
+    const hasVoiceMemo = extractVoiceMemoPart(inboundParts) !== null;
+    if (partTypes.includes("sticker")) {
+      await sendMessage(chatId, "Love it! 😊 What can I help you with today?");
+    } else if (hasVoiceMemo) {
+      await sendMessage(
+        chatId,
+        "I got your voice memo but couldn't quite make it out — could you send it again, or type what you need? I'm here either way."
+      );
+    } else {
+      await sendMessage(chatId, "Got your message! If you have a question or need help, just type it out.");
+    }
+    return;
+  }
 
   // ── Expired state machine — save checkpoint for onboarding, clear otherwise ─
   {
@@ -1634,20 +1692,16 @@ async function handleInbound(event: unknown): Promise<void> {
   if ((session as any).bereavementMode) {
     let isExit = false;
     try {
-      const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const res = await claude.messages.create({
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 5,
-        system:
-          "The user is in bereavement mode after losing a loved one. " +
+      const raw = await quickComplete(
+        "The user is in bereavement mode after losing a loved one. " +
           "Reply YES if they are clearly expressing that they are ready to resume normal service " +
           "(e.g. they need a caregiver, want to continue, are ready). " +
           "Reply NO if they are still grieving or just checking in. " +
           "Reply with only YES or NO.",
-        messages: [{ role: "user", content: text }],
-      });
-      isExit = ((res.content[0] as { text: string }).text ?? "").trim().toUpperCase().startsWith("Y");
+        text,
+        { maxTokens: 5 },
+      );
+      isExit = raw.trim().toUpperCase().startsWith("Y");
     } catch {
       isExit = false;
     }
@@ -1695,6 +1749,36 @@ async function handleInbound(event: unknown): Promise<void> {
   }
 
   // ── ONBOARDING gate — route to state machine if not complete ─────────────
+  // If the session exists but has no onboardingStep (e.g. created by an old
+  // initiateCara that only stored chatId/userType), try to recover account data
+  // from the users collection before routing. Without userId/seniorId the QA agent
+  // will crash with an invalid Firestore path.
+  // Also catches the case where onboardingStep is non-complete (e.g. "ask_role")
+  // but userId is missing — the session was corrupted, so recover it first.
+  if ((!session.onboardingStep || session.onboardingStep !== "complete") && !session.userId) {
+    const userQuery = await db.collection("users").where("phone", "==", phone).limit(1).get();
+    if (!userQuery.empty) {
+      const userDoc   = userQuery.docs[0];
+      const userData  = userDoc.data();
+      const userId    = userDoc.id;
+      const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
+      const seniorId  = (userData.seniorId  as string | undefined) ?? seniorIds[0] ?? "";
+      await db.collection("agent_sessions").doc(phone).update({
+        userId,
+        seniorId,
+        onboardingStep: "complete",
+      });
+      // Reload the session so downstream code sees the updated fields
+      session.userId         = userId;
+      (session as any).seniorId      = seniorId;
+      session.onboardingStep = "complete";
+    } else {
+      // No user account found — start onboarding from the beginning
+      await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "ask_role" });
+      session.onboardingStep = "ask_role";
+    }
+  }
+
   const step = session.onboardingStep ?? "";
   if (step && step !== "complete") {
     // Log every onboarding message to Zep — this is where names, conditions,
@@ -1749,9 +1833,11 @@ async function handleInbound(event: unknown): Promise<void> {
     return;
   }
 
-  // Rate limit
+  // Rate limit — only triggers on actual abuse (120+ msgs/hr from one phone).
+  // Drop silently instead of sending a "broken" reply to the user. Log so we
+  // can see if a real user ever hits it.
   if (await isRateLimited(phone)) {
-    await sendMessage(chatId, "I'm getting a lot of messages right now — try again in a bit.");
+    console.warn("handleInbound: phone exceeded 120 msgs/hr rate limit — dropping silently", { phone });
     return;
   }
 
@@ -1775,7 +1861,6 @@ async function handleInbound(event: unknown): Promise<void> {
     const pendingFeedback = await db.collection("proactive_triggers")
       .where("phone",            "==", phone)
       .where("type",             "==", "post_visit_feedback")
-      .where("firedAt",          "!=", null)
       .where("feedbackReceived", "==", null)
       .orderBy("firedAt", "desc")
       .limit(1)
@@ -1800,23 +1885,33 @@ async function handleInbound(event: unknown): Promise<void> {
   // ── Caregiver keyword handling ──────────────────────────────────────────────
   if (session.userType === "caregiver") {
     // ── Swap acceptance/decline — when another caregiver was asked to cover ──
+    // Stale shift-swap requests (> 4h old) shouldn't hijack unrelated caregiver
+    // messages weeks later. Clear the lingering field on stale state.
+    if ((session as any).pendingSwapRequestId) {
+      const swapSetAt   = (session as any).pendingSwapSetAt as string | undefined;
+      const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+      if (swapSetAt && swapSetAt < fourHoursAgo) {
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingSwapRequestId: admin.firestore.FieldValue.delete(),
+          pendingSwapFromName:  admin.firestore.FieldValue.delete(),
+          pendingSwapSetAt:     admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+        (session as any).pendingSwapRequestId = undefined;
+      }
+    }
     if ((session as any).pendingSwapRequestId) {
       const swapRequestId  = (session as any).pendingSwapRequestId as string;
       const fromName       = (session as any).pendingSwapFromName as string ?? "A caregiver";
-      const Anthropic      = (await import("@anthropic-ai/sdk")).default;
-      const _swapClaude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const _swapRes       = await _swapClaude.messages.create({
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 10,
-        system:
-          "The caregiver is responding to a shift-swap request. " +
+      const swapRaw = await quickComplete(
+        "The caregiver is responding to a shift-swap request. " +
           "Reply ACCEPT if they agree to cover the shift. " +
           "Reply DECLINE if they refuse. " +
           "Reply UNSURE if it is unclear. " +
           "Reply with exactly one word.",
-        messages: [{ role: "user", content: text }],
-      });
-      const swapDecision = ((_swapRes.content[0] as { text: string }).text ?? "").trim().toUpperCase();
+        text,
+        { maxTokens: 10 },
+      ).catch(() => "");
+      const swapDecision = swapRaw.trim().toUpperCase();
 
       if (swapDecision === "ACCEPT") {
         const cgName = session.caregiverId
@@ -2148,45 +2243,61 @@ async function handleInbound(event: unknown): Promise<void> {
     }
 
     // ── Wellbeing check-in response: "4 3 5" style reply ──────────────────────
+    // Only fires if the message is ONLY three numbers separated by whitespace
+    // — otherwise "I'm 32, need help 3 mornings" used to hijack this handler.
+    // Also gated to 7 days of staleness from when the check-in was sent.
     if ((session as any).pendingWellbeingCheckin) {
-      const parts = text.trim().split(/\s+/).map(Number).filter(n => !isNaN(n) && n >= 1 && n <= 5);
-      if (parts.length === 3) {
-        const [energy, stress, satisfaction] = parts;
-        await db.collection("wellbeing_checkins").add({
-          caregiverId: session.caregiverId ?? session.userId ?? phone,
-          phone,
-          energy,
-          stress,
-          satisfaction,
-          recordedAt: new Date().toISOString(),
-        });
+      const sentAtIso = (session as any).wellbeingCheckinSentAt as string | undefined;
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const isFresh = !sentAtIso || sentAtIso > sevenDaysAgo;
+      const trimmed = text.trim();
+      const isPureRatingReply = /^[1-5](?:\s+[1-5]){2}$/.test(trimmed);
+
+      if (!isFresh) {
         await db.collection("agent_sessions").doc(phone).update({
           pendingWellbeingCheckin: admin.firestore.FieldValue.delete(),
-        });
-        const avg = (energy + stress + satisfaction) / 3;
-        const reply = avg < 3
-          ? `Thank you for being honest 💙 Your scores tell me you might need some support. Would you like to:\n\n1. Adjust your schedule\n2. Talk to our support team\n3. Get info on mental health resources\n\nReply 1, 2, or 3 — or just ignore this if you're okay.`
-          : `Checked in. Sounds like things are going well — your clients are in good hands.`;
-        await sendMessage(chatId, reply);
-        return;
+          wellbeingCheckinSentAt:  admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+        (session as any).pendingWellbeingCheckin = undefined;
+      } else if (!isPureRatingReply) {
+        // Don't hijack — message isn't a rating answer. Fall through.
+      } else {
+        const parts = trimmed.split(/\s+/).map(Number).filter(n => !isNaN(n) && n >= 1 && n <= 5);
+        if (parts.length === 3) {
+          const [energy, stress, satisfaction] = parts;
+          await db.collection("wellbeing_checkins").add({
+            caregiverId: session.caregiverId ?? session.userId ?? phone,
+            phone,
+            energy,
+            stress,
+            satisfaction,
+            recordedAt: new Date().toISOString(),
+          });
+          await db.collection("agent_sessions").doc(phone).update({
+            pendingWellbeingCheckin: admin.firestore.FieldValue.delete(),
+            wellbeingCheckinSentAt:  admin.firestore.FieldValue.delete(),
+          });
+          const avg = (energy + stress + satisfaction) / 3;
+          const reply = avg < 3
+            ? `Thank you for being honest 💙 Your scores tell me you might need some support. Would you like to:\n\n1. Adjust your schedule\n2. Talk to our support team\n3. Get info on mental health resources\n\nReply 1, 2, or 3 — or just ignore this if you're okay.`
+            : `Checked in. Sounds like things are going well — your clients are in good hands.`;
+          await sendMessage(chatId, reply);
+          return;
+        }
       }
     }
 
     // Caregiver rescheduling — parse new times and notify family
     if ((session as any).caregiverRescheduling) {
-      const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
       let timeList: string[] = [];
       try {
-        const parsed = await claude.messages.create({
-          model:      "claude-haiku-4-5-20251001",
-          max_tokens: 100,
-          system:
-            "Extract interview time proposals from this message as a JSON array of human-readable strings. " +
+        const parsedRaw = await quickComplete(
+          "Extract interview time proposals from this message as a JSON array of human-readable strings. " +
             "Reply with only a JSON array, e.g. [\"Tuesday 2pm\",\"Wednesday 10am\"]. Keep them short.",
-          messages: [{ role: "user", content: text }],
-        });
-        timeList = JSON.parse((parsed.content[0] as { text: string }).text ?? "[]") as string[];
+          text,
+          { maxTokens: 100 },
+        );
+        timeList = JSON.parse(parsedRaw || "[]") as string[];
       } catch { /* fall through — use raw text below */ }
       const timesText = timeList.length > 0 ? timeList.join(", ") : text;
 
@@ -2277,13 +2388,8 @@ async function handleInbound(event: unknown): Promise<void> {
     // Runs only when no exact keyword matched and no state machine is active.
     // Catches "I just arrived", "I'm done now", "running about 10 min late", etc.
     {
-      const Anthropic   = (await import("@anthropic-ai/sdk")).default;
-      const _nluClaude  = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const _nluRes     = await _nluClaude.messages.create({
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 15,
-        system:
-          "Classify this caregiver message as one of: ARRIVED, DONE, LATE, ISSUE, CONFIRM, RESCHEDULE, NONE. " +
+      const nluRaw = await quickComplete(
+        "Classify this caregiver message as one of: ARRIVED, DONE, LATE, ISSUE, CONFIRM, RESCHEDULE, NONE. " +
           "ARRIVED = caregiver arrived at or is entering a care visit. " +
           "DONE = caregiver has finished a care visit. " +
           "LATE = caregiver is running late to a visit. " +
@@ -2292,9 +2398,10 @@ async function handleInbound(event: unknown): Promise<void> {
           "RESCHEDULE = caregiver wants to change the time of an appointment. " +
           "NONE = does not fit any of the above. " +
           "Reply with exactly one word.",
-        messages: [{ role: "user", content: text }],
-      });
-      const nluAction = ((_nluRes.content[0] as { text: string }).text ?? "").trim().toUpperCase();
+        text,
+        { maxTokens: 15 },
+      ).catch(() => "");
+      const nluAction = nluRaw.trim().toUpperCase();
       if (nluAction in KEYWORDS) {
         if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
         try { await KEYWORDS[nluAction](); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
@@ -2345,6 +2452,19 @@ async function handleInbound(event: unknown): Promise<void> {
   }
 
   // ── Shift hours APPROVE / DISPUTE (client iMessage reply) ───────────────────
+  // Clear stale pending approvals (>72h old) so APPROVE/DISPUTE replies don't
+  // hit a long-resolved shift.
+  if ((session as any).pendingShiftApproval) {
+    const setAt = (session as any).pendingShiftApprovalSetAt as string | undefined;
+    const seventyTwoHoursAgo = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+    if (setAt && setAt < seventyTwoHoursAgo) {
+      await db.collection("agent_sessions").doc(phone).update({
+        pendingShiftApproval:      admin.firestore.FieldValue.delete(),
+        pendingShiftApprovalSetAt: admin.firestore.FieldValue.delete(),
+      }).catch(() => {});
+      (session as any).pendingShiftApproval = undefined;
+    }
+  }
   if ((session as any).pendingShiftApproval && (norm === "APPROVE" || norm.startsWith("DISPUTE"))) {
     const { appointmentId, amount, caregiverName } = (session as any).pendingShiftApproval;
     if (norm === "APPROVE") {
@@ -2467,6 +2587,22 @@ async function handleInbound(event: unknown): Promise<void> {
   }
 
   // ── Timesheet approval flow (multi-step state machine) ───────────────────
+  // Drop stale timesheet state (>7 days) so old APPROVE/DISPUTE prompts don't
+  // hijack unrelated future replies.
+  if ((session as any).timesheetStep) {
+    const setAt = (session as any).pendingTimesheetSetAt as string | undefined;
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    if (setAt && setAt < sevenDaysAgo) {
+      await db.collection("agent_sessions").doc(phone).update({
+        timesheetStep:         admin.firestore.FieldValue.delete(),
+        pendingTimesheetId:    admin.firestore.FieldValue.delete(),
+        pendingTimesheetDesc:  admin.firestore.FieldValue.delete(),
+        pendingTimesheetQueue: admin.firestore.FieldValue.delete(),
+        pendingTimesheetSetAt: admin.firestore.FieldValue.delete(),
+      }).catch(() => {});
+      (session as any).timesheetStep = undefined;
+    }
+  }
   if ((session as any).timesheetStep) {
     if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
     try {
@@ -2548,23 +2684,7 @@ async function handleInbound(event: unknown): Promise<void> {
 
     // ── BOOKING_CONFIRM — natural language YES ("sure", "sounds good", etc.) ──
     if (intent === "BOOKING_CONFIRM") {
-      if ((session as any).awaitingRecurringConfirmation) {
-        await handleRecurringConfirm(phone, chatId, session);
-        return;
-      }
-      if (pendingTask && pendingTask.data().type === "booking_confirmation") {
-        try {
-          await executeBookings(pendingTask.id, phone);
-        } catch (err) {
-          console.error("executeBookings failed (BOOKING_CONFIRM):", err);
-          await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
-          await sendMessage(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
-          const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
-          const { runMatchingForClient: rmfc } = await import("../agents/matchingAgent");
-          await rmfc(phone, chatId, sd, sd).catch(() => {});
-        }
-        return;
-      }
+      // Interview and cancel confirm are time-sensitive — check before recurring to avoid stale flag collision
       if ((session as any).pendingInterviewConfirm) {
         await handleInterviewConfirm(phone, chatId, session);
         return;
@@ -2599,24 +2719,28 @@ async function handleInbound(event: unknown): Promise<void> {
         await sendMessage(chatId, cancelConfirmMsgA);
         return;
       }
+      if ((session as any).awaitingRecurringConfirmation) {
+        await handleRecurringConfirm(phone, chatId, session);
+        return;
+      }
+      if (pendingTask && pendingTask.data().type === "booking_confirmation") {
+        try {
+          await executeBookings(pendingTask.id, phone);
+        } catch (err) {
+          console.error("executeBookings failed (BOOKING_CONFIRM):", err);
+          await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
+          await sendMessage(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
+          const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
+          const { runMatchingForClient: rmfc } = await import("../agents/matchingAgent");
+          await rmfc(phone, chatId, sd, sd).catch(() => {});
+        }
+        return;
+      }
     }
 
     // ── BOOKING_DECLINE — natural language NO ("never mind", "don't book", etc.) ──
     if (intent === "BOOKING_DECLINE") {
-      if ((session as any).awaitingRecurringConfirmation) {
-        await db.collection("agent_sessions").doc(phone).update({
-          awaitingRecurringConfirmation: admin.firestore.FieldValue.delete(),
-          pendingRecurringSchedule:      admin.firestore.FieldValue.delete(),
-        });
-        await sendMessage(chatId, "No problem — I'll keep each visit booked individually. You can set up a recurring schedule anytime.");
-        return;
-      }
-      if (pendingTask && pendingTask.data().type === "booking_confirmation") {
-        await pendingTask.ref.update({ status: "declined" });
-        await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() });
-        await sendMessage(chatId, "No problem — booking cancelled. Want me to look at different dates or a different caregiver?");
-        return;
-      }
+      // Interview and cancel confirms are time-sensitive — check before recurring to avoid stale flag collision
       if ((session as any).pendingInterviewConfirm) {
         const pending = (session as any).pendingInterviewConfirm as { docId: string; caregiverName: string; mutualTime: string };
         await db.collection("agent_sessions").doc(phone).update({ pendingInterviewConfirm: admin.firestore.FieldValue.delete() });
@@ -2655,6 +2779,20 @@ async function handleInbound(event: unknown): Promise<void> {
       if ((session as any).pendingCancelConfirm) {
         await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() });
         await sendMessage(chatId, "Got it — visit is still on! Let me know if you need anything.");
+        return;
+      }
+      if ((session as any).awaitingRecurringConfirmation) {
+        await db.collection("agent_sessions").doc(phone).update({
+          awaitingRecurringConfirmation: admin.firestore.FieldValue.delete(),
+          pendingRecurringSchedule:      admin.firestore.FieldValue.delete(),
+        });
+        await sendMessage(chatId, "No problem — I'll keep each visit booked individually. You can set up a recurring schedule anytime.");
+        return;
+      }
+      if (pendingTask && pendingTask.data().type === "booking_confirmation") {
+        await pendingTask.ref.update({ status: "declined" });
+        await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() });
+        await sendMessage(chatId, "No problem — booking cancelled. Want me to look at different dates or a different caregiver?");
         return;
       }
     }
@@ -2707,29 +2845,11 @@ async function handleInbound(event: unknown): Promise<void> {
 
     // ── YES — booking, recurring setup, or interview confirmation ───────────────
     if (norm === "YES" || norm === "Y") {
-      // YES to recurring schedule setup
-      if ((session as any).awaitingRecurringConfirmation) {
-        await handleRecurringConfirm(phone, chatId, session);
-        return;
-      }
-      if (pendingTask && pendingTask.data().type === "booking_confirmation") {
-        try {
-          await executeBookings(pendingTask.id, phone);
-        } catch (err) {
-          console.error("executeBookings failed (YES):", err);
-          await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
-          await sendMessage(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
-          const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
-          const { runMatchingForClient: rmfc4 } = await import("../agents/matchingAgent");
-          await rmfc4(phone, chatId, sd, sd).catch(() => {});
-        }
-        return;
-      }
+      // Interview and cancel confirm are time-sensitive — check before recurring to avoid stale flag collision
       if ((session as any).pendingInterviewConfirm) {
         await handleInterviewConfirm(phone, chatId, session);
         return;
       }
-      // YES to cancel confirmation
       if ((session as any).pendingCancelConfirm) {
         const { appointmentId } = (session as any).pendingCancelConfirm as { appointmentId: string };
         const apptRef = db.collection("appointments").doc(appointmentId);
@@ -2737,7 +2857,6 @@ async function handleInbound(event: unknown): Promise<void> {
         if (apptSnap.exists) {
           const appt = apptSnap.data()!;
           await apptRef.update({ status: "cancelled_by_client", cancelledAt: new Date().toISOString() });
-          // Notify caregiver
           const cgSnap = await db.collection("caregivers").doc(appt.caregiverId).get();
           const cgPhone = cgSnap.data()?.phone as string | undefined;
           if (cgPhone) {
@@ -2763,33 +2882,29 @@ async function handleInbound(event: unknown): Promise<void> {
         await sendMessage(chatId, cancelConfirmMsgB);
         return;
       }
+      // YES to recurring schedule setup
+      if ((session as any).awaitingRecurringConfirmation) {
+        await handleRecurringConfirm(phone, chatId, session);
+        return;
+      }
+      if (pendingTask && pendingTask.data().type === "booking_confirmation") {
+        try {
+          await executeBookings(pendingTask.id, phone);
+        } catch (err) {
+          console.error("executeBookings failed (YES):", err);
+          await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
+          await sendMessage(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
+          const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
+          const { runMatchingForClient: rmfc4 } = await import("../agents/matchingAgent");
+          await rmfc4(phone, chatId, sd, sd).catch(() => {});
+        }
+        return;
+      }
     }
 
     // ── NO — recurring setup declined, booking declined, or interview time rejected ──
     if (norm === "NO" || norm === "N") {
-      // NO to recurring schedule setup
-      if ((session as any).awaitingRecurringConfirmation) {
-        await db.collection("agent_sessions").doc(phone).update({
-          awaitingRecurringConfirmation: admin.firestore.FieldValue.delete(),
-          pendingRecurringSchedule:      admin.firestore.FieldValue.delete(),
-        });
-        await sendMessage(chatId,
-          "No problem — I'll keep each visit booked individually. You can set up a recurring schedule anytime."
-        );
-        return;
-      }
-      // NO to booking summary
-      if (pendingTask && pendingTask.data().type === "booking_confirmation") {
-        await pendingTask.ref.update({ status: "declined" });
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingCancelConfirm: admin.firestore.FieldValue.delete(),
-        });
-        await sendMessage(chatId,
-          "No problem — booking cancelled. Want me to look at different dates or a different caregiver?"
-        );
-        return;
-      }
-      // NO to interview time — show other available times or offer alternatives
+      // Interview and cancel confirms are time-sensitive — check before recurring to avoid stale flag collision
       if ((session as any).pendingInterviewConfirm) {
         const pending = (session as any).pendingInterviewConfirm as {
           docId: string; caregiverName: string; mutualTime: string;
@@ -2826,9 +2941,44 @@ async function handleInbound(event: unknown): Promise<void> {
         await sendMessage(chatId, "Got it — visit is still on! Let me know if you need anything.");
         return;
       }
+      // NO to recurring schedule setup
+      if ((session as any).awaitingRecurringConfirmation) {
+        await db.collection("agent_sessions").doc(phone).update({
+          awaitingRecurringConfirmation: admin.firestore.FieldValue.delete(),
+          pendingRecurringSchedule:      admin.firestore.FieldValue.delete(),
+        });
+        await sendMessage(chatId,
+          "No problem — I'll keep each visit booked individually. You can set up a recurring schedule anytime."
+        );
+        return;
+      }
+      // NO to booking summary
+      if (pendingTask && pendingTask.data().type === "booking_confirmation") {
+        await pendingTask.ref.update({ status: "declined" });
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingCancelConfirm: admin.firestore.FieldValue.delete(),
+        });
+        await sendMessage(chatId,
+          "No problem — booking cancelled. Want me to look at different dates or a different caregiver?"
+        );
+        return;
+      }
     }
 
     // ── CONFIRM / SKIP — finalizes a pending task selection made by 1/2/3 ──────
+    // Drop stale pendingTaskConfirm (>1h old) so an old caregiver-selection
+    // doesn't get finalized weeks later by an unrelated CONFIRM/SKIP keyword.
+    if ((session as any).pendingTaskConfirm) {
+      const setAt = (session as any).pendingTaskConfirmSetAt as string | undefined;
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      if (setAt && setAt < oneHourAgo) {
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingTaskConfirm:      admin.firestore.FieldValue.delete(),
+          pendingTaskConfirmSetAt: admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+        (session as any).pendingTaskConfirm = undefined;
+      }
+    }
     if (norm === "CONFIRM" && (session as any).pendingTaskConfirm) {
       const { finalizeTaskApproval } = await import("../agents/taskApprovalHandler");
       await finalizeTaskApproval(phone, chatId, session as Record<string, unknown>);
@@ -2847,18 +2997,14 @@ async function handleInbound(event: unknown): Promise<void> {
       { interviewId: string; caregiverName: string; caregiverId?: string } | undefined;
     if (pendingOutcome && norm !== "HIRE" && norm !== "MAYBE" && norm !== "PASS") {
       try {
-        const Anthropic = (await import("@anthropic-ai/sdk")).default;
-        const _ac = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        const _r = await _ac.messages.create({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 10,
-          system:
-            "The user just interviewed a caregiver and is sharing their thoughts. " +
+        const classRaw = await quickComplete(
+          "The user just interviewed a caregiver and is sharing their thoughts. " +
             "Classify as HIRE (positive, wants to proceed), MAYBE (uncertain, not sure), " +
             "or PASS (negative, concerns, didn't click). Reply with one word only.",
-          messages: [{ role: "user", content: text }],
-        });
-        const classified = ((_r.content[0] as { text: string }).text ?? "").trim().toUpperCase();
+          text,
+          { maxTokens: 10 },
+        );
+        const classified = classRaw.trim().toUpperCase();
         if (classified === "HIRE" || classified === "MAYBE" || classified === "PASS") {
           // Re-enter with classified keyword — will be picked up by the checks below
           (text as any); // text is const; shadow norm instead
@@ -2996,9 +3142,41 @@ async function handleInbound(event: unknown): Promise<void> {
     }
 
     // ── Caregiver selection (numbers after match presentation) ────────────────
-    if ((session as any).pendingMatches?.length > 0 && /[123]|all/i.test(text)) {
-      await handleInterviewSelection(phone, chatId, text, session);
-      return;
+    // Only fire when ALL of:
+    //   - pendingMatches is non-empty
+    //   - pendingMatches was set within the last 2 hours (older state is stale)
+    //   - text is JUST a selection answer ("1", "2", "1 and 2", "all", "1,3"),
+    //     not a sentence that happens to contain a digit ("3 mornings a week"
+    //     used to trip the old loose /[123]/ regex)
+    // Anything else falls through to the normal intent routing. If the user
+    // explicitly says "find a caregiver" while pendingMatches is stale, we
+    // clear it below so they get a fresh search instead of being asked to
+    // pick from a list they never saw.
+    const stalePendingMatches = (session as any).pendingMatches as Array<unknown> | undefined;
+    if (stalePendingMatches && stalePendingMatches.length > 0) {
+      const setAt = (session as any).pendingMatchesSetAt as string | undefined;
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const isFresh = !setAt || setAt > twoHoursAgo;
+      const trimmedNorm = norm.replace(/[.!?]+$/, "").trim();
+      const isPureSelectionAnswer = /^(?:all|none|skip|pass|[1-9](?:\s*(?:,|and|&|\s)\s*[1-9])*)$/i.test(trimmedNorm);
+
+      if (isFresh && isPureSelectionAnswer) {
+        await handleInterviewSelection(phone, chatId, text, session);
+        return;
+      }
+
+      // User isn't picking from the list — if their intent is to start a new
+      // search (FIND_CAREGIVER, REBOOK_REQUEST) or the list is stale, clear
+      // the lingering state so it doesn't keep hijacking unrelated messages.
+      const isFreshSearchIntent = intent === "FIND_CAREGIVER" || intent === "REBOOK_REQUEST" || intent === "POST_JOB";
+      if (!isFresh || isFreshSearchIntent) {
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingMatches:      admin.firestore.FieldValue.delete(),
+          pendingMatchesSetAt: admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+        (session as any).pendingMatches = undefined;
+      }
+      // Otherwise fall through to normal intent routing.
     }
 
     // ── Recurring schedule: RESUME keyword ───────────────────────────────────
@@ -3038,20 +3216,16 @@ async function handleInbound(event: unknown): Promise<void> {
     }
 
     if (intent === "ADD_FAMILY_MEMBER") {
-      const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-      const extraction = await claude.messages.create({
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 80,
-        system:     "Extract the name and phone number from this message. Reply with JSON only: {\"name\": \"...\", \"phone\": \"+1...\"}. If no phone found, phone = null.",
-        messages:   [{ role: "user", content: text }],
-      });
+      const extractionRaw = await quickComplete(
+        "Extract the name and phone number from this message. Reply with JSON only: {\"name\": \"...\", \"phone\": \"+1...\"}. If no phone found, phone = null.",
+        text,
+        { maxTokens: 80 },
+      ).catch(() => "{}");
 
       let memberName: string | null = null;
       let memberPhone: string | null = null;
       try {
-        const parsed = JSON.parse((extraction.content[0] as { text: string }).text ?? "{}");
+        const parsed = JSON.parse(extractionRaw || "{}");
         memberName  = parsed.name  ?? null;
         memberPhone = parsed.phone ?? null;
       } catch { /* */ }
@@ -3085,20 +3259,16 @@ async function handleInbound(event: unknown): Promise<void> {
     }
 
     if (intent === "REMOVE_FAMILY_MEMBER") {
-      const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-      const extraction = await claude.messages.create({
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 80,
-        system:     "Extract the name and/or phone number of the person to remove from this message. Reply with JSON only: {\"name\": \"...\", \"phone\": \"+1...\"}. If no phone found, phone = null.",
-        messages:   [{ role: "user", content: text }],
-      });
+      const extractionRaw = await quickComplete(
+        "Extract the name and/or phone number of the person to remove from this message. Reply with JSON only: {\"name\": \"...\", \"phone\": \"+1...\"}. If no phone found, phone = null.",
+        text,
+        { maxTokens: 80 },
+      ).catch(() => "{}");
 
       let targetName: string | null = null;
       let targetPhone: string | null = null;
       try {
-        const parsed = JSON.parse((extraction.content[0] as { text: string }).text ?? "{}");
+        const parsed = JSON.parse(extractionRaw || "{}");
         targetName  = parsed.name  ?? null;
         targetPhone = parsed.phone ?? null;
       } catch { /* */ }
@@ -3148,22 +3318,17 @@ async function handleInbound(event: unknown): Promise<void> {
     if ((session as any).hireMode && (session as any).hireModeDate) {
       const hire      = (session as any).hireMode      as { caregiverName: string; caregiverId: string };
       const dateStr   = (session as any).hireModeDate  as string;
-      const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-      const parsedSchedule = await claude.messages.create({
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 120,
-        system:
-          "Extract a weekly care schedule from this message. " +
+      const parsedScheduleRaw = await quickComplete(
+        "Extract a weekly care schedule from this message. " +
           "Reply with only a JSON object: { \"days\": [\"Monday\",\"Wednesday\",\"Friday\"], " +
           "\"startTime\": \"9:00 AM\", \"endTime\": \"1:00 PM\", \"durationHours\": 4 }. " +
           "days must be full day names. durationHours is a number.",
-        messages: [{ role: "user", content: text }],
-      });
+        text,
+        { maxTokens: 120 },
+      ).catch(() => "null");
       let schedule: { days: string[]; startTime: string; endTime: string; durationHours: number } | null = null;
       try {
-        schedule = JSON.parse((parsedSchedule.content[0] as { text: string }).text ?? "null");
+        schedule = JSON.parse(parsedScheduleRaw || "null");
       } catch { /* */ }
 
       if (!schedule || !schedule.days?.length) {
@@ -3234,17 +3399,13 @@ async function handleInbound(event: unknown): Promise<void> {
 
     // ── hireMode step A — date reply ──────────────────────────────────────────
     if ((session as any).hireMode && !(session as any).hireModeDate) {
-      const Anthropic  = (await import("@anthropic-ai/sdk")).default;
-      const claude     = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const parsedDate = await claude.messages.create({
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 20,
-        system:
-          `Today is ${new Date().toISOString().slice(0, 10)}. ` +
+      const parsedDateRaw = await quickComplete(
+        `Today is ${new Date().toISOString().slice(0, 10)}. ` +
           "The user is choosing a start date for care. Reply with only a YYYY-MM-DD date string, nothing else.",
-        messages: [{ role: "user", content: text }],
-      });
-      const dateStr = ((parsedDate.content[0] as { text: string }).text ?? "").trim();
+        text,
+        { maxTokens: 20 },
+      ).catch(() => "");
+      const dateStr = parsedDateRaw.trim();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
         await sendMessage(chatId, "I didn't catch that date — could you try again? (e.g. \"next Monday\" or \"May 19\")");
         return;
@@ -3275,17 +3436,13 @@ async function handleInbound(event: unknown): Promise<void> {
       // Parse which time the family chose
       const reqSnap = await db.collection("interview_requests").doc(sel.interviewRequestId).get();
       const availability = (reqSnap.data()?.caregiverAvailability ?? []) as string[];
-      const Anthropic    = (await import("@anthropic-ai/sdk")).default;
-      const claude       = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const parsed       = await claude.messages.create({
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 60,
-        system:
-          `Available times: ${availability.join(", ")}. ` +
+      const parsedChosen = await quickComplete(
+        `Available times: ${availability.join(", ")}. ` +
           "The user picked one of these times. Reply with only the exact string from the list that best matches their reply, or 'NONE' if no match.",
-        messages: [{ role: "user", content: text }],
-      });
-      const chosen = ((parsed.content[0] as { text: string }).text ?? "").trim();
+        text,
+        { maxTokens: 60 },
+      ).catch(() => "");
+      const chosen = parsedChosen.trim();
       if (chosen === "NONE" || !availability.includes(chosen)) {
         await sendMessage(chatId, `I didn't catch that — which of these works for you?\n\n${availability.join("\n")}\n\nOr reply PASS to find someone else.`);
         return;
@@ -3331,17 +3488,13 @@ async function handleInbound(event: unknown): Promise<void> {
         caregiverId: string; caregiverName: string;
         startTime: string; endTime: string; durationHours: number;
       };
-      const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const claude    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const parsedDate = await claude.messages.create({
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 20,
-        system:
-          `Today is ${new Date().toISOString().slice(0, 10)}. ` +
+      const parsedDateRaw = await quickComplete(
+        `Today is ${new Date().toISOString().slice(0, 10)}. ` +
           "The user is choosing a date for a care visit. Reply with only a YYYY-MM-DD date string, nothing else.",
-        messages: [{ role: "user", content: text }],
-      });
-      const dateStr = ((parsedDate.content[0] as { text: string }).text ?? "").trim();
+        text,
+        { maxTokens: 20 },
+      ).catch(() => "");
+      const dateStr = parsedDateRaw.trim();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
         await sendMessage(chatId, "I didn't catch that date — could you try again? (e.g. \"May 19\" or \"next Monday\")");
         return;
@@ -3736,6 +3889,25 @@ async function handleInbound(event: unknown): Promise<void> {
       }).catch(console.error);
     }
 
+    // ── Trivial quick-reply bypass — short generic greetings/thanks ─────────
+    // For QUESTION-intent messages with no entity content, skip the full
+    // tool-use loop and answer with gpt-4o-mini in ~1s. Conservative heuristic:
+    // anything ambiguous falls through to runQaAgent below.
+    if (intent === "QUESTION" && isTrivialQuickReply(text)) {
+      const quickReply = await runQuickReply({
+        text,
+        phone,
+        chatId,
+        userId:   session.userId ?? "",
+        seniorId: session.seniorId ?? session.userId ?? "",
+        userType: session.userType ?? "client",
+      });
+      if (zepThreadId && quickReply) {
+        addAssistantMessageToZep({ threadId: zepThreadId, content: quickReply }).catch(console.error);
+      }
+      return;
+    }
+
     const qaReply = await runQaAgent({
       text,
       phone,
@@ -3768,11 +3940,22 @@ async function handleInbound(event: unknown): Promise<void> {
   } catch (err) {
     console.error("handleInbound error:", err);
     await stopTyping(chatId).catch(() => {});
-    await sendMessage(chatId, "I'm having trouble right now. For urgent concerns, please call 911.");
+    // Don't broadcast brokenness. Send a warm, natural deflection and route
+    // the error to the admin alert table so the team can follow up.
+    await sendMessage(chatId, "Give me a moment on that — I'll come back to you shortly.").catch(() => {});
 
     await db.collection("agent_error_log").add({
       phone, error: String(err), text, createdAt: new Date().toISOString(),
     }).catch(() => {/* non-critical */});
+    await db.collection("admin_alerts").add({
+      type:      "handle_inbound_failure",
+      phone,
+      error:     String(err),
+      text:      text.slice(0, 300),
+      severity:  "medium",
+      createdAt: new Date().toISOString(),
+      resolved:  false,
+    }).catch(() => {});
   } finally {
     await stopTyping(chatId).catch(() => {});
   }
@@ -3816,42 +3999,75 @@ async function handleMessageFailed(event: unknown): Promise<void> {
 
 async function handlePhoneNumberStatusUpdated(event: unknown): Promise<void> {
   const ev          = event as any;
-  const phoneNumber = ev.data?.phone_number     as string | undefined;
-  const newHealth   = ev.data?.new_health_status as string | undefined;
-  const prevHealth  = ev.data?.previous_health_status as string | undefined;
+  const phoneNumber = ev.data?.phone_number          as string | undefined;
+  const newStatus   = (ev.data?.new_status           as string | undefined)?.toUpperCase();
+  const newHealth   = (ev.data?.new_health_status    as string | undefined)?.toLowerCase();
+  const prevHealth  = (ev.data?.previous_health_status as string | undefined)?.toLowerCase();
   const now         = new Date().toISOString();
 
   if (!phoneNumber) return;
 
   await db.collection("linq_phone_health").doc(phoneNumber).set({
     phoneNumber,
+    status:       newStatus,
     healthStatus: newHealth,
     updatedAt:    now,
   }, { merge: true }).catch(() => {});
 
+  // ── FLAGGED: line is actively degraded — open circuit breaker immediately ────
+  if (newStatus === "FLAGGED") {
+    await db.collection("system_config").doc("linq_circuit_breaker").set({
+      status:    "open",
+      reason:    `Linq line ${phoneNumber} status FLAGGED`,
+      openedAt:  now,
+      phone:     phoneNumber,
+    }, { merge: true }).catch(() => {});
+    await db.collection("admin_alerts").add({
+      type:      "linq_line_flagged",
+      phoneNumber,
+      severity:  "critical",
+      message:   `Linq line ${phoneNumber} is FLAGGED — message delivery degraded. Halting outbound sends.`,
+      createdAt: now,
+      resolved:  false,
+    }).catch(() => {});
+    console.error("linqWebhook: circuit breaker OPENED — Linq line FLAGGED", { phoneNumber });
+    return;
+  }
+
+  // ── ACTIVE restored: close circuit breaker if it was opened for this line ────
+  if (newStatus === "ACTIVE") {
+    const cb = await db.collection("system_config").doc("linq_circuit_breaker").get().catch(() => null);
+    if (cb?.data()?.phone === phoneNumber && cb?.data()?.status === "open") {
+      await db.collection("system_config").doc("linq_circuit_breaker").set({
+        status: "closed", closedAt: now,
+      }, { merge: true }).catch(() => {});
+      console.info("linqWebhook: circuit breaker CLOSED — Linq line restored ACTIVE", { phoneNumber });
+    }
+  }
+
+  // ── Health status degraded ────────────────────────────────────────────────────
   const degraded = newHealth === "at_risk" || newHealth === "critical";
   if (degraded) {
     await db.collection("admin_alerts").add({
-      type:         "linq_phone_health_degraded",
+      type:      "linq_phone_health_degraded",
       phoneNumber,
       prevHealth,
       newHealth,
-      severity:     newHealth === "critical" ? "critical" : "high",
-      message:      `Linq line ${phoneNumber} health changed from ${prevHealth ?? "unknown"} to ${newHealth}. ${newHealth === "critical" ? "Pause outbound messaging immediately." : "Reduce send volume."}`,
-      createdAt:    now,
-      resolved:     false,
+      severity:  newHealth === "critical" ? "critical" : "high",
+      message:   `Linq line ${phoneNumber} health: ${prevHealth ?? "unknown"} → ${newHealth}. ${newHealth === "critical" ? "Pause outbound messaging immediately." : "Reduce send volume."}`,
+      createdAt: now,
+      resolved:  false,
     }).catch(() => {});
-
     console.error("linqWebhook: phone number health degraded", { phoneNumber, prevHealth, newHealth });
 
     if (newHealth === "critical") {
       await db.collection("system_config").doc("linq_circuit_breaker").set({
-        status:    "open",
-        reason:    `Linq line ${phoneNumber} status went critical`,
-        openedAt:  now,
-        phone:     phoneNumber,
+        status:   "open",
+        reason:   `Linq line ${phoneNumber} health went critical`,
+        openedAt: now,
+        phone:    phoneNumber,
       }, { merge: true }).catch(() => {});
-      console.error("linqWebhook: circuit breaker OPENED for outbound messaging — Linq line critical", { phoneNumber });
+      console.error("linqWebhook: circuit breaker OPENED — Linq line health critical", { phoneNumber });
     }
   }
 }
@@ -3943,41 +4159,64 @@ async function handleReactionAdded(event: any): Promise<void> {
 // ── Webhook HTTPS function ────────────────────────────────────────────────────
 
 export const linqWebhook = functions
-  .runWith({ secrets: ["BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID", "CREDENTIAL_VAULT_KEY"] })
+  .runWith({
+    memory: "1GB",
+    timeoutSeconds: 180,
+    secrets: ["BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID", "CREDENTIAL_VAULT_KEY"],
+  })
   .https.onRequest(async (req, res) => {
-  res.status(200).send("ok");
+  // IMPORTANT: do NOT call res.send before the work — Cloud Functions Gen 1
+  // throttles CPU after the HTTP response is sent, which causes every async
+  // call (Firestore, Claude, OpenAI, Linq) to take 60–90s instead of milliseconds.
+  // We respond 200 at the end so the function gets full CPU during processing.
+  // Linq's webhook timeout is generous (≥10s); for slower turns the dedup
+  // logic skips Linq's retry delivery.
 
-  if (req.method !== "POST") return;
+  if (req.method !== "POST") { res.status(405).send("method not allowed"); return; }
 
-  const webhookSecret = process.env.LINQ_WEBHOOK_SECRET;
-  if (webhookSecret) {
-    const timestamp = req.headers["x-webhook-timestamp"] as string ?? "";
-    const signature = req.headers["x-webhook-signature"] as string ?? "";
-    const rawBody   = (req as any).rawBody as Buffer ?? Buffer.from(JSON.stringify(req.body));
-    if (!verifySignature(rawBody, timestamp, signature, webhookSecret)) {
-      console.warn("linqWebhook: invalid signature — ignoring");
-      return;
+  // Single deferred response — fires at the end no matter which branch ran.
+  let sent = false;
+  const sendOk = () => { if (!sent) { sent = true; res.status(200).send("ok"); } };
+
+  try {
+    const webhookSecret = process.env.LINQ_WEBHOOK_SECRET;
+    if (webhookSecret) {
+      const timestamp = req.headers["x-webhook-timestamp"] as string ?? "";
+      const signature = req.headers["x-webhook-signature"] as string ?? "";
+      const rawBody   = (req as any).rawBody as Buffer ?? Buffer.from(JSON.stringify(req.body));
+      if (!verifySignature(rawBody, timestamp, signature, webhookSecret)) {
+        console.warn("linqWebhook: invalid signature — ignoring");
+        sendOk();
+        return;
+      }
+      // FIX 9 — reject stale events (replay attack protection)
+      const tsNum = parseInt(timestamp, 10);
+      if (!isNaN(tsNum) && Math.abs(Date.now() / 1000 - tsNum) > 300) {
+        console.warn("linqWebhook: stale timestamp — ignoring");
+        sendOk();
+        return;
+      }
     }
-    // FIX 9 — reject stale events (replay attack protection)
-    const tsNum = parseInt(timestamp, 10);
-    if (!isNaN(tsNum) && Math.abs(Date.now() / 1000 - tsNum) > 300) {
-      console.warn("linqWebhook: stale timestamp — ignoring");
-      return;
+
+    const event = req.body;
+    // Linq v3 envelope uses event_type; fall back to X-Webhook-Event header for safety
+    const eventType: string = event.event_type ?? (req.headers["x-webhook-event"] as string) ?? "";
+
+    // Deduplicate all event types by event_id (Linq delivers at-least-once).
+    // Transaction makes the check-and-write atomic so concurrent deliveries don't both pass.
+    const eventId: string | undefined = event.event_id ?? event.id;
+    if (eventId) {
+      const logRef = db.collection("agent_event_log").doc(eventId);
+      let alreadyProcessed = false;
+      await db.runTransaction(async (tx) => {
+        const existing = await tx.get(logRef);
+        if (existing.exists) { alreadyProcessed = true; return; }
+        tx.set(logRef, { type: eventType, processedAt: new Date().toISOString() });
+      });
+      if (alreadyProcessed) { sendOk(); return; }
     }
-  }
 
-  const event = req.body;
-
-  // Deduplicate all event types by event_id (Linq delivers at-least-once)
-  const eventId: string | undefined = event.event_id ?? event.id;
-  if (eventId) {
-    const logRef  = db.collection("agent_event_log").doc(eventId);
-    const existing = await logRef.get();
-    if (existing.exists) return; // already processed
-    await logRef.set({ type: event.type, processedAt: new Date().toISOString() });
-  }
-
-  switch (event.type) {
+  switch (eventType) {
     case "message.received":
       await handleInbound(event).catch((err) =>
         console.error("linqWebhook handleInbound:", err)
@@ -4005,9 +4244,11 @@ export const linqWebhook = functions
       );
       break;
 
-    case "message.delivered":
+    case "message.delivered": {
+      const delivMsgId = event.data?.message_id ?? event.data?.id ?? event.data?.message?.id;
+      if (!delivMsgId) break;
       await db.collection("agent_conversations")
-        .where("messageId", "==", event.data?.message_id)
+        .where("messageId", "==", delivMsgId)
         .limit(1)
         .get()
         .then(async (snap) => {
@@ -4017,6 +4258,7 @@ export const linqWebhook = functions
         })
         .catch(() => {/* non-critical */});
       break;
+    }
 
     case "message.failed":
       await handleMessageFailed(event).catch((err) =>
@@ -4030,10 +4272,14 @@ export const linqWebhook = functions
       );
       break;
 
-    case "message.sent":
-      // Outbound confirmed — update conversation record with message_id for later receipt matching
+    case "message.sent": {
+      // Linq message.sent event shape can vary — log it once so we know the structure
+      const sentChatId = event.data?.chat?.id ?? event.data?.chat_id ?? event.data?.message?.chat_id;
+      const sentMsgId  = event.data?.id ?? event.data?.message_id ?? event.data?.message?.id;
+      console.info("linqWebhook message.sent data keys:", Object.keys(event.data ?? {}), "chatId:", sentChatId, "msgId:", sentMsgId);
+      if (!sentChatId) break;
       await db.collection("agent_conversations")
-        .where("chatId",    "==", event.data?.chat?.id)
+        .where("chatId",    "==", sentChatId)
         .where("direction", "==", "outbound")
         .orderBy("createdAt", "desc")
         .limit(1)
@@ -4041,7 +4287,7 @@ export const linqWebhook = functions
         .then(async (snap) => {
           if (!snap.empty) {
             await snap.docs[0].ref.update({
-              messageId: event.data?.id ?? event.data?.message_id,
+              messageId: sentMsgId,
               service:   event.data?.service,
               sentAt:    event.data?.sent_at ?? new Date().toISOString(),
             });
@@ -4049,11 +4295,14 @@ export const linqWebhook = functions
         })
         .catch(() => {/* non-critical */});
       break;
+    }
 
-    case "message.edited":
+    case "message.edited": {
       // Store latest text for the edited part
+      const editMsgId = event.data?.id ?? event.data?.message_id ?? event.data?.message?.id;
+      if (!editMsgId) break;
       await db.collection("agent_conversations")
-        .where("messageId", "==", event.data?.id ?? event.data?.message_id)
+        .where("messageId", "==", editMsgId)
         .limit(1)
         .get()
         .then(async (snap) => {
@@ -4066,6 +4315,7 @@ export const linqWebhook = functions
         })
         .catch(() => {/* non-critical */});
       break;
+    }
 
     case "reaction.removed":
       await db.collection("agent_reactions").add({
@@ -4114,7 +4364,7 @@ export const linqWebhook = functions
     case "chat.group_name_updated":
     case "chat.group_icon_updated":
       await db.collection("agent_group_events").add({
-        type:      event.type,
+        type:      eventType,
         chatId:    event.data?.chat_id,
         oldValue:  event.data?.old_value,
         newValue:  event.data?.new_value,
@@ -4124,14 +4374,19 @@ export const linqWebhook = functions
 
     case "chat.group_name_update_failed":
     case "chat.group_icon_update_failed":
-      console.warn(`linqWebhook: ${event.type}`, {
+      console.warn(`linqWebhook: ${eventType}`, {
         chatId:    event.data?.chat_id,
         errorCode: event.data?.error_code,
       });
       break;
 
     default:
-      console.warn(`linqWebhook: unhandled event type "${(event as any)?.type ?? "unknown"}"`);
+      console.warn(`linqWebhook: unhandled event type "${eventType || "unknown"}"`);
       break;
+    }
+  } catch (err) {
+    console.error("linqWebhook: top-level error", err);
+  } finally {
+    sendOk();
   }
 });

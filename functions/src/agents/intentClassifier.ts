@@ -1,5 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { callClaudeWithRetry } from "../utils/claudeRetry";
+import { quickComplete } from "../utils/openaiClient";
 
 export type Intent =
   | "STOP"
@@ -58,14 +57,6 @@ const VALID_INTENTS = new Set<Intent>([
   "PRESCRIPTION_REFILL", "NEW_PRESCRIPTION",
 ]);
 
-let _client: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!_client) {
-    _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  }
-  return _client;
-}
-
 // CANCEL is intentionally NOT here — it cancels a visit, not the account
 const STOP_WORDS = new Set(["STOP", "UNSUBSCRIBE", "QUIT", "END"]);
 
@@ -79,11 +70,10 @@ export async function classifyIntent(
   if (trimmed === "CANCEL") return "CANCEL_REQUEST";
   if (hasPendingTask && ["1", "2", "3"].includes(trimmed)) return "TASK_REPLY";
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6_000);
   try {
-    const response = await callClaudeWithRetry(getClient(), {
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 10,
-      system:
+    const raw = await quickComplete(
         "You classify a message sent to an AI care assistant named Cara. " +
         "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, REQUEST_REFUND, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, SWAP_REQUEST, CLIENT_SWAP_REQUEST, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, QUESTION.\n" +
         "STOP = opting out of all messages.\n" +
@@ -126,17 +116,17 @@ export async function classifyIntent(
         "PRESCRIPTION_REFILL = asking Cara to refill or renew an existing prescription at a pharmacy (e.g. 'refill mom's blood pressure medication', 'can you renew my prescription at CVS', 'I need a refill on Lisinopril', 'refill my prescription', 'request a refill at Walgreens', 'renew dad's medication').\n" +
         "NEW_PRESCRIPTION = asking for a brand new prescription for a new condition or medication not previously prescribed (e.g. 'I need a prescription for anxiety', 'get me a prescription for something for the pain', 'mom needs a prescription for her new diagnosis', 'can you help me get a new prescription').\n" +
         "QUESTION = anything else.",
-      messages: [{ role: "user", content: text }],
-    }, { timeoutMs: 8_000, maxAttempts: 3 });
+      text,
+      { maxTokens: 10, signal: controller.signal },
+    );
+    clearTimeout(timer);
 
-    const label = (
-      (response.content[0] as { text: string }).text ?? ""
-    ).trim().toUpperCase() as Intent;
-
+    const label = raw.trim().toUpperCase() as Intent;
     if (VALID_INTENTS.has(label)) return label;
 
-    console.warn("intentClassifier: unrecognized label from Claude", { label, preview: text.slice(0, 50) });
+    console.warn("intentClassifier: unrecognized label", { label, preview: text.slice(0, 50) });
   } catch (err) {
+    clearTimeout(timer);
     console.error("intentClassifier error:", err);
   }
 

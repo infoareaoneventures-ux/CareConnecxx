@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { quickComplete } from "../utils/openaiClient";
+import { safeParseJson } from "../utils/jsonUtils";
 import { generateCaraMessage } from "../utils/caraMessage";
 import {
   searchHealthcareProvider,
@@ -11,21 +12,9 @@ import type { AgentSession } from "../linq/client";
 
 const db = admin.firestore();
 
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
-
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
-    const response = await getClaude().messages.create({
-      model:    "claude-haiku-4-5-20251001",
-      max_tokens: 200,
-      system:   prompt,
-      messages: [{ role: "user", content: userText }],
-    });
-    return ((response.content[0] as { text: string }).text ?? "").trim();
+    return await quickComplete(prompt, userText, { maxTokens: 200 });
   } catch {
     return "__parse_error__";
   }
@@ -41,15 +30,12 @@ async function isQuestionOrOther(text: string): Promise<boolean> {
 }
 
 async function answerMidFlow(text: string, context: string): Promise<string> {
-  const response = await getClaude().messages.create({
-    model:    "claude-haiku-4-5-20251001",
-    max_tokens: 120,
-    system:
-      `You are Cara, a warm AI care assistant. A client is in the middle of a healthcare request. ` +
+  return (await quickComplete(
+    `You are Cara, a warm AI care assistant. A client is in the middle of a healthcare request. ` +
       `Context: ${context}. Answer their question briefly (1–2 sentences).`,
-    messages: [{ role: "user", content: text }],
-  });
-  return ((response.content[0] as { text: string }).text ?? "").trim();
+    text,
+    { maxTokens: 120 },
+  )).trim();
 }
 
 // ── Flow data ─────────────────────────────────────────────────────────────────
@@ -283,12 +269,12 @@ Reply as JSON only: {"providerType":"...","specialty":"...","location":"..."}`,
     let providerType = "doctor";
     let specialty    = "";
     let location     = "";
-    try {
-      const p = JSON.parse(parsed);
+    const p = safeParseJson<{ providerType?: string; specialty?: string; location?: string }>(parsed, "healthcareHandler.providerSearch", null, "object");
+    if (p) {
       providerType = p.providerType || "doctor";
       specialty    = p.specialty    || "";
       location     = p.location     || "";
-    } catch { /* keep defaults */ }
+    }
 
     const data: HealthcareFlowData = {
       intent,
@@ -331,13 +317,13 @@ Reply as JSON only: {"doctorName":"...","appointmentType":"...","preferredDate":
     let appointmentType = "";
     let preferredDate   = "";
     let portalService   = "";
-    try {
-      const p = JSON.parse(parsed);
+    const p = safeParseJson<{ doctorName?: string; appointmentType?: string; preferredDate?: string; portalService?: string }>(parsed, "healthcareHandler.appointment", null, "object");
+    if (p) {
       doctorName      = p.doctorName      || "";
       appointmentType = p.appointmentType || "";
       preferredDate   = p.preferredDate   || "";
       portalService   = p.portalService   || "";
-    } catch { /* keep defaults */ }
+    }
 
     const data: HealthcareFlowData = { intent, doctorName, appointmentType, preferredDate, portalService };
 
@@ -393,12 +379,12 @@ Reply as JSON only: {"pharmacyService":"...","medicationName":"...","rxNumber":"
     let pharmacyService = "";
     let medicationName  = "";
     let rxNumber        = "";
-    try {
-      const p = JSON.parse(parsed);
+    const p = safeParseJson<{ pharmacyService?: string; medicationName?: string; rxNumber?: string }>(parsed, "healthcareHandler.refill", null, "object");
+    if (p) {
       pharmacyService = p.pharmacyService || "";
       medicationName  = p.medicationName  || "";
       rxNumber        = p.rxNumber        || "";
-    } catch { /* keep defaults */ }
+    }
 
     const data: HealthcareFlowData = { intent, pharmacyService, medicationName, rxNumber };
 

@@ -1,10 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
-
-let _client: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!_client) _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _client;
-}
+import { getSharedClient } from "./claudeClient";
 
 // Cara's voice for messages to caregivers
 const CAREGIVER_VOICE =
@@ -31,7 +25,7 @@ export async function generateCaraMessage(opts: {
   maxTokens?: number;
 }): Promise<string> {
   try {
-    const resp = await getClient().messages.create({
+    const resp = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: opts.maxTokens ?? 180,
       system:     opts.audience === "caregiver" ? CAREGIVER_VOICE : FAMILY_VOICE,

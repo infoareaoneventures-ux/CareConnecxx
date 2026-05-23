@@ -1,4 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { quickComplete } from "../utils/openaiClient";
+import { safeParseJson } from "../utils/jsonUtils";
 
 export type HealthSeverity = "none" | "watch" | "flag";
 
@@ -6,12 +7,6 @@ export interface HealthSignalResult {
   signals:  string[];
   severity: HealthSeverity;
   summary:  string;
-}
-
-let _client: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!_client) _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _client;
 }
 
 const SYSTEM_PROMPT = `You are a health signal detector reviewing a caregiver's visit notes for a senior.
@@ -54,19 +49,22 @@ export async function detectHealthSignals(
     .join("\n");
 
   try {
-    const response = await getClient().messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 300,
-      system:     SYSTEM_PROMPT,
-      messages:   [{ role: "user", content: contextText }],
-    }, { signal: AbortSignal.timeout(8_000) });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    const raw = await quickComplete(SYSTEM_PROMPT, contextText, {
+      maxTokens: 300,
+      signal:    controller.signal,
+    });
+    clearTimeout(timer);
 
-    const raw = ((response.content[0] as { text: string }).text ?? "").trim();
-    const parsed = JSON.parse(raw) as HealthSignalResult;
+    const parsed = safeParseJson<HealthSignalResult>(raw, "detectHealthSignals", null, "object");
+    if (!parsed) return fallback;
 
     if (!["none", "watch", "flag"].includes(parsed.severity)) {
       parsed.severity = "none";
     }
+    parsed.signals = Array.isArray(parsed.signals) ? parsed.signals : [];
+    parsed.summary = typeof parsed.summary === "string" ? parsed.summary : "";
 
     return parsed;
   } catch (err) {

@@ -1,21 +1,15 @@
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { buildAndSaveJobPost } from "./buildJobPost";
 
 const db = admin.firestore();
 
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
-    const response = await getClaude().messages.create({
+    const response = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 200,
       system:     prompt,
@@ -37,7 +31,7 @@ async function isQuestionOrOther(text: string): Promise<boolean> {
 
 async function answerQuestionMidFlow(text: string, session: AgentSession): Promise<string> {
   const d = (session as any).onboardingData as Record<string, unknown> ?? {};
-  const response = await getClaude().messages.create({
+  const response = await getSharedClient().messages.create({
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:

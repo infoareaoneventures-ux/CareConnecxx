@@ -84,10 +84,11 @@ export async function handleTimesheetApproval(
     const restIds = timesheets.slice(1).map(t => t.id);
 
     await db.collection("agent_sessions").doc(phone).update({
-      timesheetStep:        "confirm_one",
-      pendingTimesheetId:   first.id,
-      pendingTimesheetDesc: JSON.stringify(first),
-      pendingTimesheetQueue: restIds,
+      timesheetStep:           "confirm_one",
+      pendingTimesheetId:      first.id,
+      pendingTimesheetDesc:    JSON.stringify(first),
+      pendingTimesheetQueue:   restIds,
+      pendingTimesheetSetAt:   new Date().toISOString(),
     });
 
     const opener = await generateCaraMessage({
@@ -223,6 +224,7 @@ export async function handleTimesheetApproval(
           pendingTimesheetId:    next.id,
           pendingTimesheetDesc:  JSON.stringify(next),
           pendingTimesheetQueue: queue.slice(1),
+          pendingTimesheetSetAt: new Date().toISOString(),
         });
 
         const timeRange2 = next.clockIn && next.clockOut ? ` (${next.clockIn} – ${next.clockOut})` : "";

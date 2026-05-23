@@ -1,6 +1,6 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 import { AgentSession } from "../linq/client";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { getPermissions } from "../agents/permissionsConversation";
@@ -10,12 +10,6 @@ import { getRelevantFacts } from "../memory/learnedFacts";
 import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
-
-let _client: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!_client) _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _client;
-}
 
 // ── Data loaders ──────────────────────────────────────────────────────────────
 
@@ -109,7 +103,7 @@ async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>, use
   });
 
   try {
-    const response = await getClient().messages.create({
+    const response = await getSharedClient().messages.create({
       model:      "claude-sonnet-4-6",
       max_tokens: 400,
       messages:   [{ role: "user", content: prompt }],

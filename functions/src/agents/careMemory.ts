@@ -1,15 +1,9 @@
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 import { getMemoryContext } from "../memory/memoryFiles";
 
 const db      = admin.firestore();
 const storage = admin.storage();
-
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
 
 export async function generateCareMemoryKeepsake(
   seniorId: string,
@@ -35,7 +29,7 @@ export async function generateCareMemoryKeepsake(
     })
     .join("\n");
 
-  const result = await getClaude().messages.create({
+  const result = await getSharedClient().messages.create({
     model:      "claude-sonnet-4-6",
     max_tokens: 800,
     system:

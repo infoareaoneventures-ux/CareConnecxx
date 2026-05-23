@@ -385,6 +385,9 @@ async function runMatchingForClient(phone, chatId, intake, session) {
             : null;
         await db.collection("agent_sessions").doc(phone).update({
             pendingMatches: top3.map((c, i) => (Object.assign({ id: c.id, name: c.name, rate: c.hourlyRate, matchScore: top3Scores[i], agentId }, (goalContext ? { goalContext } : {})))),
+            // Used by webhooks.ts to detect stale state — selection prompts older
+            // than 2 hours are treated as expired and cleared on next inbound.
+            pendingMatchesSetAt: new Date().toISOString(),
         });
     }
     catch (err) {

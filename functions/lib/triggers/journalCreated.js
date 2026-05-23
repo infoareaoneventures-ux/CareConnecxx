@@ -32,14 +32,11 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.onJournalCreated = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const client_1 = require("../linq/client");
 const caraAgent_1 = require("../agents/caraAgent");
 const healthSignalDetector_1 = require("../agents/healthSignalDetector");
@@ -48,16 +45,10 @@ const permissionsConversation_1 = require("../agents/permissionsConversation");
 const zepClient_1 = require("../memory/zepClient");
 const triggerEngine_1 = require("./triggerEngine");
 const feedback_1 = require("../ai/feedback");
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 async function generateVisitSummary(caregiverName, seniorName, notes, wellness) {
     var _a, _b;
     try {
-        const resp = await getClaude().messages.create({
+        const resp = await (0, claudeClient_1.getSharedClient)().messages.create({
             model: "claude-haiku-4-5-20251001",
             max_tokens: 120,
             system: "You write one-to-two sentence visit summaries for families receiving care updates via text.\n" +
@@ -85,7 +76,7 @@ const db = admin.firestore();
 exports.onJournalCreated = functions.firestore
     .document("care_journal/{journalId}")
     .onCreate(async (snap) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
     try {
         const journal = snap.data();
         const { seniorId, caregiverId, notes, photos, wellness, activities, timestamp } = journal;
@@ -224,14 +215,34 @@ exports.onJournalCreated = functions.firestore
                 canDrop: true,
             });
         }
+        // First-occurrence observations — surface a specific "I noticed X" call-out
+        // rather than burying it in the general visit summary. Fires on the first
+        // occurrence of a watch/flag signal so the family knows fast, not after
+        // a 3-in-7-day pattern. Dedup is handled above (skips if same signalType
+        // was alerted in past 24h).
+        const seniorDocForObs = await db.collection("users").doc(seniorId).get();
+        const seniorNameForObs = ((_s = (_q = (_p = seniorDocForObs.data()) === null || _p === void 0 ? void 0 : _p.seniorName) !== null && _q !== void 0 ? _q : (_r = seniorDocForObs.data()) === null || _r === void 0 ? void 0 : _r.displayName) !== null && _s !== void 0 ? _s : "your loved one");
+        const observationSent = await maybeSendObservation({
+            phone,
+            seniorId,
+            seniorName: seniorNameForObs,
+            signals,
+            severity,
+            nowIso,
+        });
         // Follow-up for flagged health signals
         if (severity === "flag" && signals.length > 0) {
-            await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
-                content: `Worth keeping an eye on. If you notice the same thing at the next visit, it might be worth mentioning to their doctor.`,
-                urgency: "standard",
-                sourceAgent: "health_watch",
-                canDrop: true,
-            });
+            // Only send the generic "worth keeping an eye on" if we didn't already
+            // send a specific observation above — avoid double-messaging the family.
+            if (!observationSent) {
+                const signalList = signals.slice(0, 2).join(" and ");
+                await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+                    content: `Worth keeping an eye on — if ${signalList} comes up again, it's worth a quick mention to their doctor.`,
+                    urgency: "standard",
+                    sourceAgent: "health_watch",
+                    canDrop: true,
+                });
+            }
             // Schedule 24h escalation to emergency contact if family doesn't acknowledge
             const alertLogRef = await db.collection("health_alerts_pending").add({
                 seniorId,
@@ -311,4 +322,35 @@ exports.onJournalCreated = functions.firestore
         console.error("onJournalCreated error:", err);
     }
 });
+// Send a concrete "I noticed X today" observation to the family on the first
+// occurrence of a watch or flag signal. Returns true if a message was sent so
+// the caller can skip the generic flag follow-up.
+//
+// Dedup is already enforced upstream (skips if same signalType alerted in 24h).
+// Skips silently for severity "none" or empty signals.
+async function maybeSendObservation(params) {
+    const { phone, seniorId, seniorName, signals, severity, nowIso } = params;
+    if (severity === "none" || signals.length === 0)
+        return false;
+    const signalText = signals.slice(0, 2).join(" and ");
+    const content = severity === "flag"
+        ? `Heads up — ${seniorName}'s caregiver noted ${signalText} today. Wanted to flag it for you so you're not the last to know. Want to talk it through?`
+        : `Quick observation — ${seniorName}'s caregiver mentioned ${signalText} today. Not concerning on its own, but I'll keep an eye on it.`;
+    await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
+        content,
+        urgency: severity === "flag" ? "immediate" : "standard",
+        sourceAgent: "health_watch",
+        canDrop: severity === "watch", // family must see flag-level observations
+    });
+    await db.collection("agent_alerts_log").add({
+        type: "first_occurrence_observation",
+        seniorId,
+        clientId: seniorId,
+        phone,
+        signals,
+        severity,
+        sentAt: nowIso,
+    }).catch(() => { });
+    return true;
+}
 //# sourceMappingURL=journalCreated.js.map

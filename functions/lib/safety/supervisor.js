@@ -32,22 +32,13 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.supervise = supervise;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const linter_1 = require("./linter");
 const constitution_1 = require("./constitution");
 const db = admin.firestore();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 async function supervise(message, context) {
     var _a, _b;
     // Step 1: lint (synchronous, no LLM)
@@ -56,7 +47,7 @@ async function supervise(message, context) {
     let checked = linted;
     try {
         const rulesText = constitution_1.CONSTITUTION_RULES.map((r, i) => `${i + 1}. ${r}`).join("\n");
-        const result = await getClaude().messages.create({
+        const result = await (0, claudeClient_1.getSharedClient)().messages.create({
             model: "claude-haiku-4-5-20251001",
             max_tokens: 300,
             system: `You are a safety reviewer for a caregiving AI assistant named Cara. ` +

@@ -1,14 +1,11 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildMatchingSystemPrompt = buildMatchingSystemPrompt;
 exports.scoreWithClaude = scoreWithClaude;
 exports.computeSkillsCoverage = computeSkillsCoverage;
 exports.detectDementiaCert = detectDementiaCert;
 exports.detectMedicalCred = detectMedicalCred;
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 /**
  * Shared Claude-powered scoring engine.
  * Used by both runAiMatching (coordinator-triggered batch)
@@ -41,12 +38,6 @@ function buildMatchingSystemPrompt(outcomePatterns) {
 function stripFences(text) {
     return text.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "");
 }
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 /**
  * Score a batch of candidates against a senior profile using Claude Sonnet.
  * Returns a map of caregiverId → ClaudeScoredMatch.
@@ -60,7 +51,7 @@ async function scoreWithClaude(candidates, senior, systemPrompt, maxTokens = 400
         seniorProfile: senior,
         candidates,
     })}`;
-    const response = await getClaude().messages.create({
+    const response = await (0, claudeClient_1.getSharedClient)().messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: maxTokens,
         system: systemPrompt,

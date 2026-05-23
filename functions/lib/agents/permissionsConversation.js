@@ -32,9 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPermissions = getPermissions;
 exports.sendClientPermissionsFlow = sendClientPermissionsFlow;
@@ -43,19 +40,13 @@ exports.sendCaregiverPermissionsFlow = sendCaregiverPermissionsFlow;
 exports.handleCaregiverPermissionsReply = handleCaregiverPermissionsReply;
 exports.updatePermissionFromText = updatePermissionFromText;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const client_1 = require("../linq/client");
 const caraMessage_1 = require("../utils/caraMessage");
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 async function askClaude(system, userText) {
     var _a;
     try {
-        const res = await getClaude().messages.create({
+        const res = await (0, claudeClient_1.getSharedClient)().messages.create({
             model: "claude-haiku-4-5-20251001", max_tokens: 100,
             system, messages: [{ role: "user", content: userText }],
         });

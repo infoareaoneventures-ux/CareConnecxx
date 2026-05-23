@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "./caraAgent";
 import { sendToPhone } from "../linq/client";
@@ -35,9 +35,8 @@ export async function classifyIssue(text: string): Promise<IssueClassification> 
     };
   }
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   try {
-    const resp = await client.messages.create({
+    const resp = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 200,
       system:

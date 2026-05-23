@@ -404,6 +404,363 @@
         { "fieldPath": "clientId",    "order": "ASCENDING" },
         { "fieldPath": "triggeredAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "proactive_triggers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "feedbackReceived", "order": "ASCENDING" },
+        { "fieldPath": "phone",            "order": "ASCENDING" },
+        { "fieldPath": "type",             "order": "ASCENDING" },
+        { "fieldPath": "firedAt",          "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "proactive_triggers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "phone",            "order": "ASCENDING" },
+        { "fieldPath": "type",             "order": "ASCENDING" },
+        { "fieldPath": "feedbackReceived", "order": "ASCENDING" },
+        { "fieldPath": "firedAt",          "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "proactive_triggers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId",      "order": "ASCENDING" },
+        { "fieldPath": "cancelledAt", "order": "ASCENDING" },
+        { "fieldPath": "firedAt",     "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "proactive_triggers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId",  "order": "ASCENDING" },
+        { "fieldPath": "firedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "proactive_triggers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "phone", "order": "ASCENDING" },
+        { "fieldPath": "type",  "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "status",   "order": "ASCENDING" },
+        { "fieldPath": "isoDate",  "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "status",   "order": "ASCENDING" },
+        { "fieldPath": "date",     "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "status",   "order": "ASCENDING" },
+        { "fieldPath": "date",     "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" },
+        { "fieldPath": "createdAt",   "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId",       "order": "ASCENDING" },
+        { "fieldPath": "status",            "order": "ASCENDING" },
+        { "fieldPath": "caregiverConfirmed","order": "ASCENDING" },
+        { "fieldPath": "date",              "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "date",        "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" },
+        { "fieldPath": "startTime",   "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",          "order": "ASCENDING" },
+        { "fieldPath": "startDateTime",   "order": "ASCENDING" },
+        { "fieldPath": "noShowChecked",   "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",        "order": "ASCENDING" },
+        { "fieldPath": "date",          "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caraThirtyMinReminderSent", "order": "ASCENDING" },
+        { "fieldPath": "date",                      "order": "ASCENDING" },
+        { "fieldPath": "status",                    "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "preShiftCheckinSent", "order": "ASCENDING" },
+        { "fieldPath": "date",                "order": "ASCENDING" },
+        { "fieldPath": "status",              "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dayBeforeConfirmSent", "order": "ASCENDING" },
+        { "fieldPath": "date",                 "order": "ASCENDING" },
+        { "fieldPath": "status",               "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "preVisitReminderSent", "order": "ASCENDING" },
+        { "fieldPath": "status",               "order": "ASCENDING" },
+        { "fieldPath": "startDateTime",        "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "interview_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientPhone", "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" },
+        { "fieldPath": "createdAt",   "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "interview_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",    "order": "ASCENDING" },
+        { "fieldPath": "expiresAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "care_journal",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "seniorId",   "order": "ASCENDING" },
+        { "fieldPath": "timestamp",  "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "care_journal",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "seniorId",   "order": "ASCENDING" },
+        { "fieldPath": "timestamp",  "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "user_triggers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "active",     "order": "ASCENDING" },
+        { "fieldPath": "nextFireAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "dnd_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sendAfter", "order": "ASCENDING" },
+        { "fieldPath": "sentAt",    "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "chatId",    "order": "ASCENDING" },
+        { "fieldPath": "direction", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" },
+        { "fieldPath": "isoDate",     "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" },
+        { "fieldPath": "isoDate",     "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "execution_agents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerPhone", "order": "ASCENDING" },
+        { "fieldPath": "status",     "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "execution_agents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerPhone", "order": "ASCENDING" },
+        { "fieldPath": "status",     "order": "ASCENDING" },
+        { "fieldPath": "type",       "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "shiftHours",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "payouts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "agent_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "appointmentIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "status",         "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "agent_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientPhone", "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" },
+        { "fieldPath": "createdAt",   "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "agent_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientPhone", "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "agent_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "status",   "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "agent_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "stripeCustomerId", "order": "ASCENDING" },
+        { "fieldPath": "status",           "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "post_visit_feedback",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "clientId",    "order": "ASCENDING" },
+        { "fieldPath": "createdAt",   "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "post_visit_feedback",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt",   "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "agent_alerts_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "seniorId",    "order": "ASCENDING" },
+        { "fieldPath": "signalType",  "order": "ASCENDING" },
+        { "fieldPath": "sentAt",      "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "agent_alerts_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type",      "order": "ASCENDING" },
+        { "fieldPath": "clientId",  "order": "ASCENDING" },
+        { "fieldPath": "sentAt",    "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "health_signals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "seniorId",    "order": "ASCENDING" },
+        { "fieldPath": "signalType",  "order": "ASCENDING" },
+        { "fieldPath": "detectedAt",  "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",               "order": "ASCENDING" },
+        { "fieldPath": "startDateTime",        "order": "ASCENDING" },
+        { "fieldPath": "preVisitReminderSent", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

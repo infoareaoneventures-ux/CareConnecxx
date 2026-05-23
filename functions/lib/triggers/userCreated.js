@@ -37,9 +37,10 @@ exports.onUserCreated = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
+const sms_1 = require("../sms");
 const db = admin.firestore();
 exports.onUserCreated = functions.auth.user().onCreate(async (user) => {
-    var _a, _b, _c, _d;
+    var _a, _b, _c;
     try {
         // Load user profile — clients write to 'users', caregivers to 'caregivers'
         const userDoc = await db.collection("users").doc(user.uid).get();
@@ -68,11 +69,7 @@ exports.onUserCreated = functions.auth.user().onCreate(async (user) => {
             parts: [{ type: "text", value: optInText }],
         });
         // Register Cara as a named contact so users see "Cara" not a raw number
-        await (0, client_1.createOrUpdateContactCard)({
-            phone_number: (_d = process.env.LINQ_PHONE_NUMBER) !== null && _d !== void 0 ? _d : "",
-            first_name: "Cara",
-            last_name: "CareConnex",
-        });
+        await (0, sms_1.setupCaraContactCard)();
         await (0, client_1.shareContactCard)(chat.chat_id).catch(() => { });
         const session = {
             chatId: chat.chat_id,

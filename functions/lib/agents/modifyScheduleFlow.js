@@ -32,34 +32,19 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.startModifyScheduleFlow = startModifyScheduleFlow;
 exports.handleModifyScheduleStep = handleModifyScheduleStep;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const openaiClient_1 = require("../utils/openaiClient");
+const jsonUtils_1 = require("../utils/jsonUtils");
 const client_1 = require("../linq/client");
 const db = admin.firestore();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 async function parseWithClaude(prompt, userText) {
-    var _a;
     try {
-        const res = await getClaude().messages.create({
-            model: "claude-haiku-4-5-20251001",
-            max_tokens: 200,
-            system: prompt,
-            messages: [{ role: "user", content: userText }],
-        });
-        return ((_a = res.content[0].text) !== null && _a !== void 0 ? _a : "").trim();
+        return await (0, openaiClient_1.quickComplete)(prompt, userText, { maxTokens: 200 });
     }
-    catch (_b) {
+    catch (_a) {
         return "__parse_error__";
     }
 }
@@ -162,12 +147,9 @@ async function handleMsAskDays(phone, chatId, text, _session) {
         '"every day" or "daily" = all 7 days. ' +
         'Return only a JSON array, nothing else.', text);
     let newDays = [];
-    try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0)
-            newDays = parsed;
-    }
-    catch ( /**/_a) { /**/ }
+    const parsed = (0, jsonUtils_1.safeParseJson)(raw, "modifyScheduleFlow.days", null, "array");
+    if (Array.isArray(parsed) && parsed.length > 0)
+        newDays = parsed;
     if (newDays.length === 0) {
         await (0, client_1.sendMessage)(chatId, "I couldn't pick out the days from that. Try something like 'Tuesday and Thursday' or 'every Monday'.");
         return;

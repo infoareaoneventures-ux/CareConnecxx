@@ -169,7 +169,11 @@ async function broadcastSwapRequest(fromCaregiverId, fromCaregiverName, shift, f
         try {
             await (0, client_1.sendMessage)(targetChatId, msg);
             // Mark their session with the pending swap
-            await db.collection("agent_sessions").doc((_g = candidate.phone) !== null && _g !== void 0 ? _g : candidate.id).set({ pendingSwapRequestId: swapRef.id, pendingSwapFromName: fromCaregiverName }, { merge: true });
+            await db.collection("agent_sessions").doc((_g = candidate.phone) !== null && _g !== void 0 ? _g : candidate.id).set({
+                pendingSwapRequestId: swapRef.id,
+                pendingSwapFromName: fromCaregiverName,
+                pendingSwapSetAt: new Date().toISOString(),
+            }, { merge: true });
         }
         catch (e) {
             console.error(`Failed to reach candidate ${candidate.id}:`, e);

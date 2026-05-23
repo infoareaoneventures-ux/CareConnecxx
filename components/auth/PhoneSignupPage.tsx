@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 type Role = 'client' | 'caregiver';
-type Step = 'role' | 'phone' | 'sent';
+type Step = 'role' | 'consent' | 'phone' | 'sent';
 
 function normalizeE164(countryCode: string, digits: string): string {
   return `${countryCode}${digits}`;
@@ -20,26 +21,36 @@ export const PhoneSignupPage: React.FC = () => {
   const roleParam = searchParams.get('role') as Role | null;
 
   const [role, setRole] = useState<Role | null>(roleParam);
-  const [step, setStep] = useState<Step>(roleParam ? 'phone' : 'role');
+  // If role came in via URL, jump straight to consent; otherwise show role picker first
+  const [step, setStep] = useState<Step>(roleParam ? 'consent' : 'role');
+  const [agreed, setAgreed] = useState(false);
   const [countryCode, setCountryCode] = useState('+1');
   const [phone, setPhone] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const digits = phone.replace(/\D/g, '');
   const isValid = digits.length >= 10;
 
-  const linqPhone = import.meta.env.VITE_LINQ_PHONE_NUMBER as string | undefined;
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isValid || !linqPhone) return;
-    const e164 = normalizeE164(countryCode, digits);
-    const body = encodeURIComponent('Hey Cara');
-    window.location.href = `sms:${linqPhone}&body=${body}`;
-    setStep('sent');
+    if (!isValid || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const e164 = normalizeE164(countryCode, digits);
+      const initiateCara = httpsCallable(getFunctions(), 'v1-initiateCara');
+      await initiateCara({ phone: e164, role: role ?? 'client' });
+      setStep('sent');
+    } catch {
+      setError("Couldn't reach Cara right now — please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center justify-center px-6">
+    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center justify-center px-6 py-10">
       <div className="w-full max-w-sm space-y-8">
 
         {/* Logo */}
@@ -56,19 +67,102 @@ export const PhoneSignupPage: React.FC = () => {
           <div className="space-y-4">
             <h2 className="text-xl font-semibold text-center">What brings you here?</h2>
             <button
-              onClick={() => { setRole('client'); setStep('phone'); }}
+              onClick={() => { setRole('client'); setStep('consent'); }}
               className="w-full py-4 px-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/[0.15] transition text-left"
             >
               <div className="font-semibold text-sm">I need care for someone</div>
               <div className="text-white/40 text-xs mt-0.5">Find caregivers for a loved one</div>
             </button>
             <button
-              onClick={() => { setRole('caregiver'); setStep('phone'); }}
+              onClick={() => { setRole('caregiver'); setStep('consent'); }}
               className="w-full py-4 px-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/[0.15] transition text-left"
             >
               <div className="font-semibold text-sm">I'm a caregiver</div>
               <div className="text-white/40 text-xs mt-0.5">Find families in your area</div>
             </button>
+          </div>
+        )}
+
+        {/* Step: consent / messaging disclosure */}
+        {step === 'consent' && (
+          <div className="space-y-5">
+            <div className="space-y-1 text-center">
+              <h2 className="text-xl font-semibold">Welcome to Cara</h2>
+              <p className="text-white/40 text-sm">
+                {role === 'caregiver'
+                  ? 'Cara communicates with you over iMessage, RCS, or SMS.'
+                  : 'On non-Apple devices, Cara communicates with you over RCS or SMS.'}
+              </p>
+            </div>
+
+            {/* Scrollable disclosure */}
+            <div className="h-52 overflow-y-auto rounded-2xl border border-white/10 bg-white/5 px-4 py-4 space-y-4 text-sm leading-relaxed scrollbar-thin scrollbar-thumb-white/10">
+              <div>
+                <span className="font-semibold text-white">What will you receive?</span>{' '}
+                <span className="text-white/60">
+                  Care updates, caregiver matches, appointment reminders, visit summaries, and check-ins from your care team.
+                </span>
+              </div>
+              <div>
+                <span className="font-semibold text-white">How often?</span>{' '}
+                <span className="text-white/60">
+                  Only when something relevant happens. We never send unsolicited messages.
+                </span>
+              </div>
+              <div>
+                <span className="font-semibold text-white/50">Any costs?</span>{' '}
+                <span className="text-white/40">
+                  Standard message and data rates from your carrier may apply.
+                </span>
+              </div>
+              <div>
+                <span className="font-semibold text-white">Need help?</span>{' '}
+                <span className="text-white/60">
+                  Reply HELP to any message, or email{' '}
+                  <span className="text-blue-400">support@careconnex.com</span>.
+                </span>
+              </div>
+              <div>
+                <span className="font-semibold text-white">Want to stop?</span>{' '}
+                <span className="text-white/60">
+                  Reply STOP anytime. You can change your mind later too.
+                </span>
+              </div>
+              <div className="pt-1 border-t border-white/10 text-white/30 text-xs">
+                <Link to="/terms" className="underline underline-offset-2 hover:text-white/50">Terms</Link>
+                {' · '}
+                <Link to="/privacy" className="underline underline-offset-2 hover:text-white/50">Privacy</Link>
+              </div>
+            </div>
+
+            {/* Checkbox */}
+            <label className="flex items-center gap-3 cursor-pointer select-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3.5 hover:bg-white/[0.08] transition">
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={e => setAgreed(e.target.checked)}
+                className="w-4 h-4 rounded accent-blue-500 flex-shrink-0"
+              />
+              <span className="text-sm text-white/80">I agree to the terms above</span>
+            </label>
+
+            <button
+              onClick={() => setStep('phone')}
+              disabled={!agreed}
+              className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed transition font-semibold text-sm"
+            >
+              Continue
+            </button>
+
+            {!roleParam && (
+              <button
+                type="button"
+                onClick={() => setStep('role')}
+                className="w-full text-sm text-white/30 hover:text-white/50 transition"
+              >
+                ← Back
+              </button>
+            )}
           </div>
         )}
 
@@ -105,28 +199,23 @@ export const PhoneSignupPage: React.FC = () => {
 
             <button
               type="submit"
-              disabled={!isValid}
+              disabled={!isValid || loading}
               className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed transition font-semibold text-sm"
             >
-              Text Cara →
+              {loading ? 'Connecting…' : 'Continue with Phone →'}
             </button>
 
-            <p className="text-white/25 text-xs text-center leading-relaxed">
-              Message &amp; data rates may apply. Reply STOP anytime.{' '}
-              <Link to="/terms" className="underline underline-offset-2">Terms</Link>
-              {' · '}
-              <Link to="/privacy" className="underline underline-offset-2">Privacy</Link>
-            </p>
-
-            {!roleParam && (
-              <button
-                type="button"
-                onClick={() => setStep('role')}
-                className="w-full text-sm text-white/30 hover:text-white/50 transition"
-              >
-                ← Back
-              </button>
+            {error && (
+              <p className="text-red-400 text-xs text-center">{error}</p>
             )}
+
+            <button
+              type="button"
+              onClick={() => setStep('consent')}
+              className="w-full text-sm text-white/30 hover:text-white/50 transition"
+            >
+              ← Back
+            </button>
           </form>
         )}
 
@@ -134,20 +223,10 @@ export const PhoneSignupPage: React.FC = () => {
         {step === 'sent' && (
           <div className="text-center space-y-4">
             <div className="text-5xl">💬</div>
-            <h2 className="text-xl font-semibold">Check your texts ✓</h2>
+            <h2 className="text-xl font-semibold">Cara is on her way ✓</h2>
             <p className="text-white/50 text-sm leading-relaxed">
-              Cara will reply in seconds. Your conversation is already waiting.
+              You'll receive a text from Cara in the next few seconds. Reply to start your conversation.
             </p>
-            <button
-              onClick={() => {
-                const e164 = normalizeE164(countryCode, digits);
-                const body = encodeURIComponent('Hey Cara');
-                window.location.href = `sms:${linqPhone}&body=${body}`;
-              }}
-              className="w-full py-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-sm font-medium"
-            >
-              Open Messages →
-            </button>
             <p className="text-white/25 text-xs">
               Already have an account?{' '}
               <Link to="/login" className="text-blue-400 hover:text-blue-300">Log in →</Link>

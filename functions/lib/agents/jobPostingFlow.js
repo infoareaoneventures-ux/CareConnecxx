@@ -32,28 +32,19 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.startJobPostingFlow = startJobPostingFlow;
 exports.handleJobPostingStep = handleJobPostingStep;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const client_1 = require("../linq/client");
 const buildJobPost_1 = require("./buildJobPost");
 const db = admin.firestore();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function parseWithClaude(prompt, userText) {
     var _a;
     try {
-        const response = await getClaude().messages.create({
+        const response = await (0, claudeClient_1.getSharedClient)().messages.create({
             model: "claude-haiku-4-5-20251001",
             max_tokens: 200,
             system: prompt,
@@ -72,7 +63,7 @@ async function isQuestionOrOther(text) {
 async function answerQuestionMidFlow(text, session) {
     var _a, _b, _c;
     const d = (_a = session.onboardingData) !== null && _a !== void 0 ? _a : {};
-    const response = await getClaude().messages.create({
+    const response = await (0, claudeClient_1.getSharedClient)().messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 100,
         system: "You are Cara, an AI care assistant helping a client post a care job. " +

@@ -1,14 +1,9 @@
 import * as admin from "firebase-admin";
-import Anthropic from "@anthropic-ai/sdk";
+import { getSharedClient } from "../utils/claudeClient";
+import { safeParseJson } from "../utils/jsonUtils";
 
 const storage = admin.storage();
 const db      = admin.firestore();
-
-let _claude: Anthropic | null = null;
-function getClaude(): Anthropic {
-  if (!_claude) _claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _claude;
-}
 
 export type MemoryFile = "profile" | "health" | "family" | "recent_episodes" | "procedural";
 
@@ -127,7 +122,7 @@ export async function handleMemoryQuery(
     return;
   }
 
-  const result = await getClaude().messages.create({
+  const result = await getSharedClient().messages.create({
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 220,
     system:
@@ -180,7 +175,7 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
 
   const existingContext = await getMemoryContext(userId);
 
-  const result = await getClaude().messages.create({
+  const result = await getSharedClient().messages.create({
     model:      "claude-sonnet-4-6",
     max_tokens: 600,
     system:
@@ -196,12 +191,11 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
     }],
   });
 
-  let updates: Array<{ file: MemoryFile; append: string }> = [];
-  try {
-    updates = JSON.parse((result.content[0] as { text: string }).text ?? "[]");
-  } catch {
-    return;
-  }
+  const raw = ((result.content[0] as { text: string }).text ?? "").trim();
+  const updates = safeParseJson<Array<{ file: MemoryFile; append: string }>>(
+    raw, "memoryFiles.consolidate", [], "array",
+  ) ?? [];
+  if (updates.length === 0) return;
 
   const appliedUpdates: Array<{ file: MemoryFile; append: string }> = [];
   for (const { file, append } of updates) {
@@ -229,7 +223,7 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
   // Trim recent_episodes.md if it exceeds 8000 chars
   const episodes = await readMemoryFile(userId, "recent_episodes");
   if (episodes.length > 8000) {
-    const trimResult = await getClaude().messages.create({
+    const trimResult = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 400,
       system:

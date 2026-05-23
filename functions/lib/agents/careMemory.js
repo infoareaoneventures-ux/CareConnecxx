@@ -32,22 +32,13 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.generateCareMemoryKeepsake = generateCareMemoryKeepsake;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const memoryFiles_1 = require("../memory/memoryFiles");
 const db = admin.firestore();
 const storage = admin.storage();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 async function generateCareMemoryKeepsake(seniorId, userId) {
     var _a;
     // Gather memory files + last 20 journal entries
@@ -69,7 +60,7 @@ async function generateCareMemoryKeepsake(seniorId, userId) {
         return `${date}: ${mood ? `Mood ${mood}. ` : ""}${notes}`;
     })
         .join("\n");
-    const result = await getClaude().messages.create({
+    const result = await (0, claudeClient_1.getSharedClient)().messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 800,
         system: "You are writing a warm, compassionate memory keepsake for a family who has lost their loved one. " +

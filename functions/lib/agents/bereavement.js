@@ -32,45 +32,30 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isBereavementTrigger = isBereavementTrigger;
 exports.activateBereavementMode = activateBereavementMode;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const openaiClient_1 = require("../utils/openaiClient");
 const client_1 = require("../linq/client");
 const careMemory_1 = require("./careMemory");
 const auditLog_1 = require("../observability/auditLog");
 const caraMessage_1 = require("../utils/caraMessage");
 const db = admin.firestore();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 // Fast-path keywords for obvious signals — Claude handles the nuanced cases
 const OBVIOUS_BEREAVEMENT = ["passed away", "passed on", "she died", "he died", "they died",
     "funeral", "obituary", "died today", "died last night"];
 async function isBereavementTrigger(text) {
-    var _a;
     const lower = text.toLowerCase();
     if (OBVIOUS_BEREAVEMENT.some((kw) => lower.includes(kw)))
         return true;
     try {
-        const res = await getClaude().messages.create({
-            model: "claude-haiku-4-5-20251001",
-            max_tokens: 5,
-            system: "You are reading an SMS from a family using a care platform. " +
-                "Reply YES if this message is informing us that their care recipient has died or passed away. " +
-                "Reply NO otherwise. Reply with only YES or NO.",
-            messages: [{ role: "user", content: text }],
-        });
-        return ((_a = res.content[0].text) !== null && _a !== void 0 ? _a : "").trim().toUpperCase().startsWith("Y");
+        const raw = await (0, openaiClient_1.quickComplete)("You are reading an SMS from a family using a care platform. " +
+            "Reply YES if this message is informing us that their care recipient has died or passed away. " +
+            "Reply NO otherwise. Reply with only YES or NO.", text, { maxTokens: 5 });
+        return raw.trim().toUpperCase().startsWith("Y");
     }
-    catch (_b) {
+    catch (_a) {
         return false;
     }
 }

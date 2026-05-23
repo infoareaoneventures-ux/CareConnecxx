@@ -32,30 +32,20 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendViaInteractionAgent = sendViaInteractionAgent;
 exports.runInteractionAgent = runInteractionAgent;
 exports.runExecutionAgent = runExecutionAgent;
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const openaiClient_1 = require("../utils/openaiClient");
 const client_1 = require("../linq/client");
 const matchingAgent_1 = require("./matchingAgent");
 const bookingExecutor_1 = require("./bookingExecutor");
 const preferences_1 = require("../memory/preferences");
 const supervisor_1 = require("../safety/supervisor");
 const auditLog_1 = require("../observability/auditLog");
-const claudeRetry_1 = require("../utils/claudeRetry");
 const intentClassifier_1 = require("./intentClassifier");
 const db = admin.firestore();
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 // Sources that route to the family group thread when groupChatId exists
 const GROUP_SOURCE_AGENTS = new Set([
     "visit_summary",
@@ -70,7 +60,6 @@ const GROUP_SOURCE_AGENTS = new Set([
 ]);
 // ── Wait tool — decides whether to send a non-immediate message ───────────────
 async function shouldSend(output, phone, prefs, session) {
-    var _a;
     if (output.urgency === "immediate")
         return true;
     if (prefs.dndEnabled && (0, preferences_1.isInDND)(prefs))
@@ -86,23 +75,18 @@ async function shouldSend(output, phone, prefs, session) {
     // LLM judgment for standard urgency
     if (output.urgency === "standard") {
         try {
-            const result = await (0, claudeRetry_1.callClaudeWithRetry)(getClaude(), {
-                model: "claude-haiku-4-5-20251001",
-                max_tokens: 5,
-                system: "You decide if a care update should be sent to a family right now.\n" +
-                    "Consider: Is this new info? Is it timely? Would a human coordinator send this now?\n" +
-                    "Reply SEND or WAIT — one word only.",
-                messages: [{
-                        role: "user",
-                        content: `Message: "${output.content.slice(0, 200)}"\n` +
-                            `Last sent: ${lastSentAt !== null && lastSentAt !== void 0 ? lastSentAt : "never"}\n` +
-                            `Current UTC hour: ${new Date().getUTCHours()}`,
-                    }],
-            }, { timeoutMs: 5000, maxAttempts: 2 });
-            return ((_a = result.content[0].text) !== null && _a !== void 0 ? _a : "").trim().toUpperCase() === "SEND";
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 5000);
+            const raw = await (0, openaiClient_1.quickComplete)("You decide if a care update should be sent to a family right now.\n" +
+                "Consider: Is this new info? Is it timely? Would a human coordinator send this now?\n" +
+                "Reply SEND or WAIT — one word only.", `Message: "${output.content.slice(0, 200)}"\n` +
+                `Last sent: ${lastSentAt !== null && lastSentAt !== void 0 ? lastSentAt : "never"}\n` +
+                `Current UTC hour: ${new Date().getUTCHours()}`, { maxTokens: 5, signal: controller.signal });
+            clearTimeout(timer);
+            return raw.trim().toUpperCase() === "SEND";
         }
-        catch (_b) {
-            console.warn("shouldSend Claude timeout — holding message to prevent spam");
+        catch (_a) {
+            console.warn("shouldSend timeout — holding message to prevent spam");
             return false; // safe default: hold on timeout, not send
         }
     }

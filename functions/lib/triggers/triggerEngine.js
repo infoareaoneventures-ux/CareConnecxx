@@ -32,9 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.triggerEngineScheduled = exports.runTriggerEngine = void 0;
 exports.scheduleTrigger = scheduleTrigger;
@@ -44,15 +41,9 @@ exports.checkIgnoredTriggers = checkIgnoredTriggers;
 exports.checkAndTriggerRematching = checkAndTriggerRematching;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const claudeClient_1 = require("../utils/claudeClient");
 const caraAgent_1 = require("../agents/caraAgent");
 const client_1 = require("../linq/client");
-let _claude = null;
-function getClaude() {
-    if (!_claude)
-        _claude = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return _claude;
-}
 const db = admin.firestore();
 // 30-day calibration period — no proactive triggers during this window
 function isInCalibrationPeriod(sessionCreatedAt) {
@@ -79,7 +70,7 @@ async function scheduleTrigger(trigger) {
 async function generateTriggerMessage(trigger, memoryContext) {
     var _a, _b;
     try {
-        const resp = await getClaude().messages.create({
+        const resp = await (0, claudeClient_1.getSharedClient)().messages.create({
             model: "claude-haiku-4-5-20251001",
             max_tokens: 120,
             system: "You are Cara, an AI care assistant. Write a single brief follow-up text message (1–2 sentences).\n" +
@@ -113,7 +104,7 @@ async function shouldFireTrigger(trigger, recentMessages) {
         .map(m => `${m.role}: ${m.content}`)
         .join("\n");
     try {
-        const resp = await getClaude().messages.create({
+        const resp = await (0, claudeClient_1.getSharedClient)().messages.create({
             model: "claude-haiku-4-5-20251001",
             max_tokens: 5,
             system: "You decide if a scheduled follow-up message should still be sent, given recent conversation.\n" +

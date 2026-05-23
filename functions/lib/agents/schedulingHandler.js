@@ -1,46 +1,36 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleScheduleRequest = handleScheduleRequest;
 exports.handleTriggerManagement = handleTriggerManagement;
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
-const claudeRetry_1 = require("../utils/claudeRetry");
+const openaiClient_1 = require("../utils/openaiClient");
+const jsonUtils_1 = require("../utils/jsonUtils");
 const caraAgent_1 = require("./caraAgent");
 const userTriggerManager_1 = require("../triggers/userTriggerManager");
-let _client = null;
-function getClient() {
-    if (!_client) {
-        _client = new sdk_1.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    }
-    return _client;
-}
 async function parseScheduleRequest(userMessage) {
-    var _a;
     const today = new Date().toISOString().slice(0, 10);
-    const response = await (0, claudeRetry_1.callClaudeWithRetry)(getClient(), {
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 120,
-        system: `Today is ${today}. ` +
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    let raw;
+    try {
+        raw = await (0, openaiClient_1.quickComplete)(`Today is ${today}. ` +
             "Extract a reminder schedule from the user's message. Reply with a JSON object only:\n" +
             '{"recurrence":"daily"|"weekly"|"monthly"|"once","dayOfWeek":0-6|null,"hour":0-23,"minute":0-59,"label":"short name","message":"full reminder text"}\n' +
             "dayOfWeek: 0=Sunday, 1=Monday ... 6=Saturday. Null for non-weekly. " +
             "hour/minute: 24h format. " +
             "label: short user-facing name (e.g. 'mom medications'). " +
             "message: the full text Cara will send as the reminder. " +
-            "If you cannot parse a schedule, reply with null.",
-        messages: [{ role: "user", content: userMessage }],
-    }, { timeoutMs: 8000, maxAttempts: 2 });
-    const raw = ((_a = response.content[0].text) !== null && _a !== void 0 ? _a : "").trim();
-    if (raw === "null" || raw === "")
-        return null;
-    try {
-        return JSON.parse(raw);
+            "If you cannot parse a schedule, reply with null.", userMessage, { maxTokens: 120, signal: controller.signal });
     }
-    catch (_b) {
+    catch (_a) {
         return null;
     }
+    finally {
+        clearTimeout(timer);
+    }
+    const trimmed = (raw !== null && raw !== void 0 ? raw : "").trim();
+    if (trimmed === "null" || trimmed === "")
+        return null;
+    return (0, jsonUtils_1.safeParseJson)(trimmed, "parseScheduleRequest", null, "object");
 }
 async function handleScheduleRequest(phone, userMessage, session) {
     var _a, _b;

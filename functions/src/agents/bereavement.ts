@@ -11,14 +11,31 @@ const db = admin.firestore();
 const OBVIOUS_BEREAVEMENT = ["passed away", "passed on", "she died", "he died", "they died",
   "funeral", "obituary", "died today", "died last night"];
 
+// Short binary acks / fillers — can never be a death disclosure on their own,
+// and feeding "Yes" to a YES/NO classifier reliably produces a false "YES" echo.
+const TRIVIAL_ACKS = new Set([
+  "y", "n", "yes", "no", "yeah", "yep", "yup", "nope", "nah",
+  "ok", "okay", "k", "kk", "sure", "fine", "alright", "got it",
+  "thanks", "thank you", "ty", "thx", "cool", "great", "perfect",
+  "maybe", "idk", "hi", "hello", "hey",
+]);
+
 export async function isBereavementTrigger(text: string): Promise<boolean> {
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase().trim();
   if (OBVIOUS_BEREAVEMENT.some((kw) => lower.includes(kw))) return true;
+  // Guard: bare acks like "Yes" / "ok" must not be classified as a death disclosure.
+  // They almost always answer a prior question from Cara, and the YES/NO classifier
+  // tends to echo the user's "Yes" back as a positive label.
+  const stripped = lower.replace(/[.!?]+$/g, "");
+  if (TRIVIAL_ACKS.has(stripped)) return false;
+  if (stripped.length < 8) return false;
   try {
     const raw = await quickComplete(
       "You are reading an SMS from a family using a care platform. " +
-        "Reply YES if this message is informing us that their care recipient has died or passed away. " +
-        "Reply NO otherwise. Reply with only YES or NO.",
+        "Reply YES only if this message is clearly informing us that their care recipient has died or passed away " +
+        "(e.g. mentions death, dying, passing, funeral, obituary, or hospice end-of-life). " +
+        "A bare acknowledgment like \"yes\", \"ok\", or \"sure\" is NEVER a death disclosure — reply NO for those. " +
+        "Reply NO if you are unsure. Reply with only YES or NO.",
       text,
       { maxTokens: 5 },
     );

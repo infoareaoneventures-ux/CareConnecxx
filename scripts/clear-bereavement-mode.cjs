@@ -5,9 +5,9 @@
 // subsequent reply gets routed through the bereavement branch.
 //
 // Usage:
-//   node scripts/clear-bereavement-mode.js                  # list affected sessions (dry run)
-//   node scripts/clear-bereavement-mode.js --phone=+1XXX    # clear one phone
-//   node scripts/clear-bereavement-mode.js --all            # clear every flagged session
+//   node scripts/clear-bereavement-mode.cjs                  # list affected sessions (dry run)
+//   node scripts/clear-bereavement-mode.cjs --phone=+1XXX    # clear one phone
+//   node scripts/clear-bereavement-mode.cjs --all            # clear every flagged session
 //
 // Requires GOOGLE_APPLICATION_CREDENTIALS or default app creds.
 

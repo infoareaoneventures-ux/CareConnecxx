@@ -100,6 +100,7 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                 selectedJob?.title,
                 interviewType,
                 (caregiver as any).photoURL || (caregiver as any).photo || (caregiver as any).imageUrl || '',
+                currentUser.photoURL || undefined,
             );
 
             // Interview scheduled successfully

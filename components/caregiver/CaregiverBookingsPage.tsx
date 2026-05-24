@@ -156,7 +156,7 @@ function fmtTs(ts: any): string | null {
 function fmtDuration(startTs: any, endTs: any): string | null {
   const s = tsToDate(startTs); const e = tsToDate(endTs);
   if (!s || !e) return null;
-  const mins = Math.round((e.getTime() - s.getTime()) / 60000);
+  const mins = Math.ceil((e.getTime() - s.getTime()) / 60000);
   if (mins <= 0) return null;
   const h = Math.floor(mins / 60); const m = mins % 60;
   return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
@@ -630,12 +630,20 @@ const BookingGroupCard: React.FC<{
           const endDate: string | null = amendment.ongoing
             ? null
             : (amendment.endDate || (booking.schedule?.ongoing ? null : booking.schedule?.endDate || null));
+          // Fetch caregiver photo to embed on shifts (so client bookings page shows it)
+          let cgPhotoURL: string | null = booking.caregiverPhotoURL || null;
+          if (!cgPhotoURL && amendment.caregiverId) {
+            const cgSnap = await db.collection('caregivers').doc(amendment.caregiverId).get().catch(() => null);
+            const cgData = cgSnap?.data() as any;
+            cgPhotoURL = cgData?.photo || cgData?.profilePhoto || cgData?.photoURL || cgData?.imageUrl || null;
+          }
           const shiftBase = {
             clientId: booking.clientId || amendment.clientId,
             clientName: booking.clientName || amendment.clientName,
             clientPhotoURL: booking.clientPhotoURL || null,
             caregiverId: amendment.caregiverId,
             caregiverName: booking.caregiverName || amendment.caregiverName,
+            caregiverPhotoURL: cgPhotoURL,
             status: 'scheduled',
             address: booking.address || '',
             careNeeds: booking.careNeeds || [],
@@ -1744,9 +1752,8 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
           const actualStart = fmtTs(shift.startedAt);
           const actualEnd   = fmtTs(shift.completedAt);
           const duration    = fmtDuration(shift.startedAt, shift.completedAt);
-          const allTasks    = shift.careNeeds || [];
-          const doneTasks   = shift.tasksCompleted || [];
-          const notDone     = allTasks.filter(t => !doneTasks.includes(t));
+          const stripPfx    = (k: string) => k.replace(/^\d+_/, '');
+          const rawDone     = shift.tasksCompleted || [];
           return (
             <div key={shift.id}>
               <div
@@ -1769,40 +1776,94 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
                 </div>
               </div>
               {isCompleted && isOpen && (
-                <div className="px-5 pb-4 space-y-3 bg-slate-50 border-t border-slate-100">
-                  {/* Actual time worked */}
-                  {(actualStart || actualEnd || duration) && (
-                    <div className="pt-3 flex items-center gap-4 text-xs text-slate-600">
-                      <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      {actualStart && <span><span className="text-slate-400">Started</span> <span className="font-semibold">{actualStart}</span></span>}
-                      {actualEnd && <span><span className="text-slate-400">Ended</span> <span className="font-semibold">{actualEnd}</span></span>}
-                      {duration && <span className="font-semibold text-primary-600">{duration}</span>}
+                <div className="px-5 pb-4 pt-3 space-y-3 bg-slate-50 border-t border-slate-100">
+                  {/* Scheduled + Actual times */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-3 text-xs">
+                      <span className="w-20 text-slate-400 shrink-0">Scheduled</span>
+                      <span className="font-semibold text-slate-700">{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}</span>
                     </div>
-                  )}
-                  {/* Tasks — show completed tasks even if full list unavailable */}
-                  {(doneTasks.length > 0 || allTasks.length > 0) && (
-                    <div className={actualStart || actualEnd ? '' : 'pt-3'}>
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tasks</p>
-                      <div className="space-y-1">
-                        {doneTasks.map((t, i) => (
-                          <div key={i} className="flex items-center gap-2 text-xs text-green-700">
-                            <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
-                            {t}
-                          </div>
-                        ))}
-                        {notDone.map((t, i) => (
-                          <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
-                            <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />
-                            {t}
-                          </div>
-                        ))}
+                    {(actualStart || actualEnd) && (
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="w-20 text-slate-400 shrink-0">Actual</span>
+                        <span className="font-semibold text-slate-700">{actualStart}{actualEnd ? ` – ${actualEnd}` : ''}</span>
+                        {duration && <span className="font-semibold text-primary-600">{duration}</span>}
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
+                  {/* Tasks per recipient */}
+                  {(() => {
+                    const doneRaw = shift.tasksCompleted || [];
+                    const stripPfx2 = (k: string) => k.replace(/^\d+_/, '');
+                    const recipients = (shift.careRecipients || []) as Array<{ name: string; relationship?: string; age?: string; photoURL?: string | null; careNeeds?: string[] }>;
+                    const hasRecipients = recipients.some(r => (r.careNeeds || []).length > 0);
+                    if (hasRecipients) {
+                      return (
+                        <div>
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tasks</p>
+                          <div className="space-y-3">
+                            {recipients.map((r, ri) => {
+                              const rDone = [...new Set(doneRaw.filter(k => k.startsWith(`${ri}_`)).map(stripPfx2))];
+                              const rDoneSet = new Set(rDone);
+                              const rNeeds = r.careNeeds || [];
+                              const rNotDone = rNeeds.filter(t => !rDoneSet.has(t));
+                              if (rDone.length === 0 && rNotDone.length === 0) return null;
+                              return (
+                                <div key={ri}>
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <div className="w-6 h-6 rounded-full overflow-hidden bg-slate-200 shrink-0 flex items-center justify-center">
+                                      {r.photoURL
+                                        ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
+                                        : <span className="text-[9px] font-bold text-slate-500">{r.name.split(' ').map((p: string) => p[0]).join('').slice(0,2).toUpperCase()}</span>}
+                                    </div>
+                                    <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.age ? ` · Age ${r.age}` : ''}</p>
+                                  </div>
+                                  <div className="space-y-0.5">
+                                    {rDone.map((t, i) => (
+                                      <div key={i} className="flex items-center gap-2 text-xs text-green-700">
+                                        <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />{t}
+                                      </div>
+                                    ))}
+                                    {rNotDone.map((t, i) => (
+                                      <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
+                                        <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />{t}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    }
+                    // Fallback: flat careNeeds
+                    const doneNames2 = [...new Set(doneRaw.map(stripPfx2))];
+                    const doneSet2 = new Set(doneNames2);
+                    const notDone2 = (shift.careNeeds || []).filter(t => !doneSet2.has(stripPfx2(t)));
+                    if (doneNames2.length === 0 && notDone2.length === 0) return null;
+                    return (
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Tasks</p>
+                        <div className="space-y-0.5">
+                          {doneNames2.map((t, i) => (
+                            <div key={i} className="flex items-center gap-2 text-xs text-green-700">
+                              <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />{t}
+                            </div>
+                          ))}
+                          {notDone2.map((t, i) => (
+                            <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
+                              <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />{t}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {/* Caregiver notes */}
                   {shift.completionNotes && (
                     <div className="p-3 bg-white border border-slate-200 rounded-xl">
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shift Notes</p>
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Caregiver Notes</p>
                       <p className="text-xs text-slate-600">{shift.completionNotes}</p>
                     </div>
                   )}
@@ -2040,14 +2101,8 @@ export const CaregiverBookingsPage: React.FC = () => {
         {/* ── Active Bookings ── */}
         {tab === 'active' && (
           <div className="space-y-4">
-            {activeLoading ? (
+            {activeLoading || pastLoading ? (
               <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-500" /></div>
-            ) : activeShifts.length === 0 ? (
-              <EmptyState
-                icon={<CalendarDays className="w-6 h-6" />}
-                title="No active bookings"
-                body="Your scheduled and in-progress shifts will appear here."
-              />
             ) : (
               (() => {
                 // Group shifts by bookingRequestId, preserving order of first occurrence
@@ -2057,6 +2112,20 @@ export const CaregiverBookingsPage: React.FC = () => {
                   if (!groups.has(key)) groups.set(key, []);
                   groups.get(key)!.push(s);
                 });
+                // Bring past bookings back to active if they have a pending amendment
+                amendments.forEach(a => {
+                  if (a.bookingRequestId && !groups.has(a.bookingRequestId)) {
+                    const pastForBooking = pastShifts.filter(s => s.bookingRequestId === a.bookingRequestId);
+                    if (pastForBooking.length > 0) groups.set(a.bookingRequestId, pastForBooking);
+                  }
+                });
+                if (groups.size === 0) return (
+                  <EmptyState
+                    icon={<CalendarDays className="w-6 h-6" />}
+                    title="No active bookings"
+                    body="Your scheduled and in-progress shifts will appear here."
+                  />
+                );
                 return Array.from(groups.entries()).map(([key, groupShifts]) => (
                   <BookingGroupCard
                     key={key}

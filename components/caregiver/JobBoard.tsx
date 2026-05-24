@@ -1125,14 +1125,46 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             {viewingJob && createPortal(
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-[var(--color-neutral-900)]/60 backdrop-blur-sm" onClick={() => setViewingJob(null)} />
-                    <div className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 animate-slide-in">
+                    <div className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 animate-slide-in max-h-[90vh] overflow-y-auto">
                         <button onClick={() => setViewingJob(null)} className="absolute top-4 right-4 text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-600)]"><X size={24} /></button>
-                        <h2 className="text-xl font-bold text-[var(--color-neutral-900)] mb-1">{viewingJob.title}</h2>
-                        <p className="text-[var(--color-neutral-500)] text-sm mb-4">Posted by {viewingJob.clientName}</p>
+
+                        {/* Header: title + rate badge */}
+                        <div className="pr-8 mb-1">
+                            <div className="flex items-start justify-between gap-3">
+                                <h2 className="text-xl font-bold text-[var(--color-neutral-900)] leading-tight">{viewingJob.title}</h2>
+                                {viewingJob.rate != null && (
+                                    <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full shrink-0">${viewingJob.rate}/hr</span>
+                                )}
+                            </div>
+                            <p className="text-[var(--color-neutral-500)] text-sm mt-1">Posted by {viewingJob.clientName}</p>
+                            {viewingJob.location && (
+                                <p className="text-[var(--color-neutral-400)] text-xs mt-0.5 flex items-center gap-1">
+                                    <MapPin className="w-3 h-3" />{viewingJob.location}
+                                </p>
+                            )}
+                        </div>
+
+                        {/* Frequency + care type chips — same style as interview card */}
+                        {(viewingJob.jobFrequency || (viewingJob.careTypes ?? viewingJob.requirements ?? []).length > 0) && (
+                            <div className="flex flex-wrap gap-2 mt-3 mb-4">
+                                {viewingJob.jobFrequency && (
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-primary-50 text-primary-700 text-[11px] font-semibold uppercase tracking-wide">
+                                        {({'one-time':'Occasional','occasional':'Occasional','part-time':'Part-time','full-time':'Full-time'} as Record<string,string>)[viewingJob.jobFrequency] || viewingJob.jobFrequency}
+                                    </span>
+                                )}
+                                {(viewingJob.careTypes ?? viewingJob.requirements ?? []).map((ct: string, i: number) => (
+                                    <span key={i} className="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-2.5 py-0.5 rounded-full font-medium">{ct}</span>
+                                ))}
+                            </div>
+                        )}
+
                         <div className="space-y-4">
+                            {/* Schedule info */}
                             <div className="bg-[var(--color-neutral-50)] p-4 rounded-xl space-y-2 text-sm">
-                                <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Rate</span><span className="font-bold text-[var(--color-success-700)]">${viewingJob.rate}/hr</span></div>
-                                <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Starting Date</span><span className="font-medium">{(() => { const d = new Date((viewingJob.startDate || viewingJob.date) + 'T12:00:00'); return isNaN(d.getTime()) ? (viewingJob.startDate || viewingJob.date) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })()}</span></div>
+                                <div className="flex justify-between">
+                                    <span className="text-[var(--color-neutral-500)]">Starting Date</span>
+                                    <span className="font-medium">{(() => { const d = new Date((viewingJob.startDate || viewingJob.date) + 'T12:00:00'); return isNaN(d.getTime()) ? (viewingJob.startDate || viewingJob.date) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })()}</span>
+                                </div>
                                 {Array.isArray(viewingJob.daysOfWeek) && viewingJob.daysOfWeek.length > 0 && (
                                     <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Days</span><span className="font-medium">{viewingJob.daysOfWeek.join(', ')}</span></div>
                                 )}
@@ -1149,31 +1181,55 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                 {viewingJob.recipientsCount != null && (
                                     <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Seniors</span><span className="font-medium">{viewingJob.recipientsCount} {viewingJob.recipientsCount === 1 ? 'senior' : 'seniors'}</span></div>
                                 )}
-                                <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Location</span><span className="font-medium">{viewingJob.location}</span></div>
+                                {viewingJob.minHoursPerWeek != null && (
+                                    <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Hours/week</span><span className="font-medium">{viewingJob.minHoursPerWeek}+ hrs</span></div>
+                                )}
                             </div>
-                            <div>
-                                <h3 className="font-bold text-[var(--color-neutral-900)] mb-2 text-sm">Description</h3>
-                                <p className="text-[var(--color-neutral-600)] text-sm leading-relaxed break-words">{viewingJob.description}</p>
-                            </div>
-                            {Array.isArray(viewingJob.requirements) && viewingJob.requirements.length > 0 && (
+
+                            {/* Description */}
+                            {viewingJob.description && (
                                 <div>
-                                    <h3 className="font-bold text-[var(--color-neutral-900)] mb-2 text-sm">Requirements</h3>
-                                    <div className="flex flex-wrap gap-2">
-                                        {viewingJob.requirements.map((req, i) => (
-                                            <span key={i} className="px-2 py-1 bg-[var(--color-info-50)] text-[var(--color-info-700)] rounded text-xs font-medium border border-[var(--color-info-100)]">{req}</span>
-                                        ))}
-                                    </div>
+                                    <h3 className="font-bold text-[var(--color-neutral-900)] mb-2 text-sm">Description</h3>
+                                    <p className="text-[var(--color-neutral-600)] text-sm leading-relaxed break-words">{viewingJob.description}</p>
                                 </div>
                             )}
                             <div className="pt-4 flex gap-3">
                                 <Button variant="secondary" fullWidth onClick={() => setViewingJob(null)}>Close</Button>
-                                {profile?.verified ? (
-                                    <Button fullWidth onClick={() => { setApplyingJob(viewingJob); setViewingJob(null); }}>Apply Now</Button>
-                                ) : (
-                                    <Button fullWidth disabled className="bg-[var(--color-neutral-100)] text-[var(--color-neutral-400)] cursor-not-allowed">
-                                        <Lock className="w-3 h-3 mr-2" /> Verify to Apply
-                                    </Button>
-                                )}
+                                {(() => {
+                                    const existingIv = interviews.find(iv => iv.jobId === viewingJob.id);
+                                    const existingApp = applications.find(a => a.jobId === viewingJob.id);
+                                    if (existingIv) {
+                                        const label = existingIv.status === 'pending' ? 'Interview Pending'
+                                            : existingIv.status === 'accepted' || existingIv.status === 'confirmed' ? 'Interview Confirmed'
+                                            : existingIv.status === 'completed' ? 'Interview Completed'
+                                            : existingIv.status === 'declined' ? 'Interview Declined'
+                                            : existingIv.status === 'cancelled' ? 'Interview Cancelled'
+                                            : 'Interview Scheduled';
+                                        const color = existingIv.status === 'completed' ? 'bg-green-50 text-green-700 border-green-200'
+                                            : existingIv.status === 'accepted' || existingIv.status === 'confirmed' ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                            : existingIv.status === 'declined' || existingIv.status === 'cancelled' ? 'bg-slate-50 text-slate-500 border-slate-200'
+                                            : 'bg-yellow-50 text-yellow-700 border-yellow-200';
+                                        return <div className={`flex-1 flex items-center justify-center px-3 py-2 rounded-xl border text-sm font-medium ${color}`}>{label}</div>;
+                                    }
+                                    if (existingApp) {
+                                        const label = existingApp.status === 'accepted' ? 'Application Accepted'
+                                            : existingApp.status === 'rejected' ? 'Application Rejected'
+                                            : existingApp.status === 'withdrawn' ? 'Application Withdrawn'
+                                            : 'Application Pending';
+                                        const color = existingApp.status === 'accepted' ? 'bg-green-50 text-green-700 border-green-200'
+                                            : existingApp.status === 'rejected' ? 'bg-red-50 text-red-600 border-red-200'
+                                            : existingApp.status === 'withdrawn' ? 'bg-slate-50 text-slate-500 border-slate-200'
+                                            : 'bg-yellow-50 text-yellow-700 border-yellow-200';
+                                        return <div className={`flex-1 flex items-center justify-center px-3 py-2 rounded-xl border text-sm font-medium ${color}`}>{label}</div>;
+                                    }
+                                    return profile?.verified ? (
+                                        <Button fullWidth onClick={() => { setApplyingJob(viewingJob); setViewingJob(null); }}>Apply Now</Button>
+                                    ) : (
+                                        <Button fullWidth disabled className="bg-[var(--color-neutral-100)] text-[var(--color-neutral-400)] cursor-not-allowed">
+                                            <Lock className="w-3 h-3 mr-2" /> Verify to Apply
+                                        </Button>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>

@@ -82,6 +82,7 @@ async function generateShiftsForBooking(bookingId, booking, generateFrom, genera
         caregiverPhotoURL,
         status: 'scheduled',
         address: booking.address || '',
+        careNeeds: booking.careNeeds || [],
         lifestylePreferences: booking.lifestylePreferences || [],
         rate: (_d = booking.rate) !== null && _d !== void 0 ? _d : null,
         paymentMethod: booking.paymentMethod || null,

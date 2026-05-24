@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Calendar as CalendarIcon, MapPin, User,
-  XCircle, Plus, MessageSquare, ChevronLeft, ChevronRight, DollarSign,
-  Video, Phone, Home, CheckCircle,
+  XCircle, X, Plus, MessageSquare, ChevronLeft, ChevronRight,
+  Video, Phone, Home, CheckCircle, Loader2,
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
@@ -14,6 +14,7 @@ interface Shift {
   id: string;
   caregiverId: string;
   caregiverName: string;
+  caregiverPhotoURL?: string | null;
   clientId: string;
   date: string;
   startTime: string;
@@ -23,6 +24,10 @@ interface Shift {
   notes?: string;
   completionNotes?: string;
   tasksCompleted?: string[];
+  careNeeds?: string[];
+  careRecipients?: Array<{ name: string; relationship?: string; age?: string; photoURL?: string | null; careNeeds?: string[] }>;
+  startedAt?: any;
+  completedAt?: any;
   createdBy: 'client' | 'caregiver';
   paid?: boolean;
   paidAt?: string;
@@ -45,6 +50,21 @@ interface InterviewEvent {
 
 function localDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function fmtTs(ts: any): string {
+  if (!ts) return '';
+  const d = ts?.toDate ? ts.toDate() : new Date(ts);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+function fmtDuration(start: any, end: any): string {
+  if (!start || !end) return '';
+  const s = start?.toDate ? start.toDate() : new Date(start);
+  const e = end?.toDate   ? end.toDate()   : new Date(end);
+  const mins = Math.ceil((e.getTime() - s.getTime()) / 60000);
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
 }
 
 function parseInterview(id: string, data: any): InterviewEvent {
@@ -99,7 +119,7 @@ function statusStyle(status: Shift['status']): string {
     case 'scheduled':   return 'bg-primary-500 border-primary-600';
     case 'in-progress': return 'bg-accent-500 border-accent-600';
     case 'completed':   return 'bg-slate-400 border-slate-500';
-    case 'cancelled':   return 'bg-red-400 border-red-500';
+    case 'cancelled':   return 'bg-rose-600 border-rose-700';
     default:            return 'bg-slate-400 border-slate-500';
   }
 }
@@ -109,7 +129,7 @@ function statusBadge(status: Shift['status']): string {
     case 'scheduled':   return 'bg-primary-100 text-primary-700 border-primary-200';
     case 'in-progress': return 'bg-accent-100 text-accent-700 border-accent-200';
     case 'completed':   return 'bg-green-100 text-green-700 border-green-200';
-    case 'cancelled':   return 'bg-red-100 text-red-700 border-red-200';
+    case 'cancelled':   return 'bg-rose-100 text-rose-700 border-rose-200';
     default:            return 'bg-slate-100 text-slate-700';
   }
 }
@@ -139,17 +159,13 @@ export default function Schedule() {
   const [selectedInterview, setSelectedInterview] = useState<InterviewEvent | null>(null);
   const [selectedDay,       setSelectedDay]       = useState(localDate(new Date()));
   const [showAddModal,      setShowAddModal]      = useState(false);
-  const [visitType,          setVisitType]          = useState<'once' | 'recurring'>('once');
   const [visitCaregiverId,   setVisitCaregiverId]   = useState('');
   const [selectedDays,       setSelectedDays]       = useState<string[]>([]);
   const [dayTimes,           setDayTimes]           = useState<Record<string, { date: string; start: string; end: string }>>({});
   const [visitNotes,         setVisitNotes]         = useState('');
-  const [recurringStartDate, setRecurringStartDate] = useState('');
-  const [recurringEndOption, setRecurringEndOption] = useState<'ongoing' | 'end_date'>('ongoing');
-  const [recurringEndDate,   setRecurringEndDate]   = useState('');
-  const [onceDate,           setOnceDate]           = useState('');
-  const [onceStart,          setOnceStart]          = useState('09:00');
-  const [onceEnd,            setOnceEnd]            = useState('13:00');
+  const [visitStartDate,     setVisitStartDate]     = useState('');
+  const [visitEndOption,     setVisitEndOption]     = useState<'ongoing' | 'end_date'>('ongoing');
+  const [visitEndDate,       setVisitEndDate]       = useState('');
 
   useEffect(() => { fetchShifts(); }, [monthDate]);
   useEffect(() => { fetchHiredCaregivers(); fetchInterviews(); generateMissingShifts(); }, []);
@@ -330,17 +346,13 @@ export default function Schedule() {
   };
 
   const resetVisitModal = () => {
-    setVisitType('once');
     setVisitCaregiverId('');
     setSelectedDays([]);
     setDayTimes({});
     setVisitNotes('');
-    setRecurringStartDate('');
-    setRecurringEndOption('ongoing');
-    setRecurringEndDate('');
-    setOnceDate('');
-    setOnceStart('09:00');
-    setOnceEnd('13:00');
+    setVisitStartDate('');
+    setVisitEndOption('ongoing');
+    setVisitEndDate('');
   };
 
   const handleAddShift = async () => {
@@ -349,70 +361,47 @@ export default function Schedule() {
       if (!user) return;
       const cg = caregivers.find(c => c.id === visitCaregiverId);
 
-      if (visitType === 'once') {
-        // Create a single pending shift for the selected date/time
-        await db.collection('shifts').add({
-          clientId: user.uid,
-          caregiverId: visitCaregiverId,
-          caregiverName: cg?.name || 'Unknown',
-          date: onceDate,
-          startTime: onceStart,
-          endTime: onceEnd,
-          status: 'pending',
-          address: cg?.address || '',
-          notes: visitNotes,
-          bookingRequestId: cg?.bookingId || null,
-          tasksCompleted: [],
-          createdBy: 'client',
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        });
-        const dateLabel = new Date(onceDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        await db.collection('users').doc(visitCaregiverId).collection('notifications').add({
-          userId: visitCaregiverId,
-          type: 'extra_visit_request',
-          title: 'Extra Visit Requested',
-          message: `Your client requested an extra visit on ${dateLabel}.`,
-          read: false,
-          isRead: false,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        });
-      } else {
-        // Recurring: create a booking_amendment document
-        const newDays: Record<string, Array<{ start: string; end: string }>> = {};
-        for (const day of selectedDays) {
-          const times = dayTimes[day];
-          if (!times?.start || !times?.end) continue;
-          if (!newDays[day]) newDays[day] = [];
-          newDays[day].push({ start: times.start, end: times.end });
-        }
-        const todayStr = new Date().toISOString().split('T')[0];
-        await db.collection('booking_amendments').add({
-          bookingRequestId: cg?.bookingId || null,
-          clientId: user.uid,
-          clientName: user.displayName || '',
-          caregiverId: visitCaregiverId,
-          caregiverName: cg?.name || 'Unknown',
-          status: 'pending',
-          type: 'add_recurring_days',
-          newDays,
-          notes: visitNotes,
-          startDate: recurringStartDate || todayStr,
-          endDate: recurringEndOption === 'end_date' ? recurringEndDate : null,
-          ongoing: recurringEndOption === 'ongoing',
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        });
-        await db.collection('users').doc(visitCaregiverId).collection('notifications').add({
-          userId: visitCaregiverId,
-          type: 'recurring_visit_request',
-          title: 'Recurring Visit Request',
-          message: `Your client wants to add ${selectedDays.join(', ')} to your regular schedule.`,
-          read: false,
-          isRead: false,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        });
+      // Build newDays from selectedDays + dayTimes
+      const newDays: Record<string, Array<{ start: string; end: string }>> = {};
+      for (const day of selectedDays) {
+        const times = dayTimes[day];
+        if (!times?.start || !times?.end) continue;
+        newDays[day] = [{ start: times.start, end: times.end }];
       }
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const isOngoing = visitEndOption === 'ongoing';
+
+      await db.collection('booking_amendments').add({
+        bookingRequestId: cg?.bookingId || null,
+        clientId: user.uid,
+        clientName: user.displayName || '',
+        caregiverId: visitCaregiverId,
+        caregiverName: cg?.name || 'Unknown',
+        status: 'pending',
+        type: 'add_recurring_days',
+        newDays,
+        notes: visitNotes,
+        startDate: visitStartDate || todayStr,
+        endDate: isOngoing ? null : (visitEndDate || null),
+        ongoing: isOngoing,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+
+      const dayList = selectedDays.join(', ');
+      const isOneDay = !isOngoing && visitStartDate && visitEndDate && visitStartDate === visitEndDate;
+      await db.collection('users').doc(visitCaregiverId).collection('notifications').add({
+        userId: visitCaregiverId,
+        type: 'extra_visit_request',
+        title: isOneDay ? 'Extra Visit Requested' : 'Schedule Change Requested',
+        message: isOneDay
+          ? `Your client requested an extra visit on ${new Date(visitStartDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}.`
+          : `Your client wants to add ${dayList} to your regular schedule.`,
+        read: false,
+        isRead: false,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+      });
 
       setShowAddModal(false);
       resetVisitModal();
@@ -433,11 +422,6 @@ export default function Schedule() {
     fetchShifts();
   };
 
-  const handleMarkPaid = async (id: string) => {
-    await db.collection('shifts').doc(id).update({ paid: true, paidAt: new Date().toISOString() });
-    setShifts(prev => prev.map(s => s.id === id ? { ...s, paid: true } : s));
-    setSelectedShift(prev => prev?.id === id ? { ...prev, paid: true } : prev);
-  };
 
   // ── Week helpers ─────────────────────────────────────────────────────────
   const today = new Date();
@@ -528,31 +512,121 @@ export default function Schedule() {
   const groupedDates = Object.keys(groupedEvents).sort();
 
   // ── Detail panels ────────────────────────────────────────────────────────
-  const ShiftDetail = ({ shift, onClose }: { shift: Shift; onClose: () => void }) => (
+  const ShiftDetail = ({ shift, onClose }: { shift: Shift; onClose: () => void }) => {
+    const cgInitials = shift.caregiverName.split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase();
+    return (
     <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
       <div className="flex items-start justify-between mb-4">
-        <div>
-          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${statusBadge(shift.status)}`}>
-            {shift.status.replace('-',' ').replace(/\b\w/g, l => l.toUpperCase())}
-          </span>
-          <h3 className="font-bold text-slate-900 mt-2">{shift.caregiverName}</h3>
-          <p className="text-sm text-slate-500">{shift.date} · {shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center shrink-0">
+            {shift.caregiverPhotoURL
+              ? <img src={shift.caregiverPhotoURL} alt={shift.caregiverName} className="w-full h-full object-cover" />
+              : <span className="text-sm font-bold text-primary-600">{cgInitials}</span>}
+          </div>
+          <div>
+            <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
+              {shift.status.replace('-',' ').replace(/\b\w/g, l => l.toUpperCase())}
+            </span>
+            <h3 className="font-bold text-slate-900 mt-1">{shift.caregiverName}</h3>
+            <p className="text-sm text-slate-500">{shift.date} · {shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+          </div>
         </div>
         <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg font-bold">×</button>
       </div>
-      <div className="space-y-2 text-sm mb-4">
+      <div className="space-y-3 text-sm mb-4">
+        {/* Address */}
         <div className="flex items-start gap-2 text-slate-600">
           <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-slate-400" />
           <span>{shift.address}</span>
         </div>
-        {shift.notes && <div className="p-3 bg-slate-50 rounded-xl text-slate-600">{shift.notes}</div>}
-        {shift.tasksCompleted && shift.tasksCompleted.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-2">
-            {shift.tasksCompleted.map((t, i) => (
-              <span key={i} className="text-xs bg-primary-50 text-primary-700 border border-primary-200 px-2 py-0.5 rounded-full">{t}</span>
-            ))}
+        {/* Scheduled + Actual times */}
+        <div className="space-y-1">
+          <div className="flex items-center gap-3 text-xs">
+            <span className="w-20 text-slate-400 shrink-0">Scheduled</span>
+            <span className="font-semibold text-slate-700">{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</span>
           </div>
-        )}
+          {(shift.startedAt || shift.completedAt) && (() => {
+            const s = fmtTs(shift.startedAt), e = fmtTs(shift.completedAt), d = fmtDuration(shift.startedAt, shift.completedAt);
+            return (
+              <div className="flex items-center gap-3 text-xs">
+                <span className="w-20 text-slate-400 shrink-0">Actual</span>
+                <span className="font-semibold text-slate-700">{s}{e ? ` – ${e}` : ''}</span>
+                {d && <span className="font-semibold text-primary-600">{d}</span>}
+              </div>
+            );
+          })()}
+        </div>
+        {/* Tasks per recipient */}
+        {(() => {
+          const doneRaw = shift.tasksCompleted || [];
+          const sp = (k: string) => k.replace(/^\d+_/, '');
+          const recipients = shift.careRecipients || [];
+          const hasRecipients = recipients.some(r => (r.careNeeds || []).length > 0);
+          if (hasRecipients) {
+            return (
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tasks</p>
+                <div className="space-y-3">
+                  {recipients.map((r, ri) => {
+                    const rDone = [...new Set(doneRaw.filter(k => k.startsWith(`${ri}_`)).map(sp))];
+                    const rDoneSet = new Set(rDone);
+                    const rNeeds = r.careNeeds || [];
+                    const rNotDone = rNeeds.filter(t => !rDoneSet.has(t));
+                    if (rDone.length === 0 && rNotDone.length === 0) return null;
+                    return (
+                      <div key={ri}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="w-6 h-6 rounded-full overflow-hidden bg-slate-200 shrink-0 flex items-center justify-center">
+                            {r.photoURL
+                              ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
+                              : <span className="text-[9px] font-bold text-slate-500">{r.name.split(' ').map((p: string) => p[0]).join('').slice(0,2).toUpperCase()}</span>}
+                          </div>
+                          <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.age ? ` · Age ${r.age}` : ''}</p>
+                        </div>
+                        <div className="space-y-0.5">
+                          {rDone.map((t, i) => (
+                            <div key={i} className="flex items-center gap-2 text-xs text-green-700">
+                              <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />{t}
+                            </div>
+                          ))}
+                          {rNotDone.map((t, i) => (
+                            <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
+                              <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />{t}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          }
+          // Fallback: flat careNeeds
+          const dn = [...new Set(doneRaw.map(sp))];
+          const dnSet = new Set(dn);
+          const nd = (shift.careNeeds || []).filter(t => !dnSet.has(sp(t)));
+          if (dn.length === 0 && nd.length === 0) return null;
+          return (
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Tasks</p>
+              <div className="space-y-0.5">
+                {dn.map((t, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs text-green-700">
+                    <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />{t}
+                  </div>
+                ))}
+                {nd.map((t, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
+                    <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />{t}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+        {/* Notes */}
+        {shift.notes && <div className="p-3 bg-slate-50 rounded-xl text-slate-600 text-xs">{shift.notes}</div>}
         {shift.completionNotes && (
           <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shift Notes</p>
@@ -572,56 +646,162 @@ export default function Schedule() {
       )}
       {shift.status === 'completed' && (
         <div className="flex items-center gap-2">
-          {shift.paid ? (
-            <span className="flex items-center gap-1.5 px-3 py-2 bg-green-50 text-green-700 text-sm font-semibold rounded-xl border border-green-200">
-              <CheckCircle className="w-4 h-4" /> Paid
-            </span>
-          ) : (
-            <button onClick={() => handleMarkPaid(shift.id)} className="flex-1 py-2 bg-primary-600 text-white text-sm font-semibold rounded-xl hover:bg-primary-700">
-              <DollarSign className="w-4 h-4 inline mr-1" />Mark Paid
-            </button>
-          )}
-          <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="px-3 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600">
-            <MessageSquare className="w-4 h-4" />
+          <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center justify-center gap-1.5">
+            <MessageSquare className="w-4 h-4" />Message
           </button>
         </div>
       )}
     </div>
   );
+  };
 
   const InterviewDetail = ({ interview, onClose }: { interview: InterviewEvent; onClose: () => void }) => {
-    const TypeIcon = interview.interviewType === 'phone' ? Phone : interview.interviewType === 'in-person' ? Home : Video;
+    const [job, setJob]             = useState<any>(null);
+    const [cancelling, setCancelling] = useState(false);
+
+    const TypeIcon  = interview.interviewType === 'phone' ? Phone : interview.interviewType === 'in-person' ? Home : Video;
     const typeLabel = interview.interviewType === 'phone' ? 'Phone Call' : interview.interviewType === 'in-person' ? 'In Person' : 'Video Call';
-    const statusLabel = interview.status === 'requested' ? 'Pending' : interview.status.charAt(0).toUpperCase() + interview.status.slice(1);
+    const statusLabel = interview.status === 'requested' ? 'Pending'
+      : interview.status === 'in-progress' ? 'In Progress'
+      : interview.status.charAt(0).toUpperCase() + interview.status.slice(1);
+    const statusColor = interview.status === 'completed'   ? 'bg-green-100 text-green-700 border-green-200'
+      : interview.status === 'cancelled' || interview.status === 'declined' ? 'bg-slate-100 text-slate-500 border-slate-200'
+      : interview.status === 'in-progress' ? 'bg-orange-100 text-orange-700 border-orange-200'
+      : 'bg-purple-100 text-purple-700 border-purple-200';
+
+    const initials = interview.caregiverName.split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase();
+
+    useEffect(() => {
+      if (!interview.jobId) return;
+      db.collection('job_posts').doc(interview.jobId).get()
+        .then(doc => { if (doc.exists) setJob(doc.data()); })
+        .catch(() => {});
+    }, [interview.jobId]);
+
+    const handleCancel = async () => {
+      if (!window.confirm('Cancel this interview?')) return;
+      setCancelling(true);
+      try {
+        await db.collection('video_interviews').doc(interview.id).update({
+          status: 'cancelled', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'cancelled' as const } : iv));
+        setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'cancelled' as const } : prev);
+      } catch { } finally { setCancelling(false); }
+    };
+
+    const careTypes: string[] = job?.careTypes || job?.requirements || [];
+    const days:      string[] = job?.daysOfWeek || [];
+    const times:     string[] = (job?.timeOfDay || []).map((t: string) => t.charAt(0).toUpperCase() + t.slice(1));
+    const freq:      string | undefined = job?.jobFrequency;
+    const rate:      number | undefined = job?.rate;
+    const location:  string | null = job?.location || (job?.city ? [job.city, job.state].filter(Boolean).join(', ') : null);
+
     return (
       <div className="bg-white rounded-2xl border border-purple-100 p-5 shadow-sm">
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-full border bg-purple-100 text-purple-700 border-purple-200">
-              Interview · {statusLabel}
-            </span>
-            <h3 className="font-bold text-slate-900 mt-2">{interview.caregiverName}</h3>
-            <p className="text-sm text-slate-500">
-              {new Date(interview.scheduledTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-              {' · '}
-              {new Date(`2000-01-01T${interview.startTime}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
-            </p>
+        {/* Header: avatar + name + status */}
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full overflow-hidden bg-purple-100 flex items-center justify-center shrink-0">
+              {(interview as any).caregiverPhoto
+                ? <img src={(interview as any).caregiverPhoto} alt={interview.caregiverName} className="w-full h-full object-cover" />
+                : <span className="text-sm font-bold text-purple-600">{initials}</span>}
+            </div>
+            <div>
+              <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusColor}`}>
+                Interview · {statusLabel}
+              </span>
+              <h3 className="font-bold text-slate-900 mt-1">{interview.caregiverName}</h3>
+            </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg font-bold">×</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
         </div>
+
+        {/* Date + time */}
+        <div className="flex items-center gap-2 text-sm text-slate-500 mb-3">
+          <CalendarIcon className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          <span>
+            {new Date(interview.scheduledTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+            {' · '}
+            {new Date(`2000-01-01T${interview.startTime}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+          </span>
+        </div>
+
         <div className="space-y-2 text-sm">
+          {/* Interview type */}
           <div className="flex items-center gap-2 text-slate-600">
-            <TypeIcon className="w-3.5 h-3.5" /><span>{typeLabel}</span>
+            <TypeIcon className="w-3.5 h-3.5 shrink-0" /><span>{typeLabel}</span>
           </div>
-          {interview.jobTitle && (
-            <p className="text-xs text-slate-500">Related to: <span className="font-medium text-slate-700">{interview.jobTitle}</span></p>
+
+          {/* Location */}
+          {location && (
+            <div className="flex items-center gap-2 text-slate-500">
+              <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span className="text-xs">{location}</span>
+            </div>
           )}
-          {interview.notes && <div className="p-3 bg-slate-50 rounded-xl text-slate-600 mt-2 break-words overflow-hidden max-h-24 overflow-y-auto text-xs">{interview.notes}</div>}
+
+          {/* Care type chips */}
+          {careTypes.length > 0 && (
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              {careTypes.map((c: string) => (
+                <span key={c} className="text-xs px-2 py-0.5 bg-teal-50 text-teal-700 rounded-full border border-teal-100">{c}</span>
+              ))}
+            </div>
+          )}
+
+          {/* Days of week */}
+          {days.length > 0 && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-600 flex-wrap">
+              <span className="text-slate-400 shrink-0">Days:</span>
+              {days.map((d: string) => (
+                <span key={d} className="px-1.5 py-0.5 bg-slate-100 rounded text-slate-700 font-medium">{d}</span>
+              ))}
+            </div>
+          )}
+
+          {/* Time of day */}
+          {times.length > 0 && (
+            <p className="text-xs text-slate-500"><span className="text-slate-400">Time:</span> {times.join(', ')}</p>
+          )}
+
+          {/* Frequency + rate */}
+          {(freq || rate) && (
+            <p className="text-xs text-slate-500">
+              {freq && <span className="capitalize font-medium text-slate-600">{freq.replace('-', ' ')}</span>}
+              {freq && rate && ' · '}
+              {rate && <span className="font-medium text-slate-600">${rate}/hr</span>}
+            </p>
+          )}
+
+          {/* Notes */}
+          {interview.notes && (
+            <div className="p-3 bg-slate-50 rounded-xl text-slate-600 break-words text-xs max-h-24 overflow-y-auto mt-1">
+              {interview.notes}
+            </div>
+          )}
         </div>
-        <div className="mt-4">
-          <button onClick={() => navigate(`/client/inbox?caregiver=${interview.caregiverId}`)} className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm">
-            <MessageSquare className="w-4 h-4" /> Message
-          </button>
+
+        {/* Actions */}
+        <div className="mt-4 flex flex-col gap-2">
+          {/* Join Call for video + accepted/in-progress */}
+          {interview.interviewType === 'video' && (interview.status === 'accepted' || interview.status === 'in-progress') && (
+            <button onClick={() => navigate('/client/video')}
+              className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
+              <Video className="w-4 h-4" /> Join Call
+            </button>
+          )}
+          <div className="flex gap-2">
+            <button onClick={() => navigate('/client/inbox')}
+              className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm flex items-center justify-center gap-1.5">
+              <MessageSquare className="w-4 h-4" /> Message
+            </button>
+            {(interview.status === 'requested' || interview.status === 'accepted') && (
+              <button onClick={handleCancel} disabled={cancelling}
+                className="px-3 py-2 border border-red-200 rounded-xl hover:bg-red-50 text-red-500 text-sm flex items-center justify-center gap-1.5">
+                {cancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />} Cancel
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -668,7 +848,7 @@ export default function Schedule() {
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-500 inline-block" />Scheduled</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-accent-500 inline-block" />In Progress</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" />Completed</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-400 inline-block" />Cancelled</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-rose-600 inline-block" />Cancelled</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-purple-500 inline-block" />Interviews</span>
         </div>
 
@@ -903,7 +1083,7 @@ export default function Schedule() {
                           <div className="flex gap-0.5 mt-0.5 flex-wrap justify-center">
                             {dayS.slice(0, 2).map((s, i) => (
                               <span key={`s-${i}`} className={`w-1.5 h-1.5 rounded-full ${
-                                isSel ? 'bg-white' : s.status === 'scheduled' ? 'bg-primary-500' : s.status === 'in-progress' ? 'bg-accent-500' : s.status === 'completed' ? 'bg-green-500' : 'bg-red-400'
+                                isSel ? 'bg-white' : s.status === 'scheduled' ? 'bg-primary-500' : s.status === 'in-progress' ? 'bg-accent-500' : s.status === 'completed' ? 'bg-green-500' : 'bg-rose-600'
                               }`} />
                             ))}
                             {dayI.slice(0, 1).map((_, i) => (
@@ -1062,7 +1242,7 @@ export default function Schedule() {
                               <div key={i}
                                 onClick={() => { setSelectedShift(s); setSelectedInterview(null); }}
                                 className="flex items-center gap-3 p-4 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-slate-300 hover:shadow-sm transition-all">
-                                <div className={`w-1 self-stretch rounded-full flex-shrink-0 ${s.status === 'scheduled' ? 'bg-primary-500' : s.status === 'in-progress' ? 'bg-accent-500' : s.status === 'completed' ? 'bg-slate-400' : 'bg-red-400'}`} />
+                                <div className={`w-1 self-stretch rounded-full flex-shrink-0 ${s.status === 'scheduled' ? 'bg-primary-500' : s.status === 'in-progress' ? 'bg-accent-500' : s.status === 'completed' ? 'bg-slate-400' : 'bg-rose-600'}`} />
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 mb-1">
                                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusBadge(s.status)}`}>
@@ -1134,48 +1314,60 @@ export default function Schedule() {
         const DAY_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const VISIT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
         const scheduledDays = DAY_ORDER.filter(d => schedule[d]?.some(b => b.start && b.end));
-        const canSubmit = !!visitCaregiverId && (
-          visitType === 'once'
-            ? !!onceDate
-            : selectedDays.length > 0 && (recurringEndOption === 'ongoing' || !!recurringEndDate)
-        );
-        const getEndOptions = (startVal: string) => {
-          const [sh, sm] = (startVal || '09:00').split(':').map(Number);
-          const startMins = sh * 60 + sm;
+        const canSubmit =
+          !!visitCaregiverId &&
+          selectedDays.length > 0 &&
+          !!visitStartDate &&
+          (visitEndOption === 'ongoing' || !!visitEndDate);
+        // Returns start-time options for a day, excluding times that fall inside an existing block
+        const getStartOptions = (day: string) => {
+          const blocks = (schedule[day] || []).filter(b => b.start && b.end);
           return TIME_OPTIONS.filter(opt => {
             const [oh, om] = opt.value.split(':').map(Number);
-            return oh * 60 + om > startMins;
+            const mins = oh * 60 + om;
+            return !blocks.some(b => {
+              const [bsh, bsm] = b.start.split(':').map(Number);
+              const [beh, bem] = b.end.split(':').map(Number);
+              return mins >= bsh * 60 + bsm && mins < beh * 60 + bem;
+            });
+          });
+        };
+        // Returns end-time options: must be after startVal and must not cross into the next existing block
+        const getEndOptions = (day: string, startVal: string) => {
+          const [sh, sm] = (startVal || '09:00').split(':').map(Number);
+          const startMins = sh * 60 + sm;
+          const blocks = (schedule[day] || []).filter(b => b.start && b.end);
+          // Find the earliest existing-block start that comes after our chosen start
+          const nextBlockStart = blocks
+            .map(b => { const [bsh, bsm] = b.start.split(':').map(Number); return bsh * 60 + bsm; })
+            .filter(bs => bs > startMins)
+            .sort((a, z) => a - z)[0];
+          return TIME_OPTIONS.filter(opt => {
+            const [oh, om] = opt.value.split(':').map(Number);
+            const mins = oh * 60 + om;
+            if (mins <= startMins) return false;
+            if (nextBlockStart !== undefined && mins > nextBlockStart) return false;
+            return true;
           });
         };
         return (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] flex flex-col">
 
-              {/* Header + toggle */}
+              {/* Header */}
               <div className="px-6 pt-6 pb-4 border-b border-slate-100 shrink-0">
-                <div className="flex items-start justify-between mb-3">
+                <div className="flex items-start justify-between">
                   <div>
-                    <h3 className="text-lg font-bold text-slate-900">Request Extra Visit</h3>
+                    <h3 className="text-lg font-bold text-slate-900">Request Visit</h3>
                     <p className="text-xs text-slate-400 mt-0.5">Add a visit outside your regular schedule</p>
                   </div>
                   <button onClick={() => { setShowAddModal(false); resetVisitModal(); }}
                     className="text-slate-400 hover:text-slate-600 p-1 -mr-1 -mt-1 text-xl font-bold leading-none">×</button>
                 </div>
-                {/* One-time / Recurring toggle */}
-                <div className="flex items-center gap-0.5 bg-slate-100 rounded-xl p-0.5">
-                  {(['once', 'recurring'] as const).map(type => (
-                    <button key={type} onClick={() => setVisitType(type)}
-                      className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${
-                        visitType === type ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
-                      }`}>
-                      {type === 'once' ? 'One-time' : 'Recurring'}
-                    </button>
-                  ))}
-                </div>
               </div>
 
               {/* Scrollable body */}
-              <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
+              <div className="overflow-y-auto flex-1 px-6 py-4 space-y-5">
 
                 {/* Caregiver */}
                 <div>
@@ -1186,6 +1378,8 @@ export default function Schedule() {
                     {caregivers.map(cg => <option key={cg.id} value={cg.id}>{cg.name}</option>)}
                   </select>
                 </div>
+
+                {visitCaregiverId && <>
 
                 {/* Regular schedule preview */}
                 {selectedCg && scheduledDays.length > 0 && (
@@ -1204,192 +1398,118 @@ export default function Schedule() {
                   </div>
                 )}
 
-                {/* Context hint */}
-                <div className="text-xs text-slate-500 bg-primary-50 border border-primary-100 rounded-xl px-3 py-2 leading-relaxed">
-                  {visitType === 'once'
-                    ? 'Pick a date and time for the extra visit. Your caregiver will confirm before it\'s added to the calendar.'
-                    : 'Select which days to add and set times. Your caregiver will add these to your regular weekly schedule.'}
-                </div>
-
-                {/* ── ONE-TIME: single date + start/end ── */}
-                {visitType === 'once' && (
-                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-                    <div>
-                      <label className="text-xs text-slate-500 block mb-1">Date</label>
-                      <input
-                        type="date"
-                        value={onceDate}
-                        onChange={e => setOnceDate(e.target.value)}
-                        min={new Date().toISOString().split('T')[0]}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-xs text-slate-500 block mb-1">Start time</label>
-                        <select
-                          value={onceStart}
-                          onChange={e => {
-                            const newStart = e.target.value;
-                            const [sh, sm] = newStart.split(':').map(Number);
-                            const startMins = sh * 60 + sm;
-                            const [eh, em] = onceEnd.split(':').map(Number);
-                            const endMins = eh * 60 + em;
-                            const newEnd = endMins > startMins
-                              ? onceEnd
-                              : TIME_OPTIONS.find(o => {
-                                  const [oh, om] = o.value.split(':').map(Number);
-                                  return oh * 60 + om > startMins;
-                                })?.value || '13:00';
-                            setOnceStart(newStart);
-                            setOnceEnd(newEnd);
-                          }}
-                          className="w-full px-2 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
-                        >
-                          {TIME_OPTIONS.map(opt => (
-                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-500 block mb-1">End time</label>
-                        <select
-                          value={onceEnd}
-                          onChange={e => setOnceEnd(e.target.value)}
-                          className="w-full px-2 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
-                        >
-                          {getEndOptions(onceStart).map(opt => (
-                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* ── RECURRING: day chips + per-day times ── */}
-                {visitType === 'recurring' && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Add recurring day(s)</label>
-                      <div className="flex flex-wrap gap-2">
-                        {VISIT_DAYS.map(day => {
-                          const isSelected = selectedDays.includes(day);
-                          return (
-                            <button key={day}
-                              onClick={() => {
-                                if (isSelected) {
-                                  setSelectedDays(prev => prev.filter(d => d !== day));
-                                  setDayTimes(prev => { const next = { ...prev }; delete next[day]; return next; });
-                                } else {
-                                  setSelectedDays(prev => [...prev, day]);
-                                  setDayTimes(prev => ({ ...prev, [day]: { date: '', start: '09:00', end: '13:00' } }));
-                                }
-                              }}
-                              className={`px-3 py-1.5 text-xs font-semibold rounded-full border transition-colors ${
-                                isSelected
-                                  ? 'bg-primary-600 border-primary-600 text-white'
-                                  : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300 hover:text-primary-600'
-                              }`}>
-                              {day}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {selectedDays.length > 0 && (
-                      <div className="space-y-3">
-                        {selectedDays.map(day => (
-                          <div key={day} className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                            <p className="text-xs font-semibold text-slate-700 mb-2.5">{day}</p>
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="text-xs text-slate-500 block mb-1">Start</label>
-                                <select
-                                  value={dayTimes[day]?.start || '09:00'}
-                                  onChange={e => {
-                                    const newStart = e.target.value;
-                                    const [sh, sm] = newStart.split(':').map(Number);
-                                    const startMins = sh * 60 + sm;
-                                    const [eh, em] = (dayTimes[day]?.end || '13:00').split(':').map(Number);
-                                    const endMins = eh * 60 + em;
-                                    const newEnd = endMins > startMins
-                                      ? dayTimes[day]?.end || '13:00'
-                                      : TIME_OPTIONS.find(o => {
-                                          const [oh, om] = o.value.split(':').map(Number);
-                                          return oh * 60 + om > startMins;
-                                        })?.value || '13:00';
-                                    setDayTimes(prev => ({ ...prev, [day]: { ...prev[day], start: newStart, end: newEnd } }));
-                                  }}
-                                  className="w-full px-2 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
-                                >
-                                  {TIME_OPTIONS.map(opt => (
-                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                  ))}
-                                </select>
-                              </div>
-                              <div>
-                                <label className="text-xs text-slate-500 block mb-1">End</label>
-                                <select
-                                  value={dayTimes[day]?.end || '13:00'}
-                                  onChange={e => setDayTimes(prev => ({ ...prev, [day]: { ...prev[day], end: e.target.value } }))}
-                                  className="w-full px-2 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
-                                >
-                                  {getEndOptions(dayTimes[day]?.start || '09:00').map(opt => (
-                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {/* Recurring: start date + end/ongoing */}
-                {visitType === 'recurring' && (
-                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Schedule dates</p>
+                {/* Schedule dates */}
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Schedule</p>
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs text-slate-500 block mb-1">Start date</label>
                       <input
                         type="date"
-                        value={recurringStartDate}
-                        onChange={e => setRecurringStartDate(e.target.value)}
+                        value={visitStartDate}
+                        onChange={e => setVisitStartDate(e.target.value)}
                         min={new Date().toISOString().split('T')[0]}
                         className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
                       />
                     </div>
                     <div>
-                      <label className="text-xs text-slate-500 block mb-2">Ends</label>
-                      <div className="flex items-center gap-2 mb-2">
-                        {(['ongoing', 'end_date'] as const).map(opt => (
-                          <button key={opt}
-                            onClick={() => setRecurringEndOption(opt)}
-                            className={`px-3 py-1.5 text-xs font-semibold rounded-full border transition-colors ${
-                              recurringEndOption === opt
-                                ? 'bg-primary-600 border-primary-600 text-white'
-                                : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300'
-                            }`}>
-                            {opt === 'ongoing' ? 'Ongoing' : 'On a date'}
-                          </button>
-                        ))}
-                      </div>
-                      {recurringEndOption === 'end_date' && (
+                      <label className="text-xs text-slate-500 block mb-1">End date</label>
+                      <input
+                        type="date"
+                        value={visitEndDate}
+                        onChange={e => {
+                          setVisitEndDate(e.target.value);
+                          if (e.target.value) setVisitEndOption('end_date');
+                        }}
+                        min={visitStartDate || new Date().toISOString().split('T')[0]}
+                        disabled={visitEndOption === 'ongoing'}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white disabled:bg-slate-50 disabled:text-slate-400"
+                      />
+                      <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer select-none">
                         <input
-                          type="date"
-                          value={recurringEndDate}
-                          onChange={e => setRecurringEndDate(e.target.value)}
-                          min={recurringStartDate || new Date().toISOString().split('T')[0]}
-                          className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                          type="checkbox"
+                          checked={visitEndOption === 'ongoing'}
+                          onChange={e => {
+                            setVisitEndOption(e.target.checked ? 'ongoing' : 'end_date');
+                            if (e.target.checked) setVisitEndDate('');
+                          }}
+                          className="w-3.5 h-3.5 accent-primary-600"
                         />
-                      )}
+                        <span className="text-xs text-slate-500">Ongoing</span>
+                      </label>
                     </div>
                   </div>
-                )}
+                </div>
+
+                {/* Shift times per day */}
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Shift times per day</p>
+
+                  {selectedDays.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic mb-2">No days added yet.</p>
+                  ) : (
+                    <div className="space-y-2 mb-3">
+                      {selectedDays.map(day => (
+                        <div key={day} className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-slate-700 w-8 flex-shrink-0">{day}</span>
+                          <select
+                            value={dayTimes[day]?.start || '09:00'}
+                            onChange={e => {
+                              const newStart = e.target.value;
+                              const [sh, sm] = newStart.split(':').map(Number);
+                              const startMins = sh * 60 + sm;
+                              const [eh, em] = (dayTimes[day]?.end || '13:00').split(':').map(Number);
+                              const endMins = eh * 60 + em;
+                              const endOpts = getEndOptions(day, newStart);
+                              const newEnd = endMins > startMins && endOpts.some(o => o.value === (dayTimes[day]?.end || '13:00'))
+                                ? (dayTimes[day]?.end || '13:00')
+                                : endOpts[0]?.value || '13:00';
+                              setDayTimes(prev => ({ ...prev, [day]: { ...prev[day], start: newStart, end: newEnd } }));
+                            }}
+                            className="flex-1 px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                          >
+                            {getStartOptions(day).map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                          <span className="text-xs text-slate-400 flex-shrink-0">to</span>
+                          <select
+                            value={dayTimes[day]?.end || '13:00'}
+                            onChange={e => setDayTimes(prev => ({ ...prev, [day]: { ...prev[day], end: e.target.value } }))}
+                            className="flex-1 px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                          >
+                            {getEndOptions(day, dayTimes[day]?.start || '09:00').map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => {
+                              setSelectedDays(prev => prev.filter(d => d !== day));
+                              setDayTimes(prev => { const next = { ...prev }; delete next[day]; return next; });
+                            }}
+                            className="text-slate-300 hover:text-red-400 transition-colors text-lg leading-none flex-shrink-0 p-0.5"
+                          >×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Add a day chips */}
+                  {VISIT_DAYS.some(d => !selectedDays.includes(d)) && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {VISIT_DAYS.filter(d => !selectedDays.includes(d)).map(day => (
+                        <button key={day}
+                          onClick={() => {
+                            setSelectedDays(prev => [...prev, day]);
+                            setDayTimes(prev => ({ ...prev, [day]: { date: '', start: '09:00', end: '13:00' } }));
+                          }}
+                          className="flex items-center gap-0.5 px-2.5 py-1 text-xs font-medium border border-dashed border-slate-300 text-slate-500 rounded-full hover:border-primary-400 hover:text-primary-600 transition-colors">
+                          <span className="text-sm leading-none">+</span>{day}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {/* Notes */}
                 <div>
@@ -1399,6 +1519,8 @@ export default function Schedule() {
                     rows={2}
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 resize-none" />
                 </div>
+
+                </>}
               </div>
 
               {/* Footer */}
@@ -1414,9 +1536,7 @@ export default function Schedule() {
                   </button>
                 </div>
                 <p className="text-xs text-slate-400 text-center mt-2">
-                  {visitType === 'recurring'
-                    ? 'Your caregiver will need to accept before these visits are added to the schedule.'
-                    : 'Your caregiver will need to accept before this visit is confirmed.'}
+                  Your caregiver will need to accept before these visits are added to the schedule.
                 </p>
               </div>
 

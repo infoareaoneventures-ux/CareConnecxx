@@ -83,27 +83,28 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
   }
 
-  const { appointmentId, startTime, endTime } = data;
-  if (!appointmentId || !startTime || !endTime) {
-    throw new functions.https.HttpsError('invalid-argument', 'appointmentId, startTime, endTime required');
+  const { shiftId, startTime, endTime } = data;
+  if (!shiftId || !startTime || !endTime) {
+    throw new functions.https.HttpsError('invalid-argument', 'shiftId, startTime, endTime required');
   }
 
-  const apptRef = db.collection('appointments').doc(appointmentId);
-  const apptSnap = await apptRef.get();
-  if (!apptSnap.exists) {
-    throw new functions.https.HttpsError('not-found', 'Appointment not found');
+  // Source of truth is now the shifts collection
+  const shiftDocRef = db.collection('shifts').doc(shiftId);
+  const shiftDocSnap = await shiftDocRef.get();
+  if (!shiftDocSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Shift not found');
   }
-  const appt = apptSnap.data()!;
+  const shiftDoc = shiftDocSnap.data()!;
 
-  if (appt.caregiverId !== context.auth.uid) {
-    throw new functions.https.HttpsError('permission-denied', 'Not your appointment');
+  if (shiftDoc.caregiverId !== context.auth.uid) {
+    throw new functions.https.HttpsError('permission-denied', 'Not your shift');
   }
-  if (appt.status !== 'completed') {
-    throw new functions.https.HttpsError('failed-precondition', 'Appointment is not completed yet');
+  if (shiftDoc.status !== 'completed') {
+    throw new functions.https.HttpsError('failed-precondition', 'Shift is not completed yet');
   }
 
-  const shiftRef = db.collection('shiftHours').doc(appointmentId);
-  const existing = await shiftRef.get();
+  const shiftHoursRef = db.collection('shiftHours').doc(shiftId);
+  const existing = await shiftHoursRef.get();
   if (existing.exists) {
     throw new functions.https.HttpsError('already-exists', 'Hours already submitted for this shift');
   }
@@ -111,18 +112,20 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
   const caregiverDoc = await db.collection('users').doc(context.auth.uid).get();
   const caregiverData = caregiverDoc.data() || {};
   const totalHours = computeTotalHours(startTime, endTime);
-  const payRate = appt.hourlyRate || caregiverData.hourlyRate || 25;
-  const paymentMethod: PaymentMethod = appt.paymentMethod === 'cash' ? 'cash' : 'credit';
+  const payRate = shiftDoc.rate || caregiverData.hourlyRate || 25;
+  const paymentMethod: PaymentMethod = shiftDoc.paymentMethod === 'cash' ? 'cash' : 'credit';
   const submittedAt = nowIso();
   const autoApproveAt = new Date(Date.now() + ONE_DAY_MS).toISOString();
 
-  await shiftRef.set({
-    id: appointmentId,
-    appointmentId,
+  await shiftHoursRef.set({
+    id: shiftId,
+    appointmentId: shiftId,   // keep field for backward compat with existing queries
+    shiftId,
     caregiverId: context.auth.uid,
-    caregiverName: caregiverData.name || caregiverData.displayName || appt.caregiverName || 'Caregiver',
-    clientId: appt.clientId,
-    clientName: appt.clientName || 'Client',
+    caregiverName: caregiverData.name || caregiverData.displayName || shiftDoc.caregiverName || 'Caregiver',
+    caregiverPhotoURL: caregiverData.profilePhoto || caregiverData.photoURL || shiftDoc.caregiverPhotoURL || null,
+    clientId: shiftDoc.clientId,
+    clientName: shiftDoc.clientName || 'Client',
     payRate,
     currency: 'usd',
     paymentMethod,
@@ -138,41 +141,40 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
   });
 
   await pushNotification(
-    appt.clientId,
+    shiftDoc.clientId,
     'shift_hours_submitted',
     'Hours submitted for your review',
     `${caregiverData.name || 'Your caregiver'} submitted ${totalHours}h for review. Auto-approves in 24h.`,
-    { appointmentId, totalHours }
+    { appointmentId: shiftId, totalHours }
   );
 
   // iMessage: notify client so they can approve or dispute without opening the app
   try {
-    const clientUserSnap = await db.collection("users").doc(appt.clientId).get();
+    const clientUserSnap = await db.collection("users").doc(shiftDoc.clientId).get();
     const clientPhone = clientUserSnap.data()?.phone as string | undefined;
     if (clientPhone) {
-      const hourlyRate = appt.hourlyRate ?? caregiverData.hourlyRate ?? 22;
-      const amount = (totalHours * hourlyRate).toFixed(2);
+      const amount = (totalHours * payRate).toFixed(2);
       const { sendToPhone } = await import("./linq/client");
       await sendToPhone(
         clientPhone,
         `${caregiverData.name ?? "Your caregiver"} submitted ${totalHours}h for ` +
-        `${appt.date ?? "today"}'s visit ($${amount}).\n\n` +
+        `${shiftDoc.date ?? "today"}'s visit ($${amount}).\n\n` +
         `Reply APPROVE to confirm, or DISPUTE if something looks wrong.`
       );
-      await db.collection("agent_sessions").doc(clientPhone).update({
+      await db.collection("agent_sessions").doc(clientPhone).set({
         pendingShiftApproval: {
-          appointmentId,
+          appointmentId: shiftId,
           amount,
           caregiverName: caregiverData.name ?? "Caregiver",
         },
         pendingShiftApprovalSetAt: new Date().toISOString(),
-      });
+      }, { merge: true });
     }
   } catch (err) {
     console.error("shiftHours iMessage notification error:", err);
   }
 
-  return { success: true, appointmentId, totalHours };
+  return { success: true, shiftId, totalHours };
 });
 
 /**
@@ -509,7 +511,29 @@ export const onShiftHoursApproved = functions
     }
 
     if (after.paymentMethod === 'cash') {
-      // Cash bookings terminate here — no Stripe call.
+      // Cash shifts: mark paid immediately — no Stripe charge needed.
+      // The client hands cash directly to the caregiver; approval is confirmation.
+      const now = nowIso();
+      await change.after.ref.update({
+        status: 'paid' as ShiftHoursStatus,
+        paidMethod: 'cash',
+        paidAt: now,
+        updatedAt: now,
+      });
+      await pushNotification(
+        after.caregiverId,
+        'shift_hours_paid',
+        'Cash payment confirmed',
+        `${after.finalTotalHours}h approved — collect $${(after.grossPay || 0).toFixed(2)} cash from the client.`,
+        { appointmentId: context.params.appointmentId }
+      );
+      await pushNotification(
+        after.clientId,
+        'shift_hours_paid',
+        'Hours settled',
+        `${after.caregiverName}'s ${after.finalTotalHours}h cash shift is confirmed.`,
+        { appointmentId: context.params.appointmentId }
+      );
       return null;
     }
 

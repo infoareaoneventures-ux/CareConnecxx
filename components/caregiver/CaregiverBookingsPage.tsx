@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  CalendarDays, Clock, MapPin, User, CheckCircle, XCircle,
+  CalendarDays, Clock, MapPin, CheckCircle, XCircle,
   Loader2, MessageSquare, Star, Banknote, CreditCard, ChevronDown,
   ChevronUp, Phone, AlertCircle, Repeat, FileText,
 } from 'lucide-react';
@@ -741,9 +741,7 @@ const BookingGroupCard: React.FC<{
               {base.schedule.startDate && (
                 <p className="text-xs text-slate-400 mb-1">
                   Starts {fmtDate(base.schedule.startDate)}
-                  {base.schedule.ongoing
-                    ? <span className="ml-1.5 text-[10px] font-semibold bg-teal-50 text-teal-700 border border-teal-200 px-1.5 py-0.5 rounded-full">Ongoing</span>
-                    : base.schedule.endDate ? ` → ${fmtDate(base.schedule.endDate)}` : ''}
+                  {!base.schedule.ongoing && base.schedule.endDate ? ` → ${fmtDate(base.schedule.endDate)}` : ''}
                 </p>
               )}
               {ALL_DAYS_ORDER.filter(d => base.schedule!.dayShiftTimes![d]?.length).map(day => {
@@ -1194,7 +1192,7 @@ const BookingGroupCard: React.FC<{
 
 // ── Shift Card (Past Bookings) ───────────────────────────────────────────────
 
-const ShiftCard: React.FC<{
+const _ShiftCard: React.FC<{
   shift: Shift;
   onCancel?: (id: string) => void;
 }> = ({ shift, onCancel }) => {
@@ -1626,11 +1624,9 @@ const ShiftCard: React.FC<{
 // ── Past Booking Group Card ──────────────────────────────────────────────────
 
 const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
+  const navigate = useNavigate();
   const base = shifts[0];
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
-  const recipients = base.careRecipients || [];
-  const ec = base.emergencyContact;
 
   const completedCount = shifts.filter(s => s.status === 'completed').length;
   const cancelledCount = shifts.filter(s => s.status === 'cancelled').length;
@@ -1646,8 +1642,8 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
             <p className="font-semibold text-slate-900 text-base">{base.clientName || 'Client'}</p>
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
               {completedCount > 0 && (
-                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full border bg-green-100 text-green-700 border-green-200">
-                  {completedCount} completed
+                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">
+                  <CheckCircle className="w-3 h-3" /> {completedCount} completed
                 </span>
               )}
               {cancelledCount > 0 && (
@@ -1658,117 +1654,48 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Shared info */}
-      <div className="px-5 pb-4 space-y-2">
-        {base.address && (
-          <div className="flex items-start gap-2 text-sm text-slate-700">
-            <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-            <span>{base.address}</span>
-          </div>
-        )}
-        {base.rate != null && (
-          <div className="flex items-center gap-2 text-sm text-slate-700">
-            {base.paymentMethod === 'credit'
-              ? <CreditCard className="w-4 h-4 text-slate-400 shrink-0" />
-              : <Banknote className="w-4 h-4 text-slate-400 shrink-0" />}
-            <span><span className="font-semibold">${base.rate}/hr</span><span className="text-slate-400"> · {base.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span></span>
-          </div>
-        )}
-      </div>
-
-      {/* Details toggle */}
-      {(recipients.length > 0 || ec) && (
         <button
-          type="button"
-          onClick={() => setDetailsOpen(o => !o)}
-          className="w-full px-5 py-2.5 border-t border-slate-100 flex items-center justify-between text-sm text-primary-600 font-medium hover:bg-slate-50 transition-colors"
+          onClick={() => navigate(`/caregiver/inbox?client=${base.clientId}`)}
+          className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
         >
-          <span>{detailsOpen ? 'Hide details' : 'Care plan & preferences'}</span>
-          {detailsOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          <MessageSquare className="w-4 h-4" /> Message
         </button>
-      )}
+      </div>
 
-      {detailsOpen && (
-        <div className="px-5 py-4 border-t border-slate-100 space-y-4">
-          {recipients.map((r, ri) => {
-            const needs = r.careNeeds || [];
-            const details = r.careNeedDetails || {};
-            return (
-              <div key={ri} className="border-l-4 border-slate-200 pl-3 space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-full overflow-hidden bg-slate-100 flex items-center justify-center shrink-0">
-                    {r.photoURL
-                      ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
-                      : <span className="text-slate-500 font-bold text-xs">{r.name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()}</span>
-                    }
-                  </div>
-                  <div>
-                    <p className="font-semibold text-slate-700 text-sm">{r.name}</p>
-                    <p className="text-xs text-slate-400">{[r.relationship, r.age ? `Age ${r.age}` : ''].filter(Boolean).join(' · ')}</p>
-                  </div>
-                </div>
-                {needs.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {needs.map(need => {
-                      const subtasks = details[need] || [];
-                      return (
-                        <div key={need} className="rounded-lg border border-slate-200 overflow-hidden">
-                          <div className="bg-slate-50 px-2.5 py-1"><span className="text-xs font-semibold text-slate-600">{need}</span></div>
-                          {subtasks.length > 0 && (
-                            <div className="px-2.5 py-1.5 flex flex-wrap gap-1">
-                              {subtasks.map(t => <span key={t} className="text-xs text-slate-500 border border-slate-200 px-2 py-0.5 rounded-full">{t}</span>)}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-          {ec && (ec.name || ec.phone) && (
-            <div className="bg-red-50 border border-red-100 rounded-xl px-4 py-3">
-              <p className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-1">Emergency Contact</p>
-              <div className="flex items-center gap-2 text-sm text-red-800">
-                <Phone className="w-3.5 h-3.5 shrink-0" />
-                <span className="font-medium">{ec.name}</span>
-                {ec.relationship && <span className="text-red-500">· {ec.relationship}</span>}
-                {ec.phone && <span className="font-semibold">{ec.phone}</span>}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Shift history */}
+      {/* Shift rows */}
       <div className="border-t border-slate-100">
-        <p className="px-5 pt-3 pb-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Shift History</p>
         {shifts.map(shift => {
           const isCompleted = shift.status === 'completed';
           const isOpen = expandedShiftId === shift.id;
           const actualStart = fmtTs(shift.startedAt);
           const actualEnd   = fmtTs(shift.completedAt);
           const duration    = fmtDuration(shift.startedAt, shift.completedAt);
-          const stripPfx    = (k: string) => k.replace(/^\d+_/, '');
-          const rawDone     = shift.tasksCompleted || [];
+          const shiftDate   = new Date(shift.date + 'T12:00:00');
+          const dayAbbr     = shiftDate.toLocaleDateString('en-US', { weekday: 'short' });
+          const dayNum      = shiftDate.getDate();
           return (
             <div key={shift.id}>
               <div
-                className={`border-t border-slate-100 px-5 py-3 flex items-center justify-between gap-3 ${isCompleted ? 'cursor-pointer hover:bg-slate-50' : ''}`}
+                className={`border-t border-slate-100 px-4 py-3 flex items-center gap-3 ${isCompleted ? 'cursor-pointer hover:bg-slate-50' : ''}`}
                 onClick={() => isCompleted && setExpandedShiftId(isOpen ? null : shift.id)}
               >
-                <div>
-                  <p className="text-sm font-semibold text-slate-700">{fmtDate(shift.date)}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">
+                {/* Date block */}
+                <div className={`w-11 h-11 rounded-xl flex flex-col items-center justify-center shrink-0 ${isCompleted ? 'bg-slate-100' : 'bg-red-50'}`}>
+                  <span className={`text-[9px] font-semibold uppercase leading-none ${isCompleted ? 'text-slate-500' : 'text-red-400'}`}>{dayAbbr}</span>
+                  <span className={`text-base font-bold leading-tight ${isCompleted ? 'text-slate-700' : 'text-red-500'}`}>{dayNum}</span>
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-slate-800">
+                    {shiftDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                  </p>
+                  <p className="text-xs text-slate-400">
                     {actualStart && actualEnd
                       ? `${actualStart} – ${actualEnd}${duration ? ` · ${duration}` : ''}`
                       : `${fmtTime(shift.startTime)}${shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}`}
                   </p>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 shrink-0">
                   <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
                     {shift.status === 'completed' ? 'Completed' : 'Cancelled'}
                   </span>

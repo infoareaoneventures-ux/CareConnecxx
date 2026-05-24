@@ -1,333 +1,528 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Check, X, Clock, DollarSign, CreditCard, Download } from 'lucide-react';
-import { Button } from '../ui/Button';
+import {
+  Clock, CreditCard, CheckCircle, AlertTriangle, Loader2,
+  ChevronDown, ChevronUp, Banknote, CalendarDays, ExternalLink,
+  AlertCircle,
+} from 'lucide-react';
 import { ClientNavigation } from './ClientNavigation';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { auth, db } from '../../lib/firebase';
-import firebase from 'firebase/compat/app';
-import { dbService } from '../../services/api';
+import { shiftHoursService } from '../../services/api';
+import { getClientBillingPortalUrl } from '../../services/stripeService';
+import { ReviewShiftHoursModal } from '../payroll/ReviewShiftHoursModal';
 
-type TabType = 'weekly-summary' | 'invoices' | 'timesheets' | 'payment-method' | 'financial-activity';
+type Tab = 'timesheets' | 'payment-method';
 
-interface TimesheetEntry {
+type ShiftHoursStatus =
+  | 'pending_client_review'
+  | 'correction_proposed'
+  | 'approved'
+  | 'auto_approved'
+  | 'disputed_admin_review'
+  | 'paid'
+  | 'payment_failed';
+
+type DateFilter = 'all' | 'this-month' | 'last-3-months';
+
+interface ShiftHoursRow {
   id: string;
+  appointmentId: string;
   caregiverId: string;
   caregiverName: string;
-  caregiverImage?: string;
-  date: string;
-  hours: number;
-  hourlyRate: number;
-  total: number;
-  status: 'pending' | 'approved' | 'paid';
+  caregiverPhotoURL?: string | null;
+  clientId: string;
+  clientName: string;
+  payRate: number;
+  paymentMethod: 'cash' | 'credit';
+  submittedStartTime: string;
+  submittedEndTime: string;
+  submittedTotalHours: number;
   submittedAt: string;
+  autoApproveAt: string;
+  status: ShiftHoursStatus;
 }
 
-interface BillingEntry {
-  id: string;
-  date: string;
-  description: string;
-  amount: number;
-  status: 'paid' | 'pending' | 'failed';
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+function fmtTime(iso: string) {
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+function fmtAmount(hours: number, rate: number) {
+  return `$${(hours * rate).toFixed(2)}`;
 }
 
-interface PaymentCard {
-  id: string;
-  last4: string;
-  brand: string;
-  expiryMonth: string;
-  expiryYear: string;
-}
+const STATUS_CONFIG: Record<ShiftHoursStatus, { label: string; color: string; bg: string; border: string }> = {
+  pending_client_review: { label: 'Needs Review',      color: 'text-amber-700',   bg: 'bg-amber-50',   border: 'border-amber-200' },
+  correction_proposed:   { label: 'Correction Sent',   color: 'text-orange-700',  bg: 'bg-orange-50',  border: 'border-orange-200' },
+  approved:              { label: 'Approved',           color: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-200' },
+  auto_approved:         { label: 'Auto-Approved',      color: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-200' },
+  disputed_admin_review: { label: 'Under Review',       color: 'text-purple-700',  bg: 'bg-purple-50',  border: 'border-purple-200' },
+  paid:                  { label: 'Paid',               color: 'text-green-700',   bg: 'bg-green-50',   border: 'border-green-200' },
+  payment_failed:        { label: 'Payment Failed',     color: 'text-red-700',     bg: 'bg-red-50',     border: 'border-red-200' },
+};
 
-interface BankAccount {
-  id: string;
-  accountType: 'checking' | 'savings';
-  last4: string;
-  bankName: string;
-}
+const CaregiverAvatar: React.FC<{ name?: string; photoURL?: string | null; size?: string }> = ({
+  name = 'C', photoURL, size = 'w-10 h-10',
+}) => {
+  const [err, setErr] = useState(false);
+  const initials = name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase();
+  return (
+    <div className={`${size} rounded-full overflow-hidden bg-primary-100 flex items-center justify-center shrink-0`}>
+      {photoURL && !err
+        ? <img src={photoURL} alt={name} className="w-full h-full object-cover" onError={() => setErr(true)} />
+        : <span className="text-primary-700 font-bold text-sm">{initials}</span>
+      }
+    </div>
+  );
+};
 
-export const Payments: React.FC = () => {
-  const navigate = useNavigate();
-  const { addToast } = useCareConnex();
-  const [activeTab, setActiveTab] = useState<TabType>('weekly-summary');
-  const [loadingData, setLoadingData] = useState(true);
+// ── ShiftRow ──────────────────────────────────────────────────────────────────
 
-  const [timesheets, setTimesheets] = useState<TimesheetEntry[]>([]);
-  const [billingHistory, setBillingHistory] = useState<BillingEntry[]>([]);
+const ShiftRow: React.FC<{
+  row: ShiftHoursRow;
+  onReview: (row: ShiftHoursRow) => void;
+}> = ({ row, onReview }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [shiftDetails, setShiftDetails] = useState<any>(null);
 
-  // Load real data from Firestore
+  const cfg = STATUS_CONFIG[row.status] || STATUS_CONFIG.pending_client_review;
+  const total = row.submittedTotalHours * row.payRate;
+  const isPending = row.status === 'pending_client_review';
+
+  // Lazy-load shift details on expand
   useEffect(() => {
-    let isMounted = true;
-    const loadPaymentData = async () => {
-      const user = auth.currentUser;
-      if (!user) { setLoadingData(false); return; }
-      try {
-        // Load timesheets submitted by caregivers for this client
-        const tsSnap = await db.collection('timesheets')
-          .where('clientId', '==', user.uid)
-          .orderBy('submittedAt', 'desc')
-          .limit(50)
-          .get();
-        const tsList: TimesheetEntry[] = tsSnap.docs.map(doc => {
-          const d = doc.data();
-          return {
-            id: doc.id,
-            caregiverId: d.caregiverId || d.caregiverUid || '',
-            caregiverName: d.caregiverName || 'Caregiver',
-            caregiverImage: d.caregiverImage || `https://ui-avatars.com/api/?name=${encodeURIComponent(d.caregiverName || 'C')}&background=14b8a6&color=fff`,
-            date: d.date || '',
-            hours: d.hours || 0,
-            hourlyRate: d.hourlyRate || 0,
-            total: d.total || (d.hours * d.hourlyRate) || 0,
-            status: d.status || 'pending',
-            submittedAt: d.submittedAt?.toDate?.()?.toLocaleDateString() || d.submittedAt || '',
-          };
-        });
-
-        // Load billing history (membership payments)
-        const billSnap = await db.collection('payments')
-          .where('userId', '==', user.uid)
-          .orderBy('createdAt', 'desc')
-          .limit(24)
-          .get();
-        const billList: BillingEntry[] = billSnap.docs.map(doc => {
-          const d = doc.data();
-          return {
-            id: doc.id,
-            date: d.createdAt?.toDate?.()?.toLocaleDateString() || d.date || '',
-            description: d.description || 'Membership',
-            amount: d.amount || 0,
-            status: d.status || 'paid',
-          };
-        });
-
-        if (!isMounted) return;
-        setTimesheets(tsList);
-        setBillingHistory(billList);
-      } catch (err) {
-        console.error('Error loading payment data:', err);
-        if (isMounted) addToast('Failed to load payment data. Please refresh.', 'error');
-      } finally {
-        if (isMounted) setLoadingData(false);
-      }
-    };
-    loadPaymentData();
-    return () => { isMounted = false; };
-  }, []);
-
-  const handleApproveTimesheet = async (id: string) => {
-    try {
-      await db.collection('timesheets').doc(id).update({
-        status: 'approved',
-        approvedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-      const timesheet = timesheets.find(t => t.id === id);
-      setTimesheets(prev => prev.map(t => t.id === id ? { ...t, status: 'approved' } : t));
-      addToast('Timesheet approved', 'success');
-
-      if (timesheet?.caregiverId) {
-        try {
-          await dbService.createNotification({
-            userId: timesheet.caregiverId,
-            type: 'timesheet_approved',
-            title: 'Timesheet Approved',
-            message: `Your timesheet for ${timesheet.hours} hours ($${timesheet.total.toFixed(2)}) has been approved.`,
-            data: { timesheetId: id }
-          });
-        } catch { /* non-critical */ }
-      }
-    } catch {
-      addToast('Failed to approve timesheet. Please try again.', 'error');
-    }
-  };
-
-  const handleRejectTimesheet = async (id: string) => {
-    try {
-      await db.collection('timesheets').doc(id).update({
-        status: 'rejected',
-        rejectedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-      const timesheet = timesheets.find(t => t.id === id);
-      setTimesheets(prev => prev.filter(t => t.id !== id));
-      addToast('Timesheet rejected', 'info');
-
-      if (timesheet?.caregiverId) {
-        try {
-          await dbService.createNotification({
-            userId: timesheet.caregiverId,
-            type: 'timesheet_rejected',
-            title: 'Timesheet Needs Revision',
-            message: `Your timesheet for ${timesheet.hours} hours was rejected. Please contact the client for details.`,
-            data: { timesheetId: id }
-          });
-        } catch { /* non-critical */ }
-      }
-    } catch {
-      addToast('Failed to reject timesheet. Please try again.', 'error');
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    const styles = {
-      pending: 'bg-yellow-100 text-yellow-700',
-      approved: 'bg-blue-100 text-blue-700',
-      paid: 'bg-green-100 text-green-700',
-      failed: 'bg-red-100 text-red-700'
-    };
-    return styles[status as keyof typeof styles] || styles.pending;
-  };
+    if (!expanded || shiftDetails || !db) return;
+    // Try shifts collection first, fall back to appointments
+    db.collection('shifts').doc(row.appointmentId).get()
+      .then(snap => snap.exists ? setShiftDetails(snap.data()) : null)
+      .catch(() => null);
+  }, [expanded, row.appointmentId]);
 
   return (
-    <div className="min-h-screen bg-[var(--color-neutral-50)]">
-      <ClientNavigation />
-      
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-32">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-[var(--color-neutral-900)]">Payments</h1>
-          <p className="text-[var(--color-neutral-600)] mt-2">Manage timesheets, billing, and payment methods</p>
+    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+      {/* Main row */}
+      <div
+        className="px-5 py-4 flex items-center gap-4 cursor-pointer hover:bg-slate-50 transition-colors"
+        onClick={() => setExpanded(e => !e)}
+      >
+        <CaregiverAvatar name={row.caregiverName} photoURL={row.caregiverPhotoURL} />
+
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-slate-900 text-sm">{row.caregiverName}</p>
+          <p className="text-xs text-slate-500 mt-0.5">{fmtDate(row.submittedStartTime)}</p>
         </div>
 
-        {/* Tabs */}
-        <div className="bg-slate-50 rounded-t-2xl border border-slate-200 border-b-0 p-2">
-          <div className="flex overflow-x-auto scrollbar-hide gap-1">
-            {[
-              { id: 'weekly-summary', label: 'Weekly Summary', icon: FileText },
-              { id: 'invoices', label: 'Invoices', icon: FileText },
-              { id: 'timesheets', label: 'Timesheets', icon: Clock },
-              { id: 'payment-method', label: 'Payment', icon: CreditCard },
-              { id: 'financial-activity', label: 'Activity', icon: DollarSign }
-            ].map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                onClick={() => setActiveTab(id as TabType)}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap transition-all duration-200 flex-shrink-0 ${
-                  activeTab === id 
-                    ? 'bg-white text-primary-600 shadow-sm border border-primary-200' 
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{label}</span>
-              </button>
-            ))}
+        <div className="hidden sm:flex flex-col items-end text-right shrink-0">
+          <p className="text-sm font-semibold text-slate-800">{row.submittedTotalHours}h</p>
+          <div className="flex items-center gap-1 text-xs text-slate-500 mt-0.5">
+            {row.paymentMethod === 'credit'
+              ? <CreditCard className="w-3 h-3" />
+              : <Banknote className="w-3 h-3" />}
+            <span>{row.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span>
           </div>
         </div>
 
-        {/* Tab Content */}
-        <div className="bg-white rounded-b-2xl border border-slate-200 border-t-0 shadow-sm min-h-[400px]">
-          
-          {/* Weekly Summary Tab */}
-          {activeTab === 'weekly-summary' && (
-            <div className="p-4 sm:p-6">
-              <h2 className="text-xl font-bold text-[var(--color-neutral-900)] mb-6">Weekly Summary</h2>
-              <div className="text-center py-12">
-                <DollarSign className="w-12 h-12 text-[var(--color-neutral-400)] mx-auto mb-4" />
-                <p className="text-[var(--color-neutral-600)] mb-2">No weekly summary yet</p>
-                <p className="text-sm text-[var(--color-neutral-500)]">Your weekly care spending will appear here</p>
-              </div>
-            </div>
-          )}
+        <div className="flex flex-col items-end shrink-0 gap-1.5">
+          <p className="text-sm font-bold text-slate-900">{fmtAmount(row.submittedTotalHours, row.payRate)}</p>
+          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
+            {cfg.label}
+          </span>
+        </div>
 
-          {/* Invoices Tab */}
-          {activeTab === 'invoices' && (
-            <div className="p-4 sm:p-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-2">
-                <h2 className="text-xl font-bold text-slate-900">Your Invoices</h2>
-                <p className="text-sm text-slate-500">48-hour auto-approval window</p>
-              </div>
-              <div className="text-center py-12 bg-slate-50 rounded-xl border border-slate-100">
-                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <FileText className="w-8 h-8 text-slate-400" />
-                </div>
-                <p className="text-slate-600 font-medium mb-1">No pending invoices</p>
-                <p className="text-sm text-slate-500">Invoices will appear here when caregivers submit timesheets</p>
-              </div>
-            </div>
-          )}
+        <div className="shrink-0 text-slate-400">
+          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </div>
+      </div>
 
-          {/* Timesheets Tab */}
-          {activeTab === 'timesheets' && (
-            <div>
-              <h2 className="text-xl font-bold text-[var(--color-neutral-900)] mb-4">Pending Timesheets</h2>
-              {timesheets.length === 0 ? (
-                <div className="text-center py-12">
-                  <FileText className="w-12 h-12 text-[var(--color-neutral-400)] mx-auto mb-4" />
-                  <p className="text-[var(--color-neutral-600)]">You have no pending timesheet entries</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {timesheets.map(timesheet => (
-                    <div key={timesheet.id} className="border border-[var(--color-neutral-200)] rounded-xl p-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center space-x-3">
-                          <img src={timesheet.caregiverImage} alt={timesheet.caregiverName} className="w-10 h-10 rounded-full" />
-                          <div>
-                            <h3 className="font-semibold text-[var(--color-neutral-900)]">{timesheet.caregiverName}</h3>
-                            <p className="text-sm text-[var(--color-neutral-600)]">Submitted {timesheet.submittedAt}</p>
-                          </div>
-                        </div>
-                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusBadge(timesheet.status)}`}>
-                          {timesheet.status.charAt(0).toUpperCase() + timesheet.status.slice(1)}
-                        </span>
+      {/* Expanded details */}
+      {expanded && (
+        <div className="border-t border-slate-100 px-5 py-4 bg-slate-50 space-y-4">
+          {/* Times */}
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Hours</p>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="w-16 text-slate-400 shrink-0">Submitted</span>
+              <span className="font-semibold text-slate-700">
+                {fmtTime(row.submittedStartTime)} – {fmtTime(row.submittedEndTime)}
+                <span className="text-primary-600 font-bold ml-2">{row.submittedTotalHours}h</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="w-16 text-slate-400 shrink-0">Rate</span>
+              <span className="font-semibold text-slate-700">${row.payRate}/hr · Total {fmtAmount(row.submittedTotalHours, row.payRate)}</span>
+            </div>
+            {row.status === 'pending_client_review' && (
+              <div className="flex items-center gap-3 text-xs">
+                <span className="w-16 text-slate-400 shrink-0">Auto-approves</span>
+                <span className="text-slate-500">{fmtDate(row.autoApproveAt)}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Shift details if loaded */}
+          {shiftDetails && (
+            <>
+              {/* Care recipients */}
+              {Array.isArray(shiftDetails.careRecipients) && shiftDetails.careRecipients.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care Recipient</p>
+                  {shiftDetails.careRecipients.map((r: any, ri: number) => (
+                    <div key={ri} className="flex items-center gap-2 mb-1">
+                      <div className="w-6 h-6 rounded-full bg-primary-100 flex items-center justify-center shrink-0 overflow-hidden">
+                        {r.photoURL
+                          ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
+                          : <span className="text-[9px] font-bold text-primary-700">{(r.name || '?').charAt(0).toUpperCase()}</span>}
                       </div>
-                      <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
-                        <div>
-                          <p className="text-[var(--color-neutral-500)]">Date</p>
-                          <p className="font-medium text-[var(--color-neutral-900)]">{timesheet.date}</p>
-                        </div>
-                        <div>
-                          <p className="text-[var(--color-neutral-500)]">Hours</p>
-                          <p className="font-medium text-[var(--color-neutral-900)]">{timesheet.hours} hrs @ ${timesheet.hourlyRate}/hr</p>
-                        </div>
-                        <div>
-                          <p className="text-[var(--color-neutral-500)]">Total</p>
-                          <p className="font-medium text-[var(--color-primary-600)]">${timesheet.total}</p>
-                        </div>
-                      </div>
-                      {timesheet.status === 'pending' && (
-                        <div className="mt-4 flex space-x-3">
-                          <Button variant="secondary" onClick={() => handleRejectTimesheet(timesheet.id)} className="flex-1">
-                            <X className="w-4 h-4 mr-2" />Reject
-                          </Button>
-                          <Button onClick={() => handleApproveTimesheet(timesheet.id)} className="flex-1">
-                            <Check className="w-4 h-4 mr-2" />Approve
-                          </Button>
-                        </div>
-                      )}
+                      <span className="text-xs font-semibold text-slate-700">{r.name}</span>
+                      {r.relationship && <span className="text-xs text-slate-400">· {r.relationship}</span>}
+                      {r.age && <span className="text-xs text-slate-400">· Age {r.age}</span>}
                     </div>
                   ))}
                 </div>
               )}
+
+              {/* Tasks */}
+              {Array.isArray(shiftDetails.tasksCompleted) && shiftDetails.tasksCompleted.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tasks Completed</p>
+                  <div className="space-y-0.5">
+                    {shiftDetails.tasksCompleted.map((t: string, i: number) => (
+                      <div key={i} className="flex items-center gap-2 text-xs text-green-700">
+                        <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                        <span>{t.replace(/^\d+_[^_]+_/, '').replace(/^\d+_/, '')}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Notes */}
+              {shiftDetails.completionNotes && (
+                <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Caregiver Notes</p>
+                  <p className="text-xs text-slate-600">{shiftDetails.completionNotes}</p>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Status-specific messages */}
+          {row.status === 'correction_proposed' && (
+            <div className="flex items-start gap-2 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
+              <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-orange-700 font-medium">
+                You proposed a correction. Waiting for the caregiver to accept or reject.
+              </p>
+            </div>
+          )}
+          {row.status === 'disputed_admin_review' && (
+            <div className="flex items-start gap-2 bg-purple-50 border border-purple-200 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 text-purple-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-purple-700 font-medium">
+                This dispute has been escalated to our team and will be resolved within 48 hours.
+              </p>
+            </div>
+          )}
+          {row.status === 'payment_failed' && (
+            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-red-700 font-medium">
+                Payment failed. Please check your card on file in the Payment Method tab.
+              </p>
             </div>
           )}
 
-
-          {/* Payment Method Tab */}
-          {activeTab === 'payment-method' && (
-            <div className="p-4 sm:p-6">
-              <h2 className="text-xl font-bold text-[var(--color-neutral-900)] mb-6">Payment</h2>
-              <div className="text-center py-12">
-                <DollarSign className="w-12 h-12 text-[var(--color-neutral-400)] mx-auto mb-4" />
-                <p className="text-[var(--color-neutral-600)] mb-2">No payment methods yet</p>
-                <p className="text-sm text-[var(--color-neutral-500)]">Payment methods will appear here</p>
-              </div>
-            </div>
-          )}
-
-          {/* Financial Activity Tab */}
-          {activeTab === 'financial-activity' && (
-            <div>
-              <h2 className="text-xl font-bold text-[var(--color-neutral-900)] mb-6">Financial Activity</h2>
-              <div className="text-center py-12">
-                <DollarSign className="w-12 h-12 text-[var(--color-neutral-400)] mx-auto mb-4" />
-                <p className="text-[var(--color-neutral-600)] mb-2">No financial activity yet</p>
-                <p className="text-sm text-[var(--color-neutral-500)]">Payments and transactions will appear here</p>
-              </div>
-            </div>
+          {/* Actions */}
+          {isPending && (
+            <button
+              onClick={e => { e.stopPropagation(); onReview(row); }}
+              className="w-full py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors"
+            >
+              <CheckCircle className="w-4 h-4" /> Review & Approve
+            </button>
           )}
         </div>
-      </main>
+      )}
+    </div>
+  );
+};
 
+// ── Main Page ─────────────────────────────────────────────────────────────────
+
+export const Payments: React.FC = () => {
+  const { addToast } = useCareConnex();
+  const navigate = useNavigate();
+  const [tab, setTab] = useState<Tab>('timesheets');
+  const [rows, setRows] = useState<ShiftHoursRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
+  const [reviewRow, setReviewRow] = useState<ShiftHoursRow | null>(null);
+
+  // Payment method state
+  const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
+  const [loadingCard, setLoadingCard] = useState(true);
+  const [portalLoading, setPortalLoading] = useState(false);
+
+  const user = auth.currentUser;
+
+  // Subscribe to shiftHours for this client
+  useEffect(() => {
+    if (!user) { setLoading(false); return; }
+    const unsub = shiftHoursService.subscribeForClient(user.uid, (data) => {
+      setRows(data as ShiftHoursRow[]);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [user?.uid]);
+
+  // Fetch Stripe customer status — stored in customers/{uid} by checkout
+  useEffect(() => {
+    if (!user || !db) { setLoadingCard(false); return; }
+    db.collection('customers').doc(user.uid).get()
+      .then(snap => {
+        setStripeCustomerId(snap.data()?.stripeCustomerId || null);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingCard(false));
+  }, [user?.uid]);
+
+  // Filter rows by date
+  const filteredRows = useMemo(() => {
+    if (dateFilter === 'all') return rows;
+    const now = new Date();
+    const cutoff = new Date();
+    if (dateFilter === 'this-month') {
+      cutoff.setDate(1);
+      cutoff.setHours(0, 0, 0, 0);
+    } else {
+      cutoff.setMonth(now.getMonth() - 3);
+    }
+    return rows.filter(r => new Date(r.submittedAt) >= cutoff);
+  }, [rows, dateFilter]);
+
+  const pendingCount = rows.filter(r => r.status === 'pending_client_review').length;
+
+  const pillTab = (active: boolean) =>
+    `inline-flex items-center gap-2 px-5 py-2 rounded-full text-sm font-medium transition-colors ${
+      active ? 'bg-primary-600 text-white shadow-sm' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+    }`;
+
+  const handleOpenPortal = async () => {
+    // No card yet → send to membership/checkout to add one
+    if (!stripeCustomerId) {
+      navigate('/client/membership');
+      return;
+    }
+    // Card exists → open Stripe Billing Portal to manage/update it
+    setPortalLoading(true);
+    try {
+      const url = await getClientBillingPortalUrl();
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e: any) {
+      const code = e?.code as string | undefined;
+      let msg = 'Could not open billing portal. Please try again.';
+      if (code === 'functions/not-found' || e?.message?.includes('No billing account')) {
+        msg = 'No payment account found. Please subscribe first.';
+      } else if (code === 'functions/internal' || code === 'internal') {
+        msg = 'Billing portal unavailable right now. Please try again later.';
+      }
+      addToast(msg, 'error');
+    } finally {
+      setPortalLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <ClientNavigation />
+
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 pb-28">
+        <h1 className="text-2xl font-bold text-slate-900 mb-1">Payments</h1>
+        <p className="text-sm text-slate-500 mb-6">Approve hours and manage your payment method.</p>
+
+        {/* Tabs */}
+        <div className="flex gap-2 mb-6 flex-wrap">
+          <button onClick={() => setTab('timesheets')} className={pillTab(tab === 'timesheets')}>
+            <Clock className="w-4 h-4" /> Timesheets
+            {pendingCount > 0 && tab !== 'timesheets' && (
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold">
+                {pendingCount}
+              </span>
+            )}
+          </button>
+          <button onClick={() => setTab('payment-method')} className={pillTab(tab === 'payment-method')}>
+            <CreditCard className="w-4 h-4" /> Payment Method
+          </button>
+        </div>
+
+        {/* ── Timesheets ── */}
+        {tab === 'timesheets' && (
+          <div className="space-y-4">
+            {/* Pending alert */}
+            {pendingCount > 0 && (
+              <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4">
+                <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                  <Clock className="w-5 h-5 text-amber-600" />
+                </div>
+                <div className="flex-1">
+                  <p className="font-semibold text-amber-800 text-sm">
+                    {pendingCount} shift{pendingCount > 1 ? 's' : ''} to review
+                  </p>
+                  <p className="text-xs text-amber-600 mt-0.5">
+                    Approve or propose a correction. Shifts auto-approve after 24 hours.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Date filter */}
+            <div className="flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-slate-400 shrink-0" />
+              <div className="flex gap-1.5">
+                {([
+                  { id: 'all', label: 'All time' },
+                  { id: 'this-month', label: 'This month' },
+                  { id: 'last-3-months', label: 'Last 3 months' },
+                ] as { id: DateFilter; label: string }[]).map(f => (
+                  <button
+                    key={f.id}
+                    onClick={() => setDateFilter(f.id)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                      dateFilter === f.id
+                        ? 'bg-primary-600 text-white'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* List */}
+            {loading ? (
+              <div className="flex justify-center py-16">
+                <Loader2 className="w-6 h-6 animate-spin text-primary-500" />
+              </div>
+            ) : filteredRows.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center">
+                <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-3">
+                  <Clock className="w-6 h-6 text-slate-400" />
+                </div>
+                <p className="font-semibold text-slate-700 mb-1">No timesheets yet</p>
+                <p className="text-sm text-slate-400">
+                  When a caregiver completes a shift and submits their hours, they'll appear here for your review.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Pending first */}
+                {filteredRows
+                  .slice()
+                  .sort((a, b) => {
+                    // pending_client_review first, then by date desc
+                    const aP = a.status === 'pending_client_review' ? 0 : 1;
+                    const bP = b.status === 'pending_client_review' ? 0 : 1;
+                    if (aP !== bP) return aP - bP;
+                    return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+                  })
+                  .map(row => (
+                    <ShiftRow
+                      key={row.id}
+                      row={row}
+                      onReview={setReviewRow}
+                    />
+                  ))}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Payment Method ── */}
+        {tab === 'payment-method' && (
+          <div className="space-y-4">
+            {loadingCard ? (
+              <div className="flex justify-center py-16">
+                <Loader2 className="w-6 h-6 animate-spin text-primary-500" />
+              </div>
+            ) : (
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                <div className="px-6 pt-6 pb-4">
+                  <p className="font-semibold text-slate-900 mb-1">Card on file</p>
+                  <p className="text-sm text-slate-500">
+                    Your card is used for automatic payment when you approve a caregiver's hours. We never store your full card number — it's managed securely by Stripe.
+                  </p>
+                </div>
+
+                <div className="px-6 pb-6">
+                  {stripeCustomerId ? (
+                    <div className="flex items-center gap-4 bg-slate-50 border border-slate-200 rounded-xl px-4 py-4 mb-4">
+                      <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center shrink-0">
+                        <CreditCard className="w-5 h-5 text-white" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-semibold text-slate-800 text-sm">Card connected</p>
+                        <p className="text-xs text-slate-500 mt-0.5">Managed securely via Stripe</p>
+                      </div>
+                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-green-50 text-green-700 border border-green-200">
+                        Active
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-4 mb-4">
+                      <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
+                        <AlertTriangle className="w-5 h-5 text-amber-600" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-semibold text-amber-800 text-sm">No card on file</p>
+                        <p className="text-xs text-amber-600 mt-0.5">
+                          Add a card to pay caregivers when you approve their hours.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleOpenPortal}
+                    disabled={portalLoading}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
+                  >
+                    {portalLoading
+                      ? <Loader2 className="w-4 h-4 animate-spin" />
+                      : <ExternalLink className="w-4 h-4" />}
+                    {stripeCustomerId ? 'Manage payment method' : 'Add a card'}
+                  </button>
+                </div>
+
+                <div className="border-t border-slate-100 px-6 py-4 bg-slate-50">
+                  <p className="text-xs text-slate-400">
+                    <span className="font-medium text-slate-500">How payments work:</span> When you approve a caregiver's hours, your card is automatically charged. For cash payments, the caregiver marks it paid after receiving cash directly from you.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Review modal */}
+      {reviewRow && (
+        <ReviewShiftHoursModal
+          shift={reviewRow}
+          onClose={() => setReviewRow(null)}
+          onDone={() => {
+            setReviewRow(null);
+            addToast('Done — hours updated.', 'success');
+          }}
+          onError={(msg) => {
+            addToast(msg, 'error');
+          }}
+        />
+      )}
     </div>
   );
 };

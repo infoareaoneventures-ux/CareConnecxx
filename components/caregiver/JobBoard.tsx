@@ -783,8 +783,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
 
             {/* ── My Applications ── */}
             {activeTab === 'my-applications' && (() => {
-                const interviewJobIds = new Set(interviews.map(iv => iv.jobId).filter(Boolean));
-                const baseApps = applications.filter(a => !interviewJobIds.has(a.jobId));
+                // Build a map: jobId → interview (so we can show interview status on the card)
+                const interviewByJobId = new Map(
+                    interviews.filter(iv => iv.jobId).map(iv => [iv.jobId!, iv])
+                );
+                const baseApps = applications; // show ALL applications regardless of interview status
                 const visibleApps = appFilter === 'all' ? baseApps : baseApps.filter(a => a.status === appFilter);
                 return (
                     <div className="space-y-4">
@@ -793,9 +796,9 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                         ) : baseApps.length === 0 ? (
                             <div className="text-center p-8 text-[var(--color-neutral-400)] bg-[var(--color-neutral-50)] rounded-2xl">
                                 <FileText className="w-12 h-12 mx-auto mb-2 opacity-30" />
-                                <p>{applications.length > 0 ? 'All your applications have moved to interviews.' : 'No applications yet.'}</p>
-                                <button onClick={() => setActiveTab(applications.length > 0 ? 'interviews' : 'available')} className="text-[var(--color-primary-600)] font-medium mt-2 hover:underline">
-                                    {applications.length > 0 ? 'View Interviews' : 'Browse available jobs'}
+                                <p>No applications yet.</p>
+                                <button onClick={() => setActiveTab('available')} className="text-[var(--color-primary-600)] font-medium mt-2 hover:underline">
+                                    Browse available jobs
                                 </button>
                             </div>
                         ) : (
@@ -806,7 +809,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                     const total = f === 'all' ? baseApps.length : baseApps.filter(a => a.status === f).length;
                                     if (f !== 'all' && total === 0) return null;
                                     const label = f === 'all' ? 'All' : f === 'rejected' ? 'Not Selected' : f.charAt(0).toUpperCase() + f.slice(1);
-                                    const newCount = f === 'all' ? 0 : baseApps.filter(a => {
+                                    const newCount = f === 'all' ? 0 : applications.filter(a => {
                                         if (a.status !== f) return false;
                                         const tsMs = (v: any): number => {
                                             if (!v) return 0;
@@ -841,6 +844,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                             ) : visibleApps.map((app) => {
                                 const rawDate = (app.appliedAt as any)?.toDate ? (app.appliedAt as any).toDate() : new Date(app.appliedAt);
                                 const appliedDate = isNaN(rawDate.getTime()) ? null : rawDate;
+                                const linkedInterview = app.jobId ? interviewByJobId.get(app.jobId) : undefined;
                                 return (
                                     <div key={app.id} className="bg-white p-5 rounded-2xl shadow-sm border border-[var(--color-neutral-100)] hover:border-[var(--color-primary-200)] transition-all">
                                         {/* Header: title + rate + status */}
@@ -857,6 +861,24 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                     <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full">${app.jobRate}/hr</span>
                                                 )}
                                                 <StatusBadge status={app.status as ApplicationStatus} />
+                                                {linkedInterview && (() => {
+                                                    const iv = linkedInterview;
+                                                    const ivLabel = iv.status === 'pending' ? 'Interview Pending'
+                                                        : iv.status === 'accepted' || iv.status === 'confirmed' ? 'Interview Confirmed'
+                                                        : iv.status === 'completed' ? 'Interview Completed'
+                                                        : iv.status === 'declined' ? 'Interview Declined'
+                                                        : iv.status === 'cancelled' ? 'Interview Cancelled'
+                                                        : 'Interview Scheduled';
+                                                    const ivColor = iv.status === 'completed' ? 'bg-slate-100 text-slate-600'
+                                                        : iv.status === 'accepted' || iv.status === 'confirmed' ? 'bg-blue-50 text-blue-700'
+                                                        : iv.status === 'declined' || iv.status === 'cancelled' ? 'bg-red-50 text-red-600'
+                                                        : 'bg-purple-50 text-purple-700';
+                                                    return (
+                                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${ivColor}`}>
+                                                            {ivLabel}
+                                                        </span>
+                                                    );
+                                                })()}
                                             </div>
                                         </div>
 
@@ -897,7 +919,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                         Details
                                                     </button>
                                                 )}
-                                                {app.status === 'pending' && (
+                                                {app.status === 'pending' && !(['pending', 'accepted', 'confirmed'].includes(linkedInterview?.status ?? '')) && (
                                                     <button onClick={() => handleWithdrawApplication(app.id)} className="text-[var(--color-error-500)] hover:text-[var(--color-error-600)] font-medium text-sm">
                                                         Withdraw
                                                     </button>

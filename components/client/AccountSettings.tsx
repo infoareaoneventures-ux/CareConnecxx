@@ -202,7 +202,12 @@ export const AccountSettings: React.FC = () => {
       const ref = storage.ref(`profile_photos/${user.uid}/profile`);
       await ref.put(file);
       const url = await ref.getDownloadURL();
-      await db!.collection('users').doc(user.uid).update({ photoURL: url });
+      // Write to all three sources so every component that reads photo finds it
+      await Promise.all([
+        db!.collection('users').doc(user.uid).update({ photoURL: url }),
+        db!.collection('senior_profiles').doc(user.uid).set({ imageUrl: url }, { merge: true }),
+        (user as any).updateProfile?.({ photoURL: url }).catch(() => {}),
+      ]);
       setPhotoURL(url);
       addToast('Profile photo updated', 'success');
     } catch {

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, Settings, Banknote, ListOrdered, BookOpen, MessageCircle, LogOut } from 'lucide-react';
+import { Users, Settings, Wallet, BookOpen, MessageCircle, LogOut } from 'lucide-react';
 import { authService } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
 import type { Caregiver } from '../../types';
@@ -68,8 +68,7 @@ export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile })
   const items: Array<{ label: string; onClick: () => void; icon: React.ReactNode; divider?: boolean }> = [
     { label: 'My Families', onClick: () => go('/caregiver/families'), icon: <Users className="w-4 h-4" /> },
     { label: 'Settings', onClick: () => go('/caregiver/settings'), icon: <Settings className="w-4 h-4" />, divider: true },
-    { label: 'Payout and payment', onClick: () => go('/caregiver/payout'), icon: <Banknote className="w-4 h-4" /> },
-    { label: 'Transactions', onClick: () => go('/caregiver/transactions'), icon: <ListOrdered className="w-4 h-4" /> },
+    { label: 'Payments', onClick: () => go('/caregiver/payments'), icon: <Wallet className="w-4 h-4" /> },
     { label: 'Success guide', onClick: scrollToSuccessGuide, icon: <BookOpen className="w-4 h-4" /> },
     { label: 'Give feedback', onClick: () => { window.location.href = 'mailto:support@careconnex.app?subject=Caregiver%20feedback'; setOpen(false); }, icon: <MessageCircle className="w-4 h-4" />, divider: true },
   ];
@@ -94,7 +93,7 @@ export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile })
           role="menu"
           className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-2xl border border-slate-200 py-2 z-50 animate-fade-in"
         >
-          {items.map((item, i) => (
+          {items.map((item) => (
             <React.Fragment key={item.label}>
               <button
                 role="menuitem"

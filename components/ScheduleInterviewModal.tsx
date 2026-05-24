@@ -9,7 +9,7 @@ import { authService } from '../services/api';
 interface JobOption {
     id: string;
     title: string;
-    startDate?: string;
+    createdAt?: string;
 }
 
 interface ScheduleInterviewModalProps {
@@ -233,8 +233,8 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                             >
                                 <option value="">No specific post</option>
                                 {jobPosts.map((job) => {
-                                    const date = job.startDate
-                                        ? new Date(job.startDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                                    const date = job.createdAt
+                                        ? new Date(job.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
                                         : null;
                                     return (
                                         <option key={job.id} value={job.id}>

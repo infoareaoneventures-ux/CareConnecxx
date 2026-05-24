@@ -2074,7 +2074,7 @@ export const PostsPage: React.FC = () => {
             rating: schedulingFor.rating,
             hourlyRate: schedulingFor.hourlyRate,
           } as any}
-          jobPosts={openPosts.map(p => ({ id: p.id, title: p.title, startDate: p.startDate || (p as any).date }))}
+          jobPosts={openPosts.map(p => ({ id: p.id, title: p.title, createdAt: p.createdAt }))}
           preselectedJobId={panelPostId || undefined}
           onClose={() => setSchedulingFor(null)}
           onSuccess={msg => { addToast(msg, 'success'); setSchedulingFor(null); }}

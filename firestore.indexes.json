@@ -411,6 +411,34 @@
           "order": "ASCENDING"
         },
         {
+          "fieldPath": "submittedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "shiftHours",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "caregiverId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "submittedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "shiftHours",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "clientId",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "status",
           "order": "ASCENDING"
         },

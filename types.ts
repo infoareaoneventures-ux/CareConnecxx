@@ -243,6 +243,10 @@ export interface Caregiver {
     other?: string;    // "PayPal @maria", "Apple Pay 415-555-0100", etc.
   };
 
+  // Membership
+  membershipStatus?: 'active' | 'trialing' | 'past_due' | 'payment_failed' | 'canceled' | 'inactive' | 'none';
+  stripeSubscriptionId?: string;
+
   // UrbanSitter-style credit acceptance. When false, cannot apply to credit-only job posts.
   acceptsCreditCards?: boolean;
 

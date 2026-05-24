@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, UserCircle2, User, X, Plus, Minus, MapPin, Pencil, Trash2 } from 'lucide-react';
+import { Loader2, User, X, Plus, Minus, MapPin, Pencil, Trash2 } from 'lucide-react';
 import { StepProps } from './types';
 import { useCareConnex } from '../../../context/CareConnexContext';
 import { dbService } from '../../../services/api';
@@ -14,6 +14,7 @@ interface SavedPerson {
   lastName: string;
   relationship?: string;
   isSelf?: boolean;
+  photo?: string;
 }
 
 interface SavedLocation {
@@ -62,14 +63,15 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
     const nameParts = displayName.trim().split(' ');
     const selfFirst = nameParts[0] || '';
     const selfLast = nameParts.slice(1).join(' ');
-    people.push({ id: `self-${currentUser.uid}`, firstName: selfFirst || 'Me', lastName: selfLast, relationship: 'Myself', isSelf: true });
+    people.push({ id: `self-${currentUser.uid}`, firstName: selfFirst || 'Me', lastName: selfLast, relationship: 'Myself', isSelf: true, photo: (currentUser as any)?.photoURL || undefined });
     if (selfFirst) seenNames.add(`${selfFirst.toLowerCase()} ${selfLast.toLowerCase()}`.trim());
 
     Promise.all([
       dbService.getSeniorProfile(currentUser.uid).catch(() => null),
       db ? db.collection('job_postings').doc(currentUser.uid).get().catch(() => null) : Promise.resolve(null),
       db ? db.collection('carePlans').doc(currentUser.uid).get().catch(() => null) : Promise.resolve(null),
-    ]).then(([profile, jobSnap, carePlanSnap]) => {
+      db ? db.collection('users').doc(currentUser.uid).get().catch(() => null) : Promise.resolve(null),
+    ]).then(([profile, jobSnap, carePlanSnap, userDoc]) => {
       // People from senior_profiles
       if (profile) {
         const pFirst = ((profile as any).firstName || profile.name?.split(' ')[0] || '').trim();
@@ -77,7 +79,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
         const key = `${pFirst.toLowerCase()} ${pLast.toLowerCase()}`.trim();
         if (pFirst && !seenNames.has(key)) {
           seenNames.add(key);
-          people.push({ id: currentUser.uid, firstName: pFirst, lastName: pLast, relationship: (profile as any).relationship });
+          people.push({ id: currentUser.uid, firstName: pFirst, lastName: pLast, relationship: (profile as any).relationship, photo: (profile as any).imageUrl || undefined });
         }
       }
 
@@ -94,7 +96,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
         const jpKey = `${jpFirst.toLowerCase()} ${jpLast.toLowerCase()}`.trim();
         if (jpFirst && !seenNames.has(jpKey)) {
           seenNames.add(jpKey);
-          people.push({ id: `jp-primary`, firstName: jpFirst, lastName: jpLast, relationship: jp.relationship });
+          people.push({ id: `jp-primary`, firstName: jpFirst, lastName: jpLast, relationship: jp.relationship, photo: jp.careRecipientPhotoURL || undefined });
         }
         if (Array.isArray(jp.additionalRecipients)) {
           jp.additionalRecipients.forEach((r: any, i: number) => {
@@ -103,7 +105,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
             const rKey = `${rFirst.toLowerCase()} ${rLast.toLowerCase()}`.trim();
             if (rFirst && !seenNames.has(rKey)) {
               seenNames.add(rKey);
-              people.push({ id: `jp-add-${i}`, firstName: rFirst, lastName: rLast, relationship: r.relationship });
+              people.push({ id: `jp-add-${i}`, firstName: rFirst, lastName: rLast, relationship: r.relationship, photo: r.photoURL || undefined });
             }
           });
         }
@@ -175,6 +177,17 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
         Object.values(plans).forEach((plan: any, pi: number) => {
           (plan?.locations || []).forEach((loc: any, li: number) => addLoc(loc, `cp-rp-${pi}`, li, 'careplan-recipient'));
         });
+      }
+
+      // Resolve client photo and attach to the isSelf entry
+      const selfPhoto =
+        (userDoc as any)?.data?.()?.photoURL ||
+        (profile as any)?.imageUrl ||
+        (currentUser as any)?.photoURL ||
+        null;
+      if (selfPhoto) {
+        const selfIdx = people.findIndex(p => p.isSelf);
+        if (selfIdx >= 0) people[selfIdx] = { ...people[selfIdx], photo: selfPhoto };
       }
 
       setSavedPeople(people);
@@ -362,29 +375,6 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
     setConfirmDeleteLocId(null);
   };
 
-  const saveHomeEnv = (patch: { petsInHome?: boolean; smokingHousehold?: boolean }) => {
-    onChange(patch);
-    if (!db || !currentUser?.uid || !selectedLocationId) return;
-    const loc = savedLocations.find(l => l.id === selectedLocationId);
-    if (!loc || loc.source === 'job-primary') return;
-    const updatedLoc = {
-      ...loc,
-      petsInHome: patch.petsInHome !== undefined ? patch.petsInHome : data.petsInHome,
-      smokingHousehold: patch.smokingHousehold !== undefined ? patch.smokingHousehold : data.smokingHousehold,
-    };
-    setSavedLocations(prev => prev.map(l => l.id === selectedLocationId ? updatedLoc : l));
-    if (loc.source === 'careplan-pool' || loc.source === 'careplan-recipient') {
-      db.collection('carePlans').doc(currentUser.uid).get().then(snap => {
-        const pool: any[] = (snap.data() as any)?.locationPool || [];
-        const idx = pool.findIndex((p: any) => p.street?.toLowerCase() === loc.street.toLowerCase() && p.zipCode === loc.zipCode);
-        if (idx >= 0) {
-          pool[idx] = { ...pool[idx], petsInHome: updatedLoc.petsInHome, smokingHousehold: updatedLoc.smokingHousehold };
-          db!.collection('carePlans').doc(currentUser!.uid).set({ locationPool: pool }, { merge: true }).catch(() => {});
-        }
-      }).catch(() => {});
-    }
-  };
-
   const handleContinue = () => {
     if (data.careRecipients.length === 0) { onShowToast('Select at least one care recipient', 'error'); return; }
     if (data.careRecipients.length < data.recipientsCount) {
@@ -462,8 +452,13 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left transition-all ${
                       selected ? 'border-primary-600 bg-primary-50' : disabled ? 'border-slate-100 bg-slate-50 opacity-40 cursor-not-allowed' : 'border-slate-200 bg-white hover:border-primary-300'
                     }`}>
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${person.isSelf ? (selected ? 'bg-teal-100' : 'bg-teal-50') : (selected ? 'bg-primary-100' : 'bg-slate-100')}`}>
-                      {person.isSelf ? <User className={`w-5 h-5 ${selected ? 'text-teal-600' : 'text-teal-400'}`} /> : <UserCircle2 className={`w-5 h-5 ${selected ? 'text-primary-600' : 'text-slate-400'}`} />}
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden ${person.isSelf ? (selected ? 'bg-teal-100' : 'bg-teal-50') : (selected ? 'bg-primary-100' : 'bg-slate-100')}`}>
+                      {person.photo
+                        ? <img src={person.photo} alt={person.firstName} className="w-full h-full object-cover" />
+                        : person.isSelf
+                          ? <User className={`w-5 h-5 ${selected ? 'text-teal-600' : 'text-teal-400'}`} />
+                          : <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-500'}`}>{person.firstName.charAt(0).toUpperCase()}</span>
+                      }
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-slate-900 text-sm">

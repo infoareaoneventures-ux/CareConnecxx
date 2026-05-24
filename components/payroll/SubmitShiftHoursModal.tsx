@@ -1,10 +1,27 @@
 import React, { useMemo, useState } from 'react';
 import { Clock, X } from 'lucide-react';
 import { shiftHoursService } from '../../services/api';
-import { Appointment } from '../../types';
+
+export interface CompletedShift {
+  id: string;
+  clientId: string;
+  clientName?: string;
+  clientPhotoURL?: string | null;
+  caregiverId: string;
+  date: string;       // 'YYYY-MM-DD'
+  startTime: string;  // scheduled 'HH:MM'
+  endTime?: string;   // scheduled 'HH:MM'
+  startedAt?: any;    // Firestore Timestamp or ISO — actual clock-in
+  completedAt?: any;  // Firestore Timestamp or ISO — actual clock-out
+  paymentMethod?: string;
+  rate?: number;
+  careRecipients?: Array<{ name: string; relationship?: string; age?: string; photoURL?: string | null }>;
+  address?: string;
+  notes?: string;
+}
 
 interface Props {
-  appointment: Appointment;
+  shift: CompletedShift;
   onClose: () => void;
   onSubmitted: () => void;
   onError: (msg: string) => void;
@@ -16,15 +33,35 @@ function toDateTimeLocal(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function scheduledStartEnd(appt: Appointment): { startIso: string; endIso: string } {
-  const baseIso = appt.isoDate || `${appt.date}T${appt.time || '09:00'}`;
-  const start = new Date(baseIso);
-  const end = new Date(start.getTime() + (appt.duration || 1) * 60 * 60 * 1000);
-  return { startIso: start.toISOString(), endIso: end.toISOString() };
+function toIso(ts: any): string | null {
+  if (!ts) return null;
+  // Firestore Timestamp
+  if (typeof ts.toDate === 'function') return ts.toDate().toISOString();
+  // Already ISO string
+  if (typeof ts === 'string') return ts;
+  // Seconds-based object
+  if (ts.seconds) return new Date(ts.seconds * 1000).toISOString();
+  return null;
 }
 
-export const SubmitShiftHoursModal: React.FC<Props> = ({ appointment, onClose, onSubmitted, onError }) => {
-  const { startIso, endIso } = useMemo(() => scheduledStartEnd(appointment), [appointment]);
+function defaultStartEnd(shift: CompletedShift): { startIso: string; endIso: string } {
+  // Prefer actual clock-in / clock-out times; fall back to scheduled window
+  const actualStart = toIso(shift.startedAt);
+  const actualEnd = toIso(shift.completedAt);
+
+  const scheduledStart = new Date(`${shift.date}T${shift.startTime}:00`).toISOString();
+  const scheduledEnd = shift.endTime
+    ? new Date(`${shift.date}T${shift.endTime}:00`).toISOString()
+    : new Date(new Date(`${shift.date}T${shift.startTime}:00`).getTime() + 3_600_000).toISOString();
+
+  return {
+    startIso: actualStart ?? scheduledStart,
+    endIso:   actualEnd   ?? scheduledEnd,
+  };
+}
+
+export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmitted, onError }) => {
+  const { startIso, endIso } = useMemo(() => defaultStartEnd(shift), [shift]);
   const [start, setStart] = useState(toDateTimeLocal(startIso));
   const [end, setEnd] = useState(toDateTimeLocal(endIso));
   const [submitting, setSubmitting] = useState(false);
@@ -33,7 +70,7 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ appointment, onClose, o
     const s = new Date(start).getTime();
     const e = new Date(end).getTime();
     if (!isFinite(s) || !isFinite(e) || e <= s) return 0;
-    return Math.round(((e - s) / 3600000) * 100) / 100;
+    return Math.round(((e - s) / 3_600_000) * 100) / 100;
   }, [start, end]);
 
   const onConfirm = async () => {
@@ -44,7 +81,7 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ appointment, onClose, o
     setSubmitting(true);
     try {
       await shiftHoursService.submit(
-        appointment.id,
+        shift.id,
         new Date(start).toISOString(),
         new Date(end).toISOString(),
       );
@@ -56,7 +93,7 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ appointment, onClose, o
     }
   };
 
-  const isCash = appointment.paymentMethod === 'cash';
+  const isCash = shift.paymentMethod === 'cash';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -68,10 +105,12 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ appointment, onClose, o
               Submit hours worked
             </h2>
             <p className="text-sm text-slate-500 mt-1">
-              {appointment.clientName} · {appointment.date}
+              {shift.clientName} · {shift.date}
             </p>
           </div>
-          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700">
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         <div className="space-y-3">
@@ -107,7 +146,12 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ appointment, onClose, o
         </div>
 
         <div className="flex gap-2 mt-6">
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-700 font-medium hover:bg-slate-50">Cancel</button>
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-700 font-medium hover:bg-slate-50"
+          >
+            Cancel
+          </button>
           <button
             onClick={onConfirm}
             disabled={submitting || totalHours <= 0}

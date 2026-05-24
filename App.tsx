@@ -51,6 +51,7 @@ const CaregiverFamiliesPage = lazy(() => import('./components/caregiver/Caregive
 const CaregiverAccountSettings = lazy(() => import('./components/caregiver/CaregiverAccountSettings').then(module => ({ default: module.CaregiverAccountSettings })));
 const CaregiverTransactionsPage = lazy(() => import('./components/caregiver/CaregiverTransactionsPage').then(module => ({ default: module.CaregiverTransactionsPage })));
 const CaregiverPayoutPage = lazy(() => import('./components/caregiver/CaregiverPayoutPage').then(module => ({ default: module.CaregiverPayoutPage })));
+const CaregiverPaymentsPage = lazy(() => import('./components/caregiver/CaregiverPaymentsPage').then(module => ({ default: module.CaregiverPaymentsPage })));
 const PublicCaregiverProfile = lazy(() => import('./components/caregiver/PublicCaregiverProfile').then(module => ({ default: module.PublicCaregiverProfile })));
 const PostJobFlow = lazy(() => import('./components/client/postJob/PostJobFlow').then(module => ({ default: module.PostJobFlow })));
 const PostsPage = lazy(() => import('./components/client/PostsPage').then(module => ({ default: module.PostsPage })));
@@ -226,8 +227,8 @@ const AppContent: React.FC = () => {
       case 'caregiver-video': navigate('/caregiver/video'); break;
       case 'caregiver-families': navigate('/caregiver/families'); break;
       case 'caregiver-settings': navigate('/caregiver/settings'); break;
-      case 'caregiver-transactions': navigate('/caregiver/transactions'); break;
-      case 'caregiver-payout': navigate('/caregiver/payout'); break;
+      case 'caregiver-transactions': navigate('/caregiver/payments'); break;
+      case 'caregiver-payout': navigate('/caregiver/payments'); break;
       case 'admin': navigate('/admin'); break;
       case 'stripe-callback': navigate('/stripe/callback'); break;
       case 'payment-success': navigate('/payment/success'); break;
@@ -339,6 +340,8 @@ const AppContent: React.FC = () => {
           <Route path="/caregiver/video" element={<CaregiverRoute element={<CaregiverIntroVideo />} />} />
           <Route path="/caregiver/families" element={<CaregiverRoute element={<CaregiverFamiliesPage />} />} />
           <Route path="/caregiver/settings" element={<CaregiverRoute element={<CaregiverAccountSettings />} />} />
+          <Route path="/caregiver/payments" element={<CaregiverRoute element={<CaregiverPaymentsPage />} />} />
+          {/* Legacy routes — redirect to unified payments page */}
           <Route path="/caregiver/transactions" element={<CaregiverRoute element={<CaregiverTransactionsPage />} />} />
           <Route path="/caregiver/payout" element={<CaregiverRoute element={<CaregiverPayoutPage />} />} />
           {/* Public shareable caregiver profile */}

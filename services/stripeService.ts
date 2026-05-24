@@ -298,6 +298,30 @@ export const requestStandardPayout = async (): Promise<PayoutResult> => {
   return res.data as PayoutResult;
 };
 
+/**
+ * Shared helper — creates a Stripe Billing Portal session for any user.
+ * Reads stripeCustomerId from customers/{uid} (same collection used by checkout).
+ */
+const createBillingPortalSession = async (returnPath: string): Promise<string> => {
+  const user = auth.currentUser;
+  if (!user) throw new Error('User must be logged in');
+  const fns = getFunctions();
+  const fn = httpsCallable<{ returnUrl: string }, { url: string }>(
+    fns,
+    'v1-createCaregiverBillingPortalSession',
+  );
+  const res = await fn({ returnUrl: `${window.location.origin}${returnPath}` });
+  return res.data.url;
+};
+
+/** Caregiver: manage membership subscription via Stripe portal. */
+export const getCaregiverBillingPortalUrl = (): Promise<string> =>
+  createBillingPortalSession('/caregiver/payments');
+
+/** Client: manage payment method / subscription via Stripe portal. */
+export const getClientBillingPortalUrl = (): Promise<string> =>
+  createBillingPortalSession('/client/payments');
+
 // Stripe service object for backward compatibility
 export const stripeService = {
   getStripe,

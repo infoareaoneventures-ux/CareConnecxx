@@ -826,6 +826,39 @@ export const reactivateSubscription = functions.https.onCall(async (data, contex
   }
 });
 
+/**
+ * Create a Stripe Billing Portal session for a caregiver to manage their
+ * membership subscription (update card, view invoices, cancel).
+ */
+export const createCaregiverBillingPortalSession = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+
+  const userId = context.auth.uid;
+  const returnUrl = (data as any)?.returnUrl || `${process.env.APP_URL || 'https://careconnex.app'}/caregiver/payments`;
+
+  try {
+    const customerDoc = await admin.firestore().collection('customers').doc(userId).get();
+    const customerId = customerDoc.data()?.stripeCustomerId as string | undefined;
+
+    if (!customerId) {
+      throw new functions.https.HttpsError('not-found', 'No billing account found. Please purchase a membership first.');
+    }
+
+    const session = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: returnUrl,
+    });
+
+    return { url: session.url };
+  } catch (error: any) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    console.error('Error creating billing portal session:', error);
+    throw new functions.https.HttpsError('internal', 'Failed to open billing portal');
+  }
+});
+
 // ── Auto-retry booking tasks when client adds a payment method ────────────────
 
 async function handlePaymentMethodAttached(pm: Stripe.PaymentMethod): Promise<void> {

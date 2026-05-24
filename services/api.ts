@@ -3121,11 +3121,11 @@ function generateReferralCode(): string {
 // ==========================================
 
 export const shiftHoursService = {
-    submit: async (appointmentId: string, startTime: string, endTime: string) => {
+    submit: async (shiftId: string, startTime: string, endTime: string) => {
         if (!isConfigured) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('submitShiftHours');
-        const res = await fn({ appointmentId, startTime, endTime });
-        return res.data as { success: boolean; appointmentId: string; totalHours: number };
+        const res = await fn({ shiftId, startTime, endTime });
+        return res.data as { success: boolean; shiftId: string; totalHours: number };
     },
 
     review: async (
@@ -3178,7 +3178,10 @@ export const shiftHoursService = {
         return db.collection('shiftHours')
             .where('caregiverId', '==', caregiverId)
             .orderBy('submittedAt', 'desc')
-            .onSnapshot(snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+            .onSnapshot(
+                snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+                _err => cb([])
+            );
     },
 
     subscribeForClient: (clientId: string, cb: (rows: any[]) => void) => {
@@ -3186,7 +3189,10 @@ export const shiftHoursService = {
         return db.collection('shiftHours')
             .where('clientId', '==', clientId)
             .orderBy('submittedAt', 'desc')
-            .onSnapshot(snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+            .onSnapshot(
+                snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+                _err => cb([])  // index missing or permission error — stop the spinner
+            );
     },
 
     subscribeForAdmin: (cb: (rows: any[]) => void) => {

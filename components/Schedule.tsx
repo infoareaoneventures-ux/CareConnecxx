@@ -339,14 +339,33 @@ export default function Schedule() {
     try {
       const user = auth.currentUser;
       if (!user) return;
-      const snap = await db.collection('booking_requests')
-        .where('clientId', '==', user.uid)
-        .where('status', '==', 'accepted')
-        .get();
+
+      // Only include bookings that have at least one scheduled shift —
+      // past bookings (all shifts done) are excluded; use Re-book instead.
+      const [bookingsSnap, shiftsSnap] = await Promise.all([
+        db.collection('booking_requests')
+          .where('clientId', '==', user.uid)
+          .where('status', '==', 'accepted')
+          .get(),
+        db.collection('shifts')
+          .where('clientId', '==', user.uid)
+          .where('status', '==', 'scheduled')
+          .get(),
+      ]);
+
+      // Build set of booking IDs that still have scheduled shifts
+      const activeBookingIds = new Set<string>();
+      shiftsSnap.docs.forEach(d => {
+        const bid = d.data().bookingRequestId;
+        if (bid) activeBookingIds.add(bid);
+      });
+
       const seen = new Set<string>();
       const list: { id: string; name: string; address?: string; bookingId?: string; schedule?: Record<string, Array<{ start: string; end: string }>> }[] = [];
-      snap.forEach(doc => {
+      bookingsSnap.forEach(doc => {
         const d = doc.data();
+        // Skip if booking has no scheduled shifts (effectively past)
+        if (!activeBookingIds.has(doc.id)) return;
         if (d.caregiverId && !seen.has(d.caregiverId)) {
           seen.add(d.caregiverId);
           list.push({

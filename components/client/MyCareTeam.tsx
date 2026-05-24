@@ -402,7 +402,7 @@ export const MyCareTeam: React.FC = () => {
           {activeTab === 'past' && (
             <Button
               variant="outline"
-              onClick={() => navigate('/client/care-requests')}
+              onClick={() => navigate('/client/posts')}
               className="flex-1 border-primary-300 text-primary-700 hover:bg-primary-50"
             >
               <RefreshCw className="w-4 h-4 mr-2" />

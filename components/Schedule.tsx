@@ -869,9 +869,11 @@ export default function Schedule() {
                   </button>
                 ))}
               </div>
-              <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 transition-colors">
-                <Plus className="w-4 h-4" />Request Visit
-              </button>
+              {caregivers.length > 0 && (
+                <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 transition-colors">
+                  <Plus className="w-4 h-4" />Request Visit
+                </button>
+              )}
             </div>
           </div>
         </div>

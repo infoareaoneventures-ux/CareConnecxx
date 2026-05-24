@@ -74,6 +74,7 @@ export * from './triggers/userCreated';
 export * from './triggers/appointmentUpdated';
 export { onCheckinCreated } from './triggers/checkinAlert';
 export { triggerFamilyEmergency } from './triggers/familyEmergency';
+export { onShiftStatusChanged } from './triggers/shiftStatusTrigger';
 
 // Linq Sprint 3 — family group thread
 export { createFamilyGroup } from './agents/familyGroupManager';

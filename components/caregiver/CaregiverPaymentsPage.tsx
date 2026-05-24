@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Zap, Landmark, CheckCircle2, AlertCircle, Lock,
-  ExternalLink, Calendar, DollarSign,
+  ExternalLink, Calendar, DollarSign, FileDown,
   ShieldCheck, RefreshCw, XCircle, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -304,6 +304,9 @@ export const CaregiverPaymentsPage: React.FC = () => {
 
   const [tab, setTab] = useState<Tab>('timesheets');
   const [tsFilter, setTsFilter] = useState<'all' | 'unsubmitted' | 'pending' | 'history'>('all');
+  const [showReport, setShowReport] = useState(false);
+  const [reportFrom, setReportFrom] = useState('');
+  const [reportTo,   setReportTo]   = useState('');
   const [shiftRows, setShiftRows] = useState<ShiftRow[]>([]);
   const [completedShifts, setCompletedShifts] = useState<CompletedShift[]>([]);
   const [submitModalShift, setSubmitModalShift] = useState<CompletedShift | null>(null);
@@ -407,7 +410,53 @@ export const CaregiverPaymentsPage: React.FC = () => {
   const fullyEnabled = !!(profile?.payoutsEnabled && profile?.chargesEnabled);
   const canPayout = fullyEnabled && availableBalance >= 1;
 
+  // Report: date-filtered slice of historyRows
+  const reportedRows = useMemo(() => {
+    if (!showReport || (!reportFrom && !reportTo)) return historyRows;
+    return historyRows.filter(r => {
+      if (!r.submittedAt) return false;
+      const d = r.submittedAt.slice(0, 10);
+      if (reportFrom && d < reportFrom) return false;
+      if (reportTo   && d > reportTo)   return false;
+      return true;
+    });
+  }, [historyRows, showReport, reportFrom, reportTo]);
+
+  const reportSummary = useMemo(() => {
+    const rows = reportedRows;
+    const totalHours = rows.reduce((s, r) => s + (r.finalTotalHours ?? r.submittedTotalHours ?? 0), 0);
+    const totalPay   = rows.reduce((s, r) => {
+      const h = r.finalTotalHours ?? r.submittedTotalHours ?? 0;
+      return s + (r.grossPay ?? h * (r.payRate ?? 0));
+    }, 0);
+    return { shifts: rows.length, hours: Math.round(totalHours * 100) / 100, pay: totalPay };
+  }, [reportedRows]);
+
   // ── handlers ──────────────────────────────────────────────────────────────
+
+  const handleExportCSV = () => {
+    const header = ['Client', 'Date', 'Hours', 'Pay ($)', 'Method', 'Status'];
+    const lines = reportedRows.map(r => {
+      const date  = r.submittedAt ? new Date(r.submittedAt).toLocaleDateString('en-US') : '';
+      const hours = r.finalTotalHours ?? r.submittedTotalHours ?? 0;
+      const pay   = r.grossPay ?? hours * (r.payRate ?? 0);
+      return [
+        `"${(r.clientName ?? '').replace(/"/g, '""')}"`,
+        date,
+        hours.toFixed(2),
+        pay.toFixed(2),
+        r.paymentMethod ?? '',
+        STATUS_LABEL[r.status] ?? r.status,
+      ].join(',');
+    });
+    const csv  = [header.join(','), ...lines].join('\n');
+    const url  = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `timesheet-${reportFrom || 'all'}-to-${reportTo || 'all'}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const handleRespondToCorrection = async (row: ShiftRow, action: 'accept' | 'reject') => {
     try {
@@ -517,8 +566,8 @@ export const CaregiverPaymentsPage: React.FC = () => {
         {/* ── TIMESHEETS TAB ─────────────────────────────────────────────── */}
         {tab === 'timesheets' && (
           <div className="space-y-4">
-            {/* Filter chips */}
-            <div className="flex gap-2 flex-wrap">
+            {/* Filter chips + Report button */}
+            <div className="flex items-center gap-2 flex-wrap">
               {([
                 { id: 'all',         label: 'All',         count: submittableShifts.length + shiftRows.length, alert: false },
                 { id: 'unsubmitted', label: 'Unsubmitted', count: submittableShifts.length,                    alert: true  },
@@ -548,7 +597,86 @@ export const CaregiverPaymentsPage: React.FC = () => {
                   )}
                 </button>
               ))}
+
+              {/* Report toggle — pushed right */}
+              <button
+                onClick={() => {
+                  setShowReport(s => !s);
+                  if (!showReport) setTsFilter('history');
+                }}
+                className={`ml-auto flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium border transition-all ${
+                  showReport
+                    ? 'bg-primary-600 text-white border-primary-600'
+                    : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <FileDown className="w-3.5 h-3.5" />
+                Report
+              </button>
             </div>
+
+            {/* ── Report panel ── */}
+            {showReport && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                {/* Date inputs + export */}
+                <div className="flex items-end gap-3 flex-wrap">
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">From</label>
+                    <input
+                      type="date"
+                      value={reportFrom}
+                      onChange={e => setReportFrom(e.target.value)}
+                      className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">To</label>
+                    <input
+                      type="date"
+                      value={reportTo}
+                      onChange={e => setReportTo(e.target.value)}
+                      className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-300"
+                    />
+                  </div>
+                  {(reportFrom || reportTo) && (
+                    <button
+                      onClick={() => { setReportFrom(''); setReportTo(''); }}
+                      className="text-xs text-slate-400 hover:text-slate-600 pb-1.5"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    onClick={handleExportCSV}
+                    disabled={reportedRows.length === 0}
+                    className="ml-auto flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                  >
+                    <FileDown className="w-3.5 h-3.5" />
+                    Export CSV
+                  </button>
+                </div>
+
+                {/* Summary row */}
+                {reportedRows.length > 0 ? (
+                  <div className="flex gap-6 pt-2 border-t border-slate-100">
+                    {[
+                      { label: 'Shifts',          value: String(reportSummary.shifts) },
+                      { label: 'Total hours',      value: `${reportSummary.hours}h` },
+                      { label: 'Total earnings',   value: `$${reportSummary.pay.toFixed(2)}` },
+                    ].map(s => (
+                      <div key={s.label}>
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{s.label}</p>
+                        <p className="text-base font-bold text-slate-900 mt-0.5">{s.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400 pt-2 border-t border-slate-100">
+                    No history records match the selected date range.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Unified filtered list */}
             <div className="space-y-2">
@@ -574,10 +702,10 @@ export const CaregiverPaymentsPage: React.FC = () => {
                 ))
               }
 
-              {/* History — grouped in a single card */}
-              {(tsFilter === 'all' || tsFilter === 'history') && historyRows.length > 0 && (
+              {/* History — uses reportedRows when report panel is open */}
+              {(tsFilter === 'all' || tsFilter === 'history') && reportedRows.length > 0 && (
                 <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100">
-                  {historyRows.map(row => <HistoryShiftRow key={row.id} row={row} />)}
+                  {reportedRows.map(row => <HistoryShiftRow key={row.id} row={row} />)}
                 </div>
               )}
 
@@ -585,7 +713,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
               {((tsFilter === 'all'         && submittableShifts.length === 0 && shiftRows.length === 0) ||
                 (tsFilter === 'unsubmitted' && submittableShifts.length === 0) ||
                 (tsFilter === 'pending'     && pendingRows.length === 0) ||
-                (tsFilter === 'history'     && historyRows.length === 0)) && (
+                (tsFilter === 'history'     && reportedRows.length === 0)) && (
                 <div className="bg-white rounded-2xl border border-slate-200 p-6 text-sm text-slate-400 text-center">
                   {tsFilter === 'all'         ? 'No shifts yet.'                               :
                    tsFilter === 'unsubmitted' ? 'No shifts waiting on you to submit hours.'    :

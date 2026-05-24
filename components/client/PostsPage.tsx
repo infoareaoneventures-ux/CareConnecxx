@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Plus, Briefcase, Users, MapPin, Calendar, Loader2, MoreHorizontal,
   Clock, Star, MessageSquare, User, CheckCircle, XCircle, Clock3,
@@ -88,6 +88,7 @@ const pillBtn = (active: boolean) =>
 
 export const PostsPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { currentUser, addToast } = useCareConnex();
 
   const [posts, setPosts] = useState<JobPost[]>([]);
@@ -107,6 +108,21 @@ export const PostsPage: React.FC = () => {
 
   const [mainTab, setMainTab] = useState<MainTab>('posts');
   const [postsFilter, setPostsFilter] = useState<PostsFilter>('open');
+
+  // Auto-open booking modal when arriving from Re-book on My Care Team
+  useEffect(() => {
+    const rebookId = searchParams.get('rebook');
+    if (!rebookId || loadingInterviews || !interviews.length) return;
+    const interview = interviews.find(
+      i => i.caregiverId === rebookId && i.status === 'completed'
+    );
+    if (interview) {
+      setMainTab('interviews');
+      openSendBookingModal(interview);
+    }
+    // Clear param so refreshing doesn't re-trigger
+    setSearchParams({}, { replace: true });
+  }, [searchParams, interviews, loadingInterviews]);
 
   // Edit post modal
   const [editingPost, setEditingPost] = useState<JobPost | null>(null);

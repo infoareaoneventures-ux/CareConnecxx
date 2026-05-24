@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Plus, Briefcase, Users, MapPin, Calendar, Loader2, MoreHorizontal,
   Clock, Star, MessageSquare, User, CheckCircle, XCircle, Clock3,
-  Video, Phone, ChevronRight, X, Send, Edit2, Pencil,
+  Video, Phone, ChevronRight, X, Send, Edit2, Pencil, RefreshCw,
 } from 'lucide-react';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
 import { EditJobPostModal } from './EditJobPostModal';
@@ -115,6 +115,8 @@ export const PostsPage: React.FC = () => {
   const [sendBookingFor, setSendBookingFor] = useState<Interview | null>(null);
   const [sendingBooking, setSendingBooking] = useState(false);
   const [bookingStatuses, setBookingStatuses] = useState<Record<string, { id: string; status: 'pending' | 'accepted' | 'declined' | 'cancelled' }>>({});
+  // Set of bookingRequestIds that still have at least one scheduled shift
+  const [activeBookingIds, setActiveBookingIds] = useState<Set<string>>(new Set());
   const [loadingCarePlan, setLoadingCarePlan] = useState(false);
   const [loadedPost, setLoadedPost] = useState<any>(null);
   const [loadedPlan, setLoadedPlan] = useState<{
@@ -420,6 +422,23 @@ export const PostsPage: React.FC = () => {
           }
         });
         setBookingStatuses(map);
+      }, () => {});
+    return () => unsub();
+  }, [currentUser?.uid]);
+
+  // Track which bookings still have at least one scheduled shift (for Re-book button)
+  useEffect(() => {
+    if (!currentUser?.uid || !db) return;
+    const unsub = db.collection('shifts')
+      .where('clientId', '==', currentUser.uid)
+      .where('status', '==', 'scheduled')
+      .onSnapshot(snap => {
+        const ids = new Set<string>();
+        snap.docs.forEach(d => {
+          const bid = d.data().bookingRequestId;
+          if (bid) ids.add(bid);
+        });
+        setActiveBookingIds(ids);
       }, () => {});
     return () => unsub();
   }, [currentUser?.uid]);
@@ -1164,11 +1183,23 @@ export const PostsPage: React.FC = () => {
                                     <Clock3 className="w-3.5 h-3.5" /> Booking sent · Awaiting response
                                   </span>
                                 );
-                                if (booking?.status === 'accepted') return (
-                                  <span className="flex items-center gap-1.5 text-xs font-semibold text-green-700">
-                                    <CheckCircle className="w-3.5 h-3.5" /> Booking accepted
-                                  </span>
-                                );
+                                if (booking?.status === 'accepted') {
+                                  const hasActiveShifts = activeBookingIds.has(booking.id);
+                                  if (hasActiveShifts) return (
+                                    <span className="flex items-center gap-1.5 text-xs font-semibold text-green-700">
+                                      <CheckCircle className="w-3.5 h-3.5" /> Booking accepted
+                                    </span>
+                                  );
+                                  // All shifts completed — offer to re-book
+                                  return (
+                                    <button
+                                      onClick={() => openSendBookingModal(interview)}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700"
+                                    >
+                                      <RefreshCw className="w-3.5 h-3.5" /> Re-book
+                                    </button>
+                                  );
+                                }
                                 if (booking?.status === 'declined' || booking?.status === 'cancelled') return (
                                   <>
                                     <span className="flex items-center gap-1.5 text-xs text-red-600 font-medium">

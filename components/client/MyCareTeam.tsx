@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Star, Calendar, Clock, Shield, Heart, MessageSquare, User, Search } from 'lucide-react';
+import { Star, Calendar, Clock, Shield, Heart, MessageSquare, User, Search, RefreshCw } from 'lucide-react';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import { Button } from '../ui/Button';
 import { ClientNavigation } from './ClientNavigation';
@@ -49,14 +49,34 @@ export const MyCareTeam: React.FC = () => {
         const uid = authService.getCurrentUser()?.uid;
         if (!uid) { setIsLoading(false); return; }
 
-        // Query booking_requests: Active = accepted, Past = cancelled/completed
-        const allBookingsSnap = await db.collection('booking_requests')
-          .where('clientId', '==', uid)
-          .limit(100)
-          .get();
+        // Query booking_requests + scheduled shifts in parallel
+        const [allBookingsSnap, scheduledShiftsSnap] = await Promise.all([
+          db.collection('booking_requests')
+            .where('clientId', '==', uid)
+            .limit(100)
+            .get(),
+          db.collection('shifts')
+            .where('clientId', '==', uid)
+            .where('status', '==', 'scheduled')
+            .get(),
+        ]);
 
-        const activeDocs = allBookingsSnap.docs.filter(d => d.data().status === 'accepted');
-        const pastDocs   = allBookingsSnap.docs.filter(d => ['cancelled', 'completed'].includes(d.data().status));
+        // Build set of booking IDs that still have scheduled shifts
+        const activeBookingIds = new Set<string>();
+        scheduledShiftsSnap.docs.forEach(d => {
+          const bid = d.data().bookingRequestId;
+          if (bid) activeBookingIds.add(bid);
+        });
+
+        // Active = accepted AND has scheduled shifts
+        // Past = cancelled/completed OR accepted with no scheduled shifts left
+        const activeDocs = allBookingsSnap.docs.filter(d =>
+          d.data().status === 'accepted' && activeBookingIds.has(d.id)
+        );
+        const pastDocs = allBookingsSnap.docs.filter(d =>
+          ['cancelled', 'completed'].includes(d.data().status) ||
+          (d.data().status === 'accepted' && !activeBookingIds.has(d.id))
+        );
 
         const buildCaregiverList = async (
           docs: any[],
@@ -363,7 +383,7 @@ export const MyCareTeam: React.FC = () => {
         )}
 
         {/* Action Buttons */}
-        <div className="flex mt-6">
+        <div className="flex gap-2 mt-6">
           <Button
             onClick={() => handleMessage(caregiver.id, caregiver.name)}
             className="flex-1 bg-primary-600 hover:bg-primary-700 text-white"
@@ -379,6 +399,16 @@ export const MyCareTeam: React.FC = () => {
             <User className="w-4 h-4 mr-2" />
             Profile
           </Button>
+          {activeTab === 'past' && (
+            <Button
+              variant="outline"
+              onClick={() => navigate('/client/care-requests')}
+              className="flex-1 border-primary-300 text-primary-700 hover:bg-primary-50"
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Re-book
+            </Button>
+          )}
         </div>
       </div>
     </div>

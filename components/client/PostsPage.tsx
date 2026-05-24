@@ -600,11 +600,21 @@ export const PostsPage: React.FC = () => {
       const existing = bookingStatuses[key];
       const isResend = existing?.status === 'declined' || existing?.status === 'cancelled';
 
-      // Block duplicate bookings — never create a second doc when one is already active
+      // Block duplicate bookings — never create a second doc when one is already active.
+      // Exception: if all shifts are completed/cancelled the booking is effectively done
+      // and a fresh re-booking should be allowed.
       if (existing?.status === 'accepted') {
-        addToast('You already have an active booking with this caregiver.', 'info');
-        setSendingBooking(false);
-        return;
+        const activeShiftsSnap = await db.collection('shifts')
+          .where('bookingRequestId', '==', existing.id)
+          .where('status', '==', 'scheduled')
+          .limit(1)
+          .get();
+        if (!activeShiftsSnap.empty) {
+          addToast('You already have an active booking with this caregiver.', 'info');
+          setSendingBooking(false);
+          return;
+        }
+        // No scheduled shifts — booking has effectively ended, fall through to create a fresh one
       }
       if (existing?.status === 'pending') {
         addToast('Your booking request is already pending a response.', 'info');

@@ -440,8 +440,10 @@ export const PostsPage: React.FC = () => {
     setBookingDraft({ note: '', selectedRecipientKeys: [], recipientDrafts: {}, lifestyleNotes: [], selectedAddress: '', emergencyContactFirstName: '', emergencyContactLastName: '', emergencyContactPhone: '', emergencyContactRelation: '', shiftStartDate: '', shiftEndDate: '', shiftOngoing: true, dayShiftTimes: {}, agreedRate: null, paymentMethod: '' });
     if (!currentUser?.uid || !db) { setLoadingCarePlan(false); return; }
     try {
-      // Use known booking doc ID if available (avoids needing a composite index)
-      const existingBookingId = bookingStatuses[`${interview.caregiverId}_${interview.jobId || interview.id}`]?.id;
+      // Only pre-fill from a previous booking when it's a genuine resend (declined/cancelled)
+      const existingBookingStatus = bookingStatuses[`${interview.caregiverId}_${interview.jobId || interview.id}`];
+      const isResendEligible = existingBookingStatus?.status === 'declined' || existingBookingStatus?.status === 'cancelled';
+      const existingBookingId = isResendEligible ? existingBookingStatus?.id : undefined;
       const [cpSnap, jpSnap, freshPostSnap, prevBookingSnap] = await Promise.all([
         db.collection('carePlans').doc(currentUser.uid).get().catch(() => null),
         db.collection('job_postings').doc(currentUser.uid).get().catch(() => null),
@@ -596,7 +598,19 @@ export const PostsPage: React.FC = () => {
       const post = interview.jobId ? posts.find(p => p.id === interview.jobId) : undefined;
       const key = `${interview.caregiverId}_${interview.jobId || interview.id}`;
       const existing = bookingStatuses[key];
-      const isResend = existing?.status === 'declined';
+      const isResend = existing?.status === 'declined' || existing?.status === 'cancelled';
+
+      // Block duplicate bookings — never create a second doc when one is already active
+      if (existing?.status === 'accepted') {
+        addToast('You already have an active booking with this caregiver.', 'info');
+        setSendingBooking(false);
+        return;
+      }
+      if (existing?.status === 'pending') {
+        addToast('Your booking request is already pending a response.', 'info');
+        setSendingBooking(false);
+        return;
+      }
 
       // Prefer Auth photo; fall back to Firestore users document
       let clientPhotoURL: string | null = user.photoURL || null;

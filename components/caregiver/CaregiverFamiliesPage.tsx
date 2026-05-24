@@ -40,12 +40,24 @@ export const CaregiverFamiliesPage: React.FC = () => {
 
     (async () => {
       try {
-        // Pull all booking_requests for this caregiver
-        const bookingsSnap = await (db as any)
-          .collection('booking_requests')
-          .where('caregiverId', '==', uid)
-          .limit(100)
-          .get();
+        // Pull booking_requests + scheduled shifts in parallel
+        const [bookingsSnap, scheduledShiftsSnap] = await Promise.all([
+          (db as any).collection('booking_requests')
+            .where('caregiverId', '==', uid)
+            .limit(100)
+            .get(),
+          (db as any).collection('shifts')
+            .where('caregiverId', '==', uid)
+            .where('status', '==', 'scheduled')
+            .get(),
+        ]);
+
+        // Build set of booking IDs that still have scheduled shifts
+        const activeBookingIds = new Set<string>();
+        scheduledShiftsSnap.docs.forEach((d: any) => {
+          const bid = d.data().bookingRequestId;
+          if (bid) activeBookingIds.add(bid);
+        });
 
         const ALL_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const normDay = (d: string) =>
@@ -109,16 +121,19 @@ export const CaregiverFamiliesPage: React.FC = () => {
             bookingId,
             name: data.clientName || 'Family',
             photoURL: data.clientPhotoURL || undefined,
-            source: data.status === 'accepted' ? 'active' : 'past',
+            source: (data.status === 'accepted' && activeBookingIds.has(bookingId)) ? 'active' : 'past',
             scheduleDays,
             rate: data.rate ?? null,
-            nextShift: data.status === 'accepted' ? computeNextShift(data) : undefined,
+            nextShift: (data.status === 'accepted' && activeBookingIds.has(bookingId)) ? computeNextShift(data) : undefined,
             bookingStatus: data.status,
             careRecipients: data.careRecipients || [],
           };
 
-          if (data.status === 'accepted') activeList.push(entry);
-          else if (['cancelled', 'completed'].includes(data.status)) pastList.push(entry);
+          // Active = accepted AND has scheduled shifts remaining
+          // Past = cancelled/completed OR accepted with no scheduled shifts left
+          if (data.status === 'accepted' && activeBookingIds.has(bookingId)) activeList.push(entry);
+          else if (['cancelled', 'completed'].includes(data.status) ||
+                   (data.status === 'accepted' && !activeBookingIds.has(bookingId))) pastList.push(entry);
         });
 
         if (!active) return;

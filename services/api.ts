@@ -3174,10 +3174,31 @@ export const shiftHoursService = {
     },
 
     confirmCashReceived: async (appointmentId: string) => {
-        if (!isConfigured) throw new Error('Firebase not configured');
-        const fn = functions.httpsCallable('v1-confirmCashReceived');
-        const res = await fn({ appointmentId });
-        return res.data as { success: boolean };
+        if (!isConfigured || !db) throw new Error('Firebase not configured');
+        const uid = auth?.currentUser?.uid;
+        if (!uid) throw new Error('Must be signed in');
+
+        const ref = db.collection('shiftHours').doc(appointmentId);
+        const snap = await ref.get();
+        if (!snap.exists) throw new Error('Shift hours record not found');
+
+        const shift = snap.data()!;
+        if (shift.caregiverId !== uid)
+            throw new Error('Only the caregiver can confirm cash receipt');
+        if ((shift.paymentMethod || '').toLowerCase() !== 'cash')
+            throw new Error('Shift is not a cash payment');
+        if (shift.status !== 'approved' && shift.status !== 'auto_approved')
+            throw new Error(`Shift must be approved first (current: ${shift.status})`);
+
+        const now = new Date().toISOString();
+        await ref.update({
+            status: 'paid',
+            paidMethod: 'cash',
+            paidAt: now,
+            cashConfirmedAt: now,
+            updatedAt: now,
+        });
+        return { success: true };
     },
 
     subscribeForCaregiver: (caregiverId: string, cb: (rows: any[]) => void) => {

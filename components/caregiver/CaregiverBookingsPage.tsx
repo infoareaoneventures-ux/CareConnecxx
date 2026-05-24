@@ -198,6 +198,18 @@ function fmtTime(t?: string) {
   } catch { return raw; }
 }
 
+/** Sort shift blocks within a day chronologically by start time */
+function sortBlocks<T extends { start: string }>(blocks: T[]): T[] {
+  return [...blocks].sort((a, b) => {
+    const toMins = (t: string) => {
+      const clean = t.startsWith('~') ? t.slice(1) : t;
+      const [h, m] = clean.split(':').map(Number);
+      return (h || 0) * 60 + (m || 0);
+    };
+    return toMins(a.start) - toMins(b.start);
+  });
+}
+
 const statusBadge = (status: Shift['status']) => {
   switch (status) {
     case 'scheduled':   return 'bg-blue-100 text-blue-700 border-blue-200';
@@ -294,7 +306,7 @@ const RequestCard: React.FC<{
                   <Clock className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
                   <div className="space-y-0.5">
                     {orderedDays.map(day =>
-                      dayShiftTimes![day].filter(b => b.start && b.end).map((b, i) => {
+                      sortBlocks(dayShiftTimes![day].filter(b => b.start && b.end)).map((b, i) => {
                         const mins = calcShiftMins(b.start, b.end);
                         return (
                           <div key={`${day}-${i}`}>
@@ -544,9 +556,9 @@ const BookingGroupCard: React.FC<{
   shifts: Shift[];
   amendments: BookingAmendment[];
   onCancel: (id: string) => void;
-}> = ({ shifts, amendments, onCancel }) => {
+  onAcceptAmendment: (amendment: BookingAmendment) => Promise<void>;
+}> = ({ shifts, amendments, onCancel, onAcceptAmendment }) => {
   const navigate = useNavigate();
-  const { addToast } = useCareConnex();
   const base = shifts[0];
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandedShift, setExpandedShift] = useState<string | null>(null);
@@ -598,113 +610,7 @@ const BookingGroupCard: React.FC<{
     if (db) await db.collection('shifts').doc(shiftId).update({ tasksCompleted: next }).catch(() => {});
   };
 
-  const handleAcceptAmendment = async (amendment: BookingAmendment) => {
-    try {
-      const addDaysLocal = (dateStr: string, days: number) => {
-        const d = new Date(dateStr + 'T12:00:00');
-        d.setDate(d.getDate() + days);
-        return d.toISOString().split('T')[0];
-      };
-      const today = new Date().toISOString().split('T')[0];
-      // Use the client-specified start date (or today if not set)
-      const generateFrom = amendment.startDate && amendment.startDate >= today ? amendment.startDate : today;
-      const generateTo = addDaysLocal(generateFrom, 27);
-
-      if (amendment.bookingRequestId) {
-        const bookingSnap = await db.collection('booking_requests').doc(amendment.bookingRequestId).get();
-        if (bookingSnap.exists) {
-          const booking = bookingSnap.data()!;
-          // Merge new days into existing dayShiftTimes
-          const currentDST: Record<string, Array<{ start: string; end: string }>> = booking.schedule?.dayShiftTimes || {};
-          const mergedDST: Record<string, Array<{ start: string; end: string }>> = { ...currentDST };
-          for (const [day, blocks] of Object.entries(amendment.newDays)) {
-            if (!mergedDST[day]) mergedDST[day] = [];
-            mergedDST[day] = [...mergedDST[day], ...(blocks as Array<{ start: string; end: string }>)];
-          }
-          await db.collection('booking_requests').doc(amendment.bookingRequestId).update({
-            'schedule.dayShiftTimes': mergedDST,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-          });
-
-          // Generate shifts for new days — respect amendment's end date / ongoing setting
-          const endDate: string | null = amendment.ongoing
-            ? null
-            : (amendment.endDate || (booking.schedule?.ongoing ? null : booking.schedule?.endDate || null));
-          // Fetch caregiver photo to embed on shifts (so client bookings page shows it)
-          let cgPhotoURL: string | null = booking.caregiverPhotoURL || null;
-          if (!cgPhotoURL && amendment.caregiverId) {
-            const cgSnap = await db.collection('caregivers').doc(amendment.caregiverId).get().catch(() => null);
-            const cgData = cgSnap?.data() as any;
-            cgPhotoURL = cgData?.photo || cgData?.profilePhoto || cgData?.photoURL || cgData?.imageUrl || null;
-          }
-          const shiftBase = {
-            clientId: booking.clientId || amendment.clientId,
-            clientName: booking.clientName || amendment.clientName,
-            clientPhotoURL: booking.clientPhotoURL || null,
-            caregiverId: amendment.caregiverId,
-            caregiverName: booking.caregiverName || amendment.caregiverName,
-            caregiverPhotoURL: cgPhotoURL,
-            status: 'scheduled',
-            address: booking.address || '',
-            careNeeds: booking.careNeeds || [],
-            lifestylePreferences: booking.lifestylePreferences || [],
-            rate: booking.rate ?? null,
-            paymentMethod: booking.paymentMethod || null,
-            notes: booking.notes || '',
-            careRecipients: booking.careRecipients || [],
-            emergencyContact: booking.emergencyContact || null,
-            schedule: { ...(booking.schedule || {}), dayShiftTimes: mergedDST },
-            bookingRequestId: amendment.bookingRequestId,
-            recurringWeekly: true,
-            tasksCompleted: [],
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          };
-
-          const batch = db.batch();
-          let count = 0;
-          for (const [day, blocks] of Object.entries(amendment.newDays)) {
-            for (const block of blocks as Array<{ start: string; end: string }>) {
-              let dateStr = nextOccurrence(generateFrom, day);
-              while (dateStr <= generateTo && count < 490) {
-                if (endDate && dateStr > endDate) break;
-                batch.set(db.collection('shifts').doc(), {
-                  ...shiftBase,
-                  date: dateStr,
-                  startTime: block.start,
-                  endTime: block.end,
-                });
-                count++;
-                const d = new Date(dateStr + 'T12:00:00');
-                d.setDate(d.getDate() + 7);
-                dateStr = d.toISOString().split('T')[0];
-              }
-            }
-          }
-          if (count > 0) await batch.commit();
-
-          // Notify client
-          await db.collection('users').doc(amendment.clientId).collection('notifications').add({
-            userId: amendment.clientId,
-            type: 'recurring_visit_accepted',
-            title: 'Recurring Visit Accepted',
-            message: `${amendment.caregiverName} accepted your request to add ${Object.keys(amendment.newDays).join(', ')} to your regular schedule.`,
-            read: false, isRead: false,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-          }).catch(() => {});
-        }
-      }
-
-      await db.collection('booking_amendments').doc(amendment.id).update({
-        status: 'accepted',
-        respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-      addToast('Schedule updated — new visits added.', 'success');
-    } catch (e) {
-      console.error('handleAcceptAmendment error', e);
-      addToast('Failed to accept request', 'error');
-    }
-  };
+  // Delegated to page-level handler (lifted so orphan amendments in Requests tab can share it)
 
   const recipients = base.careRecipients || [];
   const ec = base.emergencyContact;
@@ -745,7 +651,7 @@ const BookingGroupCard: React.FC<{
                 </p>
               )}
               {ALL_DAYS_ORDER.filter(d => base.schedule!.dayShiftTimes![d]?.length).map(day => {
-                const blocks = base.schedule!.dayShiftTimes![day];
+                const blocks = sortBlocks(base.schedule!.dayShiftTimes![day]);
                 const mins = blocks.reduce((s, b) => s + calcShiftMins(b.start, b.end), 0);
                 return (
                   <div key={day} className="flex items-center gap-2">
@@ -912,7 +818,7 @@ const BookingGroupCard: React.FC<{
             </div>
             <div className="flex gap-2 shrink-0 mt-0.5">
               <button
-                onClick={() => handleAcceptAmendment(amendment)}
+                onClick={() => onAcceptAmendment(amendment)}
                 className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1 transition-colors"
               >
                 <CheckCircle className="w-3.5 h-3.5" /> Accept
@@ -1310,7 +1216,7 @@ const _ShiftCard: React.FC<{
                 </p>
               )}
               {ALL_DAYS_ORDER.filter(d => shift.schedule!.dayShiftTimes![d]?.length).map(day => {
-                const blocks = shift.schedule!.dayShiftTimes![day];
+                const blocks = sortBlocks(shift.schedule!.dayShiftTimes![day]);
                 const mins = blocks.reduce((s, b) => s + calcShiftMins(b.start, b.end), 0);
                 return (
                   <div key={day} className="flex items-center gap-2">
@@ -1970,7 +1876,109 @@ export const CaregiverBookingsPage: React.FC = () => {
     }
   };
 
+  const handleAcceptAmendment = async (amendment: BookingAmendment) => {
+    try {
+      const addDaysLocal = (dateStr: string, days: number) => {
+        const d = new Date(dateStr + 'T12:00:00');
+        d.setDate(d.getDate() + days);
+        return d.toISOString().split('T')[0];
+      };
+      const today = new Date().toISOString().split('T')[0];
+      const generateFrom = amendment.startDate && amendment.startDate >= today ? amendment.startDate : today;
+      const generateTo = addDaysLocal(generateFrom, 27);
+
+      if (amendment.bookingRequestId) {
+        const bookingSnap = await db.collection('booking_requests').doc(amendment.bookingRequestId).get();
+        if (bookingSnap.exists) {
+          const booking = bookingSnap.data()!;
+          const currentDST: Record<string, Array<{ start: string; end: string }>> = booking.schedule?.dayShiftTimes || {};
+          const mergedDST: Record<string, Array<{ start: string; end: string }>> = { ...currentDST };
+          for (const [day, blocks] of Object.entries(amendment.newDays)) {
+            if (!mergedDST[day]) mergedDST[day] = [];
+            mergedDST[day] = [...mergedDST[day], ...(blocks as Array<{ start: string; end: string }>)];
+          }
+          await db.collection('booking_requests').doc(amendment.bookingRequestId).update({
+            'schedule.dayShiftTimes': mergedDST,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          });
+          const endDate: string | null = amendment.ongoing
+            ? null
+            : (amendment.endDate || (booking.schedule?.ongoing ? null : booking.schedule?.endDate || null));
+          let cgPhotoURL: string | null = booking.caregiverPhotoURL || null;
+          if (!cgPhotoURL && amendment.caregiverId) {
+            const cgSnap = await db.collection('caregivers').doc(amendment.caregiverId).get().catch(() => null);
+            const cgData = cgSnap?.data() as any;
+            cgPhotoURL = cgData?.photo || cgData?.profilePhoto || cgData?.photoURL || cgData?.imageUrl || null;
+          }
+          const shiftBase = {
+            clientId: booking.clientId || amendment.clientId,
+            clientName: booking.clientName || amendment.clientName,
+            clientPhotoURL: booking.clientPhotoURL || null,
+            caregiverId: amendment.caregiverId,
+            caregiverName: booking.caregiverName || amendment.caregiverName,
+            caregiverPhotoURL: cgPhotoURL,
+            status: 'scheduled',
+            address: booking.address || '',
+            careNeeds: booking.careNeeds || [],
+            lifestylePreferences: booking.lifestylePreferences || [],
+            rate: booking.rate ?? null,
+            paymentMethod: booking.paymentMethod || null,
+            notes: booking.notes || '',
+            careRecipients: booking.careRecipients || [],
+            emergencyContact: booking.emergencyContact || null,
+            schedule: { ...(booking.schedule || {}), dayShiftTimes: mergedDST },
+            bookingRequestId: amendment.bookingRequestId,
+            recurringWeekly: true,
+            tasksCompleted: [],
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          };
+          const batch = db.batch();
+          let count = 0;
+          for (const [day, blocks] of Object.entries(amendment.newDays)) {
+            for (const block of blocks as Array<{ start: string; end: string }>) {
+              let dateStr = nextOccurrence(generateFrom, day);
+              while (dateStr <= generateTo && count < 490) {
+                if (endDate && dateStr > endDate) break;
+                batch.set(db.collection('shifts').doc(), {
+                  ...shiftBase,
+                  date: dateStr,
+                  startTime: block.start,
+                  endTime: block.end,
+                });
+                count++;
+                const d = new Date(dateStr + 'T12:00:00');
+                d.setDate(d.getDate() + 7);
+                dateStr = d.toISOString().split('T')[0];
+              }
+            }
+          }
+          if (count > 0) await batch.commit();
+          await db.collection('users').doc(amendment.clientId).collection('notifications').add({
+            userId: amendment.clientId,
+            type: 'recurring_visit_accepted',
+            title: 'Recurring Visit Accepted',
+            message: `${amendment.caregiverName} accepted your request to add ${Object.keys(amendment.newDays).join(', ')} to your regular schedule.`,
+            read: false, isRead: false,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+          }).catch(() => {});
+        }
+      }
+      await db.collection('booking_amendments').doc(amendment.id).update({
+        status: 'accepted',
+        respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      addToast('Schedule updated — new visits added.', 'success');
+    } catch (e) {
+      console.error('handleAcceptAmendment error', e);
+      addToast('Failed to accept request', 'error');
+    }
+  };
+
   const pendingRequests = requests.filter(r => r.status === 'pending');
+
+  // All pending schedule-change amendments go to the Requests tab
+  const orphanAmendments = amendments;
 
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
@@ -1984,9 +1992,9 @@ export const CaregiverBookingsPage: React.FC = () => {
         <div className="flex flex-wrap gap-2 mb-6">
           <button onClick={() => setTab('requests')} className={pillTab(tab === 'requests')}>
             Requests
-            {pendingRequests.length > 0 && tab !== 'requests' && (
+            {(pendingRequests.length + orphanAmendments.length) > 0 && tab !== 'requests' && (
               <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
-                {pendingRequests.length}
+                {pendingRequests.length + orphanAmendments.length}
               </span>
             )}
           </button>
@@ -2003,7 +2011,7 @@ export const CaregiverBookingsPage: React.FC = () => {
           <div className="space-y-4">
             {requestsLoading ? (
               <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-500" /></div>
-            ) : pendingRequests.length === 0 ? (
+            ) : pendingRequests.length === 0 && orphanAmendments.length === 0 ? (
               <EmptyState
                 icon={<AlertCircle className="w-6 h-6" />}
                 title="No pending requests"
@@ -2019,6 +2027,61 @@ export const CaregiverBookingsPage: React.FC = () => {
                     onDecline={handleDecline}
                     submitting={submitting}
                   />
+                ))}
+                {orphanAmendments.map(a => (
+                  <div key={a.id} className="bg-white border border-violet-200 rounded-2xl shadow-sm overflow-hidden">
+                    <div className="px-5 pt-4 pb-3 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-violet-100 flex items-center justify-center shrink-0">
+                        <span className="text-sm font-bold text-violet-700">
+                          {(a.clientName ?? '?')[0].toUpperCase()}
+                        </span>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-slate-900">{a.clientName || 'Client'}</p>
+                        <p className="text-xs text-slate-400">Schedule change request</p>
+                      </div>
+                    </div>
+                    <div className="border-t border-violet-100 bg-violet-50 px-5 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-1">Recurring Schedule Request</p>
+                          <div className="space-y-0.5 mb-1">
+                            {ALL_DAYS_ORDER.filter(d => a.newDays?.[d]?.length).map(day => (
+                              <p key={day} className="text-xs text-slate-700">
+                                <span className="font-semibold">{day}</span>
+                                {' · '}
+                                {a.newDays[day].map((b: any) => `${fmtTime(b.start)} – ${fmtTime(b.end)}`).join(', ')}
+                              </p>
+                            ))}
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1">
+                            {a.startDate ? `Starts ${fmtDate(a.startDate)}` : 'Starts immediately'}
+                            {a.ongoing ? ' · Ongoing' : a.endDate ? ` → ${fmtDate(a.endDate)}` : ''}
+                          </p>
+                          {a.notes && <p className="text-xs text-slate-400 italic mt-0.5">{a.notes}</p>}
+                        </div>
+                        <div className="flex gap-2 shrink-0 mt-0.5">
+                          <button
+                            onClick={() => handleAcceptAmendment(a)}
+                            className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1 transition-colors"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" /> Accept
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await db.collection('booking_amendments').doc(a.id).update({
+                                status: 'declined',
+                                respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                              }).catch(() => {});
+                            }}
+                            className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl transition-colors"
+                          >
+                            Decline
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 ))}
               </>
             )}
@@ -2046,6 +2109,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                     if (pastForBooking.length > 0) groups.set(a.bookingRequestId, pastForBooking);
                   }
                 });
+
                 if (groups.size === 0) return (
                   <EmptyState
                     icon={<CalendarDays className="w-6 h-6" />}
@@ -2053,12 +2117,15 @@ export const CaregiverBookingsPage: React.FC = () => {
                     body="Your scheduled and in-progress shifts will appear here."
                   />
                 );
+
+                // Amendments are shown in the Requests tab — pass empty array here
                 return Array.from(groups.entries()).map(([key, groupShifts]) => (
                   <BookingGroupCard
                     key={key}
                     shifts={groupShifts}
-                    amendments={amendments.filter(a => a.bookingRequestId === key)}
+                    amendments={[]}
                     onCancel={handleCancelShift}
+                    onAcceptAmendment={handleAcceptAmendment}
                   />
                 ));
               })()

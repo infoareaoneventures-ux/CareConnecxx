@@ -3123,7 +3123,7 @@ function generateReferralCode(): string {
 export const shiftHoursService = {
     submit: async (shiftId: string, startTime: string, endTime: string) => {
         if (!isConfigured) throw new Error('Firebase not configured');
-        const fn = functions.httpsCallable('submitShiftHours');
+        const fn = functions.httpsCallable('v1-submitShiftHours');
         const res = await fn({ shiftId, startTime, endTime });
         return res.data as { success: boolean; shiftId: string; totalHours: number };
     },
@@ -3134,7 +3134,7 @@ export const shiftHoursService = {
         proposed?: { startTime: string; endTime: string; reason?: string }
     ) => {
         if (!isConfigured) throw new Error('Firebase not configured');
-        const fn = functions.httpsCallable('reviewShiftHours');
+        const fn = functions.httpsCallable('v1-reviewShiftHours');
         const res = await fn({
             appointmentId,
             action,
@@ -3147,29 +3147,36 @@ export const shiftHoursService = {
 
     respondToCorrection: async (appointmentId: string, action: 'accept' | 'reject') => {
         if (!isConfigured) throw new Error('Firebase not configured');
-        const fn = functions.httpsCallable('respondToCorrection');
+        const fn = functions.httpsCallable('v1-respondToCorrection');
         const res = await fn({ appointmentId, action });
         return res.data as { success: boolean };
     },
 
     adminResolve: async (appointmentId: string, finalStartTime: string, finalEndTime: string, note?: string) => {
         if (!isConfigured) throw new Error('Firebase not configured');
-        const fn = functions.httpsCallable('adminResolveShiftHours');
+        const fn = functions.httpsCallable('v1-adminResolveShiftHours');
         const res = await fn({ appointmentId, finalStartTime, finalEndTime, note });
         return res.data as { success: boolean };
     },
 
     retryPayment: async (appointmentId: string) => {
         if (!isConfigured) throw new Error('Firebase not configured');
-        const fn = functions.httpsCallable('retryShiftPayment');
+        const fn = functions.httpsCallable('v1-retryShiftPayment');
         const res = await fn({ appointmentId });
         return res.data as { success: boolean; error?: string };
     },
 
     updateBookingPaymentMethod: async (appointmentId: string, paymentMethod: 'cash' | 'credit') => {
         if (!isConfigured) throw new Error('Firebase not configured');
-        const fn = functions.httpsCallable('updateBookingPaymentMethod');
+        const fn = functions.httpsCallable('v1-updateBookingPaymentMethod');
         const res = await fn({ appointmentId, paymentMethod });
+        return res.data as { success: boolean };
+    },
+
+    confirmCashReceived: async (appointmentId: string) => {
+        if (!isConfigured) throw new Error('Firebase not configured');
+        const fn = functions.httpsCallable('v1-confirmCashReceived');
+        const res = await fn({ appointmentId });
         return res.data as { success: boolean };
     },
 

@@ -575,7 +575,10 @@ export const PostsPage: React.FC = () => {
           })
         ),
         agreedRate: prevBookingData?.rate ?? null,
-        paymentMethod: prevBookingData?.paymentMethod || (postForDraft as any)?.paymentMethod || '',
+        paymentMethod: (() => {
+          const raw = (prevBookingData?.paymentMethod || (postForDraft as any)?.paymentMethod || '').toLowerCase();
+          return raw === 'cash' ? 'cash' : raw === 'card' || raw === 'credit' ? 'credit' : '';
+        })(),
         selectedAddress: prevBookingData?.address || '',
         note: prevBookingData?.notes || '',
         lifestyleNotes: prevBookingData?.lifestylePreferences || lifestyleNotes,
@@ -631,7 +634,10 @@ export const PostsPage: React.FC = () => {
         jobTitle: interview.jobTitle || post?.title || '',
         address: bookingDraft.selectedAddress || loadedPlan?.primaryAddress || (post ? [post.city, post.state, post.zipCode].filter(Boolean).join(', ') : ''),
         rate: bookingDraft.agreedRate ?? post?.rate ?? null,
-        paymentMethod: bookingDraft.paymentMethod || (post as any)?.paymentMethod || null,
+        paymentMethod: (() => {
+          const raw = (bookingDraft.paymentMethod || (post as any)?.paymentMethod || '').toLowerCase();
+          return raw === 'cash' ? 'cash' : raw ? 'credit' : null;
+        })(),
         careNeeds: [...new Set(Object.values(bookingDraft.recipientDrafts).flatMap(rd => rd.careNeeds))],
         careRecipients: selectedRecipients,
         lifestylePreferences: bookingDraft.lifestyleNotes,
@@ -1298,11 +1304,11 @@ export const PostsPage: React.FC = () => {
                             <div>
                               <p className="text-xs font-semibold text-slate-500 mb-1.5">Payment method</p>
                               <div className="flex gap-2">
-                                {['Cash', 'Card'].map(method => (
-                                  <button key={method} type="button"
-                                    onClick={() => upd({ paymentMethod: d.paymentMethod === method ? '' : method })}
-                                    className={`text-xs px-4 py-1.5 rounded-full border transition-colors ${d.paymentMethod === method ? 'bg-primary-500 text-white border-primary-500' : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'}`}>
-                                    {method}
+                                {([{ value: 'cash', label: 'Cash' }, { value: 'credit', label: 'Card' }] as const).map(({ value, label }) => (
+                                  <button key={value} type="button"
+                                    onClick={() => upd({ paymentMethod: d.paymentMethod === value ? '' : value })}
+                                    className={`text-xs px-4 py-1.5 rounded-full border transition-colors ${d.paymentMethod === value ? 'bg-primary-500 text-white border-primary-500' : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'}`}>
+                                    {label}
                                   </button>
                                 ))}
                               </div>

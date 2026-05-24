@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Calendar as CalendarIcon, MapPin, User,
   XCircle, X, Plus, MessageSquare, ChevronLeft, ChevronRight,
-  Video, Phone, Home, CheckCircle, Loader2,
+  Video, Phone, Home, CheckCircle, Loader2, Hourglass,
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
@@ -154,6 +154,9 @@ export default function Schedule() {
   const [interviews, setInterviews] = useState<InterviewEvent[]>([]);
   const [loading,    setLoading]    = useState(true);
   const [caregivers, setCaregivers] = useState<{ id: string; name: string; address?: string; bookingId?: string; schedule?: Record<string, Array<{ start: string; end: string }>> }[]>([]);
+  const [pendingAmendments, setPendingAmendments] = useState<Array<{
+    id: string; caregiverName: string; newDays: Record<string, Array<{ start: string; end: string }>>; startDate?: string; ongoing?: boolean; endDate?: string;
+  }>>([]);
 
   const [selectedShift,     setSelectedShift]     = useState<Shift | null>(null);
   const [selectedInterview, setSelectedInterview] = useState<InterviewEvent | null>(null);
@@ -169,6 +172,20 @@ export default function Schedule() {
 
   useEffect(() => { fetchShifts(); }, [monthDate]);
   useEffect(() => { fetchHiredCaregivers(); fetchInterviews(); generateMissingShifts(); }, []);
+
+  // Subscribe to pending booking amendments so client sees "Awaiting response"
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (!user || !db) return;
+    const unsub = db.collection('booking_amendments')
+      .where('clientId', '==', user.uid)
+      .where('status', '==', 'pending')
+      .onSnapshot(
+        snap => setPendingAmendments(snap.docs.map(d => ({ id: d.id, ...d.data() } as any))),
+        () => {}
+      );
+    return () => unsub();
+  }, []);
 
   // If no shifts exist for an accepted booking, generate 4 weeks client-side.
   // This runs once on mount and acts as a safety net when the Cloud Function hasn't fired yet.
@@ -851,6 +868,34 @@ export default function Schedule() {
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-rose-600 inline-block" />Cancelled</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-purple-500 inline-block" />Interviews</span>
         </div>
+
+        {/* ── Pending visit requests (awaiting caregiver response) ───────── */}
+        {pendingAmendments.length > 0 && (
+          <div className="mb-4 space-y-2">
+            {pendingAmendments.map(a => {
+              const dayList = Object.entries(a.newDays || {})
+                .map(([day, blocks]) =>
+                  `${day} ${(blocks as Array<{start:string;end:string}>).map(b => `${b.start}–${b.end}`).join(', ')}`
+                ).join(' · ');
+              return (
+                <div key={a.id} className="bg-amber-50 rounded-xl border border-amber-200 p-4 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center shrink-0">
+                      <Hourglass className="w-5 h-5 text-amber-600" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-900 text-sm truncate">{a.caregiverName}</p>
+                      <p className="text-xs text-slate-500 truncate">{dayList}</p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-semibold text-amber-700 bg-amber-100 border border-amber-200 px-2 py-1 rounded-lg shrink-0 whitespace-nowrap">
+                    Awaiting response
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* ── Week view ──────────────────────────────────────────────────── */}
         {view === 'week' && (

@@ -83,9 +83,9 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
   }
 
-  const { shiftId, startTime, endTime } = data;
+  const { shiftId, startTime, endTime } = data as { shiftId: string; startTime: string; endTime: string };
   if (!shiftId || !startTime || !endTime) {
-    throw new functions.https.HttpsError('invalid-argument', 'shiftId, startTime, endTime required');
+    throw new functions.https.HttpsError('invalid-argument', 'shiftId, startTime and endTime are required');
   }
 
   // Source of truth is now the shifts collection
@@ -113,7 +113,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
   const caregiverData = caregiverDoc.data() || {};
   const totalHours = computeTotalHours(startTime, endTime);
   const payRate = shiftDoc.rate || caregiverData.hourlyRate || 25;
-  const paymentMethod: PaymentMethod = shiftDoc.paymentMethod === 'cash' ? 'cash' : 'credit';
+  const paymentMethod: PaymentMethod = (shiftDoc.paymentMethod || '').toLowerCase() === 'cash' ? 'cash' : 'credit';
   const submittedAt = nowIso();
   const autoApproveAt = new Date(Date.now() + ONE_DAY_MS).toISOString();
 
@@ -511,27 +511,13 @@ export const onShiftHoursApproved = functions
     }
 
     if (after.paymentMethod === 'cash') {
-      // Cash shifts: mark paid immediately — no Stripe charge needed.
-      // The client hands cash directly to the caregiver; approval is confirmation.
-      const now = nowIso();
-      await change.after.ref.update({
-        status: 'paid' as ShiftHoursStatus,
-        paidMethod: 'cash',
-        paidAt: now,
-        updatedAt: now,
-      });
+      // Cash shifts: client has approved — notify caregiver to confirm cash receipt.
+      // We do NOT mark paid here; caregiver must call confirmCashReceived to close it out.
       await pushNotification(
         after.caregiverId,
-        'shift_hours_paid',
-        'Cash payment confirmed',
-        `${after.finalTotalHours}h approved — collect $${(after.grossPay || 0).toFixed(2)} cash from the client.`,
-        { appointmentId: context.params.appointmentId }
-      );
-      await pushNotification(
-        after.clientId,
-        'shift_hours_paid',
-        'Hours settled',
-        `${after.caregiverName}'s ${after.finalTotalHours}h cash shift is confirmed.`,
+        'shift_hours_cash_pending_confirmation',
+        'Client approved your hours',
+        `Confirm you received $${(after.grossPay || 0).toFixed(2)} cash from ${after.clientName || 'the client'}.`,
         { appointmentId: context.params.appointmentId }
       );
       return null;
@@ -663,6 +649,69 @@ async function processShiftPayment(appointmentId: string, shift: any): Promise<{
     return { ok: false, error: errorMessage };
   }
 }
+
+/**
+ * Caregiver confirms they received cash payment for an approved cash shift.
+ * Moves status from approved/auto_approved → paid and notifies both parties.
+ */
+export const confirmCashReceived = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  }
+  const { appointmentId } = data as { appointmentId: string };
+  if (!appointmentId) {
+    throw new functions.https.HttpsError('invalid-argument', 'appointmentId is required');
+  }
+
+  const ref = db.collection('shiftHours').doc(appointmentId);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Shift hours record not found');
+  }
+
+  const shift = snap.data()!;
+
+  if (shift.caregiverId !== context.auth.uid) {
+    throw new functions.https.HttpsError('permission-denied', 'Only the caregiver can confirm cash receipt');
+  }
+
+  if (shift.paymentMethod !== 'cash') {
+    throw new functions.https.HttpsError('failed-precondition', 'Shift is not a cash payment');
+  }
+
+  if (shift.status !== 'approved' && shift.status !== 'auto_approved') {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      `Shift must be approved to confirm — current status: ${shift.status}`
+    );
+  }
+
+  const now = nowIso();
+  await ref.update({
+    status: 'paid' as ShiftHoursStatus,
+    paidMethod: 'cash',
+    paidAt: now,
+    cashConfirmedAt: now,
+    updatedAt: now,
+  });
+
+  await pushNotification(
+    shift.caregiverId,
+    'shift_hours_paid',
+    'Cash payment confirmed',
+    `${shift.finalTotalHours}h · $${(shift.grossPay || 0).toFixed(2)} marked as received.`,
+    { appointmentId }
+  );
+  await pushNotification(
+    shift.clientId,
+    'shift_hours_paid',
+    'Hours settled',
+    `${shift.caregiverName}'s ${shift.finalTotalHours}h cash shift is confirmed paid.`,
+    { appointmentId }
+  );
+
+  return { success: true };
+});
 
 /**
  * Approve shift hours on behalf of the client via iMessage reply.

@@ -9,7 +9,7 @@ import { CaregiverTopNav } from './CaregiverTopNav';
 import { PayoutHistory } from './PayoutHistory';
 import { ConnectBankButton } from '../ui/ConnectBankButton';
 import { InstantPayoutModal, PayoutMethod } from './InstantPayoutModal';
-import { SubmitShiftHoursModal, CompletedShift } from '../payroll/SubmitShiftHoursModal';
+import { CompletedShift } from '../payroll/SubmitShiftHoursModal';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { shiftHoursService, dbService } from '../../services/api';
 import { checkOnboardingStatus, requestInstantPayout, requestStandardPayout, getSubscriptionStatus, getCaregiverBillingPortalUrl } from '../../services/stripeService';
@@ -33,6 +33,8 @@ interface ShiftRow {
   caregiverId: string;
   payRate?: number;
   paymentMethod?: 'cash' | 'credit';
+  submittedStartTime?: string;
+  submittedEndTime?: string;
   submittedTotalHours?: number;
   finalTotalHours?: number;
   proposedTotalHours?: number;
@@ -45,6 +47,35 @@ interface ShiftRow {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+function toDate(ts: any): Date | null {
+  if (!ts) return null;
+  if (typeof ts.toDate === 'function') return ts.toDate();
+  if (typeof ts === 'string') return new Date(ts);
+  if (ts.seconds) return new Date(ts.seconds * 1000);
+  return null;
+}
+
+const fmtTime = (d: Date) =>
+  d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+const fmtDate = (d: Date) =>
+  d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+const Col: React.FC<{ label: string; value: string; highlight?: boolean; className?: string }> = ({
+  label, value, highlight, className = '',
+}) => (
+  <div className={`flex flex-col min-w-0 ${className}`}>
+    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 leading-none mb-0.5">
+      {label}
+    </span>
+    <span className={`text-sm leading-tight truncate ${highlight ? 'font-bold text-slate-900' : 'font-medium text-slate-700'}`}>
+      {value}
+    </span>
+  </div>
+);
+
+const Divider: React.FC = () => <div className="w-px h-8 bg-slate-100 shrink-0" />;
 
 const STATUS_LABEL: Record<string, string> = {
   pending_client_review: 'Pending client review',
@@ -71,7 +102,42 @@ const STATUS_STYLE: Record<string, string> = {
 const PendingShiftRow: React.FC<{
   row: ShiftRow;
   onRespond: (action: 'accept' | 'reject') => void;
-}> = ({ row, onRespond }) => {
+  onConfirmCash: () => void;
+}> = ({ row, onRespond, onConfirmCash }) => {
+  const [confirming, setConfirming] = React.useState(false);
+
+  // Cash shift approved by client — caregiver must confirm receipt
+  if (row.paymentMethod === 'cash' && (row.status === 'approved' || row.status === 'auto_approved')) {
+    const hours = row.finalTotalHours ?? row.submittedTotalHours ?? 0;
+    const gross = row.grossPay ?? hours * (row.payRate ?? 0);
+    return (
+      <div className="bg-green-50 border border-green-200 rounded-2xl p-4">
+        <div className="flex items-start justify-between mb-1">
+          <div>
+            <p className="font-semibold text-slate-900">{row.clientName}</p>
+            <p className="text-sm text-slate-600 mt-0.5">
+              {hours}h · <span className="font-bold text-slate-900">${gross.toFixed(2)} cash</span>
+              {' · '}Client approved ✓
+            </p>
+          </div>
+          <span className="shrink-0 text-xs font-medium px-2.5 py-1 rounded-full border bg-green-100 text-green-700 border-green-300">
+            Awaiting your confirmation
+          </span>
+        </div>
+        <button
+          disabled={confirming}
+          onClick={async () => {
+            setConfirming(true);
+            try { await onConfirmCash(); } finally { setConfirming(false); }
+          }}
+          className="mt-3 w-full py-2.5 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-50 transition-colors"
+        >
+          {confirming ? 'Confirming…' : 'Confirm cash received'}
+        </button>
+      </div>
+    );
+  }
+
   if (row.status === 'correction_proposed') {
     return (
       <div className="bg-primary-50 border border-primary-200 rounded-2xl p-4">
@@ -104,75 +170,199 @@ const PendingShiftRow: React.FC<{
       </div>
     );
   }
-  const autoAt = row.autoApproveAt ? new Date(row.autoApproveAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+
+  // pending_client_review — expandable data strip
+  const [pendingOpen, setPendingOpen] = React.useState(false);
+  const dispStart = row.submittedStartTime ? new Date(row.submittedStartTime) : null;
+  const dispEnd   = row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
+  const hours     = row.finalTotalHours ?? row.submittedTotalHours ?? 0;
+  const gross     = row.grossPay ?? (hours * (row.payRate ?? 0));
+  const method    = row.paymentMethod
+    ? row.paymentMethod.charAt(0).toUpperCase() + row.paymentMethod.slice(1)
+    : '—';
+  const autoAt    = row.autoApproveAt
+    ? new Date(row.autoApproveAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : '';
+
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-4 flex items-center justify-between gap-3">
-      <div className="min-w-0">
-        <p className="font-semibold text-slate-900">{row.clientName}</p>
-        <p className="text-sm text-slate-500 mt-0.5">
-          {row.submittedTotalHours}h submitted{autoAt ? ` · auto-approves ${autoAt}` : ''}
-        </p>
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div
+        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+        onClick={() => setPendingOpen(o => !o)}
+      >
+        <Col label="Date"     value={dispStart ? fmtDate(dispStart) : '—'}  className="shrink-0 w-[58px]" />
+        <Divider />
+        <Col label="In"       value={dispStart ? fmtTime(dispStart) : '—'}  className="shrink-0 w-[66px]" />
+        <Divider />
+        <Col label="Out"      value={dispEnd   ? fmtTime(dispEnd)   : '—'}  className="shrink-0 w-[66px]" />
+        <Divider />
+        <Col label="Duration" value={`${hours}h`}                           className="shrink-0 w-[58px]" />
+        <Divider />
+        <Col label="Pay"      value={`$${gross.toFixed(2)}`} highlight      className="shrink-0 w-[60px]" />
+        <Divider />
+        <Col label="Method"   value={method}                                className="shrink-0 w-[46px]" />
+
+        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+          <span className={`text-xs font-medium px-2 py-0.5 rounded-full border whitespace-nowrap ${STATUS_STYLE[row.status] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+            {STATUS_LABEL[row.status] || row.status}
+          </span>
+          {pendingOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+        </div>
       </div>
-      <span className={`shrink-0 text-xs font-medium px-2.5 py-1 rounded-full border ${STATUS_STYLE[row.status] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-        {STATUS_LABEL[row.status] || row.status}
-      </span>
+
+      {pendingOpen && (
+        <div className="border-t-2 border-slate-200 bg-slate-50 px-4 py-3 space-y-3">
+          {/* Client identity */}
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
+              <span className="text-sm font-bold text-primary-700">
+                {(row.clientName ?? '?')[0].toUpperCase()}
+              </span>
+            </div>
+            <p className="text-sm font-semibold text-slate-900">{row.clientName ?? 'Client'}</p>
+          </div>
+
+          <div className="divide-y divide-slate-200 text-xs border border-slate-200 rounded-xl overflow-hidden">
+            {row.payRate != null && (
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Rate</span>
+                <span className="font-medium text-slate-700">${row.payRate}/hr</span>
+              </div>
+            )}
+            {dispStart && dispEnd && (
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Clock in / out</span>
+                <span className="font-medium text-slate-700">
+                  {fmtTime(dispStart)} – {fmtTime(dispEnd)}
+                </span>
+              </div>
+            )}
+            <div className="flex items-center justify-between px-3 py-2">
+              <span className="text-slate-400">Total hours</span>
+              <span className="font-medium text-slate-700">{hours}h</span>
+            </div>
+            <div className="flex items-center justify-between px-3 py-2">
+              <span className="text-slate-400">Gross pay</span>
+              <span className="font-bold text-slate-900">${gross.toFixed(2)}</span>
+            </div>
+            {autoAt && (
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Auto-approves</span>
+                <span className="font-medium text-slate-700">{autoAt}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
+  const [open, setOpen] = useState(false);
+
+  const dispStart = row.submittedStartTime ? new Date(row.submittedStartTime) : null;
+  const dispEnd   = row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
+
   const hours = row.finalTotalHours ?? row.submittedTotalHours ?? 0;
   const gross = row.grossPay ?? (hours * (row.payRate ?? 0));
-  const isCash = row.paymentMethod === 'cash';
-  const isApproved = row.status === 'approved' || row.status === 'auto_approved';
-  const displayLabel = isCash && isApproved ? 'Approved (cash)' : STATUS_LABEL[row.status] || row.status;
+  const method = row.paymentMethod
+    ? row.paymentMethod.charAt(0).toUpperCase() + row.paymentMethod.slice(1)
+    : '—';
 
   return (
-    <div className="flex items-center gap-4 px-5 py-3.5">
-      <div className="flex-1 min-w-0">
-        <p className="font-semibold text-slate-900 truncate">{row.clientName}</p>
-        <p className="text-xs text-slate-400 mt-0.5">
-          {row.submittedAt ? new Date(row.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
-        </p>
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      {/* one-line data strip */}
+      <div
+        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+        onClick={() => setOpen(o => !o)}
+      >
+        <Col label="Date"     value={dispStart ? fmtDate(dispStart) : '—'}  className="shrink-0 w-[58px]" />
+        <Divider />
+        <Col label="In"       value={dispStart ? fmtTime(dispStart) : '—'}  className="shrink-0 w-[66px]" />
+        <Divider />
+        <Col label="Out"      value={dispEnd   ? fmtTime(dispEnd)   : '—'}  className="shrink-0 w-[66px]" />
+        <Divider />
+        <Col label="Duration" value={`${hours}h`}                           className="shrink-0 w-[58px]" />
+        <Divider />
+        <Col label="Pay"      value={`$${gross.toFixed(2)}`} highlight      className="shrink-0 w-[60px]" />
+        <Divider />
+        <Col label="Method"   value={method}                                className="shrink-0 w-[46px]" />
+
+        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+          <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${STATUS_STYLE[row.status] || 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+            {STATUS_LABEL[row.status] || row.status}
+          </span>
+          {open ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+        </div>
       </div>
-      <div className="text-center shrink-0">
-        <p className="text-sm font-medium text-slate-700">{hours}h</p>
-        <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${STATUS_STYLE[row.status] || 'bg-slate-50 text-slate-500 border-slate-200'}`}>
-          {displayLabel}
-        </span>
-      </div>
-      <div className="text-right shrink-0 min-w-[64px]">
-        <p className="font-bold text-slate-900">${gross.toFixed(2)}</p>
-        {row.status === 'payment_failed' && row.stripeFailureReason && (
-          <p className="text-xs text-red-600 mt-0.5">{row.stripeFailureReason}</p>
-        )}
-      </div>
+
+      {/* expanded details */}
+      {open && (
+        <div className="border-t-2 border-slate-200 bg-slate-50 px-4 py-3 space-y-3">
+          {/* Client identity */}
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
+              <span className="text-sm font-bold text-primary-700">
+                {(row.clientName ?? '?')[0].toUpperCase()}
+              </span>
+            </div>
+            <p className="text-sm font-semibold text-slate-900">{row.clientName ?? 'Client'}</p>
+          </div>
+
+          <div className="divide-y divide-slate-200 text-xs border border-slate-200 rounded-xl overflow-hidden">
+            {row.payRate != null && (
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Rate</span>
+                <span className="font-medium text-slate-700">${row.payRate}/hr</span>
+              </div>
+            )}
+            {dispStart && dispEnd && (
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Clock in / out</span>
+                <span className="font-medium text-slate-700">
+                  {fmtTime(dispStart)} – {fmtTime(dispEnd)}
+                </span>
+              </div>
+            )}
+            <div className="flex items-center justify-between px-3 py-2">
+              <span className="text-slate-400">Total hours</span>
+              <span className="font-medium text-slate-700">{hours}h</span>
+            </div>
+            <div className="flex items-center justify-between px-3 py-2">
+              <span className="text-slate-400">Gross pay</span>
+              <span className="font-bold text-slate-900">${gross.toFixed(2)}</span>
+            </div>
+            {row.submittedAt && (
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Submitted</span>
+                <span className="font-medium text-slate-700">
+                  {new Date(row.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {row.status === 'payment_failed' && row.stripeFailureReason && (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+              ⚠ {row.stripeFailureReason}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 };
 
 // ── SubmittableShiftCard ──────────────────────────────────────────────────────
 
-function toDate(ts: any): Date | null {
-  if (!ts) return null;
-  if (typeof ts.toDate === 'function') return ts.toDate();
-  if (typeof ts === 'string') return new Date(ts);
-  if (ts.seconds) return new Date(ts.seconds * 1000);
-  return null;
-}
-
-const fmtTime = (d: Date) =>
-  d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-
-const fmtDate = (d: Date) =>
-  d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
 /** One-line labeled card: Client | Date | In | Out | Duration | Est. Pay | Status */
 const SubmittableShiftCard: React.FC<{
   shift: CompletedShift;
-  onSubmit: () => void;
+  onSubmit: (startIso: string, endIso: string) => Promise<void>;
 }> = ({ shift, onSubmit }) => {
   const [open, setOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const actualStart = toDate(shift.startedAt);
   const actualEnd   = toDate(shift.completedAt);
@@ -191,20 +381,6 @@ const SubmittableShiftCard: React.FC<{
     : 0;
 
   const estPay = shift.rate && durationH > 0 ? shift.rate * durationH : null;
-
-  // Compact labeled column helper
-  const Col: React.FC<{ label: string; value: string; highlight?: boolean; className?: string }> = ({
-    label, value, highlight, className = '',
-  }) => (
-    <div className={`flex flex-col min-w-0 ${className}`}>
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 leading-none mb-0.5">
-        {label}
-      </span>
-      <span className={`text-sm leading-tight truncate ${highlight ? 'font-bold text-slate-900' : 'font-medium text-slate-700'}`}>
-        {value}
-      </span>
-    </div>
-  );
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
@@ -242,7 +418,7 @@ const SubmittableShiftCard: React.FC<{
 
       {/* ── expanded details ── */}
       {open && (
-        <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 space-y-3">
+        <div className="border-t-2 border-slate-200 bg-slate-50 px-4 py-3 space-y-3">
           {/* Client identity */}
           <div className="flex items-center gap-3">
             {shift.clientPhotoURL ? (
@@ -254,40 +430,48 @@ const SubmittableShiftCard: React.FC<{
                 </span>
               </div>
             )}
-            <div>
-              <p className="text-sm font-semibold text-slate-900">{shift.clientName ?? 'Client'}</p>
-              {shift.address && <p className="text-xs text-slate-400 mt-0.5">{shift.address}</p>}
-            </div>
+            <p className="text-sm font-semibold text-slate-900">{shift.clientName ?? 'Client'}</p>
           </div>
 
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+          <div className="divide-y divide-slate-200 text-xs border border-slate-200 rounded-xl overflow-hidden">
             {shift.rate != null && (
-              <>
-                <dt className="text-slate-400">Rate</dt>
-                <dd className="font-medium text-slate-700">${shift.rate}/hr</dd>
-              </>
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Rate</span>
+                <span className="font-medium text-slate-700">${shift.rate}/hr</span>
+              </div>
             )}
-            <dt className="text-slate-400">Scheduled</dt>
-            <dd className="font-medium text-slate-700">
-              {shift.date} · {shift.startTime}{shift.endTime ? `–${shift.endTime}` : ''}
-            </dd>
+            <div className="flex items-center justify-between px-3 py-2">
+              <span className="text-slate-400">Scheduled</span>
+              <span className="font-medium text-slate-700">
+                {shift.date} · {shift.startTime}{shift.endTime ? `–${shift.endTime}` : ''}
+              </span>
+            </div>
             {shift.careRecipients && shift.careRecipients.length > 0 && (
-              <>
-                <dt className="text-slate-400">
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">
                   {shift.careRecipients.length === 1 ? 'Recipient' : 'Recipients'}
-                </dt>
-                <dd className="font-medium text-slate-700">
+                </span>
+                <span className="font-medium text-slate-700">
                   {shift.careRecipients.map(r => r.name).join(', ')}
-                </dd>
-              </>
+                </span>
+              </div>
             )}
-          </dl>
+          </div>
 
           <button
-            onClick={e => { e.stopPropagation(); onSubmit(); }}
-            className="w-full py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 transition-colors"
+            disabled={submitting}
+            onClick={async e => {
+              e.stopPropagation();
+              setSubmitting(true);
+              try {
+                await onSubmit(dispStart.toISOString(), dispEnd.toISOString());
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+            className="w-full py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 disabled:opacity-50 transition-colors"
           >
-            Submit hours
+            {submitting ? 'Submitting…' : 'Submit hours'}
           </button>
         </div>
       )}
@@ -309,7 +493,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
   const [reportTo,   setReportTo]   = useState('');
   const [shiftRows, setShiftRows] = useState<ShiftRow[]>([]);
   const [completedShifts, setCompletedShifts] = useState<CompletedShift[]>([]);
-  const [submitModalShift, setSubmitModalShift] = useState<CompletedShift | null>(null);
 
   // Payouts tab state
   const [profile, setProfile] = useState<Caregiver | null>(null);
@@ -391,8 +574,16 @@ export const CaregiverPaymentsPage: React.FC = () => {
     return completedShifts.filter(s => !withHours.has(s.id));
   }, [completedShifts, shiftRows]);
 
-  const pendingRows = shiftRows.filter(r => ['pending_client_review', 'correction_proposed'].includes(r.status));
-  const historyRows = shiftRows.filter(r => !['pending_client_review', 'correction_proposed'].includes(r.status));
+  const pendingRows = shiftRows.filter(r =>
+    ['pending_client_review', 'correction_proposed'].includes(r.status) ||
+    // cash approved shifts that need caregiver cash confirmation
+    (r.paymentMethod === 'cash' && (r.status === 'approved' || r.status === 'auto_approved'))
+  );
+  const historyRows = shiftRows.filter(r =>
+    !['pending_client_review', 'correction_proposed'].includes(r.status) &&
+    // exclude cash-approved shifts waiting for confirmation — they still belong in Pending
+    !(r.paymentMethod === 'cash' && (r.status === 'approved' || r.status === 'auto_approved'))
+  );
   const actionCount = submittableShifts.length + pendingRows.length;
 
   // Available balance: credit bookings that are approved/auto_approved but not paid yet
@@ -464,6 +655,15 @@ export const CaregiverPaymentsPage: React.FC = () => {
       addToast(action === 'accept' ? 'Correction accepted' : 'Sent to admin for review', 'success');
     } catch (e: any) {
       addToast(e?.message || 'Failed to respond', 'error');
+    }
+  };
+
+  const handleConfirmCash = async (row: ShiftRow) => {
+    try {
+      await shiftHoursService.confirmCashReceived(row.appointmentId);
+      addToast('Cash payment confirmed — shift marked paid', 'success');
+    } catch (e: any) {
+      addToast(e?.message || 'Failed to confirm cash receipt', 'error');
     }
   };
 
@@ -576,7 +776,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
               ] as { id: typeof tsFilter; label: string; count: number; alert: boolean }[]).map(f => (
                 <button
                   key={f.id}
-                  onClick={() => setTsFilter(f.id)}
+                  onClick={() => { setTsFilter(f.id); if (f.id !== 'history') { setShowReport(false); } }}
                   className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium transition-all border ${
                     tsFilter === f.id
                       ? 'bg-slate-900 text-white border-slate-900'
@@ -598,21 +798,20 @@ export const CaregiverPaymentsPage: React.FC = () => {
                 </button>
               ))}
 
-              {/* Report toggle — pushed right */}
-              <button
-                onClick={() => {
-                  setShowReport(s => !s);
-                  if (!showReport) setTsFilter('history');
-                }}
-                className={`ml-auto flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium border transition-all ${
-                  showReport
-                    ? 'bg-primary-600 text-white border-primary-600'
-                    : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                }`}
-              >
-                <FileDown className="w-3.5 h-3.5" />
-                Report
-              </button>
+              {/* Report toggle — only visible on History filter */}
+              {tsFilter === 'history' && (
+                <button
+                  onClick={() => setShowReport(s => !s)}
+                  className={`ml-auto flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium border transition-all ${
+                    showReport
+                      ? 'bg-primary-600 text-white border-primary-600'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <FileDown className="w-3.5 h-3.5" />
+                  Report
+                </button>
+              )}
             </div>
 
             {/* ── Report panel ── */}
@@ -686,7 +885,15 @@ export const CaregiverPaymentsPage: React.FC = () => {
                   <SubmittableShiftCard
                     key={shift.id}
                     shift={shift}
-                    onSubmit={() => setSubmitModalShift(shift)}
+                    onSubmit={async (startIso, endIso) => {
+                      try {
+                        await shiftHoursService.submit(shift.id, startIso, endIso);
+                        addToast('Hours submitted — awaiting client approval', 'success');
+                      } catch (e: any) {
+                        addToast(e?.message || 'Failed to submit hours', 'error');
+                        throw e;
+                      }
+                    }}
                   />
                 ))
               }
@@ -698,6 +905,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
                     key={row.id}
                     row={row}
                     onRespond={action => handleRespondToCorrection(row, action)}
+                    onConfirmCash={() => handleConfirmCash(row)}
                   />
                 ))
               }
@@ -870,14 +1078,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
       </div>
 
       {/* Modals */}
-      {submitModalShift && (
-        <SubmitShiftHoursModal
-          shift={submitModalShift}
-          onClose={() => setSubmitModalShift(null)}
-          onSubmitted={() => { setSubmitModalShift(null); addToast('Hours submitted', 'success'); }}
-          onError={msg => addToast(msg, 'error')}
-        />
-      )}
       {showPayoutModal && (
         <InstantPayoutModal
           availableBalance={availableBalance}

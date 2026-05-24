@@ -945,6 +945,18 @@ const BookingGroupCard: React.FC<{
                     status: 'scheduled',
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                   }).catch(() => {});
+                  if (shift.clientId) {
+                    await db.collection('users').doc(shift.clientId).collection('notifications').add({
+                      userId: shift.clientId,
+                      type: 'extra_visit_accepted',
+                      title: 'Visit Accepted',
+                      message: `${shift.caregiverName || 'Your caregiver'} confirmed your extra visit on ${fmtDate(shift.date)}.`,
+                      read: false,
+                      isRead: false,
+                      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                    }).catch(() => {});
+                  }
                 }}
                 className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1"
               >
@@ -957,6 +969,18 @@ const BookingGroupCard: React.FC<{
                     status: 'cancelled',
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                   }).catch(() => {});
+                  if (shift.clientId) {
+                    await db.collection('users').doc(shift.clientId).collection('notifications').add({
+                      userId: shift.clientId,
+                      type: 'extra_visit_declined',
+                      title: 'Visit Declined',
+                      message: `${shift.caregiverName || 'Your caregiver'} is unavailable for the extra visit on ${fmtDate(shift.date)}.`,
+                      read: false,
+                      isRead: false,
+                      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                    }).catch(() => {});
+                  }
                 }}
                 className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl"
               >

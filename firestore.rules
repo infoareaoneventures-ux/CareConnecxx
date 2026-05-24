@@ -632,8 +632,13 @@ service cloud.firestore {
     // ==========================================
     match /shifts/{shiftId} {
       // Caregiver can create (clock in or accepted booking)
-      allow create: if isAuthenticated() &&
-        request.resource.data.caregiverId == request.auth.uid;
+      // Client can create a pending extra-visit request (createdBy == 'client')
+      allow create: if isAuthenticated() && (
+        request.resource.data.caregiverId == request.auth.uid ||
+        (request.resource.data.clientId == request.auth.uid &&
+         request.resource.data.status == 'pending' &&
+         request.resource.data.createdBy == 'client')
+      );
 
       // Both parties and admin can read
       allow read: if isAuthenticated() && (
@@ -642,12 +647,38 @@ service cloud.firestore {
         isAdmin()
       );
 
-      // Caregiver: update active shifts (clock out) or scheduled shifts (cancel)
-      // Client: cancel scheduled shifts
+      // Caregiver: update active/scheduled/in-progress shifts AND pending extra-visit requests
+      // Client: cancel their own scheduled or pending shifts
       allow update: if isAuthenticated() && (
         (resource.data.caregiverId == request.auth.uid &&
-          (resource.data.status == 'active' || resource.data.status == 'scheduled' || resource.data.status == 'in-progress')) ||
-        (resource.data.clientId == request.auth.uid && resource.data.status == 'scheduled') ||
+          (resource.data.status == 'active' || resource.data.status == 'scheduled' ||
+           resource.data.status == 'in-progress' || resource.data.status == 'pending')) ||
+        (resource.data.clientId == request.auth.uid &&
+          (resource.data.status == 'scheduled' || resource.data.status == 'pending')) ||
+        isAdmin()
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // BOOKING AMENDMENTS (recurring schedule change requests)
+    // ==========================================
+    match /booking_amendments/{amendmentId} {
+      // Client creates (their own request); caregiver reads + accepts/declines their own
+      allow create: if isAuthenticated() &&
+        request.resource.data.clientId == request.auth.uid;
+
+      allow read: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Caregiver can accept/decline; client can retract (set to declined) their own pending request
+      allow update: if isAuthenticated() && (
+        resource.data.caregiverId == request.auth.uid ||
+        (resource.data.clientId == request.auth.uid && resource.data.status == 'pending') ||
         isAdmin()
       );
 

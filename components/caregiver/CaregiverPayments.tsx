@@ -257,10 +257,10 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
                   <PendingShiftRow
                     key={row.id}
                     row={row}
-                    onRespond={async (action) => {
+                    onRespond={async (action: 'accept' | 'counter_propose') => {
                       try {
                         await shiftHoursService.respondToCorrection(row.appointmentId, action);
-                        onShowToast?.(action === 'accept' ? 'Correction accepted' : 'Sent to admin for review', 'success');
+                        onShowToast?.(action === 'accept' ? 'Correction accepted' : 'Counter-proposal sent to client', 'success');
                       } catch (e: any) {
                         onShowToast?.(e?.message || 'Failed', 'error');
                       }
@@ -441,7 +441,7 @@ const statusLabel: Record<string, string> = {
   payment_failed: 'Payment failed',
 };
 
-const PendingShiftRow: React.FC<{ row: any; onRespond: (action: 'accept' | 'reject') => void }> = ({ row, onRespond }) => {
+const PendingShiftRow: React.FC<{ row: any; onRespond: (action: 'accept' | 'counter_propose') => void }> = ({ row, onRespond }) => {
   if (row.status === 'correction_proposed') {
     return (
       <div className="bg-primary-50 border border-primary-200 rounded-xl p-4">
@@ -460,8 +460,8 @@ const PendingShiftRow: React.FC<{ row: any; onRespond: (action: 'accept' | 'reje
           <button onClick={() => onRespond('accept')} className="px-3 py-1.5 rounded-lg bg-primary-600 text-white text-sm font-medium">
             Accept {row.proposedTotalHours}h
           </button>
-          <button onClick={() => onRespond('reject')} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium">
-            Reject, send to admin
+          <button onClick={() => onRespond('counter_propose')} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium">
+            Counter / send back
           </button>
         </div>
       </div>

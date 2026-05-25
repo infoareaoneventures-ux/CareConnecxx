@@ -4,7 +4,7 @@ import { shiftHoursService } from '../../services/api';
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
-export type LineItemType = 'overtime' | 'mileage' | 'supplies' | 'bonus' | 'custom';
+export type LineItemType = 'overtime' | 'mileage' | 'custom';
 
 export interface LineItem {
   type: LineItemType;
@@ -43,26 +43,17 @@ interface Props {
 const LINE_ITEM_TYPES: { value: LineItemType; label: string }[] = [
   { value: 'overtime',  label: 'Overtime' },
   { value: 'mileage',   label: 'Mileage' },
-  { value: 'supplies',  label: 'Supplies' },
-  { value: 'bonus',     label: 'Bonus Request' },
   { value: 'custom',    label: 'Custom' },
 ];
 
 const DEFAULT_LABEL: Record<LineItemType, string> = {
   overtime: 'Overtime',
   mileage:  'Mileage',
-  supplies: 'Supplies',
-  bonus:    'Bonus Request',
   custom:   '',
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function toDateTimeLocal(iso: string): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 function toIso(ts: any): string | null {
   if (!ts) return null;
@@ -72,16 +63,11 @@ function toIso(ts: any): string | null {
   return null;
 }
 
+// Shifts only appear here after status === 'completed', so startedAt/completedAt are always set.
 function defaultStartEnd(shift: CompletedShift): { startIso: string; endIso: string } {
-  const actualStart = toIso(shift.startedAt);
-  const actualEnd   = toIso(shift.completedAt);
-  const scheduledStart = new Date(`${shift.date}T${shift.startTime}:00`).toISOString();
-  const scheduledEnd   = shift.endTime
-    ? new Date(`${shift.date}T${shift.endTime}:00`).toISOString()
-    : new Date(new Date(`${shift.date}T${shift.startTime}:00`).getTime() + 3_600_000).toISOString();
   return {
-    startIso: actualStart ?? scheduledStart,
-    endIso:   actualEnd   ?? scheduledEnd,
+    startIso: toIso(shift.startedAt) ?? '',
+    endIso:   toIso(shift.completedAt) ?? '',
   };
 }
 
@@ -97,19 +83,17 @@ function fmtDuration(hours: number): string {
 
 export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmitted, onError }) => {
   const { startIso, endIso } = useMemo(() => defaultStartEnd(shift), [shift]);
-  const [start, setStart]       = useState(toDateTimeLocal(startIso));
-  const [end,   setEnd]         = useState(toDateTimeLocal(endIso));
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
   const totalHours = useMemo(() => {
-    const s = new Date(start).getTime();
-    const e = new Date(end).getTime();
+    const s = new Date(startIso).getTime();
+    const e = new Date(endIso).getTime();
     if (!isFinite(s) || !isFinite(e) || e <= s) return 0;
     return (e - s) / 3_600_000;
-  }, [start, end]);
+  }, [startIso, endIso]);
 
-  const basePay       = shift.rate ? totalHours * shift.rate : null;
+  const basePay = shift.rate ? totalHours * shift.rate : null;
   const lineItemsTotal = lineItems.reduce((sum, li) => sum + (Number(li.amount) || 0), 0);
   const grandTotal    = basePay != null ? basePay + lineItemsTotal : null;
 
@@ -137,8 +121,8 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
     try {
       await shiftHoursService.submit(
         shift.id,
-        new Date(start).toISOString(),
-        new Date(end).toISOString(),
+        startIso,
+        endIso,
         lineItems.filter(li => li.amount > 0),
       );
       onSubmitted();
@@ -172,33 +156,37 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
         </div>
 
         <div className="px-6 py-5 space-y-5">
-          {/* Times */}
+          {/* Times — read-only, sourced from actual clock-in/out */}
           <div className="space-y-3">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Hours worked</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Clock in</label>
-                <input
-                  type="datetime-local"
-                  value={start}
-                  onChange={e => setStart(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Clock out</label>
-                <input
-                  type="datetime-local"
-                  value={end}
-                  onChange={e => setEnd(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                />
-              </div>
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Hours worked</p>
             </div>
 
-            <div className="flex items-center justify-between bg-slate-50 rounded-lg px-4 py-3">
-              <span className="text-sm text-slate-500">Duration</span>
-              <span className="text-lg font-bold text-slate-900">{fmtDuration(totalHours)}</span>
+            <div className="bg-slate-50 rounded-xl px-4 py-3 space-y-2">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-slate-400 mb-0.5">Clock in</p>
+                  <p className="text-sm font-semibold text-slate-800">
+                    {new Date(startIso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {new Date(startIso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-400 mb-0.5">Clock out</p>
+                  <p className="text-sm font-semibold text-slate-800">
+                    {new Date(endIso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {new Date(endIso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  </p>
+                </div>
+              </div>
+              <div className="border-t border-slate-200 pt-2 flex items-center justify-between">
+                <span className="text-sm text-slate-500">Duration</span>
+                <span className="text-lg font-bold text-slate-900">{fmtDuration(totalHours)}</span>
+              </div>
             </div>
           </div>
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, TrendingUp, Clock, CheckCircle, Users, AlertCircle, RefreshCw } from 'lucide-react';
+import { DollarSign, TrendingUp, Clock, CheckCircle, Users, AlertCircle, RefreshCw, ChevronDown, ChevronUp, Scale } from 'lucide-react';
 import { db } from '../../lib/firebase';
+import { shiftHoursService } from '../../services/api';
 import { InvoicingTab } from './InvoicingTab';
 
 interface FinanceMetrics {
@@ -23,7 +24,267 @@ interface PayoutRecord {
   visitDate?: string;
 }
 
-type ActiveTab = 'overview' | 'invoices' | 'payouts';
+type ActiveTab = 'overview' | 'invoices' | 'payouts' | 'disputes';
+
+interface CorrectionHistoryEntry {
+  by: string;
+  action: string;
+  at: string;
+  startTime?: string;
+  endTime?: string;
+  hours?: number;
+  note?: string;
+}
+
+interface DisputedShift {
+  id: string;
+  appointmentId: string;
+  caregiverName: string;
+  clientName: string;
+  submittedAt: string;
+  submittedTotalHours: number;
+  submittedStartTime: string;
+  submittedEndTime: string;
+  proposedTotalHours?: number;
+  proposedStartTime?: string;
+  proposedEndTime?: string;
+  counterTotalHours?: number;
+  counterStartTime?: string;
+  counterEndTime?: string;
+  counterNote?: string;
+  payRate: number;
+  correctionHistory?: CorrectionHistoryEntry[];
+}
+
+function fmtTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+function fmtDuration(hours: number): string {
+  const totalMins = Math.round(hours * 60);
+  if (totalMins < 60) return `${totalMins} min`;
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+function toDateTimeLocal(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const HISTORY_ACTION_LABEL: Record<string, string> = {
+  submitted:           'Submitted by caregiver',
+  proposed_correction: 'Client proposed correction',
+  counter_proposed:    'Caregiver sent counter',
+  accepted:            'Accepted',
+  escalated:           'Escalated to admin',
+  admin_resolved:      'Resolved by admin',
+};
+
+const DisputeCard: React.FC<{ shift: DisputedShift; onResolved: () => void }> = ({ shift, onResolved }) => {
+  const [expanded,    setExpanded]    = useState(false);
+  const [finalStart,  setFinalStart]  = useState(
+    shift.counterStartTime ? toDateTimeLocal(shift.counterStartTime)
+    : shift.proposedStartTime ? toDateTimeLocal(shift.proposedStartTime)
+    : toDateTimeLocal(shift.submittedStartTime)
+  );
+  const [finalEnd,    setFinalEnd]    = useState(
+    shift.counterEndTime ? toDateTimeLocal(shift.counterEndTime)
+    : shift.proposedEndTime ? toDateTimeLocal(shift.proposedEndTime)
+    : toDateTimeLocal(shift.submittedEndTime)
+  );
+  const [note,        setNote]        = useState('');
+  const [resolving,   setResolving]   = useState(false);
+  const [error,       setError]       = useState('');
+
+  const computedHours = React.useMemo(() => {
+    const s = new Date(finalStart).getTime();
+    const e = new Date(finalEnd).getTime();
+    if (!isFinite(s) || !isFinite(e) || e <= s) return 0;
+    return Math.round(((e - s) / 3600000) * 100) / 100;
+  }, [finalStart, finalEnd]);
+
+  const handleResolve = async () => {
+    if (computedHours <= 0) { setError('End must be after start.'); return; }
+    setResolving(true);
+    setError('');
+    try {
+      await shiftHoursService.adminResolve(
+        shift.appointmentId,
+        new Date(finalStart).toISOString(),
+        new Date(finalEnd).toISOString(),
+        note.trim() || undefined
+      );
+      onResolved();
+    } catch (e: any) {
+      setError(e?.message || 'Failed to resolve');
+    } finally {
+      setResolving(false);
+    }
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      {/* Header row */}
+      <div
+        className="px-5 py-4 flex items-center gap-4 cursor-pointer hover:bg-slate-50 transition-colors"
+        onClick={() => setExpanded(e => !e)}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-semibold text-slate-900 text-sm">{shift.caregiverName}</p>
+            <span className="text-slate-400 text-xs">↔</span>
+            <p className="text-sm text-slate-600">{shift.clientName}</p>
+          </div>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {new Date(shift.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+          </p>
+        </div>
+        <div className="flex items-center gap-4 text-xs shrink-0">
+          <div className="text-right">
+            <p className="text-slate-400">Submitted</p>
+            <p className="font-semibold text-slate-700">{fmtDuration(shift.submittedTotalHours)}</p>
+          </div>
+          {shift.proposedTotalHours != null && (
+            <div className="text-right">
+              <p className="text-slate-400">Client</p>
+              <p className="font-semibold text-orange-600">{fmtDuration(shift.proposedTotalHours)}</p>
+            </div>
+          )}
+          {shift.counterTotalHours != null && (
+            <div className="text-right">
+              <p className="text-slate-400">Counter</p>
+              <p className="font-semibold text-yellow-600">{fmtDuration(shift.counterTotalHours)}</p>
+            </div>
+          )}
+        </div>
+        <div className="shrink-0 text-slate-400">
+          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </div>
+      </div>
+
+      {/* Expanded detail + resolve form */}
+      {expanded && (
+        <div className="border-t border-slate-100 px-5 py-4 bg-slate-50 space-y-4">
+          {/* Sides summary */}
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="bg-white border border-slate-200 rounded-lg p-3">
+              <p className="font-semibold text-slate-500 uppercase tracking-wide mb-1">Caregiver submitted</p>
+              <p className="font-bold text-slate-900">{fmtDuration(shift.submittedTotalHours)}</p>
+              <p className="text-slate-500 mt-0.5">
+                {fmtTime(shift.submittedStartTime)} – {fmtTime(shift.submittedEndTime)}
+              </p>
+            </div>
+            {shift.proposedStartTime && shift.proposedEndTime && (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                <p className="font-semibold text-orange-600 uppercase tracking-wide mb-1">Client proposed</p>
+                <p className="font-bold text-orange-700">{shift.proposedTotalHours != null ? fmtDuration(shift.proposedTotalHours) : '—'}</p>
+                <p className="text-orange-600 mt-0.5">
+                  {fmtTime(shift.proposedStartTime)} – {fmtTime(shift.proposedEndTime)}
+                </p>
+              </div>
+            )}
+            {shift.counterStartTime && shift.counterEndTime && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                <p className="font-semibold text-yellow-600 uppercase tracking-wide mb-1">Caregiver counter</p>
+                <p className="font-bold text-yellow-700">{shift.counterTotalHours != null ? fmtDuration(shift.counterTotalHours) : '—'}</p>
+                <p className="text-yellow-600 mt-0.5">
+                  {fmtTime(shift.counterStartTime)} – {fmtTime(shift.counterEndTime)}
+                </p>
+                {shift.counterNote && <p className="text-yellow-500 mt-0.5 italic">"{shift.counterNote}"</p>}
+              </div>
+            )}
+          </div>
+
+          {/* Correction history */}
+          {shift.correctionHistory && shift.correctionHistory.some((e: any) => e.action !== 'submitted') && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Correction history</p>
+              {shift.correctionHistory.map((entry, i) => (
+                <div key={i} className="flex gap-3 text-xs">
+                  <div className="flex flex-col items-center shrink-0">
+                    <div className="w-2 h-2 rounded-full bg-slate-300 mt-0.5" />
+                    {i < shift.correctionHistory!.length - 1 && (
+                      <div className="w-px flex-1 bg-slate-200 mt-1" />
+                    )}
+                  </div>
+                  <div className="pb-2">
+                    <p className="font-semibold text-slate-700">
+                      {HISTORY_ACTION_LABEL[entry.action] || entry.action}
+                    </p>
+                    {entry.startTime && entry.endTime && (
+                      <p className="text-slate-500 mt-0.5">
+                        {fmtTime(entry.startTime)} – {fmtTime(entry.endTime)}
+                        {entry.hours != null ? ` · ${fmtDuration(entry.hours)}` : ''}
+                      </p>
+                    )}
+                    {entry.note && <p className="text-slate-400 mt-0.5 italic">"{entry.note}"</p>}
+                    <p className="text-slate-400 mt-0.5">
+                      {new Date(entry.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      {', '}
+                      {new Date(entry.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Admin resolve form */}
+          <div className="bg-white border border-purple-200 rounded-xl p-4 space-y-3">
+            <p className="text-xs font-semibold text-purple-700 uppercase tracking-wide">Admin resolution</p>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Final start time</label>
+              <input
+                type="datetime-local"
+                value={finalStart}
+                onChange={e => setFinalStart(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Final end time</label>
+              <input
+                type="datetime-local"
+                value={finalEnd}
+                onChange={e => setFinalEnd(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+              />
+            </div>
+            {computedHours > 0 && (
+              <div className="flex items-center justify-between bg-purple-50 rounded-lg px-3 py-2 text-xs">
+                <span className="text-slate-500">Final total</span>
+                <span className="font-bold text-purple-700">{fmtDuration(computedHours)} · ${(computedHours * shift.payRate).toFixed(2)}</span>
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Resolution note (optional)</label>
+              <textarea
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                rows={2}
+                placeholder="Reason for this resolution…"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-300"
+              />
+            </div>
+            {error && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+            )}
+            <button
+              disabled={resolving || computedHours <= 0}
+              onClick={handleResolve}
+              className="w-full py-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold disabled:opacity-50 transition-colors"
+            >
+              {resolving ? 'Resolving…' : 'Resolve dispute'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const KPICard: React.FC<{
   label: string;
@@ -48,6 +309,7 @@ export const FinanceDashboard: React.FC = () => {
   const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+  const [disputes, setDisputes] = useState<DisputedShift[]>([]);
 
   const currentMonth = new Date().toISOString().slice(0, 7);
   const today = new Date().toISOString().slice(0, 10);
@@ -107,13 +369,26 @@ export const FinanceDashboard: React.FC = () => {
 
   useEffect(() => { loadMetrics(); }, []);
 
+  // Real-time subscription to disputed shifts
+  useEffect(() => {
+    const unsub = shiftHoursService.subscribeForAdmin((rows) => {
+      setDisputes(
+        rows
+          .filter((r: any) => r.status === 'disputed_admin_review')
+          .map((r: any) => r as DisputedShift)
+      );
+    });
+    return () => { try { (unsub as any)?.(); } catch {} };
+  }, []);
+
   const fmt = (n: number) =>
     n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${n.toFixed(2)}`;
 
-  const tabs: { id: ActiveTab; label: string }[] = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'invoices', label: 'Invoices' },
-    { id: 'payouts',  label: 'Caregiver Payouts' },
+  const tabs: { id: ActiveTab; label: string; badge?: number }[] = [
+    { id: 'overview',  label: 'Overview' },
+    { id: 'invoices',  label: 'Invoices' },
+    { id: 'payouts',   label: 'Caregiver Payouts' },
+    { id: 'disputes',  label: 'Disputes', badge: disputes.length || undefined },
   ];
 
   return (
@@ -125,13 +400,18 @@ export const FinanceDashboard: React.FC = () => {
             <button
               key={t.id}
               onClick={() => setActiveTab(t.id)}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              className={`relative flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
                 activeTab === t.id
                   ? 'bg-white text-slate-900 shadow-sm'
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
               {t.label}
+              {t.badge != null && t.badge > 0 && (
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
+                  {t.badge}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -263,6 +543,52 @@ export const FinanceDashboard: React.FC = () => {
       {activeTab === 'invoices' && (
         <div className="bg-white p-6 rounded-xl border border-slate-200">
           <InvoicingTab />
+        </div>
+      )}
+
+      {/* Disputes tab */}
+      {activeTab === 'disputes' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <Scale className="w-5 h-5 text-purple-600" />
+                Shift Hour Disputes
+              </h3>
+              <p className="text-sm text-slate-500 mt-0.5">
+                Shifts escalated to admin review — resolve by setting final hours.
+              </p>
+            </div>
+            <span className={`text-sm font-semibold px-3 py-1 rounded-full ${
+              disputes.length > 0
+                ? 'bg-red-50 text-red-700 border border-red-200'
+                : 'bg-green-50 text-green-700 border border-green-200'
+            }`}>
+              {disputes.length > 0 ? `${disputes.length} open` : 'All clear'}
+            </span>
+          </div>
+
+          {disputes.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
+              <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-3">
+                <CheckCircle className="w-6 h-6 text-green-500" />
+              </div>
+              <p className="font-semibold text-slate-700 mb-1">No open disputes</p>
+              <p className="text-sm text-slate-400">All shift hour disputes have been resolved.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {disputes.map(shift => (
+                <DisputeCard
+                  key={shift.id}
+                  shift={shift}
+                  onResolved={() => {
+                    /* subscription will auto-remove the card when status changes */
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
 

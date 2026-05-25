@@ -61,7 +61,7 @@ function fmtDuration(start: any, end: any): string {
   if (!start || !end) return '';
   const s = start?.toDate ? start.toDate() : new Date(start);
   const e = end?.toDate   ? end.toDate()   : new Date(end);
-  const mins = Math.ceil((e.getTime() - s.getTime()) / 60000);
+  const mins = Math.round((e.getTime() - s.getTime()) / 60000);
   if (mins < 60) return `${mins}m`;
   const h = Math.floor(mins / 60), m = mins % 60;
   return m ? `${h}h ${m}m` : `${h}h`;

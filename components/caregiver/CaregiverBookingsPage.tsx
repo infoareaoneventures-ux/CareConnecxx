@@ -1892,15 +1892,25 @@ export const CaregiverBookingsPage: React.FC = () => {
         if (bookingSnap.exists) {
           const booking = bookingSnap.data()!;
           const currentDST: Record<string, Array<{ start: string; end: string }>> = booking.schedule?.dayShiftTimes || {};
-          const mergedDST: Record<string, Array<{ start: string; end: string }>> = { ...currentDST };
-          for (const [day, blocks] of Object.entries(amendment.newDays)) {
-            if (!mergedDST[day]) mergedDST[day] = [];
-            mergedDST[day] = [...mergedDST[day], ...(blocks as Array<{ start: string; end: string }>)];
+          // Only merge into the permanent schedule for ongoing amendments.
+          // Amendments with an end date are temporary — don't add them to
+          // dayShiftTimes or the shiftGenerator will keep recreating them.
+          const mergedDST: Record<string, Array<{ start: string; end: string }>> = amendment.ongoing
+            ? (() => {
+                const dst = { ...currentDST };
+                for (const [day, blocks] of Object.entries(amendment.newDays)) {
+                  if (!dst[day]) dst[day] = [];
+                  dst[day] = [...dst[day], ...(blocks as Array<{ start: string; end: string }>)];
+                }
+                return dst;
+              })()
+            : currentDST;
+          if (amendment.ongoing) {
+            await db.collection('booking_requests').doc(amendment.bookingRequestId).update({
+              'schedule.dayShiftTimes': mergedDST,
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            });
           }
-          await db.collection('booking_requests').doc(amendment.bookingRequestId).update({
-            'schedule.dayShiftTimes': mergedDST,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-          });
           const endDate: string | null = amendment.ongoing
             ? null
             : (amendment.endDate || (booking.schedule?.ongoing ? null : booking.schedule?.endDate || null));

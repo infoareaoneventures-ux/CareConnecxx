@@ -638,18 +638,16 @@ export const PostsPage: React.FC = () => {
       // Block duplicate bookings — never create a second doc when one is already active.
       // Exception: if all shifts are completed/cancelled the booking is effectively done
       // and a fresh re-booking should be allowed.
+      // Use the in-memory activeBookingIds set (kept in sync via real-time listener)
+      // instead of a raw shifts query — the query would be rejected by Firestore rules
+      // because it doesn't include clientId/caregiverId in the filter.
       if (existing?.status === 'accepted') {
-        const activeShiftsSnap = await db.collection('shifts')
-          .where('bookingRequestId', '==', existing.id)
-          .where('status', '==', 'scheduled')
-          .limit(1)
-          .get();
-        if (!activeShiftsSnap.empty) {
+        if (activeBookingIds.has(existing.id)) {
           addToast('You already have an active booking with this caregiver.', 'info');
           setSendingBooking(false);
           return;
         }
-        // No scheduled shifts — booking has effectively ended, fall through to create a fresh one
+        // Not in activeBookingIds — all shifts done, fall through to create a fresh one
       }
       if (existing?.status === 'pending') {
         addToast('Your booking request is already pending a response.', 'info');
@@ -1272,6 +1270,21 @@ export const PostsPage: React.FC = () => {
         const isResend = bookingStatuses[key]?.status === 'declined' || bookingStatuses[key]?.status === 'cancelled';
         const d = bookingDraft;
         const upd = (patch: Partial<typeof bookingDraft>) => setBookingDraft(prev => ({ ...prev, ...patch }));
+
+        // Save & Confirm button validation
+        const scheduleDays = Object.entries(d.dayShiftTimes);
+        const noScheduleDays = scheduleDays.length === 0;
+        const daysWithMissingTimes = scheduleDays
+          .filter(([, blocks]) => (blocks as any[]).some((b: any) => !b.start || !b.end))
+          .map(([day]) => day);
+        const saveIsDisabled = !d.agreedRate || !d.paymentMethod || !d.selectedAddress || noScheduleDays || daysWithMissingTimes.length > 0;
+        const saveTip = !d.agreedRate ? 'Enter agreed rate to save'
+          : !d.paymentMethod ? 'Select a payment method to save'
+          : !d.selectedAddress ? 'Select a care location to save'
+          : noScheduleDays ? 'Add at least one day with shift times'
+          : daysWithMissingTimes.length > 0 ? `Set start & end time for: ${daysWithMissingTimes.join(', ')}`
+          : '';
+
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setSendBookingFor(null)} />
@@ -1288,8 +1301,8 @@ export const PostsPage: React.FC = () => {
                     editingBookingDetails ? (
                       <button type="button"
                         onClick={() => { setEditingBookingDetails(false); setScheduleConfirmed(true); }}
-                        disabled={!d.agreedRate || !d.paymentMethod || !d.selectedAddress}
-                        title={!d.agreedRate ? 'Enter agreed rate to save' : !d.paymentMethod ? 'Select a payment method to save' : !d.selectedAddress ? 'Select a care location to save' : ''}
+                        disabled={saveIsDisabled}
+                        title={saveTip}
                         className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
                         Save & Confirm

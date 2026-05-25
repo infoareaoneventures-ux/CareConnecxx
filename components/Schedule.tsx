@@ -169,9 +169,43 @@ export default function Schedule() {
   const [visitStartDate,     setVisitStartDate]     = useState('');
   const [visitEndOption,     setVisitEndOption]     = useState<'ongoing' | 'end_date'>('ongoing');
   const [visitEndDate,       setVisitEndDate]       = useState('');
+  // Day-of-week → time blocks from actual scheduled shifts for the selected caregiver
+  const [cgShiftBlocks, setCgShiftBlocks] = useState<Record<string, Array<{ start: string; end: string }>>>({});
 
   useEffect(() => { fetchShifts(); }, [monthDate]);
   useEffect(() => { fetchHiredCaregivers(); fetchInterviews(); generateMissingShifts(); }, []);
+
+  // When the caregiver selection changes in the Request Visit modal,
+  // load their upcoming scheduled shifts and build a day-of-week → blocks map.
+  // Include clientId filter so the query satisfies Firestore security rules.
+  useEffect(() => {
+    if (!visitCaregiverId || !db) { setCgShiftBlocks({}); return; }
+    const user = auth.currentUser;
+    if (!user) return;
+    const today = new Date().toISOString().split('T')[0];
+    const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    db.collection('shifts')
+      .where('clientId', '==', user.uid)
+      .where('caregiverId', '==', visitCaregiverId)
+      .where('status', '==', 'scheduled')
+      .get()
+      .then(snap => {
+        const blocks: Record<string, Array<{ start: string; end: string }>> = {};
+        snap.docs.forEach(d => {
+          const data = d.data();
+          if (!data.date || data.date < today) return;
+          const dow = DAY_NAMES[new Date(data.date + 'T12:00:00').getDay()];
+          if (!blocks[dow]) blocks[dow] = [];
+          if (data.startTime && data.endTime) {
+            // Avoid duplicate blocks already covered by the regular schedule
+            const already = blocks[dow].some(b => b.start === data.startTime && b.end === data.endTime);
+            if (!already) blocks[dow].push({ start: data.startTime, end: data.endTime });
+          }
+        });
+        setCgShiftBlocks(blocks);
+      })
+      .catch(() => setCgShiftBlocks({}));
+  }, [visitCaregiverId]);
 
   // Subscribe to pending booking amendments so client sees "Awaiting response"
   useEffect(() => {
@@ -1380,14 +1414,48 @@ export default function Schedule() {
         const DAY_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const VISIT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
         const scheduledDays = DAY_ORDER.filter(d => schedule[d]?.some(b => b.start && b.end));
+        // Merge regular schedule blocks + actual shift blocks for overlap checking
+        const allBlocksForDay = (day: string) => {
+          const schedBlocks = (schedule[day] || []).filter(b => b.start && b.end);
+          const shiftBlocks = (cgShiftBlocks[day] || []).filter(b => b.start && b.end);
+          // Deduplicate
+          const seen = new Set<string>();
+          return [...schedBlocks, ...shiftBlocks].filter(b => {
+            const key = `${b.start}-${b.end}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        };
+
+        // Check if a proposed [newStart, newEnd) overlaps any existing block for that day
+        const hasOverlap = (day: string, newStart: string, newEnd: string) => {
+          const [nsh, nsm] = newStart.split(':').map(Number);
+          const [neh, nem] = newEnd.split(':').map(Number);
+          const ns = nsh * 60 + nsm, ne = neh * 60 + nem;
+          return allBlocksForDay(day).some(b => {
+            const [bsh, bsm] = b.start.split(':').map(Number);
+            const [beh, bem] = b.end.split(':').map(Number);
+            const bs = bsh * 60 + bsm, be = beh * 60 + bem;
+            return ns < be && ne > bs;
+          });
+        };
+
+        const overlappingDays = selectedDays.filter(day => {
+          const t = dayTimes[day];
+          return t?.start && t?.end && hasOverlap(day, t.start, t.end);
+        });
+
         const canSubmit =
           !!visitCaregiverId &&
           selectedDays.length > 0 &&
           !!visitStartDate &&
-          (visitEndOption === 'ongoing' || !!visitEndDate);
+          (visitEndOption === 'ongoing' || !!visitEndDate) &&
+          overlappingDays.length === 0;
+
         // Returns start-time options for a day, excluding times that fall inside an existing block
         const getStartOptions = (day: string) => {
-          const blocks = (schedule[day] || []).filter(b => b.start && b.end);
+          const blocks = allBlocksForDay(day);
           return TIME_OPTIONS.filter(opt => {
             const [oh, om] = opt.value.split(':').map(Number);
             const mins = oh * 60 + om;
@@ -1402,7 +1470,7 @@ export default function Schedule() {
         const getEndOptions = (day: string, startVal: string) => {
           const [sh, sm] = (startVal || '09:00').split(':').map(Number);
           const startMins = sh * 60 + sm;
-          const blocks = (schedule[day] || []).filter(b => b.start && b.end);
+          const blocks = allBlocksForDay(day);
           // Find the earliest existing-block start that comes after our chosen start
           const nextBlockStart = blocks
             .map(b => { const [bsh, bsm] = b.start.split(':').map(Number); return bsh * 60 + bsm; })
@@ -1516,7 +1584,13 @@ export default function Schedule() {
                   ) : (
                     <div className="space-y-2 mb-3">
                       {selectedDays.map(day => (
-                        <div key={day} className="flex items-center gap-2">
+                        <div key={day} className="space-y-1">
+                        {overlappingDays.includes(day) && (
+                          <p className="text-xs text-red-600 font-medium flex items-center gap-1">
+                            <span>⚠</span> {day} overlaps an existing shift — adjust the time.
+                          </p>
+                        )}
+                        <div className="flex items-center gap-2">
                           <span className="text-xs font-semibold text-slate-700 w-8 flex-shrink-0">{day}</span>
                           <select
                             value={dayTimes[day]?.start || '09:00'}
@@ -1555,6 +1629,7 @@ export default function Schedule() {
                             }}
                             className="text-slate-300 hover:text-red-400 transition-colors text-lg leading-none flex-shrink-0 p-0.5"
                           >×</button>
+                        </div>
                         </div>
                       ))}
                     </div>

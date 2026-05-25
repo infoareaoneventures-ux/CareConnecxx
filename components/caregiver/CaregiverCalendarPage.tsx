@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
-  Calendar as CalendarIcon, ChevronLeft, ChevronRight, MessageSquare, X,
+  Calendar as CalendarIcon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, X,
   Video, Phone, Home, Loader2, User, MapPin, CheckCircle, Clock,
 } from 'lucide-react';
 import firebase from 'firebase/compat/app';
@@ -161,6 +161,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
   const [showAvailModal,    setShowAvailModal]    = useState(false);
   const [editAvail,         setEditAvail]         = useState<Record<string, any[]>>({});
   const [saving,            setSaving]            = useState(false);
+  const [expandedDates,     setExpandedDates]     = useState<Record<string, boolean>>({});
 
   const user = auth?.currentUser;
 
@@ -401,6 +402,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     const shiftEnded    = shiftEnd <= now;
 
     // Which actions are available
+    // canStart: within 30 min of start, OR shift time already passed (late start)
     const canStart  = shift.status === 'scheduled' && minUntilStart <= 30;
     const canEnd    = shift.status === 'in-progress';
     const canCancel = shift.status === 'scheduled';
@@ -434,6 +436,19 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     const [tasksCompleted, setTasksCompleted] = React.useState<string[]>(shift.tasksCompleted || []);
     const [fetchingTasks, setFetchingTasks] = React.useState(false);
 
+    // Real-time sync: listen to this shift doc so task changes from bookings page show up here
+    React.useEffect(() => {
+      if (!db) return;
+      const unsub = db.collection('shifts').doc(shift.id)
+        .onSnapshot(doc => {
+          if (doc.exists) {
+            const data = doc.data() as any;
+            setTasksCompleted(data.tasksCompleted || []);
+          }
+        });
+      return () => unsub();
+    }, [shift.id]);
+
     // End shift notes flow
     const [endingShift, setEndingShift] = React.useState(false);
     const [endNotes, setEndNotes] = React.useState('');
@@ -459,6 +474,16 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
       const updated = tasksCompleted.includes(task)
         ? tasksCompleted.filter(t => t !== task)
         : [...tasksCompleted, task];
+      setTasksCompleted(updated);
+      await db.collection('shifts').doc(shift.id).update({ tasksCompleted: updated }).catch(() => {});
+    };
+
+    const handleToggleCategory = async (keys: string[]) => {
+      if (!db) return;
+      const allDone = keys.every(k => tasksCompleted.includes(k));
+      const updated = allDone
+        ? tasksCompleted.filter(k => !keys.includes(k))
+        : [...new Set([...tasksCompleted, ...keys])];
       setTasksCompleted(updated);
       await db.collection('shifts').doc(shift.id).update({ tasksCompleted: updated }).catch(() => {});
     };
@@ -525,14 +550,18 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
 
         {/* Actual time worked */}
         {(actualStart || actualEnd) && (
-          <div className="px-5 mb-3">
-            <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-xl border border-slate-200">
-              <Clock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-              <div className="text-xs text-slate-600 flex flex-wrap gap-x-2">
-                {actualStart && <span>Started: <span className="font-medium text-slate-800">{actualStart}</span></span>}
-                {actualEnd   && <span>Ended: <span className="font-medium text-slate-800">{actualEnd}</span></span>}
-                {duration    && <span className="text-slate-400">· {duration}</span>}
-              </div>
+          <div className="px-5 mb-3 space-y-1">
+            <div className="flex items-center gap-3 text-xs">
+              <span className="w-20 text-slate-400 shrink-0">Scheduled</span>
+              <span className="font-semibold text-slate-700">{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</span>
+            </div>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="w-20 text-slate-400 shrink-0">Started</span>
+              <span className="font-semibold text-slate-700">
+                {actualStart}
+                {actualEnd && <><span className="text-slate-400 font-normal"> · Ended </span>{actualEnd}</>}
+                {duration && <span className="text-primary-600 font-semibold"> · {duration}</span>}
+              </span>
             </div>
           </div>
         )}
@@ -540,14 +569,47 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         {/* Tasks — grouped by recipient when booking data available */}
         {(careNeeds.length > 0 || fetchingTasks || (bookingData?.careRecipients?.length ?? 0) > 0) && (
           <div className="px-5 mb-4">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tasks</p>
+            {(() => {
+              // Compute total/done counts across all recipients
+              let total = 0; let done = 0;
+              if (bookingData?.careRecipients?.length > 0) {
+                bookingData.careRecipients.forEach((r: any, ri: number) => {
+                  const cats: string[] = r.careNeeds || [];
+                  const det: Record<string, string[]> = r.careNeedDetails || {};
+                  cats.forEach(cat => {
+                    const subs = det[cat] || [];
+                    if (subs.length > 0) {
+                      total += subs.length;
+                      done += subs.filter((sub: string) => tasksCompleted.includes(`${ri}_${cat}_${sub}`) || tasksCompleted.includes(sub)).length;
+                    } else {
+                      total += 1;
+                      done += tasksCompleted.includes(`${ri}_${cat}`) ? 1 : 0;
+                    }
+                  });
+                });
+              } else {
+                total = careNeeds.length;
+                done = tasksCompleted.filter(t => careNeeds.includes(t)).length;
+              }
+              return (
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tasks</p>
+                  {total > 0 && (
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${done === total ? 'bg-green-100 text-green-700' : done > 0 ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {done}/{total}
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
             {fetchingTasks && !bookingData ? (
               <p className="text-xs text-slate-400">Loading tasks…</p>
             ) : bookingData?.careRecipients?.length > 0 ? (
               <div className="space-y-3">
                 {bookingData.careRecipients.map((r: any, ri: number) => {
-                  const recipientTasks: string[] = r.careNeeds || [];
-                  if (recipientTasks.length === 0) return null;
+                  const categories: string[] = r.careNeeds || [];
+                  const details: Record<string, string[]> = r.careNeedDetails || {};
+                  if (categories.length === 0) return null;
                   const isCompleted = shift.status === 'completed' || shift.status === 'cancelled';
                   return (
                     <div key={ri}>
@@ -559,36 +621,60 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                         <span className="text-xs font-semibold text-slate-700">{r.name || r.firstName}</span>
                         {r.relationship && <span className="text-xs text-slate-400">· {r.relationship}{r.age ? ` · Age ${r.age}` : ''}</span>}
                       </div>
-                      <div className="space-y-1">
-                        {recipientTasks.map((task, i) => {
-                          const done = tasksCompleted.includes(task);
-                          if (isCompleted) return (
-                            <div key={i} className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border text-xs font-medium ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
-                              <CheckCircle className={`w-4 h-4 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-200'}`} />
-                              {task}
-                            </div>
-                          );
+                      <div className="space-y-1.5">
+                        {categories.map((category, ci) => {
+                          const subtasks = details[category] || [];
+                          const subKeys = subtasks.map((sub: string) => `${ri}_${category}_${sub}`);
+                          const doneSubCount = subKeys.filter((k: string) => tasksCompleted.includes(k)).length;
+                          const allSubDone = subtasks.length > 0 && doneSubCount === subtasks.length;
+                          const catKey = `${ri}_${category}`;
+                          const catDone = subtasks.length === 0 ? tasksCompleted.includes(catKey) : allSubDone;
                           return (
-                            <button key={i} onClick={() => handleToggleTask(task)}
-                              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border text-left text-xs font-medium transition-colors ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'}`}>
-                              <CheckCircle className={`w-4 h-4 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
-                              {task}
-                            </button>
+                            <div key={ci} className="border border-slate-200 rounded-xl overflow-hidden">
+                              {isCompleted ? (
+                                <div className={`flex items-center gap-2 px-3 py-2 ${catDone ? 'bg-green-50' : 'bg-slate-50'}`}>
+                                  <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${catDone ? 'text-green-500' : 'text-slate-300'}`} />
+                                  <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{category}</p>
+                                  {subtasks.length > 0 && doneSubCount > 0 && (
+                                    <span className={`text-[10px] font-semibold ${catDone ? 'text-green-600' : 'text-slate-400'}`}>{doneSubCount}/{subtasks.length}</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => subtasks.length > 0 ? handleToggleCategory(subKeys) : handleToggleTask(catKey)}
+                                  className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${catDone ? 'bg-primary-50' : 'bg-slate-50 hover:bg-slate-100'}`}
+                                >
+                                  <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${catDone ? 'bg-primary-500 border-primary-500' : 'border-primary-300 bg-white'}`}>
+                                    {catDone && <CheckCircle className="w-2.5 h-2.5 text-white" />}
+                                  </div>
+                                  <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-primary-400 line-through' : 'text-primary-600'}`}>{category}</p>
+                                </button>
+                              )}
+                              {subtasks.length > 0 && (
+                                <div className="px-3 py-2 space-y-1">
+                                  {subtasks.map((sub: string, si: number) => {
+                                    const taskKey = `${ri}_${category}_${sub}`;
+                                    const done = tasksCompleted.includes(taskKey) || tasksCompleted.includes(sub);
+                                    if (isCompleted) return (
+                                      <div key={si} className={`flex items-center gap-2 text-xs font-medium ${done ? 'text-green-700' : 'text-slate-400'}`}>
+                                        <CheckCircle className={`w-3.5 h-3.5 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                                        {sub}
+                                      </div>
+                                    );
+                                    return (
+                                      <button key={si} onClick={() => handleToggleTask(taskKey)}
+                                        className={`w-full flex items-center gap-2 text-left text-xs font-medium transition-colors ${done ? 'text-green-700' : 'text-slate-600 hover:text-slate-900'}`}>
+                                        <CheckCircle className={`w-3.5 h-3.5 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                                        {sub}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
-                      {/* Lifestyle & Preferences inline under tasks */}
-                      {r.lifestyle?.favoriteActivities?.length > 0 && (
-                        <div className="mt-2">
-                          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Lifestyle & Preferences</p>
-                          <div className="flex flex-wrap items-center gap-1">
-                            <span className="text-[10px] text-slate-400 mr-0.5">Enjoys</span>
-                            {r.lifestyle.favoriteActivities.map((a: string, ai: number) => (
-                              <span key={ai} className="text-[10px] bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">{a}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   );
                 })}
@@ -626,14 +712,14 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
             </p>
           )}
 
-          {/* Scheduled + within 30 min: Start Shift */}
+          {/* Scheduled + within 30 min (or late): Start Shift */}
           {canStart && (
             <button
               onClick={() => handleStartShift(shift.id)}
               className="w-full py-2.5 bg-accent-500 hover:bg-accent-600 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
             >
               <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-              Start Shift
+              {shiftEnded ? 'Start Shift (Late)' : 'Start Shift'}
             </button>
           )}
 
@@ -666,33 +752,6 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                   onClick={() => handleEndShift(shift.id, endNotes)}
                   className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5"
                 >
-                  <CheckCircle className="w-4 h-4" />Complete
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Scheduled but shift time already passed (forgot to start): still allow end */}
-          {shift.status === 'scheduled' && shiftEnded && !endingShift && (
-            <button
-              onClick={() => setEndingShift(true)}
-              className="w-full py-2.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
-            >
-              <CheckCircle className="w-4 h-4" />Mark Complete
-            </button>
-          )}
-          {shift.status === 'scheduled' && shiftEnded && endingShift && (
-            <div className="space-y-2">
-              <textarea
-                value={endNotes}
-                onChange={e => setEndNotes(e.target.value)}
-                placeholder="Add shift notes (optional)…"
-                rows={3}
-                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-green-200 resize-none"
-              />
-              <div className="flex gap-2">
-                <button onClick={() => setEndingShift(false)} className="flex-1 py-2 border border-slate-200 rounded-xl text-slate-600 text-sm hover:bg-slate-50">Back</button>
-                <button onClick={() => handleEndShift(shift.id, endNotes)} className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5">
                   <CheckCircle className="w-4 h-4" />Complete
                 </button>
               </div>
@@ -1383,7 +1442,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                 { id: 'this-month', label: 'This Month' },
                 { id: 'last-30',    label: 'Last 30 Days' },
               ] as const).map(f => (
-                <button key={f.id} onClick={() => setDateFilter(f.id)}
+                <button key={f.id} onClick={() => { setDateFilter(f.id); setExpandedDates({}); }}
                   className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${dateFilter === f.id ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}>
                   {f.label}
                 </button>
@@ -1397,7 +1456,12 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
             ) : (
               <div className="flex gap-4">
                 <div className="flex-1 min-w-0 space-y-6">
-                  {groupedDates.map(date => (
+                  {groupedDates.map(date => {
+                    const allEvents = groupedEvents[date];
+                    const isDateExpanded = !!expandedDates[date];
+                    const visibleEvents = isDateExpanded ? allEvents : allEvents.slice(0, 2);
+                    const hiddenCount = allEvents.length - 2;
+                    return (
                     <div key={date}>
                       <div className="flex items-center gap-2 mb-2 px-1">
                         <h3 className="text-sm font-bold text-slate-700">
@@ -1408,7 +1472,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                         )}
                       </div>
                       <div className="space-y-2">
-                        {groupedEvents[date].map((e, i) => {
+                        {visibleEvents.map((e, i) => {
                           if (e.kind === 'shift') {
                             const s = e.shift;
                             return (
@@ -1457,8 +1521,20 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                           }
                         })}
                       </div>
+                      {hiddenCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setExpandedDates(prev => ({ ...prev, [date]: !prev[date] }))}
+                          className="w-full mt-1 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-500 hover:text-slate-700 flex items-center justify-center gap-1 transition-colors"
+                        >
+                          {isDateExpanded
+                            ? <><ChevronUp className="w-3.5 h-3.5" /> Show less</>
+                            : <><ChevronDown className="w-3.5 h-3.5" /> Show {hiddenCount} more shift{hiddenCount !== 1 ? 's' : ''}</>
+                          }
+                        </button>
+                      )}
                     </div>
-                  ))}
+                  ); })}
                 </div>
                 {activeDetail === 'shift' && selectedShift && (
                   <div className="w-72 flex-shrink-0"><ShiftDetail shift={selectedShift} onClose={() => setSelectedShift(null)} /></div>

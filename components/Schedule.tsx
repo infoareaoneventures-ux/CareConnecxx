@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Calendar as CalendarIcon, MapPin, User,
-  XCircle, X, Plus, MessageSquare, ChevronLeft, ChevronRight,
+  XCircle, X, Plus, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   Video, Phone, Home, CheckCircle, Loader2, Hourglass,
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
@@ -25,7 +25,7 @@ interface Shift {
   completionNotes?: string;
   tasksCompleted?: string[];
   careNeeds?: string[];
-  careRecipients?: Array<{ name: string; relationship?: string; age?: string; photoURL?: string | null; careNeeds?: string[] }>;
+  careRecipients?: Array<{ name: string; relationship?: string; age?: string; photoURL?: string | null; careNeeds?: string[]; careNeedDetails?: Record<string, string[]> }>;
   startedAt?: any;
   completedAt?: any;
   createdBy: 'client' | 'caregiver';
@@ -160,6 +160,7 @@ export default function Schedule() {
 
   const [selectedShift,     setSelectedShift]     = useState<Shift | null>(null);
   const [selectedInterview, setSelectedInterview] = useState<InterviewEvent | null>(null);
+  const [expandedDates,     setExpandedDates]     = useState<Record<string, boolean>>({});
   const [selectedDay,       setSelectedDay]       = useState(localDate(new Date()));
   const [showAddModal,      setShowAddModal]      = useState(false);
   const [visitCaregiverId,   setVisitCaregiverId]   = useState('');
@@ -619,79 +620,102 @@ export default function Schedule() {
             const s = fmtTs(shift.startedAt), e = fmtTs(shift.completedAt), d = fmtDuration(shift.startedAt, shift.completedAt);
             return (
               <div className="flex items-center gap-3 text-xs">
-                <span className="w-20 text-slate-400 shrink-0">Actual</span>
-                <span className="font-semibold text-slate-700">{s}{e ? ` – ${e}` : ''}</span>
-                {d && <span className="font-semibold text-primary-600">{d}</span>}
+                <span className="w-20 text-slate-400 shrink-0">Started</span>
+                <span className="font-semibold text-slate-700">
+                  {s}{e ? <span className="text-slate-400 font-normal"> · Ended </span> : ''}{e}
+                  {d && <span className="text-primary-600 font-semibold"> · {d}</span>}
+                </span>
               </div>
             );
           })()}
         </div>
-        {/* Tasks per recipient */}
+        {/* Tasks per recipient — completion state card format */}
         {(() => {
-          const doneRaw = shift.tasksCompleted || [];
-          const sp = (k: string) => k.replace(/^\d+_/, '');
+          const doneRaw: string[] = shift.tasksCompleted || [];
           const recipients = shift.careRecipients || [];
           const hasRecipients = recipients.some(r => (r.careNeeds || []).length > 0);
+          if (!hasRecipients && (shift.careNeeds || []).length === 0) return null;
+
+          // Compute total/done for header count
+          let totalT = 0; let doneT = 0;
           if (hasRecipients) {
-            return (
-              <div>
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tasks</p>
-                <div className="space-y-3">
-                  {recipients.map((r, ri) => {
-                    const rDone = [...new Set(doneRaw.filter(k => k.startsWith(`${ri}_`)).map(sp))];
-                    const rDoneSet = new Set(rDone);
-                    const rNeeds = r.careNeeds || [];
-                    const rNotDone = rNeeds.filter(t => !rDoneSet.has(t));
-                    if (rDone.length === 0 && rNotDone.length === 0) return null;
-                    return (
-                      <div key={ri}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="w-6 h-6 rounded-full overflow-hidden bg-slate-200 shrink-0 flex items-center justify-center">
-                            {r.photoURL
-                              ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
-                              : <span className="text-[9px] font-bold text-slate-500">{r.name.split(' ').map((p: string) => p[0]).join('').slice(0,2).toUpperCase()}</span>}
-                          </div>
-                          <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.age ? ` · Age ${r.age}` : ''}</p>
-                        </div>
-                        <div className="space-y-0.5">
-                          {rDone.map((t, i) => (
-                            <div key={i} className="flex items-center gap-2 text-xs text-green-700">
-                              <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />{t}
-                            </div>
-                          ))}
-                          {rNotDone.map((t, i) => (
-                            <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
-                              <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />{t}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
+            recipients.forEach((r, ri) => {
+              (r.careNeeds || []).forEach(cat => {
+                const subs = (r.careNeedDetails || {})[cat] || [];
+                if (subs.length > 0) { totalT += subs.length; doneT += subs.filter((sub: string) => doneRaw.includes(`${ri}_${cat}_${sub}`)).length; }
+                else { totalT += 1; doneT += doneRaw.includes(`${ri}_${cat}`) ? 1 : 0; }
+              });
+            });
+          } else {
+            totalT = (shift.careNeeds || []).length;
+            doneT = doneRaw.filter((k: string) => (shift.careNeeds || []).includes(k)).length;
           }
-          // Fallback: flat careNeeds
-          const dn = [...new Set(doneRaw.map(sp))];
-          const dnSet = new Set(dn);
-          const nd = (shift.careNeeds || []).filter(t => !dnSet.has(sp(t)));
-          if (dn.length === 0 && nd.length === 0) return null;
+
+          const renderCards = (careNeeds: string[], careNeedDetails: Record<string, string[]>, ri: number) => (
+            <div className="space-y-1.5">
+              {careNeeds.map((category, ci) => {
+                const subtasks = careNeedDetails[category] || [];
+                const doneSubCount = subtasks.filter((sub: string) => doneRaw.includes(`${ri}_${category}_${sub}`)).length;
+                const catDone = subtasks.length > 0 ? doneSubCount === subtasks.length : doneRaw.includes(`${ri}_${category}`);
+                return (
+                  <div key={ci} className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className={`flex items-center gap-2 px-3 py-2 ${catDone ? 'bg-green-50' : 'bg-slate-50'}`}>
+                      <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${catDone ? 'text-green-500' : 'text-slate-300'}`} />
+                      <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{category}</p>
+                      {subtasks.length > 0 && doneSubCount > 0 && (
+                        <span className={`text-[10px] font-semibold ${catDone ? 'text-green-600' : 'text-slate-400'}`}>{doneSubCount}/{subtasks.length}</span>
+                      )}
+                    </div>
+                    {subtasks.length > 0 && (
+                      <div className="px-3 py-2 space-y-1">
+                        {subtasks.map((sub: string, si: number) => {
+                          const done = doneRaw.includes(`${ri}_${category}_${sub}`);
+                          return (
+                            <div key={si} className={`flex items-center gap-2 text-xs font-medium ${done ? 'text-green-700' : 'text-slate-400'}`}>
+                              <CheckCircle className={`w-3.5 h-3.5 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                              {sub}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+
           return (
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Tasks</p>
-              <div className="space-y-0.5">
-                {dn.map((t, i) => (
-                  <div key={i} className="flex items-center gap-2 text-xs text-green-700">
-                    <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />{t}
-                  </div>
-                ))}
-                {nd.map((t, i) => (
-                  <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
-                    <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />{t}
-                  </div>
-                ))}
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tasks</p>
+                {totalT > 0 && (
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${doneT === totalT ? 'bg-green-100 text-green-700' : doneT > 0 ? 'bg-slate-100 text-slate-500' : 'bg-slate-100 text-slate-500'}`}>
+                    {doneT}/{totalT}
+                  </span>
+                )}
               </div>
+              {hasRecipients
+                ? recipients.map((r, ri) => {
+                    const needs = r.careNeeds || [];
+                    if (needs.length === 0) return null;
+                    return (
+                      <div key={ri} className="mb-3">
+                        {(
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <div className="w-6 h-6 rounded-full overflow-hidden bg-primary-100 shrink-0 flex items-center justify-center">
+                              {r.photoURL
+                                ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
+                                : <span className="text-[9px] font-bold text-primary-600">{r.name.split(' ').map((p: string) => p[0]).join('').slice(0,2).toUpperCase()}</span>}
+                            </div>
+                            <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.age ? ` · Age ${r.age}` : ''}</p>
+                          </div>
+                        )}
+                        {renderCards(needs, r.careNeedDetails || {}, ri)}
+                      </div>
+                    );
+                  })
+                : renderCards(shift.careNeeds || [], {}, 0)}
             </div>
           );
         })()}
@@ -1309,7 +1333,7 @@ export default function Schedule() {
                 { id: 'this-month', label: 'This Month' },
                 { id: 'last-30',    label: 'Last 30 Days' },
               ] as const).map(f => (
-                <button key={f.id} onClick={() => setDateFilter(f.id)}
+                <button key={f.id} onClick={() => { setDateFilter(f.id); setExpandedDates({}); }}
                   className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${dateFilter === f.id ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}>
                   {f.label}
                 </button>
@@ -1324,7 +1348,12 @@ export default function Schedule() {
             ) : (
               <div className="flex gap-4">
                 <div className="flex-1 min-w-0 space-y-6">
-                  {groupedDates.map(date => (
+                  {groupedDates.map(date => {
+                    const allEvents = groupedEvents[date];
+                    const isDateExpanded = !!expandedDates[date];
+                    const visibleEvents = isDateExpanded ? allEvents : allEvents.slice(0, 2);
+                    const hiddenCount = allEvents.length - 2;
+                    return (
                     <div key={date}>
                       <div className="flex items-center gap-2 mb-2 px-1">
                         <h3 className="text-sm font-bold text-slate-700">
@@ -1335,7 +1364,7 @@ export default function Schedule() {
                         )}
                       </div>
                       <div className="space-y-2">
-                        {groupedEvents[date].map((e, i) => {
+                        {visibleEvents.map((e, i) => {
                           if (e.kind === 'shift') {
                             const s = e.shift;
                             return (
@@ -1386,8 +1415,20 @@ export default function Schedule() {
                           }
                         })}
                       </div>
+                      {hiddenCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setExpandedDates(prev => ({ ...prev, [date]: !prev[date] }))}
+                          className="w-full mt-1 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-500 hover:text-slate-700 flex items-center justify-center gap-1 transition-colors"
+                        >
+                          {isDateExpanded
+                            ? <><ChevronUp className="w-3.5 h-3.5" /> Show less</>
+                            : <><ChevronDown className="w-3.5 h-3.5" /> Show {hiddenCount} more shift{hiddenCount !== 1 ? 's' : ''}</>
+                          }
+                        </button>
+                      )}
                     </div>
-                  ))}
+                  ); })}
                 </div>
 
                 {/* Detail panel */}

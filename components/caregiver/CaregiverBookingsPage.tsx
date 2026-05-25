@@ -562,9 +562,19 @@ const BookingGroupCard: React.FC<{
   const base = shifts[0];
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandedShift, setExpandedShift] = useState<string | null>(null);
+  const [showAllShifts, setShowAllShifts] = useState(false);
   const [tasksByShift, setTasksByShift] = useState<Record<string, string[]>>(
     () => Object.fromEntries(shifts.map(s => [s.id, s.tasksCompleted || []]))
   );
+
+  // Sync tasksByShift when Firestore snapshot updates shifts (e.g. changes made from calendar)
+  useEffect(() => {
+    setTasksByShift(prev => {
+      const next = { ...prev };
+      shifts.forEach(s => { next[s.id] = s.tasksCompleted || []; });
+      return next;
+    });
+  }, [shifts]);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [endingShiftId, setEndingShiftId] = useState<string | null>(null);
   const [endNotesByShift, setEndNotesByShift] = useState<Record<string, string>>({});
@@ -599,6 +609,18 @@ const BookingGroupCard: React.FC<{
       status: 'cancelled',
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     }).catch(() => {}).finally(() => setSubmitting(null));
+  };
+
+  const toggleCategory = async (shiftId: string, subtaskKeys: string[]) => {
+    const shift = shifts.find(s => s.id === shiftId);
+    if (!shift || shift.status !== 'in-progress') return;
+    const prev = tasksByShift[shiftId] || [];
+    const allDone = subtaskKeys.every(k => prev.includes(k));
+    const next = allDone
+      ? prev.filter(k => !subtaskKeys.includes(k))
+      : [...new Set([...prev, ...subtaskKeys])];
+    setTasksByShift(p => ({ ...p, [shiftId]: next }));
+    if (db) await db.collection('shifts').doc(shiftId).update({ tasksCompleted: next }).catch(() => {});
   };
 
   const toggleTask = async (shiftId: string, key: string) => {
@@ -905,7 +927,13 @@ const BookingGroupCard: React.FC<{
       {/* ── Upcoming shifts ── */}
       <div className="border-t border-slate-100">
         <p className="px-5 pt-3 pb-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Upcoming Shifts</p>
-        {shifts.filter(s => s.status !== 'pending').map(shift => {
+        {(() => {
+          const allUpcoming = shifts.filter(s => s.status !== 'pending');
+          const visible = showAllShifts ? allUpcoming : allUpcoming.slice(0, 2);
+          const hiddenCount = allUpcoming.length - 2;
+          return (
+            <>
+              {visible.map(shift => {
           const inProgress = shift.status === 'in-progress';
           const completed = tasksByShift[shift.id] || [];
           const totalTasks = recipients.reduce((sum, r) => {
@@ -938,6 +966,12 @@ const BookingGroupCard: React.FC<{
                       {shift.status === 'in-progress' ? 'In Progress' : 'Scheduled'}
                     </span>
                   </div>
+                  {shift.startedAt && (
+                    <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-500">
+                      <span>Started: <span className="font-semibold text-slate-700">{fmtTs(shift.startedAt)}</span></span>
+                      {shift.completedAt && <span>Ended: <span className="font-semibold text-slate-700">{fmtTs(shift.completedAt)}</span></span>}
+                    </div>
+                  )}
                   {totalTasks > 0 && (
                     <div className="flex items-center gap-2 mt-1.5">
                       <div className="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden">
@@ -1013,16 +1047,22 @@ const BookingGroupCard: React.FC<{
                             );
                           };
                           if (subtasks.length > 0) {
-                            const allDone = subtasks.every(sub => completed.includes(`${ri}_${need}_${sub}`));
+                            const subKeys = subtasks.map((sub: string) => `${ri}_${need}_${sub}`);
+                            const allDone = subKeys.every((k: string) => completed.includes(k));
                             return (
                               <div key={need} className="rounded-lg border border-blue-200 overflow-hidden">
-                                <div className="flex items-center gap-2 bg-primary-50 px-2 py-1">
-                                  <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${allDone ? 'bg-primary-500 border-primary-500' : 'border-primary-300 bg-white'}`}>
-                                    {allDone && <CheckCircle className="w-2.5 h-2.5 text-white" />}
+                                <button
+                                  type="button"
+                                  onClick={() => toggleCategory(shift.id, subKeys)}
+                                  disabled={!inProgress}
+                                  className={`w-full flex items-center gap-2 px-2 py-1.5 text-left transition-colors ${allDone ? 'bg-primary-500' : 'bg-primary-50 hover:bg-primary-100'} ${!inProgress ? 'cursor-default opacity-60' : ''}`}
+                                >
+                                  <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${allDone ? 'bg-white border-white' : 'border-primary-300 bg-white'}`}>
+                                    {allDone && <CheckCircle className="w-2.5 h-2.5 text-primary-500" />}
                                   </div>
-                                  <span className={`text-xs font-semibold ${allDone ? 'text-primary-400 line-through' : 'text-primary-700'}`}>{need}</span>
-                                </div>
-                                <div className="px-2 pb-1">{subtasks.map(sub => checkboxRow(`${ri}_${need}_${sub}`, sub, true))}</div>
+                                  <span className={`text-xs font-semibold ${allDone ? 'text-white line-through' : 'text-primary-700'}`}>{need}</span>
+                                </button>
+                                <div className="px-2 pb-1">{subtasks.map((sub: string) => checkboxRow(`${ri}_${need}_${sub}`, sub, true))}</div>
                               </div>
                             );
                           }
@@ -1079,6 +1119,21 @@ const BookingGroupCard: React.FC<{
             </div>
           );
         })}
+        {hiddenCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowAllShifts(v => !v)}
+            className="w-full py-2.5 border-t border-slate-100 text-xs text-slate-500 hover:text-slate-700 flex items-center justify-center gap-1 transition-colors"
+          >
+            {showAllShifts
+              ? <><ChevronUp className="w-3.5 h-3.5" /> Show less</>
+              : <><ChevronDown className="w-3.5 h-3.5" /> Show {hiddenCount} more shift{hiddenCount !== 1 ? 's' : ''}</>
+            }
+          </button>
+        )}
+        </>
+        );
+      })()}
       </div>
 
       {/* ── Footer: cancel booking ── */}
@@ -1095,443 +1150,13 @@ const BookingGroupCard: React.FC<{
   );
 };
 
-// ── Shift Card (Past Bookings) ───────────────────────────────────────────────
-
-const _ShiftCard: React.FC<{
-  shift: Shift;
-  onCancel?: (id: string) => void;
-}> = ({ shift, onCancel }) => {
-  const navigate = useNavigate();
-  const [expanded, setExpanded] = useState(false);
-  const [localCompleted, setLocalCompleted] = useState<string[]>(shift.tasksCompleted || []);
-  const [submitting, setSubmitting] = useState(false);
-  const [endingShift, setEndingShift] = useState(false);
-  const [endNotes, setEndNotes] = useState('');
-
-  const inProgress = shift.status === 'in-progress';
-
-  const handleStartShift = async () => {
-    if (!db) return;
-    setSubmitting(true);
-    await db.collection('shifts').doc(shift.id).update({
-      status: 'in-progress',
-      startedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => {}).finally(() => setSubmitting(false));
-  };
-
-  const handleEndShift = async (notes?: string) => {
-    if (!db) return;
-    setSubmitting(true);
-    setEndingShift(false);
-    const update: any = {
-      status: 'completed',
-      completedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    };
-    if (notes?.trim()) update.completionNotes = notes.trim();
-    await db.collection('shifts').doc(shift.id).update(update).catch(() => {}).finally(() => setSubmitting(false));
-  };
-
-  const toggleTask = async (taskKey: string) => {
-    if (!inProgress) return;
-    const next = localCompleted.includes(taskKey)
-      ? localCompleted.filter(t => t !== taskKey)
-      : [...localCompleted, taskKey];
-    setLocalCompleted(next);
-    if (db) {
-      await db.collection('shifts').doc(shift.id).update({ tasksCompleted: next }).catch(() => {});
-    }
-  };
-
-  const statusLabel = (s: Shift['status']) => {
-    switch (s) {
-      case 'scheduled':   return 'Scheduled';
-      case 'in-progress': return 'In Progress';
-      case 'completed':   return 'Completed';
-      case 'cancelled':   return 'Cancelled';
-      default:            return s;
-    }
-  };
-
-  const recipients = shift.careRecipients || [];
-  const totalTasks = recipients.reduce((sum, r) => {
-    const needs = r.careNeeds || [];
-    const details = r.careNeedDetails || {};
-    return sum + needs.reduce((s, n) => s + ((details[n]?.length || 0) || 1), 0);
-  }, 0);
-  const doneCount = localCompleted.length;
-
-  return (
-    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-
-      {/* Header */}
-      <div className="px-5 pt-5 pb-4 flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-12 h-12 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center shrink-0">
-            {shift.clientPhotoURL
-              ? <img src={shift.clientPhotoURL} alt={shift.clientName} className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
-              : <span className="text-primary-700 font-bold text-base">
-                  {(shift.clientName || 'C').split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()}
-                </span>
-            }
-          </div>
-          <div className="min-w-0">
-            <p className="font-semibold text-slate-900 text-base">{shift.clientName || 'Client'}</p>
-            <span className={`inline-flex items-center text-xs font-semibold px-2.5 py-0.5 rounded-full border mt-0.5 ${statusBadge(shift.status)}`}>
-              {statusLabel(shift.status)}
-            </span>
-          </div>
-        </div>
-        <div className="flex flex-col items-end gap-1.5 shrink-0">
-          {shift.recurringWeekly && (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 px-2.5 py-0.5 rounded-full">
-              <Repeat className="w-3 h-3" /> Weekly
-            </span>
-          )}
-          {shift.paid && (
-            <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 px-2.5 py-0.5 rounded-full">
-              <CheckCircle className="w-3 h-3" /> Paid
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Quick info */}
-      <div className="px-5 pb-4 space-y-2">
-        {/* Full weekly schedule */}
-        {shift.schedule?.dayShiftTimes && Object.keys(shift.schedule.dayShiftTimes).length > 0 ? (
-          <div className="flex items-start gap-2 text-sm text-slate-700">
-            <CalendarDays className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-            <div className="space-y-0.5">
-              {shift.schedule.startDate && (
-                <p className="text-xs text-slate-400 mb-1">
-                  Starts {fmtDate(shift.schedule.startDate)}
-                  {shift.schedule.ongoing
-                    ? <span className="ml-1.5 text-[10px] font-semibold bg-teal-50 text-teal-700 border border-teal-200 px-1.5 py-0.5 rounded-full">Ongoing</span>
-                    : shift.schedule.endDate
-                      ? ` → ${fmtDate(shift.schedule.endDate)}`
-                      : ''}
-                </p>
-              )}
-              {ALL_DAYS_ORDER.filter(d => shift.schedule!.dayShiftTimes![d]?.length).map(day => {
-                const blocks = sortBlocks(shift.schedule!.dayShiftTimes![day]);
-                const mins = blocks.reduce((s, b) => s + calcShiftMins(b.start, b.end), 0);
-                return (
-                  <div key={day} className="flex items-center gap-2">
-                    <span className="w-8 text-xs font-semibold text-slate-500">{day}</span>
-                    <span className="text-xs text-slate-700">{blocks.map(b => `${fmtTime(b.start)} – ${fmtTime(b.end)}`).join(', ')}</span>
-                    {mins > 0 && <span className="text-[10px] text-primary-600 font-semibold ml-auto">{fmtHours(mins)}</span>}
-                  </div>
-                );
-              })}
-              {(() => {
-                const total = ALL_DAYS_ORDER.reduce((s, d) => {
-                  return s + (shift.schedule!.dayShiftTimes![d] || []).reduce((ss, b) => ss + calcShiftMins(b.start, b.end), 0);
-                }, 0);
-                return total > 0 ? (
-                  <div className="flex items-center gap-2 pt-0.5 border-t border-slate-100 mt-1">
-                    <span className="text-xs text-slate-400">Total per week</span>
-                    <span className="text-xs font-semibold text-primary-600 ml-auto">{fmtHours(total)}</span>
-                  </div>
-                ) : null;
-              })()}
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-sm text-slate-700">
-            <CalendarDays className="w-4 h-4 text-slate-400 shrink-0" />
-            <span>{fmtDate(shift.date)}</span>
-          </div>
-        )}
-        <div className="flex items-center gap-2 text-sm text-slate-700">
-          <Clock className="w-4 h-4 text-slate-400 shrink-0" />
-          <span>{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}</span>
-        </div>
-        {shift.address && (
-          <div className="flex items-start gap-2 text-sm text-slate-700">
-            <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-            <div>
-              <span>{shift.address}</span>
-              {shift.lifestylePreferences && shift.lifestylePreferences.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {shift.lifestylePreferences.map(p => (
-                    <span key={p} className="text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">{p}</span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-        {shift.rate != null && (
-          <div className="flex items-center gap-2 text-sm text-slate-700">
-            {shift.paymentMethod === 'credit'
-              ? <CreditCard className="w-4 h-4 text-slate-400 shrink-0" />
-              : <Banknote className="w-4 h-4 text-slate-400 shrink-0" />}
-            <span>
-              <span className="font-semibold">${shift.rate}/hr</span>
-              <span className="text-slate-400"> · {shift.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span>
-            </span>
-          </div>
-        )}
-        {shift.notes && (
-          <div className="flex items-start gap-2 text-sm text-slate-500">
-            <FileText className="w-4 h-4 text-slate-300 shrink-0 mt-0.5" />
-            <span>{shift.notes}</span>
-          </div>
-        )}
-
-        {/* Task progress */}
-        {totalTasks > 0 && (
-          <div className="flex items-center gap-2 pt-1">
-            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-primary-500 rounded-full transition-all"
-                style={{ width: `${Math.round((doneCount / totalTasks) * 100)}%` }}
-              />
-            </div>
-            <span className="text-xs text-slate-500 shrink-0">{doneCount}/{totalTasks} tasks</span>
-          </div>
-        )}
-      </div>
-
-      {/* Expand toggle */}
-      {recipients.length > 0 && (
-        <button
-          type="button"
-          onClick={() => setExpanded(e => !e)}
-          className="w-full px-5 py-2.5 border-t border-slate-100 flex items-center justify-between text-sm text-primary-600 font-medium hover:bg-slate-50 transition-colors"
-        >
-          <span>{expanded ? 'Hide care plan' : 'View care plan & tasks'}</span>
-          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-        </button>
-      )}
-
-      {/* Expanded: care recipients + care plan checklist */}
-      {expanded && recipients.length > 0 && (
-        <div className="px-5 py-4 border-t border-slate-100 space-y-5">
-          {recipients.map((r, ri) => {
-            const needs = r.careNeeds || [];
-            const details = r.careNeedDetails || {};
-            const ls = r.lifestyle;
-            return (
-              <div key={ri} className="border-l-4 border-primary-200 pl-3">
-                {/* Recipient header */}
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-9 h-9 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center shrink-0">
-                    {r.photoURL
-                      ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
-                      : <span className="text-primary-700 font-bold text-xs">{r.name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()}</span>
-                    }
-                  </div>
-                  <div>
-                    <p className="font-semibold text-slate-800 text-sm">{r.name}</p>
-                    <p className="text-xs text-slate-400">{[r.relationship, r.age ? `Age ${r.age}` : ''].filter(Boolean).join(' · ')}</p>
-                  </div>
-                </div>
-
-                {/* Care plan checklist */}
-                {needs.length > 0 && (
-                  <div className="space-y-2 mb-3">
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Plan</p>
-                    {needs.map(need => {
-                      const subtasks = details[need] || [];
-                      if (subtasks.length > 0) {
-                        return (
-                          <div key={need}>
-                            <p className="text-xs font-semibold text-primary-700 bg-primary-50 rounded-lg px-3 py-1.5 mb-1">{need}</p>
-                            <div className="space-y-1 pl-2">
-                              {subtasks.map(sub => {
-                                const key = `${ri}_${need}_${sub}`;
-                                const done = localCompleted.includes(key);
-                                return (
-                                  <button
-                                    key={key}
-                                    type="button"
-                                    onClick={() => toggleTask(key)}
-                                    disabled={!inProgress}
-                                    className={`w-full flex items-center gap-2 text-left py-1 group ${inProgress ? '' : 'cursor-default opacity-60'}`}
-                                  >
-                                    <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${done ? 'bg-primary-500 border-primary-500' : inProgress ? 'border-slate-300 group-hover:border-primary-400' : 'border-slate-200 bg-slate-50'}`}>
-                                      {done && <CheckCircle className="w-2.5 h-2.5 text-white" />}
-                                    </div>
-                                    <span className={`text-xs ${done ? 'line-through text-slate-400' : 'text-slate-700'}`}>{sub}</span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      }
-                      const key = `${ri}_${need}`;
-                      const done = localCompleted.includes(key);
-                      return (
-                        <button
-                          key={need}
-                          type="button"
-                          onClick={() => toggleTask(key)}
-                          disabled={!inProgress}
-                          className={`w-full flex items-center gap-2 text-left py-1 group ${inProgress ? '' : 'cursor-default opacity-60'}`}
-                        >
-                          <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${done ? 'bg-primary-500 border-primary-500' : inProgress ? 'border-slate-300 group-hover:border-primary-400' : 'border-slate-200 bg-slate-50'}`}>
-                            {done && <CheckCircle className="w-2.5 h-2.5 text-white" />}
-                          </div>
-                          <span className={`text-xs font-medium ${done ? 'line-through text-slate-400' : 'text-slate-700'}`}>{need}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Lifestyle */}
-                {ls && ((ls.favoriteActivities?.length || 0) > 0 || (ls.helpActivities?.length || 0) > 0 || (ls.entertainment?.length || 0) > 0 || ls.enjoysConversation === true || ls.prefersQuiet === true || ls.familyInArea === true || ls.friendsVisitors === true || ls.hasAppointments === true) && (
-                  <div className="space-y-1.5">
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Lifestyle</p>
-                    {ls.favoriteActivities && ls.favoriteActivities.length > 0 && (
-                      <div>
-                        <p className="text-xs text-slate-400 mb-1">Enjoys</p>
-                        <div className="flex flex-wrap gap-1">
-                          {ls.favoriteActivities.map(a => <span key={a} className="text-xs bg-green-50 text-green-700 border border-green-100 px-2 py-0.5 rounded-full">{a}</span>)}
-                        </div>
-                        {ls.favoriteActivitiesOther && <p className="text-xs text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {ls.favoriteActivitiesOther}</p>}
-                      </div>
-                    )}
-                    {ls.helpActivities && ls.helpActivities.length > 0 && (
-                      <div>
-                        <p className="text-xs text-slate-400 mb-1">Needs help with</p>
-                        <div className="flex flex-wrap gap-1">
-                          {ls.helpActivities.map(a => <span key={a} className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full">{a}</span>)}
-                        </div>
-                        {ls.helpActivitiesOther && <p className="text-xs text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {ls.helpActivitiesOther}</p>}
-                      </div>
-                    )}
-                    {ls.entertainment && ls.entertainment.length > 0 && (
-                      <div>
-                        <p className="text-xs text-slate-400 mb-1">Entertainment</p>
-                        <div className="flex flex-wrap gap-1">
-                          {ls.entertainment.map(a => <span key={a} className="text-xs bg-purple-50 text-purple-700 border border-purple-100 px-2 py-0.5 rounded-full">{a}</span>)}
-                        </div>
-                        {ls.entertainmentOther && <p className="text-xs text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {ls.entertainmentOther}</p>}
-                      </div>
-                    )}
-                    {(() => {
-                      const bools = [
-                        ls.enjoysConversation === true && 'Enjoys conversation',
-                        ls.prefersQuiet === true && 'Prefers quiet',
-                        ls.familyInArea === true && (ls.familyVisitFreq ? `Family in area · ${ls.familyVisitFreq}` : 'Family in area'),
-                        ls.friendsVisitors === true && (ls.friendsVisitFreq ? `Friends or visitors · ${ls.friendsVisitFreq}` : 'Friends or visitors'),
-                        ls.hasAppointments === true && 'Has appointments',
-                      ].filter(Boolean) as string[];
-                      return bools.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {bools.map(p => <span key={p} className="text-xs bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full">{p}</span>)}
-                        </div>
-                      ) : null;
-                    })()}
-                    {ls.hasAppointments === true && ls.appointmentsDetails && (
-                      <p className="text-xs text-slate-500"><span className="font-medium text-slate-400">Appointments:</span> {ls.appointmentsDetails}</p>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-
-          {/* Emergency contact */}
-          {shift.emergencyContact && (shift.emergencyContact.name || shift.emergencyContact.phone) && (
-            <div className="bg-red-50 border border-red-100 rounded-xl px-4 py-3">
-              <p className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-1">Emergency Contact</p>
-              <div className="flex items-center gap-2 text-sm text-red-800">
-                <Phone className="w-3.5 h-3.5 shrink-0" />
-                <span className="font-medium">{shift.emergencyContact.name}</span>
-                {shift.emergencyContact.relationship && <span className="text-red-500">· {shift.emergencyContact.relationship}</span>}
-                {shift.emergencyContact.phone && <span className="font-semibold">{shift.emergencyContact.phone}</span>}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Actions */}
-      <div className="px-5 py-3 border-t border-slate-100 bg-slate-50 flex items-center gap-2 flex-wrap">
-        <button
-          onClick={() => navigate(`/caregiver/inbox?client=${shift.clientId}`)}
-          className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 bg-white rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors"
-        >
-          <MessageSquare className="w-4 h-4" /> Message
-        </button>
-
-        {shift.status === 'scheduled' && (
-          <>
-            <button
-              onClick={handleStartShift}
-              disabled={submitting}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors ml-auto"
-            >
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-              Start Shift
-            </button>
-            {onCancel && (
-              <button
-                onClick={() => onCancel(shift.id)}
-                className="inline-flex items-center gap-1.5 px-3 py-2 border border-red-200 bg-white rounded-xl text-sm text-red-500 hover:bg-red-50 transition-colors"
-              >
-                <XCircle className="w-4 h-4" /> Cancel
-              </button>
-            )}
-          </>
-        )}
-
-        {shift.status === 'in-progress' && !endingShift && (
-          <button
-            onClick={() => setEndingShift(true)}
-            disabled={submitting}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors ml-auto"
-          >
-            <CheckCircle className="w-4 h-4" /> End Shift
-          </button>
-        )}
-      </div>
-
-      {/* End shift — notes step */}
-      {shift.status === 'in-progress' && endingShift && (
-        <div className="px-5 pb-4 space-y-2 border-t border-slate-100 pt-3">
-          <textarea
-            value={endNotes}
-            onChange={e => setEndNotes(e.target.value)}
-            placeholder="Add shift notes (optional)…"
-            rows={3}
-            className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-green-200 resize-none"
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={() => setEndingShift(false)}
-              className="flex-1 py-2 border border-slate-200 rounded-xl text-slate-600 text-sm hover:bg-slate-50"
-            >
-              Back
-            </button>
-            <button
-              onClick={() => handleEndShift(endNotes)}
-              disabled={submitting}
-              className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 disabled:opacity-50"
-            >
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-              Complete
-            </button>
-          </div>
-        </div>
-      )}
-
-    </div>
-  );
-};
-
 // ── Past Booking Group Card ──────────────────────────────────────────────────
 
 const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
   const navigate = useNavigate();
   const base = shifts[0];
   const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
+  const [showAllShifts, setShowAllShifts] = useState(false);
 
   const completedCount = shifts.filter(s => s.status === 'completed').length;
   const cancelledCount = shifts.filter(s => s.status === 'cancelled').length;
@@ -1569,7 +1194,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
 
       {/* Shift rows */}
       <div className="border-t border-slate-100">
-        {shifts.map(shift => {
+        {(showAllShifts ? shifts : shifts.slice(0, 2)).map(shift => {
           const isCompleted = shift.status === 'completed';
           const isOpen = expandedShiftId === shift.id;
           const actualStart = fmtTs(shift.startedAt);
@@ -1609,7 +1234,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
               </div>
               {isCompleted && isOpen && (
                 <div className="px-5 pb-4 pt-3 space-y-3 bg-slate-50 border-t border-slate-100">
-                  {/* Scheduled + Actual times */}
+                  {/* Scheduled + Started/Ended times */}
                   <div className="space-y-1">
                     <div className="flex items-center gap-3 text-xs">
                       <span className="w-20 text-slate-400 shrink-0">Scheduled</span>
@@ -1617,78 +1242,118 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
                     </div>
                     {(actualStart || actualEnd) && (
                       <div className="flex items-center gap-3 text-xs">
-                        <span className="w-20 text-slate-400 shrink-0">Actual</span>
-                        <span className="font-semibold text-slate-700">{actualStart}{actualEnd ? ` – ${actualEnd}` : ''}</span>
-                        {duration && <span className="font-semibold text-primary-600">{duration}</span>}
+                        <span className="w-20 text-slate-400 shrink-0">Started</span>
+                        <span className="font-semibold text-slate-700">
+                          {actualStart}{actualEnd ? <span className="text-slate-400 font-normal"> · Ended </span> : ''}{actualEnd}
+                          {duration && <span className="text-primary-600 font-semibold"> · {duration}</span>}
+                        </span>
                       </div>
                     )}
                   </div>
-                  {/* Tasks per recipient */}
+                  {/* Tasks per recipient — care plan card format */}
                   {(() => {
-                    const doneRaw = shift.tasksCompleted || [];
-                    const stripPfx2 = (k: string) => k.replace(/^\d+_/, '');
-                    const recipients = (shift.careRecipients || []) as Array<{ name: string; relationship?: string; age?: string; photoURL?: string | null; careNeeds?: string[] }>;
-                    const hasRecipients = recipients.some(r => (r.careNeeds || []).length > 0);
-                    if (hasRecipients) {
-                      return (
-                        <div>
-                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tasks</p>
+                    const doneRaw: string[] = shift.tasksCompleted || [];
+                    const recipients = (shift.careRecipients || []) as Array<{ name: string; relationship?: string; age?: string; photoURL?: string | null; careNeeds?: string[]; careNeedDetails?: Record<string, string[]> }>;
+                    const hasTasks = recipients.some(r => (r.careNeeds || []).length > 0) || (shift.careNeeds || []).length > 0;
+                    if (!hasTasks) return null;
+
+                    // Compute total/done for header count
+                    let totalT = 0; let doneT = 0;
+                    if (recipients.some(r => (r.careNeeds || []).length > 0)) {
+                      recipients.forEach((r, ri) => {
+                        (r.careNeeds || []).forEach(cat => {
+                          const subs = (r.careNeedDetails || {})[cat] || [];
+                          if (subs.length > 0) {
+                            totalT += subs.length;
+                            doneT += subs.filter((sub: string) => doneRaw.includes(`${ri}_${cat}_${sub}`)).length;
+                          } else {
+                            totalT += 1;
+                            doneT += doneRaw.includes(`${ri}_${cat}`) ? 1 : 0;
+                          }
+                        });
+                      });
+                    } else {
+                      totalT = (shift.careNeeds || []).length;
+                      doneT = doneRaw.filter((k: string) => (shift.careNeeds || []).includes(k)).length;
+                    }
+
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tasks</p>
+                          {totalT > 0 && (
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${doneT === totalT ? 'bg-green-100 text-green-700' : doneT > 0 ? 'bg-slate-100 text-slate-500' : 'bg-slate-100 text-slate-500'}`}>
+                              {doneT}/{totalT}
+                            </span>
+                          )}
+                        </div>
+                        {recipients.some(r => (r.careNeeds || []).length > 0) ? (
                           <div className="space-y-3">
                             {recipients.map((r, ri) => {
-                              const rDone = [...new Set(doneRaw.filter(k => k.startsWith(`${ri}_`)).map(stripPfx2))];
-                              const rDoneSet = new Set(rDone);
-                              const rNeeds = r.careNeeds || [];
-                              const rNotDone = rNeeds.filter(t => !rDoneSet.has(t));
-                              if (rDone.length === 0 && rNotDone.length === 0) return null;
+                              const cats = r.careNeeds || [];
+                              const det = r.careNeedDetails || {};
+                              if (cats.length === 0) return null;
                               return (
                                 <div key={ri}>
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <div className="w-6 h-6 rounded-full overflow-hidden bg-slate-200 shrink-0 flex items-center justify-center">
-                                      {r.photoURL
-                                        ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
-                                        : <span className="text-[9px] font-bold text-slate-500">{r.name.split(' ').map((p: string) => p[0]).join('').slice(0,2).toUpperCase()}</span>}
+                                  {(
+                                    <div className="flex items-center gap-1.5 mb-1.5">
+                                      <div className="w-5 h-5 rounded-full overflow-hidden bg-primary-100 shrink-0 flex items-center justify-center">
+                                        {r.photoURL
+                                          ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
+                                          : <span className="text-[9px] font-bold text-primary-600">{r.name.split(' ').map((p: string) => p[0]).join('').slice(0,2).toUpperCase()}</span>}
+                                      </div>
+                                      <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.age ? ` · Age ${r.age}` : ''}</p>
                                     </div>
-                                    <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.age ? ` · Age ${r.age}` : ''}</p>
-                                  </div>
-                                  <div className="space-y-0.5">
-                                    {rDone.map((t, i) => (
-                                      <div key={i} className="flex items-center gap-2 text-xs text-green-700">
-                                        <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />{t}
-                                      </div>
-                                    ))}
-                                    {rNotDone.map((t, i) => (
-                                      <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
-                                        <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />{t}
-                                      </div>
-                                    ))}
+                                  )}
+                                  <div className="space-y-1.5">
+                                    {cats.map((cat, ci) => {
+                                      const subs = det[cat] || [];
+                                      const doneSubCount = subs.filter((sub: string) => doneRaw.includes(`${ri}_${cat}_${sub}`)).length;
+                                      const catDone = subs.length > 0 ? doneSubCount === subs.length : doneRaw.includes(`${ri}_${cat}`);
+                                      return (
+                                        <div key={ci} className="border border-slate-200 rounded-xl overflow-hidden">
+                                          <div className={`flex items-center gap-2 px-3 py-2 ${catDone ? 'bg-green-50' : 'bg-slate-50'}`}>
+                                            <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${catDone ? 'text-green-500' : 'text-slate-300'}`} />
+                                            <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{cat}</p>
+                                            {subs.length > 0 && doneSubCount > 0 && (
+                                              <span className={`text-[10px] font-semibold ${catDone ? 'text-green-600' : 'text-slate-400'}`}>{doneSubCount}/{subs.length}</span>
+                                            )}
+                                          </div>
+                                          {subs.length > 0 && (
+                                            <div className="px-3 py-2 space-y-1">
+                                              {subs.map((sub: string, si: number) => {
+                                                const done = doneRaw.includes(`${ri}_${cat}_${sub}`);
+                                                return (
+                                                  <div key={si} className={`flex items-center gap-2 text-xs font-medium ${done ? 'text-green-700' : 'text-slate-400'}`}>
+                                                    <CheckCircle className={`w-3.5 h-3.5 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                                                    {sub}
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 </div>
                               );
                             })}
                           </div>
-                        </div>
-                      );
-                    }
-                    // Fallback: flat careNeeds
-                    const doneNames2 = [...new Set(doneRaw.map(stripPfx2))];
-                    const doneSet2 = new Set(doneNames2);
-                    const notDone2 = (shift.careNeeds || []).filter(t => !doneSet2.has(stripPfx2(t)));
-                    if (doneNames2.length === 0 && notDone2.length === 0) return null;
-                    return (
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Tasks</p>
-                        <div className="space-y-0.5">
-                          {doneNames2.map((t, i) => (
-                            <div key={i} className="flex items-center gap-2 text-xs text-green-700">
-                              <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />{t}
-                            </div>
-                          ))}
-                          {notDone2.map((t, i) => (
-                            <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
-                              <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />{t}
-                            </div>
-                          ))}
-                        </div>
+                        ) : (
+                          // Fallback: flat careNeeds list
+                          <div className="space-y-0.5">
+                            {(shift.careNeeds || []).map((t: string, i: number) => {
+                              const done = doneRaw.includes(t);
+                              return (
+                                <div key={i} className={`flex items-center gap-2 text-xs ${done ? 'text-green-700' : 'text-slate-400'}`}>
+                                  <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                                  {t}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
@@ -1704,6 +1369,18 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
             </div>
           );
         })}
+        {shifts.length > 2 && (
+          <button
+            type="button"
+            onClick={() => setShowAllShifts(v => !v)}
+            className="w-full py-2.5 border-t border-slate-100 text-xs text-slate-500 hover:text-slate-700 flex items-center justify-center gap-1 transition-colors"
+          >
+            {showAllShifts
+              ? <><ChevronUp className="w-3.5 h-3.5" /> Show less</>
+              : <><ChevronDown className="w-3.5 h-3.5" /> Show {shifts.length - 2} more shift{shifts.length - 2 !== 1 ? 's' : ''}</>
+            }
+          </button>
+        )}
       </div>
 
     </div>

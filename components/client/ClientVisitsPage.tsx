@@ -137,7 +137,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   const sorted = [...shifts].sort((a, b) => a.date.localeCompare(b.date));
-  const preview = showAll ? sorted : sorted.slice(0, 3);
+  const preview = showAll ? sorted : sorted.slice(0, 2);
   const ongoing = base.schedule?.ongoing ?? base.recurringWeekly ?? false;
   const endDate  = base.schedule?.endDate;
   const schedule = weeklyScheduleSummary(base);
@@ -390,14 +390,14 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
             </div>
           ))}
         </div>
-        {sorted.length > 3 && (
+        {sorted.length > 2 && (
           <button
             onClick={() => setShowAll(v => !v)}
             className="w-full py-2.5 text-xs text-slate-500 hover:text-slate-700 flex items-center justify-center gap-1 transition-colors"
           >
             {showAll
               ? <><ChevronUp className="w-3.5 h-3.5" /> Show less</>
-              : <><ChevronDown className="w-3.5 h-3.5" /> Show {sorted.length - 3} more shifts</>
+              : <><ChevronDown className="w-3.5 h-3.5" /> Show {sorted.length - 2} more shifts</>
             }
           </button>
         )}
@@ -437,7 +437,7 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
   const completedCount = shifts.filter(s => s.status === 'completed').length;
   const cancelledCount = shifts.filter(s => s.status === 'cancelled').length;
 
-  const preview = expanded ? sorted : sorted.slice(0, 4);
+  const preview = expanded ? sorted : sorted.slice(0, 2);
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
@@ -485,12 +485,6 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
           const actualStart = fmtTs(s.startedAt);
           const actualEnd   = fmtTs(s.completedAt);
           const duration    = fmtDuration(s.startedAt, s.completedAt);
-          const stripPfx    = (k: string) => k.replace(/^\d+_/, '');
-          const allTasks    = s.careNeeds || [];
-          const rawDone     = s.tasksCompleted || [];
-          const doneNames   = [...new Set(rawDone.map(stripPfx))];
-          const doneSet     = new Set(doneNames);
-          const notDone     = allTasks.filter(t => !doneSet.has(stripPfx(t)));
           return (
             <div key={s.id}>
               <div
@@ -532,7 +526,7 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
               </div>
               {isCompleted && isOpen && (
                 <div className="px-5 pb-4 pt-3 space-y-3 bg-slate-50 border-t border-slate-100">
-                  {/* Scheduled + Actual times */}
+                  {/* Scheduled + Started times */}
                   <div className="space-y-1">
                     <div className="flex items-center gap-3 text-xs">
                       <span className="w-20 text-slate-400 shrink-0">Scheduled</span>
@@ -540,78 +534,101 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
                     </div>
                     {(actualStart || actualEnd) && (
                       <div className="flex items-center gap-3 text-xs">
-                        <span className="w-20 text-slate-400 shrink-0">Actual</span>
-                        <span className="font-semibold text-slate-700">{actualStart}{actualEnd ? ` – ${actualEnd}` : ''}</span>
-                        {duration && <span className="font-semibold text-primary-600">{duration}</span>}
+                        <span className="w-20 text-slate-400 shrink-0">Started</span>
+                        <span className="font-semibold text-slate-700">
+                          {actualStart}
+                          {actualEnd && <><span className="text-slate-400 font-normal"> · Ended </span>{actualEnd}</>}
+                          {duration && <span className="text-primary-600 font-semibold"> · {duration}</span>}
+                        </span>
                       </div>
                     )}
                   </div>
-                  {/* Tasks per recipient */}
+                  {/* Tasks per recipient — care plan card format */}
                   {(() => {
-                    const doneRaw = s.tasksCompleted || [];
-                    const sp = (k: string) => k.replace(/^\d+_/, '');
-                    const recipients = s.careRecipients || [];
-                    const hasRecipients = recipients.some(r => (r.careNeeds || []).length > 0);
-                    if (hasRecipients) {
-                      return (
-                        <div>
-                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tasks</p>
-                          <div className="space-y-3">
-                            {recipients.map((r, ri) => {
-                              const rDone = [...new Set(doneRaw.filter(k => k.startsWith(`${ri}_`)).map(sp))];
-                              const rDoneSet = new Set(rDone);
-                              const rNeeds = r.careNeeds || [];
-                              const rNotDone = rNeeds.filter(t => !rDoneSet.has(t));
-                              if (rDone.length === 0 && rNotDone.length === 0) return null;
-                              return (
-                                <div key={ri}>
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <div className="w-6 h-6 rounded-full overflow-hidden bg-slate-200 shrink-0 flex items-center justify-center">
-                                      {r.photoURL
-                                        ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
-                                        : <span className="text-[9px] font-bold text-slate-500">{r.name.split(' ').map((p: string) => p[0]).join('').slice(0,2).toUpperCase()}</span>}
-                                    </div>
-                                    <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.age ? ` · Age ${r.age}` : ''}</p>
-                                  </div>
-                                  <div className="space-y-0.5">
-                                    {rDone.map((t, i) => (
-                                      <div key={i} className="flex items-center gap-2 text-xs text-green-700">
-                                        <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />{t}
-                                      </div>
-                                    ))}
-                                    {rNotDone.map((t, i) => (
-                                      <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
-                                        <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />{t}
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
+                    const doneRaw: string[] = s.tasksCompleted || [];
+                    const recipients = (s.careRecipients || []) as Array<{ name: string; relationship?: string; age?: string; photoURL?: string | null; careNeeds?: string[]; careNeedDetails?: Record<string, string[]> }>;
+                    const hasTasks = recipients.some(r => (r.careNeeds || []).length > 0) || (s.careNeeds || []).length > 0;
+                    if (!hasTasks) return null;
+
+                    let totalT = 0; let doneT = 0;
+                    if (recipients.some(r => (r.careNeeds || []).length > 0)) {
+                      recipients.forEach((r, ri) => {
+                        (r.careNeeds || []).forEach(cat => {
+                          const subs = (r.careNeedDetails || {})[cat] || [];
+                          if (subs.length > 0) { totalT += subs.length; doneT += subs.filter((sub: string) => doneRaw.includes(`${ri}_${cat}_${sub}`)).length; }
+                          else { totalT += 1; doneT += doneRaw.includes(`${ri}_${cat}`) ? 1 : 0; }
+                        });
+                      });
+                    } else {
+                      totalT = (s.careNeeds || []).length;
+                      doneT = doneRaw.filter((k: string) => (s.careNeeds || []).includes(k)).length;
                     }
-                    // Fallback: flat careNeeds
-                    const dn = [...new Set(doneRaw.map(sp))];
-                    const dnSet = new Set(dn);
-                    const nd = (s.careNeeds || []).filter(t => !dnSet.has(sp(t)));
-                    if (dn.length === 0 && nd.length === 0) return null;
+
+                    const renderCards = (careNeeds: string[], careNeedDetails: Record<string, string[]>, ri: number) => (
+                      <div className="space-y-1.5">
+                        {careNeeds.map((cat, ci) => {
+                          const subs = careNeedDetails[cat] || [];
+                          const doneSubCount = subs.filter((sub: string) => doneRaw.includes(`${ri}_${cat}_${sub}`)).length;
+                          const catDone = subs.length > 0 ? doneSubCount === subs.length : doneRaw.includes(`${ri}_${cat}`);
+                          return (
+                            <div key={ci} className="border border-slate-200 rounded-xl overflow-hidden">
+                              <div className={`flex items-center gap-2 px-3 py-2 ${catDone ? 'bg-green-50' : 'bg-slate-50'}`}>
+                                <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${catDone ? 'text-green-500' : 'text-slate-300'}`} />
+                                <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{cat}</p>
+                                {subs.length > 0 && doneSubCount > 0 && (
+                                  <span className={`text-[10px] font-semibold ${catDone ? 'text-green-600' : 'text-slate-400'}`}>{doneSubCount}/{subs.length}</span>
+                                )}
+                              </div>
+                              {subs.length > 0 && (
+                                <div className="px-3 py-2 space-y-1">
+                                  {subs.map((sub: string, si: number) => {
+                                    const done = doneRaw.includes(`${ri}_${cat}_${sub}`);
+                                    return (
+                                      <div key={si} className={`flex items-center gap-2 text-xs font-medium ${done ? 'text-green-700' : 'text-slate-400'}`}>
+                                        <CheckCircle className={`w-3.5 h-3.5 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                                        {sub}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+
                     return (
                       <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Tasks</p>
-                        <div className="space-y-0.5">
-                          {dn.map((t, i) => (
-                            <div key={i} className="flex items-center gap-2 text-xs text-green-700">
-                              <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />{t}
-                            </div>
-                          ))}
-                          {nd.map((t, i) => (
-                            <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
-                              <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />{t}
-                            </div>
-                          ))}
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tasks</p>
+                          {totalT > 0 && (
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${doneT === totalT ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                              {doneT}/{totalT}
+                            </span>
+                          )}
                         </div>
+                        {recipients.some(r => (r.careNeeds || []).length > 0)
+                          ? recipients.map((r, ri) => {
+                              const needs = r.careNeeds || [];
+                              if (needs.length === 0) return null;
+                              return (
+                                <div key={ri} className="mb-3">
+                                  {(
+                                    <div className="flex items-center gap-2 mb-1.5">
+                                      <div className="w-5 h-5 rounded-full overflow-hidden bg-primary-100 shrink-0 flex items-center justify-center">
+                                        {r.photoURL
+                                          ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
+                                          : <span className="text-[9px] font-bold text-primary-600">{r.name.split(' ').map((p: string) => p[0]).join('').slice(0,2).toUpperCase()}</span>}
+                                      </div>
+                                      <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.age ? ` · Age ${r.age}` : ''}</p>
+                                    </div>
+                                  )}
+                                  {renderCards(needs, r.careNeedDetails || {}, ri)}
+                                </div>
+                              );
+                            })
+                          : renderCards(s.careNeeds || [], {}, 0)}
                       </div>
                     );
                   })()}
@@ -627,14 +644,14 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
             </div>
           );
         })}
-        {sorted.length > 4 && (
+        {sorted.length > 2 && (
           <button
             onClick={() => setExpanded(v => !v)}
             className="w-full py-2.5 text-xs text-slate-500 hover:text-slate-700 flex items-center justify-center gap-1 transition-colors"
           >
             {expanded
               ? <><ChevronUp className="w-3.5 h-3.5" /> Show less</>
-              : <><ChevronDown className="w-3.5 h-3.5" /> Show {sorted.length - 4} more shifts</>
+              : <><ChevronDown className="w-3.5 h-3.5" /> Show {sorted.length - 2} more shifts</>
             }
           </button>
         )}

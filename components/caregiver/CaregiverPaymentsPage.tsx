@@ -232,7 +232,7 @@ const Divider: React.FC = () => <div className="w-px h-8 bg-slate-100 shrink-0" 
 
 const STATUS_LABEL: Record<string, string> = {
   pending_client_review:     'Pending client review',
-  correction_proposed:       'Client proposed correction',
+  correction_proposed:       'Correction Received',
   caregiver_counter_proposed: 'Counter sent',
   approved:                  'Approved',
   auto_approved:             'Auto-approved',
@@ -670,6 +670,9 @@ const PendingShiftRow: React.FC<{
             </button>
           </div>
         )}
+        {showDetailModal && (
+          <ShiftDetailModal shiftId={row.appointmentId} onClose={() => setShowDetailModal(false)} />
+        )}
       </div>
     );
   }
@@ -709,12 +712,15 @@ const PendingShiftRow: React.FC<{
             <Col label="Method"   value={method}                                 className="shrink-0 w-[46px]" />
             <div className="flex items-center gap-1.5 shrink-0 ml-auto">
               <span className="text-xs font-medium px-2 py-0.5 rounded-full border bg-orange-50 text-orange-700 border-orange-200 whitespace-nowrap">
-                Correction requested
+                Correction Received
               </span>
               {pendingOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
             </div>
           </div>
 
+          {showDetailModal && (
+            <ShiftDetailModal shiftId={row.appointmentId} onClose={() => setShowDetailModal(false)} />
+          )}
           {/* Expanded detail */}
           {pendingOpen && (
             <div className="border-t border-orange-100 px-4 pt-3 pb-4 space-y-3">

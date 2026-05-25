@@ -794,7 +794,6 @@ const BookingGroupCard: React.FC<{
         <div key={amendment.id} className="border-t border-violet-100 bg-violet-50 px-5 py-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-1">Recurring Schedule Request</p>
               <div className="space-y-0.5 mb-1">
                 {ALL_DAYS_ORDER.filter(d => amendment.newDays[d]?.length).map(day => (
                   <p key={day} className="text-xs text-slate-700">
@@ -2054,7 +2053,6 @@ export const CaregiverBookingsPage: React.FC = () => {
                     <div className="border-t border-violet-100 bg-violet-50 px-5 py-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-1">Recurring Schedule Request</p>
                           <div className="space-y-0.5 mb-1">
                             {ALL_DAYS_ORDER.filter(d => a.newDays?.[d]?.length).map(day => (
                               <p key={day} className="text-xs text-slate-700">

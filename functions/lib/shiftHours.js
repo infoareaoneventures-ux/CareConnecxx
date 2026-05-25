@@ -188,7 +188,7 @@ exports.submitShiftHours = functions.https.onCall(async (data, context) => {
         const clientUserSnap = await db.collection("users").doc(shiftDoc.clientId).get();
         const clientPhone = (_a = clientUserSnap.data()) === null || _a === void 0 ? void 0 : _a.phone;
         if (clientPhone) {
-            const amount = (totalHours * payRate).toFixed(2);
+            const amount = grossPay.toFixed(2);
             const { sendToPhone } = await Promise.resolve().then(() => __importStar(require("./linq/client")));
             await sendToPhone(clientPhone, `${(_b = caregiverData.name) !== null && _b !== void 0 ? _b : "Your caregiver"} submitted ${totalHours}h for ` +
                 `${(_c = shiftDoc.date) !== null && _c !== void 0 ? _c : "today"}'s visit ($${amount}).\n\n` +
@@ -212,7 +212,7 @@ exports.submitShiftHours = functions.https.onCall(async (data, context) => {
  * Client approves, proposes a correction, accepts a counter-proposal, or escalates.
  */
 exports.reviewShiftHours = functions.https.onCall(async (data, context) => {
-    var _a, _b;
+    var _a, _b, _c;
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
     }
@@ -238,12 +238,19 @@ exports.reviewShiftHours = functions.https.onCall(async (data, context) => {
     }
     const now = nowIso();
     if (action === 'approve') {
+        const approvedBasePay = Math.round(shift.submittedTotalHours * shift.payRate * 100) / 100;
+        const approvedLineItems = Array.isArray(shift.lineItems) ? shift.lineItems : [];
+        const approvedLineItemsTotal = Math.round(approvedLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0) * 100) / 100;
+        const approvedGrossPay = (_a = shift.grossPay) !== null && _a !== void 0 ? _a : Math.round((approvedBasePay + approvedLineItemsTotal) * 100) / 100;
         await ref.update({
             status: 'approved',
             finalStartTime: shift.submittedStartTime,
             finalEndTime: shift.submittedEndTime,
             finalTotalHours: shift.submittedTotalHours,
-            grossPay: Math.round(shift.submittedTotalHours * shift.payRate * 100) / 100,
+            basePay: approvedBasePay,
+            lineItems: approvedLineItems,
+            lineItemsTotal: approvedLineItemsTotal,
+            grossPay: approvedGrossPay,
             resolvedAt: now,
             resolvedBy: 'client',
             updatedAt: now,
@@ -254,6 +261,10 @@ exports.reviewShiftHours = functions.https.onCall(async (data, context) => {
                 startTime: shift.submittedStartTime,
                 endTime: shift.submittedEndTime,
                 hours: shift.submittedTotalHours,
+                lineItems: approvedLineItems,
+                lineItemsTotal: approvedLineItemsTotal,
+                basePay: approvedBasePay,
+                grossPay: approvedGrossPay,
             }),
         });
         await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Your hours were approved', `Client approved ${shift.submittedTotalHours}h.`, { appointmentId });
@@ -265,7 +276,7 @@ exports.reviewShiftHours = functions.https.onCall(async (data, context) => {
         }
         const proposedTotalHours = computeTotalHours(proposedStartTime, proposedEndTime);
         const correctionRespondByAt = new Date(Date.now() + ONE_DAY_MS).toISOString();
-        const proposedLineItems = Array.isArray(rawLineItems) ? rawLineItems : ((_a = shift.lineItems) !== null && _a !== void 0 ? _a : []);
+        const proposedLineItems = Array.isArray(rawLineItems) ? rawLineItems : ((_b = shift.lineItems) !== null && _b !== void 0 ? _b : []);
         const proposedLineItemsTotal = proposedLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0);
         const proposedBasePay = Math.round(proposedTotalHours * shift.payRate * 100) / 100;
         const proposedGrossPay = Math.round((proposedBasePay + proposedLineItemsTotal) * 100) / 100;
@@ -306,7 +317,7 @@ exports.reviewShiftHours = functions.https.onCall(async (data, context) => {
         const counterBasePay = Math.round(counterHours * shift.payRate * 100) / 100;
         const safeCounterLineItems = Array.isArray(shift.counterLineItems) ? shift.counterLineItems : [];
         const counterLineItemsTotal = Math.round(safeCounterLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0) * 100) / 100;
-        const acceptedGrossPay = (_b = shift.counterGrossPay) !== null && _b !== void 0 ? _b : Math.round((counterBasePay + counterLineItemsTotal) * 100) / 100;
+        const acceptedGrossPay = (_c = shift.counterGrossPay) !== null && _c !== void 0 ? _c : Math.round((counterBasePay + counterLineItemsTotal) * 100) / 100;
         await ref.update({
             status: 'approved',
             finalStartTime: shift.counterStartTime,
@@ -376,17 +387,19 @@ exports.respondToCorrection = functions.https.onCall(async (data, context) => {
     const now = nowIso();
     if (action === 'accept') {
         const finalLineItems = Array.isArray(shift.proposedLineItems) ? shift.proposedLineItems : ((_a = shift.lineItems) !== null && _a !== void 0 ? _a : []);
-        const finalLineItemsTotal = finalLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0);
+        const finalLineItemsTotal = Math.round(finalLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0) * 100) / 100;
+        const finalBasePay = Math.round(shift.proposedTotalHours * shift.payRate * 100) / 100;
         const finalGrossPay = shift.proposedGrossPay != null
             ? shift.proposedGrossPay
-            : Math.round((shift.proposedTotalHours * shift.payRate + finalLineItemsTotal) * 100) / 100;
+            : Math.round((finalBasePay + finalLineItemsTotal) * 100) / 100;
         await ref.update({
             status: 'approved',
             finalStartTime: shift.proposedStartTime,
             finalEndTime: shift.proposedEndTime,
             finalTotalHours: shift.proposedTotalHours,
-            finalLineItems,
-            finalLineItemsTotal,
+            lineItems: finalLineItems,
+            lineItemsTotal: finalLineItemsTotal,
+            basePay: finalBasePay,
             grossPay: finalGrossPay,
             resolvedAt: now,
             resolvedBy: 'caregiver',
@@ -398,6 +411,10 @@ exports.respondToCorrection = functions.https.onCall(async (data, context) => {
                 startTime: shift.proposedStartTime,
                 endTime: shift.proposedEndTime,
                 hours: shift.proposedTotalHours,
+                lineItems: finalLineItems,
+                lineItemsTotal: finalLineItemsTotal,
+                basePay: finalBasePay,
+                grossPay: finalGrossPay,
             }),
         });
         await pushNotification(shift.clientId, 'shift_hours_approved', 'Caregiver accepted correction', `${shift.caregiverName} accepted your proposed ${shift.proposedTotalHours}h.`, { appointmentId });
@@ -462,12 +479,19 @@ exports.adminResolveShiftHours = functions.https.onCall(async (data, context) =>
     }
     const finalTotalHours = computeTotalHours(finalStartTime, finalEndTime);
     const now = nowIso();
+    const adminBasePay = Math.round(finalTotalHours * shift.payRate * 100) / 100;
+    const adminLineItems = Array.isArray(shift.lineItems) ? shift.lineItems : [];
+    const adminLineItemsTotal = Math.round(adminLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0) * 100) / 100;
+    const adminGrossPay = Math.round((adminBasePay + adminLineItemsTotal) * 100) / 100;
     await ref.update({
         status: 'approved',
         finalStartTime,
         finalEndTime,
         finalTotalHours,
-        grossPay: Math.round(finalTotalHours * shift.payRate * 100) / 100,
+        basePay: adminBasePay,
+        lineItems: adminLineItems,
+        lineItemsTotal: adminLineItemsTotal,
+        grossPay: adminGrossPay,
         resolvedAt: now,
         resolvedBy: 'admin',
         adminAssignedTo: context.auth.uid,
@@ -480,6 +504,10 @@ exports.adminResolveShiftHours = functions.https.onCall(async (data, context) =>
             startTime: finalStartTime,
             endTime: finalEndTime,
             hours: finalTotalHours,
+            lineItems: adminLineItems,
+            lineItemsTotal: adminLineItemsTotal,
+            basePay: adminBasePay,
+            grossPay: adminGrossPay,
             note: note || null,
         }),
     });
@@ -516,6 +544,7 @@ exports.retryShiftPayment = functions.https.onCall(async (data, context) => {
  * Auto-approve shifts the client hasn't touched within 24h.
  */
 exports.autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').onRun(async () => {
+    var _a;
     const now = nowIso();
     const snap = await db.collection('shiftHours')
         .where('status', '==', 'pending_client_review')
@@ -524,12 +553,19 @@ exports.autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').onRun
         .get();
     for (const doc of snap.docs) {
         const shift = doc.data();
+        const autoBasePay = Math.round(shift.submittedTotalHours * shift.payRate * 100) / 100;
+        const autoLineItems = Array.isArray(shift.lineItems) ? shift.lineItems : [];
+        const autoLineItemsTotal = Math.round(autoLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0) * 100) / 100;
+        const autoGrossPay = (_a = shift.grossPay) !== null && _a !== void 0 ? _a : Math.round((autoBasePay + autoLineItemsTotal) * 100) / 100;
         await doc.ref.update({
             status: 'auto_approved',
             finalStartTime: shift.submittedStartTime,
             finalEndTime: shift.submittedEndTime,
             finalTotalHours: shift.submittedTotalHours,
-            grossPay: Math.round(shift.submittedTotalHours * shift.payRate * 100) / 100,
+            basePay: autoBasePay,
+            lineItems: autoLineItems,
+            lineItemsTotal: autoLineItemsTotal,
+            grossPay: autoGrossPay,
             resolvedAt: now,
             resolvedBy: 'system_auto_approve',
             updatedAt: now,
@@ -554,20 +590,35 @@ exports.autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').onRun(
         const shift = doc.data();
         const autoFinalLineItems = Array.isArray(shift.proposedLineItems) ? shift.proposedLineItems : ((_a = shift.lineItems) !== null && _a !== void 0 ? _a : []);
         const autoFinalLineItemsTotal = autoFinalLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0);
+        const autoFinalBasePay = Math.round(shift.proposedTotalHours * shift.payRate * 100) / 100;
+        const autoFinalLineItemsTotalRounded = Math.round(autoFinalLineItemsTotal * 100) / 100;
         const autoFinalGrossPay = shift.proposedGrossPay != null
             ? shift.proposedGrossPay
-            : Math.round((shift.proposedTotalHours * shift.payRate + autoFinalLineItemsTotal) * 100) / 100;
+            : Math.round((autoFinalBasePay + autoFinalLineItemsTotalRounded) * 100) / 100;
         await doc.ref.update({
             status: 'approved',
             finalStartTime: shift.proposedStartTime,
             finalEndTime: shift.proposedEndTime,
             finalTotalHours: shift.proposedTotalHours,
-            finalLineItems: autoFinalLineItems,
-            finalLineItemsTotal: autoFinalLineItemsTotal,
+            lineItems: autoFinalLineItems,
+            lineItemsTotal: autoFinalLineItemsTotalRounded,
+            basePay: autoFinalBasePay,
             grossPay: autoFinalGrossPay,
             resolvedAt: now,
             resolvedBy: 'system_auto_accept',
             updatedAt: now,
+            correctionHistory: admin.firestore.FieldValue.arrayUnion({
+                by: 'system',
+                action: 'accepted',
+                at: now,
+                startTime: shift.proposedStartTime,
+                endTime: shift.proposedEndTime,
+                hours: shift.proposedTotalHours,
+                lineItems: autoFinalLineItems,
+                lineItemsTotal: autoFinalLineItemsTotalRounded,
+                basePay: autoFinalBasePay,
+                grossPay: autoFinalGrossPay,
+            }),
         });
         await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Correction auto-accepted', `You did not respond in 24h; client's ${shift.proposedTotalHours}h proposal was accepted.`, { appointmentId: doc.id });
         await pushNotification(shift.clientId, 'shift_hours_approved', 'Correction auto-accepted', `Caregiver did not respond; your proposed ${shift.proposedTotalHours}h is final.`, { appointmentId: doc.id });
@@ -761,6 +812,7 @@ exports.confirmCashReceived = functions.https.onCall(async (data, context) => {
  * Approve shift hours on behalf of the client via iMessage reply.
  */
 async function approveShiftHoursForClient(appointmentId) {
+    var _a;
     const snap = await db.collection("shiftHours")
         .where("appointmentId", "==", appointmentId)
         .where("status", "==", "pending_client_review")
@@ -768,8 +820,22 @@ async function approveShiftHoursForClient(appointmentId) {
         .get();
     if (snap.empty)
         return;
+    const iMsgShift = snap.docs[0].data();
+    const iMsgBasePay = Math.round(iMsgShift.submittedTotalHours * iMsgShift.payRate * 100) / 100;
+    const iMsgLineItems = Array.isArray(iMsgShift.lineItems) ? iMsgShift.lineItems : [];
+    const iMsgLineItemsTotal = Math.round(iMsgLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0) * 100) / 100;
+    const iMsgGrossPay = (_a = iMsgShift.grossPay) !== null && _a !== void 0 ? _a : Math.round((iMsgBasePay + iMsgLineItemsTotal) * 100) / 100;
     await snap.docs[0].ref.update({
         status: "approved",
+        finalStartTime: iMsgShift.submittedStartTime,
+        finalEndTime: iMsgShift.submittedEndTime,
+        finalTotalHours: iMsgShift.submittedTotalHours,
+        basePay: iMsgBasePay,
+        lineItems: iMsgLineItems,
+        lineItemsTotal: iMsgLineItemsTotal,
+        grossPay: iMsgGrossPay,
+        resolvedAt: new Date().toISOString(),
+        resolvedBy: "client_imessage",
         approvedAt: new Date().toISOString(),
         approvedBy: "client_imessage",
         updatedAt: new Date().toISOString(),

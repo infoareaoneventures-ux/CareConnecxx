@@ -100,7 +100,7 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
   // ── line item helpers ──
 
   const addLineItem = () =>
-    setLineItems(prev => [...prev, { type: 'overtime', label: 'Overtime', note: '', amount: 0 }]);
+    setLineItems(prev => [...prev, { type: '' as LineItemType, label: '', note: '', amount: 0 }]);
 
   const updateLineItem = (i: number, patch: Partial<LineItem>) =>
     setLineItems(prev => prev.map((li, idx) => (idx === i ? { ...li, ...patch } : li)));
@@ -109,14 +109,18 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
     setLineItems(prev => prev.filter((_, idx) => idx !== i));
 
   const onTypeChange = (i: number, type: LineItemType) =>
-    updateLineItem(i, { type, label: DEFAULT_LABEL[type] });
+    updateLineItem(i, { type, label: DEFAULT_LABEL[type] ?? '' });
 
   // ── submit ──
 
   const onConfirm = async () => {
     if (totalHours <= 0) { onError('End time must be after start time.'); return; }
+    const missingType = lineItems.find(li => !li.type);
+    if (missingType) { onError('Please select a type for each additional charge.'); return; }
+    const missingAmount = lineItems.find(li => li.amount <= 0);
+    if (missingAmount) { onError('Please enter an amount for each additional charge.'); return; }
     const invalid = lineItems.find(li => li.type === 'custom' && !li.label.trim());
-    if (invalid) { onError('Please enter a label for the Custom line item.'); return; }
+    if (invalid) { onError('Please enter a label for each Custom charge.'); return; }
     setSubmitting(true);
     try {
       await shiftHoursService.submit(
@@ -215,8 +219,9 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
                   <select
                     value={li.type}
                     onChange={e => onTypeChange(i, e.target.value as LineItemType)}
-                    className="flex-1 px-2 py-1.5 border border-slate-200 rounded-lg text-sm bg-white"
+                    className={`flex-1 px-2 py-1.5 border rounded-lg text-sm bg-white ${!li.type ? 'border-red-400 text-slate-400' : 'border-slate-200'}`}
                   >
+                    <option value="" disabled hidden>Select type</option>
                     {LINE_ITEM_TYPES.map(t => (
                       <option key={t.value} value={t.value}>{t.label}</option>
                     ))}
@@ -249,10 +254,14 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
                 {li.type === 'custom' && (
                   <input
                     type="text"
-                    placeholder="Label (e.g. Holiday premium)"
+                    placeholder="Label (e.g. Holiday premium) *"
                     value={li.label}
                     onChange={e => updateLineItem(i, { label: e.target.value })}
-                    className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm"
+                    className={`w-full px-3 py-1.5 border rounded-lg text-sm ${
+                      !li.label.trim()
+                        ? 'border-red-400 bg-red-50 placeholder-red-400'
+                        : 'border-slate-200'
+                    }`}
                   />
                 )}
 
@@ -313,7 +322,7 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
           </button>
           <button
             onClick={onConfirm}
-            disabled={submitting || totalHours <= 0}
+            disabled={submitting || totalHours <= 0 || lineItems.some(li => !li.type || li.amount <= 0 || (li.type === 'custom' && !li.label.trim()))}
             className="flex-1 py-2.5 rounded-xl bg-primary-600 text-white font-medium hover:bg-primary-700 disabled:opacity-50"
           >
             {submitting ? 'Submitting…' : 'Submit'}

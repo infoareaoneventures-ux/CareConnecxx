@@ -851,7 +851,8 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
         <Col label="Method"   value={method}                                className="shrink-0 w-[46px]" />
 
         <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-          {row.resolvedBy === 'caregiver' && (
+          {(['caregiver', 'admin', 'system_auto_accept'].includes(row.resolvedBy ?? '')
+            || (row.resolvedBy === 'client' && Array.isArray(row.correctionHistory) && row.correctionHistory.some((e: any) => ['correction_proposed', 'counter_proposed'].includes(e.action)))) && (
             <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-teal-50 text-teal-700 border-teal-200 whitespace-nowrap">
               Corrected
             </span>

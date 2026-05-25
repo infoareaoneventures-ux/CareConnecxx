@@ -247,8 +247,9 @@ const ShiftRow: React.FC<{
   // Use stored grossPay (includes line items) when available
   const totalPay  = row.grossPay ?? basePay;
   const isPending = row.status === 'pending_client_review' || row.status === 'caregiver_counter_proposed';
-  // Only show "Corrected" when the caregiver explicitly accepted a client correction proposal
-  const isCorrected = row.resolvedBy === 'caregiver';
+  // Show "Corrected" whenever the correction flow was triggered (client proposed, caregiver countered, or admin resolved)
+  const isCorrected = ['caregiver', 'admin', 'system_auto_accept'].includes(row.resolvedBy ?? '')
+    || (row.resolvedBy === 'client' && Array.isArray(row.correctionHistory) && row.correctionHistory.some((e: any) => ['correction_proposed', 'counter_proposed'].includes(e.action)));
 
   // Lazy-load shift details on expand
   useEffect(() => {
@@ -309,20 +310,11 @@ const ShiftRow: React.FC<{
           <div className="space-y-1">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Hours</p>
             <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden text-xs">
-              {isCorrected && (
-                <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-slate-400">Original</span>
-                  <span className="text-slate-400 line-through">
-                    {fmtTime(row.submittedStartTime)} – {fmtTime(row.submittedEndTime)}
-                    {' · '}{fmtDuration((new Date(row.submittedEndTime).getTime() - new Date(row.submittedStartTime).getTime()) / 3_600_000)}
-                  </span>
-                </div>
-              )}
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-slate-500">{isCorrected ? 'Corrected' : 'Submitted'}</span>
+                <span className="text-slate-500">{isCorrected ? 'Original' : 'Submitted'}</span>
                 <span className="font-semibold text-slate-700">
-                  {fmtTime(row.finalStartTime ?? row.submittedStartTime)} – {fmtTime(row.finalEndTime ?? row.submittedEndTime)}
-                  <span className="text-primary-600 font-bold ml-2">{fmtDuration(dispHours)}</span>
+                  {fmtTime(row.submittedStartTime)} – {fmtTime(row.submittedEndTime)}
+                  <span className="text-primary-600 font-bold ml-2">{fmtDuration((new Date(row.submittedEndTime).getTime() - new Date(row.submittedStartTime).getTime()) / 3_600_000)}</span>
                 </span>
               </div>
               <div className="flex items-center justify-between px-3 py-2">

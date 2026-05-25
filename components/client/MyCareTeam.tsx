@@ -68,30 +68,45 @@ export const MyCareTeam: React.FC = () => {
           if (bid) activeBookingIds.add(bid);
         });
 
-        // Active = accepted AND has scheduled shifts
-        // Past = cancelled/completed OR accepted with no scheduled shifts left
-        const activeDocs = allBookingsSnap.docs.filter(d =>
-          d.data().status === 'accepted' && activeBookingIds.has(d.id)
-        );
-        const pastDocs = allBookingsSnap.docs.filter(d =>
-          ['cancelled', 'completed'].includes(d.data().status) ||
-          (d.data().status === 'accepted' && !activeBookingIds.has(d.id))
-        );
+        // One card per caregiver — Active OR Past, never both.
+        // First collect active caregivers, then only add to Past those not already active.
+        const activeCaregiverIds = new Set<string>();
+        const activeBookingByCg = new Map<string, { bookingId: string; bookingData: any }>();
+        const pastBookingByCg   = new Map<string, { bookingId: string; bookingData: any }>();
+
+        allBookingsSnap.docs.forEach(doc => {
+          const d = doc.data();
+          if (!d.caregiverId) return;
+          const bookingId = doc.id;
+
+          if (d.status === 'accepted' && activeBookingIds.has(bookingId)) {
+            activeCaregiverIds.add(d.caregiverId);
+            activeBookingByCg.set(d.caregiverId, { bookingId, bookingData: d });
+          } else if (
+            ['cancelled', 'completed'].includes(d.status) ||
+            (d.status === 'accepted' && !activeBookingIds.has(bookingId))
+          ) {
+            // Keep most recent past booking per caregiver
+            const existing = pastBookingByCg.get(d.caregiverId);
+            const newTs  = d.updatedAt?.seconds ?? d.createdAt?.seconds ?? 0;
+            const oldTs  = existing ? (existing.bookingData.updatedAt?.seconds ?? existing.bookingData.createdAt?.seconds ?? 0) : -1;
+            if (newTs > oldTs) pastBookingByCg.set(d.caregiverId, { bookingId, bookingData: d });
+          }
+        });
+
+        const activeDocs = [...activeBookingByCg.entries()].map(([, v]) => v);
+        // Exclude caregivers from Past who now have an active booking
+        const pastDocs   = [...pastBookingByCg.entries()]
+          .filter(([cgId]) => !activeCaregiverIds.has(cgId))
+          .map(([, v]) => v);
 
         const buildCaregiverList = async (
-          docs: any[],
+          docs: { bookingId: string; bookingData: any }[],
         ): Promise<TeamCaregiver[]> => {
-          // Deduplicate by caregiverId (keep first/most-recent booking per caregiver)
-          const seenCaregivers = new Map<string, { bookingId: string; bookingData: any }>();
-          docs.forEach(doc => {
-            const d = doc.data();
-            if (d.caregiverId && !seenCaregivers.has(d.caregiverId)) {
-              seenCaregivers.set(d.caregiverId, { bookingId: doc.id, bookingData: d });
-            }
-          });
-
           const list: TeamCaregiver[] = [];
-          for (const [cgId, { bookingId, bookingData }] of seenCaregivers) {
+          for (const { bookingId, bookingData } of docs) {
+            const cgId = bookingData.caregiverId;
+            if (!cgId) continue;
             // Fetch full caregiver profile for extra details
             const cgDoc = await db.collection('caregivers').doc(cgId).get().catch(() => null);
             const cgData = cgDoc?.data() || {};

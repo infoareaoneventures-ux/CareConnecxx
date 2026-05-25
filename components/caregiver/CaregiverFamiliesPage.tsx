@@ -95,45 +95,61 @@ export const CaregiverFamiliesPage: React.FC = () => {
           return (earliest as Date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
         };
 
-        // Deduplicate bookings by clientId — keep the best status per client
-        const STATUS_PRIORITY: Record<string, number> = { accepted: 3, completed: 2, cancelled: 1 };
-        const bookingMap = new Map<string, { bookingId: string; data: any }>();
+        // Build one card per client — Active OR Past, never both.
+        // First pass: identify all clients with an active booking.
+        // Second pass: add to Past only clients not already in Active.
+        const activeClientIds = new Set<string>();
+        const activeBookingByClient = new Map<string, { bookingId: string; data: any }>();
+        const pastBookingByClient  = new Map<string, { bookingId: string; data: any }>();
+
         bookingsSnap.forEach((doc: any) => {
           const d = doc.data();
           if (!d.clientId) return;
-          const existing = bookingMap.get(d.clientId);
-          const newP = STATUS_PRIORITY[d.status] ?? 0;
-          const existP = existing ? (STATUS_PRIORITY[existing.data.status] ?? 0) : -1;
-          if (newP > existP) bookingMap.set(d.clientId, { bookingId: doc.id, data: d });
+          const bookingId = doc.id;
+
+          if (d.status === 'accepted' && activeBookingIds.has(bookingId)) {
+            activeClientIds.add(d.clientId);
+            activeBookingByClient.set(d.clientId, { bookingId, data: d });
+          } else if (
+            ['cancelled', 'completed'].includes(d.status) ||
+            (d.status === 'accepted' && !activeBookingIds.has(bookingId))
+          ) {
+            // Keep most recent past booking per client
+            const existing = pastBookingByClient.get(d.clientId);
+            const newTs  = d.updatedAt?.seconds ?? d.createdAt?.seconds ?? 0;
+            const oldTs  = existing ? (existing.data.updatedAt?.seconds ?? existing.data.createdAt?.seconds ?? 0) : -1;
+            if (newTs > oldTs) pastBookingByClient.set(d.clientId, { bookingId, data: d });
+          }
         });
 
         const activeList: FamilyEntry[] = [];
         const pastList: FamilyEntry[] = [];
 
-        bookingMap.forEach(({ bookingId, data }) => {
+        const buildEntry = (bookingId: string, data: any, source: 'active' | 'past'): FamilyEntry => {
           const dst = data.schedule?.dayShiftTimes;
           const scheduleDays: string[] = dst && typeof dst === 'object'
-            ? Object.keys(dst)
-            : (data.schedule?.days || []);
-
-          const entry: FamilyEntry = {
+            ? Object.keys(dst) : (data.schedule?.days || []);
+          return {
             clientId: data.clientId,
             bookingId,
             name: data.clientName || 'Family',
             photoURL: data.clientPhotoURL || undefined,
-            source: (data.status === 'accepted' && activeBookingIds.has(bookingId)) ? 'active' : 'past',
+            source,
             scheduleDays,
             rate: data.rate ?? null,
-            nextShift: (data.status === 'accepted' && activeBookingIds.has(bookingId)) ? computeNextShift(data) : undefined,
+            nextShift: source === 'active' ? computeNextShift(data) : undefined,
             bookingStatus: data.status,
             careRecipients: data.careRecipients || [],
           };
+        };
 
-          // Active = accepted AND has scheduled shifts remaining
-          // Past = cancelled/completed OR accepted with no scheduled shifts left
-          if (data.status === 'accepted' && activeBookingIds.has(bookingId)) activeList.push(entry);
-          else if (['cancelled', 'completed'].includes(data.status) ||
-                   (data.status === 'accepted' && !activeBookingIds.has(bookingId))) pastList.push(entry);
+        activeBookingByClient.forEach(({ bookingId, data }) =>
+          activeList.push(buildEntry(bookingId, data, 'active'))
+        );
+        // Only show in Past if not currently active
+        pastBookingByClient.forEach(({ bookingId, data }) => {
+          if (!activeClientIds.has(data.clientId))
+            pastList.push(buildEntry(bookingId, data, 'past'));
         });
 
         if (!active) return;

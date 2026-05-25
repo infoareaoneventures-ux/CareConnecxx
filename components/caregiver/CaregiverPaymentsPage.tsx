@@ -36,7 +36,10 @@ interface ShiftRow {
   submittedStartTime?: string;
   submittedEndTime?: string;
   submittedTotalHours?: number;
+  finalStartTime?: string;
+  finalEndTime?: string;
   finalTotalHours?: number;
+  resolvedBy?: string;
   proposedTotalHours?: number;
   proposalReason?: string;
   grossPay?: number;
@@ -104,7 +107,9 @@ const PendingShiftRow: React.FC<{
   onRespond: (action: 'accept' | 'reject') => void;
   onConfirmCash: () => void;
 }> = ({ row, onRespond, onConfirmCash }) => {
-  const [confirming, setConfirming] = React.useState(false);
+  // All hooks must be declared before any early returns
+  const [confirming,   setConfirming]   = React.useState(false);
+  const [pendingOpen,  setPendingOpen]  = React.useState(false);
 
   // Cash shift approved by client — caregiver must confirm receipt
   if (row.paymentMethod === 'cash' && (row.status === 'approved' || row.status === 'auto_approved')) {
@@ -172,7 +177,6 @@ const PendingShiftRow: React.FC<{
   }
 
   // pending_client_review — expandable data strip
-  const [pendingOpen, setPendingOpen] = React.useState(false);
   const dispStart = row.submittedStartTime ? new Date(row.submittedStartTime) : null;
   const dispEnd   = row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
   const hours     = row.finalTotalHours ?? row.submittedTotalHours ?? 0;
@@ -261,8 +265,13 @@ const PendingShiftRow: React.FC<{
 const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
   const [open, setOpen] = useState(false);
 
-  const dispStart = row.submittedStartTime ? new Date(row.submittedStartTime) : null;
-  const dispEnd   = row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
+  // Prefer final (post-correction) times over originally submitted times
+  const dispStart = row.finalStartTime
+    ? new Date(row.finalStartTime)
+    : row.submittedStartTime ? new Date(row.submittedStartTime) : null;
+  const dispEnd = row.finalEndTime
+    ? new Date(row.finalEndTime)
+    : row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
 
   const hours = row.finalTotalHours ?? row.submittedTotalHours ?? 0;
   const gross = row.grossPay ?? (hours * (row.payRate ?? 0));
@@ -277,6 +286,12 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
         className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
         onClick={() => setOpen(o => !o)}
       >
+        {/* Client name — makes it easy to identify the shift without expanding */}
+        <div className="shrink-0 w-[90px] min-w-0">
+          <p className="text-[10px] uppercase tracking-wide text-slate-400 font-medium leading-none mb-0.5">Client</p>
+          <p className="text-xs font-semibold text-slate-800 truncate">{row.clientName ?? '—'}</p>
+        </div>
+        <Divider />
         <Col label="Date"     value={dispStart ? fmtDate(dispStart) : '—'}  className="shrink-0 w-[58px]" />
         <Divider />
         <Col label="In"       value={dispStart ? fmtTime(dispStart) : '—'}  className="shrink-0 w-[66px]" />
@@ -290,6 +305,11 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
         <Col label="Method"   value={method}                                className="shrink-0 w-[46px]" />
 
         <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+          {row.resolvedBy === 'caregiver' && (
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-teal-50 text-teal-700 border-teal-200 whitespace-nowrap">
+              Corrected
+            </span>
+          )}
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${STATUS_STYLE[row.status] || 'bg-slate-50 text-slate-500 border-slate-200'}`}>
             {STATUS_LABEL[row.status] || row.status}
           </span>

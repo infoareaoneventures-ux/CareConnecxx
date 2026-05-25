@@ -38,6 +38,10 @@ interface ShiftHoursRow {
   submittedStartTime: string;
   submittedEndTime: string;
   submittedTotalHours: number;
+  finalStartTime?: string;
+  finalEndTime?: string;
+  finalTotalHours?: number;
+  resolvedBy?: string;
   submittedAt: string;
   autoApproveAt: string;
   status: ShiftHoursStatus;
@@ -90,8 +94,11 @@ const ShiftRow: React.FC<{
   const [shiftDetails, setShiftDetails] = useState<any>(null);
 
   const cfg = STATUS_CONFIG[row.status] || STATUS_CONFIG.pending_client_review;
-  const total = row.submittedTotalHours * row.payRate;
+  // Use final (post-correction) values when available
+  const dispHours = row.finalTotalHours ?? row.submittedTotalHours;
   const isPending = row.status === 'pending_client_review';
+  // Only show "Corrected" when the caregiver explicitly accepted a client correction proposal
+  const isCorrected = row.resolvedBy === 'caregiver';
 
   // Lazy-load shift details on expand
   useEffect(() => {
@@ -117,7 +124,7 @@ const ShiftRow: React.FC<{
         </div>
 
         <div className="hidden sm:flex flex-col items-end text-right shrink-0">
-          <p className="text-sm font-semibold text-slate-800">{row.submittedTotalHours}h</p>
+          <p className="text-sm font-semibold text-slate-800">{dispHours}h</p>
           <div className="flex items-center gap-1 text-xs text-slate-500 mt-0.5">
             {row.paymentMethod === 'credit'
               ? <CreditCard className="w-3 h-3" />
@@ -127,10 +134,17 @@ const ShiftRow: React.FC<{
         </div>
 
         <div className="flex flex-col items-end shrink-0 gap-1.5">
-          <p className="text-sm font-bold text-slate-900">{fmtAmount(row.submittedTotalHours, row.payRate)}</p>
-          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
-            {cfg.label}
-          </span>
+          <p className="text-sm font-bold text-slate-900">{fmtAmount(dispHours, row.payRate)}</p>
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            {isCorrected && (
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-teal-50 text-teal-700 border-teal-200 whitespace-nowrap">
+                Corrected
+              </span>
+            )}
+            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
+              {cfg.label}
+            </span>
+          </div>
         </div>
 
         <div className="shrink-0 text-slate-400">
@@ -144,16 +158,25 @@ const ShiftRow: React.FC<{
           {/* Times */}
           <div className="space-y-1">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Hours</p>
+            {isCorrected && (
+              <div className="flex items-center gap-3 text-xs">
+                <span className="w-16 text-slate-400 shrink-0">Original</span>
+                <span className="text-slate-500 line-through">
+                  {fmtTime(row.submittedStartTime)} – {fmtTime(row.submittedEndTime)}
+                  <span className="ml-2">{row.submittedTotalHours}h</span>
+                </span>
+              </div>
+            )}
             <div className="flex items-center gap-3 text-xs">
-              <span className="w-16 text-slate-400 shrink-0">Submitted</span>
+              <span className="w-16 text-slate-400 shrink-0">{isCorrected ? 'Corrected' : 'Submitted'}</span>
               <span className="font-semibold text-slate-700">
-                {fmtTime(row.submittedStartTime)} – {fmtTime(row.submittedEndTime)}
-                <span className="text-primary-600 font-bold ml-2">{row.submittedTotalHours}h</span>
+                {fmtTime(row.finalStartTime ?? row.submittedStartTime)} – {fmtTime(row.finalEndTime ?? row.submittedEndTime)}
+                <span className="text-primary-600 font-bold ml-2">{dispHours}h</span>
               </span>
             </div>
             <div className="flex items-center gap-3 text-xs">
               <span className="w-16 text-slate-400 shrink-0">Rate</span>
-              <span className="font-semibold text-slate-700">${row.payRate}/hr · Total {fmtAmount(row.submittedTotalHours, row.payRate)}</span>
+              <span className="font-semibold text-slate-700">${row.payRate}/hr · Total {fmtAmount(dispHours, row.payRate)}</span>
             </div>
             {row.status === 'pending_client_review' && (
               <div className="flex items-center gap-3 text-xs">

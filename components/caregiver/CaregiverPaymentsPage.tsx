@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Zap, Landmark, CheckCircle2, AlertCircle, Lock,
   ExternalLink, Calendar, DollarSign, FileDown,
-  ShieldCheck, RefreshCw, XCircle, ChevronDown, ChevronUp,
+  ShieldCheck, RefreshCw, XCircle, ChevronDown, ChevronUp, X, CheckCircle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { CaregiverTopNav } from './CaregiverTopNav';
@@ -424,38 +424,131 @@ const PendingShiftRow: React.FC<{
   onConfirmCash: () => void;
 }> = ({ row, onRespond, onConfirmCash }) => {
   // All hooks must be declared before any early returns
-  const [confirming,   setConfirming]   = React.useState(false);
-  const [pendingOpen,  setPendingOpen]  = React.useState(false);
-  const [reviewOpen,   setReviewOpen]   = React.useState(false);
+  const [confirming,        setConfirming]        = React.useState(false);
+  const [pendingOpen,       setPendingOpen]       = React.useState(false);
+  const [reviewOpen,        setReviewOpen]        = React.useState(false);
+  const [showDetailModal,   setShowDetailModal]   = React.useState(false);
 
   // Cash shift approved by client — caregiver must confirm receipt
   if (row.paymentMethod === 'cash' && (row.status === 'approved' || row.status === 'auto_approved')) {
-    const hours = row.finalTotalHours ?? row.submittedTotalHours ?? 0;
-    const gross = row.grossPay ?? hours * (row.payRate ?? 0);
+    const dispStart = row.finalStartTime   ? new Date(row.finalStartTime)   : row.submittedStartTime ? new Date(row.submittedStartTime) : null;
+    const dispEnd   = row.finalEndTime     ? new Date(row.finalEndTime)     : row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
+    const hours     = dispStart && dispEnd
+      ? (dispEnd.getTime() - dispStart.getTime()) / 3_600_000
+      : (row.finalTotalHours ?? row.submittedTotalHours ?? 0);
+    const basePay   = hours * (row.payRate ?? 0);
+    const hasExtras = row.lineItems && row.lineItems.length > 0;
+    const gross     = row.grossPay ?? basePay;
     return (
-      <div className="bg-green-50 border border-green-200 rounded-2xl p-4">
-        <div className="flex items-start justify-between mb-1">
-          <div>
-            <p className="font-semibold text-slate-900">{row.clientName}</p>
-            <p className="text-sm text-slate-600 mt-0.5">
-              {hours}h · <span className="font-bold text-slate-900">${gross.toFixed(2)} cash</span>
-              {' · '}Client approved ✓
-            </p>
-          </div>
-          <span className="shrink-0 text-xs font-medium px-2.5 py-1 rounded-full border bg-green-100 text-green-700 border-green-300">
-            Awaiting your confirmation
-          </span>
-        </div>
-        <button
-          disabled={confirming}
-          onClick={async () => {
-            setConfirming(true);
-            try { await onConfirmCash(); } finally { setConfirming(false); }
-          }}
-          className="mt-3 w-full py-2.5 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-50 transition-colors"
+      <div className="bg-white rounded-2xl border border-green-300 overflow-hidden">
+        {/* Header — same Col/Divider layout as every other row */}
+        <div
+          className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-green-50 transition-colors select-none bg-green-50"
+          onClick={() => setPendingOpen(o => !o)}
         >
-          {confirming ? 'Confirming…' : 'Confirm cash received'}
-        </button>
+          <Col label="Date"     value={dispStart ? fmtDate(dispStart) : '—'} className="shrink-0 w-[58px]" />
+          <Divider />
+          <Col label="In"       value={dispStart ? fmtTime(dispStart) : '—'} className="shrink-0 w-[66px]" />
+          <Divider />
+          <Col label="Out"      value={dispEnd   ? fmtTime(dispEnd)   : '—'} className="shrink-0 w-[66px]" />
+          <Divider />
+          <Col label="Duration" value={fmtDuration(hours)}                   className="shrink-0 w-[62px]" />
+          <Divider />
+          <Col label="Pay"      value={`$${gross.toFixed(2)}`} highlight      className="shrink-0 w-[60px]" />
+          <Divider />
+          <Col label="Method"   value="Cash"                                  className="shrink-0 w-[46px]" />
+          <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full border whitespace-nowrap bg-green-100 text-green-700 border-green-300">
+              Awaiting confirmation
+            </span>
+            {pendingOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+          </div>
+        </div>
+
+        {/* Expanded section */}
+        {pendingOpen && (
+          <div className="border-t-2 border-slate-200 bg-slate-50 px-4 py-3 space-y-3">
+            {/* Client identity */}
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
+                <span className="text-sm font-bold text-primary-700">
+                  {(row.clientName ?? '?')[0].toUpperCase()}
+                </span>
+              </div>
+              <p className="text-sm font-semibold text-slate-900">{row.clientName ?? 'Client'}</p>
+            </div>
+
+            <div className="divide-y divide-slate-200 text-xs border border-slate-200 rounded-xl overflow-hidden">
+              {row.payRate != null && (
+                <div className="flex items-center justify-between px-3 py-2">
+                  <span className="text-slate-400">Rate</span>
+                  <span className="font-medium text-slate-700">${row.payRate}/hr</span>
+                </div>
+              )}
+              {dispStart && dispEnd && (
+                <div className="flex items-center justify-between px-3 py-2">
+                  <span className="text-slate-400">Clock in / out</span>
+                  <span className="font-medium text-slate-700">
+                    {fmtTime(dispStart)} – {fmtTime(dispEnd)}
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Total hours</span>
+                <span className="font-medium text-slate-700">{fmtDuration(hours)}</span>
+              </div>
+              {hasExtras ? (
+                <>
+                  <div className="flex items-center justify-between px-3 py-2">
+                    <span className="text-slate-400">Base pay</span>
+                    <span className="font-medium text-slate-700">${basePay.toFixed(2)}</span>
+                  </div>
+                  {row.lineItems!.map((li, i) => (
+                    <div key={i} className="flex items-center justify-between px-3 py-2">
+                      <span className="text-slate-400">
+                        {li.type === 'custom' ? (li.label || 'Custom') : li.label}
+                        {li.note ? ` · ${li.note}` : ''}
+                      </span>
+                      <span className="font-medium text-slate-700">+${li.amount.toFixed(2)}</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between px-3 py-2 bg-slate-100">
+                    <span className="font-semibold text-slate-700">Total</span>
+                    <span className="font-bold text-slate-900">${gross.toFixed(2)}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center justify-between px-3 py-2">
+                  <span className="text-slate-400">Gross pay</span>
+                  <span className="font-bold text-slate-900">${gross.toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowDetailModal(true)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                View shift
+              </button>
+              <button
+                disabled={confirming}
+                onClick={async () => {
+                  setConfirming(true);
+                  try { await onConfirmCash(); } finally { setConfirming(false); }
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-50 transition-colors"
+              >
+                {confirming ? 'Confirming…' : 'Confirm cash received'}
+              </button>
+            </div>
+          </div>
+        )}
+        {showDetailModal && (
+          <ShiftDetailModal shiftId={row.appointmentId} onClose={() => setShowDetailModal(false)} />
+        )}
       </div>
     );
   }
@@ -569,6 +662,12 @@ const PendingShiftRow: React.FC<{
                 submittedGrossPay={row.grossPay}
               />
             )}
+            <button
+              onClick={() => setShowDetailModal(true)}
+              className="w-full py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              View shift
+            </button>
           </div>
         )}
       </div>
@@ -665,12 +764,20 @@ const PendingShiftRow: React.FC<{
               </div>
 
 
-              <button
-                onClick={() => setReviewOpen(true)}
-                className="w-full py-2.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition-colors"
-              >
-                Review & Respond
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowDetailModal(true)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  View shift
+                </button>
+                <button
+                  onClick={() => setReviewOpen(true)}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition-colors"
+                >
+                  Review & Respond
+                </button>
+              </div>
 
               {row.correctionHistory && row.correctionHistory.length > 0 && (
                 <CorrectionTimeline history={row.correctionHistory} payRate={row.payRate} submittedLineItems={row.lineItems} submittedBasePay={row.basePay} submittedGrossPay={row.grossPay} />
@@ -801,7 +908,16 @@ const PendingShiftRow: React.FC<{
           {row.correctionHistory && row.correctionHistory.some(e => e.action !== 'submitted') && (
             <CorrectionTimeline history={row.correctionHistory} payRate={row.payRate} submittedLineItems={row.lineItems} submittedBasePay={row.basePay} submittedGrossPay={row.grossPay} />
           )}
+          <button
+            onClick={() => setShowDetailModal(true)}
+            className="w-full py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+          >
+            View shift
+          </button>
         </div>
+      )}
+      {showDetailModal && (
+        <ShiftDetailModal shiftId={row.appointmentId} onClose={() => setShowDetailModal(false)} />
       )}
     </div>
   );
@@ -809,6 +925,7 @@ const PendingShiftRow: React.FC<{
 
 const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
   const [open, setOpen] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
 
   // Prefer final (post-correction) times over originally submitted times
   const dispStart = row.finalStartTime
@@ -941,8 +1058,213 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
           {row.correctionHistory && row.correctionHistory.some(e => e.action !== 'submitted') && (
             <CorrectionTimeline history={row.correctionHistory} payRate={row.payRate} submittedLineItems={row.lineItems} submittedBasePay={row.basePay} submittedGrossPay={row.grossPay} />
           )}
+          <button
+            onClick={() => setShowDetailModal(true)}
+            className="w-full py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+          >
+            View shift
+          </button>
         </div>
       )}
+      {showDetailModal && (
+        <ShiftDetailModal shiftId={row.appointmentId} onClose={() => setShowDetailModal(false)} />
+      )}
+    </div>
+  );
+};
+
+// ── ShiftDetailModal ─────────────────────────────────────────────────────────
+
+const ShiftDetailModal: React.FC<{ shiftId: string; onClose: () => void }> = ({ shiftId, onClose }) => {
+  const [data, setData] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    if (!db) return;
+    db.collection('shifts').doc(shiftId).get().then(doc => {
+      if (doc.exists) setData({ id: doc.id, ...doc.data() });
+    }).finally(() => setLoading(false));
+  }, [shiftId]);
+
+  const fmtTs = (ts: any) => {
+    if (!ts) return null;
+    const d = ts?.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  };
+  const fmtDate = (val: any) => {
+    if (!val) return null;
+    // Firestore Timestamp
+    if (val?.toDate) return val.toDate().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    // ISO string "YYYY-MM-DD" or full ISO
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return null;
+    // For plain "YYYY-MM-DD" strings, parse as local date to avoid UTC shift
+    if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+      const [y, mo, dy] = val.split('-').map(Number);
+      return new Date(y, mo - 1, dy).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  };
+  const fmtDur = (a: any, b: any) => {
+    if (!a || !b) return null;
+    const s = a?.toDate ? a.toDate() : new Date(a);
+    const e = b?.toDate ? b.toDate() : new Date(b);
+    const mins = Math.round((e.getTime() - s.getTime()) / 60000);
+    if (mins <= 0) return null;
+    const h = Math.floor(mins / 60); const m = mins % 60;
+    return h > 0 ? `${h}h ${m > 0 ? `${m}m` : ''}`.trim() : `${m}m`;
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <p className="font-semibold text-slate-900">Completed Shift</p>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+          {loading ? (
+            <div className="py-12 text-center text-slate-400 text-sm">Loading…</div>
+          ) : !data ? (
+            <div className="py-12 text-center text-slate-400 text-sm">Shift not found.</div>
+          ) : (
+            <>
+              {/* Timing */}
+              <div className="bg-slate-50 rounded-xl px-4 py-3 space-y-2">
+                <div className="flex items-start gap-3 text-xs">
+                  <span className="w-24 text-slate-400 shrink-0 pt-0.5">Scheduled</span>
+                  <div className="font-semibold text-slate-700 leading-relaxed">
+                    {fmtDate(data.date) && (
+                      <span className="block text-slate-500 font-normal">{fmtDate(data.date)}</span>
+                    )}
+                    <span>{data.startTime}{data.endTime ? ` – ${data.endTime}` : ''}</span>
+                  </div>
+                </div>
+                {(data.startedAt || data.completedAt) && (
+                  <div className="flex items-start gap-3 text-xs pt-2 border-t border-slate-200">
+                    <span className="w-24 text-slate-400 shrink-0 pt-0.5">Completed</span>
+                    <div className="font-semibold text-slate-700 leading-relaxed">
+                      {fmtDate(data.completedAt) && (
+                        <span className="block text-slate-500 font-normal">{fmtDate(data.completedAt)}</span>
+                      )}
+                      <span>
+                        {fmtTs(data.startedAt)}
+                        {fmtTs(data.completedAt) && (
+                          <><span className="text-slate-400 font-normal"> – </span>{fmtTs(data.completedAt)}</>
+                        )}
+                        {fmtDur(data.startedAt, data.completedAt) && (
+                          <span className="text-primary-600 font-semibold"> · {fmtDur(data.startedAt, data.completedAt)}</span>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Tasks */}
+              {(() => {
+                const doneRaw: string[] = data.tasksCompleted || [];
+                const recipients: any[] = data.careRecipients || [];
+                const hasTasks = recipients.some((r: any) => (r.careNeeds || []).length > 0);
+                if (!hasTasks) return null;
+
+                let totalT = 0; let doneT = 0;
+                recipients.forEach((r: any, ri: number) => {
+                  (r.careNeeds || []).forEach((cat: string) => {
+                    const subs = (r.careNeedDetails || {})[cat] || [];
+                    if (subs.length > 0) {
+                      totalT += subs.length;
+                      doneT += subs.filter((s: string) => doneRaw.includes(`${ri}_${cat}_${s}`)).length;
+                    } else {
+                      totalT += 1;
+                      doneT += doneRaw.includes(`${ri}_${cat}`) ? 1 : 0;
+                    }
+                  });
+                });
+
+                return (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tasks</p>
+                      {totalT > 0 && (
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${doneT === totalT ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                          {doneT}/{totalT}
+                        </span>
+                      )}
+                    </div>
+                    <div className="space-y-3">
+                      {recipients.map((r: any, ri: number) => {
+                        const cats: string[] = r.careNeeds || [];
+                        const det: Record<string, string[]> = r.careNeedDetails || {};
+                        if (cats.length === 0) return null;
+                        return (
+                          <div key={ri}>
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                              <div className="w-5 h-5 rounded-full overflow-hidden bg-primary-100 shrink-0 flex items-center justify-center">
+                                {r.photoURL
+                                  ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
+                                  : <span className="text-[9px] font-bold text-primary-600">{r.name.split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase()}</span>}
+                              </div>
+                              <p className="text-xs font-semibold text-slate-600">{r.name}</p>
+                            </div>
+                            <div className="space-y-1.5">
+                              {cats.map((cat: string, ci: number) => {
+                                const subs = det[cat] || [];
+                                const doneSubCount = subs.filter((s: string) => doneRaw.includes(`${ri}_${cat}_${s}`)).length;
+                                const catDone = subs.length > 0 ? doneSubCount === subs.length : doneRaw.includes(`${ri}_${cat}`);
+                                return (
+                                  <div key={ci} className="border border-slate-200 rounded-xl overflow-hidden">
+                                    <div className={`flex items-center gap-2 px-3 py-2 ${catDone ? 'bg-green-50' : 'bg-slate-50'}`}>
+                                      <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${catDone ? 'text-green-500' : 'text-slate-300'}`} />
+                                      <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{cat}</p>
+                                      {subs.length > 0 && doneSubCount > 0 && (
+                                        <span className={`text-[10px] font-semibold ${catDone ? 'text-green-600' : 'text-slate-400'}`}>{doneSubCount}/{subs.length}</span>
+                                      )}
+                                    </div>
+                                    {subs.length > 0 && (
+                                      <div className="px-3 py-2 space-y-1">
+                                        {subs.map((sub: string, si: number) => {
+                                          const done = doneRaw.includes(`${ri}_${cat}_${sub}`);
+                                          return (
+                                            <div key={si} className={`flex items-center gap-2 text-xs font-medium ${done ? 'text-green-700' : 'text-slate-400'}`}>
+                                              <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                                              {sub}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Completion notes */}
+              {data.completionNotes && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shift Notes</p>
+                  <p className="text-xs text-slate-600">{data.completionNotes}</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
@@ -957,6 +1279,7 @@ const SubmittableShiftCard: React.FC<{
 }> = ({ shift, onSubmitted, onError }) => {
   const [open, setOpen] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
 
   const actualStart = toDate(shift.startedAt);
   const actualEnd   = toDate(shift.completedAt);
@@ -1052,13 +1375,25 @@ const SubmittableShiftCard: React.FC<{
             )}
           </div>
 
-          <button
-            onClick={e => { e.stopPropagation(); setShowModal(true); }}
-            className="w-full py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 transition-colors"
-          >
-            Submit hours
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={e => { e.stopPropagation(); setShowDetailModal(true); }}
+              className="flex-1 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              View shift
+            </button>
+            <button
+              onClick={e => { e.stopPropagation(); setShowModal(true); }}
+              className="flex-1 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 transition-colors"
+            >
+              Submit hours
+            </button>
+          </div>
         </div>
+      )}
+
+      {showDetailModal && (
+        <ShiftDetailModal shiftId={shift.id} onClose={() => setShowDetailModal(false)} />
       )}
 
       {showModal && (

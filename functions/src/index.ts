@@ -157,6 +157,8 @@ export { send1099Notifications } from './scheduled/taxReminder';
 // MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
 export * from './migrations/migrateSeniorsToHousehold';
 
+// fixAcceptedCounterPay migration already executed — not exported
+
 // ── initiateCara — unauthenticated callable: proactively sends Cara's greeting ──
 // Called from the web "Continue with Phone" screen so desktop users receive an
 // outbound SMS rather than relying on the sms: URI (which silently fails on desktop).

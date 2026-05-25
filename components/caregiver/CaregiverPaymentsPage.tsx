@@ -33,6 +33,20 @@ interface LineItem {
   amount: number;
 }
 
+interface CorrectionHistoryEntry {
+  by: string;
+  action: string;
+  at: string;
+  startTime?: string;
+  endTime?: string;
+  hours?: number;
+  note?: string;
+  basePay?: number;
+  lineItems?: LineItem[];
+  lineItemsTotal?: number;
+  grossPay?: number;
+}
+
 interface ShiftRow {
   id: string;
   appointmentId: string;
@@ -47,8 +61,18 @@ interface ShiftRow {
   finalEndTime?: string;
   finalTotalHours?: number;
   resolvedBy?: string;
+  proposedStartTime?: string;
+  proposedEndTime?: string;
   proposedTotalHours?: number;
   proposalReason?: string;
+  counterStartTime?: string;
+  counterEndTime?: string;
+  counterTotalHours?: number;
+  counterNote?: string;
+  counterLineItems?: LineItem[];
+  counterLineItemsTotal?: number;
+  counterGrossPay?: number;
+  correctionHistory?: CorrectionHistoryEntry[];
   lineItems?: LineItem[];
   lineItemsTotal?: number;
   basePay?: number;
@@ -84,6 +108,113 @@ const fmtDuration = (hours: number): string => {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 };
 
+function toDateTimeLocal(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const HISTORY_ACTION_LABEL: Record<string, string> = {
+  submitted:          'Submitted by caregiver',
+  proposed_correction:'Client proposed correction',
+  counter_proposed:   'Caregiver sent counter',
+  accepted:           'Accepted',
+  escalated:          'Escalated to admin',
+  admin_resolved:     'Resolved by admin',
+};
+
+const CorrectionTimeline: React.FC<{
+  history: CorrectionHistoryEntry[];
+  payRate?: number;
+  submittedLineItems?: LineItem[];
+  submittedBasePay?: number;
+  submittedGrossPay?: number;
+}> = ({ history, payRate, submittedLineItems, submittedBasePay, submittedGrossPay }) => {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const toggle = (i: number) => setExpanded(prev => {
+    const next = new Set(prev);
+    next.has(i) ? next.delete(i) : next.add(i);
+    return next;
+  });
+  return (
+    <div className="mt-3 space-y-1">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">History</p>
+      {history.map((entry, i) => {
+        const isOpen = expanded.has(i);
+        const isSubmitted = entry.action === 'submitted';
+        const entryBasePay = entry.basePay ?? (isSubmitted ? submittedBasePay : null) ?? (entry.hours != null && payRate ? Math.round(entry.hours * payRate * 100) / 100 : null);
+        const entryLineItems = (Array.isArray(entry.lineItems) && entry.lineItems.length > 0) ? entry.lineItems : (isSubmitted ? submittedLineItems : undefined);
+        const entryGrossPay  = entry.grossPay ?? (isSubmitted ? submittedGrossPay : null);
+        const hasReceipt = !!(entry.startTime && entry.endTime && entry.hours != null);
+        const ts = new Date(entry.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          + ', '
+          + new Date(entry.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        return (
+          <div key={i} className="flex gap-3 text-xs">
+            <div className="flex flex-col items-center shrink-0">
+              <div className="w-2 h-2 rounded-full bg-slate-300 mt-2.5" />
+              {i < history.length - 1 && <div className="w-px flex-1 bg-slate-200 mt-1" />}
+            </div>
+            <div className="pb-2 flex-1 min-w-0">
+              {/* Row header — always visible, clickable if has receipt */}
+              <div
+                className={`flex items-center justify-between ${hasReceipt ? 'cursor-pointer select-none' : ''}`}
+                onClick={() => hasReceipt && toggle(i)}
+              >
+                <div>
+                  <p className="font-semibold text-slate-700">{HISTORY_ACTION_LABEL[entry.action] || entry.action}</p>
+                  <p className="text-slate-400 mt-0.5">{ts}</p>
+                </div>
+                {hasReceipt && (
+                  isOpen
+                    ? <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-2" />
+                    : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-2" />
+                )}
+              </div>
+
+              {/* Expanded receipt */}
+              {isOpen && hasReceipt && (
+                <div className="mt-1.5 divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-white">
+                  <div className="flex items-center justify-between px-3 py-1.5">
+                    <span className="text-slate-400">Time</span>
+                    <span className="font-medium text-slate-700">
+                      {fmtTime(new Date(entry.startTime!))} – {fmtTime(new Date(entry.endTime!))} · {fmtDuration(entry.hours!)}
+                    </span>
+                  </div>
+                  {payRate != null && entryBasePay != null && (
+                    <div className="flex items-center justify-between px-3 py-1.5">
+                      <span className="text-slate-400">${payRate}/hr · Base</span>
+                      <span className="font-medium text-slate-700">${entryBasePay.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {Array.isArray(entryLineItems) && entryLineItems.map((li, j) => (
+                    <div key={j} className="flex items-center justify-between px-3 py-1.5">
+                      <span className="text-slate-400">{li.label || li.type}{li.note ? ` · ${li.note}` : ''}</span>
+                      <span className="font-medium text-slate-700">+${Number(li.amount).toFixed(2)}</span>
+                    </div>
+                  ))}
+                  {entryGrossPay != null && (
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50">
+                      <span className="font-semibold text-slate-600">Total</span>
+                      <span className="font-bold text-slate-900">${entryGrossPay.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {entry.note && (
+                    <div className="px-3 py-1.5 text-slate-400 italic">"{entry.note}"</div>
+                  )}
+                </div>
+              )}
+              {!hasReceipt && entry.note && (
+                <p className="text-slate-400 mt-0.5 italic">"{entry.note}"</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const Col: React.FC<{ label: string; value: string; highlight?: boolean; className?: string }> = ({
   label, value, highlight, className = '',
 }) => (
@@ -100,35 +231,202 @@ const Col: React.FC<{ label: string; value: string; highlight?: boolean; classNa
 const Divider: React.FC = () => <div className="w-px h-8 bg-slate-100 shrink-0" />;
 
 const STATUS_LABEL: Record<string, string> = {
-  pending_client_review: 'Pending client review',
-  correction_proposed: 'Client proposed correction',
-  approved: 'Approved',
-  auto_approved: 'Auto-approved',
-  disputed_admin_review: 'Admin reviewing',
-  paid: 'Paid',
-  payment_failed: 'Payment failed',
+  pending_client_review:     'Pending client review',
+  correction_proposed:       'Client proposed correction',
+  caregiver_counter_proposed: 'Counter sent',
+  approved:                  'Approved',
+  auto_approved:             'Auto-approved',
+  disputed_admin_review:     'Admin reviewing',
+  paid:                      'Paid',
+  payment_failed:            'Payment failed',
 };
 
 const STATUS_STYLE: Record<string, string> = {
-  pending_client_review: 'bg-amber-50 text-amber-700 border-amber-200',
-  correction_proposed:   'bg-orange-50 text-orange-700 border-orange-200',
-  approved:              'bg-blue-50 text-blue-700 border-blue-200',
-  auto_approved:         'bg-blue-50 text-blue-700 border-blue-200',
-  disputed_admin_review: 'bg-purple-50 text-purple-700 border-purple-200',
-  paid:                  'bg-green-50 text-green-700 border-green-200',
-  payment_failed:        'bg-red-50 text-red-700 border-red-200',
+  pending_client_review:     'bg-amber-50 text-amber-700 border-amber-200',
+  correction_proposed:       'bg-orange-50 text-orange-700 border-orange-200',
+  caregiver_counter_proposed:'bg-yellow-50 text-yellow-700 border-yellow-200',
+  approved:                  'bg-blue-50 text-blue-700 border-blue-200',
+  auto_approved:             'bg-blue-50 text-blue-700 border-blue-200',
+  disputed_admin_review:     'bg-purple-50 text-purple-700 border-purple-200',
+  paid:                      'bg-green-50 text-green-700 border-green-200',
+  payment_failed:            'bg-red-50 text-red-700 border-red-200',
 };
 
 // ── sub-components ────────────────────────────────────────────────────────────
 
+// ── ReviewRespondModal ────────────────────────────────────────────────────────
+
+const ReviewRespondModal: React.FC<{
+  row: ShiftRow;
+  onClose: () => void;
+  onAccept: () => void;
+  onCounter: (counter: { startTime: string; endTime: string; note?: string; lineItems?: LineItem[] }) => void;
+}> = ({ row, onClose, onAccept, onCounter }) => {
+  const proposedLineItems: LineItem[] = (row as any).proposedLineItems ?? row.lineItems ?? [];
+  const proposedBasePay = row.proposedTotalHours != null && row.payRate
+    ? Math.round(row.proposedTotalHours * row.payRate * 100) / 100 : 0;
+  const proposedGross = (row as any).proposedGrossPay
+    ?? Math.round((proposedBasePay + proposedLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0)) * 100) / 100;
+
+  const [counterStart,     setCounterStart]     = React.useState(row.proposedStartTime ? toDateTimeLocal(row.proposedStartTime) : '');
+  const [counterEnd,       setCounterEnd]       = React.useState(row.proposedEndTime   ? toDateTimeLocal(row.proposedEndTime)   : '');
+  const [counterLineItems, setCounterLineItems] = React.useState<LineItem[]>(row.lineItems ?? []);
+  const [counterNote,      setCounterNote]      = React.useState('');
+  const [submitting,       setSubmitting]       = React.useState(false);
+
+  const counterStartMs = counterStart ? new Date(counterStart).getTime() : 0;
+  const counterEndMs   = counterEnd   ? new Date(counterEnd).getTime()   : 0;
+  const counterHours   = counterStartMs && counterEndMs && counterEndMs > counterStartMs
+    ? Math.round(((counterEndMs - counterStartMs) / 3_600_000) * 100) / 100 : 0;
+  const counterBase    = Math.round(counterHours * (row.payRate ?? 0) * 100) / 100;
+  const counterLITotal = counterLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0);
+  const counterGross   = Math.round((counterBase + counterLITotal) * 100) / 100;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md max-h-[92vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 sticky top-0 bg-white rounded-t-2xl sm:rounded-t-2xl z-10">
+          <div>
+            <h2 className="font-bold text-slate-900">Review correction</h2>
+            <p className="text-sm text-slate-500 mt-0.5">{row.clientName}</p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500 text-lg">×</button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Client proposed — full receipt */}
+          <div className="bg-orange-50 border border-orange-200 rounded-xl overflow-hidden">
+            <p className="text-xs font-semibold text-orange-600 uppercase tracking-wide px-4 pt-3 pb-1">Client proposed</p>
+            <div className="divide-y divide-orange-100">
+              <div className="flex items-center justify-between px-4 py-2 text-sm">
+                <span className="text-slate-500">Time</span>
+                <span className="font-medium text-slate-800">
+                  {row.proposedStartTime && row.proposedEndTime
+                    ? `${fmtTime(new Date(row.proposedStartTime))} – ${fmtTime(new Date(row.proposedEndTime))}`
+                    : '—'}
+                  {row.proposedTotalHours != null ? ` · ${fmtDuration(row.proposedTotalHours)}` : ''}
+                </span>
+              </div>
+              {row.payRate != null && (
+                <div className="flex items-center justify-between px-4 py-2 text-sm">
+                  <span className="text-slate-500">${row.payRate}/hr · Base</span>
+                  <span className="font-medium text-slate-800">${proposedBasePay.toFixed(2)}</span>
+                </div>
+              )}
+              {proposedLineItems.map((li, i) => (
+                <div key={i} className="flex items-center justify-between px-4 py-2 text-sm">
+                  <span className="text-slate-500">{li.label || li.type}{li.note ? ` · ${li.note}` : ''}</span>
+                  <span className="font-medium text-slate-800">+${Number(li.amount).toFixed(2)}</span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between px-4 py-2.5 bg-orange-100">
+                <span className="font-bold text-slate-800">Total</span>
+                <span className="font-bold text-slate-900">${proposedGross.toFixed(2)}</span>
+              </div>
+            </div>
+            {row.proposalReason && (
+              <p className="text-xs text-slate-500 italic px-4 pb-3 pt-1">"{row.proposalReason}"</p>
+            )}
+          </div>
+
+          {/* Accept button */}
+          <button
+            disabled={submitting}
+            onClick={async () => { setSubmitting(true); try { await onAccept(); } finally { setSubmitting(false); } }}
+            className="w-full py-3 rounded-xl bg-primary-600 text-white font-semibold text-sm hover:bg-primary-700 disabled:opacity-50 transition-colors"
+          >
+            Accept · ${proposedGross.toFixed(2)}
+          </button>
+
+          {/* Divider */}
+          <div className="relative flex items-center gap-3">
+            <div className="flex-1 border-t border-slate-200" />
+            <span className="text-xs text-slate-400 shrink-0">or send a counter</span>
+            <div className="flex-1 border-t border-slate-200" />
+          </div>
+
+          {/* Counter form */}
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Counter start</label>
+                <input type="datetime-local" value={counterStart} onChange={e => setCounterStart(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-300" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Counter end</label>
+                <input type="datetime-local" value={counterEnd} onChange={e => setCounterEnd(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-300" />
+              </div>
+            </div>
+
+            {counterLineItems.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Additional charges</p>
+                <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                  {counterLineItems.map((li, i) => (
+                    <div key={i} className="flex items-center justify-between px-3 py-2 gap-2">
+                      <span className="text-xs text-slate-600 flex-1 truncate">{li.label || li.type}{li.note ? ` · ${li.note}` : ''}</span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="text-xs text-slate-400">$</span>
+                        <input type="number" min="0" step="0.01" value={li.amount}
+                          onChange={e => setCounterLineItems(counterLineItems.map((x, j) =>
+                            j === i ? { ...x, amount: parseFloat(e.target.value) || 0 } : x))}
+                          className="w-16 px-2 py-1 border border-slate-200 rounded-lg text-xs text-right focus:outline-none focus:ring-2 focus:ring-primary-300" />
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between px-3 py-2 bg-slate-50">
+                    <span className="text-xs font-semibold text-slate-600">Your total</span>
+                    <span className="text-xs font-bold text-slate-900">${counterGross.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Note (optional)</label>
+              <textarea value={counterNote} onChange={e => setCounterNote(e.target.value)} rows={2}
+                placeholder="Why do you disagree?"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary-300" />
+            </div>
+
+            <button
+              disabled={submitting || !counterStart || !counterEnd}
+              onClick={async () => {
+                setSubmitting(true);
+                try {
+                  await onCounter({
+                    startTime: new Date(counterStart).toISOString(),
+                    endTime:   new Date(counterEnd).toISOString(),
+                    note: counterNote.trim() || undefined,
+                    lineItems: counterLineItems.length > 0 ? counterLineItems : undefined,
+                  });
+                } finally { setSubmitting(false); }
+              }}
+              className="w-full py-3 rounded-xl bg-slate-800 text-white font-semibold text-sm hover:bg-slate-900 disabled:opacity-50 transition-colors"
+            >
+              {submitting ? 'Sending…' : `Send counter · $${counterGross.toFixed(2)}`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── PendingShiftRow ────────────────────────────────────────────────────────────
+
 const PendingShiftRow: React.FC<{
   row: ShiftRow;
-  onRespond: (action: 'accept' | 'reject') => void;
+  onRespond: (action: 'accept' | 'counter_propose', counter?: { startTime: string; endTime: string; note?: string; lineItems?: LineItem[] }) => void;
   onConfirmCash: () => void;
 }> = ({ row, onRespond, onConfirmCash }) => {
   // All hooks must be declared before any early returns
   const [confirming,   setConfirming]   = React.useState(false);
   const [pendingOpen,  setPendingOpen]  = React.useState(false);
+  const [reviewOpen,   setReviewOpen]   = React.useState(false);
 
   // Cash shift approved by client — caregiver must confirm receipt
   if (row.paymentMethod === 'cash' && (row.status === 'approved' || row.status === 'auto_approved')) {
@@ -162,36 +460,234 @@ const PendingShiftRow: React.FC<{
     );
   }
 
-  if (row.status === 'correction_proposed') {
+  if (row.status === 'caregiver_counter_proposed') {
+    const counterGross = row.counterGrossPay ?? (
+      row.counterTotalHours != null && row.payRate != null
+        ? Math.round((row.counterTotalHours * row.payRate + (row.counterLineItemsTotal ?? 0)) * 100) / 100
+        : null
+    );
+    // Data strip shows original submitted values — counter is pending, not approved yet
+    const ctrStart = row.submittedStartTime ? new Date(row.submittedStartTime) : null;
+    const ctrEnd   = row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
+    const ctrHours = row.submittedTotalHours ?? 0;
+    const stripPay = row.grossPay ?? 0;
+    const method   = row.paymentMethod
+      ? row.paymentMethod.charAt(0).toUpperCase() + row.paymentMethod.slice(1)
+      : '—';
+    // Original submission values for the HOURS receipt
+    const origBasePay = row.basePay ?? (row.submittedTotalHours != null && row.payRate ? Math.round(row.submittedTotalHours * row.payRate * 100) / 100 : null);
+    const origGross   = row.grossPay ?? origBasePay;
+    const counterBasePay = row.counterTotalHours != null && row.payRate
+      ? Math.round(row.counterTotalHours * row.payRate * 100) / 100
+      : null;
+
     return (
-      <div className="bg-primary-50 border border-primary-200 rounded-2xl p-4">
-        <div className="flex items-start justify-between mb-2">
-          <div>
-            <p className="font-semibold text-slate-900">{row.clientName}</p>
-            <p className="text-sm text-slate-600 mt-0.5">
-              You submitted <span className="font-bold">{row.submittedTotalHours}h</span>
-              {' · '}Client proposed <span className="font-bold">{row.proposedTotalHours}h</span>
-            </p>
-            {row.proposalReason && (
-              <p className="text-xs text-slate-500 mt-1">Reason: {row.proposalReason}</p>
-            )}
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        {/* Collapsed data strip */}
+        <div
+          className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+          onClick={() => setPendingOpen(o => !o)}
+        >
+          <Col label="Date"     value={ctrStart ? fmtDate(ctrStart) : '—'}  className="shrink-0 w-[58px]" />
+          <Divider />
+          <Col label="In"       value={ctrStart ? fmtTime(ctrStart) : '—'}  className="shrink-0 w-[66px]" />
+          <Divider />
+          <Col label="Out"      value={ctrEnd   ? fmtTime(ctrEnd)   : '—'}  className="shrink-0 w-[66px]" />
+          <Divider />
+          <Col label="Duration" value={fmtDuration(ctrHours)}               className="shrink-0 w-[62px]" />
+          <Divider />
+          <Col label="Pay"      value={`$${stripPay.toFixed(2)}`} highlight  className="shrink-0 w-[60px]" />
+          <Divider />
+          <Col label="Method"   value={method}                               className="shrink-0 w-[46px]" />
+
+          <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full border bg-yellow-50 text-yellow-700 border-yellow-200 whitespace-nowrap">
+              Counter sent
+            </span>
+            {pendingOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
           </div>
         </div>
-        <div className="flex gap-2 mt-3">
-          <button
-            onClick={() => onRespond('accept')}
-            className="px-4 py-1.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 transition-colors"
-          >
-            Accept {row.proposedTotalHours}h
-          </button>
-          <button
-            onClick={() => onRespond('reject')}
-            className="px-4 py-1.5 rounded-xl border border-slate-300 text-slate-700 text-sm font-semibold hover:bg-slate-50 transition-colors"
-          >
-            Reject → send to admin
-          </button>
-        </div>
+
+        {/* Expanded detail */}
+        {pendingOpen && (
+          <div className="border-t border-slate-100 px-4 pt-3 pb-4 space-y-3">
+            {/* Client name */}
+            <p className="text-sm font-semibold text-slate-700">{row.clientName}</p>
+
+            {/* Original HOURS receipt */}
+            <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide px-3 pt-2.5 pb-1">Hours submitted</p>
+              <div className="divide-y divide-slate-100">
+                {row.payRate != null && (
+                  <div className="flex items-center justify-between px-3 py-1.5 text-xs">
+                    <span className="text-slate-400">Rate</span>
+                    <span className="text-slate-700">${row.payRate}/hr</span>
+                  </div>
+                )}
+                {row.submittedStartTime && row.submittedEndTime && (
+                  <div className="flex items-center justify-between px-3 py-1.5 text-xs">
+                    <span className="text-slate-400">Clock in / out</span>
+                    <span className="text-slate-700">
+                      {fmtTime(new Date(row.submittedStartTime))} – {fmtTime(new Date(row.submittedEndTime))}
+                    </span>
+                  </div>
+                )}
+                {row.submittedTotalHours != null && (
+                  <div className="flex items-center justify-between px-3 py-1.5 text-xs">
+                    <span className="text-slate-400">Total hours</span>
+                    <span className="font-semibold text-slate-700">{fmtDuration(row.submittedTotalHours)}</span>
+                  </div>
+                )}
+                {origBasePay != null && row.lineItems && row.lineItems.length > 0 && (
+                  <div className="flex items-center justify-between px-3 py-1.5 text-xs">
+                    <span className="text-slate-400">Base pay</span>
+                    <span className="text-slate-700">${origBasePay.toFixed(2)}</span>
+                  </div>
+                )}
+                {row.lineItems && row.lineItems.map((li, i) => (
+                  <div key={i} className="flex items-center justify-between px-3 py-1.5 text-xs">
+                    <span className="text-slate-400 truncate">{li.label || li.type}{li.note ? ` · ${li.note}` : ''}</span>
+                    <span className="text-slate-700 shrink-0">+${Number(li.amount).toFixed(2)}</span>
+                  </div>
+                ))}
+                {origGross != null && (
+                  <div className="flex items-center justify-between px-3 py-2 bg-slate-50 text-xs">
+                    <span className="font-semibold text-slate-600">Total</span>
+                    <span className="font-bold text-slate-900">${origGross.toFixed(2)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Correction history */}
+            {row.correctionHistory && row.correctionHistory.length > 0 && (
+              <CorrectionTimeline
+                history={row.correctionHistory}
+                payRate={row.payRate}
+                submittedLineItems={row.lineItems}
+                submittedBasePay={row.basePay}
+                submittedGrossPay={row.grossPay}
+              />
+            )}
+          </div>
+        )}
       </div>
+    );
+  }
+
+  if (row.status === 'correction_proposed') {
+    const submittedBasePay  = row.basePay ?? (row.submittedTotalHours != null && row.payRate ? Math.round(row.submittedTotalHours * row.payRate * 100) / 100 : null);
+    const origGross         = row.grossPay ?? submittedBasePay;
+    const proposedLineItems: LineItem[] = (row as any).proposedLineItems ?? row.lineItems ?? [];
+    const proposedBasePay   = row.proposedTotalHours != null && row.payRate ? Math.round(row.proposedTotalHours * row.payRate * 100) / 100 : null;
+    const proposedGross     = (row as any).proposedGrossPay ?? (proposedBasePay != null ? Math.round((proposedBasePay + proposedLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0)) * 100) / 100 : null);
+    const payDiff           = proposedGross != null && origGross != null ? Math.round((proposedGross - origGross) * 100) / 100 : null;
+    // Data strip uses original submitted values
+    const stripStart = row.submittedStartTime ? new Date(row.submittedStartTime) : null;
+    const stripEnd   = row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
+    const stripHours = row.submittedTotalHours ?? 0;
+    const stripPay   = origGross ?? 0;
+    const method     = row.paymentMethod ? row.paymentMethod.charAt(0).toUpperCase() + row.paymentMethod.slice(1) : '—';
+
+    return (
+      <>
+        <div className="bg-white rounded-2xl border border-orange-200 overflow-hidden">
+          {/* Collapsed data strip */}
+          <div
+            className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-orange-50 transition-colors select-none"
+            onClick={() => setPendingOpen(o => !o)}
+          >
+            <Col label="Date"     value={stripStart ? fmtDate(stripStart) : '—'} className="shrink-0 w-[58px]" />
+            <Divider />
+            <Col label="In"       value={stripStart ? fmtTime(stripStart) : '—'} className="shrink-0 w-[66px]" />
+            <Divider />
+            <Col label="Out"      value={stripEnd   ? fmtTime(stripEnd)   : '—'} className="shrink-0 w-[66px]" />
+            <Divider />
+            <Col label="Duration" value={fmtDuration(stripHours)}                className="shrink-0 w-[62px]" />
+            <Divider />
+            <Col label="Pay"      value={`$${stripPay.toFixed(2)}`} highlight     className="shrink-0 w-[60px]" />
+            <Divider />
+            <Col label="Method"   value={method}                                 className="shrink-0 w-[46px]" />
+            <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full border bg-orange-50 text-orange-700 border-orange-200 whitespace-nowrap">
+                Correction requested
+              </span>
+              {pendingOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+            </div>
+          </div>
+
+          {/* Expanded detail */}
+          {pendingOpen && (
+            <div className="border-t border-orange-100 px-4 pt-3 pb-4 space-y-3">
+              <p className="text-sm font-semibold text-slate-700">{row.clientName}</p>
+
+              {/* Your original submission — full width */}
+              <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide px-3 pt-2.5 pb-1">Hours submitted</p>
+                <div className="divide-y divide-slate-100">
+                  {row.payRate != null && (
+                    <div className="flex items-center justify-between px-3 py-1.5 text-xs">
+                      <span className="text-slate-400">Rate</span>
+                      <span className="text-slate-700">${row.payRate}/hr</span>
+                    </div>
+                  )}
+                  {row.submittedStartTime && row.submittedEndTime && (
+                    <div className="flex items-center justify-between px-3 py-1.5 text-xs">
+                      <span className="text-slate-400">Clock in / out</span>
+                      <span className="text-slate-700">{fmtTime(new Date(row.submittedStartTime))} – {fmtTime(new Date(row.submittedEndTime))}</span>
+                    </div>
+                  )}
+                  {row.submittedTotalHours != null && (
+                    <div className="flex items-center justify-between px-3 py-1.5 text-xs">
+                      <span className="text-slate-400">Total hours</span>
+                      <span className="font-semibold text-slate-700">{fmtDuration(row.submittedTotalHours)}</span>
+                    </div>
+                  )}
+                  {submittedBasePay != null && row.lineItems && row.lineItems.length > 0 && (
+                    <div className="flex items-center justify-between px-3 py-1.5 text-xs">
+                      <span className="text-slate-400">Base pay</span>
+                      <span className="text-slate-700">${submittedBasePay.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {row.lineItems && row.lineItems.map((li, i) => (
+                    <div key={i} className="flex items-center justify-between px-3 py-1.5 text-xs">
+                      <span className="text-slate-400 truncate">{li.label || li.type}{li.note ? ` · ${li.note}` : ''}</span>
+                      <span className="text-slate-700 shrink-0">+${Number(li.amount).toFixed(2)}</span>
+                    </div>
+                  ))}
+                  {origGross != null && (
+                    <div className="flex items-center justify-between px-3 py-2 bg-slate-50 text-xs">
+                      <span className="font-semibold text-slate-600">Total</span>
+                      <span className="font-bold text-slate-900">${origGross.toFixed(2)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+
+              <button
+                onClick={() => setReviewOpen(true)}
+                className="w-full py-2.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition-colors"
+              >
+                Review & Respond
+              </button>
+
+              {row.correctionHistory && row.correctionHistory.length > 0 && (
+                <CorrectionTimeline history={row.correctionHistory} payRate={row.payRate} submittedLineItems={row.lineItems} submittedBasePay={row.basePay} submittedGrossPay={row.grossPay} />
+              )}
+            </div>
+          )}
+        </div>
+
+        {reviewOpen && (
+          <ReviewRespondModal
+            row={row}
+            onClose={() => setReviewOpen(false)}
+            onAccept={async () => { await onRespond('accept'); setReviewOpen(false); }}
+            onCounter={async (counter) => { await onRespond('counter_propose', counter); setReviewOpen(false); }}
+          />
+        )}
+      </>
     );
   }
 
@@ -301,6 +797,10 @@ const PendingShiftRow: React.FC<{
               </div>
             )}
           </div>
+
+          {row.correctionHistory && row.correctionHistory.some(e => e.action !== 'submitted') && (
+            <CorrectionTimeline history={row.correctionHistory} payRate={row.payRate} submittedLineItems={row.lineItems} submittedBasePay={row.basePay} submittedGrossPay={row.grossPay} />
+          )}
         </div>
       )}
     </div>
@@ -436,6 +936,10 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
               ⚠ {row.stripeFailureReason}
             </p>
           )}
+
+          {row.correctionHistory && row.correctionHistory.some(e => e.action !== 'submitted') && (
+            <CorrectionTimeline history={row.correctionHistory} payRate={row.payRate} submittedLineItems={row.lineItems} submittedBasePay={row.basePay} submittedGrossPay={row.grossPay} />
+          )}
         </div>
       )}
     </div>
@@ -484,7 +988,7 @@ const SubmittableShiftCard: React.FC<{
         <div className="w-px h-8 bg-slate-100 shrink-0" />
         <Col label={hasActual ? 'Out' : 'Sched out'} value={fmtTime(dispEnd)}        className="shrink-0 w-[66px]" />
         <div className="w-px h-8 bg-slate-100 shrink-0" />
-        <Col label="Duration" value={durationH > 0 ? `${durationH}h` : '—'}          className="shrink-0 w-[58px]" />
+        <Col label="Duration" value={durationH > 0 ? fmtDuration(durationH) : '—'}    className="shrink-0 w-[58px]" />
         <div className="w-px h-8 bg-slate-100 shrink-0" />
         <Col label="Est. pay" value={estPay != null ? `$${estPay.toFixed(2)}` : '—'} highlight className="shrink-0 w-[60px]" />
         <div className="w-px h-8 bg-slate-100 shrink-0" />
@@ -664,12 +1168,12 @@ export const CaregiverPaymentsPage: React.FC = () => {
   }, [completedShifts, shiftRows]);
 
   const pendingRows = shiftRows.filter(r =>
-    ['pending_client_review', 'correction_proposed'].includes(r.status) ||
+    ['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed'].includes(r.status) ||
     // cash approved shifts that need caregiver cash confirmation
     (r.paymentMethod === 'cash' && (r.status === 'approved' || r.status === 'auto_approved'))
   );
   const historyRows = shiftRows.filter(r =>
-    !['pending_client_review', 'correction_proposed'].includes(r.status) &&
+    !['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed'].includes(r.status) &&
     // exclude cash-approved shifts waiting for confirmation — they still belong in Pending
     !(r.paymentMethod === 'cash' && (r.status === 'approved' || r.status === 'auto_approved'))
   );
@@ -738,10 +1242,17 @@ export const CaregiverPaymentsPage: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const handleRespondToCorrection = async (row: ShiftRow, action: 'accept' | 'reject') => {
+  const handleRespondToCorrection = async (
+    row: ShiftRow,
+    action: 'accept' | 'counter_propose',
+    counter?: { startTime: string; endTime: string; note?: string; lineItems?: LineItem[] }
+  ) => {
     try {
-      await shiftHoursService.respondToCorrection(row.appointmentId, action);
-      addToast(action === 'accept' ? 'Correction accepted' : 'Sent to admin for review', 'success');
+      await shiftHoursService.respondToCorrection(row.appointmentId, action, counter as any);
+      addToast(
+        action === 'accept' ? 'Correction accepted' : 'Counter-proposal sent to client',
+        'success'
+      );
     } catch (e: any) {
       addToast(e?.message || 'Failed to respond', 'error');
     }
@@ -986,7 +1497,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
                   <PendingShiftRow
                     key={row.id}
                     row={row}
-                    onRespond={action => handleRespondToCorrection(row, action)}
+                    onRespond={(action, counter) => handleRespondToCorrection(row, action, counter)}
                     onConfirmCash={() => handleConfirmCash(row)}
                   />
                 ))

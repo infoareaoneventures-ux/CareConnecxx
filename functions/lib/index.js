@@ -195,6 +195,7 @@ var taxReminder_1 = require("./scheduled/taxReminder");
 Object.defineProperty(exports, "send1099Notifications", { enumerable: true, get: function () { return taxReminder_1.send1099Notifications; } });
 // MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
 __exportStar(require("./migrations/migrateSeniorsToHousehold"), exports);
+// fixAcceptedCounterPay migration already executed — not exported
 // ── initiateCara — unauthenticated callable: proactively sends Cara's greeting ──
 // Called from the web "Continue with Phone" screen so desktop users receive an
 // outbound SMS rather than relying on the sms: URI (which silently fails on desktop).

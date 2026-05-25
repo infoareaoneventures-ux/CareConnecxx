@@ -17,6 +17,7 @@ type Tab = 'timesheets' | 'payment-method';
 type ShiftHoursStatus =
   | 'pending_client_review'
   | 'correction_proposed'
+  | 'caregiver_counter_proposed'
   | 'approved'
   | 'auto_approved'
   | 'disputed_admin_review'
@@ -30,6 +31,20 @@ interface LineItem {
   label: string;
   note: string;
   amount: number;
+}
+
+interface CorrectionHistoryEntry {
+  by: string;
+  action: string;
+  at: string;
+  startTime?: string;
+  endTime?: string;
+  hours?: number;
+  note?: string;
+  basePay?: number;
+  lineItems?: LineItem[];
+  lineItemsTotal?: number;
+  grossPay?: number;
 }
 
 interface ShiftHoursRow {
@@ -49,6 +64,11 @@ interface ShiftHoursRow {
   finalEndTime?: string;
   finalTotalHours?: number;
   resolvedBy?: string;
+  counterStartTime?: string;
+  counterEndTime?: string;
+  counterTotalHours?: number;
+  counterNote?: string;
+  correctionHistory?: CorrectionHistoryEntry[];
   lineItems?: LineItem[];
   lineItemsTotal?: number;
   basePay?: number;
@@ -79,13 +99,115 @@ function fmtDuration(hours: number): string {
 }
 
 const STATUS_CONFIG: Record<ShiftHoursStatus, { label: string; color: string; bg: string; border: string }> = {
-  pending_client_review: { label: 'Needs Review',      color: 'text-amber-700',   bg: 'bg-amber-50',   border: 'border-amber-200' },
-  correction_proposed:   { label: 'Correction Sent',   color: 'text-orange-700',  bg: 'bg-orange-50',  border: 'border-orange-200' },
-  approved:              { label: 'Approved',           color: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-200' },
-  auto_approved:         { label: 'Auto-Approved',      color: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-200' },
-  disputed_admin_review: { label: 'Under Review',       color: 'text-purple-700',  bg: 'bg-purple-50',  border: 'border-purple-200' },
-  paid:                  { label: 'Paid',               color: 'text-green-700',   bg: 'bg-green-50',   border: 'border-green-200' },
-  payment_failed:        { label: 'Payment Failed',     color: 'text-red-700',     bg: 'bg-red-50',     border: 'border-red-200' },
+  pending_client_review:     { label: 'Needs Review',      color: 'text-amber-700',   bg: 'bg-amber-50',   border: 'border-amber-200' },
+  correction_proposed:       { label: 'Correction Sent',   color: 'text-orange-700',  bg: 'bg-orange-50',  border: 'border-orange-200' },
+  caregiver_counter_proposed:{ label: 'Counter Received',  color: 'text-yellow-700',  bg: 'bg-yellow-50',  border: 'border-yellow-200' },
+  approved:                  { label: 'Approved',           color: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-200' },
+  auto_approved:             { label: 'Auto-Approved',      color: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-200' },
+  disputed_admin_review:     { label: 'Under Review',       color: 'text-purple-700',  bg: 'bg-purple-50',  border: 'border-purple-200' },
+  paid:                      { label: 'Paid',               color: 'text-green-700',   bg: 'bg-green-50',   border: 'border-green-200' },
+  payment_failed:            { label: 'Payment Failed',     color: 'text-red-700',     bg: 'bg-red-50',     border: 'border-red-200' },
+};
+
+const HISTORY_ACTION_LABEL: Record<string, string> = {
+  submitted:           'Submitted by caregiver',
+  proposed_correction: 'Client proposed correction',
+  counter_proposed:    'Caregiver sent counter',
+  accepted:            'Accepted',
+  escalated:           'Escalated to admin',
+  admin_resolved:      'Resolved by admin',
+};
+
+const CorrectionTimeline: React.FC<{
+  history: CorrectionHistoryEntry[];
+  payRate?: number;
+  submittedLineItems?: LineItem[];
+  submittedBasePay?: number;
+  submittedGrossPay?: number;
+}> = ({ history, payRate, submittedLineItems, submittedBasePay, submittedGrossPay }) => {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const toggle = (i: number) => setExpanded(prev => {
+    const next = new Set(prev);
+    next.has(i) ? next.delete(i) : next.add(i);
+    return next;
+  });
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Correction history</p>
+      {history.map((entry, i) => {
+        const isOpen = expanded.has(i);
+        const isSubmitted = entry.action === 'submitted';
+        const entryBasePay = entry.basePay ?? (isSubmitted ? submittedBasePay : null) ?? (entry.hours != null && payRate ? Math.round(entry.hours * payRate * 100) / 100 : null);
+        const entryLineItems = (Array.isArray(entry.lineItems) && entry.lineItems.length > 0) ? entry.lineItems : (isSubmitted ? submittedLineItems : undefined);
+        const entryGrossPay  = entry.grossPay ?? (isSubmitted ? submittedGrossPay : null);
+        const hasReceipt = !!(entry.startTime && entry.endTime && entry.hours != null);
+        const ts = new Date(entry.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          + ', '
+          + new Date(entry.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        return (
+          <div key={i} className="flex gap-3 text-xs">
+            <div className="flex flex-col items-center shrink-0">
+              <div className="w-2 h-2 rounded-full bg-slate-300 mt-2.5" />
+              {i < history.length - 1 && <div className="w-px flex-1 bg-slate-200 mt-1" />}
+            </div>
+            <div className="pb-2 flex-1 min-w-0">
+              {/* Row header — always visible, clickable if has receipt */}
+              <div
+                className={`flex items-center justify-between ${hasReceipt ? 'cursor-pointer select-none' : ''}`}
+                onClick={() => hasReceipt && toggle(i)}
+              >
+                <div>
+                  <p className="font-semibold text-slate-700">{HISTORY_ACTION_LABEL[entry.action] || entry.action}</p>
+                  <p className="text-slate-400 mt-0.5">{ts}</p>
+                </div>
+                {hasReceipt && (
+                  isOpen
+                    ? <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-2" />
+                    : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-2" />
+                )}
+              </div>
+
+              {/* Expanded receipt */}
+              {isOpen && hasReceipt && (
+                <div className="mt-1.5 divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-white">
+                  <div className="flex items-center justify-between px-3 py-1.5">
+                    <span className="text-slate-400">Time</span>
+                    <span className="font-medium text-slate-700">
+                      {fmtTime(entry.startTime!)} – {fmtTime(entry.endTime!)} · {fmtDuration(entry.hours!)}
+                    </span>
+                  </div>
+                  {payRate != null && entryBasePay != null && (
+                    <div className="flex items-center justify-between px-3 py-1.5">
+                      <span className="text-slate-400">${payRate}/hr · Base</span>
+                      <span className="font-medium text-slate-700">${entryBasePay.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {Array.isArray(entryLineItems) && entryLineItems.map((li, j) => (
+                    <div key={j} className="flex items-center justify-between px-3 py-1.5">
+                      <span className="text-slate-400">{li.label || li.type}{li.note ? ` · ${li.note}` : ''}</span>
+                      <span className="font-medium text-slate-700">+${Number(li.amount).toFixed(2)}</span>
+                    </div>
+                  ))}
+                  {entryGrossPay != null && (
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50">
+                      <span className="font-semibold text-slate-600">Total</span>
+                      <span className="font-bold text-slate-900">${entryGrossPay.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {entry.note && (
+                    <div className="px-3 py-1.5 text-slate-400 italic">"{entry.note}"</div>
+                  )}
+                </div>
+              )}
+              {!hasReceipt && entry.note && (
+                <p className="text-slate-400 mt-0.5 italic">"{entry.note}"</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 };
 
 const CaregiverAvatar: React.FC<{ name?: string; photoURL?: string | null; size?: string }> = ({
@@ -124,7 +246,7 @@ const ShiftRow: React.FC<{
   const hasExtras = row.lineItems && row.lineItems.length > 0;
   // Use stored grossPay (includes line items) when available
   const totalPay  = row.grossPay ?? basePay;
-  const isPending = row.status === 'pending_client_review';
+  const isPending = row.status === 'pending_client_review' || row.status === 'caregiver_counter_proposed';
   // Only show "Corrected" when the caregiver explicitly accepted a client correction proposal
   const isCorrected = row.resolvedBy === 'caregiver';
 
@@ -186,32 +308,34 @@ const ShiftRow: React.FC<{
           {/* Times */}
           <div className="space-y-1">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Hours</p>
-            {isCorrected && (
-              <div className="flex items-center gap-3 text-xs">
-                <span className="w-16 text-slate-400 shrink-0">Original</span>
-                <span className="text-slate-500 line-through">
-                  {fmtTime(row.submittedStartTime)} – {fmtTime(row.submittedEndTime)}
-                  <span className="ml-2">{fmtDuration((new Date(row.submittedEndTime).getTime() - new Date(row.submittedStartTime).getTime()) / 3_600_000)}</span>
+            <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden text-xs">
+              {isCorrected && (
+                <div className="flex items-center justify-between px-3 py-2">
+                  <span className="text-slate-400">Original</span>
+                  <span className="text-slate-400 line-through">
+                    {fmtTime(row.submittedStartTime)} – {fmtTime(row.submittedEndTime)}
+                    {' · '}{fmtDuration((new Date(row.submittedEndTime).getTime() - new Date(row.submittedStartTime).getTime()) / 3_600_000)}
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-500">{isCorrected ? 'Corrected' : 'Submitted'}</span>
+                <span className="font-semibold text-slate-700">
+                  {fmtTime(row.finalStartTime ?? row.submittedStartTime)} – {fmtTime(row.finalEndTime ?? row.submittedEndTime)}
+                  <span className="text-primary-600 font-bold ml-2">{fmtDuration(dispHours)}</span>
                 </span>
               </div>
-            )}
-            <div className="flex items-center gap-3 text-xs">
-              <span className="w-16 text-slate-400 shrink-0">{isCorrected ? 'Corrected' : 'Submitted'}</span>
-              <span className="font-semibold text-slate-700">
-                {fmtTime(row.finalStartTime ?? row.submittedStartTime)} – {fmtTime(row.finalEndTime ?? row.submittedEndTime)}
-                <span className="text-primary-600 font-bold ml-2">{fmtDuration(dispHours)}</span>
-              </span>
-            </div>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="w-16 text-slate-400 shrink-0">Rate</span>
-              <span className="font-semibold text-slate-700">${row.payRate}/hr · Base {fmtAmount(dispHours, row.payRate)}</span>
-            </div>
-            {row.status === 'pending_client_review' && (
-              <div className="flex items-center gap-3 text-xs">
-                <span className="w-16 text-slate-400 shrink-0">Auto-approves</span>
-                <span className="text-slate-500">{fmtDate(row.autoApproveAt)}</span>
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-500">Rate</span>
+                <span className="font-semibold text-slate-700">${row.payRate}/hr · Base {fmtAmount(dispHours, row.payRate)}</span>
               </div>
-            )}
+              {row.status === 'pending_client_review' && (
+                <div className="flex items-center justify-between px-3 py-2">
+                  <span className="text-slate-500">Auto-approves</span>
+                  <span className="text-slate-500">{fmtDate(row.autoApproveAt)}</span>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Line items */}
@@ -288,7 +412,7 @@ const ShiftRow: React.FC<{
             <div className="flex items-start gap-2 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
               <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0 mt-0.5" />
               <p className="text-xs text-orange-700 font-medium">
-                You proposed a correction. Waiting for the caregiver to accept or reject.
+                You proposed a correction. Waiting for the caregiver to accept or send a counter.
               </p>
             </div>
           )}
@@ -309,13 +433,19 @@ const ShiftRow: React.FC<{
             </div>
           )}
 
+          {/* Correction history */}
+          {row.correctionHistory && row.correctionHistory.some((e: any) => e.action !== 'submitted') && (
+            <CorrectionTimeline history={row.correctionHistory} payRate={row.payRate} submittedLineItems={row.lineItems} submittedBasePay={row.basePay} submittedGrossPay={row.grossPay} />
+          )}
+
           {/* Actions */}
           {isPending && (
             <button
               onClick={e => { e.stopPropagation(); onReview(row); }}
               className="w-full py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors"
             >
-              <CheckCircle className="w-4 h-4" /> Review & Approve
+              <CheckCircle className="w-4 h-4" />
+              {row.status === 'caregiver_counter_proposed' ? 'Review & Respond' : 'Review & Approve'}
             </button>
           )}
         </div>
@@ -377,7 +507,9 @@ export const Payments: React.FC = () => {
     return rows.filter(r => new Date(r.submittedAt) >= cutoff);
   }, [rows, dateFilter]);
 
-  const pendingCount = rows.filter(r => r.status === 'pending_client_review').length;
+  const pendingCount = rows.filter(r =>
+    r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed'
+  ).length;
 
   const pillTab = (active: boolean) =>
     `inline-flex items-center gap-2 px-5 py-2 rounded-full text-sm font-medium transition-colors ${
@@ -497,9 +629,11 @@ export const Payments: React.FC = () => {
                 {filteredRows
                   .slice()
                   .sort((a, b) => {
-                    // pending_client_review first, then by date desc
-                    const aP = a.status === 'pending_client_review' ? 0 : 1;
-                    const bP = b.status === 'pending_client_review' ? 0 : 1;
+                    // items needing client action first, then by date desc
+                    const needsAction = (s: ShiftHoursStatus) =>
+                      s === 'pending_client_review' || s === 'caregiver_counter_proposed' ? 0 : 1;
+                    const aP = needsAction(a.status);
+                    const bP = needsAction(b.status);
                     if (aP !== bP) return aP - bP;
                     return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
                   })

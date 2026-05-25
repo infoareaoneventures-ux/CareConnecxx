@@ -167,6 +167,18 @@ exports.submitShiftHours = functions.https.onCall(async (data, context) => {
         autoApproveAt,
         paymentAttemptCount: 0,
         status: 'pending_client_review',
+        correctionHistory: [{
+                by: 'caregiver',
+                action: 'submitted',
+                at: submittedAt,
+                startTime: startTime,
+                endTime: endTime,
+                hours: totalHours,
+                lineItems,
+                lineItemsTotal,
+                basePay,
+                grossPay,
+            }],
         createdAt: submittedAt,
         updatedAt: submittedAt,
     });
@@ -197,14 +209,15 @@ exports.submitShiftHours = functions.https.onCall(async (data, context) => {
     return { success: true, shiftId, totalHours };
 });
 /**
- * Client approves or proposes a correction.
+ * Client approves, proposes a correction, accepts a counter-proposal, or escalates.
  */
 exports.reviewShiftHours = functions.https.onCall(async (data, context) => {
+    var _a, _b;
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
     }
-    const { appointmentId, action, proposedStartTime, proposedEndTime, proposalReason } = data;
-    if (!appointmentId || (action !== 'approve' && action !== 'propose_correction')) {
+    const { appointmentId, action, proposedStartTime, proposedEndTime, proposalReason, lineItems: rawLineItems } = data;
+    if (!appointmentId || !['approve', 'propose_correction', 'accept_counter', 'escalate'].includes(action)) {
         throw new functions.https.HttpsError('invalid-argument', 'appointmentId and valid action required');
     }
     const ref = db.collection('shiftHours').doc(appointmentId);
@@ -216,8 +229,12 @@ exports.reviewShiftHours = functions.https.onCall(async (data, context) => {
     if (shift.clientId !== context.auth.uid) {
         throw new functions.https.HttpsError('permission-denied', 'Not your appointment');
     }
-    if (shift.status !== 'pending_client_review') {
+    // Validate status constraints per action
+    if ((action === 'approve' || action === 'propose_correction') && shift.status !== 'pending_client_review') {
         throw new functions.https.HttpsError('failed-precondition', 'Already reviewed');
+    }
+    if ((action === 'accept_counter' || action === 'escalate') && shift.status !== 'caregiver_counter_proposed') {
+        throw new functions.https.HttpsError('failed-precondition', 'No counter-proposal to respond to');
     }
     const now = nowIso();
     if (action === 'approve') {
@@ -230,39 +247,119 @@ exports.reviewShiftHours = functions.https.onCall(async (data, context) => {
             resolvedAt: now,
             resolvedBy: 'client',
             updatedAt: now,
+            correctionHistory: admin.firestore.FieldValue.arrayUnion({
+                by: 'client',
+                action: 'accepted',
+                at: now,
+                startTime: shift.submittedStartTime,
+                endTime: shift.submittedEndTime,
+                hours: shift.submittedTotalHours,
+            }),
         });
         await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Your hours were approved', `Client approved ${shift.submittedTotalHours}h.`, { appointmentId });
         return { success: true };
     }
-    // action === 'propose_correction'
-    if (!proposedStartTime || !proposedEndTime) {
-        throw new functions.https.HttpsError('invalid-argument', 'Proposed start/end required');
+    if (action === 'propose_correction') {
+        if (!proposedStartTime || !proposedEndTime) {
+            throw new functions.https.HttpsError('invalid-argument', 'Proposed start/end required');
+        }
+        const proposedTotalHours = computeTotalHours(proposedStartTime, proposedEndTime);
+        const correctionRespondByAt = new Date(Date.now() + ONE_DAY_MS).toISOString();
+        const proposedLineItems = Array.isArray(rawLineItems) ? rawLineItems : ((_a = shift.lineItems) !== null && _a !== void 0 ? _a : []);
+        const proposedLineItemsTotal = proposedLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0);
+        const proposedBasePay = Math.round(proposedTotalHours * shift.payRate * 100) / 100;
+        const proposedGrossPay = Math.round((proposedBasePay + proposedLineItemsTotal) * 100) / 100;
+        await ref.update({
+            status: 'correction_proposed',
+            proposedStartTime,
+            proposedEndTime,
+            proposedTotalHours,
+            proposedLineItems,
+            proposedLineItemsTotal,
+            proposedGrossPay,
+            proposalReason: proposalReason || null,
+            proposedAt: now,
+            correctionRespondByAt,
+            updatedAt: now,
+            correctionHistory: admin.firestore.FieldValue.arrayUnion({
+                by: 'client',
+                action: 'proposed_correction',
+                at: now,
+                startTime: proposedStartTime,
+                endTime: proposedEndTime,
+                hours: proposedTotalHours,
+                basePay: proposedBasePay,
+                lineItems: proposedLineItems,
+                lineItemsTotal: proposedLineItemsTotal,
+                grossPay: proposedGrossPay,
+                note: proposalReason || null,
+            }),
+        });
+        await pushNotification(shift.caregiverId, 'shift_hours_correction_proposed', 'Client proposed a correction', `Client proposed ${proposedTotalHours}h (you submitted ${shift.submittedTotalHours}h). Respond within 24h or it auto-accepts.`, { appointmentId, proposedTotalHours });
+        return { success: true };
     }
-    const proposedTotalHours = computeTotalHours(proposedStartTime, proposedEndTime);
-    const correctionRespondByAt = new Date(Date.now() + ONE_DAY_MS).toISOString();
+    if (action === 'accept_counter') {
+        const counterHours = shift.counterTotalHours;
+        if (!counterHours) {
+            throw new functions.https.HttpsError('failed-precondition', 'Counter-proposal data missing');
+        }
+        const counterBasePay = Math.round(counterHours * shift.payRate * 100) / 100;
+        const safeCounterLineItems = Array.isArray(shift.counterLineItems) ? shift.counterLineItems : [];
+        const counterLineItemsTotal = Math.round(safeCounterLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0) * 100) / 100;
+        const acceptedGrossPay = (_b = shift.counterGrossPay) !== null && _b !== void 0 ? _b : Math.round((counterBasePay + counterLineItemsTotal) * 100) / 100;
+        await ref.update({
+            status: 'approved',
+            finalStartTime: shift.counterStartTime,
+            finalEndTime: shift.counterEndTime,
+            finalTotalHours: counterHours,
+            lineItems: safeCounterLineItems,
+            lineItemsTotal: counterLineItemsTotal,
+            basePay: counterBasePay,
+            grossPay: acceptedGrossPay,
+            resolvedAt: now,
+            resolvedBy: 'client',
+            updatedAt: now,
+            correctionHistory: admin.firestore.FieldValue.arrayUnion({
+                by: 'client',
+                action: 'accepted',
+                at: now,
+                startTime: shift.counterStartTime,
+                endTime: shift.counterEndTime,
+                hours: counterHours,
+                lineItems: safeCounterLineItems,
+                lineItemsTotal: counterLineItemsTotal,
+                basePay: counterBasePay,
+                grossPay: acceptedGrossPay,
+            }),
+        });
+        await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Client accepted your counter-proposal', `Client accepted ${counterHours}h. Payment will be processed shortly.`, { appointmentId });
+        return { success: true };
+    }
+    // action === 'escalate'
     await ref.update({
-        status: 'correction_proposed',
-        proposedStartTime,
-        proposedEndTime,
-        proposedTotalHours,
-        proposalReason: proposalReason || null,
-        proposedAt: now,
-        correctionRespondByAt,
+        status: 'disputed_admin_review',
+        resolvedBy: null,
         updatedAt: now,
+        correctionHistory: admin.firestore.FieldValue.arrayUnion({
+            by: 'client',
+            action: 'escalated',
+            at: now,
+        }),
     });
-    await pushNotification(shift.caregiverId, 'shift_hours_correction_proposed', 'Client proposed a correction', `Client proposed ${proposedTotalHours}h (you submitted ${shift.submittedTotalHours}h). Respond within 24h or it auto-accepts.`, { appointmentId, proposedTotalHours });
+    await notifyAdmins('shift_hours_admin_review', 'Shift hours dispute needs mediation', `${shift.clientName} escalated a dispute with ${shift.caregiverName} for appointment ${appointmentId}.`, { appointmentId });
     return { success: true };
 });
 /**
- * Caregiver accepts or rejects the client's correction.
+ * Caregiver accepts the client's correction or sends a counter-proposal.
  */
 exports.respondToCorrection = functions.https.onCall(async (data, context) => {
+    var _a, _b;
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
     }
-    const { appointmentId, action } = data;
-    if (!appointmentId || (action !== 'accept' && action !== 'reject')) {
-        throw new functions.https.HttpsError('invalid-argument', 'appointmentId and valid action required');
+    const { appointmentId, action, counterStartTime, counterEndTime, counterNote, counterLineItems: rawCounterLineItems } = data;
+    if (!appointmentId || (action !== 'accept' && action !== 'counter_propose')) {
+        throw new functions.https.HttpsError('invalid-argument', 'appointmentId and valid action (accept | counter_propose) required');
     }
     const ref = db.collection('shiftHours').doc(appointmentId);
     const snap = await ref.get();
@@ -278,26 +375,68 @@ exports.respondToCorrection = functions.https.onCall(async (data, context) => {
     }
     const now = nowIso();
     if (action === 'accept') {
+        const finalLineItems = Array.isArray(shift.proposedLineItems) ? shift.proposedLineItems : ((_a = shift.lineItems) !== null && _a !== void 0 ? _a : []);
+        const finalLineItemsTotal = finalLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0);
+        const finalGrossPay = shift.proposedGrossPay != null
+            ? shift.proposedGrossPay
+            : Math.round((shift.proposedTotalHours * shift.payRate + finalLineItemsTotal) * 100) / 100;
         await ref.update({
             status: 'approved',
             finalStartTime: shift.proposedStartTime,
             finalEndTime: shift.proposedEndTime,
             finalTotalHours: shift.proposedTotalHours,
-            grossPay: Math.round(shift.proposedTotalHours * shift.payRate * 100) / 100,
+            finalLineItems,
+            finalLineItemsTotal,
+            grossPay: finalGrossPay,
             resolvedAt: now,
             resolvedBy: 'caregiver',
             updatedAt: now,
+            correctionHistory: admin.firestore.FieldValue.arrayUnion({
+                by: 'caregiver',
+                action: 'accepted',
+                at: now,
+                startTime: shift.proposedStartTime,
+                endTime: shift.proposedEndTime,
+                hours: shift.proposedTotalHours,
+            }),
         });
         await pushNotification(shift.clientId, 'shift_hours_approved', 'Caregiver accepted correction', `${shift.caregiverName} accepted your proposed ${shift.proposedTotalHours}h.`, { appointmentId });
         return { success: true };
     }
-    // reject → admin mediation
+    // action === 'counter_propose'
+    if (!counterStartTime || !counterEndTime) {
+        throw new functions.https.HttpsError('invalid-argument', 'counterStartTime and counterEndTime are required for counter_propose');
+    }
+    const counterTotalHours = computeTotalHours(counterStartTime, counterEndTime);
+    const safeCounterLineItems = Array.isArray(rawCounterLineItems) ? rawCounterLineItems : ((_b = shift.lineItems) !== null && _b !== void 0 ? _b : []);
+    const counterLineItemsTotal = safeCounterLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0);
+    const counterBasePay = Math.round(counterTotalHours * (shift.payRate || 0) * 100) / 100;
+    const counterGrossPay = Math.round((counterBasePay + counterLineItemsTotal) * 100) / 100;
     await ref.update({
-        status: 'disputed_admin_review',
-        resolvedBy: null,
+        status: 'caregiver_counter_proposed',
+        counterStartTime,
+        counterEndTime,
+        counterTotalHours,
+        counterNote: counterNote || null,
+        counterLineItems: safeCounterLineItems,
+        counterLineItemsTotal,
+        counterGrossPay,
         updatedAt: now,
+        correctionHistory: admin.firestore.FieldValue.arrayUnion({
+            by: 'caregiver',
+            action: 'counter_proposed',
+            at: now,
+            startTime: counterStartTime,
+            endTime: counterEndTime,
+            hours: counterTotalHours,
+            basePay: counterBasePay,
+            lineItems: safeCounterLineItems,
+            lineItemsTotal: counterLineItemsTotal,
+            grossPay: counterGrossPay,
+            note: counterNote || null,
+        }),
     });
-    await notifyAdmins('shift_hours_admin_review', 'Shift hours dispute needs mediation', `${shift.caregiverName} and ${shift.clientName} could not agree on hours for appointment ${appointmentId}.`, { appointmentId });
+    await pushNotification(shift.clientId, 'shift_hours_counter_proposed', 'Caregiver sent a counter-proposal', `${shift.caregiverName} sent a counter-proposal for ${counterTotalHours}h. Review and accept or escalate.`, { appointmentId, counterTotalHours });
     return { success: true };
 });
 /**
@@ -334,6 +473,15 @@ exports.adminResolveShiftHours = functions.https.onCall(async (data, context) =>
         adminAssignedTo: context.auth.uid,
         adminResolutionNote: note || null,
         updatedAt: now,
+        correctionHistory: admin.firestore.FieldValue.arrayUnion({
+            by: 'admin',
+            action: 'admin_resolved',
+            at: now,
+            startTime: finalStartTime,
+            endTime: finalEndTime,
+            hours: finalTotalHours,
+            note: note || null,
+        }),
     });
     await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Admin resolved your dispute', `Final: ${finalTotalHours}h.`, { appointmentId });
     await pushNotification(shift.clientId, 'shift_hours_approved', 'Admin resolved the dispute', `Final: ${finalTotalHours}h.`, { appointmentId });
@@ -395,6 +543,7 @@ exports.autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').onRun
  * Auto-accept client's proposed correction after 24h caregiver silence.
  */
 exports.autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').onRun(async () => {
+    var _a;
     const now = nowIso();
     const snap = await db.collection('shiftHours')
         .where('status', '==', 'correction_proposed')
@@ -403,12 +552,19 @@ exports.autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').onRun(
         .get();
     for (const doc of snap.docs) {
         const shift = doc.data();
+        const autoFinalLineItems = Array.isArray(shift.proposedLineItems) ? shift.proposedLineItems : ((_a = shift.lineItems) !== null && _a !== void 0 ? _a : []);
+        const autoFinalLineItemsTotal = autoFinalLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0);
+        const autoFinalGrossPay = shift.proposedGrossPay != null
+            ? shift.proposedGrossPay
+            : Math.round((shift.proposedTotalHours * shift.payRate + autoFinalLineItemsTotal) * 100) / 100;
         await doc.ref.update({
             status: 'approved',
             finalStartTime: shift.proposedStartTime,
             finalEndTime: shift.proposedEndTime,
             finalTotalHours: shift.proposedTotalHours,
-            grossPay: Math.round(shift.proposedTotalHours * shift.payRate * 100) / 100,
+            finalLineItems: autoFinalLineItems,
+            finalLineItemsTotal: autoFinalLineItemsTotal,
+            grossPay: autoFinalGrossPay,
             resolvedAt: now,
             resolvedBy: 'system_auto_accept',
             updatedAt: now,

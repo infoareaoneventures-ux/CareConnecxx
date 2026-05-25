@@ -3135,8 +3135,8 @@ export const shiftHoursService = {
 
     review: async (
         appointmentId: string,
-        action: 'approve' | 'propose_correction',
-        proposed?: { startTime: string; endTime: string; reason?: string }
+        action: 'approve' | 'propose_correction' | 'accept_counter' | 'escalate',
+        proposed?: { startTime: string; endTime: string; reason?: string; lineItems?: Array<{ type: string; label: string; note: string; amount: number }> }
     ) => {
         if (!isConfigured) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-reviewShiftHours');
@@ -3146,14 +3146,26 @@ export const shiftHoursService = {
             proposedStartTime: proposed?.startTime,
             proposedEndTime: proposed?.endTime,
             proposalReason: proposed?.reason,
+            lineItems: proposed?.lineItems,
         });
         return res.data as { success: boolean };
     },
 
-    respondToCorrection: async (appointmentId: string, action: 'accept' | 'reject') => {
+    respondToCorrection: async (
+        appointmentId: string,
+        action: 'accept' | 'counter_propose',
+        counter?: { startTime: string; endTime: string; note?: string; lineItems?: Array<{ type: string; label: string; note: string; amount: number }> }
+    ) => {
         if (!isConfigured) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-respondToCorrection');
-        const res = await fn({ appointmentId, action });
+        const res = await fn({
+            appointmentId,
+            action,
+            counterStartTime: counter?.startTime,
+            counterEndTime: counter?.endTime,
+            counterNote: counter?.note,
+            counterLineItems: counter?.lineItems,
+        });
         return res.data as { success: boolean };
     },
 

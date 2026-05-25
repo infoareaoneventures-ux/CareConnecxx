@@ -72,18 +72,39 @@ export const ReviewShiftHoursModal: React.FC<Props> = ({ shift, onClose, onDone,
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
         </div>
 
-        <div className="bg-slate-50 rounded-xl p-4 mb-4">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-sm text-slate-600">Submitted</span>
+        <div className="bg-slate-50 rounded-xl p-4 mb-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-600">Hours</span>
             <span className="text-lg font-bold text-slate-900">{shift.submittedTotalHours}h</span>
           </div>
           <p className="text-xs text-slate-500">
             {new Date(shift.submittedStartTime).toLocaleString()} → {new Date(shift.submittedEndTime).toLocaleString()}
           </p>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-xs text-slate-500">
             Rate: ${shift.payRate}/hr · Payment: {shift.paymentMethod === 'cash' ? 'Cash' : 'Credit card'}
           </p>
-          <p className="text-xs text-slate-400 mt-1">
+
+          {/* Line items breakdown */}
+          {Array.isArray(shift.lineItems) && shift.lineItems.length > 0 && (
+            <div className="pt-2 border-t border-slate-200 space-y-1">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Additional charges</p>
+              {shift.lineItems.map((li: any, i: number) => (
+                <div key={i} className="flex items-center justify-between text-xs">
+                  <span className="text-slate-600">
+                    {li.type === 'custom' ? (li.label || 'Custom') : li.label}
+                    {li.note ? <span className="text-slate-400"> · {li.note}</span> : null}
+                  </span>
+                  <span className="font-semibold text-slate-700">+${Number(li.amount).toFixed(2)}</span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200">
+                <span className="font-semibold text-slate-700">Total</span>
+                <span className="font-bold text-slate-900">${Number(shift.grossPay ?? shift.submittedTotalHours * shift.payRate).toFixed(2)}</span>
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-slate-400">
             Auto-approves at {new Date(shift.autoApproveAt).toLocaleString()}
           </p>
         </div>

@@ -83,10 +83,30 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
   }
 
-  const { shiftId, startTime, endTime } = data as { shiftId: string; startTime: string; endTime: string };
+  const { shiftId, startTime, endTime, lineItems: rawLineItems = [] } = data as {
+    shiftId: string;
+    startTime: string;
+    endTime: string;
+    lineItems?: any[];
+  };
   if (!shiftId || !startTime || !endTime) {
     throw new functions.https.HttpsError('invalid-argument', 'shiftId, startTime and endTime are required');
   }
+
+  // Validate and sanitise line items
+  const VALID_TYPES = ['overtime', 'mileage', 'supplies', 'bonus', 'custom'];
+  const lineItems: Array<{ type: string; label: string; note: string; amount: number }> =
+    (Array.isArray(rawLineItems) ? rawLineItems : [])
+      .filter((li: any) => li && typeof li === 'object')
+      .map((li: any) => ({
+        type:   VALID_TYPES.includes(li.type) ? li.type : 'custom',
+        label:  typeof li.label === 'string' ? li.label.slice(0, 100) : '',
+        note:   typeof li.note  === 'string' ? li.note.slice(0, 500)  : '',
+        amount: Math.max(0, Math.round((Number(li.amount) || 0) * 100) / 100),
+      }))
+      .filter((li) => li.amount > 0);
+
+  const lineItemsTotal = lineItems.reduce((sum, li) => sum + li.amount, 0);
 
   // Source of truth is now the shifts collection
   const shiftDocRef = db.collection('shifts').doc(shiftId);
@@ -116,6 +136,8 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
   const paymentMethod: PaymentMethod = (shiftDoc.paymentMethod || '').toLowerCase() === 'cash' ? 'cash' : 'credit';
   const submittedAt = nowIso();
   const autoApproveAt = new Date(Date.now() + ONE_DAY_MS).toISOString();
+  const basePay  = Math.round(totalHours * payRate * 100) / 100;
+  const grossPay = Math.round((basePay + lineItemsTotal) * 100) / 100;
 
   await shiftHoursRef.set({
     id: shiftId,
@@ -132,6 +154,10 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     submittedStartTime: startTime,
     submittedEndTime: endTime,
     submittedTotalHours: totalHours,
+    lineItems,
+    lineItemsTotal,
+    basePay,
+    grossPay,
     submittedAt,
     autoApproveAt,
     paymentAttemptCount: 0,

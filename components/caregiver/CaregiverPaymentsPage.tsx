@@ -9,7 +9,7 @@ import { CaregiverTopNav } from './CaregiverTopNav';
 import { PayoutHistory } from './PayoutHistory';
 import { ConnectBankButton } from '../ui/ConnectBankButton';
 import { InstantPayoutModal, PayoutMethod } from './InstantPayoutModal';
-import { CompletedShift } from '../payroll/SubmitShiftHoursModal';
+import { CompletedShift, SubmitShiftHoursModal } from '../payroll/SubmitShiftHoursModal';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { shiftHoursService, dbService } from '../../services/api';
 import { checkOnboardingStatus, requestInstantPayout, requestStandardPayout, getSubscriptionStatus, getCaregiverBillingPortalUrl } from '../../services/stripeService';
@@ -24,6 +24,13 @@ interface SubscriptionInfo {
   status: string | null;
   currentPeriodEnd: Date | null;
   cancelAtPeriodEnd: boolean;
+}
+
+interface LineItem {
+  type: string;
+  label: string;
+  note: string;
+  amount: number;
 }
 
 interface ShiftRow {
@@ -42,6 +49,9 @@ interface ShiftRow {
   resolvedBy?: string;
   proposedTotalHours?: number;
   proposalReason?: string;
+  lineItems?: LineItem[];
+  lineItemsTotal?: number;
+  basePay?: number;
   grossPay?: number;
   submittedAt?: string;
   autoApproveAt?: string;
@@ -64,6 +74,15 @@ const fmtTime = (d: Date) =>
 
 const fmtDate = (d: Date) =>
   d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+/** 0.1 → "6 min" · 1.5 → "1h 30m" · 2.0 → "2h" */
+const fmtDuration = (hours: number): string => {
+  const totalMins = Math.round(hours * 60);
+  if (totalMins < 60) return `${totalMins} min`;
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+};
 
 const Col: React.FC<{ label: string; value: string; highlight?: boolean; className?: string }> = ({
   label, value, highlight, className = '',
@@ -179,8 +198,12 @@ const PendingShiftRow: React.FC<{
   // pending_client_review — expandable data strip
   const dispStart = row.submittedStartTime ? new Date(row.submittedStartTime) : null;
   const dispEnd   = row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
-  const hours     = row.finalTotalHours ?? row.submittedTotalHours ?? 0;
-  const gross     = row.grossPay ?? (hours * (row.payRate ?? 0));
+  const hours = (dispStart && dispEnd)
+    ? (dispEnd.getTime() - dispStart.getTime()) / 3_600_000
+    : (row.finalTotalHours ?? row.submittedTotalHours ?? 0);
+  const basePay   = hours * (row.payRate ?? 0);
+  const hasExtras = row.lineItems && row.lineItems.length > 0;
+  const gross     = row.grossPay ?? basePay;
   const method    = row.paymentMethod
     ? row.paymentMethod.charAt(0).toUpperCase() + row.paymentMethod.slice(1)
     : '—';
@@ -200,7 +223,7 @@ const PendingShiftRow: React.FC<{
         <Divider />
         <Col label="Out"      value={dispEnd   ? fmtTime(dispEnd)   : '—'}  className="shrink-0 w-[66px]" />
         <Divider />
-        <Col label="Duration" value={`${hours}h`}                           className="shrink-0 w-[58px]" />
+        <Col label="Duration" value={fmtDuration(hours)}                    className="shrink-0 w-[62px]" />
         <Divider />
         <Col label="Pay"      value={`$${gross.toFixed(2)}`} highlight      className="shrink-0 w-[60px]" />
         <Divider />
@@ -243,12 +266,34 @@ const PendingShiftRow: React.FC<{
             )}
             <div className="flex items-center justify-between px-3 py-2">
               <span className="text-slate-400">Total hours</span>
-              <span className="font-medium text-slate-700">{hours}h</span>
+              <span className="font-medium text-slate-700">{fmtDuration(hours)}</span>
             </div>
-            <div className="flex items-center justify-between px-3 py-2">
-              <span className="text-slate-400">Gross pay</span>
-              <span className="font-bold text-slate-900">${gross.toFixed(2)}</span>
-            </div>
+            {hasExtras ? (
+              <>
+                <div className="flex items-center justify-between px-3 py-2">
+                  <span className="text-slate-400">Base pay</span>
+                  <span className="font-medium text-slate-700">${basePay.toFixed(2)}</span>
+                </div>
+                {row.lineItems!.map((li, i) => (
+                  <div key={i} className="flex items-center justify-between px-3 py-2">
+                    <span className="text-slate-400">
+                      {li.type === 'custom' ? (li.label || 'Custom') : li.label}
+                      {li.note ? ` · ${li.note}` : ''}
+                    </span>
+                    <span className="font-medium text-slate-700">+${li.amount.toFixed(2)}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-3 py-2 bg-slate-100">
+                  <span className="font-semibold text-slate-700">Total</span>
+                  <span className="font-bold text-slate-900">${gross.toFixed(2)}</span>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Gross pay</span>
+                <span className="font-bold text-slate-900">${gross.toFixed(2)}</span>
+              </div>
+            )}
             {autoAt && (
               <div className="flex items-center justify-between px-3 py-2">
                 <span className="text-slate-400">Auto-approves</span>
@@ -273,8 +318,15 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
     ? new Date(row.finalEndTime)
     : row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
 
-  const hours = row.finalTotalHours ?? row.submittedTotalHours ?? 0;
-  const gross = row.grossPay ?? (hours * (row.payRate ?? 0));
+  // Always compute hours from the actual clock-in/out timestamps (seconds-accurate).
+  // Fall back to stored value only if timestamps are missing.
+  const hours = (dispStart && dispEnd)
+    ? (dispEnd.getTime() - dispStart.getTime()) / 3_600_000
+    : (row.finalTotalHours ?? row.submittedTotalHours ?? 0);
+  const basePay  = hours * (row.payRate ?? 0);
+  const hasExtras = row.lineItems && row.lineItems.length > 0;
+  // Use stored grossPay (includes line items) if available, otherwise compute from hours
+  const gross = row.grossPay ?? basePay;
   const method = row.paymentMethod
     ? row.paymentMethod.charAt(0).toUpperCase() + row.paymentMethod.slice(1)
     : '—';
@@ -286,19 +338,13 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
         className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
         onClick={() => setOpen(o => !o)}
       >
-        {/* Client name — makes it easy to identify the shift without expanding */}
-        <div className="shrink-0 w-[90px] min-w-0">
-          <p className="text-[10px] uppercase tracking-wide text-slate-400 font-medium leading-none mb-0.5">Client</p>
-          <p className="text-xs font-semibold text-slate-800 truncate">{row.clientName ?? '—'}</p>
-        </div>
-        <Divider />
         <Col label="Date"     value={dispStart ? fmtDate(dispStart) : '—'}  className="shrink-0 w-[58px]" />
         <Divider />
         <Col label="In"       value={dispStart ? fmtTime(dispStart) : '—'}  className="shrink-0 w-[66px]" />
         <Divider />
         <Col label="Out"      value={dispEnd   ? fmtTime(dispEnd)   : '—'}  className="shrink-0 w-[66px]" />
         <Divider />
-        <Col label="Duration" value={`${hours}h`}                           className="shrink-0 w-[58px]" />
+        <Col label="Duration" value={fmtDuration(hours)}                    className="shrink-0 w-[62px]" />
         <Divider />
         <Col label="Pay"      value={`$${gross.toFixed(2)}`} highlight      className="shrink-0 w-[60px]" />
         <Divider />
@@ -347,12 +393,34 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
             )}
             <div className="flex items-center justify-between px-3 py-2">
               <span className="text-slate-400">Total hours</span>
-              <span className="font-medium text-slate-700">{hours}h</span>
+              <span className="font-medium text-slate-700">{fmtDuration(hours)}</span>
             </div>
-            <div className="flex items-center justify-between px-3 py-2">
-              <span className="text-slate-400">Gross pay</span>
-              <span className="font-bold text-slate-900">${gross.toFixed(2)}</span>
-            </div>
+            {hasExtras ? (
+              <>
+                <div className="flex items-center justify-between px-3 py-2">
+                  <span className="text-slate-400">Base pay</span>
+                  <span className="font-medium text-slate-700">${basePay.toFixed(2)}</span>
+                </div>
+                {row.lineItems!.map((li, i) => (
+                  <div key={i} className="flex items-center justify-between px-3 py-2">
+                    <span className="text-slate-400">
+                      {li.type === 'custom' ? (li.label || 'Custom') : li.label}
+                      {li.note ? ` · ${li.note}` : ''}
+                    </span>
+                    <span className="font-medium text-slate-700">+${li.amount.toFixed(2)}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-3 py-2 bg-slate-100">
+                  <span className="font-semibold text-slate-700">Total</span>
+                  <span className="font-bold text-slate-900">${gross.toFixed(2)}</span>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Gross pay</span>
+                <span className="font-bold text-slate-900">${gross.toFixed(2)}</span>
+              </div>
+            )}
             {row.submittedAt && (
               <div className="flex items-center justify-between px-3 py-2">
                 <span className="text-slate-400">Submitted</span>
@@ -379,10 +447,11 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
 /** One-line labeled card: Client | Date | In | Out | Duration | Est. Pay | Status */
 const SubmittableShiftCard: React.FC<{
   shift: CompletedShift;
-  onSubmit: (startIso: string, endIso: string) => Promise<void>;
-}> = ({ shift, onSubmit }) => {
+  onSubmitted: () => void;
+  onError: (msg: string) => void;
+}> = ({ shift, onSubmitted, onError }) => {
   const [open, setOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [showModal, setShowModal] = useState(false);
 
   const actualStart = toDate(shift.startedAt);
   const actualEnd   = toDate(shift.completedAt);
@@ -479,21 +548,21 @@ const SubmittableShiftCard: React.FC<{
           </div>
 
           <button
-            disabled={submitting}
-            onClick={async e => {
-              e.stopPropagation();
-              setSubmitting(true);
-              try {
-                await onSubmit(dispStart.toISOString(), dispEnd.toISOString());
-              } finally {
-                setSubmitting(false);
-              }
-            }}
-            className="w-full py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 disabled:opacity-50 transition-colors"
+            onClick={e => { e.stopPropagation(); setShowModal(true); }}
+            className="w-full py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 transition-colors"
           >
-            {submitting ? 'Submitting…' : 'Submit hours'}
+            Submit hours
           </button>
         </div>
+      )}
+
+      {showModal && (
+        <SubmitShiftHoursModal
+          shift={shift}
+          onClose={() => setShowModal(false)}
+          onSubmitted={() => { setShowModal(false); onSubmitted(); }}
+          onError={(msg) => { setShowModal(false); onError(msg); }}
+        />
       )}
     </div>
   );
@@ -905,15 +974,8 @@ export const CaregiverPaymentsPage: React.FC = () => {
                   <SubmittableShiftCard
                     key={shift.id}
                     shift={shift}
-                    onSubmit={async (startIso, endIso) => {
-                      try {
-                        await shiftHoursService.submit(shift.id, startIso, endIso);
-                        addToast('Hours submitted — awaiting client approval', 'success');
-                      } catch (e: any) {
-                        addToast(e?.message || 'Failed to submit hours', 'error');
-                        throw e;
-                      }
-                    }}
+                    onSubmitted={() => addToast('Hours submitted — awaiting client approval', 'success')}
+                    onError={(msg) => addToast(msg || 'Failed to submit hours', 'error')}
                   />
                 ))
               }

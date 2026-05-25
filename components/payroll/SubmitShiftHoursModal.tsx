@@ -1,6 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { Clock, X } from 'lucide-react';
+import { Clock, X, Plus, Trash2 } from 'lucide-react';
 import { shiftHoursService } from '../../services/api';
+
+// ── types ─────────────────────────────────────────────────────────────────────
+
+export type LineItemType = 'overtime' | 'mileage' | 'supplies' | 'bonus' | 'custom';
+
+export interface LineItem {
+  type: LineItemType;
+  label: string;   // human label; for 'custom' this is user-entered
+  note: string;
+  amount: number;
+}
 
 export interface CompletedShift {
   id: string;
@@ -27,6 +38,26 @@ interface Props {
   onError: (msg: string) => void;
 }
 
+// ── constants ─────────────────────────────────────────────────────────────────
+
+const LINE_ITEM_TYPES: { value: LineItemType; label: string }[] = [
+  { value: 'overtime',  label: 'Overtime' },
+  { value: 'mileage',   label: 'Mileage' },
+  { value: 'supplies',  label: 'Supplies' },
+  { value: 'bonus',     label: 'Bonus Request' },
+  { value: 'custom',    label: 'Custom' },
+];
+
+const DEFAULT_LABEL: Record<LineItemType, string> = {
+  overtime: 'Overtime',
+  mileage:  'Mileage',
+  supplies: 'Supplies',
+  bonus:    'Bonus Request',
+  custom:   '',
+};
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
 function toDateTimeLocal(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -35,55 +66,80 @@ function toDateTimeLocal(iso: string): string {
 
 function toIso(ts: any): string | null {
   if (!ts) return null;
-  // Firestore Timestamp
   if (typeof ts.toDate === 'function') return ts.toDate().toISOString();
-  // Already ISO string
   if (typeof ts === 'string') return ts;
-  // Seconds-based object
   if (ts.seconds) return new Date(ts.seconds * 1000).toISOString();
   return null;
 }
 
 function defaultStartEnd(shift: CompletedShift): { startIso: string; endIso: string } {
-  // Prefer actual clock-in / clock-out times; fall back to scheduled window
   const actualStart = toIso(shift.startedAt);
-  const actualEnd = toIso(shift.completedAt);
-
+  const actualEnd   = toIso(shift.completedAt);
   const scheduledStart = new Date(`${shift.date}T${shift.startTime}:00`).toISOString();
-  const scheduledEnd = shift.endTime
+  const scheduledEnd   = shift.endTime
     ? new Date(`${shift.date}T${shift.endTime}:00`).toISOString()
     : new Date(new Date(`${shift.date}T${shift.startTime}:00`).getTime() + 3_600_000).toISOString();
-
   return {
     startIso: actualStart ?? scheduledStart,
     endIso:   actualEnd   ?? scheduledEnd,
   };
 }
 
+function fmtDuration(hours: number): string {
+  const totalMins = Math.round(hours * 60);
+  if (totalMins < 60) return `${totalMins} min`;
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+// ── component ─────────────────────────────────────────────────────────────────
+
 export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmitted, onError }) => {
   const { startIso, endIso } = useMemo(() => defaultStartEnd(shift), [shift]);
-  const [start, setStart] = useState(toDateTimeLocal(startIso));
-  const [end, setEnd] = useState(toDateTimeLocal(endIso));
+  const [start, setStart]       = useState(toDateTimeLocal(startIso));
+  const [end,   setEnd]         = useState(toDateTimeLocal(endIso));
+  const [lineItems, setLineItems] = useState<LineItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
   const totalHours = useMemo(() => {
     const s = new Date(start).getTime();
     const e = new Date(end).getTime();
     if (!isFinite(s) || !isFinite(e) || e <= s) return 0;
-    return Math.round(((e - s) / 3_600_000) * 100) / 100;
+    return (e - s) / 3_600_000;
   }, [start, end]);
 
+  const basePay       = shift.rate ? totalHours * shift.rate : null;
+  const lineItemsTotal = lineItems.reduce((sum, li) => sum + (Number(li.amount) || 0), 0);
+  const grandTotal    = basePay != null ? basePay + lineItemsTotal : null;
+
+  // ── line item helpers ──
+
+  const addLineItem = () =>
+    setLineItems(prev => [...prev, { type: 'overtime', label: 'Overtime', note: '', amount: 0 }]);
+
+  const updateLineItem = (i: number, patch: Partial<LineItem>) =>
+    setLineItems(prev => prev.map((li, idx) => (idx === i ? { ...li, ...patch } : li)));
+
+  const removeLineItem = (i: number) =>
+    setLineItems(prev => prev.filter((_, idx) => idx !== i));
+
+  const onTypeChange = (i: number, type: LineItemType) =>
+    updateLineItem(i, { type, label: DEFAULT_LABEL[type] });
+
+  // ── submit ──
+
   const onConfirm = async () => {
-    if (totalHours <= 0) {
-      onError('End time must be after start time.');
-      return;
-    }
+    if (totalHours <= 0) { onError('End time must be after start time.'); return; }
+    const invalid = lineItems.find(li => li.type === 'custom' && !li.label.trim());
+    if (invalid) { onError('Please enter a label for the Custom line item.'); return; }
     setSubmitting(true);
     try {
       await shiftHoursService.submit(
         shift.id,
         new Date(start).toISOString(),
         new Date(end).toISOString(),
+        lineItems.filter(li => li.amount > 0),
       );
       onSubmitted();
     } catch (e: any) {
@@ -97,47 +153,161 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
-        <div className="flex items-start justify-between mb-4">
+      <div
+        className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between px-6 pt-6 pb-4 border-b border-slate-100">
           <div>
             <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <Clock className="w-5 h-5 text-primary-600" />
               Submit hours worked
             </h2>
-            <p className="text-sm text-slate-500 mt-1">
-              {shift.clientName} · {shift.date}
-            </p>
+            <p className="text-sm text-slate-500 mt-0.5">{shift.clientName} · {shift.date}</p>
           </div>
-          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700">
+          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700 mt-0.5">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Start</label>
-            <input
-              type="datetime-local"
-              value={start}
-              onChange={e => setStart(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">End</label>
-            <input
-              type="datetime-local"
-              value={end}
-              onChange={e => setEnd(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-            />
+        <div className="px-6 py-5 space-y-5">
+          {/* Times */}
+          <div className="space-y-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Hours worked</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Clock in</label>
+                <input
+                  type="datetime-local"
+                  value={start}
+                  onChange={e => setStart(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Clock out</label>
+                <input
+                  type="datetime-local"
+                  value={end}
+                  onChange={e => setEnd(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between bg-slate-50 rounded-lg px-4 py-3">
+              <span className="text-sm text-slate-500">Duration</span>
+              <span className="text-lg font-bold text-slate-900">{fmtDuration(totalHours)}</span>
+            </div>
           </div>
 
-          <div className="flex items-center justify-between bg-slate-50 rounded-lg px-4 py-3">
-            <span className="text-sm text-slate-500">Total hours</span>
-            <span className="text-xl font-bold text-slate-900">{totalHours.toFixed(2)}h</span>
+          {/* Line items */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Additional charges</p>
+              <button
+                onClick={addLineItem}
+                className="flex items-center gap-1 text-xs font-semibold text-primary-600 hover:text-primary-700 px-2 py-1 rounded-lg hover:bg-primary-50 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add
+              </button>
+            </div>
+
+            {lineItems.length === 0 && (
+              <p className="text-xs text-slate-400 italic">
+                No additional charges. Tap Add to include overtime, mileage, supplies, etc.
+              </p>
+            )}
+
+            {lineItems.map((li, i) => (
+              <div key={i} className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  {/* Type selector */}
+                  <select
+                    value={li.type}
+                    onChange={e => onTypeChange(i, e.target.value as LineItemType)}
+                    className="flex-1 px-2 py-1.5 border border-slate-200 rounded-lg text-sm bg-white"
+                  >
+                    {LINE_ITEM_TYPES.map(t => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+
+                  {/* Amount */}
+                  <div className="relative w-28 shrink-0">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={li.amount || ''}
+                      onChange={e => updateLineItem(i, { amount: parseFloat(e.target.value) || 0 })}
+                      className="w-full pl-6 pr-3 py-1.5 border border-slate-200 rounded-lg text-sm"
+                    />
+                  </div>
+
+                  {/* Remove */}
+                  <button
+                    onClick={() => removeLineItem(i)}
+                    className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors shrink-0"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Custom label */}
+                {li.type === 'custom' && (
+                  <input
+                    type="text"
+                    placeholder="Label (e.g. Holiday premium)"
+                    value={li.label}
+                    onChange={e => updateLineItem(i, { label: e.target.value })}
+                    className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm"
+                  />
+                )}
+
+                {/* Note */}
+                <input
+                  type="text"
+                  placeholder="Note (optional)"
+                  value={li.note}
+                  onChange={e => updateLineItem(i, { note: e.target.value })}
+                  className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm"
+                />
+              </div>
+            ))}
           </div>
 
+          {/* Pay summary */}
+          {(basePay != null || lineItems.length > 0) && (
+            <div className="border border-slate-200 rounded-xl overflow-hidden text-sm">
+              {basePay != null && (
+                <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100">
+                  <span className="text-slate-500">Base pay ({fmtDuration(totalHours)} @ ${shift.rate}/hr)</span>
+                  <span className="font-semibold text-slate-700">${basePay.toFixed(2)}</span>
+                </div>
+              )}
+              {lineItems.filter(li => li.amount > 0).map((li, i) => (
+                <div key={i} className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100">
+                  <span className="text-slate-500">
+                    {li.type === 'custom' ? (li.label || 'Custom') : li.label}
+                    {li.note && <span className="text-slate-400"> · {li.note}</span>}
+                  </span>
+                  <span className="font-semibold text-slate-700">${Number(li.amount).toFixed(2)}</span>
+                </div>
+              ))}
+              {grandTotal != null && lineItems.some(li => li.amount > 0) && (
+                <div className="flex items-center justify-between px-4 py-3 bg-slate-50">
+                  <span className="font-semibold text-slate-700">Total</span>
+                  <span className="text-lg font-bold text-slate-900">${grandTotal.toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Payment note */}
           <p className="text-xs text-slate-500">
             {isCash
               ? 'Payment method: Cash. Client will approve your hours for the record; cash is paid directly.'
@@ -145,17 +315,18 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
           </p>
         </div>
 
-        <div className="flex gap-2 mt-6">
+        {/* Footer */}
+        <div className="flex gap-2 px-6 pb-6">
           <button
             onClick={onClose}
-            className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-700 font-medium hover:bg-slate-50"
+            className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-700 font-medium hover:bg-slate-50"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
             disabled={submitting || totalHours <= 0}
-            className="flex-1 py-2.5 rounded-lg bg-primary-600 text-white font-medium hover:bg-primary-700 disabled:opacity-50"
+            className="flex-1 py-2.5 rounded-xl bg-primary-600 text-white font-medium hover:bg-primary-700 disabled:opacity-50"
           >
             {submitting ? 'Submitting…' : 'Submit'}
           </button>

@@ -3121,10 +3121,15 @@ function generateReferralCode(): string {
 // ==========================================
 
 export const shiftHoursService = {
-    submit: async (shiftId: string, startTime: string, endTime: string) => {
+    submit: async (
+        shiftId: string,
+        startTime: string,
+        endTime: string,
+        lineItems?: Array<{ type: string; label: string; note: string; amount: number }>,
+    ) => {
         if (!isConfigured) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-submitShiftHours');
-        const res = await fn({ shiftId, startTime, endTime });
+        const res = await fn({ shiftId, startTime, endTime, lineItems: lineItems ?? [] });
         return res.data as { success: boolean; shiftId: string; totalHours: number };
     },
 

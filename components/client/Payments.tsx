@@ -25,6 +25,13 @@ type ShiftHoursStatus =
 
 type DateFilter = 'all' | 'this-month' | 'last-3-months';
 
+interface LineItem {
+  type: string;
+  label: string;
+  note: string;
+  amount: number;
+}
+
 interface ShiftHoursRow {
   id: string;
   appointmentId: string;
@@ -42,6 +49,10 @@ interface ShiftHoursRow {
   finalEndTime?: string;
   finalTotalHours?: number;
   resolvedBy?: string;
+  lineItems?: LineItem[];
+  lineItemsTotal?: number;
+  basePay?: number;
+  grossPay?: number;
   submittedAt: string;
   autoApproveAt: string;
   status: ShiftHoursStatus;
@@ -57,6 +68,14 @@ function fmtTime(iso: string) {
 }
 function fmtAmount(hours: number, rate: number) {
   return `$${(hours * rate).toFixed(2)}`;
+}
+/** 0.1 → "6 min" · 1.5 → "1h 30m" · 2.0 → "2h" */
+function fmtDuration(hours: number): string {
+  const totalMins = Math.round(hours * 60);
+  if (totalMins < 60) return `${totalMins} min`;
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 const STATUS_CONFIG: Record<ShiftHoursStatus, { label: string; color: string; bg: string; border: string }> = {
@@ -94,8 +113,17 @@ const ShiftRow: React.FC<{
   const [shiftDetails, setShiftDetails] = useState<any>(null);
 
   const cfg = STATUS_CONFIG[row.status] || STATUS_CONFIG.pending_client_review;
-  // Use final (post-correction) values when available
-  const dispHours = row.finalTotalHours ?? row.submittedTotalHours;
+  // Compute hours from actual timestamps (seconds-accurate). Final times take
+  // priority for corrected shifts; fall back to stored value if timestamps missing.
+  const startTs = row.finalStartTime ?? row.submittedStartTime;
+  const endTs   = row.finalEndTime   ?? row.submittedEndTime;
+  const dispHours = (startTs && endTs)
+    ? (new Date(endTs).getTime() - new Date(startTs).getTime()) / 3_600_000
+    : (row.finalTotalHours ?? row.submittedTotalHours);
+  const basePay   = dispHours * row.payRate;
+  const hasExtras = row.lineItems && row.lineItems.length > 0;
+  // Use stored grossPay (includes line items) when available
+  const totalPay  = row.grossPay ?? basePay;
   const isPending = row.status === 'pending_client_review';
   // Only show "Corrected" when the caregiver explicitly accepted a client correction proposal
   const isCorrected = row.resolvedBy === 'caregiver';
@@ -124,7 +152,7 @@ const ShiftRow: React.FC<{
         </div>
 
         <div className="hidden sm:flex flex-col items-end text-right shrink-0">
-          <p className="text-sm font-semibold text-slate-800">{dispHours}h</p>
+          <p className="text-sm font-semibold text-slate-800">{fmtDuration(dispHours)}</p>
           <div className="flex items-center gap-1 text-xs text-slate-500 mt-0.5">
             {row.paymentMethod === 'credit'
               ? <CreditCard className="w-3 h-3" />
@@ -134,7 +162,7 @@ const ShiftRow: React.FC<{
         </div>
 
         <div className="flex flex-col items-end shrink-0 gap-1.5">
-          <p className="text-sm font-bold text-slate-900">{fmtAmount(dispHours, row.payRate)}</p>
+          <p className="text-sm font-bold text-slate-900">${totalPay.toFixed(2)}</p>
           <div className="flex items-center gap-1.5 flex-wrap justify-end">
             {isCorrected && (
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-teal-50 text-teal-700 border-teal-200 whitespace-nowrap">
@@ -163,7 +191,7 @@ const ShiftRow: React.FC<{
                 <span className="w-16 text-slate-400 shrink-0">Original</span>
                 <span className="text-slate-500 line-through">
                   {fmtTime(row.submittedStartTime)} – {fmtTime(row.submittedEndTime)}
-                  <span className="ml-2">{row.submittedTotalHours}h</span>
+                  <span className="ml-2">{fmtDuration((new Date(row.submittedEndTime).getTime() - new Date(row.submittedStartTime).getTime()) / 3_600_000)}</span>
                 </span>
               </div>
             )}
@@ -171,12 +199,12 @@ const ShiftRow: React.FC<{
               <span className="w-16 text-slate-400 shrink-0">{isCorrected ? 'Corrected' : 'Submitted'}</span>
               <span className="font-semibold text-slate-700">
                 {fmtTime(row.finalStartTime ?? row.submittedStartTime)} – {fmtTime(row.finalEndTime ?? row.submittedEndTime)}
-                <span className="text-primary-600 font-bold ml-2">{dispHours}h</span>
+                <span className="text-primary-600 font-bold ml-2">{fmtDuration(dispHours)}</span>
               </span>
             </div>
             <div className="flex items-center gap-3 text-xs">
               <span className="w-16 text-slate-400 shrink-0">Rate</span>
-              <span className="font-semibold text-slate-700">${row.payRate}/hr · Total {fmtAmount(dispHours, row.payRate)}</span>
+              <span className="font-semibold text-slate-700">${row.payRate}/hr · Base {fmtAmount(dispHours, row.payRate)}</span>
             </div>
             {row.status === 'pending_client_review' && (
               <div className="flex items-center gap-3 text-xs">
@@ -185,6 +213,28 @@ const ShiftRow: React.FC<{
               </div>
             )}
           </div>
+
+          {/* Line items */}
+          {hasExtras && (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Additional charges</p>
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden text-xs">
+                {row.lineItems!.map((li, i) => (
+                  <div key={i} className="flex items-center justify-between px-3 py-2">
+                    <span className="text-slate-600">
+                      {li.type === 'custom' ? (li.label || 'Custom') : li.label}
+                      {li.note ? <span className="text-slate-400"> · {li.note}</span> : null}
+                    </span>
+                    <span className="font-semibold text-slate-700">+${li.amount.toFixed(2)}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-3 py-2.5 bg-slate-50">
+                  <span className="font-semibold text-slate-700">Total</span>
+                  <span className="font-bold text-slate-900">${totalPay.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Shift details if loaded */}
           {shiftDetails && (

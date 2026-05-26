@@ -8,6 +8,7 @@ import {
 import firebase from 'firebase/compat/app';
 import { auth, db } from '../../lib/firebase';
 import { CaregiverTopNav } from './CaregiverTopNav';
+import { blocksToWeeklySlots, weeklySlotsToBl } from '../../services/availabilityService';
 
 const TIME_BLOCKS = [
   { id: 'morning',   label: 'Morning',   hours: '6am – 12pm' },
@@ -76,8 +77,8 @@ function parseInterview(id: string, data: any): InterviewEvent {
   };
 }
 
-const H_START = 6;
-const H_END   = 22;
+const H_START = 0;
+const H_END   = 24;
 const CELL_H  = 56;
 const TOTAL_H = (H_END - H_START) * CELL_H;
 const HOURS   = Array.from({ length: H_END - H_START }, (_, i) => i + H_START);
@@ -107,9 +108,15 @@ function fmtH(h: number): string {
   const whole = Math.floor(h);
   const mins  = Math.round((h - whole) * 60);
   if (whole === 12) return mins ? `12:${String(mins).padStart(2, '0')}pm` : '12pm';
-  if (whole === 0)  return '12am';
+  if (whole === 0)  return mins ? `12:${String(mins).padStart(2, '0')}am` : '12am';
   if (whole < 12)   return mins ? `${whole}:${String(mins).padStart(2, '0')}am` : `${whole}am`;
   return mins ? `${whole - 12}:${String(mins).padStart(2, '0')}pm` : `${whole - 12}pm`;
+}
+
+/** Convert "HH:MM" 24-hr string → "12:xx am/pm" */
+function fmt12(t?: string): string {
+  if (!t) return '';
+  return fmtH(parseH(t));
 }
 
 function statusStyle(status: Shift['status']): string {
@@ -213,7 +220,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     try {
       const snap = await db.collection('caregivers').doc(user.uid).get();
       const data = snap.data();
-      if (data?.weeklyAvailability) setAvailability(data.weeklyAvailability);
+      if (data?.weeklyAvailability) setAvailability(weeklySlotsToBl(data.weeklyAvailability) as Record<string, any[]>);
     } catch {}
   };
 
@@ -269,7 +276,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     if (!user || !db) return;
     setSaving(true);
     try {
-      await db.collection('caregivers').doc(user.uid).update({ weeklyAvailability: editAvail });
+      await db.collection('caregivers').doc(user.uid).update({ weeklyAvailability: blocksToWeeklySlots(editAvail as Record<string, string[]>) });
       setAvailability(editAvail);
       setShowAvailModal(false);
     } catch {
@@ -513,7 +520,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                 <h3 className="font-bold text-slate-900 text-base mt-1">{shift.clientName || 'Client'}</h3>
                 <p className="text-sm text-slate-500 mt-0.5">
                   {new Date(shift.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                  {' · '}{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}
+                  {' · '}{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}
                 </p>
               </div>
             </div>
@@ -553,7 +560,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           <div className="px-5 mb-3 space-y-1">
             <div className="flex items-center gap-3 text-xs">
               <span className="w-20 text-slate-400 shrink-0">Scheduled</span>
-              <span className="font-semibold text-slate-700">{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</span>
+              <span className="font-semibold text-slate-700">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</span>
             </div>
             <div className="flex items-center gap-3 text-xs">
               <span className="w-20 text-slate-400 shrink-0">Started</span>
@@ -1160,7 +1167,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                                       className={`absolute rounded-md border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)}`}
                                       style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '2px', right: hasBoth ? '50%' : '2px' }}>
                                       <p className="px-1.5 pt-1 text-xs font-bold text-white leading-tight truncate">{(shift.clientName || 'Client').split(' ')[0]}</p>
-                                      <p className="px-1.5 text-xs text-white/80">{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+                                      <p className="px-1.5 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
                                     </button>
                                   );
                                 })}
@@ -1246,7 +1253,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                                   className={`absolute rounded-lg border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)}`}
                                   style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '4px', right: dayInterviews.length > 0 ? '50%' : '4px' }}>
                                   <p className="px-2 pt-1.5 text-sm font-bold text-white leading-tight truncate">{shift.clientName || 'Client'}</p>
-                                  <p className="px-2 text-xs text-white/80">{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+                                  <p className="px-2 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
                                 </button>
                               );
                             })}
@@ -1356,7 +1363,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
                             {shift.status.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
                           </span>
-                          <span className="text-sm font-bold text-slate-700">{shift.startTime}{shift.endTime ? `–${shift.endTime}` : ''}</span>
+                          <span className="text-sm font-bold text-slate-700">{fmt12(shift.startTime)}{shift.endTime ? `–${fmt12(shift.endTime)}` : ''}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
@@ -1406,7 +1413,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                       </div>
                       <div className="min-w-0">
                         <p className="font-medium text-slate-900 text-sm truncate">{s.clientName || 'Client'}</p>
-                        <p className="text-xs text-slate-500">{s.startTime}{s.endTime ? ` – ${s.endTime}` : ''}</p>
+                        <p className="text-xs text-slate-500">{fmt12(s.startTime)}{s.endTime ? ` – ${fmt12(s.endTime)}` : ''}</p>
                       </div>
                     </div>
                   ))}

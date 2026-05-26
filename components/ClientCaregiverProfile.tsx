@@ -14,6 +14,7 @@ import { useCareConnex } from '../context/CareConnexContext';
 import { dbService } from '../services/api';
 import { ClientNavigation } from './client/ClientNavigation';
 import { TIME_BLOCKS, DAYS } from './caregiver/signup/constants';
+import { weeklySlotsToBl } from '../services/availabilityService';
 
 interface CaregiverProfile {
   id: string;
@@ -78,7 +79,7 @@ function mapRawToProfile(id: string, data: any): CaregiverProfile {
     acceptsCreditCards: data.acceptsCreditCards ?? true,
     hasTransportation: data.hasTransportation || (data.skills || data.services || []).includes('Transportation') || false,
     serviceRadius: data.serviceRadius ?? 25,
-    weeklyAvailability: data.weeklyAvailability || {},
+    weeklyAvailability: weeklySlotsToBl(data.weeklyAvailability || {}),
     jobTypes: data.jobTypes || [],
     lastActiveIso: data.lastActive || data.lastActiveIso,
   };

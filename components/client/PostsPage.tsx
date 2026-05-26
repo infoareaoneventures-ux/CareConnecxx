@@ -11,6 +11,7 @@ import { ClientNavigation } from './ClientNavigation';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { dbService } from '../../services/api';
 import { auth, db } from '../../lib/firebase';
+import { availabilityService, weeklySlotsToBl } from '../../services/availabilityService';
 import firebase from '../../lib/firebase';
 import { JobPost } from '../../types';
 
@@ -162,6 +163,8 @@ export const PostsPage: React.FC = () => {
   const [editingBookingDetails, setEditingBookingDetails] = useState(false);
   const [scheduleConfirmed, setScheduleConfirmed] = useState(false);
   const [schedulePrePopulated, setSchedulePrePopulated] = useState(false);
+  const [cgWeeklyAvail, setCgWeeklyAvail] = useState<Record<string, any[]>>({});
+  const [cgBookedSlots, setCgBookedSlots] = useState<Record<string, Array<{s:number;e:number}>>>({});
 
   const LS_IVS_KEY = 'careconnex.posts.lastCheckedInterviews';
   const MIN_VALID_TS = new Date('2024-01-01').getTime();
@@ -472,6 +475,8 @@ export const PostsPage: React.FC = () => {
     setEditingBookingDetails(false);
     setScheduleConfirmed(false);
     setSchedulePrePopulated(false);
+    setCgWeeklyAvail({});
+    setCgBookedSlots({});
     setBookingDraft({ note: '', selectedRecipientKeys: [], recipientDrafts: {}, lifestyleNotes: [], selectedAddress: '', emergencyContactFirstName: '', emergencyContactLastName: '', emergencyContactPhone: '', emergencyContactRelation: '', shiftStartDate: '', shiftEndDate: '', shiftOngoing: true, dayShiftTimes: {}, agreedRate: null, paymentMethod: '' });
     if (!currentUser?.uid || !db) { setLoadingCarePlan(false); return; }
     try {
@@ -621,6 +626,34 @@ export const PostsPage: React.FC = () => {
         lifestyleNotes: prevBookingData?.lifestylePreferences || lifestyleNotes,
       });
       if (prevDayShiftTimes) { setSchedulePrePopulated(true); setScheduleConfirmed(true); }
+
+      // Load caregiver's weeklyAvailability + existing booked slots for blocking check
+      try {
+        const DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const BUFFER = 30;
+        const toMinLocal = (t: string) => { const [h, m] = (t || '00:00').split(':').map(Number); return h * 60 + m; };
+        const [cgSnap, apptSnap] = await Promise.all([
+          db.collection('caregivers').doc(interview.caregiverId).get(),
+          db.collection('appointments')
+            .where('caregiverId', '==', interview.caregiverId)
+            .where('status', 'in', ['confirmed', 'in-progress'])
+            .get().catch(() => null),
+        ]);
+        if (cgSnap.exists) setCgWeeklyAvail((cgSnap.data() as any)?.weeklyAvailability || {});
+        if (apptSnap) {
+          const booked: Record<string, Array<{s:number;e:number}>> = {};
+          apptSnap.docs.forEach(doc => {
+            const appt = doc.data();
+            if (!appt.date || !appt.time) return;
+            const dayAbbr = DAY_ABBR[new Date(appt.date + 'T12:00:00').getDay()];
+            if (!booked[dayAbbr]) booked[dayAbbr] = [];
+            const start = toMinLocal(appt.time);
+            const dur = appt.duration ? appt.duration * 60 : (appt.cost ? Math.round(appt.cost / (appt.hourlyRate || 25)) * 60 : 120);
+            booked[dayAbbr].push({ s: start - BUFFER, e: start + dur + BUFFER });
+          });
+          setCgBookedSlots(booked);
+        }
+      } catch { /* non-fatal */ }
     } catch (e) { console.error('openSendBookingModal error', e); }
     finally { setLoadingCarePlan(false); }
   };
@@ -1277,6 +1310,37 @@ export const PostsPage: React.FC = () => {
         const daysWithMissingTimes = scheduleDays
           .filter(([, blocks]) => (blocks as any[]).some((b: any) => !b.start || !b.end))
           .map(([day]) => day);
+        // Availability check — flag days outside caregiver's weekly availability
+        const ABBR_TO_FULL: Record<string, string> = { Sun:'sunday', Mon:'monday', Tue:'tuesday', Wed:'wednesday', Thu:'thursday', Fri:'friday', Sat:'saturday' };
+        const normalizedAvail = weeklySlotsToBl(cgWeeklyAvail) as Record<string, string[]>;
+        const hasCgAvail = Object.keys(cgWeeklyAvail).length > 0;
+        const availUnavailDays = hasCgAvail ? scheduleDays
+          .filter(([day, blocks]) => {
+            const filled = (blocks as any[]).filter((b: any) => b.start && b.end);
+            if (filled.length === 0) return false;
+            const fullDay = ABBR_TO_FULL[day] || ABBR_TO_FULL[day.slice(0,3)] || day.toLowerCase();
+            const daySlots = normalizedAvail[fullDay] || [];
+            if (daySlots.length === 0) return true; // no availability on this day
+            // Check each shift block against caregiver's availability
+            return filled.some((b: any) => {
+              const [sh, sm] = b.start.split(':').map(Number);
+              const [eh, em] = b.end.split(':').map(Number);
+              const dur = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+              if (dur <= 0) return false;
+              const fakeCaregiver = { weeklyAvailability: cgWeeklyAvail } as any;
+              const checkDate = (() => {
+                const today = new Date();
+                const targetDow = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'].indexOf(fullDay);
+                const diff = (targetDow - today.getDay() + 7) % 7;
+                const d2 = new Date(today); d2.setDate(today.getDate() + diff);
+                return d2;
+              })();
+              return !availabilityService.checkWeeklyAvailability(fakeCaregiver, checkDate, b.start, dur);
+            });
+          })
+          .map(([day]) => day)
+        : [];
+
         const saveIsDisabled = !d.agreedRate || !d.paymentMethod || !d.selectedAddress || noScheduleDays || daysWithMissingTimes.length > 0;
         const saveTip = !d.agreedRate ? 'Enter agreed rate to save'
           : !d.paymentMethod ? 'Select a payment method to save'
@@ -1411,7 +1475,8 @@ export const PostsPage: React.FC = () => {
 
                     {/* Schedule — start date, end/ongoing, per-day shift times */}
                     {(() => {
-                      const todayIso = new Date().toISOString().split('T')[0];
+                      const _td = new Date();
+                      const todayIso = `${_td.getFullYear()}-${String(_td.getMonth()+1).padStart(2,'0')}-${String(_td.getDate()).padStart(2,'0')}`;
                       const fmtTime = (t: string, suffix = '') => {
                         if (!t) return '';
                         const nextDay = t.startsWith('~');
@@ -1430,12 +1495,77 @@ export const PostsPage: React.FC = () => {
                         const h = Math.floor(i / 4), m = (i % 4) * 15;
                         return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
                       });
+                      // ── Caregiver availability helpers ──────────────────
+                      const toMin = (t: string) => { const [h, m] = (t || '00:00').split(':').map(Number); return h * 60 + m; };
+                      // overnight is cross-midnight: e(360) < s(1380) → getDaySlots splits it
+                      const BLOCK_MINS: Record<string, {s:number;e:number}> = { morning:{s:360,e:720}, afternoon:{s:720,e:1080}, evening:{s:1080,e:1380}, overnight:{s:1380,e:360} };
+                      const getDaySlots = (abbr: string): Array<{s:number;e:number}> => {
+                        if (!hasCgAvail) return [];
+                        const full = ABBR_TO_FULL[abbr] || abbr.toLowerCase();
+                        const raw: any[] = cgWeeklyAvail[full] || [];
+                        const result: {s:number;e:number}[] = [];
+                        for (const sl of raw) {
+                          let s: number, e: number;
+                          if (typeof sl === 'string') {
+                            const bm = BLOCK_MINS[sl]; if (!bm) continue;
+                            s = bm.s; e = bm.e;
+                          } else {
+                            if (!sl?.start) continue;
+                            s = toMin(sl.start); e = toMin(sl.end);
+                          }
+                          if (e > 0 && e <= s) {
+                            // cross-midnight (overnight 23:00–06:00): split into two ranges
+                            result.push({s, e: 1440}); // 23:00–midnight
+                            result.push({s: 0, e});    // midnight–06:00
+                          } else {
+                            result.push({s, e: e > 0 ? e : 1440});
+                          }
+                        }
+                        return result;
+                      };
+                      const isDayAvailable = (abbr: string) => !hasCgAvail || getDaySlots(abbr).length > 0;
+                      const isBooked = (abbr: string, m: number) =>
+                        (cgBookedSlots[abbr] || []).some(b => m >= b.s && m < b.e);
+                      const availTimeOpts = (abbr: string) => {
+                        if (!hasCgAvail) return TIME_OPTS; // caregiver hasn't set any availability yet
+                        const slots = getDaySlots(abbr);
+                        if (slots.length === 0) return TIME_OPTS.filter(t => !isBooked(abbr, toMin(t))); // not in their schedule but warn-only — show all times
+                        return TIME_OPTS.filter(t => {
+                          const m = toMin(t);
+                          return slots.some(sl => m >= sl.s && m < sl.e) && !isBooked(abbr, m);
+                        });
+                      };
+                      const availEndOpts = (abbr: string, startT: string) => {
+                        if (!hasCgAvail) return TIME_OPTS.filter(t => !startT || t > startT);
+                        const slots = getDaySlots(abbr);
+                        if (slots.length === 0) return TIME_OPTS.filter(t => (!startT || t > startT) && !isBooked(abbr, toMin(t))); // warn-only day — show all end times
+                        const startM = startT ? toMin(startT) : 0;
+                        // Same-day end times (after start)
+                        const sameDayOpts = TIME_OPTS.filter(t => {
+                          if (startT && t <= startT) return false;
+                          const m = toMin(t);
+                          return slots.some(sl => m > sl.s && m <= sl.e) && !isBooked(abbr, m);
+                        });
+                        // Cross-midnight end times: if start is 23:00+, add ~HH:MM next-morning options
+                        let nextDayOpts: string[] = [];
+                        if (startM >= 1380) {
+                          const morningSlot = slots.find(sl => sl.s === 0 && sl.e > 0);
+                          if (morningSlot) {
+                            nextDayOpts = TIME_OPTS
+                              .filter(t => { const m = toMin(t); return m >= 0 && m <= morningSlot.e && !isBooked(abbr, m); })
+                              .map(t => `~${t}`);
+                          }
+                        }
+                        return [...sameDayOpts, ...nextDayOpts];
+                      };
                       const fmtTimeOpt = (t: string) => {
                         if (!t) return '';
-                        const [hh, mm] = t.split(':').map(Number);
+                        const isNext = t.startsWith('~');
+                        const raw = isNext ? t.slice(1) : t;
+                        const [hh, mm] = raw.split(':').map(Number);
                         const ap = hh < 12 ? 'AM' : 'PM';
                         const h12 = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh;
-                        return `${h12}:${String(mm).padStart(2,'0')} ${ap}`;
+                        return `${h12}:${String(mm).padStart(2,'0')} ${ap}${isNext ? ' +1' : ''}`;
                       };
                       const calcDayHours = (blocks: Array<{start:string;end:string}>) => {
                         return blocks.reduce((sum, b) => {
@@ -1468,7 +1598,7 @@ export const PostsPage: React.FC = () => {
                                   <div>
                                     <p className="text-xs font-semibold text-slate-500 mb-1">Start date</p>
                                     <input type="date" value={d.shiftStartDate} min={todayIso}
-                                      onChange={e => upd({ shiftStartDate: e.target.value })}
+                                      onChange={e => { const v = e.target.value; upd({ shiftStartDate: v && v < todayIso ? todayIso : v }); }}
                                       className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-300" />
                                   </div>
                                   <div>
@@ -1494,6 +1624,7 @@ export const PostsPage: React.FC = () => {
                                               <div className="flex items-center gap-2">
                                                 <p className="text-xs font-bold text-slate-700">{day}</p>
                                                 {(() => { const hrs = fmtHours(calcDayHours(d.dayShiftTimes[day] || [])); return hrs ? <span className="text-xs text-primary-600 font-semibold">{hrs}</span> : null; })()}
+                                                {!isDayAvailable(day) && <span className="text-[10px] font-semibold text-orange-600 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded-full">Not available</span>}
                                               </div>
                                               <button type="button" onClick={() => { const next = { ...d.dayShiftTimes }; delete next[day]; upd({ dayShiftTimes: next }); }} className="text-xs text-slate-400 hover:text-red-500 transition-colors">Remove</button>
                                             </div>
@@ -1504,15 +1635,14 @@ export const PostsPage: React.FC = () => {
                                                     onChange={e => { const nb = [...blocks]; nb[bi] = { ...block, start: e.target.value }; upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: nb } }); }}
                                                     className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary-300 bg-white">
                                                     <option value="">Start</option>
-                                                    {TIME_OPTS.map(t => <option key={t} value={t}>{fmtTimeOpt(t)}</option>)}
+                                                    {availTimeOpts(day).map(t => <option key={t} value={t}>{fmtTimeOpt(t)}</option>)}
                                                   </select>
                                                   <span className="text-xs text-slate-400 shrink-0">to</span>
-                                                  <select value={stripNextDay(block.end)}
+                                                  <select value={block.end}
                                                     onChange={e => { const nb = [...blocks]; nb[bi] = { ...block, end: e.target.value }; upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: nb } }); }}
                                                     className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary-300 bg-white">
                                                     <option value="">End</option>
-                                                    {TIME_OPTS.filter(t => !block.start || t > block.start).map(t => <option key={t} value={t}>{fmtTimeOpt(t)}</option>)}
-                                                    {block.start && TIME_OPTS.filter(t => t <= block.start).map(t => <option key={`nd-${t}`} value={t}>{fmtTimeOpt(t)} (next day)</option>)}
+                                                    {availEndOpts(day, stripNextDay(block.start)).map(t => <option key={t} value={t}>{fmtTimeOpt(t)}</option>)}
                                                   </select>
                                                 </div>
                                               ))}
@@ -1527,13 +1657,17 @@ export const PostsPage: React.FC = () => {
                                   <div>
                                     <p className="text-xs font-semibold text-slate-500 mb-2">Add a day</p>
                                     <div className="flex flex-wrap gap-1.5">
-                                      {availableDays.map(day => (
-                                        <button key={day} type="button"
-                                          onClick={() => upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: [{ label: '', start: '', end: '' }] } })}
-                                          className="text-xs px-3 py-1.5 rounded-lg border-2 border-dashed border-slate-300 text-slate-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
-                                          + {day}
-                                        </button>
-                                      ))}
+                                      {availableDays.map(day => {
+                                        const avail = isDayAvailable(day);
+                                        return (
+                                          <button key={day} type="button"
+                                            onClick={() => upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: [{ label: '', start: '', end: '' }] } })}
+                                            className={`text-xs px-3 py-1.5 rounded-lg border-2 border-dashed transition-colors ${avail ? 'border-slate-300 text-slate-500 hover:border-primary-400 hover:text-primary-600' : 'border-orange-200 text-orange-400 hover:border-orange-300'}`}
+                                            title={avail ? undefined : 'Caregiver not available this day'}>
+                                            + {day}
+                                          </button>
+                                        );
+                                      })}
                                     </div>
                                   </div>
                                 )}

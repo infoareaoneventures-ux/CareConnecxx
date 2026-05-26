@@ -8,6 +8,7 @@ import {
 import { auth, db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
 import { useCareConnex } from '../context/CareConnexContext';
+import { availabilityService } from '../services/availabilityService';
 import { ClientNavigation } from './client/ClientNavigation';
 
 interface Shift {
@@ -77,8 +78,8 @@ function parseInterview(id: string, data: any): InterviewEvent {
   };
 }
 
-const H_START = 6;
-const H_END   = 22;
+const H_START = 0;
+const H_END   = 24;
 const CELL_H  = 56;
 const TOTAL_H = (H_END - H_START) * CELL_H;
 const HOURS   = Array.from({ length: H_END - H_START }, (_, i) => i + H_START);
@@ -109,9 +110,15 @@ function fmtH(h: number): string {
   const whole = Math.floor(h);
   const mins  = Math.round((h - whole) * 60);
   if (whole === 12) return mins ? `12:${String(mins).padStart(2,'0')}pm` : '12pm';
-  if (whole === 0)  return '12am';
+  if (whole === 0)  return mins ? `12:${String(mins).padStart(2,'0')}am` : '12am';
   if (whole < 12)   return mins ? `${whole}:${String(mins).padStart(2,'0')}am` : `${whole}am`;
   return mins ? `${whole-12}:${String(mins).padStart(2,'0')}pm` : `${whole-12}pm`;
+}
+
+/** Convert "HH:MM" 24-hr string → "12:xx am/pm" */
+function fmt12(t?: string): string {
+  if (!t) return '';
+  return fmtH(parseH(t));
 }
 
 function statusStyle(status: Shift['status']): string {
@@ -183,7 +190,8 @@ export default function Schedule() {
     if (!visitCaregiverId || !db) { setCgShiftBlocks({}); return; }
     const user = auth.currentUser;
     if (!user) return;
-    const today = new Date().toISOString().split('T')[0];
+    const _t = new Date();
+    const today = `${_t.getFullYear()}-${String(_t.getMonth()+1).padStart(2,'0')}-${String(_t.getDate()).padStart(2,'0')}`;
     const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     db.collection('shifts')
       .where('clientId', '==', user.uid)
@@ -440,7 +448,8 @@ export default function Schedule() {
         newDays[day] = [{ start: times.start, end: times.end }];
       }
 
-      const todayStr = new Date().toISOString().split('T')[0];
+      const _td2 = new Date();
+      const todayStr = `${_td2.getFullYear()}-${String(_td2.getMonth()+1).padStart(2,'0')}-${String(_td2.getDate()).padStart(2,'0')}`;
       const isOngoing = visitEndOption === 'ongoing';
 
       await db.collection('booking_amendments').add({
@@ -599,7 +608,7 @@ export default function Schedule() {
               {shift.status.replace('-',' ').replace(/\b\w/g, l => l.toUpperCase())}
             </span>
             <h3 className="font-bold text-slate-900 mt-1">{shift.caregiverName}</h3>
-            <p className="text-sm text-slate-500">{shift.date} · {shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+            <p className="text-sm text-slate-500">{shift.date} · {fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
           </div>
         </div>
         <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg font-bold">×</button>
@@ -614,7 +623,7 @@ export default function Schedule() {
         <div className="space-y-1">
           <div className="flex items-center gap-3 text-xs">
             <span className="w-20 text-slate-400 shrink-0">Scheduled</span>
-            <span className="font-semibold text-slate-700">{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</span>
+            <span className="font-semibold text-slate-700">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</span>
           </div>
           {(shift.startedAt || shift.completedAt) && (() => {
             const s = fmtTs(shift.startedAt), e = fmtTs(shift.completedAt), d = fmtDuration(shift.startedAt, shift.completedAt);
@@ -1044,7 +1053,7 @@ export default function Schedule() {
                                       className={`absolute rounded-md border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)}`}
                                       style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '2px', right: hasBoth ? '50%' : '2px' }}>
                                       <p className="px-1.5 pt-1 text-xs font-bold text-white leading-tight truncate">{shift.caregiverName.split(' ')[0]}</p>
-                                      <p className="px-1.5 text-xs text-white/80">{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+                                      <p className="px-1.5 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
                                     </button>
                                   );
                                 })}
@@ -1135,7 +1144,7 @@ export default function Schedule() {
                                   className={`absolute rounded-lg border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)}`}
                                   style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '4px', right: dayInterviews.length > 0 ? '50%' : '4px' }}>
                                   <p className="px-2 pt-1.5 text-sm font-bold text-white leading-tight truncate">{shift.caregiverName}</p>
-                                  <p className="px-2 text-xs text-white/80">{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+                                  <p className="px-2 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
                                   {shift.notes && <p className="px-2 text-xs text-white/70 truncate mt-0.5">{shift.notes}</p>}
                                 </button>
                               );
@@ -1241,7 +1250,7 @@ export default function Schedule() {
                           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
                             {shift.status.replace('-',' ').replace(/\b\w/g, l=>l.toUpperCase())}
                           </span>
-                          <span className="text-sm font-bold text-slate-700">{shift.startTime}{shift.endTime ? `–${shift.endTime}` : ''}</span>
+                          <span className="text-sm font-bold text-slate-700">{fmt12(shift.startTime)}{shift.endTime ? `–${fmt12(shift.endTime)}` : ''}</span>
                         </div>
                         <div className="flex items-center gap-2 mb-2">
                           <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
@@ -1297,7 +1306,7 @@ export default function Schedule() {
                       </div>
                       <div className="min-w-0">
                         <p className="font-medium text-slate-900 text-sm truncate">{s.caregiverName}</p>
-                        <p className="text-xs text-slate-500">{s.startTime}{s.endTime ? ` – ${s.endTime}` : ''}</p>
+                        <p className="text-xs text-slate-500">{fmt12(s.startTime)}{s.endTime ? ` – ${fmt12(s.endTime)}` : ''}</p>
                       </div>
                     </div>
                   ))}
@@ -1454,6 +1463,33 @@ export default function Schedule() {
         const schedule = selectedCg?.schedule || {};
         const DAY_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const VISIT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+        // ── Availability helpers ──────────────────────────────────────────
+        const DAY_NAME_TO_IDX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const getNextDateForDay = (dayName: string, fromDateStr: string): Date | null => {
+          if (!fromDateStr) return null;
+          const fromDate = new Date(fromDateStr + 'T12:00:00');
+          const targetDow = DAY_NAME_TO_IDX[dayName];
+          if (targetDow === undefined) return null;
+          const diff = (targetDow - fromDate.getDay() + 7) % 7;
+          const result = new Date(fromDate);
+          result.setDate(result.getDate() + diff);
+          return result;
+        };
+
+        // Days whose requested times fall outside the caregiver's weekly availability
+        const weeklyUnavailableDays: string[] = selectedCg ? selectedDays.filter(day => {
+          const t = dayTimes[day];
+          if (!t?.start || !t?.end) return false;
+          const checkDate = getNextDateForDay(day, visitStartDate);
+          if (!checkDate) return false;
+          const [sh, sm] = t.start.split(':').map(Number);
+          const [eh, em] = t.end.split(':').map(Number);
+          const durationHours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+          if (durationHours <= 0) return false;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return !availabilityService.checkWeeklyAvailability(selectedCg as any, checkDate, t.start, durationHours);
+        }) : [];
         const scheduledDays = DAY_ORDER.filter(d => schedule[d]?.some(b => b.start && b.end));
         // Merge regular schedule blocks + actual shift blocks for overlap checking
         const allBlocksForDay = (day: string) => {
@@ -1492,7 +1528,8 @@ export default function Schedule() {
           selectedDays.length > 0 &&
           !!visitStartDate &&
           (visitEndOption === 'ongoing' || !!visitEndDate) &&
-          overlappingDays.length === 0;
+          overlappingDays.length === 0 &&
+          weeklyUnavailableDays.length === 0;
 
         // Returns start-time options for a day, excluding times that fall inside an existing block
         const getStartOptions = (day: string) => {
@@ -1503,7 +1540,7 @@ export default function Schedule() {
             return !blocks.some(b => {
               const [bsh, bsm] = b.start.split(':').map(Number);
               const [beh, bem] = b.end.split(':').map(Number);
-              return mins >= bsh * 60 + bsm && mins < beh * 60 + bem;
+              return mins > bsh * 60 + bsm && mins < beh * 60 + bem;
             });
           });
         };
@@ -1582,8 +1619,8 @@ export default function Schedule() {
                       <input
                         type="date"
                         value={visitStartDate}
-                        onChange={e => setVisitStartDate(e.target.value)}
-                        min={new Date().toISOString().split('T')[0]}
+                        onChange={e => { const _n = new Date(); const _min = `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`; const v = e.target.value; setVisitStartDate(v && v < _min ? _min : v); }}
+                        min={(() => { const _n = new Date(); return `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`; })()}
                         className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
                       />
                     </div>
@@ -1596,7 +1633,7 @@ export default function Schedule() {
                           setVisitEndDate(e.target.value);
                           if (e.target.value) setVisitEndOption('end_date');
                         }}
-                        min={visitStartDate || new Date().toISOString().split('T')[0]}
+                        min={visitStartDate || (() => { const _n = new Date(); return `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`; })()}
                         disabled={visitEndOption === 'ongoing'}
                         className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white disabled:bg-slate-50 disabled:text-slate-400"
                       />
@@ -1629,6 +1666,11 @@ export default function Schedule() {
                         {overlappingDays.includes(day) && (
                           <p className="text-xs text-red-600 font-medium flex items-center gap-1">
                             <span>⚠</span> {day} overlaps an existing shift — adjust the time.
+                          </p>
+                        )}
+                        {weeklyUnavailableDays.includes(day) && (
+                          <p className="text-xs text-amber-600 font-medium flex items-center gap-1">
+                            <span>⚠</span> {day} is outside {selectedCg?.name?.split(' ')[0] || 'the caregiver'}'s available hours — adjust the time or day.
                           </p>
                         )}
                         <div className="flex items-center gap-2">

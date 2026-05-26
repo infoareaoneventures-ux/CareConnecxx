@@ -462,8 +462,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                     {([
                         ['morning', 'Morning', '6am–12pm'],
                         ['afternoon', 'Afternoon', '12pm–6pm'],
-                        ['evening', 'Evening', '6pm–11pm'],
-                        ['overnight', 'Overnight', '11pm–6am'],
+                        ['evening', 'Evening', '6pm–12am'],
+                        ['overnight', 'Overnight', '12am–6am'],
                     ] as const).map(([val, label, hours]) => (
                         <label key={val} className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
                             <input

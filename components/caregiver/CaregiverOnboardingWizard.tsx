@@ -400,8 +400,8 @@ const AVAIL_DAYS = [
 const AVAIL_TIMES = [
   { id: 'morning',   label: 'Morning',   sub: '6am – 12pm' },
   { id: 'afternoon', label: 'Afternoon', sub: '12pm – 6pm' },
-  { id: 'evening',   label: 'Evening',   sub: '6pm – 11pm' },
-  { id: 'overnight', label: 'Overnight', sub: '11pm – 6am' },
+  { id: 'evening',   label: 'Evening',   sub: '6pm – 12am' },
+  { id: 'overnight', label: 'Overnight', sub: '12am – 6am' },
 ];
 
 const AvailabilityStep: React.FC<{

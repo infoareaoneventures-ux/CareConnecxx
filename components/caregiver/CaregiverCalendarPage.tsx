@@ -13,8 +13,8 @@ import { blocksToWeeklySlots, weeklySlotsToBl } from '../../services/availabilit
 const TIME_BLOCKS = [
   { id: 'morning',   label: 'Morning',   hours: '6am – 12pm' },
   { id: 'afternoon', label: 'Afternoon', hours: '12pm – 6pm' },
-  { id: 'evening',   label: 'Evening',   hours: '6pm – 11pm' },
-  { id: 'overnight', label: 'Overnight', hours: '11pm – 6am' },
+  { id: 'evening',   label: 'Evening',   hours: '6pm – 12am' },
+  { id: 'overnight', label: 'Overnight', hours: '12am – 6am' },
 ] as const;
 
 const WEEK_DAYS = [

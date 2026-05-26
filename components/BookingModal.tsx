@@ -1,12 +1,29 @@
 
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Calendar, Clock, ArrowLeft, ShieldCheck, MapPin, Info } from 'lucide-react';
+import { X, Calendar, Clock, ArrowLeft, ShieldCheck, MapPin, Info, AlertCircle } from 'lucide-react';
 import { Caregiver, Appointment, MicroTask, MICRO_TASKS } from '../types';
 import { Button } from './ui/Button';
 import { db } from '../lib/firebase';
 import { useCareConnex } from '../context/CareConnexContext';
+import { availabilityService } from '../services/availabilityService';
+
+/** Convert "09:00 AM" / "02:30 PM" → "09:00" / "14:30" */
+function to24h(t: string): string {
+  const [tp, period] = t.split(' ');
+  const [h, m] = tp.split(':');
+  let hour = parseInt(h, 10);
+  if (period === 'PM' && hour !== 12) hour += 12;
+  if (period === 'AM' && hour === 12) hour = 0;
+  return `${hour.toString().padStart(2, '0')}:${m}`;
+}
+
+/** Parse "YYYY-MM-DD" as a local (not UTC) Date */
+function isoToLocalDate(iso: string): Date {
+  const [y, mo, d] = iso.split('-').map(Number);
+  return new Date(y, mo - 1, d);
+}
 
 interface BookingModalProps {
   caregiver: Caregiver;
@@ -104,6 +121,46 @@ export const BookingModal: React.FC<BookingModalProps> = ({ caregiver, onClose, 
 
   const times = ["09:00 AM", "11:00 AM", "02:00 PM", "04:30 PM"];
 
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+
+  // Duration in hours for the current booking type
+  const durationHours = bookingType === 'task' && selectedTask ? selectedTask.durationMin / 60 : 3;
+
+  // Dates where NO time slot fits the caregiver's weekly schedule → disable the chip
+  const disabledDates = useMemo(() => {
+    const disabled = new Set<string>();
+    dates.forEach(d => {
+      const dateObj = isoToLocalDate(d.iso);
+      const anyAvailable = times.some(t =>
+        availabilityService.checkWeeklyAvailability(caregiver, dateObj, to24h(t), durationHours)
+      );
+      if (!anyAvailable) disabled.add(d.full);
+    });
+    return disabled;
+  }, [caregiver, bookingType, selectedTask]);
+
+  // Times that don't fit the caregiver's schedule for the selected date → disable the button
+  const disabledTimes = useMemo(() => {
+    if (!selectedDate) return new Set<string>();
+    const d = dates.find(dt => dt.full === selectedDate);
+    if (!d) return new Set<string>();
+    const dateObj = isoToLocalDate(d.iso);
+    const disabled = new Set<string>();
+    times.forEach(t => {
+      if (!availabilityService.checkWeeklyAvailability(caregiver, dateObj, to24h(t), durationHours)) {
+        disabled.add(t);
+      }
+    });
+    return disabled;
+  }, [selectedDate, caregiver, bookingType, selectedTask]);
+
+  // Clear selected time if it becomes unavailable after date change
+  useEffect(() => {
+    if (selectedTime && disabledTimes.has(selectedTime)) {
+      setSelectedTime(null);
+    }
+  }, [disabledTimes]);
+
   const handleContinue = () => {
     if (selectedDate && selectedTime) {
       setStep('confirm');
@@ -113,9 +170,20 @@ export const BookingModal: React.FC<BookingModalProps> = ({ caregiver, onClose, 
   const handleConfirmBooking = async () => {
     if (!selectedDate || !selectedTime) return;
     setLoading(true);
+    setAvailabilityError(null);
 
     const dateObj = dates.find(d => d.full === selectedDate);
     const isoDate = dateObj ? dateObj.iso : new Date().toISOString().split('T')[0];
+
+    // Final guard: check weekly schedule + calendar conflicts before confirming
+    const requestDate = isoToLocalDate(isoDate);
+    const isAvail = await availabilityService.isAvailable(caregiver, requestDate, to24h(selectedTime), durationHours);
+    if (!isAvail) {
+      setLoading(false);
+      setAvailabilityError('This time slot conflicts with the caregiver\'s schedule or an existing booking. Please select a different time.');
+      setStep('select');
+      return;
+    }
 
     // Cost Logic
     let totalCost = 0;
@@ -206,6 +274,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({ caregiver, onClose, 
           {step === 'select' ? (
             /* STEP 1: SELECTION */
             <div className="space-y-6 animate-slide-in">
+              {/* Availability error */}
+              {availabilityError && (
+                <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                  <p className="text-xs text-red-700 font-medium">{availabilityError}</p>
+                </div>
+              )}
               {/* Booking Type Toggle */}
               <div className="flex bg-slate-100 p-1 rounded-xl">
                 <button
@@ -256,22 +331,29 @@ export const BookingModal: React.FC<BookingModalProps> = ({ caregiver, onClose, 
                   Select Date
                 </div>
                 <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-                  {dates.map((d) => (
-                    <button
-                      key={d.iso}
-                      onClick={() => setSelectedDate(d.full)}
-                      className={`
-                        flex flex-col items-center justify-center min-w-[70px] h-[80px] rounded-xl border-2 transition-all flex-shrink-0
-                        ${selectedDate === d.full
-                          ? 'border-primary-600 bg-primary-50 text-primary-700 shadow-sm'
-                          : 'border-slate-100 hover:border-primary-200 text-slate-600'
-                        }
-                      `}
-                    >
-                      <span className="text-xs font-medium uppercase">{d.day}</span>
-                      <span className="text-2xl font-bold">{d.date}</span>
-                    </button>
-                  ))}
+                  {dates.map((d) => {
+                    const isDisabled = disabledDates.has(d.full);
+                    return (
+                      <button
+                        key={d.iso}
+                        disabled={isDisabled}
+                        onClick={() => !isDisabled && setSelectedDate(d.full)}
+                        className={`
+                          flex flex-col items-center justify-center min-w-[70px] h-[80px] rounded-xl border-2 transition-all flex-shrink-0
+                          ${isDisabled
+                            ? 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed opacity-50'
+                            : selectedDate === d.full
+                              ? 'border-primary-600 bg-primary-50 text-primary-700 shadow-sm'
+                              : 'border-slate-100 hover:border-primary-200 text-slate-600'
+                          }
+                        `}
+                      >
+                        <span className="text-xs font-medium uppercase">{d.day}</span>
+                        <span className="text-2xl font-bold">{d.date}</span>
+                        {isDisabled && <span className="text-[9px] mt-0.5 text-slate-300">Unavailable</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -282,21 +364,27 @@ export const BookingModal: React.FC<BookingModalProps> = ({ caregiver, onClose, 
                   Select Time
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  {times.map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => setSelectedTime(t)}
-                      className={`
-                        py-3 px-4 rounded-xl border text-sm font-medium transition-all
-                        ${selectedTime === t
-                          ? 'bg-primary-600 border-primary-600 text-white shadow-md'
-                          : 'border-slate-200 text-slate-600 hover:border-primary-300'
-                        }
-                      `}
-                    >
-                      {t}
-                    </button>
-                  ))}
+                  {times.map((t) => {
+                    const isDisabled = disabledTimes.has(t);
+                    return (
+                      <button
+                        key={t}
+                        disabled={isDisabled}
+                        onClick={() => !isDisabled && setSelectedTime(t)}
+                        className={`
+                          py-3 px-4 rounded-xl border text-sm font-medium transition-all
+                          ${isDisabled
+                            ? 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed line-through opacity-50'
+                            : selectedTime === t
+                              ? 'bg-primary-600 border-primary-600 text-white shadow-md'
+                              : 'border-slate-200 text-slate-600 hover:border-primary-300'
+                          }
+                        `}
+                      >
+                        {t}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

@@ -7,6 +7,7 @@ import { AvatarUpload } from './ui/AvatarUpload';
 import { Badge } from './ui/Badge';
 import { ViewType, AddToastFunction, Review, Caregiver } from '../types';
 import { dbService, authService } from '../services/api';
+import { blocksToWeeklySlots, weeklySlotsToBl } from '../services/availabilityService';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 import { ProfileApprovalBanner } from './caregiver/ProfileApprovalBanner';
 import {
@@ -70,7 +71,8 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
             setEditRadius(String(p.serviceRadius || '10'));
             setEditLocation(p.location || (p.city && p.state ? `${p.city}, ${p.state}` : ''));
             setEditJobTypes(p.jobTypes || []);
-            setEditAvailability(p.weeklyAvailability || {});
+            // Normalize to block IDs regardless of whether Firestore has TimeSlots (Cara) or block IDs (onboarding/profile)
+            setEditAvailability(weeklySlotsToBl(p.weeklyAvailability || {}) as Record<string, string[]>);
           }
         }
 
@@ -127,7 +129,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   const displayServices: string[] = profile.services || profile.skills || editServices;
   const displayLocation: string = profile.location || (profile.city && profile.state ? `${profile.city}, ${profile.state}` : editLocation);
   const displayRadius: string = String(profile.serviceRadius || editRadius);
-  const displayAvailability: Record<string, string[]> = (profile.weeklyAvailability as unknown as Record<string, string[]>) || editAvailability;
+  const displayAvailability: Record<string, string[]> = weeklySlotsToBl((profile.weeklyAvailability || {}) as Record<string, any[]>) as Record<string, string[]> || editAvailability;
   const displayLanguages: string[] = profile.languages || editLanguages;
   const displayJobTypes: string[] = profile.jobTypes || editJobTypes;
   const displayExperience: string = profile.yearsExperience || String(profile.experience || '') || editExperience;
@@ -457,7 +459,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                       setEditAvailability({ ...displayAvailability });
                       setEditingSection('availability');
                     }}
-                    onSave={() => saveSection({ jobTypes: editJobTypes, weeklyAvailability: editAvailability })}
+                    onSave={() => saveSection({ jobTypes: editJobTypes, weeklyAvailability: blocksToWeeklySlots(editAvailability) })}
                   />
                 </div>
               </div>

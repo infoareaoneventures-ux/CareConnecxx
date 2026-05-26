@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { dbService } from '../../services/api';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
+import { blocksToWeeklySlots } from '../../services/availabilityService';
 import { AddToastFunction } from '../../types';
 import {
   PRIMARY_SERVICES,
@@ -105,7 +106,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     setIsLoading(true);
     try {
       await dbService.updateUser('caregivers', uid, cleanData({
-        weeklyAvailability: form.weeklyAvailability,
+        weeklyAvailability: blocksToWeeklySlots(form.weeklyAvailability),
         jobTypes: form.jobTypes,
       }) as any);
       next();

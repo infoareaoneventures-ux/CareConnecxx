@@ -28,7 +28,17 @@ export function classifyCompleteness(session: AgentSession | null | undefined): 
   const data    = (session.onboardingData ?? {}) as Record<string, unknown>;
   const hasName = typeof data.firstName === "string" && (data.firstName as string).trim().length > 0;
 
+  // Primary signal: a completed session linked to a real account is fully
+  // onboarded — even when onboardingData is empty. For most live users the
+  // name/senior/city live in the users + seniors docs, not the session blob,
+  // so keying ONBOARDED off onboardingData.firstName alone false-positives
+  // real clients into the "never finished setup" offer. Trust the account link.
+  if (step === "complete" && (session.userId || session.caregiverId)) return "ONBOARDED";
+
+  // Secondary signal: completed sessions that predate account linkage but kept
+  // their onboardingData (name + role) are also onboarded.
   if (step === "complete" && role && hasName) return "ONBOARDED";
+
   return "PARTIAL";
 }
 

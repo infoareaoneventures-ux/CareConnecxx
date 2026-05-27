@@ -2057,52 +2057,6 @@ async function handleInbound(event: unknown): Promise<void> {
     );
   }
 
-  // ── Profile completeness gate ────────────────────────────────────────────
-  // Catches "phone is in the system but onboarding never completed" — sandbox→
-  // live migrations, admin-added stubs, abandoned flows. Without this, the
-  // session falls through to qaAgent which sees partial linkage to other
-  // people's data and produces contradictory replies ("I have your profile" /
-  // "key details haven't been filled in"). Skipped if the user is actively
-  // mid-onboarding (existing flow handles them) or already onboarded.
-  {
-    const inOnboardingFlow = session.onboardingStep && session.onboardingStep !== "complete";
-    if (!inOnboardingFlow) {
-      const completeness = classifyCompleteness(session);
-      if (completeness === "PARTIAL") {
-        const offerState = (session as any).onboardingOfferState as "pending" | "declined" | undefined;
-
-        if (offerState === "pending") {
-          const reply = await classifyOfferReply(text);
-          if (reply === "accept") {
-            await markOfferAccepted(phone);
-            await sendMessage(chatId,
-              "Great — let's get you set up.\n\n" +
-              "Are you looking for care for a loved one, or are you a caregiver?\n\n" +
-              "1️⃣  I need care for someone\n" +
-              "2️⃣  I'm a caregiver looking for work"
-            );
-            return;
-          }
-          if (reply === "decline") {
-            await markOfferDeclined(phone);
-            await sendMessage(chatId,
-              "No problem — we can do it whenever you're ready. What can I help with right now?"
-            );
-            return;
-          }
-          // QUESTION → fall through to QA (cross-entity context will be suppressed),
-          // leaving offerState=pending so the offer is implicitly still on the table.
-        } else if (!offerState || shouldReoffer(session)) {
-          await sendOnboardingOffer(phone, chatId, session);
-          return;
-        }
-        // offerState === "declined" and not yet time to re-offer → fall through to QA
-        // with cross-entity context suppressed (signaled via session flag below).
-        (session as any).__unconfirmedIdentity = true;
-      }
-    }
-  }
-
   // ── ONBOARDING gate — route to state machine if not complete ─────────────
   // If the session exists but has no onboardingStep (e.g. created by an old
   // initiateCara that only stored chatId/userType), try to recover account data
@@ -2144,6 +2098,54 @@ async function handleInbound(event: unknown): Promise<void> {
       );
       console.error("handleInbound: complete session with no userId and no users record", { phone });
       return;
+    }
+  }
+
+  // ── Profile completeness gate ────────────────────────────────────────────
+  // Catches "phone is in the system but onboarding never completed" — sandbox→
+  // live migrations and old-format stubs that carry a chatId but no real
+  // account. Runs AFTER the recovery block above so that recoverable sessions
+  // (no userId in the session, but a users-collection record exists) have
+  // already been restored to ONBOARDED and are NOT mis-offered re-setup.
+  // classifyCompleteness treats any session with a linked userId/caregiverId +
+  // step "complete" as ONBOARDED regardless of onboardingData, so real clients
+  // whose name lives in the users/seniors docs are never false-flagged.
+  // Skipped entirely when the user is actively mid-onboarding.
+  {
+    const inOnboardingFlow = session.onboardingStep && session.onboardingStep !== "complete";
+    if (!inOnboardingFlow && classifyCompleteness(session) === "PARTIAL") {
+      const offerState = (session as any).onboardingOfferState as "pending" | "declined" | undefined;
+
+      if (offerState === "pending") {
+        const reply = await classifyOfferReply(text);
+        if (reply === "accept") {
+          await markOfferAccepted(phone);
+          await sendMessage(chatId,
+            "Great — let's get you set up.\n\n" +
+            "Are you looking for care for a loved one, or are you a caregiver?\n\n" +
+            "1️⃣  I need care for someone\n" +
+            "2️⃣  I'm a caregiver looking for work"
+          );
+          return;
+        }
+        if (reply === "decline") {
+          await markOfferDeclined(phone);
+          await sendMessage(chatId,
+            "No problem — we can do it whenever you're ready. What can I help with right now?"
+          );
+          return;
+        }
+        // QUESTION → fall through to QA (cross-entity context suppressed below),
+        // leaving offerState=pending so the offer stays implicitly on the table.
+        (session as any).__unconfirmedIdentity = true;
+      } else if (!offerState || shouldReoffer(session)) {
+        await sendOnboardingOffer(phone, chatId, session);
+        return;
+      } else {
+        // offerState === "declined" and not yet time to re-offer → answer freely
+        // but with cross-entity context suppressed.
+        (session as any).__unconfirmedIdentity = true;
+      }
     }
   }
 

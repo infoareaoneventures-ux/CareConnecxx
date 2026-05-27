@@ -36,7 +36,8 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.zepSetup = exports.chatWithCara = exports.createWebOnboardingSession = exports.send1099Notifications = exports.submitGpsCheckin = exports.sendJobMatchNotifications = exports.getMatchPatterns = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.sendOnboardingReengagement = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.sendThirtyMinShiftReminders = exports.sendClientThirtyMinReminders = exports.sendClientDayBeforeReminders = exports.sendDayBeforeShiftReminders = exports.sendPreShiftFamilyCheckin = exports.sendShiftTaskNudges = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.familySilenceCheckinJob = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.dailyContactCardShare = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.onShiftStatusChanged = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
+exports.chatWithCara = exports.createWebOnboardingSession = exports.initiateCara = exports.send1099Notifications = exports.submitGpsCheckin = exports.sendJobMatchNotifications = exports.getMatchPatterns = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.sendOnboardingReengagement = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.sendThirtyMinShiftReminders = exports.sendClientThirtyMinReminders = exports.sendClientDayBeforeReminders = exports.sendDayBeforeShiftReminders = exports.sendPreShiftFamilyCheckin = exports.sendShiftTaskNudges = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.familySilenceCheckinJob = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.dailyContactCardShare = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.onShiftStatusChanged = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
+exports.zepSetup = void 0;
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions"));
 // Initialize Admin globally if not already done
@@ -202,6 +203,31 @@ Object.defineProperty(exports, "send1099Notifications", { enumerable: true, get:
 // MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
 __exportStar(require("./migrations/migrateSeniorsToHousehold"), exports);
 // fixAcceptedCounterPay migration already executed — not exported
+// ── initiateCara — DEPRECATED no-op stub (do not extend) ──────────────────────
+// The original callable proactively sent Cara's greeting SMS from the old web
+// "Continue with Phone" screen (PhoneSignupPage). It was removed from source
+// when onboarding moved to the inbound-first model (see createWebOnboardingSession
+// below), but the deployed v1-initiateCara function kept getting called by stale
+// cached PWA clients whose service worker still serves the old bundle — each call
+// fired an unauthenticated outbound SMS (an A2P 10DLC / abuse / cost liability).
+//
+// This stub neutralizes that: it sends NO SMS, writes NOTHING, and returns the same
+// { success: true } shape the cached frontend expects so those clients degrade
+// gracefully (no errors) instead of triggering outbound traffic. Keeping it in
+// source also restores clean `firebase deploy --only functions` (the orphaned
+// function no longer aborts the deploy on its deletion prompt).
+//
+// Once telemetry shows zero invocations for a sustained window (cached clients
+// aged out), this export can be removed and the function hard-deleted:
+//   firebase functions:delete v1-initiateCara --region us-central1
+exports.initiateCara = functions.https.onCall(async (data) => {
+    var _a;
+    const phone = (_a = data === null || data === void 0 ? void 0 : data.phone) === null || _a === void 0 ? void 0 : _a.trim();
+    console.warn("initiateCara: DEPRECATED no-op invoked by a stale client — no SMS sent", {
+        phoneSuffix: phone ? phone.slice(-4) : "none",
+    });
+    return { success: true, deprecated: true };
+});
 // ── createWebOnboardingSession — authenticated callable, NEVER sends outbound SMS ──
 // Called from /start after the user verifies their phone with Firebase Phone Auth.
 // Records role + consent on a TTL'd bridge doc that the LINQ inbound webhook reads

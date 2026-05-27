@@ -162,6 +162,31 @@ export * from './migrations/migrateSeniorsToHousehold';
 
 // fixAcceptedCounterPay migration already executed — not exported
 
+// ── initiateCara — DEPRECATED no-op stub (do not extend) ──────────────────────
+// The original callable proactively sent Cara's greeting SMS from the old web
+// "Continue with Phone" screen (PhoneSignupPage). It was removed from source
+// when onboarding moved to the inbound-first model (see createWebOnboardingSession
+// below), but the deployed v1-initiateCara function kept getting called by stale
+// cached PWA clients whose service worker still serves the old bundle — each call
+// fired an unauthenticated outbound SMS (an A2P 10DLC / abuse / cost liability).
+//
+// This stub neutralizes that: it sends NO SMS, writes NOTHING, and returns the same
+// { success: true } shape the cached frontend expects so those clients degrade
+// gracefully (no errors) instead of triggering outbound traffic. Keeping it in
+// source also restores clean `firebase deploy --only functions` (the orphaned
+// function no longer aborts the deploy on its deletion prompt).
+//
+// Once telemetry shows zero invocations for a sustained window (cached clients
+// aged out), this export can be removed and the function hard-deleted:
+//   firebase functions:delete v1-initiateCara --region us-central1
+export const initiateCara = functions.https.onCall(async (data) => {
+  const phone = (data?.phone as string | undefined)?.trim();
+  console.warn("initiateCara: DEPRECATED no-op invoked by a stale client — no SMS sent", {
+    phoneSuffix: phone ? phone.slice(-4) : "none",
+  });
+  return { success: true, deprecated: true };
+});
+
 // ── createWebOnboardingSession — authenticated callable, NEVER sends outbound SMS ──
 // Called from /start after the user verifies their phone with Firebase Phone Auth.
 // Records role + consent on a TTL'd bridge doc that the LINQ inbound webhook reads

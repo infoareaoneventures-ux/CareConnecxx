@@ -1713,47 +1713,6 @@ async function handleInbound(event) {
     if (!session.zepThreadId && session.onboardingStep === "complete") {
         (0, zepClient_1.initializeZepOnFirstContact)(phone).catch((err) => console.error("Zep lazy-init error:", err));
     }
-    // ── Profile completeness gate ────────────────────────────────────────────
-    // Catches "phone is in the system but onboarding never completed" — sandbox→
-    // live migrations, admin-added stubs, abandoned flows. Without this, the
-    // session falls through to qaAgent which sees partial linkage to other
-    // people's data and produces contradictory replies ("I have your profile" /
-    // "key details haven't been filled in"). Skipped if the user is actively
-    // mid-onboarding (existing flow handles them) or already onboarded.
-    {
-        const inOnboardingFlow = session.onboardingStep && session.onboardingStep !== "complete";
-        if (!inOnboardingFlow) {
-            const completeness = (0, profileCompleteness_1.classifyCompleteness)(session);
-            if (completeness === "PARTIAL") {
-                const offerState = session.onboardingOfferState;
-                if (offerState === "pending") {
-                    const reply = await (0, profileCompleteness_1.classifyOfferReply)(text);
-                    if (reply === "accept") {
-                        await (0, profileCompleteness_1.markOfferAccepted)(phone);
-                        await (0, client_1.sendMessage)(chatId, "Great — let's get you set up.\n\n" +
-                            "Are you looking for care for a loved one, or are you a caregiver?\n\n" +
-                            "1️⃣  I need care for someone\n" +
-                            "2️⃣  I'm a caregiver looking for work");
-                        return;
-                    }
-                    if (reply === "decline") {
-                        await (0, profileCompleteness_1.markOfferDeclined)(phone);
-                        await (0, client_1.sendMessage)(chatId, "No problem — we can do it whenever you're ready. What can I help with right now?");
-                        return;
-                    }
-                    // QUESTION → fall through to QA (cross-entity context will be suppressed),
-                    // leaving offerState=pending so the offer is implicitly still on the table.
-                }
-                else if (!offerState || (0, profileCompleteness_1.shouldReoffer)(session)) {
-                    await (0, profileCompleteness_1.sendOnboardingOffer)(phone, chatId, session);
-                    return;
-                }
-                // offerState === "declined" and not yet time to re-offer → fall through to QA
-                // with cross-entity context suppressed (signaled via session flag below).
-                session.__unconfirmedIdentity = true;
-            }
-        }
-    }
     // ── ONBOARDING gate — route to state machine if not complete ─────────────
     // If the session exists but has no onboardingStep (e.g. created by an old
     // initiateCara that only stored chatId/userType), try to recover account data
@@ -1795,6 +1754,50 @@ async function handleInbound(event) {
                 "Reply START OVER and I'll get you set up again.");
             console.error("handleInbound: complete session with no userId and no users record", { phone });
             return;
+        }
+    }
+    // ── Profile completeness gate ────────────────────────────────────────────
+    // Catches "phone is in the system but onboarding never completed" — sandbox→
+    // live migrations and old-format stubs that carry a chatId but no real
+    // account. Runs AFTER the recovery block above so that recoverable sessions
+    // (no userId in the session, but a users-collection record exists) have
+    // already been restored to ONBOARDED and are NOT mis-offered re-setup.
+    // classifyCompleteness treats any session with a linked userId/caregiverId +
+    // step "complete" as ONBOARDED regardless of onboardingData, so real clients
+    // whose name lives in the users/seniors docs are never false-flagged.
+    // Skipped entirely when the user is actively mid-onboarding.
+    {
+        const inOnboardingFlow = session.onboardingStep && session.onboardingStep !== "complete";
+        if (!inOnboardingFlow && (0, profileCompleteness_1.classifyCompleteness)(session) === "PARTIAL") {
+            const offerState = session.onboardingOfferState;
+            if (offerState === "pending") {
+                const reply = await (0, profileCompleteness_1.classifyOfferReply)(text);
+                if (reply === "accept") {
+                    await (0, profileCompleteness_1.markOfferAccepted)(phone);
+                    await (0, client_1.sendMessage)(chatId, "Great — let's get you set up.\n\n" +
+                        "Are you looking for care for a loved one, or are you a caregiver?\n\n" +
+                        "1️⃣  I need care for someone\n" +
+                        "2️⃣  I'm a caregiver looking for work");
+                    return;
+                }
+                if (reply === "decline") {
+                    await (0, profileCompleteness_1.markOfferDeclined)(phone);
+                    await (0, client_1.sendMessage)(chatId, "No problem — we can do it whenever you're ready. What can I help with right now?");
+                    return;
+                }
+                // QUESTION → fall through to QA (cross-entity context suppressed below),
+                // leaving offerState=pending so the offer stays implicitly on the table.
+                session.__unconfirmedIdentity = true;
+            }
+            else if (!offerState || (0, profileCompleteness_1.shouldReoffer)(session)) {
+                await (0, profileCompleteness_1.sendOnboardingOffer)(phone, chatId, session);
+                return;
+            }
+            else {
+                // offerState === "declined" and not yet time to re-offer → answer freely
+                // but with cross-entity context suppressed.
+                session.__unconfirmedIdentity = true;
+            }
         }
     }
     const step = (_18 = session.onboardingStep) !== null && _18 !== void 0 ? _18 : "";

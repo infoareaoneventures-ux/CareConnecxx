@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Heart, MapPin, Star, CheckCircle, Sparkles, TrendingUp,
   MessageSquare, Shield, Search, SlidersHorizontal, X,
-  ChevronDown, BookmarkPlus, Languages, Award,
-  Pill, Car, Brain, Activity, Users, Video, Zap,
+  ChevronDown, Briefcase,
+  Pill, Car, Brain, Activity, Users, Video,
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
@@ -45,6 +45,7 @@ interface Caregiver {
   lastActive?: string;
   repeatFamilies?: number;
   availability?: string[];
+  serviceRadius?: number;
 }
 
 type SortOption = 'best-match' | 'rating' | 'price-low' | 'price-high' | 'distance' | 'experience';
@@ -69,43 +70,15 @@ const EXPERIENCE_TIERS = [
   { key: 10, label: '10+ years' },
 ];
 
+
 function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 3959;
+  const R = 3959; // Earth radius in miles
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-const GEOCODE_CACHE_KEY = 'careconnex_geocode_v1';
-
-function getGeocodeCache(): Record<string, { lat: number; lng: number }> {
-  try { return JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}'); } catch { return {}; }
-}
-
-function setGeocodeCache(cache: Record<string, { lat: number; lng: number }>) {
-  try { localStorage.setItem(GEOCODE_CACHE_KEY, JSON.stringify(cache)); } catch { /* storage full */ }
-}
-
-// Returns coords + whether they came from cache (cached = no rate-limit delay needed)
-async function geocodeAddress(id: string, street?: string, city?: string, state?: string, zipCode?: string): Promise<{ lat: number; lng: number; cached: boolean } | null> {
-  const cache = getGeocodeCache();
-  if (cache[id]) return { ...cache[id], cached: true };
-  const query = [street, city, state, zipCode].filter(Boolean).join(', ');
-  if (!query) return null;
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&countrycodes=us`,
-      { headers: { 'Accept-Language': 'en', 'User-Agent': 'CareConnex/1.0' } }
-    );
-    const data = await res.json();
-    if (!data?.length) return null;
-    const result = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-    setGeocodeCache({ ...getGeocodeCache(), [id]: result });
-    return { ...result, cached: false };
-  } catch {
-    return null;
-  }
 }
 
 function formatLastActive(iso?: string): string {
@@ -132,15 +105,16 @@ export default function FindCaregivers() {
   const { gate, Modals: GateModals } = useAccessGates();
   const [viewingCaregiver, setViewingCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
   const [interviewCaregiver, setInterviewCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
-  const [clientLat, setClientLat] = useState<number | null>(null);
-  const [clientLng, setClientLng] = useState<number | null>(null);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
   const [bookedCaregiverIds, setBookedCaregiverIds] = useState<Set<string>>(new Set());
 
+  // Client care locations — all lat/lngs from job_posts, job_postings, carePlans, users
+  const [clientLocations, setClientLocations] = useState<{ lat: number; lng: number }[]>([]);
+
   // Filters
   const [nameQuery, setNameQuery] = useState('');
-  const [maxDistance, setMaxDistance] = useState(25);
   const [maxRate, setMaxRate] = useState(75);
+  const [maxDistance, setMaxDistance] = useState(25);
   const [minRating, setMinRating] = useState(0);
   const [minExperience, setMinExperience] = useState(0);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
@@ -152,81 +126,6 @@ export default function FindCaregivers() {
     loadClientDataAndCaregivers();
   }, []);
 
-  // Ref so caregiver geocoding closures always see the latest client coords
-  const clientLatRef = useRef<number | null>(null);
-  const clientLngRef = useRef<number | null>(null);
-
-  // Resolve client's care location coordinates — reads from job_postings first (geocoded at post time),
-  // falls back to geocoding their profile address if not yet stored.
-  const resolveClientLocation = async (uid: string) => {
-    try {
-      const jpSnap = await db.collection('job_postings').doc(uid).get();
-      const jp = jpSnap.data() as any;
-      if (jp?.lat && jp?.lng) {
-        clientLatRef.current = jp.lat;
-        clientLngRef.current = jp.lng;
-        setClientLat(jp.lat);
-        setClientLng(jp.lng);
-        return;
-      }
-      // Fallback: geocode from job posting address or profile address
-      const street = jp?.streetAddress || jp?.street;
-      const city = jp?.city;
-      const state = jp?.state;
-      const zipCode = jp?.zipCode;
-      const coords = await geocodeAddress(`client_${uid}`, street, city, state, zipCode);
-      if (coords) {
-        clientLatRef.current = coords.lat;
-        clientLngRef.current = coords.lng;
-        setClientLat(coords.lat);
-        setClientLng(coords.lng);
-        db.collection('job_postings').doc(uid)
-          .set({ lat: coords.lat, lng: coords.lng }, { merge: true })
-          .catch(() => {});
-      }
-    } catch { /* best effort */ }
-  };
-
-  // Recalculate distances for caregivers that already have coords when client location resolves
-  useEffect(() => {
-    if (clientLat === null || clientLng === null) return;
-    setCaregivers(prev => prev.map(cg => {
-      if (cg.lat != null && cg.lng != null) {
-        const dist = haversineDistance(clientLat, clientLng, cg.lat, cg.lng);
-        return { ...cg, distance: Math.round(dist * 10) / 10 };
-      }
-      return cg;
-    }));
-  }, [clientLat, clientLng]);
-
-  // Geocode caregivers without stored coords — runs as soon as caregivers load
-  useEffect(() => {
-    const needsGeocode = caregivers.filter(cg => cg.lat == null && (cg.street || cg.city));
-    if (!needsGeocode.length) return;
-
-    let cancelled = false;
-    (async () => {
-      for (const cg of needsGeocode) {
-        if (cancelled) break;
-        const coords = await geocodeAddress(cg.id, cg.street, cg.city, cg.state, cg.zipCode);
-        if (coords && !cancelled) {
-          setCaregivers(prev => prev.map(c => {
-            if (c.id !== cg.id) return c;
-            const lat = clientLatRef.current;
-            const lng = clientLngRef.current;
-            const dist = lat != null && lng != null
-              ? Math.round(haversineDistance(lat, lng, coords.lat, coords.lng) * 10) / 10
-              : 0;
-            return { ...c, lat: coords.lat, lng: coords.lng, distance: dist };
-          }));
-        }
-        if (!coords?.cached) await new Promise(r => setTimeout(r, 1100)); // Nominatim: 1 req/sec, skip if cached
-      }
-    })();
-
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [caregivers.length]);
 
   const loadClientDataAndCaregivers = async () => {
     try {
@@ -243,11 +142,7 @@ export default function FindCaregivers() {
         setClientIntakeData(intakeData);
       }
 
-      dbService.getJobPostsByClient(user.uid).then(posts => {
-        setClientOpenPosts(posts.filter((p: any) => p.status === 'open').map((p: any) => ({ id: p.id, title: p.title, startDate: p.startDate || p.date })));
-      }).catch(() => {});
-
-      // Load accepted booking caregiver IDs so we can hide "Request Interview" for already-booked caregivers
+      // Load accepted booking caregiver IDs — fire and forget
       db.collection('booking_requests')
         .where('clientId', '==', user.uid)
         .where('status', '==', 'accepted')
@@ -258,9 +153,47 @@ export default function FindCaregivers() {
         })
         .catch(() => {});
 
-      await fetchCaregivers(intakeData);
+      // ── Collect all client care location lat/lngs in parallel ──
+      const [postsSnap, jpDoc, cpDoc] = await Promise.all([
+        db.collection('job_posts').where('clientId', '==', user.uid).where('status', '==', 'open').get(),
+        db.collection('job_postings').doc(user.uid).get(),
+        db.collection('carePlans').doc(user.uid).get(),
+      ]);
+
+      // Populate clientOpenPosts from the same query
+      const openPosts = postsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+      setClientOpenPosts(openPosts.map((p: any) => ({ id: p.id, title: p.title, startDate: p.startDate || p.date })));
+
+      const seen = new Set<string>();
+      const locs: { lat: number; lng: number }[] = [];
+      const addLoc = (lat: any, lng: any) => {
+        if (lat == null || lng == null) return;
+        const key = `${lat},${lng}`;
+        if (!seen.has(key)) { seen.add(key); locs.push({ lat: Number(lat), lng: Number(lng) }); }
+      };
+
+      // 1. Open job posts
+      openPosts.forEach((p: any) => addLoc(p.lat, p.lng));
+
+      // 2. Wizard / onboarding job_postings
+      if (jpDoc.exists) { const d = jpDoc.data() as any; addLoc(d.lat, d.lng); }
+
+      // 3. Care plan location pool (geocoded when saved)
+      if (cpDoc.exists) {
+        const d = cpDoc.data() as any;
+        (d.locationPool || []).forEach((loc: any) => addLoc(loc.lat, loc.lng));
+      }
+
+      // 4. Fallback — signup address on users/{uid}
+      if (locs.length === 0) {
+        const userDoc = await db.collection('users').doc(user.uid).get();
+        if (userDoc.exists) { const d = userDoc.data() as any; addLoc(d.latitude, d.longitude); }
+      }
+
+      setClientLocations(locs);
+
+      await fetchCaregivers(intakeData, locs);
       await fetchFavorites();
-      resolveClientLocation(user.uid); // fire-and-forget; updates distances when resolved
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -268,7 +201,7 @@ export default function FindCaregivers() {
     }
   };
 
-  const fetchCaregivers = async (intakeData: any) => {
+  const fetchCaregivers = async (intakeData: any, clientLocs: { lat: number; lng: number }[]) => {
     try {
       const user = auth.currentUser;
       const precomputedData = user ? await dbService.getClientMatches(user.uid) : null;
@@ -295,6 +228,14 @@ export default function FindCaregivers() {
         const lastName = data.lastName || data.name?.split(' ').slice(1).join(' ') || '';
         if (!firstName && !lastName && !data.name) return;
         seen.add(doc.id);
+        const cgLat: number | undefined = data.lat ?? data.latitude ?? data.location?.lat ?? data._geoloc?.lat;
+        const cgLng: number | undefined = data.lng ?? data.longitude ?? data.location?.lng ?? data._geoloc?.lng;
+        // Minimum distance from any client care location to this caregiver's home
+        let minDist = 0;
+        if (cgLat != null && cgLng != null && clientLocs.length > 0) {
+          minDist = Math.min(...clientLocs.map(loc => haversineDistance(loc.lat, loc.lng, cgLat, cgLng)));
+          minDist = Math.round(minDist * 10) / 10;
+        }
         caregiverList.push({
           id: doc.id,
           firstName,
@@ -308,9 +249,9 @@ export default function FindCaregivers() {
           street: data.street || data.streetAddress,
           verified: data.backgroundCheckComplete || data.verified || false,
           backgroundCheckStatus: data.backgroundCheckStatus || data.backgroundCheckData?.status || (data.backgroundCheckComplete || data.verified ? 'clear' : 'none'),
-          distance: data.distance ?? 0,
-          lat: data.lat ?? data.latitude ?? data.location?.lat ?? data._geoloc?.lat,
-          lng: data.lng ?? data.longitude ?? data.location?.lng ?? data._geoloc?.lng,
+          distance: minDist,
+          lat: cgLat,
+          lng: cgLng,
           photoURL: data.photoURL || data.photo || data.imageUrl || data.profilePhoto,
           hasReliableTransportation: data.hasTransportation || data.hasReliableTransportation || false,
           skills: data.skills || data.specializations || data.specialties || [],
@@ -321,6 +262,7 @@ export default function FindCaregivers() {
           lastActive: data.lastActive || new Date().toISOString(),
           repeatFamilies: data.repeatFamilies ?? 0,
           availability: Array.isArray(data.availability) ? data.availability : [],
+          serviceRadius: data.serviceRadius ?? data.travelRadius,
         });
       };
 
@@ -452,8 +394,8 @@ export default function FindCaregivers() {
 
   const clearAllFilters = () => {
     setNameQuery('');
-    setMaxDistance(25);
     setMaxRate(75);
+    setMaxDistance(25);
     setMinRating(0);
     setMinExperience(0);
     setVerifiedOnly(false);
@@ -466,8 +408,8 @@ export default function FindCaregivers() {
   const activeFilterCount = useMemo(() => {
     let n = 0;
     if (nameQuery) n++;
-    if (maxDistance < 25) n++;
-    if (maxRate < 75) n++;
+    if (maxRate < 75 || maxRate >= 100) n++;
+    if (maxDistance !== 25) n++;
     if (minRating > 0) n++;
     if (minExperience > 0) n++;
     if (verifiedOnly) n++;
@@ -475,18 +417,27 @@ export default function FindCaregivers() {
     n += selectedSpecialties.size;
     n += selectedLanguages.size;
     return n;
-  }, [nameQuery, maxDistance, maxRate, minRating, minExperience, verifiedOnly, transportationOnly, selectedSpecialties, selectedLanguages]);
+  }, [nameQuery, maxRate, maxDistance, minRating, minExperience, verifiedOnly, transportationOnly, selectedSpecialties, selectedLanguages]);
 
   const filteredCaregivers = useMemo(() => {
     let list = caregivers.filter(cg => {
       if (showFavoritesOnly && !favorites.includes(cg.id)) return false;
+      // Distance filter — only applied when client has locations AND caregiver has coords
+      if (clientLocations.length > 0 && cg.lat != null && cg.lng != null) {
+        // Client's max distance slider
+        if (cg.distance > maxDistance) return false;
+        // Caregiver's own service radius cross-check
+        if (cg.serviceRadius != null && cg.distance > cg.serviceRadius) return false;
+      }
       if (nameQuery) {
         const q = nameQuery.toLowerCase();
         const name = `${cg.firstName} ${cg.lastName}`.toLowerCase();
-        if (!name.includes(q)) return false;
+        const city = (cg.city || '').toLowerCase();
+        const state = (cg.state || '').toLowerCase();
+        const zip = (cg.zipCode || '').toLowerCase();
+        if (!name.includes(q) && !city.includes(q) && !state.includes(q) && !zip.includes(q)) return false;
       }
-      if (cg.distance > maxDistance) return false;
-      if (cg.hourlyRate > maxRate) return false;
+      if (maxRate < 100 && cg.hourlyRate > maxRate) return false;
       if (cg.rating < minRating) return false;
       if ((cg.experience || 0) < minExperience) return false;
       if (verifiedOnly && !cg.verified) return false;
@@ -531,7 +482,7 @@ export default function FindCaregivers() {
         break;
     }
     return sorted;
-  }, [caregivers, favorites, showFavoritesOnly, nameQuery, maxDistance, maxRate, minRating, minExperience, verifiedOnly, transportationOnly, selectedSpecialties, selectedLanguages, sortBy]);
+  }, [caregivers, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, verifiedOnly, transportationOnly, selectedSpecialties, selectedLanguages, sortBy]);
 
   if (loading) {
     return (
@@ -546,14 +497,14 @@ export default function FindCaregivers() {
 
   const FilterPanel = (
     <div className="space-y-5">
-      {/* Name search */}
+      {/* Name / Location search */}
       <div>
-        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Name</label>
+        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Search</label>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Caregiver name"
+            placeholder="Name, city, or zip code"
             value={nameQuery}
             onChange={(e) => setNameQuery(e.target.value)}
             className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
@@ -561,25 +512,29 @@ export default function FindCaregivers() {
         </div>
       </div>
 
-      {/* Distance */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Distance</label>
-          <span className="text-xs text-slate-600 font-medium">within {maxDistance} mi</span>
+      {/* Distance — only shown when client has geocoded care locations */}
+      {clientLocations.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Distance</label>
+            <span className="text-xs text-slate-600 font-medium">within {maxDistance} mi</span>
+          </div>
+          <input
+            type="range" min={5} max={50} step={5}
+            value={maxDistance}
+            onChange={(e) => setMaxDistance(Number(e.target.value))}
+            className="w-full accent-teal-600"
+          />
         </div>
-        <input
-          type="range" min={5} max={50} step={5}
-          value={maxDistance}
-          onChange={(e) => setMaxDistance(Number(e.target.value))}
-          className="w-full accent-teal-600"
-        />
-      </div>
+      )}
 
       {/* Rate per hour */}
       <div>
         <div className="flex items-center justify-between mb-2">
           <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Max Rate</label>
-          <span className="text-xs text-slate-600 font-medium">up to ${maxRate}/hr</span>
+          <span className="text-xs text-slate-600 font-medium">
+            {maxRate >= 100 ? '$100+/hr' : `up to $${maxRate}/hr`}
+          </span>
         </div>
         <input
           type="range" min={15} max={100} step={5}
@@ -990,15 +945,15 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
         {/* Details section */}
         <div className="space-y-3.5 mb-5 mt-1">
           <div className="flex items-center gap-3.5 text-slate-700">
-            <Heart className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
+            <Briefcase className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
             <span className="text-[17px]">{caregiver.experience || 0} experience</span>
           </div>
           <div className="flex items-center gap-3.5 text-slate-700">
             <MapPin className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
             <span className="text-[17px]">
-              {caregiver.lat != null && caregiver.distance > 0
-                ? `${caregiver.distance} miles away`
-                : (caregiver.city || 'Nearby')}
+              {[caregiver.city, caregiver.state].filter(Boolean).join(', ')}
+              {caregiver.zipCode ? ` ${caregiver.zipCode}` : ''}
+              {!caregiver.city && !caregiver.zipCode && 'Nearby'}
             </span>
             {caregiver.hourlyRate > 0 && (
               <>

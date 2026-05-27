@@ -506,7 +506,7 @@ export const MyCareTeam: React.FC = () => {
                 <p className="text-gray-600 mb-6">
                   Your care team will appear here once a caregiver accepts your booking.
                 </p>
-                <Button onClick={() => navigate('/client/dashboard')}>
+                <Button onClick={() => navigate('/client/find-caregivers')}>
                   Find a Caregiver
                 </Button>
               </>

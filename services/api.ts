@@ -3434,12 +3434,32 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
         })),
     };
 
+    // Geocode the care address once at wizard completion so Find Caregivers
+    // can do instant distance math without any API calls at browse time.
+    let lat: number | null = null;
+    let lng: number | null = null;
+    const addrQuery = [clean.street, clean.city, clean.state, clean.zipCode].filter(Boolean).join(', ');
+    if (addrQuery) {
+        try {
+            const geoRes = await fetch(
+                `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addrQuery)}&format=json&limit=1&countrycodes=us`,
+                { headers: { 'Accept-Language': 'en', 'User-Agent': 'CareConnex/1.0' } }
+            );
+            const geoData = await geoRes.json();
+            if (geoData?.length) {
+                lat = parseFloat(geoData[0].lat);
+                lng = parseFloat(geoData[0].lon);
+            }
+        } catch { /* best effort — wizard saves without coords if geocoding fails */ }
+    }
+
     // Critical write — throw if this fails
     await db.collection('job_postings').doc(uid).set({
         ...clean,
         clientId: uid,
         status: 'active',
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        ...(lat !== null && lng !== null ? { lat, lng } : {}),
     });
 
     // Best-effort writes — don't block wizard completion if they fail

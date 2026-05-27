@@ -640,6 +640,24 @@ export const dbService = {
             sanitizedPost.location = parts.join(', ');
         }
 
+        // Geocode the job address once at creation — stored as lat/lng so caregivers
+        // can do instant distance math without API calls at browse time.
+        const addrQuery = [sanitizedPost.streetAddress, sanitizedPost.city, sanitizedPost.state, sanitizedPost.zipCode]
+            .filter(Boolean).join(', ') || sanitizedPost.location || '';
+        if (addrQuery) {
+            try {
+                const geoRes = await fetch(
+                    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addrQuery)}&format=json&limit=1&countrycodes=us`,
+                    { headers: { 'Accept-Language': 'en', 'User-Agent': 'CareConnex/1.0' } }
+                );
+                const geoData = await geoRes.json();
+                if (geoData?.length) {
+                    sanitizedPost.lat = parseFloat(geoData[0].lat);
+                    sanitizedPost.lng = parseFloat(geoData[0].lon);
+                }
+            } catch { /* best effort — job saves without coords if geocoding fails */ }
+        }
+
         if (isConfigured && db) {
             const currentUser = auth?.currentUser;
             const clientName = currentUser?.displayName || 'Anonymous';

@@ -75,10 +75,14 @@ const JOB_DESCRIPTION_EXAMPLES = [
   "My husband had a stroke 6 months ago. He needs assistance with mobility, bathing, and physical therapy exercises. Patience and positivity are a must.",
 ];
 
-// ── Helper: today as yyyy-mm-dd ────────────────────────────────────────────
+// ── Helper: today as yyyy-mm-dd (local time, not UTC) ──────────────────────
 
 function todayISO(): string {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -493,7 +497,10 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                     type="date"
                     value={form.startDate}
                     min={todayISO()}
-                    onChange={e => update('startDate', e.target.value)}
+                    onChange={e => {
+                      const val = e.target.value;
+                      update('startDate', val < todayISO() ? todayISO() : val);
+                    }}
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm focus:outline-none focus:border-indigo-500"
                   />
                 </div>
@@ -504,7 +511,11 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                     value={form.endDate}
                     min={form.startDate || todayISO()}
                     disabled={form.ongoing}
-                    onChange={e => update('endDate', e.target.value)}
+                    onChange={e => {
+                      const val = e.target.value;
+                      const minDate = form.startDate || todayISO();
+                      update('endDate', val < minDate ? minDate : val);
+                    }}
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40"
                   />
                 </div>

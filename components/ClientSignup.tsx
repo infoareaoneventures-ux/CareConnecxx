@@ -6,6 +6,7 @@ import { LegalDocs } from './LegalDocs';
 import { ViewType, AddToastFunction } from '../types';
 import { authService } from '../services/api';
 import { normalizePhoneNumber } from '../utils/validation';
+import { geocodeToLatLng } from '../utils/geocode';
 
 function debounce<T extends (...args: any[]) => any>(func: T, wait: number): (...args: Parameters<T>) => void {
   let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -221,6 +222,8 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
     try {
       const normalizedPhone = normalizePhoneNumber(formData.phone) || formData.phone;
       const locationString = `${formData.city}, ${formData.state} ${formData.zipCode}`;
+      // Geocode address at signup so lat/lng are stored on the user doc from day one
+      const coords = await geocodeToLatLng(formData.street, formData.city, formData.state, formData.zipCode);
       await authService.signup(
         formData.email,
         formData.password,
@@ -235,6 +238,8 @@ export const ClientSignup: React.FC<ClientSignupProps> = ({ onNavigate, onShowTo
           city: formData.city,
           state: formData.state,
           location: locationString,
+          latitude: coords?.lat ?? null,
+          longitude: coords?.lng ?? null,
         } as any
       );
       onShowToast('Welcome to CareConnex! Browse caregivers near you.', 'success');

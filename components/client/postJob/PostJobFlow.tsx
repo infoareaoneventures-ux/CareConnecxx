@@ -5,7 +5,6 @@ import { ClientNavigation } from '../ClientNavigation';
 import { StepIndicator } from '../../ui/StepIndicator';
 import { useCareConnex } from '../../../context/CareConnexContext';
 import { dbService } from '../../../services/api';
-import { geocodeToLatLng } from '../../../utils/geocode';
 import { db } from '../../../lib/firebase';
 import firebase from '../../../lib/firebase';
 import { Step1Schedule } from './Step1Schedule';
@@ -78,14 +77,7 @@ export const PostJobFlow: React.FC = () => {
       setSubmittedPostId(typeof id === 'string' ? id : 'posted');
       addToast('Job posted! Caregivers can now apply.', 'success');
 
-      // Geocode care address and store lat/lng so FindCaregivers can calculate real distances
-      geocodeToLatLng(data.streetAddress, data.city, data.state, data.zipCode).then(coords => {
-        if (coords && db) {
-          db.collection('job_postings').doc(currentUser.uid)
-            .set({ lat: coords.lat, lng: coords.lng }, { merge: true })
-            .catch(() => {});
-        }
-      });
+      // Note: geocoding is handled inside createJobPost — no separate geocoding needed here.
 
       // Save recipients to job_postings (for care plan recipient tabs) and
       // save per-recipient care data to carePlans/{uid}.recipientPlans

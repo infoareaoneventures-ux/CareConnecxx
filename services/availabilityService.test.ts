@@ -65,26 +65,30 @@ describe('AvailabilityService', () => {
       expect(result).toBe(false);
     });
 
-    it('should return false for time outside availability', () => {
+    // checkWeeklyAvailability is now day-level only: if the day has any
+    // availability slots, any time on that day is allowed. Per-hour/time-window
+    // enforcement moved to checkForConflicts (calendar conflicts) — see the
+    // "warn-only unavailable days" availability-UX change.
+    it('should return true for any time on an available day (time-of-day no longer blocks here)', () => {
       const monday = new Date('2026-02-09T12:00:00Z');
       const result = availabilityService.checkWeeklyAvailability(
         mockCaregiver,
         monday,
-        '18:00', // After 5 PM
+        '18:00', // After 5 PM — still allowed at the day level
         2
       );
-      expect(result).toBe(false);
+      expect(result).toBe(true);
     });
 
-    it('should return false if duration exceeds availability', () => {
+    it('should return true regardless of duration on an available day', () => {
       const monday = new Date('2026-02-09T12:00:00Z');
       const result = availabilityService.checkWeeklyAvailability(
         mockCaregiver,
         monday,
         '14:00', // 2 PM
-        5 // Would end at 7 PM, past availability
+        5 // Would end at 7 PM — duration no longer blocks at the day level
       );
-      expect(result).toBe(false);
+      expect(result).toBe(true);
     });
 
     it('should return true for legacy caregivers without weeklyAvailability', () => {

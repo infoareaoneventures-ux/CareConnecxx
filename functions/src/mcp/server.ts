@@ -1189,6 +1189,167 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["clientId", "appointmentId"],
     },
   },
+  // ── Account & profile ─────────────────────────────────────────────────────
+  {
+    name: "update_user_profile",
+    description: "Update the client's own profile fields (name, phone, address, photoUrl). Confirm changes with the family by reading back the new values before calling. Phone changes re-trigger OTP verification on the new number; tell the family they'll need to verify.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:    { type: "string", description: "The user's ID" },
+        firstName: { type: "string", description: "New first name (optional)" },
+        lastName:  { type: "string", description: "New last name (optional)" },
+        phone:     { type: "string", description: "New phone number in E.164 format, e.g. +15555550100 (optional)" },
+        address:   { type: "string", description: "New street address (optional)" },
+        city:      { type: "string", description: "New city (optional)" },
+        state:     { type: "string", description: "New state (optional)" },
+        zip:       { type: "string", description: "New ZIP code (optional)" },
+        photoUrl:  { type: "string", description: "New profile photo URL (optional)" },
+      },
+      required: ["userId"],
+    },
+  },
+  {
+    name: "update_communication_preferences",
+    description: "Toggle the family's communication preferences. Confirm each change with them first.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:               { type: "string", description: "The user's ID" },
+        newsletter:           { type: "boolean", description: "Receive the CareConnex newsletter" },
+        newMatchAlerts:       { type: "boolean", description: "Notify when new caregiver matches are found" },
+        reviewNotifications:  { type: "boolean", description: "Notify when caregivers receive reviews" },
+        privacyShowBookings:  { type: "boolean", description: "Show the family's booking calendar to caregivers" },
+      },
+      required: ["userId"],
+    },
+  },
+  {
+    name: "request_email_change",
+    description: "Request a change of the family's email address. Sends a verification link to the new email; does NOT change the auth email until verified. Tell the family they'll need to click the link from the new inbox.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:   { type: "string", description: "The user's ID" },
+        newEmail: { type: "string", description: "The new email address" },
+      },
+      required: ["userId", "newEmail"],
+    },
+  },
+  // ── Favorites ─────────────────────────────────────────────────────────────
+  {
+    name: "save_caregiver_favorite",
+    description: "Save a caregiver to the family's favorites list for quick access later.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:    { type: "string", description: "The client's user ID" },
+        caregiverId: { type: "string", description: "The caregiver to save" },
+      },
+      required: ["clientId", "caregiverId"],
+    },
+  },
+  {
+    name: "unsave_caregiver_favorite",
+    description: "Remove a caregiver from the family's favorites list.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:    { type: "string", description: "The client's user ID" },
+        caregiverId: { type: "string", description: "The caregiver to remove" },
+      },
+      required: ["clientId", "caregiverId"],
+    },
+  },
+  {
+    name: "list_saved_caregivers",
+    description: "List the family's saved/favorite caregivers, with name and rating.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string", description: "The client's user ID" },
+      },
+      required: ["clientId"],
+    },
+  },
+  // ── Safety: block + report ────────────────────────────────────────────────
+  {
+    name: "block_user",
+    description: "Block another user from messaging or otherwise interacting with this family. MANDATORY: read back who you're about to block and wait for explicit confirmation before calling.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:        { type: "string", description: "The blocking user's ID (the family)" },
+        targetUserId:  { type: "string", description: "The user being blocked" },
+        reason:        { type: "string", description: "Optional reason (helps ops triage)" },
+      },
+      required: ["userId", "targetUserId"],
+    },
+  },
+  {
+    name: "unblock_user",
+    description: "Remove a block on another user.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:        { type: "string", description: "The unblocking user's ID" },
+        targetUserId:  { type: "string", description: "The user to unblock" },
+      },
+      required: ["userId", "targetUserId"],
+    },
+  },
+  {
+    name: "report_user",
+    description: "File a report against another user for abusive behavior. MANDATORY: confirm with the family what the report is about before calling, and tell them ops will follow up within 24 hours.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:        { type: "string", description: "The reporting user's ID" },
+        targetUserId:  { type: "string", description: "The reported user's ID" },
+        category:      { type: "string", description: "One of: harassment, scam, safety_concern, inappropriate_content, other" },
+        description:   { type: "string", description: "Short description of what happened" },
+      },
+      required: ["userId", "targetUserId", "category", "description"],
+    },
+  },
+  // ── Care journal engagement ───────────────────────────────────────────────
+  {
+    name: "like_journal_entry",
+    description: "Like a care journal entry the caregiver posted. Use when the family says something like 'tell Maria I love that photo'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:  { type: "string", description: "The user liking the entry" },
+        entryId: { type: "string", description: "The care_journal entry ID" },
+      },
+      required: ["userId", "entryId"],
+    },
+  },
+  {
+    name: "unlike_journal_entry",
+    description: "Remove a like from a care journal entry.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:  { type: "string", description: "The user removing the like" },
+        entryId: { type: "string", description: "The care_journal entry ID" },
+      },
+      required: ["userId", "entryId"],
+    },
+  },
+  {
+    name: "comment_on_journal_entry",
+    description: "Add a comment to a care journal entry. The caregiver will see the comment. Use when a family says 'tell Maria thanks for the visit notes' or 'reply that the puzzle was a great idea'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:  { type: "string", description: "The user commenting" },
+        entryId: { type: "string", description: "The care_journal entry ID" },
+        comment: { type: "string", description: "The comment text" },
+      },
+      required: ["userId", "entryId", "comment"],
+    },
+  },
 ];
 
 // Tools available to caregivers — scoped to what's relevant to their role
@@ -1500,8 +1661,23 @@ export async function handleToolCall(
           .orderBy("createdAt", "desc")
           .limit(limit + 1)
           .get();
-        const docs = snap.docs.slice(0, limit).map((d) => d.data());
-        return { success: true, results: docs, hasMore: snap.docs.length > limit };
+        const docs = snap.docs.slice(0, limit).map((d) => {
+          const r = d.data();
+          return { rating: r.rating, comment: r.comment ?? "", createdAt: r.createdAt };
+        });
+        const cgSnap = await db.collection("caregivers").doc(input.caregiverId as string).get();
+        const cg = cgSnap.data() ?? {};
+        const averageRating = typeof cg.averageRating === "number"
+          ? cg.averageRating
+          : (docs.length ? docs.reduce((s, r) => s + (r.rating ?? 0), 0) / docs.length : null);
+        return {
+          success: true,
+          caregiverName: cg.name ?? "the caregiver",
+          averageRating,
+          totalReviews:  cg.reviewCount ?? docs.length,
+          recentReviews: docs,
+          hasMore: snap.docs.length > limit,
+        };
       }
 
       case "get_health_signals": {
@@ -1639,19 +1815,22 @@ export async function handleToolCall(
           cancelledAt:      nowIso,
           cancelledReason:  reason ?? "client_request",
         });
-        // Notify caregiver
+        // Notify caregiver — surface success/failure so Cara doesn't claim
+        // the caregiver was reached when the message never went out.
+        let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
         if (appt.caregiverId) {
           const cgSnap  = await db.collection("caregivers").doc(appt.caregiverId as string).get();
           const cgPhone = cgSnap.data()?.phone as string | undefined;
           if (cgPhone) {
-            const { sendToPhone } = await import("../linq/client");
-            await sendToPhone(cgPhone,
-              `The family has cancelled the visit on ${appt.date ?? ""}. Sorry for the inconvenience.`
-            ).catch(() => {});
+            const { trySend } = await import("../utils/toolNotify");
+            notification = await trySend(cgPhone,
+              `The family has cancelled the visit on ${appt.date ?? ""}. Sorry for the inconvenience.`,
+              "mcp:cancel_appointment",
+            );
           }
         }
-        logAudit({ eventType: "health_data_accessed", userId: clientId as string, data: { source: "mcp:cancel_appointment", appointmentId } }).catch(() => {});
-        return { success: true, cancelled: true, appointmentId, date: appt.date, caregiverName: appt.caregiverName };
+        logAudit({ eventType: "health_data_accessed", userId: clientId as string, data: { source: "mcp:cancel_appointment", appointmentId, notificationSent: notification.sent } }).catch(() => {});
+        return { success: true, cancelled: true, appointmentId, date: appt.date, caregiverName: appt.caregiverName, notification };
       }
 
       case "send_caregiver_message": {
@@ -1661,10 +1840,10 @@ export async function handleToolCall(
         if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
         const cgPhone = cgSnap.data()?.phone as string | undefined;
         if (!cgPhone) return toolError("NOT_FOUND", "Caregiver phone not on file");
-        const { sendToPhone } = await import("../linq/client");
-        await sendToPhone(cgPhone, `Message from family: ${message as string}`);
-        logAudit({ eventType: "health_data_accessed", userId: clientId as string ?? "", data: { source: "mcp:send_caregiver_message", caregiverId } }).catch(() => {});
-        return { success: true, sent: true, caregiverName: cgSnap.data()?.name ?? "" };
+        const { trySend } = await import("../utils/toolNotify");
+        const notification = await trySend(cgPhone, `Message from family: ${message as string}`, "mcp:send_caregiver_message");
+        logAudit({ eventType: "health_data_accessed", userId: clientId as string ?? "", data: { source: "mcp:send_caregiver_message", caregiverId, notificationSent: notification.sent } }).catch(() => {});
+        return { success: true, sent: notification.sent, caregiverName: cgSnap.data()?.name ?? "", notification };
       }
 
       case "get_recurring_schedule": {
@@ -2061,10 +2240,14 @@ export async function handleToolCall(
       await seniorSnap.ref.update({ familyMembers: admin.firestore.FieldValue.arrayUnion({ name: memberName, phone: memberPhone, addedAt: nowIso, addedBy: clientId }) });
       const { buildOrUpdateFamilyGroup } = await import("../agents/familyGroupManager");
       await buildOrUpdateFamilyGroup(seniorId as string).catch(() => {});
-      const { sendToPhone } = await import("../linq/client");
-      await sendToPhone(memberPhone as string, "Hi! You've been added to a CareConnex care group. You'll receive updates about your loved one's care here. Text any question anytime.").catch(() => {});
-      logAudit({ eventType: "family_member_added", userId: clientId as string, data: { source: "mcp:add_family_member", seniorId, newMemberPhone: memberPhone } }).catch(() => {});
-      return { success: true, added: true, name: memberName, phone: memberPhone };
+      const { trySend } = await import("../utils/toolNotify");
+      const notification = await trySend(
+        memberPhone as string,
+        "Hi! You've been added to a CareConnex care group. You'll receive updates about your loved one's care here. Text any question anytime.",
+        "mcp:add_family_member",
+      );
+      logAudit({ eventType: "family_member_added", userId: clientId as string, data: { source: "mcp:add_family_member", seniorId, newMemberPhone: memberPhone, notificationSent: notification.sent } }).catch(() => {});
+      return { success: true, added: true, name: memberName, phone: memberPhone, notification };
     }
 
     if (name === "remove_family_member") {
@@ -2079,8 +2262,16 @@ export async function handleToolCall(
       const existingMembers: Array<Record<string, unknown>> = seniorData.familyMembers ?? [];
       const memberObj = existingMembers.find(m => m.phone === targetPhone);
       if (memberObj) await seniorSnap.ref.update({ familyMembers: admin.firestore.FieldValue.arrayRemove(memberObj) });
-      logAudit({ eventType: "family_member_removed", userId: clientId as string, data: { source: "mcp:remove_family_member", seniorId, removedPhone: targetPhone } }).catch(() => {});
-      return { success: true, ...result };
+      // Tell the removed person they were removed — courtesy plus prevents
+      // confusion when their next inbound stops getting Cara replies.
+      const { trySend } = await import("../utils/toolNotify");
+      const notification = await trySend(
+        targetPhone as string,
+        "You've been removed from a CareConnex care group. You won't get further updates here. Text STOP anytime to unsubscribe completely.",
+        "mcp:remove_family_member",
+      );
+      logAudit({ eventType: "family_member_removed", userId: clientId as string, data: { source: "mcp:remove_family_member", seniorId, removedPhone: targetPhone, notificationSent: notification.sent } }).catch(() => {});
+      return { success: true, ...result, notification };
     }
 
     if (name === "submit_review") {
@@ -2209,12 +2400,13 @@ export async function handleToolCall(
       await apptSnap.ref.update({ date: newDate, startTime: newTime, endTime: newEndTime, rescheduledAt: nowIso, previousDate: appt.date, previousStartTime: appt.startTime });
       const cgSnap2 = await db.collection("caregivers").doc(appt.caregiverId as string).get();
       const cgPhone2 = cgSnap2.data()?.phone as string | undefined;
+      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
       if (cgPhone2) {
-        const { sendToPhone } = await import("../linq/client");
-        await sendToPhone(cgPhone2, `Your appointment has been moved to ${newDate} at ${newTime}. Please confirm you can still make it.`).catch(() => {});
+        const { trySend } = await import("../utils/toolNotify");
+        notification = await trySend(cgPhone2, `Your appointment has been moved to ${newDate} at ${newTime}. Please confirm you can still make it.`, "mcp:reschedule_appointment");
       }
-      logAudit({ eventType: "appointment_rescheduled", userId: clientId as string, data: { source: "mcp:reschedule_appointment", appointmentId, newDate, newTime } }).catch(() => {});
-      return { success: true, appointmentId, newDate, newTime, newEndTime };
+      logAudit({ eventType: "appointment_rescheduled", userId: clientId as string, data: { source: "mcp:reschedule_appointment", appointmentId, newDate, newTime, notificationSent: notification.sent } }).catch(() => {});
+      return { success: true, appointmentId, newDate, newTime, newEndTime, notification };
     }
 
     if (name === "create_care_journal_entry") {
@@ -2265,15 +2457,16 @@ export async function handleToolCall(
       await appSnap2.ref.update({ status: decision === "accept" ? "accepted" : "rejected", decidedAt: nowIso, decisionMessage: decMsg ?? "" });
       if (decision === "accept") await db.collection("job_posts").doc(app.jobId as string).update({ status: "filled" }).catch(() => {});
       const cgSessSnap = await db.collection("agent_sessions").where("userId", "==", app.caregiverId).limit(1).get();
+      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_session" };
       if (!cgSessSnap.empty) {
-        const { sendToPhone } = await import("../linq/client");
+        const { trySend } = await import("../utils/toolNotify");
         const msg = decision === "accept"
           ? "Great news — a family accepted your job application! They'll be in touch soon to finalize details."
           : "Thanks for applying — the family went with another caregiver this time. Keep an eye out for new jobs!";
-        await sendToPhone(cgSessSnap.docs[0].id, msg).catch(() => {});
+        notification = await trySend(cgSessSnap.docs[0].id, msg, "mcp:respond_to_job_application");
       }
-      logAudit({ eventType: "job_application_responded", userId: clientId as string, data: { source: "mcp:respond_to_job_application", applicationId, decision } }).catch(() => {});
-      return { success: true, decision, applicationId };
+      logAudit({ eventType: "job_application_responded", userId: clientId as string, data: { source: "mcp:respond_to_job_application", applicationId, decision, notificationSent: notification.sent } }).catch(() => {});
+      return { success: true, decision, applicationId, notification };
     }
 
     if (name === "submit_interview_feedback") {
@@ -2408,14 +2601,15 @@ export async function handleToolCall(
       }
       const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
       const cgPhone = cgSnap.data()?.phone as string | undefined;
+      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
       if (cgPhone) {
         const clientSnap = await db.collection("users").doc(clientId as string).get();
         const clientName = clientSnap.data()?.name ?? "A family";
-        const { sendToPhone } = await import("../linq/client");
-        await sendToPhone(cgPhone, `Interview scheduled! ${clientName} wants to meet ${preferredDate} at ${preferredTime}. Reply to confirm.`).catch(() => {});
+        const { trySend } = await import("../utils/toolNotify");
+        notification = await trySend(cgPhone, `Interview scheduled! ${clientName} wants to meet ${preferredDate} at ${preferredTime}. Reply to confirm.`, "mcp:schedule_interview");
       }
-      logAudit({ eventType: "interview_scheduled", userId: clientId as string, data: { source: "mcp:schedule_interview", interviewId: ivRef.id, caregiverId, scheduledTime } }).catch(() => {});
-      return { success: true, interviewId: ivRef.id, scheduledTime, interviewType: interviewType ?? "video" };
+      logAudit({ eventType: "interview_scheduled", userId: clientId as string, data: { source: "mcp:schedule_interview", interviewId: ivRef.id, caregiverId, scheduledTime, notificationSent: notification.sent } }).catch(() => {});
+      return { success: true, interviewId: ivRef.id, scheduledTime, interviewType: interviewType ?? "video", notification };
     }
 
     // ── respond_to_interview_request ────────────────────────────────────────
@@ -2475,7 +2669,7 @@ export async function handleToolCall(
           const cg = cgSnap.data() ?? {};
           return {
             caregiverId: cid,
-            name:        cg.name ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim() || "Caregiver",
+            name:        cg.name ?? (`${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim() || "Caregiver"),
             phone:       cg.phone ?? null,
             rating:      cg.rating ?? null,
             nextShift:   meta.nextShift,
@@ -2543,20 +2737,56 @@ export async function handleToolCall(
       const { caregiverId, message, clientId: clientIdInput } = input as Record<string, unknown>;
       if (!caregiverId || !message) return toolError("INVALID_INPUT", "caregiverId and message are required");
       let resolvedClientId = clientIdInput as string | undefined;
+
+      // If clientId is omitted we MUST verify the caregiver has an active or
+      // recent engagement with that client. Previously this auto-resolved from
+      // the most-recent appointment regardless of age or status, which let a
+      // dismissed caregiver message any past client (IDOR).
       if (!resolvedClientId) {
-        const recentAppt = await db.collection("appointments").where("caregiverId", "==", caregiverId).orderBy("date", "desc").limit(1).get();
-        if (!recentAppt.empty) resolvedClientId = recentAppt.docs[0].data().clientId as string;
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const activeOrRecent = await db.collection("appointments")
+          .where("caregiverId", "==", caregiverId)
+          .where("status",      "in", ["confirmed", "in_progress", "completed"])
+          .orderBy("date", "desc")
+          .limit(5)
+          .get();
+        const eligible = activeOrRecent.docs.find((d) => {
+          const data = d.data();
+          const date = data.date as string | undefined;
+          const status = data.status as string | undefined;
+          // Confirmed/in-progress regardless of date; completed only if within 30 days.
+          if (status === "confirmed" || status === "in_progress") return true;
+          if (status === "completed" && date && date >= thirtyDaysAgo) return true;
+          return false;
+        });
+        if (eligible) resolvedClientId = eligible.data().clientId as string;
+      } else {
+        // Explicit clientId still requires verifying the relationship exists —
+        // anyone could otherwise pass an arbitrary clientId to address.
+        const relationship = await db.collection("appointments")
+          .where("caregiverId", "==", caregiverId)
+          .where("clientId",    "==", resolvedClientId)
+          .where("status",      "in", ["confirmed", "in_progress", "completed"])
+          .limit(1)
+          .get();
+        if (relationship.empty) {
+          return toolError("FORBIDDEN", "No active or recent engagement with that client — cannot send message.");
+        }
       }
-      if (!resolvedClientId) return toolError("NOT_FOUND", "Could not find a client to message — please provide clientId");
+
+      if (!resolvedClientId) {
+        return toolError("FORBIDDEN", "No active engagement with any client — cannot send message. Ask the family to book a visit first.");
+      }
+
       const clientSnap = await db.collection("users").doc(resolvedClientId).get();
       const clientPhone = clientSnap.data()?.phone as string | undefined;
       if (!clientPhone) return toolError("NOT_FOUND", "Client phone number not found");
       const cgData = (await db.collection("caregivers").doc(caregiverId as string).get()).data();
       const cgName = cgData?.name ?? "Your caregiver";
-      const { sendToPhone } = await import("../linq/client");
-      await sendToPhone(clientPhone, `${cgName}: ${message}`);
-      logAudit({ eventType: "caregiver_sent_message", userId: caregiverId as string, data: { source: "mcp:send_client_message", resolvedClientId, messageLength: (message as string).length } }).catch(() => {});
-      return { success: true, sentTo: resolvedClientId };
+      const { trySend } = await import("../utils/toolNotify");
+      const notification = await trySend(clientPhone, `${cgName}: ${message}`, "mcp:send_client_message");
+      logAudit({ eventType: "caregiver_sent_message", userId: caregiverId as string, data: { source: "mcp:send_client_message", resolvedClientId, messageLength: (message as string).length, notificationSent: notification.sent } }).catch(() => {});
+      return { success: true, sentTo: resolvedClientId, notification };
     }
 
     // ── get_payout_history ──────────────────────────────────────────────────
@@ -2605,7 +2835,7 @@ export async function handleToolCall(
             const cgSnap = await db.collection("caregivers").doc(otherUserId).get().catch(() => null);
             const uSnap  = await db.collection("users").doc(otherUserId).get().catch(() => null);
             const d = cgSnap?.data() ?? uSnap?.data() ?? {};
-            otherName = d.name ?? `${d.firstName ?? ""} ${d.lastName ?? ""}`.trim() || "Unknown";
+            otherName = d.name ?? (`${d.firstName ?? ""} ${d.lastName ?? ""}`.trim() || "Unknown");
           }
           const msgsSnap = await db.collection("threads").doc(t.id).collection("messages")
             .orderBy("timestamp", "desc").limit(msgLimit).get();
@@ -2953,16 +3183,18 @@ export async function handleToolCall(
       // Notify caregiver
       const cgSnap = await db.collection("caregivers").doc(sched.caregiverId as string).get().catch(() => null);
       const cgPhone = cgSnap?.data()?.phone as string | undefined;
+      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
       if (cgPhone) {
-        const { sendToPhone } = await import("../linq/client");
-        await sendToPhone(cgPhone,
+        const { trySend } = await import("../utils/toolNotify");
+        notification = await trySend(cgPhone,
           `Your recurring schedule with this family has been updated. New schedule: ${resolvedDays.join(", ")}, ${resolvedStart}–${resolvedEnd}. ` +
-          `Old upcoming visits were replaced with new ones.`
-        ).catch(() => {});
+          `Old upcoming visits were replaced with new ones.`,
+          "mcp:modify_recurring_schedule",
+        );
       }
 
-      logAudit({ eventType: "recurring_schedule_updated", userId: clientId as string, data: { source: "mcp:modify_recurring_schedule", scheduleId, newDays: resolvedDays, newStartTime: resolvedStart, newEndTime: resolvedEnd } }).catch(() => {});
-      return { success: true, scheduleId, newDays: resolvedDays, newStartTime: resolvedStart, newEndTime: resolvedEnd, newVisitsCreated: newDatesArr.length, oldVisitsCancelled: futureSnap.size };
+      logAudit({ eventType: "recurring_schedule_updated", userId: clientId as string, data: { source: "mcp:modify_recurring_schedule", scheduleId, newDays: resolvedDays, newStartTime: resolvedStart, newEndTime: resolvedEnd, notificationSent: notification.sent } }).catch(() => {});
+      return { success: true, scheduleId, newDays: resolvedDays, newStartTime: resolvedStart, newEndTime: resolvedEnd, newVisitsCreated: newDatesArr.length, oldVisitsCancelled: futureSnap.size, notification };
     }
 
     // ── get_payment_update_link ─────────────────────────────────────────────
@@ -3204,6 +3436,273 @@ export async function handleToolCall(
       const year = (input.year as number) ?? new Date().getFullYear();
       const summary = await getCaregiverTaxSummary(caregiverId, year);
       return summary;
+    }
+
+    // ── update_user_profile ─────────────────────────────────────────────────
+    if (name === "update_user_profile") {
+      const { userId, firstName, lastName, phone, address, city, state, zip, photoUrl } = input as Record<string, unknown>;
+      if (!userId) return toolError("INVALID_INPUT", "userId is required");
+      const patch: Record<string, unknown> = { updatedAt: nowIso };
+      if (firstName != null) patch.firstName = firstName;
+      if (lastName  != null) patch.lastName  = lastName;
+      if (address   != null) patch.address   = address;
+      if (city      != null) patch.city      = city;
+      if (state     != null) patch.state     = state;
+      if (zip       != null) patch.zip       = zip;
+      if (photoUrl  != null) patch.photoUrl  = photoUrl;
+      // Phone changes trigger a re-verification — store as pendingPhone rather
+      // than the live phone so the existing OTP flow can run before swapping.
+      let phoneChangeRequested = false;
+      if (phone != null) {
+        if (!/^\+1\d{10}$/.test(phone as string)) {
+          return toolError("INVALID_INPUT", "phone must be in E.164 format (+1XXXXXXXXXX)");
+        }
+        patch.pendingPhone = phone;
+        patch.pendingPhoneAt = nowIso;
+        phoneChangeRequested = true;
+      }
+      if (Object.keys(patch).length === 1) {
+        return toolError("INVALID_INPUT", "No fields to update");
+      }
+      await db.collection("users").doc(userId as string).set(patch, { merge: true });
+      // If address fields touched and this is a single-senior household, mirror
+      // to the senior profile too.
+      if (address != null || city != null || state != null || zip != null) {
+        const seniorSnap = await db.collection("senior_profiles").where("userId", "==", userId).limit(2).get();
+        if (seniorSnap.size === 1) {
+          const seniorPatch: Record<string, unknown> = { updatedAt: nowIso };
+          if (address != null) seniorPatch.address = address;
+          if (city    != null) seniorPatch.city    = city;
+          if (state   != null) seniorPatch.state   = state;
+          if (zip     != null) seniorPatch.zip     = zip;
+          await seniorSnap.docs[0].ref.set(seniorPatch, { merge: true }).catch(() => {});
+        }
+      }
+      logAudit({ eventType: "profile_updated", userId: userId as string, data: { source: "mcp:update_user_profile", fields: Object.keys(patch).filter(k => k !== "updatedAt") } }).catch(() => {});
+      return {
+        success: true,
+        updated: Object.keys(patch).filter(k => k !== "updatedAt"),
+        phoneChangeRequested,
+        phoneVerificationNote: phoneChangeRequested
+          ? "Phone change saved but not yet active — the new number needs to verify via OTP before it takes over."
+          : undefined,
+      };
+    }
+
+    // ── update_communication_preferences ────────────────────────────────────
+    if (name === "update_communication_preferences") {
+      const { userId, newsletter, newMatchAlerts, reviewNotifications, privacyShowBookings } = input as Record<string, unknown>;
+      if (!userId) return toolError("INVALID_INPUT", "userId is required");
+      const patch: Record<string, unknown> = { updatedAt: nowIso };
+      if (newsletter           != null) patch.newsletter           = !!newsletter;
+      if (newMatchAlerts       != null) patch.newMatchAlerts       = !!newMatchAlerts;
+      if (reviewNotifications  != null) patch.reviewNotifications  = !!reviewNotifications;
+      if (privacyShowBookings  != null) patch.privacyShowBookings  = !!privacyShowBookings;
+      if (Object.keys(patch).length === 1) {
+        return toolError("INVALID_INPUT", "No preference fields provided");
+      }
+      await db.collection("users").doc(userId as string).set(patch, { merge: true });
+      logAudit({ eventType: "preferences_updated", userId: userId as string, data: { source: "mcp:update_communication_preferences", fields: Object.keys(patch).filter(k => k !== "updatedAt") } }).catch(() => {});
+      return { success: true, updated: Object.keys(patch).filter(k => k !== "updatedAt") };
+    }
+
+    // ── request_email_change ────────────────────────────────────────────────
+    if (name === "request_email_change") {
+      const { userId, newEmail } = input as Record<string, unknown>;
+      if (!userId || !newEmail) return toolError("INVALID_INPUT", "userId and newEmail are required");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail as string)) {
+        return toolError("INVALID_INPUT", "newEmail is not a valid email address");
+      }
+      // Check for an account already using that email
+      const existing = await db.collection("users").where("email", "==", newEmail).limit(1).get();
+      if (!existing.empty && existing.docs[0].id !== userId) {
+        return toolError("INVALID_INPUT", "An account already exists with that email address");
+      }
+      const token = `${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 12)}`;
+      await db.collection("email_change_requests").doc(token).set({
+        userId, newEmail, requestedAt: nowIso, status: "pending",
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+      await db.collection("users").doc(userId as string).set({ pendingEmail: newEmail, pendingEmailToken: token, pendingEmailAt: nowIso }, { merge: true });
+      logAudit({ eventType: "email_change_requested", userId: userId as string, data: { source: "mcp:request_email_change", maskedEmail: (newEmail as string).replace(/(.{2}).*(@.*)/, "$1***$2") } }).catch(() => {});
+      // Email-send is fire-and-forget for now — the actual link send is handled by
+      // a separate triggered function watching email_change_requests writes.
+      return {
+        success: true,
+        verificationSent: true,
+        newEmail,
+        note: "Confirmation link sent to the new address. The change isn't live until they click it.",
+      };
+    }
+
+    // ── save_caregiver_favorite ─────────────────────────────────────────────
+    if (name === "save_caregiver_favorite") {
+      const { clientId, caregiverId } = input as Record<string, unknown>;
+      if (!clientId || !caregiverId) return toolError("INVALID_INPUT", "clientId and caregiverId are required");
+      const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
+      if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      await db.collection("users").doc(clientId as string).set({
+        savedCaregiverIds: admin.firestore.FieldValue.arrayUnion(caregiverId),
+        updatedAt: nowIso,
+      }, { merge: true });
+      logAudit({ eventType: "favorite_saved", userId: clientId as string, data: { source: "mcp:save_caregiver_favorite", caregiverId } }).catch(() => {});
+      return { success: true, saved: true, caregiverName: cgSnap.data()?.name ?? "the caregiver" };
+    }
+
+    // ── unsave_caregiver_favorite ───────────────────────────────────────────
+    if (name === "unsave_caregiver_favorite") {
+      const { clientId, caregiverId } = input as Record<string, unknown>;
+      if (!clientId || !caregiverId) return toolError("INVALID_INPUT", "clientId and caregiverId are required");
+      await db.collection("users").doc(clientId as string).set({
+        savedCaregiverIds: admin.firestore.FieldValue.arrayRemove(caregiverId),
+        updatedAt: nowIso,
+      }, { merge: true });
+      logAudit({ eventType: "favorite_removed", userId: clientId as string, data: { source: "mcp:unsave_caregiver_favorite", caregiverId } }).catch(() => {});
+      return { success: true, unsaved: true };
+    }
+
+    // ── list_saved_caregivers ───────────────────────────────────────────────
+    if (name === "list_saved_caregivers") {
+      const { clientId } = input as Record<string, unknown>;
+      if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
+      const userSnap = await db.collection("users").doc(clientId as string).get();
+      const ids = (userSnap.data()?.savedCaregiverIds as string[] | undefined) ?? [];
+      if (ids.length === 0) return { success: true, caregivers: [], count: 0 };
+      const caregivers: Array<Record<string, unknown>> = [];
+      for (const id of ids.slice(0, 20)) {
+        const cgSnap = await db.collection("caregivers").doc(id).get();
+        if (!cgSnap.exists) continue;
+        const cg = cgSnap.data()!;
+        caregivers.push({
+          id, name: cg.name ?? "",
+          rate: cg.hourlyRate ?? null,
+          rating: cg.averageRating ?? null,
+          specialties: cg.specialties ?? [],
+        });
+      }
+      return { success: true, caregivers, count: caregivers.length };
+    }
+
+    // ── block_user ──────────────────────────────────────────────────────────
+    if (name === "block_user") {
+      const { userId, targetUserId, reason } = input as Record<string, unknown>;
+      if (!userId || !targetUserId) return toolError("INVALID_INPUT", "userId and targetUserId are required");
+      if (userId === targetUserId) return toolError("INVALID_INPUT", "Cannot block yourself");
+      await db.collection("users").doc(userId as string).set({
+        blockedUsers: admin.firestore.FieldValue.arrayUnion(targetUserId),
+        updatedAt: nowIso,
+      }, { merge: true });
+      // Surface to ops so abuse patterns become visible.
+      db.collection("admin_alerts").add({
+        type:        "user_blocked",
+        userId,
+        targetUserId,
+        reason:      reason ?? null,
+        severity:    "medium",
+        resolved:    false,
+        createdAt:   nowIso,
+      }).catch(() => {});
+      logAudit({ eventType: "user_blocked", userId: userId as string, data: { source: "mcp:block_user", targetUserId, reason } }).catch(() => {});
+      return { success: true, blocked: true };
+    }
+
+    // ── unblock_user ────────────────────────────────────────────────────────
+    if (name === "unblock_user") {
+      const { userId, targetUserId } = input as Record<string, unknown>;
+      if (!userId || !targetUserId) return toolError("INVALID_INPUT", "userId and targetUserId are required");
+      await db.collection("users").doc(userId as string).set({
+        blockedUsers: admin.firestore.FieldValue.arrayRemove(targetUserId),
+        updatedAt: nowIso,
+      }, { merge: true });
+      logAudit({ eventType: "user_unblocked", userId: userId as string, data: { source: "mcp:unblock_user", targetUserId } }).catch(() => {});
+      return { success: true, unblocked: true };
+    }
+
+    // ── report_user ─────────────────────────────────────────────────────────
+    if (name === "report_user") {
+      const { userId, targetUserId, category, description } = input as Record<string, unknown>;
+      if (!userId || !targetUserId || !category || !description) return toolError("INVALID_INPUT", "userId, targetUserId, category, and description are required");
+      const ALLOWED_CATEGORIES = new Set(["harassment", "scam", "safety_concern", "inappropriate_content", "other"]);
+      if (!ALLOWED_CATEGORIES.has(category as string)) {
+        return toolError("INVALID_INPUT", `category must be one of: ${[...ALLOWED_CATEGORIES].join(", ")}`);
+      }
+      const reportRef = await db.collection("reports").add({
+        reporterId:    userId,
+        targetUserId,
+        category,
+        description:   (description as string).slice(0, 2000),
+        source:        "cara_sms",
+        status:        "open",
+        createdAt:     nowIso,
+      });
+      db.collection("admin_alerts").add({
+        type:        "user_reported",
+        reporterId:  userId,
+        targetUserId,
+        category,
+        reportId:    reportRef.id,
+        severity:    "medium",
+        resolved:    false,
+        createdAt:   nowIso,
+      }).catch(() => {});
+      logAudit({ eventType: "user_reported", userId: userId as string, data: { source: "mcp:report_user", targetUserId, category, reportId: reportRef.id } }).catch(() => {});
+      return { success: true, reported: true, reportId: reportRef.id, followUpWindow: "24h" };
+    }
+
+    // ── like_journal_entry ──────────────────────────────────────────────────
+    if (name === "like_journal_entry") {
+      const { userId, entryId } = input as Record<string, unknown>;
+      if (!userId || !entryId) return toolError("INVALID_INPUT", "userId and entryId are required");
+      const entryRef = db.collection("care_journal").doc(entryId as string);
+      const entrySnap = await entryRef.get();
+      if (!entrySnap.exists) return toolError("NOT_FOUND", "Care journal entry not found");
+      await entryRef.set({
+        likedBy: admin.firestore.FieldValue.arrayUnion(userId),
+        likeCount: admin.firestore.FieldValue.increment(1),
+      }, { merge: true });
+      logAudit({ eventType: "journal_liked", userId: userId as string, data: { source: "mcp:like_journal_entry", entryId } }).catch(() => {});
+      return { success: true, liked: true };
+    }
+
+    // ── unlike_journal_entry ────────────────────────────────────────────────
+    if (name === "unlike_journal_entry") {
+      const { userId, entryId } = input as Record<string, unknown>;
+      if (!userId || !entryId) return toolError("INVALID_INPUT", "userId and entryId are required");
+      const entryRef = db.collection("care_journal").doc(entryId as string);
+      await entryRef.set({
+        likedBy: admin.firestore.FieldValue.arrayRemove(userId),
+        likeCount: admin.firestore.FieldValue.increment(-1),
+      }, { merge: true });
+      logAudit({ eventType: "journal_unliked", userId: userId as string, data: { source: "mcp:unlike_journal_entry", entryId } }).catch(() => {});
+      return { success: true, unliked: true };
+    }
+
+    // ── comment_on_journal_entry ────────────────────────────────────────────
+    if (name === "comment_on_journal_entry") {
+      const { userId, entryId, comment } = input as Record<string, unknown>;
+      if (!userId || !entryId || !comment) return toolError("INVALID_INPUT", "userId, entryId, and comment are required");
+      const entryRef = db.collection("care_journal").doc(entryId as string);
+      const entrySnap = await entryRef.get();
+      if (!entrySnap.exists) return toolError("NOT_FOUND", "Care journal entry not found");
+      const commentRef = await entryRef.collection("comments").add({
+        userId,
+        comment: (comment as string).slice(0, 2000),
+        createdAt: nowIso,
+      });
+      await entryRef.set({ commentCount: admin.firestore.FieldValue.increment(1) }, { merge: true }).catch(() => {});
+      // Best-effort notify caregiver so the comment actually reaches them.
+      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
+      const entry = entrySnap.data()!;
+      if (entry.caregiverId) {
+        const cgSnap = await db.collection("caregivers").doc(entry.caregiverId as string).get();
+        const cgPhone = cgSnap.data()?.phone as string | undefined;
+        if (cgPhone) {
+          const { trySend } = await import("../utils/toolNotify");
+          notification = await trySend(cgPhone, `New comment on your care journal entry: "${(comment as string).slice(0, 120)}"`, "mcp:comment_on_journal_entry");
+        }
+      }
+      logAudit({ eventType: "journal_comment_added", userId: userId as string, data: { source: "mcp:comment_on_journal_entry", entryId, commentId: commentRef.id, notificationSent: notification.sent } }).catch(() => {});
+      return { success: true, commentId: commentRef.id, notification };
     }
 
     return toolError("INVALID_INPUT", `Unknown tool: ${name}`);

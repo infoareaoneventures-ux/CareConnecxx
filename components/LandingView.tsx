@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Activity, Menu, X, ChevronDown, Users, Briefcase } from 'lucide-react';
+import React, { useState } from 'react';
+import { Activity, Menu, X, Users, Briefcase } from 'lucide-react';
 import { ViewType } from '../types';
 import { Button } from './ui/Button';
 import { SEO, generateOrganizationSchema, generateServiceSchema, generateFAQSchema } from './SEO';
@@ -26,18 +26,6 @@ interface LandingViewProps {
 export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
    const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-   const [signupOpen, setSignupOpen] = useState(false);
-   const signupRef = useRef<HTMLDivElement>(null);
-
-   useEffect(() => {
-      const handler = (e: MouseEvent) => {
-         if (signupRef.current && !signupRef.current.contains(e.target as Node)) {
-            setSignupOpen(false);
-         }
-      };
-      document.addEventListener('mousedown', handler);
-      return () => document.removeEventListener('mousedown', handler);
-   }, []);
 
    return (
       <div className="flex flex-col min-h-screen bg-white font-sans pb-20 md:pb-0">
@@ -101,46 +89,21 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
                         Log In
                      </button>
 
-                     {/* Sign up dropdown */}
-                     <div ref={signupRef} className="relative">
-                        <button
-                           onClick={() => setSignupOpen(o => !o)}
-                           className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white font-semibold px-6 py-2.5 rounded-full text-sm transition-colors shadow-md shadow-primary-200"
-                        >
-                           Sign up
-                           <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${signupOpen ? 'rotate-180' : ''}`} />
-                        </button>
-
-                        {signupOpen && (
-                           <div className="absolute top-full right-0 mt-3 w-64 bg-white border border-slate-100 rounded-3xl shadow-xl p-2 z-50 overflow-hidden">
-                              <button
-                                 onClick={() => { setSignupOpen(false); onNavigate('client-signup'); }}
-                                 className="w-full flex items-center gap-3 px-3 py-3 rounded-2xl hover:bg-primary-50 transition-colors text-left"
-                              >
-                                 <div className="w-10 h-10 bg-primary-100 rounded-2xl flex items-center justify-center flex-shrink-0">
-                                    <Users className="w-4 h-4 text-primary-600" />
-                                 </div>
-                                 <div>
-                                    <p className="font-semibold text-slate-900 text-sm">Families</p>
-                                    <p className="text-xs text-slate-500">Find Care →</p>
-                                 </div>
-                              </button>
-
-                              <button
-                                 onClick={() => { setSignupOpen(false); onNavigate('caregiver-signup'); }}
-                                 className="w-full flex items-center gap-3 px-3 py-3 rounded-2xl hover:bg-accent-50 transition-colors text-left"
-                              >
-                                 <div className="w-10 h-10 bg-accent-100 rounded-2xl flex items-center justify-center flex-shrink-0">
-                                    <Briefcase className="w-4 h-4 text-accent-500" />
-                                 </div>
-                                 <div>
-                                    <p className="font-semibold text-slate-900 text-sm">Caregivers</p>
-                                    <p className="text-xs text-slate-500">Find Jobs →</p>
-                                 </div>
-                              </button>
-                           </div>
-                        )}
-                     </div>
+                     {/* Two prominent CTAs route into the unified phone-first onboarding */}
+                     <button
+                        onClick={() => onNavigate('client-signup')}
+                        className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white font-semibold px-5 py-2.5 rounded-full text-sm transition-colors shadow-md shadow-primary-200"
+                     >
+                        <Users className="w-4 h-4" />
+                        Find a Caregiver
+                     </button>
+                     <button
+                        onClick={() => onNavigate('caregiver-signup')}
+                        className="flex items-center gap-2 bg-white border border-accent-300 hover:border-accent-500 text-accent-600 font-semibold px-5 py-2.5 rounded-full text-sm transition-colors"
+                     >
+                        <Briefcase className="w-4 h-4" />
+                        Apply as a Caregiver
+                     </button>
                   </div>
 
                   {/* Mobile Menu Button */}

@@ -1,8 +1,38 @@
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
 import { createBookingTask } from "./bookingExecutor";
+import { quickComplete } from "../utils/openaiClient";
 
 const db = admin.firestore();
+
+async function isQuestionOrOther(text: string): Promise<boolean> {
+  try {
+    const result = await quickComplete(
+      "The user was just shown a list of caregivers (numbered 1, 2, 3...) and asked to pick one. " +
+      "Reply YES if their reply is a question or off-topic comment about the caregivers, the booking, " +
+      "pricing, or anything else. Reply NO if it is a selection (a number, a name, or a clear pick).",
+      text,
+      { maxTokens: 5 },
+    );
+    return result.trim().toUpperCase().startsWith("Y");
+  } catch {
+    return false;
+  }
+}
+
+async function answerQuestionMidFlow(text: string, optionsSummary: string): Promise<string> {
+  try {
+    return await quickComplete(
+      "You are Cara, an AI care assistant. A family member was just shown caregiver options " +
+      `(${optionsSummary}) and asked to pick one. Instead they asked a question. Answer it briefly ` +
+      "(1–2 sentences). Be warm and helpful. Do NOT tell them to pick a caregiver — that prompt is sent separately.",
+      text,
+      { maxTokens: 180 },
+    );
+  } catch {
+    return "Sorry, I'm having trouble pulling that up right now.";
+  }
+}
 
 export async function handleTaskApproval(
   taskDoc: admin.firestore.QueryDocumentSnapshot,
@@ -12,7 +42,21 @@ export async function handleTaskApproval(
 ): Promise<void> {
   const task    = taskDoc.data();
   const options = task.options ?? [];
-  const idx     = parseInt(choice, 10) - 1;
+
+  // If the family asked a question instead of picking, answer it and re-ask.
+  if (await isQuestionOrOther(choice)) {
+    const optionsSummary = options
+      .map((o: any, i: number) => `${i + 1}. ${o.name ?? "caregiver"}`)
+      .join(", ");
+    const answer = await answerQuestionMidFlow(choice, optionsSummary);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId,
+      `When you're ready, reply 1, 2, or 3 to choose a caregiver for your ${task.time ?? "upcoming"} visit.`
+    );
+    return;
+  }
+
+  const idx = parseInt(choice, 10) - 1;
 
   if (idx < 0 || idx >= options.length) {
     await sendMessage(chatId, "Please reply 1, 2, or 3 to choose a caregiver.");

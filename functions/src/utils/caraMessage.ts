@@ -23,12 +23,19 @@ export async function generateCaraMessage(opts: {
   context:  string;
   fallback: string;
   maxTokens?: number;
+  /** ISO language code — "es" makes Cara reply in Spanish; default English. */
+  language?: "en" | "es";
 }): Promise<string> {
   try {
+    const baseVoice = opts.audience === "caregiver" ? CAREGIVER_VOICE : FAMILY_VOICE;
+    const voice = opts.language === "es"
+      ? baseVoice +
+        " The recipient speaks Spanish — write your message in warm, natural Spanish. Same tone as Cara's English voice."
+      : baseVoice;
     const resp = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: opts.maxTokens ?? 180,
-      system:     opts.audience === "caregiver" ? CAREGIVER_VOICE : FAMILY_VOICE,
+      system:     voice,
       messages:   [{ role: "user", content: opts.context }],
     });
     const out = ((resp.content[0] as { text: string }).text ?? "").trim();

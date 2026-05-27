@@ -295,7 +295,28 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         `  · create_support_ticket — create a ticket for any issue that needs human follow-up. The support team will respond within 24 hours.`,
         `  · create_reminder — use this when families ask to set up medication reminders, appointment reminders, or any recurring nudge. Say "I've set that up — I'll text you a reminder." Don't ask them to use an app.`,
         `  · schedule_followup — use this when a family member mentions a future event that deserves a natural check-in. Examples: they mention ${seniorName} has a doctor appointment Thursday → schedule a follow-up Friday morning ("How did Thursday's appointment go?"). They mention trying a new medication → schedule 3 days out. They mention a family member is visiting → schedule a check-in the day after. Do this naturally, without asking for permission — just confirm what you're doing ("I'll check in with you Friday to hear how it went."). Only schedule one follow-up per event.`,
-        `For irreversible actions (cancel_appointment, delete_reminder, remove_family_member, cancel_subscription, manage_recurring_schedule with action 'cancel'), always confirm with the family before calling. For everything else, act and report.`,
+        `  · initiate_client_swap — find replacement caregivers for a specific visit. Use when the family wants to swap who's coming for a single date (vs. cancelling outright).`,
+        `  · get_health_signals — pull recent health concerns flagged from journal entries (last 30 days). Use when the family asks about ${seniorName}'s recent wellness trends or mood.`,
+        `  · get_recurring_schedule — read the active recurring care schedule. Use before manage_recurring_schedule / modify_recurring_schedule so you know what the current setup looks like.`,
+        `  · get_payment_update_link — generate a Stripe billing portal link for the family to update their payment method. Send them the link; never ask them to type card details.`,
+        `  · get_invoice_details — pull the itemized breakdown for a specific invoice. Use when they ask "what was I charged for on June 3?".`,
+        `  · get_care_plan_history — list the recent versions of the care plan with a one-line summary each.`,
+        `  · restore_care_plan_version — roll the care plan back to a prior version. MANDATORY: confirm with the family which version they want and read back what it contains before calling.`,
+        `  · get_family_group — list everyone in the care group with their role and phone.`,
+        `  · update_user_profile — update the family's own name, phone, address, or photo. Read back the proposed change before calling. Phone changes need OTP re-verification on the new number.`,
+        `  · update_communication_preferences — toggle newsletter / new-match alerts / review notifications / privacy. Confirm each toggle with the family.`,
+        `  · request_email_change — kick off an email change. Sends a verify link to the new address; tell the family they'll need to click it from the new inbox before it takes effect.`,
+        `  · get_caregiver_reviews — pull recent reviews and average rating for a caregiver. Use for "what do other families say about Alice?".`,
+        `  · save_caregiver_favorite / unsave_caregiver_favorite / list_saved_caregivers — manage the family's favorite caregivers.`,
+        `  · block_user — block another user from interacting with the family. MANDATORY: read back who you're about to block and wait for explicit YES.`,
+        `  · unblock_user — remove an existing block.`,
+        `  · report_user — file an abuse report. MANDATORY: confirm category and details with the family, then call. Tell them ops follows up within 24 hours.`,
+        `  · like_journal_entry — like a care journal post when the family expresses appreciation ("loved that photo of Mom").`,
+        `  · unlike_journal_entry — undo a like.`,
+        `  · comment_on_journal_entry — leave a comment on a journal entry. Use when the family says "tell Maria thanks for the visit notes" — comment + the tool also notifies the caregiver.`,
+        `For irreversible actions (cancel_appointment, delete_reminder, remove_family_member, cancel_subscription, manage_recurring_schedule with action 'cancel', restore_care_plan_version, block_user, report_user), always confirm with the family before calling. For everything else, act and report.`,
+        ``,
+        `NOTIFICATION DELIVERY (non-negotiable): When a tool result includes a "notification" field with sent:false, the action completed but the downstream message to the caregiver/family-member did NOT go through. Tell the user honestly: "I cancelled the visit, but my note to the caregiver didn't go through — want me to retry?" Never claim someone was notified if notification.sent === false.`,
         ``,
         `WEB ACTIONS — do not say "you'd need to check that yourself" when you can act:`,
         `PUBLIC (no login needed — always try these first):`,
@@ -359,7 +380,7 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         `- Never rush to action when emotions are high. Acknowledge before solving.`,
     ].join("\n");
 }
-function buildCaregiverSystemPrompt(caregiver, todayAppt, zepContext) {
+function buildCaregiverSystemPrompt(caregiver, todayAppt, zepContext, contextFlags) {
     var _a, _b, _c, _d, _e, _f;
     const name = (_a = caregiver === null || caregiver === void 0 ? void 0 : caregiver.name) !== null && _a !== void 0 ? _a : "there";
     const rate = (_b = caregiver === null || caregiver === void 0 ? void 0 : caregiver.hourlyRate) !== null && _b !== void 0 ? _b : 22;
@@ -367,6 +388,26 @@ function buildCaregiverSystemPrompt(caregiver, todayAppt, zepContext) {
         ? `Today's visit: ${todayAppt.date} at ${(_c = todayAppt.startTime) !== null && _c !== void 0 ? _c : "TBD"} for client ${(_d = todayAppt.clientId) !== null && _d !== void 0 ? _d : ""}. Address: ${(_f = (_e = todayAppt.address) !== null && _e !== void 0 ? _e : todayAppt.location) !== null && _f !== void 0 ? _f : "check your schedule"}.`
         : "No visits scheduled for today.";
     const zepSection = zepContext ? `\n${zepContext}\n` : "";
+    // Context-flag overlay — surfaces recent notifications the caregiver may be replying to.
+    const ctxLines = [];
+    if (contextFlags === null || contextFlags === void 0 ? void 0 : contextFlags.pendingPayoutNotificationAck) {
+        ctxLines.push(`RECENT CONTEXT: This caregiver was just notified about a payout (${contextFlags.pendingPayoutNotificationAck}). ` +
+            `If their message is a question about the payment (timing, amount, fees, status), use get_payout_history / get_caregiver_earnings / get_billing_summary to answer accurately.`);
+    }
+    if (contextFlags === null || contextFlags === void 0 ? void 0 : contextFlags.pendingBgCheckAck) {
+        const status = contextFlags.pendingBgCheckAck;
+        const statusLine = status === "clear"
+            ? "their background check just cleared — they are now approved"
+            : status === "review"
+                ? "their background check is in 'consider/review' status — our team is following up"
+                : status === "suspended"
+                    ? "their background check is on hold while Checkr gathers more info"
+                    : `background check status: ${status}`;
+        ctxLines.push(`RECENT CONTEXT: This caregiver was just notified that ${statusLine}. ` +
+            `Answer follow-up questions about the BG check, what families will see, and next steps. ` +
+            `Do not promise specific timing for re-runs; redirect to support if needed.`);
+    }
+    const contextSection = ctxLines.length ? `\n${ctxLines.join("\n")}\n` : "";
     return [
         `You ARE Cara — an AI care assistant texting with ${name}, one of our caregivers.`,
         `IDENTITY: Speak in first person. Never refer to yourself as "Cara" in the third person. Never say "reach out to Cara", "the Cara team will help", or anything that treats Cara as a separate entity. You ARE Cara.`,
@@ -374,6 +415,7 @@ function buildCaregiverSystemPrompt(caregiver, todayAppt, zepContext) {
         ``,
         apptLine,
         zepSection,
+        contextSection,
         `The caregiver earns $${rate}/hr. Payments are processed automatically after each visit.`,
         ``,
         `TOOLS — call them when needed:`,
@@ -420,13 +462,19 @@ function buildCaregiverSystemPrompt(caregiver, todayAppt, zepContext) {
 async function getPrefetchedContext(phone) {
     var _a, _b, _c;
     const snap = await db.collection("agent_prefetch").doc(phone).get();
-    if (!snap.exists)
+    if (!snap.exists) {
+        // Instrumentation: log prefetch miss so we can measure hit rate over time
+        // (helps decide whether back-to-back inbound races are actually hurting users).
+        console.info("qaAgent.prefetch: miss", { phone });
         return null;
+    }
     const data = snap.data();
     if (new Date(data.expiresAt) < new Date()) {
+        console.info("qaAgent.prefetch: expired", { phone, ageMs: Date.now() - new Date(data.cachedAt).getTime() });
         await snap.ref.delete().catch(() => { });
         return null;
     }
+    console.info("qaAgent.prefetch: hit", { phone, ageMs: Date.now() - new Date(data.cachedAt).getTime() });
     await snap.ref.delete().catch(() => { });
     return {
         seniorProfile: data.seniorProfile,
@@ -496,7 +544,17 @@ async function resumeActiveGoal(phone, session) {
         await db.collection("agent_sessions").doc(phone)
             .update({ activeGoal: admin.firestore.FieldValue.delete() })
             .catch(() => { });
-        return { goalContext: "" };
+        // Tell Claude there was an old goal so it can acknowledge the gap instead
+        // of behaving as if no prior context existed. Previously the goal expired
+        // silently mid-turn and the user would see a "fresh" response that ignored
+        // the conversation they were continuing.
+        const ageHours = Math.max(1, Math.round(goalAge / (60 * 60 * 1000)));
+        return {
+            goalContext: `\n\n<expired_goal>The user had an active goal (${goal.description}) from ~${ageHours}h ago. ` +
+                "It has expired. If their current message references that goal (\"the booking\", \"that caregiver\", " +
+                "\"what we were doing\"), acknowledge the gap and ask if they want to pick it up or start fresh. " +
+                "Do not pretend the prior context is still loaded.</expired_goal>",
+        };
     }
     // Decrement turns remaining (fire-and-forget)
     db.collection("agent_sessions").doc(phone).update({
@@ -524,10 +582,22 @@ async function runQaAgent(params) {
     }
     let systemPrompt;
     let history;
+    // Sentinel injected when Zep fails. Claude sees this in the system prompt and
+    // knows long-term memory (allergies, meds, conditions) is missing this turn,
+    // so it must hedge medical-adjacent answers and confirm before acting on them.
+    // Empty string is reserved for "no zepThreadId" / "no memory expected."
+    const ZEP_UNAVAILABLE_MARKER = "[SYSTEM: memory_unavailable] Long-term memory service is unavailable this turn. " +
+        "Stored health facts (allergies, medications, conditions, doctor names) are NOT loaded. " +
+        "If the user asks about any of these, say you don't have it available right now and ask them to confirm; " +
+        "do not state any health fact you can't see in the cached context or learned facts above.";
     // 4s hard cap on Zep — past calls have hung 30s+ when Zep is unhealthy.
-    const withZepTimeout = (p) => Promise.race([
+    // On timeout OR throw, we inject the marker so Claude knows context is missing.
+    const withZepTimeout = (p, role) => Promise.race([
         p,
-        new Promise((r) => setTimeout(() => r(""), 4000)),
+        new Promise((r) => setTimeout(() => {
+            console.warn(`qaAgent: Zep context timed out (${role}, 4s cap) — injecting memory_unavailable marker`);
+            r(ZEP_UNAVAILABLE_MARKER);
+        }, 4000)),
     ]);
     if (userType === "caregiver" && caregiverId) {
         const [caregiver, todayAppt, hist, cgZepContext] = await Promise.all([
@@ -536,14 +606,36 @@ async function runQaAgent(params) {
             getConversationHistory(phone),
             zepThreadId ? withZepTimeout((0, zepClient_1.getZepContext)(zepThreadId).catch((err) => {
                 console.warn("qaAgent: Zep context unavailable (caregiver)", err instanceof Error ? err.message : err);
-                return "";
-            })) : Promise.resolve(""),
+                return ZEP_UNAVAILABLE_MARKER;
+            }), "caregiver") : Promise.resolve(""),
         ]);
-        systemPrompt = buildCaregiverSystemPrompt(caregiver, todayAppt, cgZepContext || undefined);
+        const contextFlags = session ? {
+            pendingPayoutNotificationAck: session.pendingPayoutNotificationAck,
+            pendingBgCheckAck: session.pendingBgCheckAck,
+        } : undefined;
+        systemPrompt = buildCaregiverSystemPrompt(caregiver, todayAppt, cgZepContext || undefined, contextFlags);
         history = hist;
+        // Clear the context flags after a reply consumes them — they're one-shot context.
+        // 48h expiry is also enforced by the router so this only fires for genuine acks.
+        if ((contextFlags === null || contextFlags === void 0 ? void 0 : contextFlags.pendingPayoutNotificationAck) || (contextFlags === null || contextFlags === void 0 ? void 0 : contextFlags.pendingBgCheckAck)) {
+            await db.collection("agent_sessions").doc(phone).update({
+                pendingPayoutNotificationAck: admin.firestore.FieldValue.delete(),
+                pendingPayoutNotificationAckSetAt: admin.firestore.FieldValue.delete(),
+                pendingBgCheckAck: admin.firestore.FieldValue.delete(),
+                pendingBgCheckAckSetAt: admin.firestore.FieldValue.delete(),
+            }).catch(() => { });
+        }
     }
     else {
-        const prefetched = await getPrefetchedContext(phone);
+        // Unconfirmed-identity gate — phone is in the system but onboarding never
+        // completed, so any seniorId/userId/seniorIds on this session may point at
+        // a different person we linked them to (e.g. invited family contact, or a
+        // sandbox→live migration artifact). Suppress cross-entity context so Cara
+        // doesn't surface someone else's appointments or care plan as if it were
+        // theirs. Conversation history with THIS phone stays — that's their own
+        // SMS thread with Cara, not someone else's data.
+        const unconfirmedIdentity = !!(session === null || session === void 0 ? void 0 : session.__unconfirmedIdentity);
+        const prefetched = unconfirmedIdentity ? null : await getPrefetchedContext(phone);
         let senior, journal, nextAppt, permissions;
         if (prefetched) {
             senior = prefetched.seniorProfile;
@@ -551,6 +643,13 @@ async function runQaAgent(params) {
             nextAppt = prefetched.nextAppointment;
             history = prefetched.conversationHistory;
             permissions = null;
+        }
+        else if (unconfirmedIdentity) {
+            senior = null;
+            journal = [];
+            nextAppt = null;
+            permissions = null;
+            history = await getConversationHistory(phone);
         }
         else {
             [senior, journal, nextAppt, permissions, history] = await Promise.all([
@@ -561,26 +660,33 @@ async function runQaAgent(params) {
                 getConversationHistory(phone),
             ]);
         }
-        // Detect and apply fact corrections before building context — reload facts if applied
+        // Detect and apply fact corrections before building context — reload facts if applied.
+        // Skipped for unconfirmed identity: we don't know whose facts these would be.
         let correctionApplied = false;
-        try {
-            const { detectAndApplyCorrection } = await Promise.resolve().then(() => __importStar(require("../memory/learnedFacts")));
-            correctionApplied = await detectAndApplyCorrection(userId, text, zepThreadId ? phone.replace(/\D/g, "") : undefined);
+        if (!unconfirmedIdentity) {
+            try {
+                const { detectAndApplyCorrection } = await Promise.resolve().then(() => __importStar(require("../memory/learnedFacts")));
+                correctionApplied = await detectAndApplyCorrection(userId, text, zepThreadId ? phone.replace(/\D/g, "") : undefined);
+            }
+            catch (_r) {
+                // Non-critical
+            }
         }
-        catch (_r) {
-            // Non-critical
-        }
-        // Load Zep context, memory files, learned facts, active visit, and booking patterns in parallel
-        const [zepContext, memoryContext, facts, activeVisit, bookingPatterns] = await Promise.all([
-            zepThreadId ? withZepTimeout((0, zepClient_1.getZepContext)(zepThreadId).catch((err) => {
-                console.warn("qaAgent: Zep context unavailable (client)", err instanceof Error ? err.message : err);
-                return "";
-            })) : Promise.resolve(""),
-            (0, memoryFiles_1.getMemoryContext)(userId).catch(() => ""),
-            (0, learnedFacts_1.getRelevantFacts)(userId).catch(() => []),
-            getActiveVisit(userId).catch(() => null),
-            getBookingPatterns(userId),
-        ]);
+        // Load Zep context, memory files, learned facts, active visit, and booking patterns in parallel.
+        // Unconfirmed-identity sessions skip all of these — they all key off userId
+        // and would surface another person's care data on a linked phone.
+        const [zepContext, memoryContext, facts, activeVisit, bookingPatterns] = unconfirmedIdentity
+            ? ["", "", [], null, ""]
+            : await Promise.all([
+                zepThreadId ? withZepTimeout((0, zepClient_1.getZepContext)(zepThreadId).catch((err) => {
+                    console.warn("qaAgent: Zep context unavailable (client)", err instanceof Error ? err.message : err);
+                    return ZEP_UNAVAILABLE_MARKER;
+                }), "client") : Promise.resolve(""),
+                (0, memoryFiles_1.getMemoryContext)(userId).catch(() => ""),
+                (0, learnedFacts_1.getRelevantFacts)(userId).catch(() => []),
+                getActiveVisit(userId).catch(() => null),
+                getBookingPatterns(userId),
+            ]);
         // Lazy-bootstrap memory files for users who completed onboarding before the
         // memory-files code shipped, or whose initial write silently failed. Runs
         // once per user (idempotent — initializeMemoryFiles overwrites if needed
@@ -615,22 +721,53 @@ async function runQaAgent(params) {
     // Inject session identifiers — Claude must never ask the user for clientId, userId, or phone.
     // These are always known from the session and are also auto-injected into every tool call.
     systemPrompt += `\n\nSESSION (do not ask the user for these — use them when tools require clientId, userId, or phone):\nclientId = "${userId}" | userId = "${userId}" | phone = "${phone}"`;
+    // Unconfirmed-identity directive — set when the phone exists in our system
+    // but onboarding has not completed and the user declined (or hasn't yet
+    // accepted) the onboarding offer. Cara must NOT reference any senior, care
+    // plan, appointment, or care-team data because that data may belong to a
+    // different person on the same family link. Cara should answer general
+    // questions only and steer toward completing onboarding when relevant.
+    if (session === null || session === void 0 ? void 0 : session.__unconfirmedIdentity) {
+        systemPrompt +=
+            "\n\nUNCONFIRMED IDENTITY: This phone is in the system but the speaker has not completed onboarding, " +
+                "so we do not know who they are or what care plan they belong to. " +
+                "Do NOT mention any senior, caregiver, appointment, interview, care plan, family group, or other person's data — " +
+                "treat as if you have no profile context (because what's on file may be someone else's). " +
+                "Do NOT call any tool that reads or writes care data (matching, booking, journal, scheduling, payments). " +
+                "If they ask whether you know them, say plainly: \"I have your number on file but not your name yet — " +
+                "we never finished setting up your account. Want to do that now?\" " +
+                "Otherwise answer general questions about CareConnex (what we do, pricing, how it works) and gently nudge toward setup.";
+    }
+    // Language directive — when the user has a non-English preference on file,
+    // tell Claude to respond in that language. Without this, all of Cara's
+    // generated prose stays English even when the user wrote in Spanish.
+    const preferredLanguage = session === null || session === void 0 ? void 0 : session.preferredLanguage;
+    if (preferredLanguage === "es") {
+        systemPrompt += "\n\nLANGUAGE: The family member speaks Spanish. Respond in warm, natural Spanish — " +
+            "keep the same tone as Cara's English voice (close, direct, no chatbot phrasing). Do not switch back " +
+            "to English unless the user does first.";
+    }
+    // Unconfirmed-identity short-circuits: skip all per-phone task/goal/agent
+    // context — they may reference work on behalf of a different linked person.
+    const skipCrossEntity = !!(session === null || session === void 0 ? void 0 : session.__unconfirmedIdentity);
     // Inject active goal context if present
-    if (session) {
+    if (session && !skipCrossEntity) {
         const { goalContext } = await resumeActiveGoal(phone, session);
         if (goalContext)
             systemPrompt += goalContext;
     }
     // Inject active background task status (e.g. emergency replacement in progress)
-    const activeTaskSnap = await db.collection("agent_tasks_active").doc(phone).get().catch(() => null);
-    if (activeTaskSnap === null || activeTaskSnap === void 0 ? void 0 : activeTaskSnap.exists) {
-        const t = activeTaskSnap.data();
-        systemPrompt +=
-            `\n\nACTIVE BACKGROUND TASK:\nType: ${t.type}\nStatus: ${t.status}\nDetails: ${t.description}\n` +
-                `If the family asks for an update or "what's happening", report this status directly.`;
+    if (!skipCrossEntity) {
+        const activeTaskSnap = await db.collection("agent_tasks_active").doc(phone).get().catch(() => null);
+        if (activeTaskSnap === null || activeTaskSnap === void 0 ? void 0 : activeTaskSnap.exists) {
+            const t = activeTaskSnap.data();
+            systemPrompt +=
+                `\n\nACTIVE BACKGROUND TASK:\nType: ${t.type}\nStatus: ${t.status}\nDetails: ${t.description}\n` +
+                    `If the family asks for an update or "what's happening", report this status directly.`;
+        }
     }
     // Roster check — inject active execution agent context so Claude can route follow-up questions
-    if (userType !== "caregiver") {
+    if (userType !== "caregiver" && !skipCrossEntity) {
         const activeAgent = await (0, executionAgent_1.getActiveAgentForUser)(phone).catch(() => null);
         if (activeAgent) {
             const lastAction = (_o = (_m = (_l = activeAgent.operationalLog) === null || _l === void 0 ? void 0 : _l.at(-1)) === null || _m === void 0 ? void 0 : _m.result) !== null && _o !== void 0 ? _o : "none";
@@ -706,6 +843,7 @@ async function runQaAgent(params) {
                         // Only inject non-empty values — an empty string is falsy and fails tool validation.
                         const enrichedInput = Object.assign(Object.assign(Object.assign({}, block.input), { phone,
                             chatId }), (userId ? { clientId: userId, userId } : {}));
+                        const toolStart = Date.now();
                         const result = await toolHandler(block.name, enrichedInput)
                             .catch((err) => {
                             console.error(`qaAgent: tool call failed [${block.name}]`, err);
@@ -714,6 +852,28 @@ async function runQaAgent(params) {
                                 message: "Tool unavailable — tell the user you don't have that information right now and offer to try again.",
                             };
                         });
+                        // Instrumentation for D4 — track success rate on the cancel path so
+                        // we can decide if a dedicated cancelFlow is needed. Same pattern
+                        // works for any high-stakes tool.
+                        if (block.name === "cancel_appointment" || block.name === "cancel_subscription") {
+                            const succeeded = !(result === null || result === void 0 ? void 0 : result._toolError) && !(result === null || result === void 0 ? void 0 : result.error);
+                            console.info("qaAgent.toolUse", {
+                                tool: block.name,
+                                phone,
+                                userId,
+                                succeeded,
+                                durationMs: Date.now() - toolStart,
+                            });
+                            db.collection("agent_tool_metrics").add({
+                                tool: block.name,
+                                phone,
+                                userId,
+                                succeeded,
+                                durationMs: Date.now() - toolStart,
+                                errorPreview: succeeded ? null : JSON.stringify(result).slice(0, 200),
+                                ranAt: new Date().toISOString(),
+                            }).catch(() => { });
+                        }
                         toolResults.push({
                             type: "tool_result",
                             tool_use_id: block.id,
@@ -800,7 +960,24 @@ async function runQaAgent(params) {
                 detectedAt: new Date().toISOString(),
             }).catch(() => { });
         }
-        reply = await (0, supervisor_1.supervise)(reply, { phone, role: userType }).catch(() => reply);
+        reply = await (0, supervisor_1.supervise)(reply, { phone, role: userType }).catch((err) => {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            console.error("qaAgent: supervisor threw, sending unsupervised", errMsg);
+            const minuteBucket = new Date().toISOString().slice(0, 16);
+            db.collection("admin_alerts").add({
+                type: "supervisor_fail_open",
+                phone,
+                userId,
+                error: errMsg.slice(0, 500),
+                preview: reply.slice(0, 200),
+                source: "qaAgent",
+                dedupeKey: `supervisor_fail_open:${minuteBucket}`,
+                severity: "high",
+                resolved: false,
+                createdAt: new Date().toISOString(),
+            }).catch(() => { });
+            return reply;
+        });
         await saveConversationTurn(phone, text, reply);
         if (!skipSend)
             await sendSplit(chatId, reply);

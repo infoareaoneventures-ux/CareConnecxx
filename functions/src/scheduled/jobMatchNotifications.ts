@@ -33,9 +33,14 @@ export const sendJobMatchNotifications = functions.pubsub
 
     console.log(`[sendJobMatchNotifications] Checking ${caregiverSnap.size} verified caregivers`);
 
+    const todayIso = new Date().toISOString();
     for (const cgDoc of caregiverSnap.docs) {
       const cg = cgDoc.data();
       if (!cg.chatId && !cg.phone) continue;
+
+      // Skip paused caregivers
+      const pausedUntil = cg.pausedUntil as string | undefined;
+      if (pausedUntil && pausedUntil > todayIso) continue;
 
       try {
         const recs = await getJobRecommendationsForCaregiver(cgDoc.id, 3);

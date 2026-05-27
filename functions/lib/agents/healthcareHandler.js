@@ -324,9 +324,19 @@ Reply as JSON only: {"pharmacyService":"...","medicationName":"...","rxNumber":"
             return;
         }
         const condition = await parseWithClaude("What condition or symptom needs this new prescription? Extract just the condition in a few words. Reply 'general' if unclear.", text);
+        // If we couldn't pin down a condition from the initial message, ask for it
+        // explicitly instead of silently storing "general" and moving on. Avoids the
+        // case where Cara later sends the doctor a vague "needs a new prescription for
+        // general" request.
+        const isUnclear = condition === "__parse_error__" || condition.toLowerCase() === "general";
+        if (isUnclear) {
+            await setFlowState(phone, "hc_newrx_condition", { intent });
+            await sendMessage("Happy to help. What condition or symptom is this new prescription for?");
+            return;
+        }
         const data = {
             intent,
-            condition: condition === "__parse_error__" ? "general" : condition,
+            condition,
         };
         await setFlowState(phone, "hc_newrx_hasdoctor", data);
         const msg = await (0, caraMessage_1.generateCaraMessage)({
@@ -445,6 +455,26 @@ async function resumeHealthcareFlow(phone, chatId, text, session, sendMessage) {
             "Reply with exactly one of: cvs, walgreens, riteaid.", text);
         const pharmacy = ["cvs", "walgreens", "riteaid"].includes(raw) ? raw : "cvs";
         await executePharmacyRefill(phone, sendMessage, Object.assign(Object.assign({}, data), { pharmacyService: pharmacy }), userId);
+        return;
+    }
+    // ── hc_newrx_condition: ask explicitly what the prescription is for ───────
+    // Reached when the initial intent message didn't carry a clear condition.
+    if (step === "hc_newrx_condition") {
+        if (await isQuestionOrOther(text)) {
+            const answer = await answerMidFlow(text, "client needs a new prescription and Cara asked what condition it's for");
+            await sendMessage(answer);
+            await sendMessage("What condition or symptom is this new prescription for?");
+            return;
+        }
+        const condition = text.trim().slice(0, 200);
+        await setFlowState(phone, "hc_newrx_hasdoctor", Object.assign(Object.assign({}, data), { condition }));
+        const msg = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "family",
+            context: `Client needs a new prescription for ${condition}. Ask if they have a doctor they'd like to see for this.`,
+            fallback: "Got it. Do you already have a doctor you'd like to book for this?",
+            maxTokens: 80,
+        });
+        await sendMessage(msg);
         return;
     }
     // ── hc_newrx_hasdoctor: do they have a doctor for this? ───────────────────

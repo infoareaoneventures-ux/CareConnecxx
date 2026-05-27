@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EMOTIONAL_RESPONSE = exports.MEDICAL_RESPONSE = void 0;
 exports.detectCrisis = detectCrisis;
+exports.isLikelyRealCrisis = isLikelyRealCrisis;
+const openaiClient_1 = require("../utils/openaiClient");
 const MEDICAL_KEYWORDS = [
     "chest pain", "can't breathe", "cannot breathe", "heart attack",
     "stroke", "seizure", "unconscious", "not breathing", "stopped breathing",
@@ -33,5 +35,31 @@ function detectCrisis(text) {
             return "emotional";
     }
     return null;
+}
+// Verify a keyword hit is a real crisis rather than a quote, hypothetical, or
+// historical reference. Fail-safe: on timeout, error, or "unclear" we treat as
+// a real crisis (return true). Over-responding to safety is the lower-cost
+// failure mode; under-responding is not. Tight 1.2s budget keeps the path
+// fast enough for life-critical use.
+async function isLikelyRealCrisis(text, kind) {
+    try {
+        const verdict = await Promise.race([
+            (0, openaiClient_1.quickComplete)(kind === "medical"
+                ? "Reply YES if the user is describing a medical emergency happening NOW (themselves or someone present). " +
+                    "Reply NO if it is a quote, joke, fictional reference, past event, hypothetical (\"what if\"), or a " +
+                    "question about symptoms in general. When in doubt, reply YES. Reply with only YES or NO."
+                : "Reply YES if the user is expressing genuine suicidal thoughts, self-harm intent, or hopelessness right now. " +
+                    "Reply NO if it is a quote, joke, fictional reference, exaggeration about a non-life situation, or a question " +
+                    "about the topic in general. When in doubt, reply YES. Reply with only YES or NO.", text, { maxTokens: 5 }),
+            new Promise((r) => setTimeout(() => r("YES"), 1200)),
+        ]);
+        const v = verdict.trim().toUpperCase();
+        if (v.startsWith("N"))
+            return false;
+        return true; // YES or anything else → fail-safe to crisis
+    }
+    catch (_a) {
+        return true;
+    }
 }
 //# sourceMappingURL=crisisDetector.js.map

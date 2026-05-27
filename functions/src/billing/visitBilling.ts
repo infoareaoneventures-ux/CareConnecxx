@@ -99,6 +99,11 @@ export async function createVisitPayment(params: VisitPaymentParams): Promise<vo
     await sendToPhone(caregiverPhone,
       `Visit logged for ${date}. Your payment of ${totalStr} will be processed shortly.`
     ).catch(() => {});
+    // Flag the session so any follow-up reply routes to qaAgent with payout context
+    await admin.firestore().collection("agent_sessions").doc(caregiverPhone).update({
+      pendingPayoutNotificationAck:      `${totalStr} for ${date} visit`,
+      pendingPayoutNotificationAckSetAt: new Date().toISOString(),
+    }).catch(() => {});
   }
 }
 

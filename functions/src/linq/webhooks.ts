@@ -6,7 +6,7 @@ import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability
 import { classifyIntent } from "../agents/intentClassifier";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { handleTaskApproval, finalizeTaskApproval } from "../agents/taskApprovalHandler";
-import { optOutPhoneNumber, setupCaraContactCard } from "../sms";
+import { optOutPhoneNumber, optInPhoneNumber, setupCaraContactCard } from "../sms";
 import {
   handleOnboardingStep,
 } from "../agents/onboardingConversation";
@@ -23,11 +23,19 @@ import {
   writeInterviewOutcomeSignal,
 } from "../agents/interviewAgent";
 import { executeBookings, createBookingTask } from "../agents/bookingExecutor";
-import { detectCrisis, MEDICAL_RESPONSE, EMOTIONAL_RESPONSE } from "../safety/crisisDetector";
+import { detectCrisis, isLikelyRealCrisis, MEDICAL_RESPONSE, EMOTIONAL_RESPONSE } from "../safety/crisisDetector";
 import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
 import { logCrisisDetected } from "../observability/auditLog";
 import { isBereavementTrigger, activateBereavementMode } from "../agents/bereavement";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import {
+  classifyCompleteness,
+  classifyOfferReply,
+  markOfferAccepted,
+  markOfferDeclined,
+  sendOnboardingOffer,
+  shouldReoffer,
+} from "../agents/profileCompleteness";
 import { handleJobPostingStep, startJobPostingFlow } from "../agents/jobPostingFlow";
 import { startModifyScheduleFlow, handleModifyScheduleStep } from "../agents/modifyScheduleFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
@@ -36,6 +44,8 @@ import { handleEarningsView } from "../agents/earningsHandler";
 import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
 import { handleCaregiverSwapRequest, handleSwapAcceptance } from "../agents/caregiverSwapHandler";
 import { handleClientSwapRequest } from "../agents/clientSwapRequestHandler";
+import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
+import { handleCaregiverProfileUpdate, profileFieldFromIntent, ProfileUpdateField } from "../agents/caregiverProfileHandler";
 import { STATE_MACHINE_FLAGS, clearAllStateFlags } from "../utils/sessionState";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { sendIfNotDND } from "../utils/dndGuard";
@@ -51,6 +61,9 @@ import {
 } from "../memory/zepClient";
 import { quickComplete } from "../utils/openaiClient";
 import { extractVoiceMemoPart, transcribeVoiceMemo } from "../utils/voiceTranscription";
+import { generateOtp, formatOtpForDisplay } from "../utils/phoneVerification";
+import { detectPersonaShift } from "../utils/personaShiftDetector";
+import { detectLanguage, languageFromSession, t as tr, flowLabel } from "../utils/language";
 
 const db = admin.firestore();
 
@@ -359,20 +372,31 @@ async function handleShiftConfirmation(
     }).catch(() => {});
 
   } else {
-    // QUESTION or unclear — let caraAgent answer, then re-ask
-    await sendViaInteractionAgent(phone, {
-      content:     text,
-      urgency:     "standard",
-      sourceAgent: "shift_confirm_question",
-      canDrop:     true,
-    });
-    // Re-set the flag and re-ask
+    // QUESTION or unclear — answer the question, then re-ask the confirmation.
+    // Generate the answer inline so we control message ordering (otherwise the
+    // re-ask can land before the interaction agent's reply).
+    let answer = "";
+    try {
+      answer = await quickComplete(
+        "You are Cara, an AI care assistant. A caregiver was asked to confirm they'll be at " +
+        `${info.seniorName}'s shift on ${info.appointmentDate} (start ${info.startTime}). ` +
+        "Instead they sent the message below — likely a question about the shift, address, client, or logistics. " +
+        "Answer briefly (1–2 sentences). Do NOT ask them to confirm — that prompt comes next.",
+        text,
+        { maxTokens: 180 },
+      );
+    } catch {
+      answer = "Let me get back to you on that. In the meantime —";
+    }
+    await sendMessage(chatId, answer);
+
+    // Re-set the flag and re-ask (sequentially so the question is acknowledged first)
     await db.collection("agent_sessions").doc(phone).update({
       pendingShiftConfirmation: info,
       stateExpiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
     });
     await sendMessage(chatId,
-      `By the way — can you confirm you'll be at ${info.seniorName}'s shift on ${info.appointmentDate}? Reply YES or NO.`
+      `So — can you confirm you'll be at ${info.seniorName}'s shift on ${info.appointmentDate}? Reply YES or NO.`
     );
   }
 }
@@ -403,14 +427,25 @@ async function handlePreShiftUpdate(
   const isQuestion = questionRaw.trim().toUpperCase().startsWith("Y");
 
   if (isQuestion) {
-    await sendViaInteractionAgent(phone, {
-      content:     text,
-      urgency:     "standard",
-      sourceAgent: "pre_shift_question",
-      canDrop:     true,
-    });
+    // Generate the answer inline so we control message ordering. The previous
+    // implementation sent the raw user text to sendViaInteractionAgent (which
+    // generates a reply asynchronously) and immediately followed with the
+    // re-ask, so the re-ask could arrive before the answer.
+    let answer = "";
+    try {
+      answer = await quickComplete(
+        "You are Cara, an AI care assistant. A family member was asked if they want to add tasks for today's " +
+        `visit with ${info.caregiverName ?? "the caregiver"} for ${info.seniorName}. Instead they asked a question — ` +
+        "answer it briefly (1–2 sentences). Do NOT ask them to add tasks — that prompt comes next.",
+        text,
+        { maxTokens: 180 },
+      );
+    } catch {
+      answer = "Let me get back to you on that. In the meantime —";
+    }
+    await sendMessage(chatId, answer);
     await sendMessage(chatId,
-      `By the way — did you want to add any tasks for ${info.seniorName}'s visit today?`
+      `So — did you want to add any tasks for ${info.seniorName}'s visit today?`
     );
     return;
   }
@@ -574,9 +609,34 @@ async function sendArrivalCarePlanBriefing(
   await sendMessage(chatId, body);
 }
 
-async function handleDone(phone: string, chatId: string, session: AgentSession): Promise<void> {
+async function handleDone(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
   const caregiverId = session.caregiverId;
   if (!caregiverId) return;
+
+  // If DONE arrived with extra text (e.g. "DONE but I need to ask you something"),
+  // surface a question check. The pure-keyword path passes text === "DONE" and
+  // we skip the LLM hop.
+  if (text && text.trim().toUpperCase() !== "DONE" && text.trim().length > 8) {
+    const qRaw = await quickComplete(
+      "A caregiver just signaled they're done with a visit. " +
+        "Reply YES if their message also contains a question they need answered. " +
+        "Reply NO if it's only a sign-off. Only reply YES or NO.",
+      text,
+      { maxTokens: 5 },
+    ).catch(() => "NO");
+    if (qRaw.trim().toUpperCase().startsWith("Y")) {
+      let answer = "";
+      try {
+        answer = await quickComplete(
+          "You are Cara. A caregiver said they're done with a visit and also asked a question. " +
+            "Answer it briefly (1-2 sentences). Do NOT ask them for visit notes yet — that prompt comes next.",
+          text,
+          { maxTokens: 180 },
+        );
+      } catch { answer = "Let me get back to you on that. In the meantime —"; }
+      await sendMessage(chatId, answer);
+    }
+  }
 
   const today = new Date().toISOString().slice(0, 10);
   const snap  = await db.collection("appointments")
@@ -927,6 +987,35 @@ async function handleCareNotes(
   text:     string,
   session:  AgentSession
 ): Promise<void> {
+
+  // ── isQuestionOrOther — if caregiver is asking a question alongside (or
+  // instead of) shift notes, answer it first then re-prompt. Skip the LLM
+  // hop for short messages that look like a clear answer (< 30 chars).
+  if (text.trim().length >= 30) {
+    const questionRaw = await quickComplete(
+      "A caregiver was asked to share notes about a care visit they just finished " +
+        "(mood, meals, activities, anything notable). " +
+        "Reply YES if their message is primarily a question to the assistant rather than visit notes. " +
+        "Reply NO if it is visit notes (even if a small question is buried inside). Only reply YES or NO.",
+      text,
+      { maxTokens: 5 },
+    ).catch(() => "NO");
+    if (questionRaw.trim().toUpperCase().startsWith("Y")) {
+      let answer = "";
+      try {
+        answer = await quickComplete(
+          "You are Cara, an AI care assistant. A caregiver just finished a shift and was asked for visit notes, " +
+            "but instead they asked a question. Answer it briefly (1-2 sentences). " +
+            "Do NOT ask them for notes — that prompt comes next.",
+          text,
+          { maxTokens: 180 },
+        );
+      } catch { answer = "Let me get back to you on that. In the meantime —"; }
+      await sendMessage(chatId, answer);
+      await sendMessage(chatId, "Now — tell me how the visit went so I can send the family an update. (Mood, meals, activities, anything notable.)");
+      return;
+    }
+  }
 
   const structuredRaw = await quickComplete(
     "Convert this caregiver note into a structured care journal entry. " +
@@ -1503,14 +1592,116 @@ async function handleInbound(event: unknown): Promise<void> {
 
     await setupCaraContactCard().catch(() => {/* non-critical */});
 
+    // Detect language from the first message so OTP + onboarding speak the
+    // family's language from the start.
+    const detected = await detectLanguage(text).catch(() => null);
+    const preferredLanguage = detected ?? "en";
+
+    // ── Web-onboarding bridge ──────────────────────────────────────────────────
+    // If this phone just verified through Firebase Phone Auth on the web and is
+    // awaiting their first inbound, skip the SMS-side OTP entirely — phone
+    // possession is already proven by the Firebase token they presented when
+    // calling createWebOnboardingSession. Route them straight into the role's
+    // first onboarding step.
+    const webSessionRef  = db.collection("web_onboarding_sessions").doc(phone);
+    const webSessionSnap = await webSessionRef.get();
+    if (webSessionSnap.exists && webSessionSnap.data()?.status === "awaiting_inbound") {
+      const webRole  = (webSessionSnap.data()?.role as string | undefined) === "caregiver" ? "caregiver" : "client";
+      const firstStep = webRole === "caregiver" ? "caregiver_ask_name" : "client_ask_name";
+
+      // Returning user — phone already linked to an account. Skip re-onboarding;
+      // restore their account context and greet them as a known user. Without
+      // this, a returning user who re-verified on /start would be walked through
+      // onboarding from scratch.
+      const userQuery = await db.collection("users").where("phone", "==", phone).limit(1).get();
+      const isReturning = !userQuery.empty;
+
+      if (isReturning) {
+        const userDoc   = userQuery.docs[0];
+        const userData  = userDoc.data();
+        const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
+        const seniorId  = (userData.seniorId  as string | undefined) ?? seniorIds[0] ?? "";
+
+        await db.collection("agent_sessions").doc(phone).set({
+          chatId,
+          phone,
+          service,
+          userType:       (userData.userType as string | undefined) ?? webRole,
+          userId:         userDoc.id,
+          seniorId,
+          onboardingStep: "complete",
+          optedIn:        true,
+          optedOut:       false,
+          preferredLanguage,
+          createdAt:      new Date().toISOString(),
+          webOnboardingUid: webSessionSnap.data()?.uid ?? null,
+        });
+      } else {
+        await db.collection("agent_sessions").doc(phone).set({
+          chatId,
+          phone,
+          service,
+          userType:       webRole,
+          onboardingStep: firstStep,
+          optedIn:        true,
+          optedOut:       false,
+          preferredLanguage,
+          createdAt:      new Date().toISOString(),
+          webOnboardingUid: webSessionSnap.data()?.uid ?? null,
+        });
+      }
+
+      // Mark the web bridge as connected so the desktop/mobile tab can flip to
+      // the success state via its onSnapshot listener.
+      await webSessionRef.update({
+        status:      "connected",
+        connectedAt: admin.firestore.Timestamp.now(),
+        chatId,
+      }).catch(() => {/* non-critical */});
+
+      await initializeZepOnFirstContact(phone).catch((err) =>
+        console.error("Zep init failed (web bridge):", err)
+      );
+
+      if (service === "iMessage") await startTyping(chatId).catch(() => {});
+
+      let welcome: string;
+      if (isReturning) {
+        welcome = preferredLanguage === "es"
+          ? "¡Hola otra vez! Soy Cara. Me alegra verte de nuevo — ¿en qué te puedo ayudar hoy?"
+          : "Welcome back! It's Cara. Good to hear from you again — how can I help today?";
+      } else {
+        // Role-aware welcome — mirrors what handleAskRole sends so the user
+        // experiences the same conversational onboarding from message #1.
+        welcome = webRole === "caregiver"
+          ? (preferredLanguage === "es"
+              ? "¡Hola! Soy Cara — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Cómo te llamas?"
+              : "Hi! I'm Cara — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and everything happens right here.\n\nWhat's your name?")
+          : (preferredLanguage === "es"
+              ? "¡Hola! Soy Cara, tu coordinadora de cuidados. Me encantaría ayudarte.\n\n¿Cómo te llamas?"
+              : "Hi! I'm Cara, your care coordinator. I'd love to help.\n\nWhat's your name?");
+      }
+      await sendMessage(chatId, welcome);
+
+      if (service === "iMessage") shareContactCard(chatId).catch(() => {/* non-critical */});
+      return;
+    }
+
+    // Phone-possession check: send a 6-digit OTP that the real owner of this
+    // number will receive via their carrier. A spoofed sender can't read it.
+    // Session is created in verify_phone step; nothing else happens until the
+    // code comes back.
+    const otp = generateOtp();
     await db.collection("agent_sessions").doc(phone).set({
       chatId,
       phone,
       service,
       userType:       null,
-      onboardingStep: "ask_role",
+      onboardingStep: "verify_phone",
       optedIn:        true,
       optedOut:       false,
+      otp,
+      preferredLanguage,
       createdAt:      new Date().toISOString(),
     });
 
@@ -1521,12 +1712,7 @@ async function handleInbound(event: unknown): Promise<void> {
     );
 
     if (service === "iMessage") await startTyping(chatId).catch(() => {});
-    await sendMessage(chatId,
-      `Hi — I'm Cara. I help families find and manage care for aging parents, all through text. No app needed.\n\n` +
-      `Are you looking for care for someone, or are you a caregiver?\n\n` +
-      `1️⃣ I need care for someone\n` +
-      `2️⃣ I'm a caregiver`
-    );
+    await sendMessage(chatId, tr.otp_greeting(formatOtpForDisplay(otp.code), preferredLanguage));
     // Share contact card AFTER the first outbound message — Linq requires at least
     // one outbound message in history before the share endpoint accepts the call.
     if (service === "iMessage") shareContactCard(chatId).catch(() => {/* non-critical */});
@@ -1548,7 +1734,18 @@ async function handleInbound(event: unknown): Promise<void> {
     return;
   }
 
-  if (session.optedOut) return;
+  // START — opt back in (must run BEFORE the opted-out early return, otherwise
+  // opted-out users can never reach this handler).
+  if (session.optedOut) {
+    const startWords = new Set(["START", "UNSTOP", "RESUBSCRIBE", "YES", "SI", "SÍ"]);
+    if (startWords.has(norm)) {
+      await optInPhoneNumber(phone);
+      const lang = languageFromSession(session as unknown as Record<string, unknown>);
+      await sendMessage(chatId, tr.opt_in_welcome_back(lang));
+      return;
+    }
+    return;
+  }
 
   // ── Sticker / voice memo / media-only — no text to process ──────────────────
   // Stickers are inbound-only (API doesn't support sending them). Voice memos
@@ -1589,14 +1786,30 @@ async function handleInbound(event: unknown): Promise<void> {
           },
         }).catch(() => {});
       }
+
+      // Identify which non-onboarding flow was active so the user gets a
+      // contextual timeout message instead of the generic "session timed out".
+      // Names track the state-flag families defined in utils/sessionState.ts.
+      const flowKey: string | null =
+        (session as any).jobPostingStep        ? "job_posting"      :
+        (session as any).refundStep            ? "refund"           :
+        (session as any).modifyScheduleStep    ? "modify_schedule"  :
+        (session as any).clientSwapStep        ? "client_swap"      :
+        (session as any).healthcareFlowStep    ? "healthcare"       :
+        (session as any).collectingCredential  ? "credential"       :
+        (session as any).hireMode              ? "hire"             :
+        (session as any).pendingMatches        ? "matches"          :
+        (session as any).pendingTaskConfirm    ? "booking_confirm"  :
+        null;
+
+      const lang = languageFromSession(session as unknown as Record<string, unknown>);
       await clearAllStateFlags(phone, db);
       if (isOnboarding) {
-        await sendMessage(chatId,
-          "Your session timed out. No worries — I saved your progress!\n\n" +
-          "Reply RESUME to pick up where you left off, or START OVER to begin fresh."
-        );
+        await sendMessage(chatId, tr.session_timeout_onboarding(lang));
+      } else if (flowKey) {
+        await sendMessage(chatId, tr.session_timeout_flow(flowLabel(flowKey, lang), lang));
       } else {
-        await sendMessage(chatId, "Your previous session timed out — just text me if you'd like to continue.");
+        await sendMessage(chatId, tr.session_timeout_generic(lang));
       }
       return;
     }
@@ -1648,7 +1861,8 @@ async function handleInbound(event: unknown): Promise<void> {
   // STOP — works at any stage (CANCEL is NOT here — it cancels a visit, not the account)
   if (stopWords.has(norm)) {
     await optOutPhoneNumber(phone);
-    await sendMessage(chatId, "You've been unsubscribed from Cara messages. Reply START anytime to reactivate.");
+    const lang = languageFromSession(session as unknown as Record<string, unknown>);
+    await sendMessage(chatId, tr.opt_out_confirmation(lang));
     return;
   }
 
@@ -1670,16 +1884,111 @@ async function handleInbound(event: unknown): Promise<void> {
   cancelTriggerIfUserReplied(session.userId ?? phone, phone).catch(() => {});
 
   // ── Crisis detection — checked before everything else ──────────────────────
+  // Keyword fast-path identifies POTENTIAL crisis (sub-millisecond). For real
+  // hits we then run a 1.2s LLM verification to filter out quotes/jokes/
+  // hypotheticals — fail-safe to crisis on timeout/error.
   const crisis = detectCrisis(text);
+  const sessionLang = languageFromSession(session as unknown as Record<string, unknown>);
   if (crisis === "medical") {
-    await sendMessage(chatId, MEDICAL_RESPONSE);
-    logCrisisDetected(phone, "medical", text).catch(() => {});
-    return;
+    if (await isLikelyRealCrisis(text, "medical")) {
+      await sendMessage(chatId, tr.crisis_medical(sessionLang));
+      logCrisisDetected(phone, "medical", text).catch(() => {});
+      return;
+    }
+    console.info("crisisDetector: medical keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
   }
   if (crisis === "emotional") {
-    await sendMessage(chatId, EMOTIONAL_RESPONSE);
-    logCrisisDetected(phone, "emotional", text).catch(() => {});
-    return;
+    if (await isLikelyRealCrisis(text, "emotional")) {
+      await sendMessage(chatId, tr.crisis_emotional(sessionLang));
+      logCrisisDetected(phone, "emotional", text).catch(() => {});
+      return;
+    }
+    console.info("crisisDetector: emotional keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
+  }
+
+  // ── Persona-shift resolution ────────────────────────────────────────────────
+  // If we previously asked "is this still about [seniorName]?", interpret
+  // this inbound as the answer and either resume or block the original action.
+  {
+    const pending = (session as any).pendingPersonaResolve as {
+      originalText: string;
+      seniorName?:  string;
+      detectedAt:   string;
+    } | undefined;
+    if (pending) {
+      // Quick yes/no classify — was the user confirming the session person or not?
+      let isSame = false;
+      try {
+        const verdict = await quickComplete(
+          `Cara asked: "Is this still about ${pending.seniorName ?? "the person on file"}?" ` +
+          "Reply YES if the user confirms it is still about them. " +
+          "Reply NO if the user says it is a different person or family. " +
+          "Reply UNCLEAR if you cannot tell. Only reply one word.",
+          text,
+          { maxTokens: 5 },
+        );
+        const v = verdict.trim().toUpperCase();
+        isSame = v.startsWith("Y");
+        if (v.startsWith("U")) {
+          await sendMessage(chatId,
+            `Just to be sure — is this message about ${pending.seniorName ?? "the person on file"}? Reply YES or NO.`,
+          );
+          return;
+        }
+      } catch {
+        await sendMessage(chatId,
+          `Just to be sure — is this message about ${pending.seniorName ?? "the person on file"}? Reply YES or NO.`,
+        );
+        return;
+      }
+
+      await db.collection("agent_sessions").doc(phone).update({
+        pendingPersonaResolve: admin.firestore.FieldValue.delete(),
+      }).catch(() => {});
+
+      if (!isSame) {
+        await sendMessage(chatId,
+          `Got it — different person. I keep one care plan per phone number, so I can't mix them up.\n\n` +
+          `If you want a separate setup, the person you're asking about needs to text me from their own phone. ` +
+          `Or ask whoever set this up for ${pending.seniorName ?? "the person on file"} to add you as a family member, ` +
+          `which lets you get care updates without overwriting their plan.`,
+        );
+        return;
+      }
+      // isSame === true → fall through and process the ORIGINAL text as if just received
+      text = pending.originalText;
+    }
+  }
+
+  // ── Persona shift detection — flag and pause when a different person seems to be texting ─
+  // Only relevant for complete client sessions; onboarding flows already self-reset via START OVER.
+  if (session.onboardingStep === "complete" && session.userType === "client") {
+    const sessionSeniorName =
+      ((session as any).onboardingData?.seniorName as string | undefined) ??
+      ((session as any).seniorName as string | undefined);
+    const shift = await detectPersonaShift({
+      text,
+      sessionSenior: sessionSeniorName,
+      sessionRole:   session.userType,
+    }).catch(() => null);
+
+    if (shift) {
+      await db.collection("agent_sessions").doc(phone).update({
+        pendingPersonaResolve: {
+          originalText: text,
+          seniorName:   sessionSeniorName ?? "",
+          detectedAt:   new Date().toISOString(),
+        },
+      }).catch(() => {});
+      await sendMessage(chatId,
+        sessionSeniorName
+          ? `I see this phone is set up for ${sessionSeniorName}'s care plan, but your message sounds like it's about someone else. ` +
+            `Is this still about ${sessionSeniorName}? Reply YES to continue, or NO if it's a different family member.`
+          : `Quick check — your message sounds like it might be about someone other than the person I have on file for this phone. ` +
+            `Is this for the same person? Reply YES or NO.`,
+      );
+      return;
+    }
   }
 
   // ── Bereavement detection — before intent classification ───────────────────
@@ -1748,14 +2057,63 @@ async function handleInbound(event: unknown): Promise<void> {
     );
   }
 
+  // ── Profile completeness gate ────────────────────────────────────────────
+  // Catches "phone is in the system but onboarding never completed" — sandbox→
+  // live migrations, admin-added stubs, abandoned flows. Without this, the
+  // session falls through to qaAgent which sees partial linkage to other
+  // people's data and produces contradictory replies ("I have your profile" /
+  // "key details haven't been filled in"). Skipped if the user is actively
+  // mid-onboarding (existing flow handles them) or already onboarded.
+  {
+    const inOnboardingFlow = session.onboardingStep && session.onboardingStep !== "complete";
+    if (!inOnboardingFlow) {
+      const completeness = classifyCompleteness(session);
+      if (completeness === "PARTIAL") {
+        const offerState = (session as any).onboardingOfferState as "pending" | "declined" | undefined;
+
+        if (offerState === "pending") {
+          const reply = await classifyOfferReply(text);
+          if (reply === "accept") {
+            await markOfferAccepted(phone);
+            await sendMessage(chatId,
+              "Great — let's get you set up.\n\n" +
+              "Are you looking for care for a loved one, or are you a caregiver?\n\n" +
+              "1️⃣  I need care for someone\n" +
+              "2️⃣  I'm a caregiver looking for work"
+            );
+            return;
+          }
+          if (reply === "decline") {
+            await markOfferDeclined(phone);
+            await sendMessage(chatId,
+              "No problem — we can do it whenever you're ready. What can I help with right now?"
+            );
+            return;
+          }
+          // QUESTION → fall through to QA (cross-entity context will be suppressed),
+          // leaving offerState=pending so the offer is implicitly still on the table.
+        } else if (!offerState || shouldReoffer(session)) {
+          await sendOnboardingOffer(phone, chatId, session);
+          return;
+        }
+        // offerState === "declined" and not yet time to re-offer → fall through to QA
+        // with cross-entity context suppressed (signaled via session flag below).
+        (session as any).__unconfirmedIdentity = true;
+      }
+    }
+  }
+
   // ── ONBOARDING gate — route to state machine if not complete ─────────────
   // If the session exists but has no onboardingStep (e.g. created by an old
   // initiateCara that only stored chatId/userType), try to recover account data
   // from the users collection before routing. Without userId/seniorId the QA agent
   // will crash with an invalid Firestore path.
-  // Also catches the case where onboardingStep is non-complete (e.g. "ask_role")
-  // but userId is missing — the session was corrupted, so recover it first.
-  if ((!session.onboardingStep || session.onboardingStep !== "complete") && !session.userId) {
+  // Recovers corrupted sessions: any missing userId triggers a users-collection
+  // lookup. Previously only ran when step !== "complete" — but "complete with
+  // no userId" is also corrupt (e.g. signup completed then user account write
+  // failed) and was producing downstream crashes when qaAgent tried to load
+  // senior context from an empty seniorId.
+  if (!session.userId) {
     const userQuery = await db.collection("users").where("phone", "==", phone).limit(1).get();
     if (!userQuery.empty) {
       const userDoc   = userQuery.docs[0];
@@ -1772,15 +2130,39 @@ async function handleInbound(event: unknown): Promise<void> {
       session.userId         = userId;
       (session as any).seniorId      = seniorId;
       session.onboardingStep = "complete";
-    } else {
-      // No user account found — start onboarding from the beginning
+    } else if (!session.onboardingStep || session.onboardingStep !== "complete") {
+      // No user account found and not complete — start onboarding from the beginning
       await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "ask_role" });
       session.onboardingStep = "ask_role";
+    } else {
+      // Complete but no user record and no users-collection match — session
+      // is orphaned. Tell the user something went wrong and offer a restart
+      // rather than crashing through qaAgent.
+      await sendMessage(chatId,
+        "Something's off with this account — I can't find your details. " +
+        "Reply START OVER and I'll get you set up again."
+      );
+      console.error("handleInbound: complete session with no userId and no users record", { phone });
+      return;
     }
   }
 
   const step = session.onboardingStep ?? "";
   if (step && step !== "complete") {
+    // Soft-resume ack — when a user comes back mid-onboarding after a notable
+    // gap (>=10 min, but inside the 30-min state-expiry window), prepend a
+    // one-liner so they know we picked up where they left off instead of
+    // continuing mid-question as if nothing happened. Skipped for verify_phone
+    // because the OTP context speaks for itself.
+    const previousInboundAt = (session as any).lastInboundAt as string | undefined;
+    if (previousInboundAt && step !== "verify_phone") {
+      const gapMs = Date.now() - new Date(previousInboundAt).getTime();
+      if (gapMs >= 10 * 60 * 1000 && gapMs <= 30 * 60 * 1000) {
+        const lang = languageFromSession(session as unknown as Record<string, unknown>);
+        await sendMessage(chatId, tr.welcome_back(lang));
+      }
+    }
+
     // Log every onboarding message to Zep — this is where names, conditions,
     // and care needs are shared, so Zep starts building the knowledge graph now
     const onboardingZepThreadId = (session as any).zepThreadId as string | undefined;
@@ -1956,7 +2338,7 @@ async function handleInbound(event: unknown): Promise<void> {
 
     const KEYWORDS: Record<string, () => Promise<void>> = {
       ARRIVED:    () => handleArrived(phone, chatId, session),
-      DONE:       () => handleDone(phone, chatId, session),
+      DONE:       () => handleDone(phone, chatId, session, text),
       LATE:       () => handleRunningLate(phone, chatId),
       ISSUE:      () => handleIssue(phone, chatId),
       CONFIRM:    async () => {
@@ -2005,6 +2387,25 @@ async function handleInbound(event: unknown): Promise<void> {
       },
       PASS:       async () => {
         await handleCaregiverAvailabilityReply(phone, session.caregiverId ?? "", "", chatId, "PASS");
+      },
+      PAYOUT:     async () => {
+        if (!session.caregiverId) {
+          await sendMessage(chatId, "I couldn't find your caregiver profile. Please contact support.");
+          return;
+        }
+        const { startInstantPayout } = await import("../agents/instantPayoutHandler");
+        await startInstantPayout(session.caregiverId, phone, chatId);
+      },
+      REACTIVATE: async () => {
+        if (!session.caregiverId) return;
+        await handleCaregiverProfileUpdate(
+          session.caregiverId,
+          phone,
+          text,
+          session as Record<string, unknown>,
+          chatId,
+          "reactivate",
+        );
       },
     };
 
@@ -2064,6 +2465,22 @@ async function handleInbound(event: unknown): Promise<void> {
         // fall through to normal routing
       } else {
         await handleShiftConfirmation(phone, chatId, text, session);
+        return;
+      }
+    }
+
+    // Day-before CLIENT shift confirmation reply (CONFIRM / CANCEL / question)
+    if ((session as any).pendingClientShiftConfirm) {
+      const csExpiry = (session as any).stateExpiresAt as string | undefined;
+      if (csExpiry && new Date(csExpiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingClientShiftConfirm: admin.firestore.FieldValue.delete(),
+          stateExpiresAt:            admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+        // fall through to normal routing
+      } else {
+        const { handleClientShiftConfirm } = await import("../agents/clientShiftConfirmHandler");
+        await handleClientShiftConfirm(phone, chatId, text, session as unknown as Record<string, unknown>);
         return;
       }
     }
@@ -2382,6 +2799,86 @@ async function handleInbound(event: unknown): Promise<void> {
         if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
       }
       return;
+    }
+
+    // ── Caregiver-initiated shift cancellation — multi-step state machine ─
+    if ((session as any).cancelStep) {
+      const expiry = (session as any).stateExpiresAt as string | undefined;
+      if (expiry && new Date(expiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({
+          cancelStep:          admin.firestore.FieldValue.delete(),
+          cancelCandidates:    admin.firestore.FieldValue.delete(),
+          cancelShiftId:       admin.firestore.FieldValue.delete(),
+          cancelShiftDate:     admin.firestore.FieldValue.delete(),
+          cancelShiftClientId: admin.firestore.FieldValue.delete(),
+          stateExpiresAt:      admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+      } else {
+        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+        try {
+          const cgDoc = session.caregiverId
+            ? await db.collection("caregivers").doc(session.caregiverId).get()
+            : null;
+          await handleCaregiverCancelShift(
+            session.caregiverId ?? phone,
+            cgDoc?.data()?.name ?? "Caregiver",
+            phone,
+            text,
+            session as Record<string, unknown>,
+            chatId,
+          );
+        } finally {
+          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+        }
+        return;
+      }
+    }
+
+    // ── Profile update flow (rate / skills / bio / photo / pause / reactivate)
+    if ((session as any).profileUpdateStep) {
+      const expiry = (session as any).stateExpiresAt as string | undefined;
+      if (expiry && new Date(expiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({
+          profileUpdateStep:  admin.firestore.FieldValue.delete(),
+          profileUpdateField: admin.firestore.FieldValue.delete(),
+          profileUpdateValue: admin.firestore.FieldValue.delete(),
+          stateExpiresAt:     admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+      } else if (session.caregiverId) {
+        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+        try {
+          await handleCaregiverProfileUpdate(
+            session.caregiverId,
+            phone,
+            text,
+            session as Record<string, unknown>,
+            chatId,
+          );
+        } finally {
+          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+        }
+        return;
+      }
+    }
+
+    // ── PAYOUT instant-payout YES/NO confirmation ──────────────────────────
+    if ((session as any).pendingInstantPayoutConfirm) {
+      const setAt = (session as any).pendingInstantPayoutConfirm as string;
+      const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      if (setAt < tenMinAgo) {
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingInstantPayoutConfirm: admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+      } else {
+        const { handleInstantPayoutConfirm } = await import("../agents/instantPayoutHandler");
+        await handleInstantPayoutConfirm(
+          session.caregiverId ?? phone,
+          phone,
+          text,
+          chatId,
+        );
+        return;
+      }
     }
 
     // ── Caregiver NLU fallback — handle natural-language keyword variants ──
@@ -3165,6 +3662,55 @@ async function handleInbound(event: unknown): Promise<void> {
         return;
       }
 
+      // ── Mid-match refilter ─────────────────────────────────────────────
+      // "show me cheaper ones", "any with dementia experience", "anyone Saturday?"
+      // — detect criterion changes and re-run matching with the new filters.
+      if (isFresh) {
+        const { detectMatchRefilter } = await import("../utils/matchRefilterDetector");
+        const refilter = await detectMatchRefilter(text).catch(() => null);
+        if (refilter) {
+          const baseIntake = ((session as any).onboardingData ?? {}) as Record<string, unknown>;
+          const mergedIntake: Record<string, unknown> = { ...baseIntake };
+
+          // Merge refilter overrides into intake
+          if (refilter.skills?.length) {
+            const existing = (baseIntake.careNeeds as string[] | undefined) ?? [];
+            mergedIntake.careNeeds = Array.from(new Set([...existing, ...refilter.skills]));
+          }
+          if (refilter.languages?.length) {
+            mergedIntake.languagePreference = refilter.languages[0];
+          }
+          if (refilter.genderPreference) {
+            mergedIntake.genderPreference = refilter.genderPreference;
+          }
+          if (refilter.rate) {
+            mergedIntake.rateDirection = refilter.rate.direction;
+          }
+          if (refilter.availability) {
+            mergedIntake.availabilityOverride = refilter.availability;
+          }
+          if (refilter.distance) {
+            mergedIntake.distanceDirection = refilter.distance.direction;
+          }
+          if (refilter.experienceYears?.min) {
+            mergedIntake.minExperienceYears = refilter.experienceYears.min;
+          }
+
+          await db.collection("agent_sessions").doc(phone).update({
+            pendingMatches:      admin.firestore.FieldValue.delete(),
+            pendingMatchesSetAt: admin.firestore.FieldValue.delete(),
+            lastRefilterSummary: refilter.summary,
+          }).catch(() => {});
+
+          await sendMessage(chatId, `Searching for ${refilter.summary} — coming up.`);
+
+          // Fire matching with merged intake; runs async with its own send.
+          const { runMatchingForClient } = await import("../agents/matchingAgent");
+          await runMatchingForClient(phone, chatId, mergedIntake, session as unknown as Record<string, unknown>);
+          return;
+        }
+      }
+
       // User isn't picking from the list — if their intent is to start a new
       // search (FIND_CAREGIVER, REBOOK_REQUEST) or the list is stale, clear
       // the lingering state so it doesn't keep hijacking unrelated messages.
@@ -3644,6 +4190,72 @@ async function handleInbound(event: unknown): Promise<void> {
           session as Record<string, unknown>,
           chatId
         );
+      } finally {
+        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+      }
+      return;
+    }
+
+    // ── CANCEL_SHIFT — caregiver proactively cancels one of their shifts ───
+    if (intent === "CANCEL_SHIFT" && session.userType === "caregiver") {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try {
+        const cgDoc = session.caregiverId
+          ? await db.collection("caregivers").doc(session.caregiverId).get()
+          : null;
+        await handleCaregiverCancelShift(
+          session.caregiverId ?? phone,
+          cgDoc?.data()?.name ?? "Caregiver",
+          phone,
+          text,
+          session as Record<string, unknown>,
+          chatId,
+        );
+      } finally {
+        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+      }
+      return;
+    }
+
+    // ── Caregiver profile updates (rate / skills / bio / photo / pause / reactivate) ──
+    {
+      const profileField = profileFieldFromIntent(intent) as ProfileUpdateField | undefined;
+      if (profileField && session.userType === "caregiver" && session.caregiverId) {
+        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+        try {
+          // Seed the session state with the requested field and entry step so the
+          // handler enters "collect" cleanly.
+          await db.collection("agent_sessions").doc(phone).update({
+            profileUpdateStep:  "collect",
+            profileUpdateField: profileField,
+            stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+          });
+          const enrichedSession = {
+            ...(session as Record<string, unknown>),
+            profileUpdateStep:  "collect",
+            profileUpdateField: profileField,
+          };
+          await handleCaregiverProfileUpdate(
+            session.caregiverId,
+            phone,
+            text,
+            enrichedSession,
+            chatId,
+            profileField,
+          );
+        } finally {
+          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+        }
+        return;
+      }
+    }
+
+    // ── INSTANT_PAYOUT — PAYOUT keyword / "cash out now" / etc. ────────────
+    if (intent === "INSTANT_PAYOUT" && session.userType === "caregiver" && session.caregiverId) {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try {
+        const { startInstantPayout } = await import("../agents/instantPayoutHandler");
+        await startInstantPayout(session.caregiverId, phone, chatId);
       } finally {
         if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
       }
@@ -4180,22 +4792,33 @@ export const linqWebhook = functions
 
   try {
     const webhookSecret = process.env.LINQ_WEBHOOK_SECRET;
-    if (webhookSecret) {
-      const timestamp = req.headers["x-webhook-timestamp"] as string ?? "";
-      const signature = req.headers["x-webhook-signature"] as string ?? "";
-      const rawBody   = (req as any).rawBody as Buffer ?? Buffer.from(JSON.stringify(req.body));
-      if (!verifySignature(rawBody, timestamp, signature, webhookSecret)) {
-        console.warn("linqWebhook: invalid signature — ignoring");
-        sendOk();
-        return;
-      }
-      // FIX 9 — reject stale events (replay attack protection)
-      const tsNum = parseInt(timestamp, 10);
-      if (!isNaN(tsNum) && Math.abs(Date.now() / 1000 - tsNum) > 300) {
-        console.warn("linqWebhook: stale timestamp — ignoring");
-        sendOk();
-        return;
-      }
+    if (!webhookSecret) {
+      // Fail closed. If the secret is unset, we cannot verify any inbound event,
+      // which means replays, spoofed senders, and signature tampering are all
+      // accepted as authentic. A missing secret is a deploy-time misconfig, not
+      // a runtime condition we degrade through. Return 500 so Linq retries until
+      // an operator notices and the secret is restored.
+      console.error("linqWebhook: LINQ_WEBHOOK_SECRET is not set — rejecting all inbound until configured");
+      res.status(500).send("webhook secret not configured");
+      sent = true;
+      return;
+    }
+
+    const timestamp = req.headers["x-webhook-timestamp"] as string ?? "";
+    const signature = req.headers["x-webhook-signature"] as string ?? "";
+    const rawBody   = (req as any).rawBody as Buffer ?? Buffer.from(JSON.stringify(req.body));
+    if (!verifySignature(rawBody, timestamp, signature, webhookSecret)) {
+      console.warn("linqWebhook: invalid signature — ignoring");
+      sendOk();
+      return;
+    }
+    // Reject stale events (replay attack protection). Enforced regardless of
+    // signature outcome above — both must pass.
+    const tsNum = parseInt(timestamp, 10);
+    if (!isNaN(tsNum) && Math.abs(Date.now() / 1000 - tsNum) > 300) {
+      console.warn("linqWebhook: stale timestamp — ignoring");
+      sendOk();
+      return;
     }
 
     const event = req.body;

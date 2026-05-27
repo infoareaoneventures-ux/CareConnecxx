@@ -349,6 +349,11 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
           if (cgPhone) {
             const { advanceOnboardingStep } = await import("./agents/onboardingConversation");
             await advanceOnboardingStep(cgPhone, "background_check", "");
+            // Flag so any follow-up reply routes to qaAgent with BG-check context
+            await db.collection("agent_sessions").doc(cgPhone).update({
+              pendingBgCheckAck:      "clear",
+              pendingBgCheckAckSetAt: new Date().toISOString(),
+            }).catch(() => {});
           }
         } catch (err) {
           console.error("advanceOnboardingStep(background_check) error:", err);
@@ -418,6 +423,10 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
               sourceAgent: "checkr_status",
               canDrop:     true,
             });
+            await db.collection("agent_sessions").doc(cgData.phone).update({
+              pendingBgCheckAck:      "review",
+              pendingBgCheckAckSetAt: new Date().toISOString(),
+            }).catch(() => {});
           }
         } catch (err) {
           console.error("admin_alerts write error (consider):", err);
@@ -455,6 +464,10 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
               sourceAgent: "checkr_status",
               canDrop:     true,
             });
+            await db.collection("agent_sessions").doc(cgData.phone).update({
+              pendingBgCheckAck:      "suspended",
+              pendingBgCheckAckSetAt: new Date().toISOString(),
+            }).catch(() => {});
           }
         } catch (err) {
           console.error("admin_alerts write error (suspended):", err);

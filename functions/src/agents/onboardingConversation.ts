@@ -10,6 +10,8 @@ import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
 import { pushOnboardingDataToZep, addBusinessDataToZep, getZepUserId } from "../memory/zepClient";
 import { buildAndSaveJobPost } from "./buildJobPost";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { generateOtp, verifyOtp, formatOtpForDisplay, OtpState } from "../utils/phoneVerification";
+import { languageFromSession, t as tr } from "../utils/language";
 
 const db = admin.firestore();
 
@@ -59,6 +61,38 @@ async function isQuestionOrOther(text: string): Promise<boolean> {
     text
   );
   return result.toUpperCase().startsWith("Y");
+}
+
+// ── Mid-flow role-switch detector ────────────────────────────────────────────
+// Catches the case where someone realized halfway through onboarding that they
+// picked the wrong role ("wait, I'm actually a caregiver", "no I'm looking for
+// care for my mom"). Returns the role they want to switch TO, or null.
+
+async function detectRoleSwitch(
+  text:        string,
+  currentRole: "client" | "caregiver" | null,
+): Promise<"client" | "caregiver" | null> {
+  if (!currentRole) return null;
+  if (text.trim().length < 6) return null; // too short to be a switch
+  const raw = await parseWithClaude(
+    `The user is mid-onboarding as a ${currentRole}. Reply with JSON: ` +
+    "{\"switchTo\": \"client\" | \"caregiver\" | \"none\"}. " +
+    "Use \"client\" if they are clearly saying they need care for a loved one (not their own job). " +
+    "Use \"caregiver\" if they are clearly saying they are a caregiver looking for work. " +
+    `Use \"none\" if their message is just answering the current question or is ambiguous. ` +
+    "Only flag clear role-switch intent; do NOT flag a client mentioning they have a caregiver background, " +
+    "or a caregiver mentioning their own elderly parent in passing.",
+    text,
+  );
+  if (raw === "__parse_error__" || !raw.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(raw) as { switchTo?: string };
+    if (parsed.switchTo === "client" && currentRole !== "client") return "client";
+    if (parsed.switchTo === "caregiver" && currentRole !== "caregiver") return "caregiver";
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Mid-flow correction detector ─────────────────────────────────────────────
@@ -220,6 +254,30 @@ export async function handleOnboardingStep(
     }
   }
 
+  // Mid-flow role switch: "wait I'm actually a caregiver" / "no I need care, not a job".
+  // Previously the only escape hatch was START OVER which wiped all progress.
+  // Now: detect the intent, confirm before flipping role, and reset onboardingData
+  // (different role = different fields, so previous answers don't transfer).
+  if (step !== "ask_role" && step !== "verify_phone" && !step.endsWith("_send_payment")
+      && !step.endsWith("_awaiting_payment") && !step.endsWith("_awaiting_stripe")
+      && !step.endsWith("_awaiting_bgcheck") && !step.endsWith("_awaiting_membership")
+      && !step.endsWith("_awaiting_documents") && !step.endsWith("_awaiting_photo")) {
+    const switchTo = await detectRoleSwitch(text, session.userType ?? null);
+    if (switchTo) {
+      await updateSession(phone, {
+        onboardingStep: "ask_role",
+        userType:        null,
+        onboardingData:  {},
+      });
+      await sendMessage(chatId,
+        switchTo === "caregiver"
+          ? "Got it — switching you over. You're a caregiver looking for work, right? Reply 2 to confirm, or 1 if you actually meant client."
+          : "Got it — switching you over. You need care for someone, right? Reply 1 to confirm, or 2 if you actually meant caregiver."
+      );
+      return;
+    }
+  }
+
   // Mid-flow correction: "actually my name is X", "sorry, my city is Y"
   // Only applies once user has started answering (not on ask_role)
   if (step !== "ask_role" && !step.endsWith("_send_payment") && !step.endsWith("_awaiting_payment")
@@ -256,6 +314,7 @@ export async function handleOnboardingStep(
 
   // Route to the appropriate step handler
   switch (step) {
+    case "verify_phone":          return handleVerifyPhone(phone, chatId, text, session);
     case "ask_role":              return handleAskRole(phone, chatId, text);
     case "client_ask_name":       return handleClientAskName(phone, chatId, text, session);
     case "client_ask_senior":     return handleClientAskSenior(phone, chatId, text, session);
@@ -288,7 +347,7 @@ export async function handleOnboardingStep(
     case "job_ask_pay_method":   return handleJobAskPayMethod(phone, chatId, text, session);
     case "job_ask_description":  return handleJobAskDescription(phone, chatId, text, session);
     case "job_confirm_post":     return handleJobConfirmPost(phone, chatId, text, session);
-    case "caregiver_ask_name":        return handleCaregiverAskName(phone, chatId, text);
+    case "caregiver_ask_name":        return handleCaregiverAskName(phone, chatId, text, session);
     case "caregiver_ask_location":    return handleCaregiverAskLocation(phone, chatId, text, session);
     case "caregiver_ask_experience":  return handleCaregiverAskExperience(phone, chatId, text, session);
     case "caregiver_ask_specialties": return handleCaregiverAskSpecialties(phone, chatId, text, session);
@@ -312,7 +371,7 @@ export async function handleOnboardingStep(
     case "caregiver_ask_mvr":          return handleCaregiverAskMvr(phone, chatId, text, session);
     case "caregiver_send_membership":  return handleCaregiverSendMembership(phone, chatId, session);
     case "caregiver_awaiting_membership":
-      await handleCaregiverResendMembership(phone, chatId, session);
+      await handleCaregiverResendMembership(phone, chatId, session, text);
       return;
     case "caregiver_send_bgcheck":    return handleCaregiverSendBgcheck(phone, chatId, session);
     case "caregiver_awaiting_bgcheck": {
@@ -332,6 +391,65 @@ export async function handleOnboardingStep(
     default:
       await sendMessage(chatId, "I think something went sideways. Reply START OVER to begin fresh.");
   }
+}
+
+// ── verify_phone ──────────────────────────────────────────────────────────────
+// Phone-possession check. The session was created with an OTP that we texted
+// to the FROM number; only the real owner of that number receives it. We block
+// progression past this step until they reply with the code.
+
+async function handleVerifyPhone(
+  phone:   string,
+  chatId:  string,
+  text:    string,
+  session: AgentSession,
+): Promise<void> {
+  const norm = text.trim().toUpperCase();
+  const otp  = (session as unknown as { otp?: OtpState }).otp;
+  const lang = languageFromSession(session as unknown as Record<string, unknown>);
+
+  // If the message looks more like a question than an OTP code or RESEND/STOP keyword,
+  // answer it and re-prompt instead of failing the OTP attempt.
+  const looksLikeCode = /^\s*\d{4,6}\s*$/.test(text);
+  if (!looksLikeCode && norm !== "RESEND" && norm !== "START OVER" && norm !== "RESTART" && await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "Please reply with the 6-digit verification code I just texted you. (Reply RESEND if you didn't get it.)");
+    return;
+  }
+
+  // RESEND — issue a new code (rate-limited to once per 30s by checking issuedAt)
+  if (norm === "RESEND") {
+    const issuedMs = otp?.issuedAt ? new Date(otp.issuedAt).getTime() : 0;
+    if (Date.now() - issuedMs < 30_000) {
+      await sendMessage(chatId, tr.otp_resend_too_soon(lang));
+      return;
+    }
+    const fresh = generateOtp();
+    await updateSession(phone, { otp: fresh });
+    await sendMessage(chatId, tr.otp_resend_new_code(formatOtpForDisplay(fresh.code), lang));
+    return;
+  }
+
+  const result = verifyOtp(text, otp);
+  if (result.status === "ok") {
+    await updateSession(phone, {
+      onboardingStep: "ask_role",
+      otp:            null,
+    });
+    await sendMessage(chatId, tr.otp_verified_role_question(lang));
+    return;
+  }
+  if (result.status === "expired" || result.status === "locked" || result.status === "no_state") {
+    const fresh = generateOtp();
+    await updateSession(phone, { otp: fresh });
+    await sendMessage(chatId, tr.otp_fresh_code_after_expiry(formatOtpForDisplay(fresh.code), lang));
+    return;
+  }
+  // wrong — increment attempts, prompt again
+  const attempts = (otp?.attempts ?? 0) + 1;
+  await updateSession(phone, { otp: { ...otp!, attempts } });
+  await sendMessage(chatId, tr.otp_wrong(result.attemptsLeft, lang));
 }
 
 // ── ask_role ──────────────────────────────────────────────────────────────────
@@ -682,7 +800,13 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
 
 // ── CAREGIVER FLOW ────────────────────────────────────────────────────────────
 
-async function handleCaregiverAskName(phone: string, chatId: string, text: string): Promise<void> {
+async function handleCaregiverAskName(phone: string, chatId: string, text: string, session?: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session ?? ({ onboardingData: {} } as AgentSession));
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "What's your name?");
+    return;
+  }
   const name = await parseWithClaude(
     "Extract the full name from this message. Reply with just the name, nothing else.",
     text
@@ -703,6 +827,12 @@ async function handleCaregiverAskName(phone: string, chatId: string, text: strin
 }
 
 async function handleCaregiverAskLocation(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "What city and zip code do you work in?");
+    return;
+  }
   const raw = await parseWithClaude(
     'Extract city and zipCode from this message. Reply in JSON: {"city":"...","zipCode":"..."}',
     text
@@ -725,6 +855,12 @@ async function handleCaregiverAskLocation(phone: string, chatId: string, text: s
 }
 
 async function handleCaregiverAskExperience(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "How many years of caregiving experience do you have, and do you hold any certifications?");
+    return;
+  }
   const raw = await parseWithClaude(
     'Extract yearsExperience (number) and certifications (array of strings) from this message. Reply in JSON: {"yearsExperience":0,"certifications":[]}',
     text
@@ -746,6 +882,12 @@ async function handleCaregiverAskExperience(phone: string, chatId: string, text:
 }
 
 async function handleCaregiverAskSpecialties(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "What types of care do you specialize in? (e.g. dementia, mobility, post-surgery, companionship)");
+    return;
+  }
   const raw = await parseWithClaude(
     "Extract a list of care specialties from this message. Reply in JSON: {\"specialties\":[\"...\",\"...\"]}",
     text
@@ -765,6 +907,12 @@ async function handleCaregiverAskSpecialties(phone: string, chatId: string, text
 }
 
 async function handleCaregiverAskAvailability(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "What days and hours are you generally available to work?");
+    return;
+  }
   const raw = await parseWithClaude(
     "Extract availability days (array of strings) and hours (string) from this message. Reply in JSON: {\"days\":[\"Monday\",\"Tuesday\"],\"hours\":\"9am-5pm\"}",
     text
@@ -781,6 +929,12 @@ async function handleCaregiverAskAvailability(phone: string, chatId: string, tex
 }
 
 async function handleCaregiverAskRate(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "What's your hourly rate? Just a number works (e.g. \"22\").");
+    return;
+  }
   const raw = await parseWithClaude(
     "Extract the hourly rate as a number from this message. Reply with just the number (e.g. 22). No dollar sign.",
     text
@@ -827,7 +981,15 @@ async function handleCaregiverAskJobType(phone: string, chatId: string, text: st
 }
 
 async function handleCaregiverAskEmail(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  // For email, only treat as question if it doesn't even look like an email attempt —
+  // skip the isQuestionOrOther LLM hop when there's a "@" in the trimmed text.
   const email = text.trim().toLowerCase();
+  if (!email.includes("@") && await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "What's your email address?");
+    return;
+  }
   if (!/\S+@\S+\.\S+/.test(email)) {
     await sendMessage(chatId, "That doesn't look like a valid email. Could you double-check? (e.g. name@example.com)");
     return;
@@ -840,6 +1002,14 @@ async function handleCaregiverAskEmail(phone: string, chatId: string, text: stri
 }
 
 async function handleCaregiverAskBio(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  // Only treat as question if the message is short (< 60 chars) — a bio that's
+  // also a question is unlikely at this stage.
+  if (text.trim().length < 60 && text.trim().toLowerCase() !== "skip" && await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "Tell me about your approach to care in a sentence or two — or reply SKIP.");
+    return;
+  }
   const bio = text.trim().toLowerCase() === "skip" || text.trim().length < 10 ? "" : text.trim();
   await mergeOnboardingData(phone, { bio });
   await updateSession(phone, { onboardingStep: "caregiver_send_photo" });
@@ -918,7 +1088,13 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
   await sendMessage(chatId, { parts: [{ type: "link", url: checkoutUrl, value: "💳 Pay Now →" }] });
 }
 
-async function handleCaregiverResendMembership(phone: string, chatId: string, session: AgentSession): Promise<void> {
+async function handleCaregiverResendMembership(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
+  // If the caregiver replied with a question while waiting on Stripe, answer it
+  // before resending the link.
+  if (text && await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+  }
   const url = (session as any).membershipCheckoutUrl as string | undefined;
   if (url) {
     await sendMessage(chatId, "Tap the link below to complete your membership payment:");
@@ -1385,6 +1561,25 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           timestamp:                    new Date().toISOString(),
         },
       }).catch((err) => console.error("addBusinessDataToZep caregiver error:", err));
+
+      // Warm "you're approved" milestone message before handing off to permissions
+      const firstName = ((d.name ?? "") as string).split(" ")[0] || "you";
+      const specialties = Array.isArray(d.specialties) ? (d.specialties as string[]).join(", ") : "";
+      const activationMsg = await generateCaraMessage({
+        audience: "caregiver",
+        context:
+          `Caregiver first name: ${firstName}. ` +
+          `Their background check came back clear and they just finished setting up payouts — they're now fully approved and active. ` +
+          `${specialties ? `Their specialties: ${specialties}. ` : ""}` +
+          `Write a warm 2-3 sentence "you're approved" celebration message. Reassure them their profile is live, ` +
+          `mention they'll start getting matched with families soon, and that I'll text them as new jobs come in. ` +
+          `Sound genuinely happy for them.`,
+        fallback:
+          `🎉 You're approved, ${firstName}! Your profile is live and I'll start matching you with families that need help. ` +
+          `Watch for job alerts here — reply YES to any that interest you. Welcome to CareConnex!`,
+        maxTokens: 180,
+      });
+      await sendMessage(chatId, activationMsg);
 
       const { sendCaregiverPermissionsFlow } = await import("./permissionsConversation");
       await sendCaregiverPermissionsFlow(phone, chatId, session, d.name as string);

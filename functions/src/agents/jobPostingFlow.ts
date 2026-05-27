@@ -431,6 +431,17 @@ async function handleJpAskDescription(
 async function handleJpConfirmPost(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    const jobData = await getJobData(phone);
+    const summary = buildJobSummary(jobData, session);
+    await sendMessage(chatId,
+      `Here's your job post:\n\n${summary}\n\nReply YES to post it for caregivers to see, or NO to start over.`
+    );
+    return;
+  }
+
   const norm = await parseWithClaude(
     'The user is confirming or declining to post a job. ' +
     '"yes", "yep", "post it", "go ahead", "do it", "confirm", "looks good", "perfect" = YES. ' +

@@ -106,10 +106,13 @@ export { upcomingVisitReminder } from './scheduled/upcomingVisitReminder';
 export { sendShiftTaskNudges } from './scheduled/shiftTaskNudges';
 export { sendPreShiftFamilyCheckin } from './scheduled/preShiftFamilyCheckin';
 export { sendDayBeforeShiftReminders } from './scheduled/dayBeforeShiftReminder';
+export { sendClientDayBeforeReminders } from './scheduled/clientDayBeforeReminder';
+export { sendClientThirtyMinReminders } from './scheduled/clientThirtyMinReminder';
 export { sendThirtyMinShiftReminders } from './scheduled/thirtyMinShiftReminder';
 export { processDndQueue } from './scheduled/dndQueueProcessor';
 export { expirePostVisitFeedback } from './scheduled/feedbackExpiry';
 export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';
+export { sendOnboardingReengagement } from './scheduled/onboardingReengagement';
 export { checkBackgroundCheckExpiry } from './scheduled/backgroundCheckExpiry';
 export { wellbeingCheckinJob } from './scheduled/wellbeingCheckin';
 
@@ -157,115 +160,65 @@ export { send1099Notifications } from './scheduled/taxReminder';
 // MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
 export * from './migrations/migrateSeniorsToHousehold';
 
-// ── initiateCara — unauthenticated callable: proactively sends Cara's greeting ──
-// Called from the web "Continue with Phone" screen so desktop users receive an
-// outbound SMS rather than relying on the sms: URI (which silently fails on desktop).
-export const initiateCara = functions.https.onCall(async (data) => {
-  const phone = (data.phone as string | undefined)?.trim();
-  const role  = (data.role  as string | undefined) === "caregiver" ? "caregiver" : "client";
+// ── createWebOnboardingSession — authenticated callable, NEVER sends outbound SMS ──
+// Called from /start after the user verifies their phone with Firebase Phone Auth.
+// Records role + consent on a TTL'd bridge doc that the LINQ inbound webhook reads
+// when the user texts "Hey Cara" — letting us skip the SMS-side OTP step (their phone
+// possession is already proven by Firebase) and route them straight into the role-aware
+// onboarding flow.
+//
+// A2P 10DLC posture: zero outbound LINQ traffic until the user initiates with their
+// own inbound message. This callable only writes Firestore.
+export const createWebOnboardingSession = functions.https.onCall(async (data, context) => {
+  // Auth gate — caller must have just completed Firebase Phone Auth so their uid is
+  // bound to this phone number. Web flow signs in with signInWithPhoneNumber() before
+  // calling this; an unauthenticated request would be a misuse.
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Phone verification required.");
+  }
 
-  // Basic E.164 validation (US/CA +1 only for now)
+  const phone   = (data.phone   as string | undefined)?.trim();
+  const role    = (data.role    as string | undefined) === "caregiver" ? "caregiver" : "client";
+  const consent = (data.consentText as string | undefined) ?? "v1.0";
+
   if (!phone || !/^\+1\d{10}$/.test(phone)) {
     throw new functions.https.HttpsError("invalid-argument", "A valid US/CA phone number is required.");
   }
 
-  const { sendMessage, createChat, getOrCreateSession } = await import("./linq/client");
+  // Caller's Firebase Auth token must have phone_number matching what they're claiming.
+  // Without this check, a user could verify their own number and then submit someone
+  // else's in the callable payload to grief them. token.phone_number is set by the
+  // Firebase Phone Auth provider — not user-controlled.
+  const tokenPhone = (context.auth.token.phone_number as string | undefined) ?? "";
+  if (tokenPhone !== phone) {
+    throw new functions.https.HttpsError(
+      "permission-denied",
+      "Phone number must match the verified token.",
+    );
+  }
 
   const db = admin.firestore();
 
-  const sessionRef  = db.collection("agent_sessions").doc(phone);
-  const sessionSnap = await sessionRef.get();
+  const now            = new Date();
+  const ttlExpireAt    = new Date(now.getTime() + 30 * 60 * 1000); // 30 min — Firestore TTL purges
+  const linqPhoneNumber = process.env.LINQ_PHONE_NUMBER ?? "";
 
-  if (sessionSnap.exists) {
-    const existing = sessionSnap.data() as Record<string, unknown>;
+  await db.collection("web_onboarding_sessions").doc(phone).set({
+    uid:         context.auth.uid,
+    role,
+    phone,
+    consentText: consent,
+    status:      "awaiting_inbound",
+    createdAt:   admin.firestore.Timestamp.fromDate(now),
+    ttlExpireAt: admin.firestore.Timestamp.fromDate(ttlExpireAt),
+  }, { merge: true });
 
-    // If the session has userId, it's a known user — try sending to the existing chatId.
-    // This avoids creating a new Linq chat (which is slow and can hang).
-    // If the existing chatId is stale, the send will fail fast (15s timeout added to axios).
-    if (existing.userId && existing.chatId) {
-      const greeting = "Hi! I'm Cara, your care assistant. I'm here whenever you need help with your care.";
-      const sent = await sendMessage(existing.chatId as string, greeting).then(() => true).catch(() => false);
-
-      if (!sent) {
-        // Existing chatId is stale — open a fresh Linq thread.
-        const { chat_id } = await createChat(phone, {
-          parts: [{ type: "text", value: greeting }],
-        });
-        await sessionRef.update({ chatId: chat_id });
-      }
-    } else {
-      // Session exists but is missing userId — restore from users collection.
-      const userQuery = await db.collection("users").where("phone", "==", phone).limit(1).get();
-      if (!userQuery.empty) {
-        const userDoc   = userQuery.docs[0];
-        const userData  = userDoc.data();
-        const userId    = userDoc.id;
-        const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
-        const seniorId  = (userData.seniorId  as string | undefined) ?? seniorIds[0] ?? "";
-
-        const greeting = "Hi! I'm Cara, your care assistant. I'm here whenever you need help.";
-        // Try sending to current chatId; open fresh chat if it fails.
-        const chatId = existing.chatId as string | undefined;
-        let finalChatId = chatId ?? "";
-        if (chatId) {
-          const sent = await sendMessage(chatId, greeting).then(() => true).catch(() => false);
-          if (!sent) {
-            const { chat_id } = await createChat(phone, { parts: [{ type: "text", value: greeting }] });
-            finalChatId = chat_id;
-          }
-        } else {
-          const { chat_id } = await createChat(phone, { parts: [{ type: "text", value: greeting }] });
-          finalChatId = chat_id;
-        }
-
-        await sessionRef.update({
-          chatId:         finalChatId,
-          userId,
-          seniorId,
-          onboardingStep: "complete",
-          userType:       (existing.userType as string | undefined) ?? role,
-        });
-      } else {
-        // No user account — just open a fresh Linq chat for onboarding.
-        const { chat_id } = await createChat(phone, {
-          parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
-        });
-        await sessionRef.update({ chatId: chat_id, onboardingStep: "ask_role" });
-      }
-    }
-  } else {
-    // No session — look up the user's account data to pre-fill and skip re-onboarding.
-    const userQuery = await db.collection("users").where("phone", "==", phone).limit(1).get();
-    if (!userQuery.empty) {
-      const userDoc   = userQuery.docs[0];
-      const userData  = userDoc.data();
-      const userId    = userDoc.id;
-      const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
-      const seniorId  = (userData.seniorId  as string | undefined) ?? seniorIds[0] ?? "";
-
-      const { chat_id } = await createChat(phone, {
-        parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
-      });
-
-      await sessionRef.set({
-        chatId:         chat_id,
-        service:        "iMessage",
-        phone,
-        userType:       role,
-        userId,
-        seniorId,
-        onboardingStep: "complete",
-        optedIn:        true,
-        optedOut:       false,
-        createdAt:      new Date().toISOString(),
-      });
-    } else {
-      // No user account yet — minimal session for fresh onboarding.
-      await getOrCreateSession(phone, { userType: role });
-    }
-  }
-
-  return { success: true };
+  return {
+    success:     true,
+    linqPhone:   linqPhoneNumber,
+    smsBody:     "Hey Cara",
+    expiresInMs: 30 * 60 * 1000,
+  };
 });
 
 // ── chatWithCara — web callable: routes authenticated web users through qaAgent ─

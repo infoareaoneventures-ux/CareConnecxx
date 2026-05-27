@@ -113,6 +113,11 @@ async function createVisitPayment(params) {
     // Notify caregiver directly (bypass interaction agent — caregiver-initiated message path)
     if (caregiverPhone) {
         await (0, client_1.sendToPhone)(caregiverPhone, `Visit logged for ${date}. Your payment of ${totalStr} will be processed shortly.`).catch(() => { });
+        // Flag the session so any follow-up reply routes to qaAgent with payout context
+        await admin.firestore().collection("agent_sessions").doc(caregiverPhone).update({
+            pendingPayoutNotificationAck: `${totalStr} for ${date} visit`,
+            pendingPayoutNotificationAckSetAt: new Date().toISOString(),
+        }).catch(() => { });
     }
 }
 async function handlePaymentError(params) {

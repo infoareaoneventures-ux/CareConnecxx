@@ -153,7 +153,7 @@ async function createChat(phone, message) {
     };
 }
 async function sendMessage(chatId, textOrMessage) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
     const message = typeof textOrMessage === "string"
         ? { parts: [{ type: "text", value: textOrMessage }] }
         : textOrMessage;
@@ -171,12 +171,30 @@ async function sendMessage(chatId, textOrMessage) {
             status: (_b = axErr === null || axErr === void 0 ? void 0 : axErr.response) === null || _b === void 0 ? void 0 : _b.status,
             data: JSON.stringify((_d = (_c = axErr === null || axErr === void 0 ? void 0 : axErr.response) === null || _c === void 0 ? void 0 : _c.data) !== null && _d !== void 0 ? _d : {}),
         });
+        // Surface to operators — silent send failures were leaving users with no
+        // reply and no signal in admin tooling. Dedupe key collapses bursts to one
+        // alert per minute so a sustained outage doesn't fan out.
+        try {
+            const admin = await Promise.resolve().then(() => __importStar(require("firebase-admin")));
+            const minuteBucket = new Date().toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
+            await admin.firestore().collection("admin_alerts").add({
+                type: "linq_send_failure",
+                chatId,
+                status: (_f = (_e = axErr === null || axErr === void 0 ? void 0 : axErr.response) === null || _e === void 0 ? void 0 : _e.status) !== null && _f !== void 0 ? _f : null,
+                errorBody: JSON.stringify((_h = (_g = axErr === null || axErr === void 0 ? void 0 : axErr.response) === null || _g === void 0 ? void 0 : _g.data) !== null && _h !== void 0 ? _h : {}).slice(0, 1000),
+                dedupeKey: `linq_send_failure:${minuteBucket}`,
+                severity: "high",
+                resolved: false,
+                createdAt: new Date().toISOString(),
+            });
+        }
+        catch ( /* non-critical */_l) { /* non-critical */ }
         throw err;
     }
     const traceId = res.headers["x-trace-id"];
     if (traceId)
         console.info("Linq sendMessage trace_id:", traceId, "chatId:", chatId);
-    return { message_id: (_f = (_e = res.data.id) !== null && _e !== void 0 ? _e : res.data.message_id) !== null && _f !== void 0 ? _f : "" };
+    return { message_id: (_k = (_j = res.data.id) !== null && _j !== void 0 ? _j : res.data.message_id) !== null && _k !== void 0 ? _k : "" };
 }
 // ── Message retrieval + editing + deletion ───────────────────────────────────
 async function getMessage(messageId) {

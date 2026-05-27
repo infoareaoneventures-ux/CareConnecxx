@@ -36,7 +36,29 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleClientSwapRequest = handleClientSwapRequest;
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
+const openaiClient_1 = require("../utils/openaiClient");
 const db = admin.firestore();
+async function isQuestionOrOther(text) {
+    try {
+        const result = await (0, openaiClient_1.quickComplete)("The user was shown a numbered list of upcoming visits and asked to pick one to swap the caregiver for. " +
+            "Reply YES if their reply is a question or off-topic comment (about swap fees, timing, caregivers in general). " +
+            "Reply NO if it is a selection (a number).", text, { maxTokens: 5 });
+        return result.trim().toUpperCase().startsWith("Y");
+    }
+    catch (_a) {
+        return false;
+    }
+}
+async function answerSwapQuestion(text) {
+    try {
+        return await (0, openaiClient_1.quickComplete)("You are Cara, an AI care assistant. A family member was just shown their upcoming visits and asked to " +
+            "pick one to swap the caregiver for. Instead they asked a question. Answer briefly (1–2 sentences). " +
+            "Do NOT ask them to pick a visit — that prompt comes next.", text, { maxTokens: 180 });
+    }
+    catch (_a) {
+        return "Sorry, I'm having trouble pulling that up right now.";
+    }
+}
 async function handleClientSwapRequest(clientId, clientPhone, text, session, chatId) {
     var _a, _b, _c, _d, _e, _f, _g, _h;
     const step = (_a = session.clientSwapStep) !== null && _a !== void 0 ? _a : "identify_appointment";
@@ -78,6 +100,15 @@ async function handleClientSwapRequest(clientId, clientPhone, text, session, cha
         catch (_j) {
             await (0, client_1.sendMessage)(chatId, "Something went wrong — let me start over. Which visit do you want to swap the caregiver for?");
             await db.collection("agent_sessions").doc(clientPhone).update({ clientSwapStep: "identify_appointment", clientSwapVisits: admin.firestore.FieldValue.delete() });
+            return;
+        }
+        // Question guard — "what's a swap?" / "will I keep my schedule?" used to
+        // get parsed as a number and rejected with "reply with a number".
+        if (await isQuestionOrOther(text)) {
+            const answer = await answerSwapQuestion(text);
+            await (0, client_1.sendMessage)(chatId, answer);
+            const list = visits.map(v => `${v.index}. ${v.date} at ${v.time} with ${v.caregiverName}`).join("\n");
+            await (0, client_1.sendMessage)(chatId, `When you're ready, which visit do you want to swap?\n${list}\n\nReply with the number.`);
             return;
         }
         const pick = parseInt(text.trim(), 10);

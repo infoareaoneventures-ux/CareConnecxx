@@ -220,6 +220,23 @@ export async function sendMessage(
       status: axErr?.response?.status,
       data:   JSON.stringify(axErr?.response?.data ?? {}),
     });
+    // Surface to operators — silent send failures were leaving users with no
+    // reply and no signal in admin tooling. Dedupe key collapses bursts to one
+    // alert per minute so a sustained outage doesn't fan out.
+    try {
+      const admin = await import("firebase-admin");
+      const minuteBucket = new Date().toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
+      await admin.firestore().collection("admin_alerts").add({
+        type:        "linq_send_failure",
+        chatId,
+        status:      axErr?.response?.status ?? null,
+        errorBody:   JSON.stringify(axErr?.response?.data ?? {}).slice(0, 1000),
+        dedupeKey:   `linq_send_failure:${minuteBucket}`,
+        severity:    "high",
+        resolved:    false,
+        createdAt:   new Date().toISOString(),
+      });
+    } catch {/* non-critical */}
     throw err;
   }
   const traceId = res.headers["x-trace-id"] as string | undefined;

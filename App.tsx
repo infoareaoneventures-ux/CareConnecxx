@@ -22,9 +22,7 @@ const ReviewSystem = lazy(() => import('./components/ReviewSystem'));
 const WeeklySummary = lazy(() => import('./components/WeeklySummary'));
 const InterviewOutcome = lazy(() => import('./components/InterviewOutcome'));
 const CaregiverDashboard = lazy(() => import('./components/CaregiverDashboard').then(module => ({ default: module.CaregiverDashboard })));
-const ClientSignup = lazy(() => import('./components/ClientSignup').then(module => ({ default: module.ClientSignup })));
 const ClientLogin = lazy(() => import('./components/ClientLogin').then(module => ({ default: module.ClientLogin })));
-const CaregiverSignup = lazy(() => import('./components/caregiver/signup/CaregiverSignupFlow').then(module => ({ default: module.CaregiverSignupFlow })));
 const CaregiverLogin = lazy(() => import('./components/CaregiverLogin').then(module => ({ default: module.CaregiverLogin })));
 const ForgotPassword = lazy(() => import('./components/ForgotPassword').then(module => ({ default: module.ForgotPassword })));
 const AdminView = lazy(() => import('./components/AdminView').then(module => ({ default: module.AdminView })));
@@ -289,13 +287,16 @@ const AppContent: React.FC = () => {
           <Route path="/help/caregivers" element={<HelpPage section="caregivers" onNavigate={handleNavigation} />} />
           <Route path="/help/general" element={<HelpPage section="general" onNavigate={handleNavigation} />} />
           <Route path="/pricing" element={<Subscription onNavigate={handleNavigation} />} />
-          <Route path="/client/signup" element={<ClientSignup onNavigate={handleNavigation} onShowToast={addToast} />} />
+          {/* Signup routes redirect into the unified phone-first onboarding at /start.
+              The role= query param selects between the senior-friendly family mode and
+              the leaner caregiver mode. See components/auth/onboarding/OnboardingFlow.tsx. */}
+          <Route path="/client/signup" element={<Navigate to="/start?role=client" replace />} />
           <Route path="/client/login" element={<PublicOnlyRoute element={<ClientLogin onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/client/intake" element={<Navigate to="/client/dashboard" replace />} />
           <Route path="/client/profile" element={<ClientRoute element={<ClientProfileDashboard />} />} />
           <Route path="/client/forgot-password" element={<ForgotPassword userType="client" onNavigate={handleNavigation} onShowToast={addToast} />} />
 
-          <Route path="/caregiver/signup" element={<CaregiverSignup onNavigate={handleNavigation} onShowToast={addToast} />} />
+          <Route path="/caregiver/signup" element={<Navigate to="/start?role=caregiver" replace />} />
           <Route path="/caregiver/login" element={<PublicOnlyRoute element={<CaregiverLogin onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/caregiver/forgot-password" element={<ForgotPassword userType="caregiver" onNavigate={handleNavigation} onShowToast={addToast} />} />
 

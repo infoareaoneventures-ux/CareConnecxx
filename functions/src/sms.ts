@@ -86,6 +86,14 @@ export async function optOutPhoneNumber(phoneNumber: string): Promise<void> {
   );
 }
 
+export async function optInPhoneNumber(phoneNumber: string): Promise<void> {
+  const phone = phoneNumber.replace(/\s/g, "");
+  await db.collection("agent_sessions").doc(phone).set(
+    { optedOut: false, optedInAt: new Date().toISOString() },
+    { merge: true }
+  );
+}
+
 // ── Core send ─────────────────────────────────────────────────────────────────
 
 export async function sendSMS(payload: SMSPayload): Promise<SMSResult> {
@@ -235,6 +243,18 @@ export async function syncPhoneHealth(): Promise<void> {
         openedAt: new Date().toISOString(),
         phone:    pn.phone_number,
       }, { merge: true });
+
+      // P0 — surface circuit-open to ops immediately. Previously silent: outbound
+      // was suppressed with no alert, leaving users in radio silence.
+      const alertRef = db.collection("admin_alerts").doc();
+      batch.set(alertRef, {
+        type:        "linq_circuit_breaker_opened",
+        phone:       pn.phone_number,
+        reason:      `Phone ${pn.phone_number} health=CRITICAL — outbound messages suppressed`,
+        severity:    "critical",
+        resolved:    false,
+        createdAt:   new Date().toISOString(),
+      });
     }
   }
 

@@ -40,6 +40,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendTestSMS = exports.SMS_TEMPLATES = void 0;
 exports.hasOptedOut = hasOptedOut;
 exports.optOutPhoneNumber = optOutPhoneNumber;
+exports.optInPhoneNumber = optInPhoneNumber;
 exports.sendSMS = sendSMS;
 exports.getUserPhone = getUserPhone;
 exports.sendSMSToUser = sendSMSToUser;
@@ -103,6 +104,10 @@ async function hasOptedOut(phoneNumber) {
 async function optOutPhoneNumber(phoneNumber) {
     const phone = phoneNumber.replace(/\s/g, "");
     await db.collection("agent_sessions").doc(phone).set({ optedOut: true, optedOutAt: new Date().toISOString() }, { merge: true });
+}
+async function optInPhoneNumber(phoneNumber) {
+    const phone = phoneNumber.replace(/\s/g, "");
+    await db.collection("agent_sessions").doc(phone).set({ optedOut: false, optedInAt: new Date().toISOString() }, { merge: true });
 }
 // ── Core send ─────────────────────────────────────────────────────────────────
 async function sendSMS(payload) {
@@ -207,6 +212,17 @@ async function syncPhoneHealth() {
                 openedAt: new Date().toISOString(),
                 phone: pn.phone_number,
             }, { merge: true });
+            // P0 — surface circuit-open to ops immediately. Previously silent: outbound
+            // was suppressed with no alert, leaving users in radio silence.
+            const alertRef = db.collection("admin_alerts").doc();
+            batch.set(alertRef, {
+                type: "linq_circuit_breaker_opened",
+                phone: pn.phone_number,
+                reason: `Phone ${pn.phone_number} health=CRITICAL — outbound messages suppressed`,
+                severity: "critical",
+                resolved: false,
+                createdAt: new Date().toISOString(),
+            });
         }
     }
     await batch.commit();

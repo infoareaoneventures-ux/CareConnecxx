@@ -1,7 +1,29 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
+import { parseWithClaude } from "../utils/parseWithClaude";
+import { quickComplete } from "../utils/openaiClient";
 
 const db = admin.firestore();
+
+async function isSwapQuestion(text: string, reAsk: string): Promise<boolean> {
+  const result = await parseWithClaude(
+    `A caregiver is in a shift-swap flow. Current question: "${reAsk}". ` +
+      "Reply YES if their message is a question or off-topic rather than a direct answer. Reply NO otherwise. Only reply YES or NO.",
+    text,
+    5,
+  );
+  return result.toUpperCase().startsWith("Y");
+}
+
+async function answerSwapMidFlow(text: string, reAsk: string): Promise<string> {
+  const answer = await quickComplete(
+    "You are Cara, an AI care assistant helping a caregiver find coverage for one of their shifts. " +
+      "Answer their question briefly (1-2 sentences). Do NOT ask them to continue — that prompt comes next.",
+    text,
+    { maxTokens: 150 },
+  ).catch(() => "Let me get back to you on that. In the meantime —");
+  return `${answer}\n\n${reAsk}`;
+}
 
 export async function handleCaregiverSwapRequest(
   caregiverId: string,
@@ -12,6 +34,16 @@ export async function handleCaregiverSwapRequest(
   chatId: string
 ): Promise<void> {
   const step = (session.swapStep as string) ?? "identify_shift";
+
+  // ── isQuestionOrOther guard (skip on identify_shift initial entry where text
+  //    is the original "SWAP" intent message, not a step answer) ──────────────
+  if (step === "confirm_shift") {
+    const reAsk = "Reply with the number of the shift you need covered, or CANCEL.";
+    if (await isSwapQuestion(text, reAsk)) {
+      await sendMessage(chatId, await answerSwapMidFlow(text, reAsk));
+      return;
+    }
+  }
 
   if (step === "identify_shift") {
     // Find upcoming confirmed appointments for this caregiver

@@ -1,7 +1,37 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
+import { quickComplete } from "../utils/openaiClient";
 
 const db = admin.firestore();
+
+async function isQuestionOrOther(text: string): Promise<boolean> {
+  try {
+    const result = await quickComplete(
+      "The user was shown a numbered list of upcoming visits and asked to pick one to swap the caregiver for. " +
+      "Reply YES if their reply is a question or off-topic comment (about swap fees, timing, caregivers in general). " +
+      "Reply NO if it is a selection (a number).",
+      text,
+      { maxTokens: 5 },
+    );
+    return result.trim().toUpperCase().startsWith("Y");
+  } catch {
+    return false;
+  }
+}
+
+async function answerSwapQuestion(text: string): Promise<string> {
+  try {
+    return await quickComplete(
+      "You are Cara, an AI care assistant. A family member was just shown their upcoming visits and asked to " +
+      "pick one to swap the caregiver for. Instead they asked a question. Answer briefly (1–2 sentences). " +
+      "Do NOT ask them to pick a visit — that prompt comes next.",
+      text,
+      { maxTokens: 180 },
+    );
+  } catch {
+    return "Sorry, I'm having trouble pulling that up right now.";
+  }
+}
 
 export async function handleClientSwapRequest(
   clientId: string,
@@ -56,6 +86,17 @@ export async function handleClientSwapRequest(
       await db.collection("agent_sessions").doc(clientPhone).update({ clientSwapStep: "identify_appointment", clientSwapVisits: admin.firestore.FieldValue.delete() });
       return;
     }
+
+    // Question guard — "what's a swap?" / "will I keep my schedule?" used to
+    // get parsed as a number and rejected with "reply with a number".
+    if (await isQuestionOrOther(text)) {
+      const answer = await answerSwapQuestion(text);
+      await sendMessage(chatId, answer);
+      const list = visits.map(v => `${v.index}. ${v.date} at ${v.time} with ${v.caregiverName}`).join("\n");
+      await sendMessage(chatId, `When you're ready, which visit do you want to swap?\n${list}\n\nReply with the number.`);
+      return;
+    }
+
     const pick = parseInt(text.trim(), 10);
     const visit = visits.find((v: any) => v.index === pick);
     if (!visit) {

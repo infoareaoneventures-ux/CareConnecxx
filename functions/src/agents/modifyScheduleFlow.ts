@@ -243,6 +243,11 @@ async function sendConfirmMessage(phone: string, chatId: string): Promise<void> 
 async function handleMsConfirm(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    await sendConfirmMessage(phone, chatId);
+    return;
+  }
+
   const norm = await parseWithClaude(
     '"yes", "yep", "confirm", "go ahead", "do it", "sounds good", "perfect" = YES. ' +
     '"no", "cancel", "never mind", "stop", "nope" = NO. ' +

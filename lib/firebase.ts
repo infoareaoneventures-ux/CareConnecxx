@@ -56,5 +56,34 @@ try {
   isConfigured = false;
 }
 
+// ── Phone Auth: RecaptchaVerifier singleton per container ──────────────────
+// Firebase compat requires a RecaptchaVerifier bound to a DOM element before
+// signInWithPhoneNumber will resolve. Keeping one per container so React
+// remount doesn't leak unrendered instances (each one phones home to Google).
+const _recaptchaVerifiers = new Map<string, firebase.auth.RecaptchaVerifier>();
+
+export function getOrCreateRecaptchaVerifier(
+  containerId: string,
+  options: { size?: 'invisible' | 'normal'; onSolved?: () => void } = {},
+): firebase.auth.RecaptchaVerifier {
+  const existing = _recaptchaVerifiers.get(containerId);
+  if (existing) return existing;
+  if (!auth) throw new Error('Firebase auth is not configured');
+  const verifier = new firebase.auth.RecaptchaVerifier(containerId, {
+    size: options.size ?? 'invisible',
+    callback: options.onSolved,
+  });
+  _recaptchaVerifiers.set(containerId, verifier);
+  return verifier;
+}
+
+export function clearRecaptchaVerifier(containerId: string): void {
+  const v = _recaptchaVerifiers.get(containerId);
+  if (v) {
+    try { v.clear(); } catch { /* SDK can throw when already cleared */ }
+    _recaptchaVerifiers.delete(containerId);
+  }
+}
+
 export { app, auth, db, functions, storage, isConfigured, googleProvider };
 export default firebase;

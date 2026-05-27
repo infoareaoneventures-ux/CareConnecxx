@@ -48,7 +48,10 @@ async function compressConversationForPhone(phone) {
     const allSnap = await col.orderBy("timestamp", "asc").get();
     const summaryDocs = allSnap.docs.filter(d => d.data().role === "summary");
     const realDocs = allSnap.docs.filter(d => d.data().role !== "summary");
-    if (realDocs.length <= 30)
+    // Compress earlier than the previous threshold (was 30) — qaAgent only loads
+    // the 10 most-recent + 1 summary, so turns 11-30 had no fallback. Triggering
+    // at 15 means active users get summary continuity within a couple of days.
+    if (realDocs.length <= 15)
         return;
     const toCompress = realDocs.slice(0, realDocs.length - 10);
     if (toCompress.length < 5)

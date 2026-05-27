@@ -37,10 +37,31 @@ exports.handleCaregiverSwapRequest = handleCaregiverSwapRequest;
 exports.handleSwapAcceptance = handleSwapAcceptance;
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
+const parseWithClaude_1 = require("../utils/parseWithClaude");
+const openaiClient_1 = require("../utils/openaiClient");
 const db = admin.firestore();
+async function isSwapQuestion(text, reAsk) {
+    const result = await (0, parseWithClaude_1.parseWithClaude)(`A caregiver is in a shift-swap flow. Current question: "${reAsk}". ` +
+        "Reply YES if their message is a question or off-topic rather than a direct answer. Reply NO otherwise. Only reply YES or NO.", text, 5);
+    return result.toUpperCase().startsWith("Y");
+}
+async function answerSwapMidFlow(text, reAsk) {
+    const answer = await (0, openaiClient_1.quickComplete)("You are Cara, an AI care assistant helping a caregiver find coverage for one of their shifts. " +
+        "Answer their question briefly (1-2 sentences). Do NOT ask them to continue — that prompt comes next.", text, { maxTokens: 150 }).catch(() => "Let me get back to you on that. In the meantime —");
+    return `${answer}\n\n${reAsk}`;
+}
 async function handleCaregiverSwapRequest(caregiverId, caregiverName, caregiverPhone, text, session, chatId) {
     var _a, _b;
     const step = (_a = session.swapStep) !== null && _a !== void 0 ? _a : "identify_shift";
+    // ── isQuestionOrOther guard (skip on identify_shift initial entry where text
+    //    is the original "SWAP" intent message, not a step answer) ──────────────
+    if (step === "confirm_shift") {
+        const reAsk = "Reply with the number of the shift you need covered, or CANCEL.";
+        if (await isSwapQuestion(text, reAsk)) {
+            await (0, client_1.sendMessage)(chatId, await answerSwapMidFlow(text, reAsk));
+            return;
+        }
+    }
     if (step === "identify_shift") {
         // Find upcoming confirmed appointments for this caregiver
         const today = new Date().toISOString().split("T")[0];

@@ -52,6 +52,7 @@ const triggerEngine_1 = require("../triggers/triggerEngine");
 const auditLog_1 = require("../observability/auditLog");
 const bereavement_1 = require("../agents/bereavement");
 const caraAgent_1 = require("../agents/caraAgent");
+const profileCompleteness_1 = require("../agents/profileCompleteness");
 const jobPostingFlow_1 = require("../agents/jobPostingFlow");
 const modifyScheduleFlow_1 = require("../agents/modifyScheduleFlow");
 const refundHandler_1 = require("../agents/refundHandler");
@@ -60,6 +61,8 @@ const earningsHandler_1 = require("../agents/earningsHandler");
 const availabilityHandler_1 = require("../agents/availabilityHandler");
 const caregiverSwapHandler_1 = require("../agents/caregiverSwapHandler");
 const clientSwapRequestHandler_1 = require("../agents/clientSwapRequestHandler");
+const caregiverCancelShiftHandler_1 = require("../agents/caregiverCancelShiftHandler");
+const caregiverProfileHandler_1 = require("../agents/caregiverProfileHandler");
 const sessionState_1 = require("../utils/sessionState");
 const caraMessage_1 = require("../utils/caraMessage");
 const dndGuard_1 = require("../utils/dndGuard");
@@ -68,6 +71,9 @@ const jobNotifications_1 = require("../triggers/jobNotifications");
 const zepClient_1 = require("../memory/zepClient");
 const openaiClient_1 = require("../utils/openaiClient");
 const voiceTranscription_1 = require("../utils/voiceTranscription");
+const phoneVerification_1 = require("../utils/phoneVerification");
+const personaShiftDetector_1 = require("../utils/personaShiftDetector");
+const language_1 = require("../utils/language");
 const db = admin.firestore();
 // ── Signature verification ────────────────────────────────────────────────────
 function verifySignature(rawBody, timestamp, signature, secret) {
@@ -319,37 +325,52 @@ async function handleShiftConfirmation(phone, chatId, text, session) {
         }).catch(() => { });
     }
     else {
-        // QUESTION or unclear — let caraAgent answer, then re-ask
-        await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
-            content: text,
-            urgency: "standard",
-            sourceAgent: "shift_confirm_question",
-            canDrop: true,
-        });
-        // Re-set the flag and re-ask
+        // QUESTION or unclear — answer the question, then re-ask the confirmation.
+        // Generate the answer inline so we control message ordering (otherwise the
+        // re-ask can land before the interaction agent's reply).
+        let answer = "";
+        try {
+            answer = await (0, openaiClient_1.quickComplete)("You are Cara, an AI care assistant. A caregiver was asked to confirm they'll be at " +
+                `${info.seniorName}'s shift on ${info.appointmentDate} (start ${info.startTime}). ` +
+                "Instead they sent the message below — likely a question about the shift, address, client, or logistics. " +
+                "Answer briefly (1–2 sentences). Do NOT ask them to confirm — that prompt comes next.", text, { maxTokens: 180 });
+        }
+        catch (_a) {
+            answer = "Let me get back to you on that. In the meantime —";
+        }
+        await (0, client_1.sendMessage)(chatId, answer);
+        // Re-set the flag and re-ask (sequentially so the question is acknowledged first)
         await db.collection("agent_sessions").doc(phone).update({
             pendingShiftConfirmation: info,
             stateExpiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
         });
-        await (0, client_1.sendMessage)(chatId, `By the way — can you confirm you'll be at ${info.seniorName}'s shift on ${info.appointmentDate}? Reply YES or NO.`);
+        await (0, client_1.sendMessage)(chatId, `So — can you confirm you'll be at ${info.seniorName}'s shift on ${info.appointmentDate}? Reply YES or NO.`);
     }
 }
 // ── Pre-shift family task check-in handler ───────────────────────────────────
 async function handlePreShiftUpdate(phone, chatId, text, session) {
-    var _a;
+    var _a, _b;
     const info = session.awaitingPreShiftUpdate;
     // isQuestionOrOther check — CLAUDE.md requirement
     const questionRaw = await (0, openaiClient_1.quickComplete)("Is this message a question unrelated to adding care tasks, or is it about something completely different? " +
         "Reply only YES or NO.", text, { maxTokens: 5 }).catch(() => "");
     const isQuestion = questionRaw.trim().toUpperCase().startsWith("Y");
     if (isQuestion) {
-        await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
-            content: text,
-            urgency: "standard",
-            sourceAgent: "pre_shift_question",
-            canDrop: true,
-        });
-        await (0, client_1.sendMessage)(chatId, `By the way — did you want to add any tasks for ${info.seniorName}'s visit today?`);
+        // Generate the answer inline so we control message ordering. The previous
+        // implementation sent the raw user text to sendViaInteractionAgent (which
+        // generates a reply asynchronously) and immediately followed with the
+        // re-ask, so the re-ask could arrive before the answer.
+        let answer = "";
+        try {
+            answer = await (0, openaiClient_1.quickComplete)("You are Cara, an AI care assistant. A family member was asked if they want to add tasks for today's " +
+                `visit with ${(_a = info.caregiverName) !== null && _a !== void 0 ? _a : "the caregiver"} for ${info.seniorName}. Instead they asked a question — ` +
+                "answer it briefly (1–2 sentences). Do NOT ask them to add tasks — that prompt comes next.", text, { maxTokens: 180 });
+        }
+        catch (_c) {
+            answer = "Let me get back to you on that. In the meantime —";
+        }
+        await (0, client_1.sendMessage)(chatId, answer);
+        await (0, client_1.sendMessage)(chatId, `So — did you want to add any tasks for ${info.seniorName}'s visit today?`);
         return;
     }
     // Parse action: decline or new tasks
@@ -362,10 +383,10 @@ async function handlePreShiftUpdate(phone, chatId, text, session) {
     let tasks = [];
     try {
         const parsed = JSON.parse(parseRaw || "{}");
-        action = ((_a = parsed.action) !== null && _a !== void 0 ? _a : "decline");
+        action = ((_b = parsed.action) !== null && _b !== void 0 ? _b : "decline");
         tasks = Array.isArray(parsed.tasks) ? parsed.tasks.filter(Boolean) : [];
     }
-    catch ( /* default to decline */_b) { /* default to decline */ }
+    catch ( /* default to decline */_d) { /* default to decline */ }
     // Clear state regardless of action
     await db.collection("agent_sessions").doc(phone).update({
         awaitingPreShiftUpdate: admin.firestore.FieldValue.delete(),
@@ -487,11 +508,30 @@ async function sendArrivalCarePlanBriefing(chatId, apptData) {
         `\n\nReply DONE when the visit is complete, or ISSUE if anything comes up.`;
     await (0, client_1.sendMessage)(chatId, body);
 }
-async function handleDone(phone, chatId, session) {
+async function handleDone(phone, chatId, session, text) {
     var _a, _b, _c, _d, _e;
     const caregiverId = session.caregiverId;
     if (!caregiverId)
         return;
+    // If DONE arrived with extra text (e.g. "DONE but I need to ask you something"),
+    // surface a question check. The pure-keyword path passes text === "DONE" and
+    // we skip the LLM hop.
+    if (text && text.trim().toUpperCase() !== "DONE" && text.trim().length > 8) {
+        const qRaw = await (0, openaiClient_1.quickComplete)("A caregiver just signaled they're done with a visit. " +
+            "Reply YES if their message also contains a question they need answered. " +
+            "Reply NO if it's only a sign-off. Only reply YES or NO.", text, { maxTokens: 5 }).catch(() => "NO");
+        if (qRaw.trim().toUpperCase().startsWith("Y")) {
+            let answer = "";
+            try {
+                answer = await (0, openaiClient_1.quickComplete)("You are Cara. A caregiver said they're done with a visit and also asked a question. " +
+                    "Answer it briefly (1-2 sentences). Do NOT ask them for visit notes yet — that prompt comes next.", text, { maxTokens: 180 });
+            }
+            catch (_f) {
+                answer = "Let me get back to you on that. In the meantime —";
+            }
+            await (0, client_1.sendMessage)(chatId, answer);
+        }
+    }
     const today = new Date().toISOString().slice(0, 10);
     const snap = await db.collection("appointments")
         .where("caregiverId", "==", caregiverId)
@@ -770,6 +810,29 @@ async function handleTaskAck(phone, chatId, text, session) {
 // ── Caregiver voice/text → structured journal ─────────────────────────────────
 async function handleCareNotes(phone, chatId, text, session) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
+    // ── isQuestionOrOther — if caregiver is asking a question alongside (or
+    // instead of) shift notes, answer it first then re-prompt. Skip the LLM
+    // hop for short messages that look like a clear answer (< 30 chars).
+    if (text.trim().length >= 30) {
+        const questionRaw = await (0, openaiClient_1.quickComplete)("A caregiver was asked to share notes about a care visit they just finished " +
+            "(mood, meals, activities, anything notable). " +
+            "Reply YES if their message is primarily a question to the assistant rather than visit notes. " +
+            "Reply NO if it is visit notes (even if a small question is buried inside). Only reply YES or NO.", text, { maxTokens: 5 }).catch(() => "NO");
+        if (questionRaw.trim().toUpperCase().startsWith("Y")) {
+            let answer = "";
+            try {
+                answer = await (0, openaiClient_1.quickComplete)("You are Cara, an AI care assistant. A caregiver just finished a shift and was asked for visit notes, " +
+                    "but instead they asked a question. Answer it briefly (1-2 sentences). " +
+                    "Do NOT ask them for notes — that prompt comes next.", text, { maxTokens: 180 });
+            }
+            catch (_v) {
+                answer = "Let me get back to you on that. In the meantime —";
+            }
+            await (0, client_1.sendMessage)(chatId, answer);
+            await (0, client_1.sendMessage)(chatId, "Now — tell me how the visit went so I can send the family an update. (Mood, meals, activities, anything notable.)");
+            return;
+        }
+    }
     const structuredRaw = await (0, openaiClient_1.quickComplete)("Convert this caregiver note into a structured care journal entry. " +
         'Reply in JSON: {"overallWellness":1,"mood":"happy|neutral|agitated|confused|tired",' +
         '"appetite":"good|fair|poor|refused","activities":[],"medications":[],' +
@@ -778,7 +841,7 @@ async function handleCareNotes(phone, chatId, text, session) {
     try {
         entry = JSON.parse(structuredRaw || "{}");
     }
-    catch (_v) {
+    catch (_w) {
         entry = { notes: text };
     }
     const apptId = (_a = session.careNotesApptId) !== null && _a !== void 0 ? _a : "";
@@ -1137,7 +1200,7 @@ async function handleRecurringResume(phone, chatId, session) {
 }
 // ── Main inbound handler ──────────────────────────────────────────────────────
 async function handleInbound(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98, _99, _100, _101, _102, _103, _104, _105, _106, _107, _108, _109, _110, _111, _112, _113, _114, _115, _116, _117, _118, _119, _120, _121, _122, _123, _124, _125, _126, _127, _128, _129, _130, _131, _132, _133, _134, _135, _136, _137, _138, _139, _140, _141, _142, _143, _144, _145, _146, _147, _148, _149, _150;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98, _99, _100, _101, _102, _103, _104, _105, _106, _107, _108, _109, _110, _111, _112, _113, _114, _115, _116, _117, _118, _119, _120, _121, _122, _123, _124, _125, _126, _127, _128, _129, _130, _131, _132, _133, _134, _135, _136, _137, _138, _139, _140, _141, _142, _143, _144, _145, _146, _147, _148, _149, _150, _151, _152, _153, _154, _155, _156, _157, _158, _159, _160, _161, _162, _163, _164, _165, _166, _167, _168, _169, _170, _171, _172, _173, _174, _175, _176, _177, _178;
     const ev = event;
     const phone = (_b = (_a = ev.data) === null || _a === void 0 ? void 0 : _a.sender_handle) === null || _b === void 0 ? void 0 : _b.handle;
     const chatId = (_d = (_c = ev.data) === null || _c === void 0 ? void 0 : _c.chat) === null || _d === void 0 ? void 0 : _d.id;
@@ -1244,14 +1307,108 @@ async function handleInbound(event) {
         const capability = await (0, client_1.checkCapability)(phone);
         const service = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
         await (0, sms_1.setupCaraContactCard)().catch(() => { });
+        // Detect language from the first message so OTP + onboarding speak the
+        // family's language from the start.
+        const detected = await (0, language_1.detectLanguage)(text).catch(() => null);
+        const preferredLanguage = detected !== null && detected !== void 0 ? detected : "en";
+        // ── Web-onboarding bridge ──────────────────────────────────────────────────
+        // If this phone just verified through Firebase Phone Auth on the web and is
+        // awaiting their first inbound, skip the SMS-side OTP entirely — phone
+        // possession is already proven by the Firebase token they presented when
+        // calling createWebOnboardingSession. Route them straight into the role's
+        // first onboarding step.
+        const webSessionRef = db.collection("web_onboarding_sessions").doc(phone);
+        const webSessionSnap = await webSessionRef.get();
+        if (webSessionSnap.exists && ((_p = webSessionSnap.data()) === null || _p === void 0 ? void 0 : _p.status) === "awaiting_inbound") {
+            const webRole = ((_q = webSessionSnap.data()) === null || _q === void 0 ? void 0 : _q.role) === "caregiver" ? "caregiver" : "client";
+            const firstStep = webRole === "caregiver" ? "caregiver_ask_name" : "client_ask_name";
+            // Returning user — phone already linked to an account. Skip re-onboarding;
+            // restore their account context and greet them as a known user. Without
+            // this, a returning user who re-verified on /start would be walked through
+            // onboarding from scratch.
+            const userQuery = await db.collection("users").where("phone", "==", phone).limit(1).get();
+            const isReturning = !userQuery.empty;
+            if (isReturning) {
+                const userDoc = userQuery.docs[0];
+                const userData = userDoc.data();
+                const seniorIds = (_r = userData.seniorIds) !== null && _r !== void 0 ? _r : [];
+                const seniorId = (_t = (_s = userData.seniorId) !== null && _s !== void 0 ? _s : seniorIds[0]) !== null && _t !== void 0 ? _t : "";
+                await db.collection("agent_sessions").doc(phone).set({
+                    chatId,
+                    phone,
+                    service,
+                    userType: (_u = userData.userType) !== null && _u !== void 0 ? _u : webRole,
+                    userId: userDoc.id,
+                    seniorId,
+                    onboardingStep: "complete",
+                    optedIn: true,
+                    optedOut: false,
+                    preferredLanguage,
+                    createdAt: new Date().toISOString(),
+                    webOnboardingUid: (_w = (_v = webSessionSnap.data()) === null || _v === void 0 ? void 0 : _v.uid) !== null && _w !== void 0 ? _w : null,
+                });
+            }
+            else {
+                await db.collection("agent_sessions").doc(phone).set({
+                    chatId,
+                    phone,
+                    service,
+                    userType: webRole,
+                    onboardingStep: firstStep,
+                    optedIn: true,
+                    optedOut: false,
+                    preferredLanguage,
+                    createdAt: new Date().toISOString(),
+                    webOnboardingUid: (_y = (_x = webSessionSnap.data()) === null || _x === void 0 ? void 0 : _x.uid) !== null && _y !== void 0 ? _y : null,
+                });
+            }
+            // Mark the web bridge as connected so the desktop/mobile tab can flip to
+            // the success state via its onSnapshot listener.
+            await webSessionRef.update({
+                status: "connected",
+                connectedAt: admin.firestore.Timestamp.now(),
+                chatId,
+            }).catch(() => { });
+            await (0, zepClient_1.initializeZepOnFirstContact)(phone).catch((err) => console.error("Zep init failed (web bridge):", err));
+            if (service === "iMessage")
+                await (0, client_1.startTyping)(chatId).catch(() => { });
+            let welcome;
+            if (isReturning) {
+                welcome = preferredLanguage === "es"
+                    ? "¡Hola otra vez! Soy Cara. Me alegra verte de nuevo — ¿en qué te puedo ayudar hoy?"
+                    : "Welcome back! It's Cara. Good to hear from you again — how can I help today?";
+            }
+            else {
+                // Role-aware welcome — mirrors what handleAskRole sends so the user
+                // experiences the same conversational onboarding from message #1.
+                welcome = webRole === "caregiver"
+                    ? (preferredLanguage === "es"
+                        ? "¡Hola! Soy Cara — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Cómo te llamas?"
+                        : "Hi! I'm Cara — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and everything happens right here.\n\nWhat's your name?")
+                    : (preferredLanguage === "es"
+                        ? "¡Hola! Soy Cara, tu coordinadora de cuidados. Me encantaría ayudarte.\n\n¿Cómo te llamas?"
+                        : "Hi! I'm Cara, your care coordinator. I'd love to help.\n\nWhat's your name?");
+            }
+            await (0, client_1.sendMessage)(chatId, welcome);
+            if (service === "iMessage")
+                (0, client_1.shareContactCard)(chatId).catch(() => { });
+            return;
+        }
+        // Phone-possession check: send a 6-digit OTP that the real owner of this
+        // number will receive via their carrier. A spoofed sender can't read it.
+        // Session is created in verify_phone step; nothing else happens until the
+        // code comes back.
+        const otp = (0, phoneVerification_1.generateOtp)();
         await db.collection("agent_sessions").doc(phone).set({
             chatId,
             phone,
             service,
             userType: null,
-            onboardingStep: "ask_role",
+            onboardingStep: "verify_phone",
             optedIn: true,
             optedOut: false,
+            otp,
+            preferredLanguage,
             createdAt: new Date().toISOString(),
         });
         // Start Zep memory immediately — awaited so zepThreadId is written before
@@ -1259,10 +1416,7 @@ async function handleInbound(event) {
         await (0, zepClient_1.initializeZepOnFirstContact)(phone).catch((err) => console.error("Zep init failed (first contact):", err));
         if (service === "iMessage")
             await (0, client_1.startTyping)(chatId).catch(() => { });
-        await (0, client_1.sendMessage)(chatId, `Hi — I'm Cara. I help families find and manage care for aging parents, all through text. No app needed.\n\n` +
-            `Are you looking for care for someone, or are you a caregiver?\n\n` +
-            `1️⃣ I need care for someone\n` +
-            `2️⃣ I'm a caregiver`);
+        await (0, client_1.sendMessage)(chatId, language_1.t.otp_greeting((0, phoneVerification_1.formatOtpForDisplay)(otp.code), preferredLanguage));
         // Share contact card AFTER the first outbound message — Linq requires at least
         // one outbound message in history before the share endpoint accepts the call.
         if (service === "iMessage")
@@ -1273,7 +1427,7 @@ async function handleInbound(event) {
     const norm = text.trim().toUpperCase();
     const stopWords = new Set(["STOP", "UNSUBSCRIBE", "QUIT", "END", "OPTOUT"]);
     // ── Chat health gate — pause outbound on CRITICAL, honour OPTED_OUT ──────────
-    const chatHealth = ((_s = (_r = (_q = (_p = ev.data) === null || _p === void 0 ? void 0 : _p.chat) === null || _q === void 0 ? void 0 : _q.health_status) === null || _r === void 0 ? void 0 : _r.status) !== null && _s !== void 0 ? _s : "HEALTHY");
+    const chatHealth = ((_2 = (_1 = (_0 = (_z = ev.data) === null || _z === void 0 ? void 0 : _z.chat) === null || _0 === void 0 ? void 0 : _0.health_status) === null || _1 === void 0 ? void 0 : _1.status) !== null && _2 !== void 0 ? _2 : "HEALTHY");
     if (chatHealth === "OPTED_OUT" && !session.optedOut) {
         await db.collection("agent_sessions").doc(phone).update({ optedOut: true }).catch(() => { });
         return;
@@ -1282,8 +1436,18 @@ async function handleInbound(event) {
         console.warn("handleInbound: chat health CRITICAL — skipping outbound response", { phone, chatId });
         return;
     }
-    if (session.optedOut)
+    // START — opt back in (must run BEFORE the opted-out early return, otherwise
+    // opted-out users can never reach this handler).
+    if (session.optedOut) {
+        const startWords = new Set(["START", "UNSTOP", "RESUBSCRIBE", "YES", "SI", "SÍ"]);
+        if (startWords.has(norm)) {
+            await (0, sms_1.optInPhoneNumber)(phone);
+            const lang = (0, language_1.languageFromSession)(session);
+            await (0, client_1.sendMessage)(chatId, language_1.t.opt_in_welcome_back(lang));
+            return;
+        }
         return;
+    }
     // ── Sticker / voice memo / media-only — no text to process ──────────────────
     // Stickers are inbound-only (API doesn't support sending them). Voice memos
     // are transcribed above; if that failed we still land here. Other media
@@ -1316,18 +1480,34 @@ async function handleInbound(event) {
                 await db.collection("agent_sessions").doc(phone).update({
                     onboardingCheckpoint: {
                         step: session.onboardingStep,
-                        onboardingData: (_t = session.onboardingData) !== null && _t !== void 0 ? _t : {},
+                        onboardingData: (_3 = session.onboardingData) !== null && _3 !== void 0 ? _3 : {},
                         savedAt: new Date().toISOString(),
                     },
                 }).catch(() => { });
             }
+            // Identify which non-onboarding flow was active so the user gets a
+            // contextual timeout message instead of the generic "session timed out".
+            // Names track the state-flag families defined in utils/sessionState.ts.
+            const flowKey = session.jobPostingStep ? "job_posting" :
+                session.refundStep ? "refund" :
+                    session.modifyScheduleStep ? "modify_schedule" :
+                        session.clientSwapStep ? "client_swap" :
+                            session.healthcareFlowStep ? "healthcare" :
+                                session.collectingCredential ? "credential" :
+                                    session.hireMode ? "hire" :
+                                        session.pendingMatches ? "matches" :
+                                            session.pendingTaskConfirm ? "booking_confirm" :
+                                                null;
+            const lang = (0, language_1.languageFromSession)(session);
             await (0, sessionState_1.clearAllStateFlags)(phone, db);
             if (isOnboarding) {
-                await (0, client_1.sendMessage)(chatId, "Your session timed out. No worries — I saved your progress!\n\n" +
-                    "Reply RESUME to pick up where you left off, or START OVER to begin fresh.");
+                await (0, client_1.sendMessage)(chatId, language_1.t.session_timeout_onboarding(lang));
+            }
+            else if (flowKey) {
+                await (0, client_1.sendMessage)(chatId, language_1.t.session_timeout_flow((0, language_1.flowLabel)(flowKey, lang), lang));
             }
             else {
-                await (0, client_1.sendMessage)(chatId, "Your previous session timed out — just text me if you'd like to continue.");
+                await (0, client_1.sendMessage)(chatId, language_1.t.session_timeout_generic(lang));
             }
             return;
         }
@@ -1370,14 +1550,15 @@ async function handleInbound(event) {
     // STOP — works at any stage (CANCEL is NOT here — it cancels a visit, not the account)
     if (stopWords.has(norm)) {
         await (0, sms_1.optOutPhoneNumber)(phone);
-        await (0, client_1.sendMessage)(chatId, "You've been unsubscribed from Cara messages. Reply START anytime to reactivate.");
+        const lang = (0, language_1.languageFromSession)(session);
+        await (0, client_1.sendMessage)(chatId, language_1.t.opt_out_confirmation(lang));
         return;
     }
     // ── Subscription lapse — graceful degradation for clients with lapsed billing ─
     if (session.userType === "client" && session.onboardingStep === "complete") {
-        const userId = (_u = session.userId) !== null && _u !== void 0 ? _u : phone;
+        const userId = (_4 = session.userId) !== null && _4 !== void 0 ? _4 : phone;
         const userSnap = await db.collection("users").doc(userId).get().catch(() => null);
-        const subStatus = (_v = userSnap === null || userSnap === void 0 ? void 0 : userSnap.data()) === null || _v === void 0 ? void 0 : _v.subscriptionStatus;
+        const subStatus = (_5 = userSnap === null || userSnap === void 0 ? void 0 : userSnap.data()) === null || _5 === void 0 ? void 0 : _5.subscriptionStatus;
         if (subStatus === "past_due" || subStatus === "canceled" || subStatus === "unpaid") {
             await (0, client_1.sendMessage)(chatId, "Your Cara membership needs attention — there was an issue with your payment.\n\n" +
                 "To keep your care coordination active, please update your billing at cara.app/billing or reply HELP to reach our support team.");
@@ -1385,23 +1566,96 @@ async function handleInbound(event) {
         }
     }
     // ── Twin-trigger cancel — user replied, cancel any pending proactive nudges ─
-    (0, triggerEngine_1.cancelTriggerIfUserReplied)((_w = session.userId) !== null && _w !== void 0 ? _w : phone, phone).catch(() => { });
+    (0, triggerEngine_1.cancelTriggerIfUserReplied)((_6 = session.userId) !== null && _6 !== void 0 ? _6 : phone, phone).catch(() => { });
     // ── Crisis detection — checked before everything else ──────────────────────
+    // Keyword fast-path identifies POTENTIAL crisis (sub-millisecond). For real
+    // hits we then run a 1.2s LLM verification to filter out quotes/jokes/
+    // hypotheticals — fail-safe to crisis on timeout/error.
     const crisis = (0, crisisDetector_1.detectCrisis)(text);
+    const sessionLang = (0, language_1.languageFromSession)(session);
     if (crisis === "medical") {
-        await (0, client_1.sendMessage)(chatId, crisisDetector_1.MEDICAL_RESPONSE);
-        (0, auditLog_1.logCrisisDetected)(phone, "medical", text).catch(() => { });
-        return;
+        if (await (0, crisisDetector_1.isLikelyRealCrisis)(text, "medical")) {
+            await (0, client_1.sendMessage)(chatId, language_1.t.crisis_medical(sessionLang));
+            (0, auditLog_1.logCrisisDetected)(phone, "medical", text).catch(() => { });
+            return;
+        }
+        console.info("crisisDetector: medical keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
     }
     if (crisis === "emotional") {
-        await (0, client_1.sendMessage)(chatId, crisisDetector_1.EMOTIONAL_RESPONSE);
-        (0, auditLog_1.logCrisisDetected)(phone, "emotional", text).catch(() => { });
-        return;
+        if (await (0, crisisDetector_1.isLikelyRealCrisis)(text, "emotional")) {
+            await (0, client_1.sendMessage)(chatId, language_1.t.crisis_emotional(sessionLang));
+            (0, auditLog_1.logCrisisDetected)(phone, "emotional", text).catch(() => { });
+            return;
+        }
+        console.info("crisisDetector: emotional keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
+    }
+    // ── Persona-shift resolution ────────────────────────────────────────────────
+    // If we previously asked "is this still about [seniorName]?", interpret
+    // this inbound as the answer and either resume or block the original action.
+    {
+        const pending = session.pendingPersonaResolve;
+        if (pending) {
+            // Quick yes/no classify — was the user confirming the session person or not?
+            let isSame = false;
+            try {
+                const verdict = await (0, openaiClient_1.quickComplete)(`Cara asked: "Is this still about ${(_7 = pending.seniorName) !== null && _7 !== void 0 ? _7 : "the person on file"}?" ` +
+                    "Reply YES if the user confirms it is still about them. " +
+                    "Reply NO if the user says it is a different person or family. " +
+                    "Reply UNCLEAR if you cannot tell. Only reply one word.", text, { maxTokens: 5 });
+                const v = verdict.trim().toUpperCase();
+                isSame = v.startsWith("Y");
+                if (v.startsWith("U")) {
+                    await (0, client_1.sendMessage)(chatId, `Just to be sure — is this message about ${(_8 = pending.seniorName) !== null && _8 !== void 0 ? _8 : "the person on file"}? Reply YES or NO.`);
+                    return;
+                }
+            }
+            catch (_179) {
+                await (0, client_1.sendMessage)(chatId, `Just to be sure — is this message about ${(_9 = pending.seniorName) !== null && _9 !== void 0 ? _9 : "the person on file"}? Reply YES or NO.`);
+                return;
+            }
+            await db.collection("agent_sessions").doc(phone).update({
+                pendingPersonaResolve: admin.firestore.FieldValue.delete(),
+            }).catch(() => { });
+            if (!isSame) {
+                await (0, client_1.sendMessage)(chatId, `Got it — different person. I keep one care plan per phone number, so I can't mix them up.\n\n` +
+                    `If you want a separate setup, the person you're asking about needs to text me from their own phone. ` +
+                    `Or ask whoever set this up for ${(_10 = pending.seniorName) !== null && _10 !== void 0 ? _10 : "the person on file"} to add you as a family member, ` +
+                    `which lets you get care updates without overwriting their plan.`);
+                return;
+            }
+            // isSame === true → fall through and process the ORIGINAL text as if just received
+            text = pending.originalText;
+        }
+    }
+    // ── Persona shift detection — flag and pause when a different person seems to be texting ─
+    // Only relevant for complete client sessions; onboarding flows already self-reset via START OVER.
+    if (session.onboardingStep === "complete" && session.userType === "client") {
+        const sessionSeniorName = (_12 = (_11 = session.onboardingData) === null || _11 === void 0 ? void 0 : _11.seniorName) !== null && _12 !== void 0 ? _12 : session.seniorName;
+        const shift = await (0, personaShiftDetector_1.detectPersonaShift)({
+            text,
+            sessionSenior: sessionSeniorName,
+            sessionRole: session.userType,
+        }).catch(() => null);
+        if (shift) {
+            await db.collection("agent_sessions").doc(phone).update({
+                pendingPersonaResolve: {
+                    originalText: text,
+                    seniorName: sessionSeniorName !== null && sessionSeniorName !== void 0 ? sessionSeniorName : "",
+                    detectedAt: new Date().toISOString(),
+                },
+            }).catch(() => { });
+            await (0, client_1.sendMessage)(chatId, sessionSeniorName
+                ? `I see this phone is set up for ${sessionSeniorName}'s care plan, but your message sounds like it's about someone else. ` +
+                    `Is this still about ${sessionSeniorName}? Reply YES to continue, or NO if it's a different family member.`
+                : `Quick check — your message sounds like it might be about someone other than the person I have on file for this phone. ` +
+                    `Is this for the same person? Reply YES or NO.`);
+            return;
+        }
     }
     // ── Bereavement detection — before intent classification ───────────────────
     if (await (0, bereavement_1.isBereavementTrigger)(text) && !session.bereavementMode) {
-        const seniorName = (_x = session.seniorName) !== null && _x !== void 0 ? _x : "your loved one";
-        await (0, bereavement_1.activateBereavementMode)((_y = session.userId) !== null && _y !== void 0 ? _y : phone, chatId, phone, seniorName);
+        const seniorName = (_13 = session.seniorName) !== null && _13 !== void 0 ? _13 : "your loved one";
+        await (0, bereavement_1.activateBereavementMode)((_14 = session.userId) !== null && _14 !== void 0 ? _14 : phone, chatId, phone, seniorName);
         return;
     }
     // If already in bereavement mode — allow explicit exit or send gentle acknowledgment
@@ -1415,7 +1669,7 @@ async function handleInbound(event) {
                 "Reply with only YES or NO.", text, { maxTokens: 5 });
             isExit = raw.trim().toUpperCase().startsWith("Y");
         }
-        catch (_151) {
+        catch (_180) {
             isExit = false;
         }
         if (isExit) {
@@ -1459,21 +1713,65 @@ async function handleInbound(event) {
     if (!session.zepThreadId && session.onboardingStep === "complete") {
         (0, zepClient_1.initializeZepOnFirstContact)(phone).catch((err) => console.error("Zep lazy-init error:", err));
     }
+    // ── Profile completeness gate ────────────────────────────────────────────
+    // Catches "phone is in the system but onboarding never completed" — sandbox→
+    // live migrations, admin-added stubs, abandoned flows. Without this, the
+    // session falls through to qaAgent which sees partial linkage to other
+    // people's data and produces contradictory replies ("I have your profile" /
+    // "key details haven't been filled in"). Skipped if the user is actively
+    // mid-onboarding (existing flow handles them) or already onboarded.
+    {
+        const inOnboardingFlow = session.onboardingStep && session.onboardingStep !== "complete";
+        if (!inOnboardingFlow) {
+            const completeness = (0, profileCompleteness_1.classifyCompleteness)(session);
+            if (completeness === "PARTIAL") {
+                const offerState = session.onboardingOfferState;
+                if (offerState === "pending") {
+                    const reply = await (0, profileCompleteness_1.classifyOfferReply)(text);
+                    if (reply === "accept") {
+                        await (0, profileCompleteness_1.markOfferAccepted)(phone);
+                        await (0, client_1.sendMessage)(chatId, "Great — let's get you set up.\n\n" +
+                            "Are you looking for care for a loved one, or are you a caregiver?\n\n" +
+                            "1️⃣  I need care for someone\n" +
+                            "2️⃣  I'm a caregiver looking for work");
+                        return;
+                    }
+                    if (reply === "decline") {
+                        await (0, profileCompleteness_1.markOfferDeclined)(phone);
+                        await (0, client_1.sendMessage)(chatId, "No problem — we can do it whenever you're ready. What can I help with right now?");
+                        return;
+                    }
+                    // QUESTION → fall through to QA (cross-entity context will be suppressed),
+                    // leaving offerState=pending so the offer is implicitly still on the table.
+                }
+                else if (!offerState || (0, profileCompleteness_1.shouldReoffer)(session)) {
+                    await (0, profileCompleteness_1.sendOnboardingOffer)(phone, chatId, session);
+                    return;
+                }
+                // offerState === "declined" and not yet time to re-offer → fall through to QA
+                // with cross-entity context suppressed (signaled via session flag below).
+                session.__unconfirmedIdentity = true;
+            }
+        }
+    }
     // ── ONBOARDING gate — route to state machine if not complete ─────────────
     // If the session exists but has no onboardingStep (e.g. created by an old
     // initiateCara that only stored chatId/userType), try to recover account data
     // from the users collection before routing. Without userId/seniorId the QA agent
     // will crash with an invalid Firestore path.
-    // Also catches the case where onboardingStep is non-complete (e.g. "ask_role")
-    // but userId is missing — the session was corrupted, so recover it first.
-    if ((!session.onboardingStep || session.onboardingStep !== "complete") && !session.userId) {
+    // Recovers corrupted sessions: any missing userId triggers a users-collection
+    // lookup. Previously only ran when step !== "complete" — but "complete with
+    // no userId" is also corrupt (e.g. signup completed then user account write
+    // failed) and was producing downstream crashes when qaAgent tried to load
+    // senior context from an empty seniorId.
+    if (!session.userId) {
         const userQuery = await db.collection("users").where("phone", "==", phone).limit(1).get();
         if (!userQuery.empty) {
             const userDoc = userQuery.docs[0];
             const userData = userDoc.data();
             const userId = userDoc.id;
-            const seniorIds = (_z = userData.seniorIds) !== null && _z !== void 0 ? _z : [];
-            const seniorId = (_1 = (_0 = userData.seniorId) !== null && _0 !== void 0 ? _0 : seniorIds[0]) !== null && _1 !== void 0 ? _1 : "";
+            const seniorIds = (_15 = userData.seniorIds) !== null && _15 !== void 0 ? _15 : [];
+            const seniorId = (_17 = (_16 = userData.seniorId) !== null && _16 !== void 0 ? _16 : seniorIds[0]) !== null && _17 !== void 0 ? _17 : "";
             await db.collection("agent_sessions").doc(phone).update({
                 userId,
                 seniorId,
@@ -1484,14 +1782,36 @@ async function handleInbound(event) {
             session.seniorId = seniorId;
             session.onboardingStep = "complete";
         }
-        else {
-            // No user account found — start onboarding from the beginning
+        else if (!session.onboardingStep || session.onboardingStep !== "complete") {
+            // No user account found and not complete — start onboarding from the beginning
             await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "ask_role" });
             session.onboardingStep = "ask_role";
         }
+        else {
+            // Complete but no user record and no users-collection match — session
+            // is orphaned. Tell the user something went wrong and offer a restart
+            // rather than crashing through qaAgent.
+            await (0, client_1.sendMessage)(chatId, "Something's off with this account — I can't find your details. " +
+                "Reply START OVER and I'll get you set up again.");
+            console.error("handleInbound: complete session with no userId and no users record", { phone });
+            return;
+        }
     }
-    const step = (_2 = session.onboardingStep) !== null && _2 !== void 0 ? _2 : "";
+    const step = (_18 = session.onboardingStep) !== null && _18 !== void 0 ? _18 : "";
     if (step && step !== "complete") {
+        // Soft-resume ack — when a user comes back mid-onboarding after a notable
+        // gap (>=10 min, but inside the 30-min state-expiry window), prepend a
+        // one-liner so they know we picked up where they left off instead of
+        // continuing mid-question as if nothing happened. Skipped for verify_phone
+        // because the OTP context speaks for itself.
+        const previousInboundAt = session.lastInboundAt;
+        if (previousInboundAt && step !== "verify_phone") {
+            const gapMs = Date.now() - new Date(previousInboundAt).getTime();
+            if (gapMs >= 10 * 60 * 1000 && gapMs <= 30 * 60 * 1000) {
+                const lang = (0, language_1.languageFromSession)(session);
+                await (0, client_1.sendMessage)(chatId, language_1.t.welcome_back(lang));
+            }
+        }
         // Log every onboarding message to Zep — this is where names, conditions,
         // and care needs are shared, so Zep starts building the knowledge graph now
         const onboardingZepThreadId = session.zepThreadId;
@@ -1499,18 +1819,18 @@ async function handleInbound(event) {
             (0, zepClient_1.addUserMessageToZep)({
                 threadId: onboardingZepThreadId,
                 content: text,
-                userName: (_4 = (_3 = session.onboardingData) === null || _3 === void 0 ? void 0 : _3.firstName) !== null && _4 !== void 0 ? _4 : "User",
+                userName: (_20 = (_19 = session.onboardingData) === null || _19 === void 0 ? void 0 : _19.firstName) !== null && _20 !== void 0 ? _20 : "User",
                 sentAt: new Date(),
             }).catch(console.error);
         }
         // Permissions steps
         if (step === "client_permissions_contact" || step === "client_permissions_booking" || step === "client_permissions_autobook") {
-            const userId = (_5 = session.userId) !== null && _5 !== void 0 ? _5 : phone;
+            const userId = (_21 = session.userId) !== null && _21 !== void 0 ? _21 : phone;
             await (0, permissionsConversation_1.handleClientPermissionsReply)(phone, chatId, text, session, userId);
             return;
         }
         if (step === "caregiver_permissions_decline" || step === "caregiver_permissions_arrival") {
-            const caregiverId = (_6 = session.caregiverId) !== null && _6 !== void 0 ? _6 : phone;
+            const caregiverId = (_22 = session.caregiverId) !== null && _22 !== void 0 ? _22 : phone;
             await (0, permissionsConversation_1.handleCaregiverPermissionsReply)(phone, chatId, text, session, caregiverId);
             return;
         }
@@ -1519,22 +1839,22 @@ async function handleInbound(event) {
         // so Zep's knowledge graph captures names, conditions, care needs as they're collected.
         if (onboardingZepThreadId) {
             const afterSnap = await db.collection("agent_sessions").doc(phone).get();
-            const afterData = (_7 = afterSnap.data()) !== null && _7 !== void 0 ? _7 : {};
-            const newStep = (_8 = afterData.onboardingStep) !== null && _8 !== void 0 ? _8 : step;
-            const oData = (_9 = afterData.onboardingData) !== null && _9 !== void 0 ? _9 : {};
+            const afterData = (_23 = afterSnap.data()) !== null && _23 !== void 0 ? _23 : {};
+            const newStep = (_24 = afterData.onboardingStep) !== null && _24 !== void 0 ? _24 : step;
+            const oData = (_25 = afterData.onboardingData) !== null && _25 !== void 0 ? _25 : {};
             (0, zepClient_1.addBusinessDataToZep)({
                 userId: (0, zepClient_1.getZepUserId)(phone),
                 data: {
                     event_type: "onboarding_step",
                     step_completed: step,
                     step_next: newStep,
-                    user_type: (_10 = afterData.userType) !== null && _10 !== void 0 ? _10 : "unknown",
-                    user_name: (_12 = (_11 = oData.firstName) !== null && _11 !== void 0 ? _11 : oData.name) !== null && _12 !== void 0 ? _12 : "",
-                    senior_name: (_13 = oData.seniorName) !== null && _13 !== void 0 ? _13 : "",
-                    senior_age: (_14 = oData.age) !== null && _14 !== void 0 ? _14 : null,
-                    senior_conditions: (_15 = oData.conditions) !== null && _15 !== void 0 ? _15 : [],
-                    senior_care_needs: (_16 = oData.careNeeds) !== null && _16 !== void 0 ? _16 : [],
-                    senior_city: (_17 = oData.city) !== null && _17 !== void 0 ? _17 : "",
+                    user_type: (_26 = afterData.userType) !== null && _26 !== void 0 ? _26 : "unknown",
+                    user_name: (_28 = (_27 = oData.firstName) !== null && _27 !== void 0 ? _27 : oData.name) !== null && _28 !== void 0 ? _28 : "",
+                    senior_name: (_29 = oData.seniorName) !== null && _29 !== void 0 ? _29 : "",
+                    senior_age: (_30 = oData.age) !== null && _30 !== void 0 ? _30 : null,
+                    senior_conditions: (_31 = oData.conditions) !== null && _31 !== void 0 ? _31 : [],
+                    senior_care_needs: (_32 = oData.careNeeds) !== null && _32 !== void 0 ? _32 : [],
+                    senior_city: (_33 = oData.city) !== null && _33 !== void 0 ? _33 : "",
                     timestamp: new Date().toISOString(),
                 },
             }).catch((err) => console.error("onboarding Zep push error:", err));
@@ -1573,14 +1893,14 @@ async function handleInbound(event) {
             .get();
         if (!pendingFeedback.empty) {
             const triggerDoc = pendingFeedback.docs[0];
-            const meta = (_18 = triggerDoc.data().metadata) !== null && _18 !== void 0 ? _18 : {};
+            const meta = (_34 = triggerDoc.data().metadata) !== null && _34 !== void 0 ? _34 : {};
             await handleVisitFeedback({
                 phone,
                 chatId,
                 text,
-                caregiverId: (_19 = meta.caregiverId) !== null && _19 !== void 0 ? _19 : "",
-                clientId: (_21 = (_20 = meta.clientId) !== null && _20 !== void 0 ? _20 : session.userId) !== null && _21 !== void 0 ? _21 : "",
-                appointmentId: (_22 = meta.appointmentId) !== null && _22 !== void 0 ? _22 : "",
+                caregiverId: (_35 = meta.caregiverId) !== null && _35 !== void 0 ? _35 : "",
+                clientId: (_37 = (_36 = meta.clientId) !== null && _36 !== void 0 ? _36 : session.userId) !== null && _37 !== void 0 ? _37 : "",
+                appointmentId: (_38 = meta.appointmentId) !== null && _38 !== void 0 ? _38 : "",
                 triggerId: triggerDoc.id,
             });
             return;
@@ -1605,7 +1925,7 @@ async function handleInbound(event) {
         }
         if (session.pendingSwapRequestId) {
             const swapRequestId = session.pendingSwapRequestId;
-            const fromName = (_23 = session.pendingSwapFromName) !== null && _23 !== void 0 ? _23 : "A caregiver";
+            const fromName = (_39 = session.pendingSwapFromName) !== null && _39 !== void 0 ? _39 : "A caregiver";
             const swapRaw = await (0, openaiClient_1.quickComplete)("The caregiver is responding to a shift-swap request. " +
                 "Reply ACCEPT if they agree to cover the shift. " +
                 "Reply DECLINE if they refuse. " +
@@ -1614,7 +1934,7 @@ async function handleInbound(event) {
             const swapDecision = swapRaw.trim().toUpperCase();
             if (swapDecision === "ACCEPT") {
                 const cgName = session.caregiverId
-                    ? (_25 = (_24 = (await db.collection("caregivers").doc(session.caregiverId).get()).data()) === null || _24 === void 0 ? void 0 : _24.name) !== null && _25 !== void 0 ? _25 : "Caregiver"
+                    ? (_41 = (_40 = (await db.collection("caregivers").doc(session.caregiverId).get()).data()) === null || _40 === void 0 ? void 0 : _40.name) !== null && _41 !== void 0 ? _41 : "Caregiver"
                     : "Caregiver";
                 await db.collection("agent_sessions").doc(phone).update({
                     pendingSwapRequestId: admin.firestore.FieldValue.delete(),
@@ -1623,7 +1943,7 @@ async function handleInbound(event) {
                 if (session.service === "iMessage")
                     await (0, client_1.startTyping)(chatId).catch(() => { });
                 try {
-                    await (0, caregiverSwapHandler_1.handleSwapAcceptance)((_26 = session.caregiverId) !== null && _26 !== void 0 ? _26 : phone, cgName, swapRequestId, chatId);
+                    await (0, caregiverSwapHandler_1.handleSwapAcceptance)((_42 = session.caregiverId) !== null && _42 !== void 0 ? _42 : phone, cgName, swapRequestId, chatId);
                 }
                 finally {
                     if (session.service === "iMessage")
@@ -1634,7 +1954,7 @@ async function handleInbound(event) {
             if (swapDecision === "DECLINE") {
                 await db.collection("shift_swap_requests").doc(swapRequestId).update({
                     candidateResponses: admin.firestore.FieldValue.arrayUnion({
-                        caregiverId: (_27 = session.caregiverId) !== null && _27 !== void 0 ? _27 : phone,
+                        caregiverId: (_43 = session.caregiverId) !== null && _43 !== void 0 ? _43 : phone,
                         response: "declined",
                         at: new Date().toISOString(),
                     }),
@@ -1656,7 +1976,7 @@ async function handleInbound(event) {
         }
         const KEYWORDS = {
             ARRIVED: () => handleArrived(phone, chatId, session),
-            DONE: () => handleDone(phone, chatId, session),
+            DONE: () => handleDone(phone, chatId, session, text),
             LATE: () => handleRunningLate(phone, chatId),
             ISSUE: () => handleIssue(phone, chatId),
             CONFIRM: async () => {
@@ -1706,6 +2026,19 @@ async function handleInbound(event) {
             PASS: async () => {
                 var _a;
                 await (0, interviewAgent_1.handleCaregiverAvailabilityReply)(phone, (_a = session.caregiverId) !== null && _a !== void 0 ? _a : "", "", chatId, "PASS");
+            },
+            PAYOUT: async () => {
+                if (!session.caregiverId) {
+                    await (0, client_1.sendMessage)(chatId, "I couldn't find your caregiver profile. Please contact support.");
+                    return;
+                }
+                const { startInstantPayout } = await Promise.resolve().then(() => __importStar(require("../agents/instantPayoutHandler")));
+                await startInstantPayout(session.caregiverId, phone, chatId);
+            },
+            REACTIVATE: async () => {
+                if (!session.caregiverId)
+                    return;
+                await (0, caregiverProfileHandler_1.handleCaregiverProfileUpdate)(session.caregiverId, phone, text, session, chatId, "reactivate");
             },
         };
         if (norm in KEYWORDS) {
@@ -1772,6 +2105,22 @@ async function handleInbound(event) {
                 return;
             }
         }
+        // Day-before CLIENT shift confirmation reply (CONFIRM / CANCEL / question)
+        if (session.pendingClientShiftConfirm) {
+            const csExpiry = session.stateExpiresAt;
+            if (csExpiry && new Date(csExpiry) < new Date()) {
+                await db.collection("agent_sessions").doc(phone).update({
+                    pendingClientShiftConfirm: admin.firestore.FieldValue.delete(),
+                    stateExpiresAt: admin.firestore.FieldValue.delete(),
+                }).catch(() => { });
+                // fall through to normal routing
+            }
+            else {
+                const { handleClientShiftConfirm } = await Promise.resolve().then(() => __importStar(require("../agents/clientShiftConfirmHandler")));
+                await handleClientShiftConfirm(phone, chatId, text, session);
+                return;
+            }
+        }
         // Awaiting task acknowledgment after a mid-shift nudge
         if (session.awaitingTaskAck) {
             const taskAckExpiry = session.stateExpiresAt;
@@ -1808,7 +2157,7 @@ async function handleInbound(event) {
                 await db.collection("agent_sessions").doc(phone).update({ awaitingLateMinutes: false });
                 const today2 = new Date().toISOString().slice(0, 10);
                 const lateApptSnap = await db.collection("appointments")
-                    .where("caregiverId", "==", (_28 = session.caregiverId) !== null && _28 !== void 0 ? _28 : "")
+                    .where("caregiverId", "==", (_44 = session.caregiverId) !== null && _44 !== void 0 ? _44 : "")
                     .where("date", "==", today2).limit(1).get();
                 const clientPhone = lateApptSnap.empty ? null : await getClientPhoneForAppt(lateApptSnap.docs[0].data());
                 // Record lateness event
@@ -1817,15 +2166,15 @@ async function handleInbound(event) {
                     const minutesLateNum = parseInt(text.replace(/\D/g, ""), 10);
                     if (!isNaN(minutesLateNum) && minutesLateNum > 0) {
                         const cgSnap2 = await db.collection("caregivers").doc(session.caregiverId).get();
-                        const cgName2 = (_30 = (_29 = cgSnap2.data()) === null || _29 === void 0 ? void 0 : _29.name) !== null && _30 !== void 0 ? _30 : "Unknown";
+                        const cgName2 = (_46 = (_45 = cgSnap2.data()) === null || _45 === void 0 ? void 0 : _45.name) !== null && _46 !== void 0 ? _46 : "Unknown";
                         const { recordLatenessEvent, checkLatenessPattern } = await Promise.resolve().then(() => __importStar(require("../agents/latenessTracker")));
                         recordLatenessEvent({
                             caregiverId: session.caregiverId,
                             caregiverName: cgName2,
                             appointmentId: lateApptSnap.docs[0].id,
-                            clientId: (_31 = lateApptData.clientId) !== null && _31 !== void 0 ? _31 : "",
+                            clientId: (_47 = lateApptData.clientId) !== null && _47 !== void 0 ? _47 : "",
                             date: today2,
-                            scheduledTime: ((_32 = lateApptData.startTime) !== null && _32 !== void 0 ? _32 : "").slice(0, 5),
+                            scheduledTime: ((_48 = lateApptData.startTime) !== null && _48 !== void 0 ? _48 : "").slice(0, 5),
                             minutesLate: minutesLateNum,
                             selfReported: true,
                         }).catch(() => { });
@@ -1836,7 +2185,7 @@ async function handleInbound(event) {
                     const cgSnap = session.caregiverId
                         ? await db.collection("caregivers").doc(session.caregiverId).get()
                         : null;
-                    const cgName = (_34 = (_33 = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _33 === void 0 ? void 0 : _33.name) !== null && _34 !== void 0 ? _34 : "Your caregiver";
+                    const cgName = (_50 = (_49 = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _49 === void 0 ? void 0 : _49.name) !== null && _50 !== void 0 ? _50 : "Your caregiver";
                     const origTime = lateApptSnap.empty ? "" : ` (originally ${lateApptSnap.docs[0].data().startTime})`;
                     await (0, dndGuard_1.sendIfNotDND)(clientPhone, {
                         content: `${cgName} is running about ${text} late. They're on their way${origTime}.`,
@@ -1866,7 +2215,7 @@ async function handleInbound(event) {
                 await db.collection("agent_sessions").doc(phone).update({ awaitingIssueDescription: false });
                 const issueToday = new Date().toISOString().slice(0, 10);
                 const issueApptSnap = await db.collection("appointments")
-                    .where("caregiverId", "==", (_35 = session.caregiverId) !== null && _35 !== void 0 ? _35 : "")
+                    .where("caregiverId", "==", (_51 = session.caregiverId) !== null && _51 !== void 0 ? _51 : "")
                     .where("date", "==", issueToday)
                     .where("status", "in", ["confirmed", "in-progress"])
                     .limit(1).get();
@@ -1875,17 +2224,17 @@ async function handleInbound(event) {
                 const cgSnap = session.caregiverId
                     ? await db.collection("caregivers").doc(session.caregiverId).get()
                     : null;
-                const cgName = (_37 = (_36 = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _36 === void 0 ? void 0 : _36.name) !== null && _37 !== void 0 ? _37 : "Your caregiver";
-                const seniorId = (_39 = (_38 = issueAppt === null || issueAppt === void 0 ? void 0 : issueAppt.seniorId) !== null && _38 !== void 0 ? _38 : issueAppt === null || issueAppt === void 0 ? void 0 : issueAppt.clientId) !== null && _39 !== void 0 ? _39 : "";
+                const cgName = (_53 = (_52 = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _52 === void 0 ? void 0 : _52.name) !== null && _53 !== void 0 ? _53 : "Your caregiver";
+                const seniorId = (_55 = (_54 = issueAppt === null || issueAppt === void 0 ? void 0 : issueAppt.seniorId) !== null && _54 !== void 0 ? _54 : issueAppt === null || issueAppt === void 0 ? void 0 : issueAppt.clientId) !== null && _55 !== void 0 ? _55 : "";
                 const seniorSnap = seniorId ? await db.collection("senior_profiles").doc(seniorId).get() : null;
-                const seniorName = (_42 = (_41 = (_40 = seniorSnap === null || seniorSnap === void 0 ? void 0 : seniorSnap.data()) === null || _40 === void 0 ? void 0 : _40.name) !== null && _41 !== void 0 ? _41 : issueAppt === null || issueAppt === void 0 ? void 0 : issueAppt.clientName) !== null && _42 !== void 0 ? _42 : "your client";
+                const seniorName = (_58 = (_57 = (_56 = seniorSnap === null || seniorSnap === void 0 ? void 0 : seniorSnap.data()) === null || _56 === void 0 ? void 0 : _56.name) !== null && _57 !== void 0 ? _57 : issueAppt === null || issueAppt === void 0 ? void 0 : issueAppt.clientName) !== null && _58 !== void 0 ? _58 : "your client";
                 const { handleCaregiverIssue } = await Promise.resolve().then(() => __importStar(require("../agents/issueEscalator")));
                 await handleCaregiverIssue({
-                    caregiverId: (_43 = session.caregiverId) !== null && _43 !== void 0 ? _43 : phone,
+                    caregiverId: (_59 = session.caregiverId) !== null && _59 !== void 0 ? _59 : phone,
                     caregiverPhone: phone,
                     caregiverName: cgName,
                     appointmentId: issueApptSnap.empty ? "" : issueApptSnap.docs[0].id,
-                    clientId: (_44 = issueAppt === null || issueAppt === void 0 ? void 0 : issueAppt.clientId) !== null && _44 !== void 0 ? _44 : "",
+                    clientId: (_60 = issueAppt === null || issueAppt === void 0 ? void 0 : issueAppt.clientId) !== null && _60 !== void 0 ? _60 : "",
                     clientPhone: clientPhone !== null && clientPhone !== void 0 ? clientPhone : "",
                     seniorId,
                     seniorName,
@@ -1966,7 +2315,7 @@ async function handleInbound(event) {
                 if (parts.length === 3) {
                     const [energy, stress, satisfaction] = parts;
                     await db.collection("wellbeing_checkins").add({
-                        caregiverId: (_46 = (_45 = session.caregiverId) !== null && _45 !== void 0 ? _45 : session.userId) !== null && _46 !== void 0 ? _46 : phone,
+                        caregiverId: (_62 = (_61 = session.caregiverId) !== null && _61 !== void 0 ? _61 : session.userId) !== null && _62 !== void 0 ? _62 : phone,
                         phone,
                         energy,
                         stress,
@@ -1994,12 +2343,12 @@ async function handleInbound(event) {
                     "Reply with only a JSON array, e.g. [\"Tuesday 2pm\",\"Wednesday 10am\"]. Keep them short.", text, { maxTokens: 100 });
                 timeList = JSON.parse(parsedRaw || "[]");
             }
-            catch ( /* fall through — use raw text below */_152) { /* fall through — use raw text below */ }
+            catch ( /* fall through — use raw text below */_181) { /* fall through — use raw text below */ }
             const timesText = timeList.length > 0 ? timeList.join(", ") : text;
             // Find the relevant interview request
-            const caregiverId = (_47 = session.caregiverId) !== null && _47 !== void 0 ? _47 : "";
+            const caregiverId = (_63 = session.caregiverId) !== null && _63 !== void 0 ? _63 : "";
             const cgSnap = caregiverId ? await db.collection("caregivers").doc(caregiverId).get() : null;
-            const cgName = (_49 = (_48 = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _48 === void 0 ? void 0 : _48.name) !== null && _49 !== void 0 ? _49 : "Your caregiver";
+            const cgName = (_65 = (_64 = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _64 === void 0 ? void 0 : _64.name) !== null && _65 !== void 0 ? _65 : "Your caregiver";
             const reqSnap = await db.collection("interview_requests")
                 .where("caregiverId", "==", caregiverId)
                 .where("status", "in", ["scheduled", "awaiting_client_confirmation"])
@@ -2027,7 +2376,7 @@ async function handleInbound(event) {
         }
         // Caregiver availability reply (for interview scheduling)
         if (session.pendingInterviewAvailabilityRequest) {
-            await (0, interviewAgent_1.handleCaregiverAvailabilityReply)(phone, (_50 = session.caregiverId) !== null && _50 !== void 0 ? _50 : "", "", chatId, text);
+            await (0, interviewAgent_1.handleCaregiverAvailabilityReply)(phone, (_66 = session.caregiverId) !== null && _66 !== void 0 ? _66 : "", "", chatId, text);
             return;
         }
         // ── Job alert: YES/NO/natural-language response ────────────────────────
@@ -2064,13 +2413,81 @@ async function handleInbound(event) {
                 const cgDoc = session.caregiverId
                     ? await db.collection("caregivers").doc(session.caregiverId).get()
                     : null;
-                await (0, caregiverSwapHandler_1.handleCaregiverSwapRequest)((_51 = session.caregiverId) !== null && _51 !== void 0 ? _51 : phone, (_53 = (_52 = cgDoc === null || cgDoc === void 0 ? void 0 : cgDoc.data()) === null || _52 === void 0 ? void 0 : _52.name) !== null && _53 !== void 0 ? _53 : "Caregiver", phone, text, session, chatId);
+                await (0, caregiverSwapHandler_1.handleCaregiverSwapRequest)((_67 = session.caregiverId) !== null && _67 !== void 0 ? _67 : phone, (_69 = (_68 = cgDoc === null || cgDoc === void 0 ? void 0 : cgDoc.data()) === null || _68 === void 0 ? void 0 : _68.name) !== null && _69 !== void 0 ? _69 : "Caregiver", phone, text, session, chatId);
             }
             finally {
                 if (session.service === "iMessage")
                     await (0, client_1.stopTyping)(chatId).catch(() => { });
             }
             return;
+        }
+        // ── Caregiver-initiated shift cancellation — multi-step state machine ─
+        if (session.cancelStep) {
+            const expiry = session.stateExpiresAt;
+            if (expiry && new Date(expiry) < new Date()) {
+                await db.collection("agent_sessions").doc(phone).update({
+                    cancelStep: admin.firestore.FieldValue.delete(),
+                    cancelCandidates: admin.firestore.FieldValue.delete(),
+                    cancelShiftId: admin.firestore.FieldValue.delete(),
+                    cancelShiftDate: admin.firestore.FieldValue.delete(),
+                    cancelShiftClientId: admin.firestore.FieldValue.delete(),
+                    stateExpiresAt: admin.firestore.FieldValue.delete(),
+                }).catch(() => { });
+            }
+            else {
+                if (session.service === "iMessage")
+                    await (0, client_1.startTyping)(chatId).catch(() => { });
+                try {
+                    const cgDoc = session.caregiverId
+                        ? await db.collection("caregivers").doc(session.caregiverId).get()
+                        : null;
+                    await (0, caregiverCancelShiftHandler_1.handleCaregiverCancelShift)((_70 = session.caregiverId) !== null && _70 !== void 0 ? _70 : phone, (_72 = (_71 = cgDoc === null || cgDoc === void 0 ? void 0 : cgDoc.data()) === null || _71 === void 0 ? void 0 : _71.name) !== null && _72 !== void 0 ? _72 : "Caregiver", phone, text, session, chatId);
+                }
+                finally {
+                    if (session.service === "iMessage")
+                        await (0, client_1.stopTyping)(chatId).catch(() => { });
+                }
+                return;
+            }
+        }
+        // ── Profile update flow (rate / skills / bio / photo / pause / reactivate)
+        if (session.profileUpdateStep) {
+            const expiry = session.stateExpiresAt;
+            if (expiry && new Date(expiry) < new Date()) {
+                await db.collection("agent_sessions").doc(phone).update({
+                    profileUpdateStep: admin.firestore.FieldValue.delete(),
+                    profileUpdateField: admin.firestore.FieldValue.delete(),
+                    profileUpdateValue: admin.firestore.FieldValue.delete(),
+                    stateExpiresAt: admin.firestore.FieldValue.delete(),
+                }).catch(() => { });
+            }
+            else if (session.caregiverId) {
+                if (session.service === "iMessage")
+                    await (0, client_1.startTyping)(chatId).catch(() => { });
+                try {
+                    await (0, caregiverProfileHandler_1.handleCaregiverProfileUpdate)(session.caregiverId, phone, text, session, chatId);
+                }
+                finally {
+                    if (session.service === "iMessage")
+                        await (0, client_1.stopTyping)(chatId).catch(() => { });
+                }
+                return;
+            }
+        }
+        // ── PAYOUT instant-payout YES/NO confirmation ──────────────────────────
+        if (session.pendingInstantPayoutConfirm) {
+            const setAt = session.pendingInstantPayoutConfirm;
+            const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+            if (setAt < tenMinAgo) {
+                await db.collection("agent_sessions").doc(phone).update({
+                    pendingInstantPayoutConfirm: admin.firestore.FieldValue.delete(),
+                }).catch(() => { });
+            }
+            else {
+                const { handleInstantPayoutConfirm } = await Promise.resolve().then(() => __importStar(require("../agents/instantPayoutHandler")));
+                await handleInstantPayoutConfirm((_73 = session.caregiverId) !== null && _73 !== void 0 ? _73 : phone, phone, text, chatId);
+                return;
+            }
         }
         // ── Caregiver NLU fallback — handle natural-language keyword variants ──
         // Runs only when no exact keyword matched and no state machine is active.
@@ -2123,10 +2540,10 @@ async function handleInbound(event) {
         const ecPhoneMatch = text.match(/\+?[\d\s\-().]{10,}/);
         const ecPhone = ecPhoneMatch ? ecPhoneMatch[0].replace(/[\s\-().]/g, "") : null;
         const ecName = text.replace(/\+?[\d\s\-().]{10,}/g, "").trim().replace(/^[,;]+|[,;]+$/g, "").trim();
-        const seniorId = (_55 = (_54 = session.seniorId) !== null && _54 !== void 0 ? _54 : session.userId) !== null && _55 !== void 0 ? _55 : "";
+        const seniorId = (_75 = (_74 = session.seniorId) !== null && _74 !== void 0 ? _74 : session.userId) !== null && _75 !== void 0 ? _75 : "";
         if (ecPhone && seniorId) {
             await db.collection("senior_profiles").doc(seniorId).set({ emergencyContact: { phone: ecPhone, name: ecName || "Emergency Contact" } }, { merge: true });
-            await (0, client_1.sendMessage)(chatId, `Got it — I've saved ${ecName || "your emergency contact"} (${ecPhone}) for ${(_57 = (_56 = session.onboardingData) === null || _56 === void 0 ? void 0 : _56.seniorName) !== null && _57 !== void 0 ? _57 : "your family member"}. They'll be contacted if there's ever an urgent issue.`);
+            await (0, client_1.sendMessage)(chatId, `Got it — I've saved ${ecName || "your emergency contact"} (${ecPhone}) for ${(_77 = (_76 = session.onboardingData) === null || _76 === void 0 ? void 0 : _76.seniorName) !== null && _77 !== void 0 ? _77 : "your family member"}. They'll be contacted if there's ever an urgent issue.`);
         }
         else {
             await (0, client_1.sendMessage)(chatId, "I wasn't able to find a phone number in that message. Please reply with your emergency contact's name and phone number (e.g. 'John Smith 555-000-1234').");
@@ -2194,7 +2611,7 @@ async function handleInbound(event) {
         const { handleCredentialReply } = await Promise.resolve().then(() => __importStar(require("../browser/credentialCollector")));
         const handled = await handleCredentialReply({
             phone,
-            userId: (_58 = session.userId) !== null && _58 !== void 0 ? _58 : "",
+            userId: (_78 = session.userId) !== null && _78 !== void 0 ? _78 : "",
             text,
             session: session,
         });
@@ -2256,7 +2673,7 @@ async function handleInbound(event) {
         if (session.service === "iMessage" && !session.groupChatId)
             await (0, client_1.startTyping)(chatId).catch(() => { });
         try {
-            const refundClientId = ((_59 = session.userId) !== null && _59 !== void 0 ? _59 : phone);
+            const refundClientId = ((_79 = session.userId) !== null && _79 !== void 0 ? _79 : phone);
             await (0, refundHandler_1.handleRefundRequest)(refundClientId, text, session, (msg) => (0, client_1.sendMessage)(chatId, msg));
         }
         finally {
@@ -2286,7 +2703,7 @@ async function handleInbound(event) {
         if (session.service === "iMessage" && !session.groupChatId)
             await (0, client_1.startTyping)(chatId).catch(() => { });
         try {
-            await (0, timesheetHandler_1.handleTimesheetApproval)(((_60 = session.userId) !== null && _60 !== void 0 ? _60 : phone), phone, text, session, (msg) => (0, client_1.sendMessage)(chatId, msg));
+            await (0, timesheetHandler_1.handleTimesheetApproval)(((_80 = session.userId) !== null && _80 !== void 0 ? _80 : phone), phone, text, session, (msg) => (0, client_1.sendMessage)(chatId, msg));
         }
         finally {
             if (session.service === "iMessage" && !session.groupChatId)
@@ -2299,7 +2716,7 @@ async function handleInbound(event) {
         if (session.service === "iMessage" && !session.groupChatId)
             await (0, client_1.startTyping)(chatId).catch(() => { });
         try {
-            await (0, availabilityHandler_1.handleAvailabilityUpdate)(((_62 = (_61 = session.caregiverId) !== null && _61 !== void 0 ? _61 : session.userId) !== null && _62 !== void 0 ? _62 : phone), phone, text, session, (msg) => (0, client_1.sendMessage)(chatId, msg));
+            await (0, availabilityHandler_1.handleAvailabilityUpdate)(((_82 = (_81 = session.caregiverId) !== null && _81 !== void 0 ? _81 : session.userId) !== null && _82 !== void 0 ? _82 : phone), phone, text, session, (msg) => (0, client_1.sendMessage)(chatId, msg));
         }
         finally {
             if (session.service === "iMessage" && !session.groupChatId)
@@ -2312,7 +2729,7 @@ async function handleInbound(event) {
         if (session.service === "iMessage" && !session.groupChatId)
             await (0, client_1.startTyping)(chatId).catch(() => { });
         try {
-            await (0, clientSwapRequestHandler_1.handleClientSwapRequest)((_63 = session.userId) !== null && _63 !== void 0 ? _63 : phone, phone, text, session, chatId);
+            await (0, clientSwapRequestHandler_1.handleClientSwapRequest)((_83 = session.userId) !== null && _83 !== void 0 ? _83 : phone, phone, text, session, chatId);
         }
         finally {
             if (session.service === "iMessage" && !session.groupChatId)
@@ -2323,7 +2740,7 @@ async function handleInbound(event) {
     // ── Pending rematching after interview cancelled due to availability change ──
     if (session.pendingRematch && (norm === "YES" || norm === "Y")) {
         await db.collection("agent_sessions").doc(phone).update({ pendingRematch: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete() });
-        const sd = (_64 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _64 !== void 0 ? _64 : {};
+        const sd = (_84 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _84 !== void 0 ? _84 : {};
         const { runMatchingForClient: rmfcPendingRematch } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
         await rmfcPendingRematch(phone, chatId, sd, sd);
         return;
@@ -2359,7 +2776,7 @@ async function handleInbound(event) {
                     const appt = apptSnap.data();
                     await apptRef.update({ status: "cancelled_by_client", cancelledAt: new Date().toISOString() });
                     const cgSnap = await db.collection("caregivers").doc(appt.caregiverId).get();
-                    const cgPhone = (_65 = cgSnap.data()) === null || _65 === void 0 ? void 0 : _65.phone;
+                    const cgPhone = (_85 = cgSnap.data()) === null || _85 === void 0 ? void 0 : _85.phone;
                     if (cgPhone) {
                         const cgSess = await (await Promise.resolve().then(() => __importStar(require("./client")))).getOrCreateSession(cgPhone);
                         const cancelNotifMsgA = await (0, caraMessage_1.generateCaraMessage)({
@@ -2393,7 +2810,7 @@ async function handleInbound(event) {
                     console.error("executeBookings failed (BOOKING_CONFIRM):", err);
                     await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
                     await (0, client_1.sendMessage)(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
-                    const sd = (_66 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _66 !== void 0 ? _66 : {};
+                    const sd = (_86 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _86 !== void 0 ? _86 : {};
                     const { runMatchingForClient: rmfc } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
                     await rmfc(phone, chatId, sd, sd).catch(() => { });
                 }
@@ -2407,7 +2824,7 @@ async function handleInbound(event) {
                 const pending = session.pendingInterviewConfirm;
                 await db.collection("agent_sessions").doc(phone).update({ pendingInterviewConfirm: admin.firestore.FieldValue.delete() });
                 const reqSnap = await db.collection("interview_requests").doc(pending.docId).get();
-                const availability = ((_68 = (_67 = reqSnap.data()) === null || _67 === void 0 ? void 0 : _67.caregiverAvailability) !== null && _68 !== void 0 ? _68 : []);
+                const availability = ((_88 = (_87 = reqSnap.data()) === null || _87 === void 0 ? void 0 : _87.caregiverAvailability) !== null && _88 !== void 0 ? _88 : []);
                 const remaining = availability.filter(t => t !== pending.mutualTime);
                 if (remaining.length > 0) {
                     const timesList = remaining.map((t, i) => `${i + 1}. ${t}`).join("\n");
@@ -2422,10 +2839,10 @@ async function handleInbound(event) {
                     await db.collection("interview_requests").doc(pending.docId).update({ status: "client_declined", clientDeclinedAt: new Date().toISOString() }).catch(() => { });
                     // Notify the caregiver so they aren't left waiting
                     const _bdReqSnap = await db.collection("interview_requests").doc(pending.docId).get().catch(() => null);
-                    const _bdCgId = (_69 = _bdReqSnap === null || _bdReqSnap === void 0 ? void 0 : _bdReqSnap.data()) === null || _69 === void 0 ? void 0 : _69.caregiverId;
+                    const _bdCgId = (_89 = _bdReqSnap === null || _bdReqSnap === void 0 ? void 0 : _bdReqSnap.data()) === null || _89 === void 0 ? void 0 : _89.caregiverId;
                     if (_bdCgId) {
                         const _bdCgSnap = await db.collection("caregivers").doc(_bdCgId).get().catch(() => null);
-                        const _bdCgPhone = (_70 = _bdCgSnap === null || _bdCgSnap === void 0 ? void 0 : _bdCgSnap.data()) === null || _70 === void 0 ? void 0 : _70.phone;
+                        const _bdCgPhone = (_90 = _bdCgSnap === null || _bdCgSnap === void 0 ? void 0 : _bdCgSnap.data()) === null || _90 === void 0 ? void 0 : _90.phone;
                         if (_bdCgPhone) {
                             const _bdCgSess = await (await Promise.resolve().then(() => __importStar(require("./client")))).getOrCreateSession(_bdCgPhone);
                             await (0, client_1.sendMessage)(_bdCgSess.chatId, `Hi ${pending.caregiverName}, the family was not able to find a time that works right now. ` +
@@ -2461,12 +2878,12 @@ async function handleInbound(event) {
         if (intent === "HIRE_CAREGIVER") {
             const pending = session.pendingInterviewOutcome;
             if (pending) {
-                let caregiverId = (_71 = pending.caregiverId) !== null && _71 !== void 0 ? _71 : "";
+                let caregiverId = (_91 = pending.caregiverId) !== null && _91 !== void 0 ? _91 : "";
                 if (!caregiverId && pending.interviewId) {
                     const reqSnap = await db.collection("interview_requests")
                         .where("interviewId", "==", pending.interviewId).limit(1).get();
                     if (!reqSnap.empty)
-                        caregiverId = (_72 = reqSnap.docs[0].data().caregiverId) !== null && _72 !== void 0 ? _72 : "";
+                        caregiverId = (_92 = reqSnap.docs[0].data().caregiverId) !== null && _92 !== void 0 ? _92 : "";
                 }
                 await db.collection("agent_sessions").doc(phone).update({
                     hireMode: { caregiverName: pending.caregiverName, caregiverId },
@@ -2474,7 +2891,7 @@ async function handleInbound(event) {
                     stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
                 });
                 if (caregiverId)
-                    (0, interviewAgent_1.writeInterviewOutcomeSignal)((_73 = session.userId) !== null && _73 !== void 0 ? _73 : phone, caregiverId, "hire").catch(() => { });
+                    (0, interviewAgent_1.writeInterviewOutcomeSignal)((_93 = session.userId) !== null && _93 !== void 0 ? _93 : phone, caregiverId, "hire").catch(() => { });
                 const hireMsgA = await (0, caraMessage_1.generateCaraMessage)({
                     audience: "family",
                     context: `Family wants to hire caregiver ${pending.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
@@ -2518,7 +2935,7 @@ async function handleInbound(event) {
                     const appt = apptSnap.data();
                     await apptRef.update({ status: "cancelled_by_client", cancelledAt: new Date().toISOString() });
                     const cgSnap = await db.collection("caregivers").doc(appt.caregiverId).get();
-                    const cgPhone = (_74 = cgSnap.data()) === null || _74 === void 0 ? void 0 : _74.phone;
+                    const cgPhone = (_94 = cgSnap.data()) === null || _94 === void 0 ? void 0 : _94.phone;
                     if (cgPhone) {
                         const cgSess = await (await Promise.resolve().then(() => __importStar(require("./client")))).getOrCreateSession(cgPhone);
                         const cancelNotifMsgB = await (0, caraMessage_1.generateCaraMessage)({
@@ -2555,7 +2972,7 @@ async function handleInbound(event) {
                     console.error("executeBookings failed (YES):", err);
                     await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
                     await (0, client_1.sendMessage)(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
-                    const sd = (_75 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _75 !== void 0 ? _75 : {};
+                    const sd = (_95 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _95 !== void 0 ? _95 : {};
                     const { runMatchingForClient: rmfc4 } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
                     await rmfc4(phone, chatId, sd, sd).catch(() => { });
                 }
@@ -2572,7 +2989,7 @@ async function handleInbound(event) {
                 });
                 // Check if caregiver offered more times
                 const reqSnap = await db.collection("interview_requests").doc(pending.docId).get();
-                const availability = ((_77 = (_76 = reqSnap.data()) === null || _76 === void 0 ? void 0 : _76.caregiverAvailability) !== null && _77 !== void 0 ? _77 : []);
+                const availability = ((_97 = (_96 = reqSnap.data()) === null || _96 === void 0 ? void 0 : _96.caregiverAvailability) !== null && _97 !== void 0 ? _97 : []);
                 // Remove the time we just rejected
                 const remaining = availability.filter(t => t !== pending.mutualTime);
                 if (remaining.length > 0) {
@@ -2656,12 +3073,12 @@ async function handleInbound(event) {
                     // Override norm for the blocks below
                     const resolvedNorm = classified;
                     if (resolvedNorm === "HIRE") {
-                        let caregiverId = (_78 = pendingOutcome.caregiverId) !== null && _78 !== void 0 ? _78 : "";
+                        let caregiverId = (_98 = pendingOutcome.caregiverId) !== null && _98 !== void 0 ? _98 : "";
                         if (!caregiverId && pendingOutcome.interviewId) {
                             const reqSnap = await db.collection("interview_requests")
                                 .doc(pendingOutcome.interviewId).get();
                             if (reqSnap.exists)
-                                caregiverId = (_80 = (_79 = reqSnap.data()) === null || _79 === void 0 ? void 0 : _79.caregiverId) !== null && _80 !== void 0 ? _80 : "";
+                                caregiverId = (_100 = (_99 = reqSnap.data()) === null || _99 === void 0 ? void 0 : _99.caregiverId) !== null && _100 !== void 0 ? _100 : "";
                         }
                         await db.collection("agent_sessions").doc(phone).update({
                             hireMode: { caregiverName: pendingOutcome.caregiverName, caregiverId },
@@ -2669,7 +3086,7 @@ async function handleInbound(event) {
                             stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
                         });
                         if (caregiverId) {
-                            (0, interviewAgent_1.writeInterviewOutcomeSignal)((_81 = session.userId) !== null && _81 !== void 0 ? _81 : phone, caregiverId, "hire").catch(() => { });
+                            (0, interviewAgent_1.writeInterviewOutcomeSignal)((_101 = session.userId) !== null && _101 !== void 0 ? _101 : phone, caregiverId, "hire").catch(() => { });
                         }
                         const hireMsgB = await (0, caraMessage_1.generateCaraMessage)({
                             audience: "family",
@@ -2695,7 +3112,7 @@ async function handleInbound(event) {
                         };
                         if (pendingOutcome.caregiverId) {
                             updates.rejectedCaregiverIds = admin.firestore.FieldValue.arrayUnion(pendingOutcome.caregiverId);
-                            (0, interviewAgent_1.writeInterviewOutcomeSignal)((_82 = session.userId) !== null && _82 !== void 0 ? _82 : phone, pendingOutcome.caregiverId, "pass").catch(() => { });
+                            (0, interviewAgent_1.writeInterviewOutcomeSignal)((_102 = session.userId) !== null && _102 !== void 0 ? _102 : phone, pendingOutcome.caregiverId, "pass").catch(() => { });
                             // Notify caregiver of the outcome
                             db.collection("caregivers").doc(pendingOutcome.caregiverId).get().then(async (cgSnap) => {
                                 var _a, _b, _c;
@@ -2723,13 +3140,13 @@ async function handleInbound(event) {
             const pending = session.pendingInterviewOutcome;
             if (pending) {
                 // Resolve caregiverId from interview_requests if not already on pending
-                let caregiverId = (_83 = pending.caregiverId) !== null && _83 !== void 0 ? _83 : "";
+                let caregiverId = (_103 = pending.caregiverId) !== null && _103 !== void 0 ? _103 : "";
                 if (!caregiverId && pending.interviewId) {
                     const reqSnap = await db.collection("interview_requests")
                         .where("interviewId", "==", pending.interviewId)
                         .limit(1).get();
                     if (!reqSnap.empty)
-                        caregiverId = (_84 = reqSnap.docs[0].data().caregiverId) !== null && _84 !== void 0 ? _84 : "";
+                        caregiverId = (_104 = reqSnap.docs[0].data().caregiverId) !== null && _104 !== void 0 ? _104 : "";
                 }
                 await db.collection("agent_sessions").doc(phone).update({
                     hireMode: { caregiverName: pending.caregiverName, caregiverId },
@@ -2737,7 +3154,7 @@ async function handleInbound(event) {
                     stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
                 });
                 if (caregiverId) {
-                    (0, interviewAgent_1.writeInterviewOutcomeSignal)((_85 = session.userId) !== null && _85 !== void 0 ? _85 : phone, caregiverId, "hire").catch(() => { });
+                    (0, interviewAgent_1.writeInterviewOutcomeSignal)((_105 = session.userId) !== null && _105 !== void 0 ? _105 : phone, caregiverId, "hire").catch(() => { });
                 }
                 const hireMsgC = await (0, caraMessage_1.generateCaraMessage)({
                     audience: "family",
@@ -2762,7 +3179,7 @@ async function handleInbound(event) {
                 if (pending.caregiverId) {
                     updates.rejectedCaregiverIds = admin.firestore.FieldValue.arrayUnion(pending.caregiverId);
                     if (norm === "PASS") {
-                        (0, interviewAgent_1.writeInterviewOutcomeSignal)((_86 = session.userId) !== null && _86 !== void 0 ? _86 : phone, pending.caregiverId, "pass").catch(() => { });
+                        (0, interviewAgent_1.writeInterviewOutcomeSignal)((_106 = session.userId) !== null && _106 !== void 0 ? _106 : phone, pending.caregiverId, "pass").catch(() => { });
                         // Notify caregiver of the outcome so they aren't left waiting
                         db.collection("caregivers").doc(pending.caregiverId).get().then(async (cgSnap) => {
                             var _a, _b, _c;
@@ -2808,6 +3225,50 @@ async function handleInbound(event) {
                 await (0, interviewAgent_1.handleInterviewSelection)(phone, chatId, text, session);
                 return;
             }
+            // ── Mid-match refilter ─────────────────────────────────────────────
+            // "show me cheaper ones", "any with dementia experience", "anyone Saturday?"
+            // — detect criterion changes and re-run matching with the new filters.
+            if (isFresh) {
+                const { detectMatchRefilter } = await Promise.resolve().then(() => __importStar(require("../utils/matchRefilterDetector")));
+                const refilter = await detectMatchRefilter(text).catch(() => null);
+                if (refilter) {
+                    const baseIntake = ((_107 = session.onboardingData) !== null && _107 !== void 0 ? _107 : {});
+                    const mergedIntake = Object.assign({}, baseIntake);
+                    // Merge refilter overrides into intake
+                    if ((_108 = refilter.skills) === null || _108 === void 0 ? void 0 : _108.length) {
+                        const existing = (_109 = baseIntake.careNeeds) !== null && _109 !== void 0 ? _109 : [];
+                        mergedIntake.careNeeds = Array.from(new Set([...existing, ...refilter.skills]));
+                    }
+                    if ((_110 = refilter.languages) === null || _110 === void 0 ? void 0 : _110.length) {
+                        mergedIntake.languagePreference = refilter.languages[0];
+                    }
+                    if (refilter.genderPreference) {
+                        mergedIntake.genderPreference = refilter.genderPreference;
+                    }
+                    if (refilter.rate) {
+                        mergedIntake.rateDirection = refilter.rate.direction;
+                    }
+                    if (refilter.availability) {
+                        mergedIntake.availabilityOverride = refilter.availability;
+                    }
+                    if (refilter.distance) {
+                        mergedIntake.distanceDirection = refilter.distance.direction;
+                    }
+                    if ((_111 = refilter.experienceYears) === null || _111 === void 0 ? void 0 : _111.min) {
+                        mergedIntake.minExperienceYears = refilter.experienceYears.min;
+                    }
+                    await db.collection("agent_sessions").doc(phone).update({
+                        pendingMatches: admin.firestore.FieldValue.delete(),
+                        pendingMatchesSetAt: admin.firestore.FieldValue.delete(),
+                        lastRefilterSummary: refilter.summary,
+                    }).catch(() => { });
+                    await (0, client_1.sendMessage)(chatId, `Searching for ${refilter.summary} — coming up.`);
+                    // Fire matching with merged intake; runs async with its own send.
+                    const { runMatchingForClient } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
+                    await runMatchingForClient(phone, chatId, mergedIntake, session);
+                    return;
+                }
+            }
             // User isn't picking from the list — if their intent is to start a new
             // search (FIND_CAREGIVER, REBOOK_REQUEST) or the list is stale, clear
             // the lingering state so it doesn't keep hijacking unrelated messages.
@@ -2839,15 +3300,15 @@ async function handleInbound(event) {
         }
         // ── Permission update ─────────────────────────────────────────────────────
         if (intent === "PERMISSION_UPDATE") {
-            const userId = (_88 = (_87 = session.userId) !== null && _87 !== void 0 ? _87 : session.caregiverId) !== null && _88 !== void 0 ? _88 : phone;
-            const userType = (_89 = session.userType) !== null && _89 !== void 0 ? _89 : "client";
+            const userId = (_113 = (_112 = session.userId) !== null && _112 !== void 0 ? _112 : session.caregiverId) !== null && _113 !== void 0 ? _113 : phone;
+            const userType = (_114 = session.userType) !== null && _114 !== void 0 ? _114 : "client";
             await (0, permissionsConversation_1.updatePermissionFromText)(userId, userType, phone, chatId, text);
             return;
         }
         if (intent === "MEMORY_QUERY") {
             const zepUserId = (0, zepClient_1.getZepUserId)(phone);
             const zepFacts = await (0, zepClient_1.searchZepMemory)(zepUserId, text).catch(() => "");
-            const memUserId = (_91 = (_90 = session.userId) !== null && _90 !== void 0 ? _90 : session.caregiverId) !== null && _91 !== void 0 ? _91 : phone;
+            const memUserId = (_116 = (_115 = session.userId) !== null && _115 !== void 0 ? _115 : session.caregiverId) !== null && _116 !== void 0 ? _116 : phone;
             const { handleMemoryQuery } = await Promise.resolve().then(() => __importStar(require("../memory/memoryFiles")));
             await handleMemoryQuery(memUserId, chatId, client_1.sendMessage, zepFacts || undefined);
             return;
@@ -2858,10 +3319,10 @@ async function handleInbound(event) {
             let memberPhone = null;
             try {
                 const parsed = JSON.parse(extractionRaw || "{}");
-                memberName = (_92 = parsed.name) !== null && _92 !== void 0 ? _92 : null;
-                memberPhone = (_93 = parsed.phone) !== null && _93 !== void 0 ? _93 : null;
+                memberName = (_117 = parsed.name) !== null && _117 !== void 0 ? _117 : null;
+                memberPhone = (_118 = parsed.phone) !== null && _118 !== void 0 ? _118 : null;
             }
-            catch ( /* */_153) { /* */ }
+            catch ( /* */_182) { /* */ }
             if (!memberPhone) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch a phone number — please include it (e.g. 'add my sister Sarah at +1 555 000 1234').");
                 return;
@@ -2875,7 +3336,7 @@ async function handleInbound(event) {
                 primaryPhone: phone,
                 memberPhone,
                 memberName: memberName !== null && memberName !== void 0 ? memberName : "Family member",
-                userId: (_94 = session.userId) !== null && _94 !== void 0 ? _94 : phone,
+                userId: (_119 = session.userId) !== null && _119 !== void 0 ? _119 : phone,
                 addedAt: new Date().toISOString(),
             });
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
@@ -2892,10 +3353,10 @@ async function handleInbound(event) {
             let targetPhone = null;
             try {
                 const parsed = JSON.parse(extractionRaw || "{}");
-                targetName = (_95 = parsed.name) !== null && _95 !== void 0 ? _95 : null;
-                targetPhone = (_96 = parsed.phone) !== null && _96 !== void 0 ? _96 : null;
+                targetName = (_120 = parsed.name) !== null && _120 !== void 0 ? _120 : null;
+                targetPhone = (_121 = parsed.phone) !== null && _121 !== void 0 ? _121 : null;
             }
-            catch ( /* */_154) { /* */ }
+            catch ( /* */_183) { /* */ }
             // If no phone provided, try to resolve by name from family_group_members
             if (!targetPhone && targetName) {
                 const memberSnap = await db.collection("family_group_members")
@@ -2910,7 +3371,7 @@ async function handleInbound(event) {
                 return;
             }
             // Look up seniorId from session
-            const seniorId = (_98 = (_97 = session.seniorId) !== null && _97 !== void 0 ? _97 : session.userId) !== null && _98 !== void 0 ? _98 : phone;
+            const seniorId = (_123 = (_122 = session.seniorId) !== null && _122 !== void 0 ? _122 : session.userId) !== null && _123 !== void 0 ? _123 : phone;
             const { removeMemberFromGroup } = await Promise.resolve().then(() => __importStar(require("../agents/familyGroupManager")));
             const result = await removeMemberFromGroup(seniorId, targetPhone);
             if (result.removed) {
@@ -2944,14 +3405,14 @@ async function handleInbound(event) {
             try {
                 schedule = JSON.parse(parsedScheduleRaw || "null");
             }
-            catch ( /* */_155) { /* */ }
-            if (!schedule || !((_99 = schedule.days) === null || _99 === void 0 ? void 0 : _99.length)) {
+            catch ( /* */_184) { /* */ }
+            if (!schedule || !((_124 = schedule.days) === null || _124 === void 0 ? void 0 : _124.length)) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch that — could you try again? (e.g. '3 days, Mon/Wed/Fri, 9am–1pm')");
                 return;
             }
             // Fetch actual hourly rate from caregiver doc
             const cgDoc = await db.collection("caregivers").doc(hire.caregiverId).get();
-            const hourlyRate = ((_101 = (_100 = cgDoc.data()) === null || _100 === void 0 ? void 0 : _100.hourlyRate) !== null && _101 !== void 0 ? _101 : 20);
+            const hourlyRate = ((_126 = (_125 = cgDoc.data()) === null || _125 === void 0 ? void 0 : _125.hourlyRate) !== null && _126 !== void 0 ? _126 : 20);
             // Build one appointment per day starting from the hire date's week
             const startDate = new Date(dateStr + "T12:00:00Z");
             const dayIndexMap = {
@@ -2959,7 +3420,7 @@ async function handleInbound(event) {
             };
             const appointments = [];
             for (const day of schedule.days) {
-                const target = (_102 = dayIndexMap[day]) !== null && _102 !== void 0 ? _102 : -1;
+                const target = (_127 = dayIndexMap[day]) !== null && _127 !== void 0 ? _127 : -1;
                 if (target < 0)
                     continue;
                 const d = new Date(startDate);
@@ -2972,7 +3433,7 @@ async function handleInbound(event) {
                     durationHours: schedule.durationHours,
                 });
             }
-            const clientId = (_103 = session.userId) !== null && _103 !== void 0 ? _103 : phone;
+            const clientId = (_128 = session.userId) !== null && _128 !== void 0 ? _128 : phone;
             const taskId = await (0, bookingExecutor_1.createBookingTask)({
                 clientPhone: phone,
                 clientId,
@@ -2985,7 +3446,7 @@ async function handleInbound(event) {
                 hireMode: admin.firestore.FieldValue.delete(),
                 hireModeDate: admin.firestore.FieldValue.delete(),
             });
-            const perms = await (0, permissionsConversation_1.getPermissions)((_104 = session.userId) !== null && _104 !== void 0 ? _104 : phone).catch(() => null);
+            const perms = await (0, permissionsConversation_1.getPermissions)((_129 = session.userId) !== null && _129 !== void 0 ? _129 : phone).catch(() => null);
             if (perms === null || perms === void 0 ? void 0 : perms.canBookAutomatically) {
                 try {
                     await (0, bookingExecutor_1.executeBookings)(taskId, phone);
@@ -2994,7 +3455,7 @@ async function handleInbound(event) {
                     console.error("executeBookings failed (hireMode):", err);
                     await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
                     await (0, client_1.sendMessage)(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
-                    const sd = (_105 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _105 !== void 0 ? _105 : {};
+                    const sd = (_130 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _130 !== void 0 ? _130 : {};
                     const { runMatchingForClient: rmfc2 } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
                     await rmfc2(phone, chatId, sd, sd).catch(() => { });
                 }
@@ -3035,7 +3496,7 @@ async function handleInbound(event) {
             }
             // Parse which time the family chose
             const reqSnap = await db.collection("interview_requests").doc(sel.interviewRequestId).get();
-            const availability = ((_107 = (_106 = reqSnap.data()) === null || _106 === void 0 ? void 0 : _106.caregiverAvailability) !== null && _107 !== void 0 ? _107 : []);
+            const availability = ((_132 = (_131 = reqSnap.data()) === null || _131 === void 0 ? void 0 : _131.caregiverAvailability) !== null && _132 !== void 0 ? _132 : []);
             const parsedChosen = await (0, openaiClient_1.quickComplete)(`Available times: ${availability.join(", ")}. ` +
                 "The user picked one of these times. Reply with only the exact string from the list that best matches their reply, or 'NONE' if no match.", text, { maxTokens: 60 }).catch(() => "");
             const chosen = parsedChosen.trim();
@@ -3053,7 +3514,7 @@ async function handleInbound(event) {
         }
         // ── CANCEL intent — cancel a visit, NOT an opt-out ────────────────────────
         if (intent === "CANCEL_REQUEST" || norm === "CANCEL") {
-            const clientId = (_108 = session.userId) !== null && _108 !== void 0 ? _108 : phone;
+            const clientId = (_133 = session.userId) !== null && _133 !== void 0 ? _133 : phone;
             const upcoming = await db.collection("appointments")
                 .where("clientId", "==", clientId)
                 .where("status", "==", "confirmed")
@@ -3080,7 +3541,7 @@ async function handleInbound(event) {
                 await (0, client_1.sendMessage)(chatId, "I didn't catch that date — could you try again? (e.g. \"May 19\" or \"next Monday\")");
                 return;
             }
-            const clientId = (_109 = session.userId) !== null && _109 !== void 0 ? _109 : phone;
+            const clientId = (_134 = session.userId) !== null && _134 !== void 0 ? _134 : phone;
             const taskId = await (0, bookingExecutor_1.createBookingTask)({
                 clientPhone: phone,
                 clientId,
@@ -3090,7 +3551,7 @@ async function handleInbound(event) {
                 hourlyRate: 20,
             });
             await db.collection("agent_sessions").doc(phone).update({ pendingRebook: admin.firestore.FieldValue.delete() });
-            const perms = await (0, permissionsConversation_1.getPermissions)((_110 = session.userId) !== null && _110 !== void 0 ? _110 : phone).catch(() => null);
+            const perms = await (0, permissionsConversation_1.getPermissions)((_135 = session.userId) !== null && _135 !== void 0 ? _135 : phone).catch(() => null);
             if (perms === null || perms === void 0 ? void 0 : perms.canBookAutomatically) {
                 try {
                     await (0, bookingExecutor_1.executeBookings)(taskId, phone);
@@ -3099,7 +3560,7 @@ async function handleInbound(event) {
                     console.error("executeBookings failed (rebook):", err);
                     await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
                     await (0, client_1.sendMessage)(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
-                    const sd = (_111 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _111 !== void 0 ? _111 : {};
+                    const sd = (_136 = (await db.collection("agent_sessions").doc(phone).get()).data()) !== null && _136 !== void 0 ? _136 : {};
                     const { runMatchingForClient: rmfc3 } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
                     await rmfc3(phone, chatId, sd, sd).catch(() => { });
                 }
@@ -3115,7 +3576,7 @@ async function handleInbound(event) {
         }
         // ── Rebook request ────────────────────────────────────────────────────────
         if (intent === "REBOOK_REQUEST") {
-            const clientId = (_112 = session.userId) !== null && _112 !== void 0 ? _112 : phone;
+            const clientId = (_137 = session.userId) !== null && _137 !== void 0 ? _137 : phone;
             const lastApptSnap = await db.collection("appointments")
                 .where("clientId", "==", clientId)
                 .where("status", "==", "confirmed")
@@ -3129,7 +3590,7 @@ async function handleInbound(event) {
             const caregiverName = last.caregiverName;
             const startTime = last.startTime;
             const endTime = last.endTime;
-            const durationHours = ((_113 = last.durationHours) !== null && _113 !== void 0 ? _113 : 4);
+            const durationHours = ((_138 = last.durationHours) !== null && _138 !== void 0 ? _138 : 4);
             await db.collection("agent_sessions").doc(phone).update({
                 pendingRebook: { caregiverId, caregiverName, startTime, endTime, durationHours },
                 stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
@@ -3176,8 +3637,8 @@ async function handleInbound(event) {
                 text,
                 phone,
                 chatId,
-                userId: (_114 = session.userId) !== null && _114 !== void 0 ? _114 : "",
-                seniorId: (_116 = (_115 = session.seniorId) !== null && _115 !== void 0 ? _115 : session.userId) !== null && _116 !== void 0 ? _116 : "",
+                userId: (_139 = session.userId) !== null && _139 !== void 0 ? _139 : "",
+                seniorId: (_141 = (_140 = session.seniorId) !== null && _140 !== void 0 ? _140 : session.userId) !== null && _141 !== void 0 ? _141 : "",
                 userType: "client",
                 caregiverId: session.caregiverId,
                 zepThreadId: session.zepThreadId,
@@ -3204,9 +3665,63 @@ async function handleInbound(event) {
                 const cgDoc = session.caregiverId
                     ? await db.collection("caregivers").doc(session.caregiverId).get()
                     : null;
-                await (0, caregiverSwapHandler_1.handleCaregiverSwapRequest)((_117 = session.caregiverId) !== null && _117 !== void 0 ? _117 : phone, (_119 = (_118 = cgDoc === null || cgDoc === void 0 ? void 0 : cgDoc.data()) === null || _118 === void 0 ? void 0 : _118.name) !== null && _119 !== void 0 ? _119 : "Caregiver", phone, text, 
+                await (0, caregiverSwapHandler_1.handleCaregiverSwapRequest)((_142 = session.caregiverId) !== null && _142 !== void 0 ? _142 : phone, (_144 = (_143 = cgDoc === null || cgDoc === void 0 ? void 0 : cgDoc.data()) === null || _143 === void 0 ? void 0 : _143.name) !== null && _144 !== void 0 ? _144 : "Caregiver", phone, text, 
                 // Session has no swapStep yet — handler defaults to "identify_shift"
                 session, chatId);
+            }
+            finally {
+                if (session.service === "iMessage")
+                    await (0, client_1.stopTyping)(chatId).catch(() => { });
+            }
+            return;
+        }
+        // ── CANCEL_SHIFT — caregiver proactively cancels one of their shifts ───
+        if (intent === "CANCEL_SHIFT" && session.userType === "caregiver") {
+            if (session.service === "iMessage")
+                await (0, client_1.startTyping)(chatId).catch(() => { });
+            try {
+                const cgDoc = session.caregiverId
+                    ? await db.collection("caregivers").doc(session.caregiverId).get()
+                    : null;
+                await (0, caregiverCancelShiftHandler_1.handleCaregiverCancelShift)((_145 = session.caregiverId) !== null && _145 !== void 0 ? _145 : phone, (_147 = (_146 = cgDoc === null || cgDoc === void 0 ? void 0 : cgDoc.data()) === null || _146 === void 0 ? void 0 : _146.name) !== null && _147 !== void 0 ? _147 : "Caregiver", phone, text, session, chatId);
+            }
+            finally {
+                if (session.service === "iMessage")
+                    await (0, client_1.stopTyping)(chatId).catch(() => { });
+            }
+            return;
+        }
+        // ── Caregiver profile updates (rate / skills / bio / photo / pause / reactivate) ──
+        {
+            const profileField = (0, caregiverProfileHandler_1.profileFieldFromIntent)(intent);
+            if (profileField && session.userType === "caregiver" && session.caregiverId) {
+                if (session.service === "iMessage")
+                    await (0, client_1.startTyping)(chatId).catch(() => { });
+                try {
+                    // Seed the session state with the requested field and entry step so the
+                    // handler enters "collect" cleanly.
+                    await db.collection("agent_sessions").doc(phone).update({
+                        profileUpdateStep: "collect",
+                        profileUpdateField: profileField,
+                        stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+                    });
+                    const enrichedSession = Object.assign(Object.assign({}, session), { profileUpdateStep: "collect", profileUpdateField: profileField });
+                    await (0, caregiverProfileHandler_1.handleCaregiverProfileUpdate)(session.caregiverId, phone, text, enrichedSession, chatId, profileField);
+                }
+                finally {
+                    if (session.service === "iMessage")
+                        await (0, client_1.stopTyping)(chatId).catch(() => { });
+                }
+                return;
+            }
+        }
+        // ── INSTANT_PAYOUT — PAYOUT keyword / "cash out now" / etc. ────────────
+        if (intent === "INSTANT_PAYOUT" && session.userType === "caregiver" && session.caregiverId) {
+            if (session.service === "iMessage")
+                await (0, client_1.startTyping)(chatId).catch(() => { });
+            try {
+                const { startInstantPayout } = await Promise.resolve().then(() => __importStar(require("../agents/instantPayoutHandler")));
+                await startInstantPayout(session.caregiverId, phone, chatId);
             }
             finally {
                 if (session.service === "iMessage")
@@ -3219,7 +3734,7 @@ async function handleInbound(event) {
             if (session.service === "iMessage" && !session.groupChatId)
                 await (0, client_1.startTyping)(chatId).catch(() => { });
             try {
-                await (0, clientSwapRequestHandler_1.handleClientSwapRequest)((_120 = session.userId) !== null && _120 !== void 0 ? _120 : phone, phone, text, 
+                await (0, clientSwapRequestHandler_1.handleClientSwapRequest)((_148 = session.userId) !== null && _148 !== void 0 ? _148 : phone, phone, text, 
                 // Session has no clientSwapStep yet — handler defaults to "identify_appointment"
                 session, chatId);
             }
@@ -3231,7 +3746,7 @@ async function handleInbound(event) {
         }
         // ── UPDATE_PAYMENT_METHOD — generate Stripe billing portal link ───────────
         if (intent === "UPDATE_PAYMENT_METHOD" && session.userType !== "caregiver") {
-            const clientId = (_121 = session.userId) !== null && _121 !== void 0 ? _121 : phone;
+            const clientId = (_149 = session.userId) !== null && _149 !== void 0 ? _149 : phone;
             try {
                 const { handleToolCall } = await Promise.resolve().then(() => __importStar(require("../mcp/server")));
                 const result = await handleToolCall("get_payment_update_link", { clientId });
@@ -3251,7 +3766,7 @@ async function handleInbound(event) {
         }
         // ── REQUEST_REFUND — start the refund self-service state machine ─────────
         if (intent === "REQUEST_REFUND" && session.userType !== "caregiver") {
-            const refundClientId = ((_122 = session.userId) !== null && _122 !== void 0 ? _122 : phone);
+            const refundClientId = ((_150 = session.userId) !== null && _150 !== void 0 ? _150 : phone);
             // Initialise the state machine by calling with step = "identify_visit"
             await (0, refundHandler_1.handleRefundRequest)(refundClientId, text, session, (msg) => (0, client_1.sendMessage)(chatId, msg));
             return;
@@ -3263,8 +3778,8 @@ async function handleInbound(event) {
                 text,
                 phone,
                 chatId,
-                userId: (_123 = session.userId) !== null && _123 !== void 0 ? _123 : "",
-                seniorId: (_125 = (_124 = session.seniorId) !== null && _124 !== void 0 ? _124 : session.userId) !== null && _125 !== void 0 ? _125 : "",
+                userId: (_151 = session.userId) !== null && _151 !== void 0 ? _151 : "",
+                seniorId: (_153 = (_152 = session.seniorId) !== null && _152 !== void 0 ? _152 : session.userId) !== null && _153 !== void 0 ? _153 : "",
                 userType: "client",
                 caregiverId: session.caregiverId,
                 zepThreadId: session.zepThreadId,
@@ -3283,7 +3798,7 @@ async function handleInbound(event) {
             if (session.service === "iMessage" && !session.groupChatId)
                 await (0, client_1.startTyping)(chatId).catch(() => { });
             try {
-                await (0, timesheetHandler_1.handleTimesheetApproval)(((_126 = session.userId) !== null && _126 !== void 0 ? _126 : phone), phone, text, Object.assign(Object.assign({}, session), { timesheetStep: "start" }), (msg) => (0, client_1.sendMessage)(chatId, msg));
+                await (0, timesheetHandler_1.handleTimesheetApproval)(((_154 = session.userId) !== null && _154 !== void 0 ? _154 : phone), phone, text, Object.assign(Object.assign({}, session), { timesheetStep: "start" }), (msg) => (0, client_1.sendMessage)(chatId, msg));
             }
             finally {
                 if (session.service === "iMessage" && !session.groupChatId)
@@ -3296,7 +3811,7 @@ async function handleInbound(event) {
             if (session.service === "iMessage" && !session.groupChatId)
                 await (0, client_1.startTyping)(chatId).catch(() => { });
             try {
-                const cgId = ((_128 = (_127 = session.caregiverId) !== null && _127 !== void 0 ? _127 : session.userId) !== null && _128 !== void 0 ? _128 : phone);
+                const cgId = ((_156 = (_155 = session.caregiverId) !== null && _155 !== void 0 ? _155 : session.userId) !== null && _156 !== void 0 ? _156 : phone);
                 await (0, earningsHandler_1.handleEarningsView)(cgId, (msg) => (0, client_1.sendMessage)(chatId, msg));
             }
             finally {
@@ -3310,7 +3825,7 @@ async function handleInbound(event) {
             if (session.service === "iMessage" && !session.groupChatId)
                 await (0, client_1.startTyping)(chatId).catch(() => { });
             try {
-                const cgId = ((_130 = (_129 = session.caregiverId) !== null && _129 !== void 0 ? _129 : session.userId) !== null && _130 !== void 0 ? _130 : phone);
+                const cgId = ((_158 = (_157 = session.caregiverId) !== null && _157 !== void 0 ? _157 : session.userId) !== null && _158 !== void 0 ? _158 : phone);
                 await (0, availabilityHandler_1.handleAvailabilityUpdate)(cgId, phone, text, Object.assign(Object.assign({}, session), { availabilityStep: "start" }), (msg) => (0, client_1.sendMessage)(chatId, msg));
             }
             finally {
@@ -3328,9 +3843,9 @@ async function handleInbound(event) {
                 text,
                 phone,
                 chatId,
-                userId: (_131 = session.userId) !== null && _131 !== void 0 ? _131 : "",
-                seniorId: (_133 = (_132 = session.seniorId) !== null && _132 !== void 0 ? _132 : session.userId) !== null && _133 !== void 0 ? _133 : "",
-                userType: (_134 = session.userType) !== null && _134 !== void 0 ? _134 : "client",
+                userId: (_159 = session.userId) !== null && _159 !== void 0 ? _159 : "",
+                seniorId: (_161 = (_160 = session.seniorId) !== null && _160 !== void 0 ? _160 : session.userId) !== null && _161 !== void 0 ? _161 : "",
+                userType: (_162 = session.userType) !== null && _162 !== void 0 ? _162 : "client",
                 caregiverId: session.caregiverId,
                 zepThreadId: session.zepThreadId,
                 session: session,
@@ -3349,8 +3864,8 @@ async function handleInbound(event) {
                 text,
                 phone,
                 chatId,
-                userId: (_135 = session.userId) !== null && _135 !== void 0 ? _135 : "",
-                seniorId: (_137 = (_136 = session.seniorId) !== null && _136 !== void 0 ? _136 : session.userId) !== null && _137 !== void 0 ? _137 : "",
+                userId: (_163 = session.userId) !== null && _163 !== void 0 ? _163 : "",
+                seniorId: (_165 = (_164 = session.seniorId) !== null && _164 !== void 0 ? _164 : session.userId) !== null && _165 !== void 0 ? _165 : "",
                 userType: "client",
                 caregiverId: session.caregiverId,
                 zepThreadId: session.zepThreadId,
@@ -3368,7 +3883,7 @@ async function handleInbound(event) {
         if (intent === "FIND_CAREGIVER" && session.userType !== "caregiver") {
             const { runMatchingForClient } = await Promise.resolve().then(() => __importStar(require("../agents/matchingAgent")));
             const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();
-            const sessionData = (_138 = sessionSnap2.data()) !== null && _138 !== void 0 ? _138 : {};
+            const sessionData = (_166 = sessionSnap2.data()) !== null && _166 !== void 0 ? _166 : {};
             await runMatchingForClient(phone, chatId, sessionData, sessionData);
             return;
         }
@@ -3394,8 +3909,8 @@ async function handleInbound(event) {
         if (intent === "FACT_CORRECTION") {
             const { detectAndApplyCorrection } = await Promise.resolve().then(() => __importStar(require("../memory/learnedFacts")));
             const factUserId = session.userType === "caregiver"
-                ? ((_140 = (_139 = session.caregiverId) !== null && _139 !== void 0 ? _139 : session.userId) !== null && _140 !== void 0 ? _140 : phone)
-                : ((_141 = session.userId) !== null && _141 !== void 0 ? _141 : phone);
+                ? ((_168 = (_167 = session.caregiverId) !== null && _167 !== void 0 ? _167 : session.userId) !== null && _168 !== void 0 ? _168 : phone)
+                : ((_169 = session.userId) !== null && _169 !== void 0 ? _169 : phone);
             const zepUserId2 = session.zepThreadId ? phone.replace(/\D/g, "") : undefined;
             const applied = await detectAndApplyCorrection(factUserId, text, zepUserId2).catch(() => false);
             if (applied) {
@@ -3410,7 +3925,7 @@ async function handleInbound(event) {
             (0, zepClient_1.addUserMessageToZep)({
                 threadId: zepThreadId,
                 content: text,
-                userName: (_142 = session.firstName) !== null && _142 !== void 0 ? _142 : "Family",
+                userName: (_170 = session.firstName) !== null && _170 !== void 0 ? _170 : "Family",
                 sentAt: new Date(),
             }).catch(console.error);
         }
@@ -3423,9 +3938,9 @@ async function handleInbound(event) {
                 text,
                 phone,
                 chatId,
-                userId: (_143 = session.userId) !== null && _143 !== void 0 ? _143 : "",
-                seniorId: (_145 = (_144 = session.seniorId) !== null && _144 !== void 0 ? _144 : session.userId) !== null && _145 !== void 0 ? _145 : "",
-                userType: (_146 = session.userType) !== null && _146 !== void 0 ? _146 : "client",
+                userId: (_171 = session.userId) !== null && _171 !== void 0 ? _171 : "",
+                seniorId: (_173 = (_172 = session.seniorId) !== null && _172 !== void 0 ? _172 : session.userId) !== null && _173 !== void 0 ? _173 : "",
+                userType: (_174 = session.userType) !== null && _174 !== void 0 ? _174 : "client",
             });
             if (zepThreadId && quickReply) {
                 (0, zepClient_1.addAssistantMessageToZep)({ threadId: zepThreadId, content: quickReply }).catch(console.error);
@@ -3436,9 +3951,9 @@ async function handleInbound(event) {
             text,
             phone,
             chatId,
-            userId: (_147 = session.userId) !== null && _147 !== void 0 ? _147 : "",
-            seniorId: (_149 = (_148 = session.seniorId) !== null && _148 !== void 0 ? _148 : session.userId) !== null && _149 !== void 0 ? _149 : "",
-            userType: (_150 = session.userType) !== null && _150 !== void 0 ? _150 : "client",
+            userId: (_175 = session.userId) !== null && _175 !== void 0 ? _175 : "",
+            seniorId: (_177 = (_176 = session.seniorId) !== null && _176 !== void 0 ? _176 : session.userId) !== null && _177 !== void 0 ? _177 : "",
+            userType: (_178 = session.userType) !== null && _178 !== void 0 ? _178 : "client",
             caregiverId: session.caregiverId,
             zepThreadId,
             session: session,
@@ -3684,22 +4199,32 @@ exports.linqWebhook = functions
     } };
     try {
         const webhookSecret = process.env.LINQ_WEBHOOK_SECRET;
-        if (webhookSecret) {
-            const timestamp = (_a = req.headers["x-webhook-timestamp"]) !== null && _a !== void 0 ? _a : "";
-            const signature = (_b = req.headers["x-webhook-signature"]) !== null && _b !== void 0 ? _b : "";
-            const rawBody = (_c = req.rawBody) !== null && _c !== void 0 ? _c : Buffer.from(JSON.stringify(req.body));
-            if (!verifySignature(rawBody, timestamp, signature, webhookSecret)) {
-                console.warn("linqWebhook: invalid signature — ignoring");
-                sendOk();
-                return;
-            }
-            // FIX 9 — reject stale events (replay attack protection)
-            const tsNum = parseInt(timestamp, 10);
-            if (!isNaN(tsNum) && Math.abs(Date.now() / 1000 - tsNum) > 300) {
-                console.warn("linqWebhook: stale timestamp — ignoring");
-                sendOk();
-                return;
-            }
+        if (!webhookSecret) {
+            // Fail closed. If the secret is unset, we cannot verify any inbound event,
+            // which means replays, spoofed senders, and signature tampering are all
+            // accepted as authentic. A missing secret is a deploy-time misconfig, not
+            // a runtime condition we degrade through. Return 500 so Linq retries until
+            // an operator notices and the secret is restored.
+            console.error("linqWebhook: LINQ_WEBHOOK_SECRET is not set — rejecting all inbound until configured");
+            res.status(500).send("webhook secret not configured");
+            sent = true;
+            return;
+        }
+        const timestamp = (_a = req.headers["x-webhook-timestamp"]) !== null && _a !== void 0 ? _a : "";
+        const signature = (_b = req.headers["x-webhook-signature"]) !== null && _b !== void 0 ? _b : "";
+        const rawBody = (_c = req.rawBody) !== null && _c !== void 0 ? _c : Buffer.from(JSON.stringify(req.body));
+        if (!verifySignature(rawBody, timestamp, signature, webhookSecret)) {
+            console.warn("linqWebhook: invalid signature — ignoring");
+            sendOk();
+            return;
+        }
+        // Reject stale events (replay attack protection). Enforced regardless of
+        // signature outcome above — both must pass.
+        const tsNum = parseInt(timestamp, 10);
+        if (!isNaN(tsNum) && Math.abs(Date.now() / 1000 - tsNum) > 300) {
+            console.warn("linqWebhook: stale timestamp — ignoring");
+            sendOk();
+            return;
         }
         const event = req.body;
         // Linq v3 envelope uses event_type; fall back to X-Webhook-Event header for safety

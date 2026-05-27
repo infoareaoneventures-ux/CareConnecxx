@@ -354,6 +354,11 @@ exports.checkrWebhook = functions.runWith({}).https.onRequest(async (req, res) =
                     if (cgPhone) {
                         const { advanceOnboardingStep } = await Promise.resolve().then(() => __importStar(require("./agents/onboardingConversation")));
                         await advanceOnboardingStep(cgPhone, "background_check", "");
+                        // Flag so any follow-up reply routes to qaAgent with BG-check context
+                        await db.collection("agent_sessions").doc(cgPhone).update({
+                            pendingBgCheckAck: "clear",
+                            pendingBgCheckAckSetAt: new Date().toISOString(),
+                        }).catch(() => { });
                     }
                 }
                 catch (err) {
@@ -420,6 +425,10 @@ exports.checkrWebhook = functions.runWith({}).https.onRequest(async (req, res) =
                             sourceAgent: "checkr_status",
                             canDrop: true,
                         });
+                        await db.collection("agent_sessions").doc(cgData.phone).update({
+                            pendingBgCheckAck: "review",
+                            pendingBgCheckAckSetAt: new Date().toISOString(),
+                        }).catch(() => { });
                     }
                 }
                 catch (err) {
@@ -456,6 +465,10 @@ exports.checkrWebhook = functions.runWith({}).https.onRequest(async (req, res) =
                             sourceAgent: "checkr_status",
                             canDrop: true,
                         });
+                        await db.collection("agent_sessions").doc(cgData.phone).update({
+                            pendingBgCheckAck: "suspended",
+                            pendingBgCheckAckSetAt: new Date().toISOString(),
+                        }).catch(() => { });
                     }
                 }
                 catch (err) {

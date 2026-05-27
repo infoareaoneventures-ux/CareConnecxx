@@ -33,6 +33,8 @@ export const STATE_MACHINE_FLAGS = [
   "awaitingPreShiftUpdate",
   // Day-before shift confirmation from caregiver
   "pendingShiftConfirmation",
+  // Day-before shift confirmation from CLIENT (family)
+  "pendingClientShiftConfirm",
   // Caregiver shift swap flow
   "swapStep",
   "swapCandidates",
@@ -65,6 +67,24 @@ export const STATE_MACHINE_FLAGS = [
   "refundAppointmentId",
   "refundVisitDescription",
   "refundReason",
+  // Caregiver-initiated shift cancellation flow
+  "cancelStep",
+  "cancelCandidates",
+  "cancelShiftId",
+  "cancelShiftDate",
+  "cancelShiftClientId",
+  "cancelReason",
+  // Caregiver profile update flow (rate / skills / bio / photo / pause / reactivate)
+  "profileUpdateStep",
+  "profileUpdateField",
+  "profileUpdateValue",
+  // PAYOUT instant-payout confirmation
+  "pendingInstantPayoutConfirm",
+  // Context flags that route follow-up replies to qaAgent with rich context
+  "pendingPayoutNotificationAck",
+  "pendingPayoutNotificationAckSetAt",
+  "pendingBgCheckAck",
+  "pendingBgCheckAckSetAt",
   // Onboarding resume checkpoint (NOT cleared — intentionally kept for resume)
 ] as const;
 

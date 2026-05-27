@@ -775,6 +775,20 @@ service cloud.firestore {
     }
 
     // ==========================================
+    // WEB ONBOARDING SESSIONS — bridge between web phone verification and SMS inbound
+    // Doc id = phone in E.164. Writes happen only via the createWebOnboardingSession
+    // callable (admin SDK bypasses these rules). The web client reads its own doc to
+    // detect when the LINQ webhook flips status from awaiting_inbound → connected.
+    // ==========================================
+    match /web_onboarding_sessions/{phone} {
+      // The verified user can read their own bridge doc — their Firebase Auth uid
+      // is stamped on the doc when the callable wrote it, so a stranger holding the
+      // phone string can't observe the bridge status of an unrelated number.
+      allow read: if isAuthenticated() && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // ==========================================
     // Internal-only collections — accessible only via Firebase Admin SDK (Cloud Functions)
     match /browser_sessions/{sessionId} {
       allow read, write: if false;

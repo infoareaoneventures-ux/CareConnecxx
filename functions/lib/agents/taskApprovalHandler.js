@@ -38,11 +38,43 @@ exports.finalizeTaskApproval = finalizeTaskApproval;
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
 const bookingExecutor_1 = require("./bookingExecutor");
+const openaiClient_1 = require("../utils/openaiClient");
 const db = admin.firestore();
+async function isQuestionOrOther(text) {
+    try {
+        const result = await (0, openaiClient_1.quickComplete)("The user was just shown a list of caregivers (numbered 1, 2, 3...) and asked to pick one. " +
+            "Reply YES if their reply is a question or off-topic comment about the caregivers, the booking, " +
+            "pricing, or anything else. Reply NO if it is a selection (a number, a name, or a clear pick).", text, { maxTokens: 5 });
+        return result.trim().toUpperCase().startsWith("Y");
+    }
+    catch (_a) {
+        return false;
+    }
+}
+async function answerQuestionMidFlow(text, optionsSummary) {
+    try {
+        return await (0, openaiClient_1.quickComplete)("You are Cara, an AI care assistant. A family member was just shown caregiver options " +
+            `(${optionsSummary}) and asked to pick one. Instead they asked a question. Answer it briefly ` +
+            "(1–2 sentences). Be warm and helpful. Do NOT tell them to pick a caregiver — that prompt is sent separately.", text, { maxTokens: 180 });
+    }
+    catch (_a) {
+        return "Sorry, I'm having trouble pulling that up right now.";
+    }
+}
 async function handleTaskApproval(taskDoc, choice, session, chatId) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g;
     const task = taskDoc.data();
     const options = (_a = task.options) !== null && _a !== void 0 ? _a : [];
+    // If the family asked a question instead of picking, answer it and re-ask.
+    if (await isQuestionOrOther(choice)) {
+        const optionsSummary = options
+            .map((o, i) => { var _a; return `${i + 1}. ${(_a = o.name) !== null && _a !== void 0 ? _a : "caregiver"}`; })
+            .join(", ");
+        const answer = await answerQuestionMidFlow(choice, optionsSummary);
+        await (0, client_1.sendMessage)(chatId, answer);
+        await (0, client_1.sendMessage)(chatId, `When you're ready, reply 1, 2, or 3 to choose a caregiver for your ${(_b = task.time) !== null && _b !== void 0 ? _b : "upcoming"} visit.`);
+        return;
+    }
     const idx = parseInt(choice, 10) - 1;
     if (idx < 0 || idx >= options.length) {
         await (0, client_1.sendMessage)(chatId, "Please reply 1, 2, or 3 to choose a caregiver.");
@@ -53,22 +85,22 @@ async function handleTaskApproval(taskDoc, choice, session, chatId) {
     const cgSnap = selected.caregiverId
         ? await db.collection("caregivers").doc(selected.caregiverId).get()
         : null;
-    if (cgSnap && cgSnap.exists && ((_b = cgSnap.data()) === null || _b === void 0 ? void 0 : _b.status) === "inactive") {
+    if (cgSnap && cgSnap.exists && ((_c = cgSnap.data()) === null || _c === void 0 ? void 0 : _c.status) === "inactive") {
         await (0, client_1.sendMessage)(chatId, `${selected.name} is no longer available. Want me to search for another caregiver?`);
         return;
     }
     // Store selection so CONFIRM reply can finalize it
     await taskDoc.ref.update({ status: "pending_confirm", selectedIdx: idx });
-    await db.collection("agent_sessions").doc((_c = session.phone) !== null && _c !== void 0 ? _c : taskDoc.ref.path).update({
+    await db.collection("agent_sessions").doc((_d = session.phone) !== null && _d !== void 0 ? _d : taskDoc.ref.path).update({
         pendingTaskConfirm: {
             taskId: taskDoc.id,
             caregiverName: selected.name,
-            caregiverId: (_d = selected.caregiverId) !== null && _d !== void 0 ? _d : "",
-            time: (_e = task.time) !== null && _e !== void 0 ? _e : "",
+            caregiverId: (_e = selected.caregiverId) !== null && _e !== void 0 ? _e : "",
+            time: (_f = task.time) !== null && _f !== void 0 ? _f : "",
         },
         pendingTaskConfirmSetAt: new Date().toISOString(),
     }).catch(() => { });
-    await (0, client_1.sendMessage)(chatId, `Got it — ${selected.name} for your ${(_f = task.time) !== null && _f !== void 0 ? _f : "upcoming"} visit.\n\n` +
+    await (0, client_1.sendMessage)(chatId, `Got it — ${selected.name} for your ${(_g = task.time) !== null && _g !== void 0 ? _g : "upcoming"} visit.\n\n` +
         `Reply CONFIRM to book, or SKIP to choose someone else.`);
 }
 // Called when user replies CONFIRM after handleTaskApproval

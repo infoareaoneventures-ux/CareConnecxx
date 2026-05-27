@@ -36,7 +36,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.zepSetup = exports.chatWithCara = exports.initiateCara = exports.send1099Notifications = exports.submitGpsCheckin = exports.sendJobMatchNotifications = exports.getMatchPatterns = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.sendThirtyMinShiftReminders = exports.sendDayBeforeShiftReminders = exports.sendPreShiftFamilyCheckin = exports.sendShiftTaskNudges = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.familySilenceCheckinJob = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.dailyContactCardShare = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
+exports.zepSetup = exports.chatWithCara = exports.createWebOnboardingSession = exports.send1099Notifications = exports.submitGpsCheckin = exports.sendJobMatchNotifications = exports.getMatchPatterns = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.sendOnboardingReengagement = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.sendThirtyMinShiftReminders = exports.sendClientThirtyMinReminders = exports.sendClientDayBeforeReminders = exports.sendDayBeforeShiftReminders = exports.sendPreShiftFamilyCheckin = exports.sendShiftTaskNudges = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.familySilenceCheckinJob = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.dailyContactCardShare = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions"));
 // Initialize Admin globally if not already done
@@ -138,6 +138,10 @@ var preShiftFamilyCheckin_1 = require("./scheduled/preShiftFamilyCheckin");
 Object.defineProperty(exports, "sendPreShiftFamilyCheckin", { enumerable: true, get: function () { return preShiftFamilyCheckin_1.sendPreShiftFamilyCheckin; } });
 var dayBeforeShiftReminder_1 = require("./scheduled/dayBeforeShiftReminder");
 Object.defineProperty(exports, "sendDayBeforeShiftReminders", { enumerable: true, get: function () { return dayBeforeShiftReminder_1.sendDayBeforeShiftReminders; } });
+var clientDayBeforeReminder_1 = require("./scheduled/clientDayBeforeReminder");
+Object.defineProperty(exports, "sendClientDayBeforeReminders", { enumerable: true, get: function () { return clientDayBeforeReminder_1.sendClientDayBeforeReminders; } });
+var clientThirtyMinReminder_1 = require("./scheduled/clientThirtyMinReminder");
+Object.defineProperty(exports, "sendClientThirtyMinReminders", { enumerable: true, get: function () { return clientThirtyMinReminder_1.sendClientThirtyMinReminders; } });
 var thirtyMinShiftReminder_1 = require("./scheduled/thirtyMinShiftReminder");
 Object.defineProperty(exports, "sendThirtyMinShiftReminders", { enumerable: true, get: function () { return thirtyMinShiftReminder_1.sendThirtyMinShiftReminders; } });
 var dndQueueProcessor_1 = require("./scheduled/dndQueueProcessor");
@@ -146,6 +150,8 @@ var feedbackExpiry_1 = require("./scheduled/feedbackExpiry");
 Object.defineProperty(exports, "expirePostVisitFeedback", { enumerable: true, get: function () { return feedbackExpiry_1.expirePostVisitFeedback; } });
 var caregiverInactivityCheck_1 = require("./scheduled/caregiverInactivityCheck");
 Object.defineProperty(exports, "checkCaregiverInactivity", { enumerable: true, get: function () { return caregiverInactivityCheck_1.checkCaregiverInactivity; } });
+var onboardingReengagement_1 = require("./scheduled/onboardingReengagement");
+Object.defineProperty(exports, "sendOnboardingReengagement", { enumerable: true, get: function () { return onboardingReengagement_1.sendOnboardingReengagement; } });
 var backgroundCheckExpiry_1 = require("./scheduled/backgroundCheckExpiry");
 Object.defineProperty(exports, "checkBackgroundCheckExpiry", { enumerable: true, get: function () { return backgroundCheckExpiry_1.checkBackgroundCheckExpiry; } });
 var wellbeingCheckin_1 = require("./scheduled/wellbeingCheckin");
@@ -194,109 +200,56 @@ var taxReminder_1 = require("./scheduled/taxReminder");
 Object.defineProperty(exports, "send1099Notifications", { enumerable: true, get: function () { return taxReminder_1.send1099Notifications; } });
 // MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
 __exportStar(require("./migrations/migrateSeniorsToHousehold"), exports);
-// ── initiateCara — unauthenticated callable: proactively sends Cara's greeting ──
-// Called from the web "Continue with Phone" screen so desktop users receive an
-// outbound SMS rather than relying on the sms: URI (which silently fails on desktop).
-exports.initiateCara = functions.https.onCall(async (data) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+// ── createWebOnboardingSession — authenticated callable, NEVER sends outbound SMS ──
+// Called from /start after the user verifies their phone with Firebase Phone Auth.
+// Records role + consent on a TTL'd bridge doc that the LINQ inbound webhook reads
+// when the user texts "Hey Cara" — letting us skip the SMS-side OTP step (their phone
+// possession is already proven by Firebase) and route them straight into the role-aware
+// onboarding flow.
+//
+// A2P 10DLC posture: zero outbound LINQ traffic until the user initiates with their
+// own inbound message. This callable only writes Firestore.
+exports.createWebOnboardingSession = functions.https.onCall(async (data, context) => {
+    var _a, _b, _c, _d;
+    // Auth gate — caller must have just completed Firebase Phone Auth so their uid is
+    // bound to this phone number. Web flow signs in with signInWithPhoneNumber() before
+    // calling this; an unauthenticated request would be a misuse.
+    if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated", "Phone verification required.");
+    }
     const phone = (_a = data.phone) === null || _a === void 0 ? void 0 : _a.trim();
     const role = data.role === "caregiver" ? "caregiver" : "client";
-    // Basic E.164 validation (US/CA +1 only for now)
+    const consent = (_b = data.consentText) !== null && _b !== void 0 ? _b : "v1.0";
     if (!phone || !/^\+1\d{10}$/.test(phone)) {
         throw new functions.https.HttpsError("invalid-argument", "A valid US/CA phone number is required.");
     }
-    const { sendMessage, createChat, getOrCreateSession } = await Promise.resolve().then(() => __importStar(require("./linq/client")));
+    // Caller's Firebase Auth token must have phone_number matching what they're claiming.
+    // Without this check, a user could verify their own number and then submit someone
+    // else's in the callable payload to grief them. token.phone_number is set by the
+    // Firebase Phone Auth provider — not user-controlled.
+    const tokenPhone = (_c = context.auth.token.phone_number) !== null && _c !== void 0 ? _c : "";
+    if (tokenPhone !== phone) {
+        throw new functions.https.HttpsError("permission-denied", "Phone number must match the verified token.");
+    }
     const db = admin.firestore();
-    const sessionRef = db.collection("agent_sessions").doc(phone);
-    const sessionSnap = await sessionRef.get();
-    if (sessionSnap.exists) {
-        const existing = sessionSnap.data();
-        // If the session has userId, it's a known user — try sending to the existing chatId.
-        // This avoids creating a new Linq chat (which is slow and can hang).
-        // If the existing chatId is stale, the send will fail fast (15s timeout added to axios).
-        if (existing.userId && existing.chatId) {
-            const greeting = "Hi! I'm Cara, your care assistant. I'm here whenever you need help with your care.";
-            const sent = await sendMessage(existing.chatId, greeting).then(() => true).catch(() => false);
-            if (!sent) {
-                // Existing chatId is stale — open a fresh Linq thread.
-                const { chat_id } = await createChat(phone, {
-                    parts: [{ type: "text", value: greeting }],
-                });
-                await sessionRef.update({ chatId: chat_id });
-            }
-        }
-        else {
-            // Session exists but is missing userId — restore from users collection.
-            const userQuery = await db.collection("users").where("phone", "==", phone).limit(1).get();
-            if (!userQuery.empty) {
-                const userDoc = userQuery.docs[0];
-                const userData = userDoc.data();
-                const userId = userDoc.id;
-                const seniorIds = (_b = userData.seniorIds) !== null && _b !== void 0 ? _b : [];
-                const seniorId = (_d = (_c = userData.seniorId) !== null && _c !== void 0 ? _c : seniorIds[0]) !== null && _d !== void 0 ? _d : "";
-                const greeting = "Hi! I'm Cara, your care assistant. I'm here whenever you need help.";
-                // Try sending to current chatId; open fresh chat if it fails.
-                const chatId = existing.chatId;
-                let finalChatId = chatId !== null && chatId !== void 0 ? chatId : "";
-                if (chatId) {
-                    const sent = await sendMessage(chatId, greeting).then(() => true).catch(() => false);
-                    if (!sent) {
-                        const { chat_id } = await createChat(phone, { parts: [{ type: "text", value: greeting }] });
-                        finalChatId = chat_id;
-                    }
-                }
-                else {
-                    const { chat_id } = await createChat(phone, { parts: [{ type: "text", value: greeting }] });
-                    finalChatId = chat_id;
-                }
-                await sessionRef.update({
-                    chatId: finalChatId,
-                    userId,
-                    seniorId,
-                    onboardingStep: "complete",
-                    userType: (_e = existing.userType) !== null && _e !== void 0 ? _e : role,
-                });
-            }
-            else {
-                // No user account — just open a fresh Linq chat for onboarding.
-                const { chat_id } = await createChat(phone, {
-                    parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
-                });
-                await sessionRef.update({ chatId: chat_id, onboardingStep: "ask_role" });
-            }
-        }
-    }
-    else {
-        // No session — look up the user's account data to pre-fill and skip re-onboarding.
-        const userQuery = await db.collection("users").where("phone", "==", phone).limit(1).get();
-        if (!userQuery.empty) {
-            const userDoc = userQuery.docs[0];
-            const userData = userDoc.data();
-            const userId = userDoc.id;
-            const seniorIds = (_f = userData.seniorIds) !== null && _f !== void 0 ? _f : [];
-            const seniorId = (_h = (_g = userData.seniorId) !== null && _g !== void 0 ? _g : seniorIds[0]) !== null && _h !== void 0 ? _h : "";
-            const { chat_id } = await createChat(phone, {
-                parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
-            });
-            await sessionRef.set({
-                chatId: chat_id,
-                service: "iMessage",
-                phone,
-                userType: role,
-                userId,
-                seniorId,
-                onboardingStep: "complete",
-                optedIn: true,
-                optedOut: false,
-                createdAt: new Date().toISOString(),
-            });
-        }
-        else {
-            // No user account yet — minimal session for fresh onboarding.
-            await getOrCreateSession(phone, { userType: role });
-        }
-    }
-    return { success: true };
+    const now = new Date();
+    const ttlExpireAt = new Date(now.getTime() + 30 * 60 * 1000); // 30 min — Firestore TTL purges
+    const linqPhoneNumber = (_d = process.env.LINQ_PHONE_NUMBER) !== null && _d !== void 0 ? _d : "";
+    await db.collection("web_onboarding_sessions").doc(phone).set({
+        uid: context.auth.uid,
+        role,
+        phone,
+        consentText: consent,
+        status: "awaiting_inbound",
+        createdAt: admin.firestore.Timestamp.fromDate(now),
+        ttlExpireAt: admin.firestore.Timestamp.fromDate(ttlExpireAt),
+    }, { merge: true });
+    return {
+        success: true,
+        linqPhone: linqPhoneNumber,
+        smsBody: "Hey Cara",
+        expiresInMs: 30 * 60 * 1000,
+    };
 });
 // ── chatWithCara — web callable: routes authenticated web users through qaAgent ─
 // Bridges Firebase Auth UID → phone → agent_sessions so web users get the same

@@ -1,9 +1,10 @@
 import * as admin from "firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import { getSharedClient } from "../utils/claudeClient";
 import { haversineMiles } from "../ai/scoring";
 import { sendMessage, startTyping, getOrCreateSession } from "../linq/client";
 import { sendViaInteractionAgent, AgentOutput } from "../agents/caraAgent";
+import { parseWithClaude } from "../utils/parseWithClaude";
+import { quickComplete } from "../utils/openaiClient";
 
 const MATCH_PUSH_THRESHOLD = 80; // push only when skill overlap is ≥ 80%
 
@@ -112,10 +113,14 @@ export async function notifyAreaCaregivers(
   let pushSentCount = 0;
   const jobTitle = careTypes.length > 0 ? `${careTypes.join(", ")} job` : "Care job";
 
+  const todayIso = new Date().toISOString();
   for (const doc of snap.docs) {
     const cg    = doc.data();
     const phone = cg.phone as string | undefined;
     if (!phone || cg.optedOut === true) continue;
+    // Skip paused caregivers — they're on vacation / temporarily off the platform
+    const pausedUntil = cg.pausedUntil as string | undefined;
+    if (pausedUntil && pausedUntil > todayIso) continue;
 
     const cgLat = cg.latitude ?? cg.location?.latitude ?? cg.location?.lat;
     const cgLng = cg.longitude ?? cg.location?.longitude ?? cg.location?.lng;
@@ -219,20 +224,37 @@ export async function handleJobResponse(
     return;
   }
 
-  // Use NLU to determine YES/NO from natural language
-  let isYes: boolean;
-  const upper = text.trim().toUpperCase();
-  if (["YES", "Y", "YEAH", "YEP", "YUP", "SURE", "OK", "OKAY"].includes(upper)) {
-    isYes = true;
-  } else if (["NO", "N", "NOPE", "PASS", "CANT", "CAN'T", "DECLINE", "SKIP"].includes(upper)) {
-    isYes = false;
-  } else {
-    try {
-      isYes = await parseAvailabilityConfirmation(text);
-    } catch {
-      isYes = false;
-    }
+  // isQuestionOrOther — if caregiver asks a question instead of YES/NO, answer
+  // it and re-pose the question without consuming the pending state.
+  const qRaw = await parseWithClaude(
+    "A caregiver was just texted about a new job opportunity and asked to reply YES or NO. " +
+      "Reply YES if their message is a general question or off-topic comment rather than a yes/no answer. " +
+      "Reply NO if it is a direct yes/no decision. Only reply YES or NO.",
+    text,
+    5,
+  );
+  if (qRaw.toUpperCase().startsWith("Y")) {
+    const answer = await quickComplete(
+      "You are Cara, an AI care assistant. A caregiver was offered a job and asked a question instead of replying YES/NO. " +
+        "Answer their question briefly (1-2 sentences). Do NOT ask them to commit — that prompt comes next.",
+      text,
+      { maxTokens: 180 },
+    ).catch(() => "Let me get back to you on that. In the meantime —");
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "So — interested in this job? Reply YES or NO.");
+    return;
   }
+
+  // Single LLM call to determine YES/NO from natural language.
+  const decision = await parseWithClaude(
+    'A caregiver is responding to a job offer. ' +
+      '"yes", "yeah", "yep", "sure", "ok", "interested", "I\'ll take it" → YES. ' +
+      '"no", "pass", "can\'t", "decline", "skip", "not interested" → NO. ' +
+      'Reply with exactly YES or NO.',
+    text,
+    5,
+  );
+  const isYes = ["YES", "Y", "YEAH", "YEP"].includes(decision.toUpperCase());
 
   if (!isYes) {
     await db.collection("agent_sessions").doc(phone).update({
@@ -457,20 +479,13 @@ export async function handleAvailabilityConfirmation(
 }
 
 async function parseAvailabilityConfirmation(text: string): Promise<boolean> {
-  // Quick keyword check first
-  const upper = text.trim().toUpperCase();
-  if (["YES", "YEP", "YEA", "YEAH", "YUP", "CONFIRMED", "CONFIRM", "WORKS", "GOOD"].includes(upper)) return true;
-  if (["NO", "NOPE", "CANT", "CAN'T", "UNAVAILABLE", "PASS"].includes(upper)) return false;
-
-  const resp   = await getSharedClient().messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 20,
-    system:
-      "The user is a caregiver confirming or declining availability for a care job. " +
-      "Reply with exactly one word: YES if they confirm availability, NO if they decline. No other output.",
-    messages: [{ role: "user", content: text }],
-  });
-  return ((resp.content[0] as { text: string }).text ?? "").trim().toUpperCase() === "YES";
+  const decision = await parseWithClaude(
+    "A caregiver is confirming or declining availability for a specific care job. " +
+      "Reply YES if they confirm availability, NO if they decline. Reply with exactly YES or NO.",
+    text,
+    5,
+  );
+  return decision.toUpperCase() === "YES";
 }
 
 async function notifyFamilyOfApplicant(

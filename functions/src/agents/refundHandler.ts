@@ -174,6 +174,18 @@ export async function handleRefundRequest(
 
   // ── submitted — final YES/NO confirmation ─────────────────────────────────
   if (step === "submitted") {
+    if (await isQuestionOrOther(text)) {
+      const answer = await answerQuestionMidFlow(text);
+      await sendMessage(answer);
+      const desc   = (session.refundVisitDescription as string) ?? "that visit";
+      const reason = (session.refundReason          as string) ?? "the reason you mentioned";
+      await sendMessage(
+        `To confirm — refund for ${desc} because: "${reason}".\n\n` +
+        `Reply YES to submit, or NO to cancel.`
+      );
+      return;
+    }
+
     const norm = await parseWithClaude(
       '"yes", "yeah", "yep", "correct", "submit it", "go ahead", "please", "do it", "sure" = YES. ' +
       '"no", "never mind", "cancel", "forget it", "nope", "don\'t" = NO. ' +

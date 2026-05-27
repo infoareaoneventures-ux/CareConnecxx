@@ -57,7 +57,7 @@ async function answerQuestionMidFlow(text) {
 }
 // State flow: identify_visit → select_visit → confirm → submitted
 async function handleRefundRequest(clientId, text, session, sendMessage) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     const step = (_a = session.refundStep) !== null && _a !== void 0 ? _a : "identify_visit";
     // ── identify_visit — load recent visits and ask which one ────────────────
     if (step === "identify_visit") {
@@ -167,6 +167,15 @@ async function handleRefundRequest(clientId, text, session, sendMessage) {
     }
     // ── submitted — final YES/NO confirmation ─────────────────────────────────
     if (step === "submitted") {
+        if (await isQuestionOrOther(text)) {
+            const answer = await answerQuestionMidFlow(text);
+            await sendMessage(answer);
+            const desc = (_f = session.refundVisitDescription) !== null && _f !== void 0 ? _f : "that visit";
+            const reason = (_g = session.refundReason) !== null && _g !== void 0 ? _g : "the reason you mentioned";
+            await sendMessage(`To confirm — refund for ${desc} because: "${reason}".\n\n` +
+                `Reply YES to submit, or NO to cancel.`);
+            return;
+        }
         const norm = await parseWithClaude('"yes", "yeah", "yep", "correct", "submit it", "go ahead", "please", "do it", "sure" = YES. ' +
             '"no", "never mind", "cancel", "forget it", "nope", "don\'t" = NO. ' +
             'Reply with exactly YES or NO.', text);
@@ -188,7 +197,7 @@ async function handleRefundRequest(clientId, text, session, sendMessage) {
             return;
         }
         const appointmentId = session.refundAppointmentId;
-        const refundReason = (_f = session.refundReason) !== null && _f !== void 0 ? _f : "";
+        const refundReason = (_h = session.refundReason) !== null && _h !== void 0 ? _h : "";
         await db.collection("refundRequests").add({
             clientId,
             appointmentId,

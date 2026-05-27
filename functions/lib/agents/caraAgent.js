@@ -136,9 +136,25 @@ async function sendViaInteractionAgent(phone, output) {
             return;
         }
     }
-    // Run through supervisor (which also lints internally)
+    // Run through supervisor (which also lints internally). If supervisor throws
+    // we fail-open (send unsupervised) so Cara doesn't go dark — but record an
+    // admin_alert so a sustained supervisor outage gets noticed instead of just
+    // showing up in logs.
     const safe = await (0, supervisor_1.supervise)(output.content, { phone }).catch((err) => {
-        console.error("caraAgent: supervisor threw, sending message unsupervised", err instanceof Error ? err.message : err);
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error("caraAgent: supervisor threw, sending message unsupervised", errMsg);
+        const minuteBucket = new Date().toISOString().slice(0, 16);
+        db.collection("admin_alerts").add({
+            type: "supervisor_fail_open",
+            phone,
+            error: errMsg.slice(0, 500),
+            preview: output.content.slice(0, 200),
+            sourceAgent: output.sourceAgent,
+            dedupeKey: `supervisor_fail_open:${minuteBucket}`,
+            severity: "high",
+            resolved: false,
+            createdAt: new Date().toISOString(),
+        }).catch(() => { });
         return output.content;
     });
     // Send in chunks with 1s delay between

@@ -13,6 +13,8 @@ const VALID_INTENTS = new Set([
     "RESCHEDULE_REQUEST", "MODIFY_SCHEDULE", "UPDATE_PAYMENT_METHOD",
     "REQUEST_REFUND", "VIEW_INVOICE", "VIEW_CARE_PLAN_HISTORY",
     "SWAP_REQUEST", "CLIENT_SWAP_REQUEST",
+    "CANCEL_SHIFT", "UPDATE_RATE", "UPDATE_SKILLS", "UPDATE_BIO", "UPDATE_PHOTO",
+    "PAUSE_ACCOUNT", "REACTIVATE", "INSTANT_PAYOUT",
     "FIND_NEARBY_PROVIDER", "BOOK_DOCTOR_APPOINTMENT",
     "PRESCRIPTION_REFILL", "NEW_PRESCRIPTION",
 ]);
@@ -30,7 +32,7 @@ async function classifyIntent(text, hasPendingTask) {
     const timer = setTimeout(() => controller.abort(), 6000);
     try {
         const raw = await (0, openaiClient_1.quickComplete)("You classify a message sent to an AI care assistant named Cara. " +
-            "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, REQUEST_REFUND, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, SWAP_REQUEST, CLIENT_SWAP_REQUEST, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, QUESTION.\n" +
+            "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, REQUEST_REFUND, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, SWAP_REQUEST, CLIENT_SWAP_REQUEST, CANCEL_SHIFT, UPDATE_RATE, UPDATE_SKILLS, UPDATE_BIO, UPDATE_PHOTO, PAUSE_ACCOUNT, REACTIVATE, INSTANT_PAYOUT, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, QUESTION.\n" +
             "STOP = opting out of all messages.\n" +
             "TASK_REPLY = responding to a numbered list (1, 2, or 3).\n" +
             "BOOKING_CONFIRM = confirming or approving a booking, schedule, or action (e.g. 'yes', 'sure', 'sounds good', 'let's do it', 'book it', 'go ahead', 'that works', 'perfect', 'confirmed', 'ok', 'yep').\n" +
@@ -66,6 +68,14 @@ async function classifyIntent(text, hasPendingTask) {
             "VIEW_CARE_PLAN_HISTORY = a client asking about changes to the care plan or wanting to see past versions (e.g. 'what changed in the care plan', 'show care plan history', 'who updated the care plan', 'restore old care plan', 'show previous care plan').\n" +
             "SWAP_REQUEST = a caregiver wanting to swap, transfer, or find coverage for one of their shifts (e.g. 'can someone cover my Tuesday shift', 'I need someone to take my Wednesday visit', 'looking for coverage', 'can\\'t make Thursday need swap', 'swap my shift with someone').\n" +
             "CLIENT_SWAP_REQUEST = a client asking if a different caregiver can cover a specific date or visit (e.g. 'can someone else cover Thursday', 'I want a different caregiver for Friday', 'swap the caregiver for next Tuesday', 'can Maria cover instead of David').\n" +
+            "CANCEL_SHIFT = a caregiver wanting to proactively cancel one of their own upcoming shifts (e.g. 'I need to cancel my Tuesday shift', 'cancel my Wednesday visit', 'I can't make my Friday appointment', 'I have to back out of tomorrow').\n" +
+            "UPDATE_RATE = a caregiver wanting to change their hourly rate (e.g. 'change my rate to $28', 'update my hourly to 25', 'I want to raise my rate', 'set my pay to $30/hr').\n" +
+            "UPDATE_SKILLS = a caregiver wanting to add or remove care specialties/skills on their profile (e.g. 'add dementia care to my skills', 'remove mobility from my specialties', 'I can also do post-surgery now', 'I'm now certified in hospice care').\n" +
+            "UPDATE_BIO = a caregiver wanting to update their bio or profile description (e.g. 'change my bio', 'update my profile description', 'rewrite my about-me', 'my bio is wrong').\n" +
+            "UPDATE_PHOTO = a caregiver wanting to update their profile photo (e.g. 'change my photo', 'update my profile picture', 'new headshot', 'replace my photo').\n" +
+            "PAUSE_ACCOUNT = a caregiver wanting to pause their account / go on vacation / temporarily stop receiving job matches (e.g. 'going on vacation Jul 5-12', 'pause my account', 'I need a break for two weeks', 'stop sending me jobs for a month', 'I'm taking time off').\n" +
+            "REACTIVATE = a caregiver wanting to come back from a pause / vacation mode and start receiving jobs again (e.g. 'I'm back', 'reactivate me', 'unpause my account', 'I want to start taking jobs again').\n" +
+            "INSTANT_PAYOUT = a caregiver requesting an instant payout of their available balance (e.g. 'PAYOUT', 'cash out now', 'instant payout', 'send me my money now', 'pay me out today').\n" +
             "FIND_NEARBY_PROVIDER = asking to find or locate a nearby doctor, clinic, hospital, pharmacy, urgent care, dentist, or specialist (e.g. 'find a cardiologist near me', 'closest pharmacy to mom', 'any urgent care nearby', 'find a clinic in Atlanta', 'where can I find a dermatologist close by').\n" +
             "BOOK_DOCTOR_APPOINTMENT = asking Cara to book or schedule a doctor appointment on their behalf (e.g. 'book an appointment with Dr. Smith', 'schedule a checkup for mom', 'can you make an appointment with my doctor', 'book me in with Dr. Johnson next week', 'I need to see a doctor — can you book it').\n" +
             "PRESCRIPTION_REFILL = asking Cara to refill or renew an existing prescription at a pharmacy (e.g. 'refill mom's blood pressure medication', 'can you renew my prescription at CVS', 'I need a refill on Lisinopril', 'refill my prescription', 'request a refill at Walgreens', 'renew dad's medication').\n" +

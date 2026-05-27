@@ -210,6 +210,10 @@ async function sendConfirmMessage(phone, chatId) {
 }
 async function handleMsConfirm(phone, chatId, text, session) {
     var _a, _b, _c, _d, _e, _f;
+    if (await isQuestionOrOther(text)) {
+        await sendConfirmMessage(phone, chatId);
+        return;
+    }
     const norm = await parseWithClaude('"yes", "yep", "confirm", "go ahead", "do it", "sounds good", "perfect" = YES. ' +
         '"no", "cancel", "never mind", "stop", "nope" = NO. ' +
         'Reply with exactly YES or NO.', text);

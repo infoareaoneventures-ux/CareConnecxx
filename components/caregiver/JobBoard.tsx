@@ -462,8 +462,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                     {([
                         ['morning', 'Morning', '6am–12pm'],
                         ['afternoon', 'Afternoon', '12pm–6pm'],
-                        ['evening', 'Evening', '6pm–11pm'],
-                        ['overnight', 'Overnight', '11pm–6am'],
+                        ['evening', 'Evening', '6pm–12am'],
+                        ['overnight', 'Overnight', '12am–6am'],
                     ] as const).map(([val, label, hours]) => (
                         <label key={val} className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
                             <input
@@ -783,8 +783,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
 
             {/* ── My Applications ── */}
             {activeTab === 'my-applications' && (() => {
-                const interviewJobIds = new Set(interviews.map(iv => iv.jobId).filter(Boolean));
-                const baseApps = applications.filter(a => !interviewJobIds.has(a.jobId));
+                // Build a map: jobId → interview (so we can show interview status on the card)
+                const interviewByJobId = new Map(
+                    interviews.filter(iv => iv.jobId).map(iv => [iv.jobId!, iv])
+                );
+                const baseApps = applications; // show ALL applications regardless of interview status
                 const visibleApps = appFilter === 'all' ? baseApps : baseApps.filter(a => a.status === appFilter);
                 return (
                     <div className="space-y-4">
@@ -793,9 +796,9 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                         ) : baseApps.length === 0 ? (
                             <div className="text-center p-8 text-[var(--color-neutral-400)] bg-[var(--color-neutral-50)] rounded-2xl">
                                 <FileText className="w-12 h-12 mx-auto mb-2 opacity-30" />
-                                <p>{applications.length > 0 ? 'All your applications have moved to interviews.' : 'No applications yet.'}</p>
-                                <button onClick={() => setActiveTab(applications.length > 0 ? 'interviews' : 'available')} className="text-[var(--color-primary-600)] font-medium mt-2 hover:underline">
-                                    {applications.length > 0 ? 'View Interviews' : 'Browse available jobs'}
+                                <p>No applications yet.</p>
+                                <button onClick={() => setActiveTab('available')} className="text-[var(--color-primary-600)] font-medium mt-2 hover:underline">
+                                    Browse available jobs
                                 </button>
                             </div>
                         ) : (
@@ -806,7 +809,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                     const total = f === 'all' ? baseApps.length : baseApps.filter(a => a.status === f).length;
                                     if (f !== 'all' && total === 0) return null;
                                     const label = f === 'all' ? 'All' : f === 'rejected' ? 'Not Selected' : f.charAt(0).toUpperCase() + f.slice(1);
-                                    const newCount = f === 'all' ? 0 : baseApps.filter(a => {
+                                    const newCount = f === 'all' ? 0 : applications.filter(a => {
                                         if (a.status !== f) return false;
                                         const tsMs = (v: any): number => {
                                             if (!v) return 0;
@@ -841,6 +844,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                             ) : visibleApps.map((app) => {
                                 const rawDate = (app.appliedAt as any)?.toDate ? (app.appliedAt as any).toDate() : new Date(app.appliedAt);
                                 const appliedDate = isNaN(rawDate.getTime()) ? null : rawDate;
+                                const linkedInterview = app.jobId ? interviewByJobId.get(app.jobId) : undefined;
                                 return (
                                     <div key={app.id} className="bg-white p-5 rounded-2xl shadow-sm border border-[var(--color-neutral-100)] hover:border-[var(--color-primary-200)] transition-all">
                                         {/* Header: title + rate + status */}
@@ -857,6 +861,24 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                     <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full">${app.jobRate}/hr</span>
                                                 )}
                                                 <StatusBadge status={app.status as ApplicationStatus} />
+                                                {linkedInterview && (() => {
+                                                    const iv = linkedInterview;
+                                                    const ivLabel = iv.status === 'pending' ? 'Interview Pending'
+                                                        : iv.status === 'accepted' || iv.status === 'confirmed' ? 'Interview Confirmed'
+                                                        : iv.status === 'completed' ? 'Interview Completed'
+                                                        : iv.status === 'declined' ? 'Interview Declined'
+                                                        : iv.status === 'cancelled' ? 'Interview Cancelled'
+                                                        : 'Interview Scheduled';
+                                                    const ivColor = iv.status === 'completed' ? 'bg-slate-100 text-slate-600'
+                                                        : iv.status === 'accepted' || iv.status === 'confirmed' ? 'bg-blue-50 text-blue-700'
+                                                        : iv.status === 'declined' || iv.status === 'cancelled' ? 'bg-red-50 text-red-600'
+                                                        : 'bg-purple-50 text-purple-700';
+                                                    return (
+                                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${ivColor}`}>
+                                                            {ivLabel}
+                                                        </span>
+                                                    );
+                                                })()}
                                             </div>
                                         </div>
 
@@ -897,7 +919,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                         Details
                                                     </button>
                                                 )}
-                                                {app.status === 'pending' && (
+                                                {app.status === 'pending' && !(['pending', 'accepted', 'confirmed'].includes(linkedInterview?.status ?? '')) && (
                                                     <button onClick={() => handleWithdrawApplication(app.id)} className="text-[var(--color-error-500)] hover:text-[var(--color-error-600)] font-medium text-sm">
                                                         Withdraw
                                                     </button>
@@ -1019,31 +1041,63 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                         {iv.notes && <p className="text-xs text-slate-500 italic bg-slate-50 rounded-lg px-3 py-2 mb-3 break-words">"{iv.notes}"</p>}
 
                                         {/* Footer: Details + Accept/Decline */}
-                                        <div className="flex items-center justify-between mt-3">
-                                            {iv.jobId ? (
-                                                <button onClick={() => handleViewJobDetails(iv.jobId!)} className="text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] font-medium text-sm">
-                                                    Details
-                                                </button>
-                                            ) : <span />}
-                                            {iv.status === 'pending' ? (
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        onClick={() => handleDeclineInterview(iv)}
-                                                        disabled={submittingInterview === iv.id}
-                                                        className="px-4 py-1.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50"
-                                                    >
-                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Decline'}
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleAcceptInterview(iv)}
-                                                        disabled={submittingInterview === iv.id}
-                                                        className="px-4 py-1.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-semibold disabled:opacity-50"
-                                                    >
-                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Accept'}
-                                                    </button>
+                                        {(() => {
+                                            const hasPaid = !!(
+                                                (profile as any)?.membershipPaid === true ||
+                                                ((profile as any)?.membershipStatus && (profile as any)?.membershipStatus !== 'none' && (profile as any)?.membershipStatus !== 'inactive')
+                                            );
+                                            const bgStatus = (profile as any)?.verificationStatus;
+                                            const bgOk = ['checkr_clear', 'approved'].includes(bgStatus) ||
+                                                (profile as any)?.backgroundCheckStatus === 'clear' ||
+                                                (profile as any)?.backgroundCheckComplete === true;
+                                            const canRespond = hasPaid && bgOk;
+                                            return (
+                                                <div className="mt-3">
+                                                    {iv.status === 'pending' && !canRespond ? (
+                                                        <div className="flex items-center justify-between">
+                                                            {iv.jobId ? (
+                                                                <button onClick={() => handleViewJobDetails(iv.jobId!)} className="text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] font-medium text-sm">
+                                                                    Details
+                                                                </button>
+                                                            ) : <span />}
+                                                            <a
+                                                                href="/caregiver/dashboard"
+                                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors"
+                                                            >
+                                                                <Lock className="w-3 h-3" />
+                                                                Complete verification to respond
+                                                            </a>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex items-center justify-between">
+                                                            {iv.jobId ? (
+                                                                <button onClick={() => handleViewJobDetails(iv.jobId!)} className="text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] font-medium text-sm">
+                                                                    Details
+                                                                </button>
+                                                            ) : <span />}
+                                                            {iv.status === 'pending' ? (
+                                                                <div className="flex gap-2">
+                                                                    <button
+                                                                        onClick={() => handleDeclineInterview(iv)}
+                                                                        disabled={submittingInterview === iv.id}
+                                                                        className="px-4 py-1.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50"
+                                                                    >
+                                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Decline'}
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleAcceptInterview(iv)}
+                                                                        disabled={submittingInterview === iv.id}
+                                                                        className="px-4 py-1.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-semibold disabled:opacity-50"
+                                                                    >
+                                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Accept'}
+                                                                    </button>
+                                                                </div>
+                                                            ) : <span />}
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            ) : <span />}
-                                        </div>
+                                            );
+                                        })()}
                                     </div>
                                 );
                             })}
@@ -1093,14 +1147,46 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             {viewingJob && createPortal(
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-[var(--color-neutral-900)]/60 backdrop-blur-sm" onClick={() => setViewingJob(null)} />
-                    <div className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 animate-slide-in">
+                    <div className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 animate-slide-in max-h-[90vh] overflow-y-auto">
                         <button onClick={() => setViewingJob(null)} className="absolute top-4 right-4 text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-600)]"><X size={24} /></button>
-                        <h2 className="text-xl font-bold text-[var(--color-neutral-900)] mb-1">{viewingJob.title}</h2>
-                        <p className="text-[var(--color-neutral-500)] text-sm mb-4">Posted by {viewingJob.clientName}</p>
+
+                        {/* Header: title + rate badge */}
+                        <div className="pr-8 mb-1">
+                            <div className="flex items-start justify-between gap-3">
+                                <h2 className="text-xl font-bold text-[var(--color-neutral-900)] leading-tight">{viewingJob.title}</h2>
+                                {viewingJob.rate != null && (
+                                    <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full shrink-0">${viewingJob.rate}/hr</span>
+                                )}
+                            </div>
+                            <p className="text-[var(--color-neutral-500)] text-sm mt-1">Posted by {viewingJob.clientName}</p>
+                            {viewingJob.location && (
+                                <p className="text-[var(--color-neutral-400)] text-xs mt-0.5 flex items-center gap-1">
+                                    <MapPin className="w-3 h-3" />{viewingJob.location}
+                                </p>
+                            )}
+                        </div>
+
+                        {/* Frequency + care type chips — same style as interview card */}
+                        {(viewingJob.jobFrequency || (viewingJob.careTypes ?? viewingJob.requirements ?? []).length > 0) && (
+                            <div className="flex flex-wrap gap-2 mt-3 mb-4">
+                                {viewingJob.jobFrequency && (
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-primary-50 text-primary-700 text-[11px] font-semibold uppercase tracking-wide">
+                                        {({'one-time':'Occasional','occasional':'Occasional','part-time':'Part-time','full-time':'Full-time'} as Record<string,string>)[viewingJob.jobFrequency] || viewingJob.jobFrequency}
+                                    </span>
+                                )}
+                                {(viewingJob.careTypes ?? viewingJob.requirements ?? []).map((ct: string, i: number) => (
+                                    <span key={i} className="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-2.5 py-0.5 rounded-full font-medium">{ct}</span>
+                                ))}
+                            </div>
+                        )}
+
                         <div className="space-y-4">
+                            {/* Schedule info */}
                             <div className="bg-[var(--color-neutral-50)] p-4 rounded-xl space-y-2 text-sm">
-                                <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Rate</span><span className="font-bold text-[var(--color-success-700)]">${viewingJob.rate}/hr</span></div>
-                                <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Starting Date</span><span className="font-medium">{(() => { const d = new Date((viewingJob.startDate || viewingJob.date) + 'T12:00:00'); return isNaN(d.getTime()) ? (viewingJob.startDate || viewingJob.date) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })()}</span></div>
+                                <div className="flex justify-between">
+                                    <span className="text-[var(--color-neutral-500)]">Starting Date</span>
+                                    <span className="font-medium">{(() => { const d = new Date((viewingJob.startDate || viewingJob.date) + 'T12:00:00'); return isNaN(d.getTime()) ? (viewingJob.startDate || viewingJob.date) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })()}</span>
+                                </div>
                                 {Array.isArray(viewingJob.daysOfWeek) && viewingJob.daysOfWeek.length > 0 && (
                                     <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Days</span><span className="font-medium">{viewingJob.daysOfWeek.join(', ')}</span></div>
                                 )}
@@ -1117,31 +1203,55 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                 {viewingJob.recipientsCount != null && (
                                     <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Seniors</span><span className="font-medium">{viewingJob.recipientsCount} {viewingJob.recipientsCount === 1 ? 'senior' : 'seniors'}</span></div>
                                 )}
-                                <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Location</span><span className="font-medium">{viewingJob.location}</span></div>
+                                {viewingJob.minHoursPerWeek != null && (
+                                    <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Hours/week</span><span className="font-medium">{viewingJob.minHoursPerWeek}+ hrs</span></div>
+                                )}
                             </div>
-                            <div>
-                                <h3 className="font-bold text-[var(--color-neutral-900)] mb-2 text-sm">Description</h3>
-                                <p className="text-[var(--color-neutral-600)] text-sm leading-relaxed break-words">{viewingJob.description}</p>
-                            </div>
-                            {Array.isArray(viewingJob.requirements) && viewingJob.requirements.length > 0 && (
+
+                            {/* Description */}
+                            {viewingJob.description && (
                                 <div>
-                                    <h3 className="font-bold text-[var(--color-neutral-900)] mb-2 text-sm">Requirements</h3>
-                                    <div className="flex flex-wrap gap-2">
-                                        {viewingJob.requirements.map((req, i) => (
-                                            <span key={i} className="px-2 py-1 bg-[var(--color-info-50)] text-[var(--color-info-700)] rounded text-xs font-medium border border-[var(--color-info-100)]">{req}</span>
-                                        ))}
-                                    </div>
+                                    <h3 className="font-bold text-[var(--color-neutral-900)] mb-2 text-sm">Description</h3>
+                                    <p className="text-[var(--color-neutral-600)] text-sm leading-relaxed break-words">{viewingJob.description}</p>
                                 </div>
                             )}
                             <div className="pt-4 flex gap-3">
                                 <Button variant="secondary" fullWidth onClick={() => setViewingJob(null)}>Close</Button>
-                                {profile?.verified ? (
-                                    <Button fullWidth onClick={() => { setApplyingJob(viewingJob); setViewingJob(null); }}>Apply Now</Button>
-                                ) : (
-                                    <Button fullWidth disabled className="bg-[var(--color-neutral-100)] text-[var(--color-neutral-400)] cursor-not-allowed">
-                                        <Lock className="w-3 h-3 mr-2" /> Verify to Apply
-                                    </Button>
-                                )}
+                                {(() => {
+                                    const existingIv = interviews.find(iv => iv.jobId === viewingJob.id);
+                                    const existingApp = applications.find(a => a.jobId === viewingJob.id);
+                                    if (existingIv) {
+                                        const label = existingIv.status === 'pending' ? 'Interview Pending'
+                                            : existingIv.status === 'accepted' || existingIv.status === 'confirmed' ? 'Interview Confirmed'
+                                            : existingIv.status === 'completed' ? 'Interview Completed'
+                                            : existingIv.status === 'declined' ? 'Interview Declined'
+                                            : existingIv.status === 'cancelled' ? 'Interview Cancelled'
+                                            : 'Interview Scheduled';
+                                        const color = existingIv.status === 'completed' ? 'bg-green-50 text-green-700 border-green-200'
+                                            : existingIv.status === 'accepted' || existingIv.status === 'confirmed' ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                            : existingIv.status === 'declined' || existingIv.status === 'cancelled' ? 'bg-slate-50 text-slate-500 border-slate-200'
+                                            : 'bg-yellow-50 text-yellow-700 border-yellow-200';
+                                        return <div className={`flex-1 flex items-center justify-center px-3 py-2 rounded-xl border text-sm font-medium ${color}`}>{label}</div>;
+                                    }
+                                    if (existingApp) {
+                                        const label = existingApp.status === 'accepted' ? 'Application Accepted'
+                                            : existingApp.status === 'rejected' ? 'Application Rejected'
+                                            : existingApp.status === 'withdrawn' ? 'Application Withdrawn'
+                                            : 'Application Pending';
+                                        const color = existingApp.status === 'accepted' ? 'bg-green-50 text-green-700 border-green-200'
+                                            : existingApp.status === 'rejected' ? 'bg-red-50 text-red-600 border-red-200'
+                                            : existingApp.status === 'withdrawn' ? 'bg-slate-50 text-slate-500 border-slate-200'
+                                            : 'bg-yellow-50 text-yellow-700 border-yellow-200';
+                                        return <div className={`flex-1 flex items-center justify-center px-3 py-2 rounded-xl border text-sm font-medium ${color}`}>{label}</div>;
+                                    }
+                                    return profile?.verified ? (
+                                        <Button fullWidth onClick={() => { setApplyingJob(viewingJob); setViewingJob(null); }}>Apply Now</Button>
+                                    ) : (
+                                        <Button fullWidth disabled className="bg-[var(--color-neutral-100)] text-[var(--color-neutral-400)] cursor-not-allowed">
+                                            <Lock className="w-3 h-3 mr-2" /> Verify to Apply
+                                        </Button>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>

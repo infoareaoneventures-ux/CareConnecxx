@@ -71,10 +71,10 @@ export * from './linq/webhooks';
 export * from './triggers/userCreated';
 
 // Linq Sprint 2 — proactive care alerts + emergency replacement
-export * from './triggers/journalCreated';
 export * from './triggers/appointmentUpdated';
 export { onCheckinCreated } from './triggers/checkinAlert';
 export { triggerFamilyEmergency } from './triggers/familyEmergency';
+export { onShiftStatusChanged } from './triggers/shiftStatusTrigger';
 
 // Linq Sprint 3 — family group thread
 export { createFamilyGroup } from './agents/familyGroupManager';
@@ -159,6 +159,8 @@ export { send1099Notifications } from './scheduled/taxReminder';
 
 // MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
 export * from './migrations/migrateSeniorsToHousehold';
+
+// fixAcceptedCounterPay migration already executed — not exported
 
 // ── createWebOnboardingSession — authenticated callable, NEVER sends outbound SMS ──
 // Called from /start after the user verifies their phone with Firebase Phone Auth.

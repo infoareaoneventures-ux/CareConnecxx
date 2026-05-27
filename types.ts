@@ -15,7 +15,6 @@ export type ViewType =
   | 'client-inbox'
   | 'client-intake'
   | 'care-plan'
-  | 'care-journal'
   | 'caregiver'
   | 'caregiver-profile'
   | 'caregiver-inbox'
@@ -243,6 +242,10 @@ export interface Caregiver {
     cash?: boolean;
     other?: string;    // "PayPal @maria", "Apple Pay 415-555-0100", etc.
   };
+
+  // Membership
+  membershipStatus?: 'active' | 'trialing' | 'past_due' | 'payment_failed' | 'canceled' | 'inactive' | 'none';
+  stripeSubscriptionId?: string;
 
   // UrbanSitter-style credit acceptance. When false, cannot apply to credit-only job posts.
   acceptsCreditCards?: boolean;
@@ -537,28 +540,6 @@ export interface ToastMessage {
 }
 
 export type AddToastFunction = (message: string, type: ToastType) => void;
-
-// Care Journal Types - Family Command Center
-export interface CareJournalEntry {
-  id: string;
-  appointmentId: string;
-  caregiverId: string;
-  seniorId: string;
-  timestamp: string;
-  checkInTime: string;
-  checkOutTime?: string;
-  photos: string[];
-  notes: string;
-  wellness: {
-    ateWell: boolean;
-    tookMeds: boolean;
-    wasActive: boolean;
-    sleptWell?: boolean;
-    mood: 'great' | 'good' | 'ok' | 'poor';
-  };
-  activities: string[];
-  updatedAt?: string;
-}
 
 // AI Matching Types
 export interface MatchScore {

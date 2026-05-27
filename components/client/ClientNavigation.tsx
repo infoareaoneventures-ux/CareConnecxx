@@ -7,6 +7,7 @@ import {
   Briefcase, X, MoreHorizontal,
 } from 'lucide-react';
 import { authService, dbService } from '../../services/api';
+import { db } from '../../lib/firebase';
 
 const MY_CARE_ROUTES = [
   '/client/care-plan',
@@ -32,9 +33,16 @@ export const ClientNavigation: React.FC = () => {
   React.useEffect(() => {
     const user = authService.getCurrentUser();
     setCurrentUser(user);
+    // Immediate fallback: Firebase Auth photoURL (set by AccountSettings upload)
+    if ((user as any)?.photoURL) setProfilePhotoUrl((user as any).photoURL);
     if (user?.uid) {
-      dbService.getSeniorProfile(user.uid).then(profile => {
-        if (profile?.imageUrl) setProfilePhotoUrl(profile.imageUrl);
+      // Also check users doc and senior_profiles for photo
+      Promise.all([
+        db?.collection('users').doc(user.uid).get().catch(() => null),
+        dbService.getSeniorProfile(user.uid).catch(() => null),
+      ]).then(([userDoc, profile]) => {
+        const url = userDoc?.data()?.photoURL || profile?.imageUrl || (user as any)?.photoURL;
+        if (url) setProfilePhotoUrl(url);
       }).catch(() => {});
     }
   }, []);

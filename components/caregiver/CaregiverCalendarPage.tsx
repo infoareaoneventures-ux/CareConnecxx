@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import {
-  Calendar as CalendarIcon, ChevronLeft, ChevronRight, MessageSquare, X,
-  Video, Phone, Home, Loader2, User, MapPin,
+  Calendar as CalendarIcon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, X,
+  Video, Phone, Home, Loader2, User, MapPin, CheckCircle, Clock,
 } from 'lucide-react';
+import firebase from 'firebase/compat/app';
 import { auth, db } from '../../lib/firebase';
 import { CaregiverTopNav } from './CaregiverTopNav';
+import { blocksToWeeklySlots, weeklySlotsToBl } from '../../services/availabilityService';
 
 const TIME_BLOCKS = [
   { id: 'morning',   label: 'Morning',   hours: '6am – 12pm' },
   { id: 'afternoon', label: 'Afternoon', hours: '12pm – 6pm' },
-  { id: 'evening',   label: 'Evening',   hours: '6pm – 11pm' },
-  { id: 'overnight', label: 'Overnight', hours: '11pm – 6am' },
+  { id: 'evening',   label: 'Evening',   hours: '6pm – 12am' },
+  { id: 'overnight', label: 'Overnight', hours: '12am – 6am' },
 ] as const;
 
 const WEEK_DAYS = [
@@ -35,7 +38,14 @@ interface Shift {
   status: 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
   address?: string;
   notes?: string;
+  completionNotes?: string;
   tasksCompleted?: string[];
+  careNeeds?: string[];
+  lifestylePreferences?: string[];
+  bookingRequestId?: string;
+  startedAt?: any;
+  completedAt?: any;
+  rate?: number | null;
 }
 
 interface InterviewEvent {
@@ -67,8 +77,8 @@ function parseInterview(id: string, data: any): InterviewEvent {
   };
 }
 
-const H_START = 6;
-const H_END   = 22;
+const H_START = 0;
+const H_END   = 24;
 const CELL_H  = 56;
 const TOTAL_H = (H_END - H_START) * CELL_H;
 const HOURS   = Array.from({ length: H_END - H_START }, (_, i) => i + H_START);
@@ -98,9 +108,15 @@ function fmtH(h: number): string {
   const whole = Math.floor(h);
   const mins  = Math.round((h - whole) * 60);
   if (whole === 12) return mins ? `12:${String(mins).padStart(2, '0')}pm` : '12pm';
-  if (whole === 0)  return '12am';
+  if (whole === 0)  return mins ? `12:${String(mins).padStart(2, '0')}am` : '12am';
   if (whole < 12)   return mins ? `${whole}:${String(mins).padStart(2, '0')}am` : `${whole}am`;
   return mins ? `${whole - 12}:${String(mins).padStart(2, '0')}pm` : `${whole - 12}pm`;
+}
+
+/** Convert "HH:MM" 24-hr string → "12:xx am/pm" */
+function fmt12(t?: string): string {
+  if (!t) return '';
+  return fmtH(parseH(t));
 }
 
 function statusStyle(status: Shift['status']): string {
@@ -108,7 +124,7 @@ function statusStyle(status: Shift['status']): string {
     case 'scheduled':   return 'bg-primary-500 border-primary-600';
     case 'in-progress': return 'bg-accent-500 border-accent-600';
     case 'completed':   return 'bg-slate-400 border-slate-500';
-    case 'cancelled':   return 'bg-red-400 border-red-500';
+    case 'cancelled':   return 'bg-rose-600 border-rose-700';
     default:            return 'bg-slate-400 border-slate-500';
   }
 }
@@ -118,7 +134,7 @@ function statusBadge(status: Shift['status']): string {
     case 'scheduled':   return 'bg-primary-100 text-primary-700 border-primary-200';
     case 'in-progress': return 'bg-accent-100 text-accent-700 border-accent-200';
     case 'completed':   return 'bg-green-100 text-green-700 border-green-200';
-    case 'cancelled':   return 'bg-red-100 text-red-700 border-red-200';
+    case 'cancelled':   return 'bg-rose-100 text-rose-700 border-rose-200';
     default:            return 'bg-slate-100 text-slate-700';
   }
 }
@@ -134,6 +150,7 @@ interface CaregiverCalendarPageProps {
 }
 
 export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ onNavigate }) => {
+  const navigate = useNavigate();
   const [view,       setView]       = useState<'week' | 'month' | 'day' | 'list'>('week');
   const [dateFilter, setDateFilter] = useState<'upcoming' | 'this-week' | 'this-month' | 'last-30' | 'all'>('upcoming');
   const [weekOffset, setWeekOffset] = useState(0);
@@ -151,6 +168,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
   const [showAvailModal,    setShowAvailModal]    = useState(false);
   const [editAvail,         setEditAvail]         = useState<Record<string, any[]>>({});
   const [saving,            setSaving]            = useState(false);
+  const [expandedDates,     setExpandedDates]     = useState<Record<string, boolean>>({});
 
   const user = auth?.currentUser;
 
@@ -202,15 +220,63 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     try {
       const snap = await db.collection('caregivers').doc(user.uid).get();
       const data = snap.data();
-      if (data?.weeklyAvailability) setAvailability(data.weeklyAvailability);
+      if (data?.weeklyAvailability) setAvailability(weeklySlotsToBl(data.weeklyAvailability) as Record<string, any[]>);
     } catch {}
   };
+
+  const handleStartShift = async (shiftId: string) => {
+    if (!db) return;
+    await db.collection('shifts').doc(shiftId).update({
+      status: 'in-progress',
+      startedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    setSelectedShift(prev => prev ? { ...prev, status: 'in-progress' } : prev);
+    fetchShifts();
+  };
+
+  const handleEndShift = async (shiftId: string, notes?: string) => {
+    if (!db) return;
+    const update: Record<string, any> = {
+      status: 'completed',
+      completedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    };
+    if (notes?.trim()) update.completionNotes = notes.trim();
+    await db.collection('shifts').doc(shiftId).update(update);
+    setSelectedShift(null);
+    fetchShifts();
+  };
+
+  const handleCancelShift = async (shiftId: string) => {
+    if (!confirm('Cancel this shift? The client will be notified.')) return;
+    if (!db || !user) return;
+    const shift = shifts.find(s => s.id === shiftId);
+    await db.collection('shifts').doc(shiftId).update({
+      status: 'cancelled',
+      cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+      cancelledBy: 'caregiver',
+    });
+    // Notify client
+    if (shift?.clientId) {
+      await db.collection('users').doc(shift.clientId).collection('notifications').add({
+        userId: shift.clientId,
+        type: 'shift_cancelled',
+        title: 'Shift Cancelled',
+        message: `Your caregiver cancelled the shift on ${shift.date}.`,
+        read: false,
+        isRead: false,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+    setSelectedShift(null);
+    fetchShifts();
+  };
+
 
   const saveAvailability = useCallback(async () => {
     if (!user || !db) return;
     setSaving(true);
     try {
-      await db.collection('caregivers').doc(user.uid).update({ weeklyAvailability: editAvail });
+      await db.collection('caregivers').doc(user.uid).update({ weeklyAvailability: blocksToWeeklySlots(editAvail as Record<string, string[]>) });
       setAvailability(editAvail);
       setShowAvailModal(false);
     } catch {
@@ -335,77 +401,657 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
 
   const activeDetail = selectedShift ? 'shift' : selectedInterview ? 'interview' : null;
 
-  const ShiftDetail = ({ shift, onClose }: { shift: Shift; onClose: () => void }) => (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-      <div className="flex items-start justify-between mb-4">
-        <div>
-          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${statusBadge(shift.status)}`}>
-            {shift.status.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-          </span>
-          <h3 className="font-bold text-slate-900 mt-2">{shift.clientName || 'Client'}</h3>
-          <p className="text-sm text-slate-500">{shift.date} · {shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+  const ShiftDetail = ({ shift, onClose }: { shift: Shift; onClose: () => void }) => {
+    const now = new Date();
+    const shiftStart = new Date(`${shift.date}T${shift.startTime}`);
+    const shiftEnd   = new Date(`${shift.date}T${shift.endTime || shift.startTime}`);
+    const minUntilStart = (shiftStart.getTime() - now.getTime()) / 60000;
+    const shiftEnded    = shiftEnd <= now;
+
+    // Which actions are available
+    // canStart: within 30 min of start, OR shift time already passed (late start)
+    const canStart  = shift.status === 'scheduled' && minUntilStart <= 30;
+    const canEnd    = shift.status === 'in-progress';
+    const canCancel = shift.status === 'scheduled';
+
+    const householdInfo = shift.lifestylePreferences || [];
+
+    // Actual start/end/duration helpers
+    const tsToDate = (ts: any): Date | null => {
+      if (!ts) return null;
+      if (ts?.toDate) return ts.toDate();
+      if (ts?.seconds) return new Date(ts.seconds * 1000);
+      return null;
+    };
+    const fmtTs = (ts: any) => {
+      const d = tsToDate(ts);
+      return d ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : null;
+    };
+    const actualStart = fmtTs(shift.startedAt);
+    const actualEnd   = fmtTs(shift.completedAt);
+    const duration = (() => {
+      const s = tsToDate(shift.startedAt); const e = tsToDate(shift.completedAt);
+      if (!s || !e) return null;
+      const mins = Math.round((e.getTime() - s.getTime()) / 60000);
+      if (mins <= 0) return null;
+      const h = Math.floor(mins / 60); const m = mins % 60;
+      return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+    })();
+
+    // Care tasks — from shift directly, or fetch from booking as fallback
+    const [careNeeds, setCareNeeds] = React.useState<string[]>(shift.careNeeds || []);
+    const [tasksCompleted, setTasksCompleted] = React.useState<string[]>(shift.tasksCompleted || []);
+    const [fetchingTasks, setFetchingTasks] = React.useState(false);
+
+    // Real-time sync: listen to this shift doc so task changes from bookings page show up here
+    React.useEffect(() => {
+      if (!db) return;
+      const unsub = db.collection('shifts').doc(shift.id)
+        .onSnapshot(doc => {
+          if (doc.exists) {
+            const data = doc.data() as any;
+            setTasksCompleted(data.tasksCompleted || []);
+          }
+        });
+      return () => unsub();
+    }, [shift.id]);
+
+    // End shift notes flow
+    const [endingShift, setEndingShift] = React.useState(false);
+    const [endNotes, setEndNotes] = React.useState('');
+
+    // Booking details
+    const [bookingData, setBookingData] = React.useState<any>(null);
+
+    React.useEffect(() => {
+      if (!shift.bookingRequestId || !db) return;
+      if (careNeeds.length === 0) setFetchingTasks(true);
+      db.collection('booking_requests').doc(shift.bookingRequestId).get()
+        .then(doc => {
+          const data = doc.data() || {};
+          if (careNeeds.length === 0) setCareNeeds(data.careNeeds || []);
+          setBookingData(data);
+        })
+        .catch(() => {})
+        .finally(() => setFetchingTasks(false));
+    }, [shift.id]);
+
+    const handleToggleTask = async (task: string) => {
+      if (!db) return;
+      const updated = tasksCompleted.includes(task)
+        ? tasksCompleted.filter(t => t !== task)
+        : [...tasksCompleted, task];
+      setTasksCompleted(updated);
+      await db.collection('shifts').doc(shift.id).update({ tasksCompleted: updated }).catch(() => {});
+    };
+
+    const handleToggleCategory = async (keys: string[]) => {
+      if (!db) return;
+      const allDone = keys.every(k => tasksCompleted.includes(k));
+      const updated = allDone
+        ? tasksCompleted.filter(k => !keys.includes(k))
+        : [...new Set([...tasksCompleted, ...keys])];
+      setTasksCompleted(updated);
+      await db.collection('shifts').doc(shift.id).update({ tasksCompleted: updated }).catch(() => {});
+    };
+
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        {/* Header */}
+        <div className="p-5 pb-3">
+          <div className="flex items-start justify-between mb-3">
+            <div className="flex items-center gap-3">
+              {(() => {
+                const nm = shift.clientName || 'Client';
+                const ini = nm.split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase();
+                const photo = (shift as any).clientPhotoURL;
+                return (
+                  <div className="w-10 h-10 rounded-full overflow-hidden bg-blue-100 flex items-center justify-center shrink-0">
+                    {photo
+                      ? <img src={photo} alt={nm} className="w-full h-full object-cover" />
+                      : <span className="text-sm font-bold text-blue-600">{ini}</span>}
+                  </div>
+                );
+              })()}
+              <div>
+                <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
+                  {shift.status === 'in-progress' ? '● In Progress' : shift.status.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                </span>
+                <h3 className="font-bold text-slate-900 text-base mt-1">{shift.clientName || 'Client'}</h3>
+                <p className="text-sm text-slate-500 mt-0.5">
+                  {new Date(shift.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                  {' · '}{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}
+                </p>
+              </div>
+            </div>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg font-bold leading-none">×</button>
+          </div>
+          {shift.rate && (
+            <p className="text-xs text-slate-400 mt-0.5">${shift.rate}/hr</p>
+          )}
         </div>
-        <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg font-bold">×</button>
-      </div>
-      <div className="space-y-2 text-sm mb-4">
-        {shift.address && (
-          <div className="flex items-start gap-2 text-slate-600">
-            <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-slate-400" />
-            <span>{shift.address}</span>
+
+        {/* Info: address + household badges */}
+        <div className="px-5 space-y-2 text-sm mb-3">
+          {shift.address && (
+            <div>
+              <div className="flex items-start gap-2 text-slate-600">
+                <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-slate-400" />
+                <span className="text-xs">{shift.address}</span>
+              </div>
+              {householdInfo.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-1.5 ml-6">
+                  {householdInfo.map((pref, i) => (
+                    <span key={i} className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-xs font-medium">
+                      {pref}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {shift.notes && (
+            <div className="p-3 bg-slate-50 rounded-xl text-slate-600 text-xs">{shift.notes}</div>
+          )}
+        </div>
+
+        {/* Actual time worked */}
+        {(actualStart || actualEnd) && (
+          <div className="px-5 mb-3 space-y-1">
+            <div className="flex items-center gap-3 text-xs">
+              <span className="w-20 text-slate-400 shrink-0">Scheduled</span>
+              <span className="font-semibold text-slate-700">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</span>
+            </div>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="w-20 text-slate-400 shrink-0">Started</span>
+              <span className="font-semibold text-slate-700">
+                {actualStart}
+                {actualEnd && <><span className="text-slate-400 font-normal"> · Ended </span>{actualEnd}</>}
+                {duration && <span className="text-primary-600 font-semibold"> · {duration}</span>}
+              </span>
+            </div>
           </div>
         )}
-        {shift.notes && <div className="p-3 bg-slate-50 rounded-xl text-slate-600">{shift.notes}</div>}
-        {shift.tasksCompleted && shift.tasksCompleted.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-2">
-            {shift.tasksCompleted.map((t, i) => (
-              <span key={i} className="text-xs bg-primary-50 text-primary-700 border border-primary-200 px-2 py-0.5 rounded-full">{t}</span>
-            ))}
+
+        {/* Tasks — grouped by recipient when booking data available */}
+        {(careNeeds.length > 0 || fetchingTasks || (bookingData?.careRecipients?.length ?? 0) > 0) && (
+          <div className="px-5 mb-4">
+            {(() => {
+              // Compute total/done counts across all recipients
+              let total = 0; let done = 0;
+              if (bookingData?.careRecipients?.length > 0) {
+                bookingData.careRecipients.forEach((r: any, ri: number) => {
+                  const cats: string[] = r.careNeeds || [];
+                  const det: Record<string, string[]> = r.careNeedDetails || {};
+                  cats.forEach(cat => {
+                    const subs = det[cat] || [];
+                    if (subs.length > 0) {
+                      total += subs.length;
+                      done += subs.filter((sub: string) => tasksCompleted.includes(`${ri}_${cat}_${sub}`) || tasksCompleted.includes(sub)).length;
+                    } else {
+                      total += 1;
+                      done += tasksCompleted.includes(`${ri}_${cat}`) ? 1 : 0;
+                    }
+                  });
+                });
+              } else {
+                total = careNeeds.length;
+                done = tasksCompleted.filter(t => careNeeds.includes(t)).length;
+              }
+              return (
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tasks</p>
+                  {total > 0 && (
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${done === total ? 'bg-green-100 text-green-700' : done > 0 ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {done}/{total}
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
+            {fetchingTasks && !bookingData ? (
+              <p className="text-xs text-slate-400">Loading tasks…</p>
+            ) : bookingData?.careRecipients?.length > 0 ? (
+              <div className="space-y-3">
+                {bookingData.careRecipients.map((r: any, ri: number) => {
+                  const categories: string[] = r.careNeeds || [];
+                  const details: Record<string, string[]> = r.careNeedDetails || {};
+                  if (categories.length === 0) return null;
+                  const isCompleted = shift.status === 'completed' || shift.status === 'cancelled';
+                  return (
+                    <div key={ri}>
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        {r.photoURL
+                          ? <img src={r.photoURL} className="w-5 h-5 rounded-full object-cover shrink-0" alt="" />
+                          : <div className="w-5 h-5 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 text-[10px] font-bold shrink-0">{(r.name || r.firstName || '?')[0].toUpperCase()}</div>
+                        }
+                        <span className="text-xs font-semibold text-slate-700">{r.name || r.firstName}</span>
+                        {r.relationship && <span className="text-xs text-slate-400">· {r.relationship}{r.age ? ` · Age ${r.age}` : ''}</span>}
+                      </div>
+                      <div className="space-y-1.5">
+                        {categories.map((category, ci) => {
+                          const subtasks = details[category] || [];
+                          const subKeys = subtasks.map((sub: string) => `${ri}_${category}_${sub}`);
+                          const doneSubCount = subKeys.filter((k: string) => tasksCompleted.includes(k)).length;
+                          const allSubDone = subtasks.length > 0 && doneSubCount === subtasks.length;
+                          const catKey = `${ri}_${category}`;
+                          const catDone = subtasks.length === 0 ? tasksCompleted.includes(catKey) : allSubDone;
+                          return (
+                            <div key={ci} className="border border-slate-200 rounded-xl overflow-hidden">
+                              {isCompleted ? (
+                                <div className={`flex items-center gap-2 px-3 py-2 ${catDone ? 'bg-green-50' : 'bg-slate-50'}`}>
+                                  <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${catDone ? 'text-green-500' : 'text-slate-300'}`} />
+                                  <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{category}</p>
+                                  {subtasks.length > 0 && doneSubCount > 0 && (
+                                    <span className={`text-[10px] font-semibold ${catDone ? 'text-green-600' : 'text-slate-400'}`}>{doneSubCount}/{subtasks.length}</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => subtasks.length > 0 ? handleToggleCategory(subKeys) : handleToggleTask(catKey)}
+                                  className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${catDone ? 'bg-primary-50' : 'bg-slate-50 hover:bg-slate-100'}`}
+                                >
+                                  <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${catDone ? 'bg-primary-500 border-primary-500' : 'border-primary-300 bg-white'}`}>
+                                    {catDone && <CheckCircle className="w-2.5 h-2.5 text-white" />}
+                                  </div>
+                                  <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-primary-400 line-through' : 'text-primary-600'}`}>{category}</p>
+                                </button>
+                              )}
+                              {subtasks.length > 0 && (
+                                <div className="px-3 py-2 space-y-1">
+                                  {subtasks.map((sub: string, si: number) => {
+                                    const taskKey = `${ri}_${category}_${sub}`;
+                                    const done = tasksCompleted.includes(taskKey) || tasksCompleted.includes(sub);
+                                    if (isCompleted) return (
+                                      <div key={si} className={`flex items-center gap-2 text-xs font-medium ${done ? 'text-green-700' : 'text-slate-400'}`}>
+                                        <CheckCircle className={`w-3.5 h-3.5 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                                        {sub}
+                                      </div>
+                                    );
+                                    return (
+                                      <button key={si} onClick={() => handleToggleTask(taskKey)}
+                                        className={`w-full flex items-center gap-2 text-left text-xs font-medium transition-colors ${done ? 'text-green-700' : 'text-slate-600 hover:text-slate-900'}`}>
+                                        <CheckCircle className={`w-3.5 h-3.5 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                                        {sub}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {careNeeds.map((task, i) => {
+                  const done = tasksCompleted.includes(task);
+                  const isCompleted = shift.status === 'completed' || shift.status === 'cancelled';
+                  if (isCompleted) return (
+                    <div key={i} className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border text-xs font-medium ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                      <CheckCircle className={`w-4 h-4 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-200'}`} />
+                      {task}
+                    </div>
+                  );
+                  return (
+                    <button key={i} onClick={() => handleToggleTask(task)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border text-left text-xs font-medium transition-colors ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'}`}>
+                      <CheckCircle className={`w-4 h-4 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                      {task}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="px-5 pb-3 space-y-2">
+          {/* Scheduled: not yet startable */}
+          {shift.status === 'scheduled' && !canStart && !shiftEnded && (
+            <p className="text-xs text-slate-400 text-center py-1">
+              Start available 30 min before shift
+            </p>
+          )}
+
+          {/* Scheduled + within 30 min (or late): Start Shift */}
+          {canStart && (
+            <button
+              onClick={() => handleStartShift(shift.id)}
+              className="w-full py-2.5 bg-accent-500 hover:bg-accent-600 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              {shiftEnded ? 'Start Shift (Late)' : 'Start Shift'}
+            </button>
+          )}
+
+          {/* In Progress: End Shift (two-step with notes) */}
+          {canEnd && !endingShift && (
+            <button
+              onClick={() => setEndingShift(true)}
+              className="w-full py-2.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <CheckCircle className="w-4 h-4" />End Shift
+            </button>
+          )}
+          {canEnd && endingShift && (
+            <div className="space-y-2">
+              <textarea
+                value={endNotes}
+                onChange={e => setEndNotes(e.target.value)}
+                placeholder="Add shift notes (optional)…"
+                rows={3}
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-green-200 resize-none"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setEndingShift(false)}
+                  className="flex-1 py-2 border border-slate-200 rounded-xl text-slate-600 text-sm hover:bg-slate-50"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={() => handleEndShift(shift.id, endNotes)}
+                  className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5"
+                >
+                  <CheckCircle className="w-4 h-4" />Complete
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Completed */}
+          {shift.status === 'completed' && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-center gap-1.5 py-2 text-green-700 text-sm font-semibold bg-green-50 rounded-xl border border-green-200">
+                <CheckCircle className="w-4 h-4" /> Shift Completed
+              </div>
+              {shift.completionNotes && (
+                <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-600 border border-slate-200">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shift Notes</p>
+                  {shift.completionNotes}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Cancelled */}
+          {shift.status === 'cancelled' && (
+            <div className="flex items-center justify-center gap-1.5 py-2 text-rose-600 text-sm font-semibold bg-rose-50 rounded-xl border border-rose-200">
+              Shift Cancelled
+            </div>
+          )}
+
+          {/* Bottom row: Message + Cancel */}
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() => navigate('/caregiver/inbox')}
+              className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 flex items-center justify-center gap-1.5 text-sm"
+            >
+              <MessageSquare className="w-4 h-4" />Message
+            </button>
+            {canCancel && (
+              <button
+                onClick={() => handleCancelShift(shift.id)}
+                className="px-3 py-2 border border-red-200 rounded-xl hover:bg-red-50 text-red-500 text-sm font-medium"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Emergency Contact — always visible */}
+        {bookingData?.emergencyContact?.name && (
+          <div className="px-5 pb-5">
+            <div className="p-3 bg-red-50 border border-red-100 rounded-xl">
+              <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-1">Emergency Contact</p>
+              <p className="text-xs text-red-700 font-medium">
+                {bookingData.emergencyContact.name}
+                {bookingData.emergencyContact.relationship && (
+                  <span className="text-red-400 font-normal"> · {bookingData.emergencyContact.relationship}</span>
+                )}
+              </p>
+              {bookingData.emergencyContact.phone && (
+                <p className="text-xs text-red-600 mt-0.5">📞 {bookingData.emergencyContact.phone}</p>
+              )}
+            </div>
           </div>
         )}
       </div>
-      <button onClick={() => onNavigate(`/caregiver/messages?client=${shift.clientId}`)}
-        className="px-3 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600">
-        <MessageSquare className="w-4 h-4" />
-      </button>
-    </div>
-  );
+    );
+  };
 
   const InterviewDetail = ({ interview, onClose }: { interview: InterviewEvent; onClose: () => void }) => {
+    const [job, setJob]                   = useState<any>(null);
+    const [clientPhoto, setClientPhoto]   = useState<string | null>(null);
+    const [accepting,  setAccepting]      = useState(false);
+    const [declining,  setDeclining]      = useState(false);
+    const [cancelling, setCancelling]     = useState(false);
+
     const TypeIcon  = interview.interviewType === 'phone' ? Phone : interview.interviewType === 'in-person' ? Home : Video;
     const typeLabel = interview.interviewType === 'phone' ? 'Phone Call' : interview.interviewType === 'in-person' ? 'In Person' : 'Video Call';
-    const statusLabel = interview.status === 'requested' ? 'Pending' : interview.status.charAt(0).toUpperCase() + interview.status.slice(1);
+    const statusLabel = interview.status === 'requested' ? 'Pending'
+      : interview.status === 'in-progress' ? 'In Progress'
+      : interview.status.charAt(0).toUpperCase() + interview.status.slice(1);
+    const statusColor = interview.status === 'completed'   ? 'bg-green-100 text-green-700 border-green-200'
+      : interview.status === 'cancelled' || interview.status === 'declined' ? 'bg-slate-100 text-slate-500 border-slate-200'
+      : interview.status === 'in-progress' ? 'bg-orange-100 text-orange-700 border-orange-200'
+      : 'bg-purple-100 text-purple-700 border-purple-200';
+
+    const name     = interview.clientName || 'Client';
+    const initials = name.split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase();
+
+    useEffect(() => {
+      if (!interview.jobId) return;
+      db.collection('job_posts').doc(interview.jobId).get()
+        .then(doc => { if (doc.exists) setJob(doc.data()); })
+        .catch(() => {});
+    }, [interview.jobId]);
+
+    useEffect(() => {
+      if (!interview.clientId) return;
+      // 1. Embedded directly on the interview doc (new interviews going forward)
+      const embedded = (interview as any).clientPhotoURL || (interview as any).clientPhoto;
+      if (embedded) { setClientPhoto(embedded); return; }
+      const pickPhoto = (d: any) => d?.clientPhotoURL || d?.photoURL || d?.imageUrl || d?.photo || d?.avatar || null;
+      // 2. users doc → 3. senior_profiles → 4. booking_requests (most reliable: PostsPage always writes clientPhotoURL there)
+      db.collection('users').doc(interview.clientId).get()
+        .then(doc => {
+          const photo = pickPhoto(doc.data());
+          if (photo) { setClientPhoto(photo); return; }
+          return db.collection('senior_profiles').doc(interview.clientId).get()
+            .then(sp => {
+              const p = pickPhoto(sp.data());
+              if (p) { setClientPhoto(p); return; }
+              // Grab clientPhotoURL from the most recent booking request by this client
+              return db.collection('booking_requests')
+                .where('clientId', '==', interview.clientId)
+                .limit(1)
+                .get()
+                .then(snap => {
+                  if (!snap.empty) {
+                    const url = snap.docs[0].data()?.clientPhotoURL;
+                    if (url) setClientPhoto(url);
+                  }
+                });
+            });
+        })
+        .catch(() => {});
+    }, [interview.clientId]);
+
+    const handleAccept = async () => {
+      setAccepting(true);
+      try {
+        await db.collection('video_interviews').doc(interview.id).update({
+          status: 'accepted', acceptedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        await db.collection('users').doc(interview.clientId).collection('notifications').add({
+          type: 'interview_accepted', title: 'Interview Accepted',
+          message: 'Your interview request has been accepted.',
+          read: false, isRead: false, timestamp: new Date().toISOString(),
+        });
+        setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'accepted' as const } : iv));
+        setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'accepted' as const } : prev);
+      } catch { } finally { setAccepting(false); }
+    };
+
+    const handleDecline = async () => {
+      if (!window.confirm('Decline this interview request?')) return;
+      setDeclining(true);
+      try {
+        await db.collection('video_interviews').doc(interview.id).update({
+          status: 'declined', declinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'declined' as const } : iv));
+        setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'declined' as const } : prev);
+      } catch { } finally { setDeclining(false); }
+    };
+
+    const handleCancel = async () => {
+      if (!window.confirm('Cancel this interview?')) return;
+      setCancelling(true);
+      try {
+        await db.collection('video_interviews').doc(interview.id).update({
+          status: 'cancelled', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'cancelled' as const } : iv));
+        setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'cancelled' as const } : prev);
+      } catch { } finally { setCancelling(false); }
+    };
+
+    const careTypes: string[] = job?.careTypes || job?.requirements || [];
+    const days:      string[] = job?.daysOfWeek || [];
+    const times:     string[] = (job?.timeOfDay || []).map((t: string) => t.charAt(0).toUpperCase() + t.slice(1));
+    const freq:      string | undefined  = job?.jobFrequency;
+    const rate:      number | undefined  = job?.rate;
+    const location:  string | null = job?.location || (job?.city ? [job.city, job.state].filter(Boolean).join(', ') : null);
+
     return (
       <div className="bg-white rounded-2xl border border-purple-100 p-5 shadow-sm">
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-full border bg-purple-100 text-purple-700 border-purple-200">
-              Interview · {statusLabel}
-            </span>
-            <h3 className="font-bold text-slate-900 mt-2">{interview.clientName || interview.jobTitle || 'Client'}</h3>
-            <p className="text-sm text-slate-500">
-              {new Date(interview.scheduledTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-              {' · '}
-              {new Date(`2000-01-01T${interview.startTime}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
-            </p>
+        {/* Header: avatar + name + status */}
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full overflow-hidden bg-blue-100 flex items-center justify-center shrink-0">
+              {clientPhoto
+                ? <img src={clientPhoto} alt={name} className="w-full h-full object-cover" />
+                : <span className="text-sm font-bold text-blue-600">{initials}</span>}
+            </div>
+            <div>
+              <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusColor}`}>
+                Interview · {statusLabel}
+              </span>
+              <h3 className="font-bold text-slate-900 mt-1">{name}</h3>
+            </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg font-bold">×</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
         </div>
+
+        {/* Date + time */}
+        <div className="flex items-center gap-2 text-sm text-slate-500 mb-3">
+          <CalendarIcon className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          <span>
+            {new Date(interview.scheduledTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+            {' · '}
+            {new Date(`2000-01-01T${interview.startTime}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+          </span>
+        </div>
+
         <div className="space-y-2 text-sm">
+          {/* Interview type */}
           <div className="flex items-center gap-2 text-slate-600">
-            <TypeIcon className="w-3.5 h-3.5" /><span>{typeLabel}</span>
+            <TypeIcon className="w-3.5 h-3.5 shrink-0" /><span>{typeLabel}</span>
           </div>
-          {interview.jobTitle && (
-            <p className="text-xs text-slate-500">Job: <span className="font-medium text-slate-700">{interview.jobTitle}</span></p>
+
+          {/* Location */}
+          {location && (
+            <div className="flex items-center gap-2 text-slate-500">
+              <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span className="text-xs">{location}</span>
+            </div>
           )}
+
+          {/* Care type chips */}
+          {careTypes.length > 0 && (
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              {careTypes.map((c: string) => (
+                <span key={c} className="text-xs px-2 py-0.5 bg-teal-50 text-teal-700 rounded-full border border-teal-100">{c}</span>
+              ))}
+            </div>
+          )}
+
+          {/* Days of week */}
+          {days.length > 0 && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-600 flex-wrap">
+              <span className="text-slate-400 shrink-0">Days:</span>
+              {days.map((d: string) => (
+                <span key={d} className="px-1.5 py-0.5 bg-slate-100 rounded text-slate-700 font-medium">{d}</span>
+              ))}
+            </div>
+          )}
+
+          {/* Time of day */}
+          {times.length > 0 && (
+            <p className="text-xs text-slate-500"><span className="text-slate-400">Time:</span> {times.join(', ')}</p>
+          )}
+
+          {/* Frequency + rate */}
+          {(freq || rate) && (
+            <p className="text-xs text-slate-500">
+              {freq && <span className="capitalize font-medium text-slate-600">{freq.replace('-', ' ')}</span>}
+              {freq && rate && ' · '}
+              {rate && <span className="font-medium text-slate-600">${rate}/hr</span>}
+            </p>
+          )}
+
+          {/* Notes */}
           {interview.notes && (
-            <div className="p-3 bg-slate-50 rounded-xl text-slate-600 mt-2 break-words text-xs max-h-24 overflow-y-auto">{interview.notes}</div>
+            <div className="p-3 bg-slate-50 rounded-xl text-slate-600 break-words text-xs max-h-24 overflow-y-auto mt-1">
+              {interview.notes}
+            </div>
           )}
         </div>
-        <div className="mt-4">
-          <button onClick={() => onNavigate(`/caregiver/messages?client=${interview.clientId}`)}
-            className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm">
-            <MessageSquare className="w-4 h-4" /> Message
-          </button>
+
+        {/* Actions */}
+        <div className="mt-4 flex flex-col gap-2">
+          {/* Accept / Decline for pending requests */}
+          {interview.status === 'requested' && (
+            <div className="flex gap-2">
+              <button onClick={handleAccept} disabled={accepting}
+                className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
+                {accepting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Accept
+              </button>
+              <button onClick={handleDecline} disabled={declining}
+                className="flex-1 py-2 border border-red-200 hover:bg-red-50 text-red-600 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
+                {declining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-4 h-4" />} Decline
+              </button>
+            </div>
+          )}
+
+          {/* Join Call for video + accepted/in-progress */}
+          {interview.interviewType === 'video' && (interview.status === 'accepted' || interview.status === 'in-progress') && (
+            <button onClick={() => navigate('/caregiver/video')}
+              className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
+              <Video className="w-4 h-4" /> Join Call
+            </button>
+          )}
+
+          <div className="flex gap-2">
+            <button onClick={() => navigate('/caregiver/inbox')}
+              className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm flex items-center justify-center gap-1.5">
+              <MessageSquare className="w-4 h-4" /> Message
+            </button>
+            {interview.status === 'accepted' && (
+              <button onClick={handleCancel} disabled={cancelling}
+                className="px-3 py-2 border border-red-200 rounded-xl hover:bg-red-50 text-red-500 text-sm flex items-center justify-center gap-1.5">
+                {cancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />} Cancel
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -450,6 +1096,16 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
 
       <main className="max-w-6xl mx-auto px-4 py-6">
 
+        {/* ── Shared legend (all views) ── */}
+        <div className="flex items-center gap-5 px-4 py-2.5 mb-4 bg-white rounded-xl border border-slate-200 text-xs text-slate-500 flex-wrap">
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-100 border border-primary-200 inline-block" />Available</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-500 inline-block" />Scheduled</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-accent-500 inline-block" />In Progress</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" />Completed</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-rose-600 inline-block" />Cancelled</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-purple-500 inline-block" />Interviews</span>
+        </div>
+
         {/* ── Week view ── */}
         {view === 'week' && (
           <div className="flex flex-col gap-4">
@@ -461,13 +1117,6 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
             </div>
             <div className="flex gap-4">
               <div className="flex-1 min-w-0 bg-white rounded-2xl border border-slate-200 overflow-hidden">
-                <div className="flex items-center gap-5 px-4 py-2.5 border-b border-slate-100 bg-slate-50 text-xs text-slate-500 flex-wrap">
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-100 border border-primary-200 inline-block" />Available</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-500 inline-block" />Scheduled</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-accent-500 inline-block" />In Progress</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" />Completed</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-purple-500 inline-block" />Interviews</span>
-                </div>
                 <div className="overflow-x-auto">
                   <div style={{ minWidth: 520 }}>
                     <div className="grid border-b border-slate-200 bg-slate-50" style={{ gridTemplateColumns: '52px repeat(7, 1fr)' }}>
@@ -518,7 +1167,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                                       className={`absolute rounded-md border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)}`}
                                       style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '2px', right: hasBoth ? '50%' : '2px' }}>
                                       <p className="px-1.5 pt-1 text-xs font-bold text-white leading-tight truncate">{(shift.clientName || 'Client').split(' ')[0]}</p>
-                                      <p className="px-1.5 text-xs text-white/80">{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+                                      <p className="px-1.5 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
                                     </button>
                                   );
                                 })}
@@ -604,7 +1253,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                                   className={`absolute rounded-lg border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)}`}
                                   style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '4px', right: dayInterviews.length > 0 ? '50%' : '4px' }}>
                                   <p className="px-2 pt-1.5 text-sm font-bold text-white leading-tight truncate">{shift.clientName || 'Client'}</p>
-                                  <p className="px-2 text-xs text-white/80">{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+                                  <p className="px-2 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
                                 </button>
                               );
                             })}
@@ -671,7 +1320,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                         {(dayS.length > 0 || dayI.length > 0) && (
                           <div className="flex gap-0.5 mt-0.5 flex-wrap justify-center">
                             {dayS.slice(0, 2).map((s, i) => (
-                              <span key={`s-${i}`} className={`w-1.5 h-1.5 rounded-full ${isSel ? 'bg-white' : s.status === 'scheduled' ? 'bg-primary-500' : s.status === 'in-progress' ? 'bg-accent-500' : s.status === 'completed' ? 'bg-green-500' : 'bg-red-400'}`} />
+                              <span key={`s-${i}`} className={`w-1.5 h-1.5 rounded-full ${isSel ? 'bg-white' : s.status === 'scheduled' ? 'bg-primary-500' : s.status === 'in-progress' ? 'bg-accent-500' : s.status === 'completed' ? 'bg-green-500' : 'bg-rose-600'}`} />
                             ))}
                             {dayI.slice(0, 1).map((_, i) => (
                               <span key={`i-${i}`} className={`w-1.5 h-1.5 rounded-full ${isSel ? 'bg-white' : 'bg-purple-500'}`} />
@@ -686,6 +1335,13 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
             </div>
 
             <div className="space-y-4">
+              {/* If a shift is selected, show the detail panel instead of day summary */}
+              {activeDetail === 'shift' && selectedShift && (
+                <ShiftDetail shift={selectedShift} onClose={() => setSelectedShift(null)} />
+              )}
+              {activeDetail === 'interview' && selectedInterview && (
+                <InterviewDetail interview={selectedInterview} onClose={() => setSelectedInterview(null)} />
+              )}
               <div className="bg-white rounded-2xl border border-slate-200 p-5">
                 <h3 className="font-bold text-slate-900 mb-4">
                   {new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
@@ -698,12 +1354,16 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                 ) : (
                   <div className="space-y-3">
                     {selectedDateShifts.map(shift => (
-                      <div key={shift.id} className="border border-slate-200 rounded-xl p-4">
+                      <div
+                        key={shift.id}
+                        onClick={() => { setSelectedShift(shift); setSelectedInterview(null); }}
+                        className="border border-slate-200 rounded-xl p-4 cursor-pointer hover:border-primary-300 hover:shadow-sm transition-all"
+                      >
                         <div className="flex justify-between items-center mb-2">
                           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
                             {shift.status.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
                           </span>
-                          <span className="text-sm font-bold text-slate-700">{shift.startTime}{shift.endTime ? `–${shift.endTime}` : ''}</span>
+                          <span className="text-sm font-bold text-slate-700">{fmt12(shift.startTime)}{shift.endTime ? `–${fmt12(shift.endTime)}` : ''}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
@@ -711,6 +1371,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                           </div>
                           <p className="font-medium text-slate-900 text-sm">{shift.clientName || 'Client'}</p>
                         </div>
+                        <p className="text-xs text-primary-500 mt-2 font-medium">Tap to manage →</p>
                       </div>
                     ))}
                     {selectedDateInterviews.map(iv => {
@@ -752,7 +1413,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                       </div>
                       <div className="min-w-0">
                         <p className="font-medium text-slate-900 text-sm truncate">{s.clientName || 'Client'}</p>
-                        <p className="text-xs text-slate-500">{s.startTime}{s.endTime ? ` – ${s.endTime}` : ''}</p>
+                        <p className="text-xs text-slate-500">{fmt12(s.startTime)}{s.endTime ? ` – ${fmt12(s.endTime)}` : ''}</p>
                       </div>
                     </div>
                   ))}
@@ -788,7 +1449,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                 { id: 'this-month', label: 'This Month' },
                 { id: 'last-30',    label: 'Last 30 Days' },
               ] as const).map(f => (
-                <button key={f.id} onClick={() => setDateFilter(f.id)}
+                <button key={f.id} onClick={() => { setDateFilter(f.id); setExpandedDates({}); }}
                   className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${dateFilter === f.id ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}>
                   {f.label}
                 </button>
@@ -802,7 +1463,12 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
             ) : (
               <div className="flex gap-4">
                 <div className="flex-1 min-w-0 space-y-6">
-                  {groupedDates.map(date => (
+                  {groupedDates.map(date => {
+                    const allEvents = groupedEvents[date];
+                    const isDateExpanded = !!expandedDates[date];
+                    const visibleEvents = isDateExpanded ? allEvents : allEvents.slice(0, 2);
+                    const hiddenCount = allEvents.length - 2;
+                    return (
                     <div key={date}>
                       <div className="flex items-center gap-2 mb-2 px-1">
                         <h3 className="text-sm font-bold text-slate-700">
@@ -813,7 +1479,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                         )}
                       </div>
                       <div className="space-y-2">
-                        {groupedEvents[date].map((e, i) => {
+                        {visibleEvents.map((e, i) => {
                           if (e.kind === 'shift') {
                             const s = e.shift;
                             return (
@@ -862,8 +1528,20 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                           }
                         })}
                       </div>
+                      {hiddenCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setExpandedDates(prev => ({ ...prev, [date]: !prev[date] }))}
+                          className="w-full mt-1 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-500 hover:text-slate-700 flex items-center justify-center gap-1 transition-colors"
+                        >
+                          {isDateExpanded
+                            ? <><ChevronUp className="w-3.5 h-3.5" /> Show less</>
+                            : <><ChevronDown className="w-3.5 h-3.5" /> Show {hiddenCount} more shift{hiddenCount !== 1 ? 's' : ''}</>
+                          }
+                        </button>
+                      )}
                     </div>
-                  ))}
+                  ); })}
                 </div>
                 {activeDetail === 'shift' && selectedShift && (
                   <div className="w-72 flex-shrink-0"><ShiftDetail shift={selectedShift} onClose={() => setSelectedShift(null)} /></div>

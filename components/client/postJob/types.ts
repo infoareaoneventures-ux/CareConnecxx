@@ -110,8 +110,8 @@ export const CARE_TYPES = [
 export const TIME_OF_DAY_OPTIONS: Array<{ value: JobTimeOfDay; label: string; sub: string }> = [
   { value: 'morning',   label: 'Morning',   sub: '6am–12pm' },
   { value: 'afternoon', label: 'Afternoon', sub: '12pm–6pm' },
-  { value: 'evening',   label: 'Evening',   sub: '6pm–11pm' },
-  { value: 'overnight', label: 'Overnight', sub: '11pm–6am' },
+  { value: 'evening',   label: 'Evening',   sub: '6pm–12am' },
+  { value: 'overnight', label: 'Overnight', sub: '12am–6am' },
 ];
 
 export const CARE_LEVEL_OPTIONS: Array<{ value: JobCareLevel; label: string; description: string }> = [

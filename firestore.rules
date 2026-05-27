@@ -561,7 +561,8 @@ service cloud.firestore {
     // ==========================================
     // SHIFT HOURS COLLECTION (per-appointment)
     // Doc id === appointmentId for idempotent submits.
-    // All state transitions happen via Cloud Functions (admin SDK).
+    // State transitions happen via Cloud Functions (admin SDK).
+    // Exception: caregiver can confirm cash receipt directly (approved → paid).
     // ==========================================
     match /shiftHours/{appointmentId} {
       allow read: if isAuthenticated() && (
@@ -576,7 +577,18 @@ service cloud.firestore {
         && request.resource.data.status == 'pending_client_review'
         && request.resource.data.paymentAttemptCount == 0;
 
-      allow update: if isAdmin();
+      // Admin can update anything.
+      // Caregiver may confirm cash receipt: approved/auto_approved → paid,
+      // restricted to only the 5 confirmation fields.
+      allow update: if isAdmin() || (
+        isAuthenticated() &&
+        resource.data.caregiverId == request.auth.uid &&
+        resource.data.paymentMethod == 'cash' &&
+        (resource.data.status == 'approved' || resource.data.status == 'auto_approved') &&
+        request.resource.data.status == 'paid' &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'paidMethod', 'paidAt', 'cashConfirmedAt', 'updatedAt'])
+      );
       allow delete: if isAdmin();
     }
     
@@ -632,8 +644,13 @@ service cloud.firestore {
     // ==========================================
     match /shifts/{shiftId} {
       // Caregiver can create (clock in or accepted booking)
-      allow create: if isAuthenticated() &&
-        request.resource.data.caregiverId == request.auth.uid;
+      // Client can create a pending extra-visit request (createdBy == 'client')
+      allow create: if isAuthenticated() && (
+        request.resource.data.caregiverId == request.auth.uid ||
+        (request.resource.data.clientId == request.auth.uid &&
+         request.resource.data.status == 'pending' &&
+         request.resource.data.createdBy == 'client')
+      );
 
       // Both parties and admin can read
       allow read: if isAuthenticated() && (
@@ -642,12 +659,38 @@ service cloud.firestore {
         isAdmin()
       );
 
-      // Caregiver: update active shifts (clock out) or scheduled shifts (cancel)
-      // Client: cancel scheduled shifts
+      // Caregiver: update active/scheduled/in-progress shifts AND pending extra-visit requests
+      // Client: cancel their own scheduled or pending shifts
       allow update: if isAuthenticated() && (
         (resource.data.caregiverId == request.auth.uid &&
-          (resource.data.status == 'active' || resource.data.status == 'scheduled' || resource.data.status == 'in-progress')) ||
-        (resource.data.clientId == request.auth.uid && resource.data.status == 'scheduled') ||
+          (resource.data.status == 'active' || resource.data.status == 'scheduled' ||
+           resource.data.status == 'in-progress' || resource.data.status == 'pending')) ||
+        (resource.data.clientId == request.auth.uid &&
+          (resource.data.status == 'scheduled' || resource.data.status == 'pending')) ||
+        isAdmin()
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // BOOKING AMENDMENTS (recurring schedule change requests)
+    // ==========================================
+    match /booking_amendments/{amendmentId} {
+      // Client creates (their own request); caregiver reads + accepts/declines their own
+      allow create: if isAuthenticated() &&
+        request.resource.data.clientId == request.auth.uid;
+
+      allow read: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Caregiver can accept/decline; client can retract (set to declined) their own pending request
+      allow update: if isAuthenticated() && (
+        resource.data.caregiverId == request.auth.uid ||
+        (resource.data.clientId == request.auth.uid && resource.data.status == 'pending') ||
         isAdmin()
       );
 

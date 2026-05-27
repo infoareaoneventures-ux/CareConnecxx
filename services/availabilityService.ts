@@ -12,6 +12,82 @@ import { db } from '../lib/firebase';
 // Buffer time between appointments (in minutes)
 const BUFFER_MINUTES = 30;
 
+/**
+ * Onboarding Step 5 saves weeklyAvailability as block IDs: { monday: ['morning', 'afternoon'] }
+ * Cara's availabilityHandler saves it as TimeSlots:        { monday: [{ start: '06:00', end: '12:00' }] }
+ * This map normalizes both formats so the service works regardless of which was used.
+ */
+const BLOCK_TO_TIMESLOT: Record<string, TimeSlot> = {
+  morning:   { start: '06:00', end: '12:00' },
+  afternoon: { start: '12:00', end: '18:00' },
+  evening:   { start: '18:00', end: '23:00' },
+  overnight: { start: '23:00', end: '06:00' }, // cross-midnight: 11pm → 6am
+};
+
+function normalizeSlots(slots: (TimeSlot | string)[]): TimeSlot[] {
+  return slots.flatMap(slot => {
+    if (typeof slot === 'string') {
+      const mapped = BLOCK_TO_TIMESLOT[slot];
+      return mapped ? [mapped] : [];
+    }
+    return [slot as TimeSlot];
+  });
+}
+
+const BLOCK_ORDER = ['morning', 'afternoon', 'evening', 'overnight'] as const;
+
+/**
+ * Convert block IDs → TimeSlots for Firestore storage.
+ * Use this before saving from onboarding or profile edit so
+ * the format matches what Cara's availabilityHandler writes.
+ * e.g. { monday: ['morning','afternoon'] } → { monday: [{start:'06:00',end:'12:00'},{start:'12:00',end:'18:00'}] }
+ */
+export function blocksToWeeklySlots(
+  blocks: Record<string, string[]>
+): Record<string, TimeSlot[]> {
+  const result: Record<string, TimeSlot[]> = {};
+  for (const [day, blockIds] of Object.entries(blocks)) {
+    result[day] = blockIds.map(id => BLOCK_TO_TIMESLOT[id]).filter(Boolean) as TimeSlot[];
+  }
+  return result;
+}
+
+/**
+ * Convert TimeSlots (from Firestore) → block IDs for the UI grid.
+ * Handles both formats: if a value is already a string block ID, it passes through.
+ * e.g. { monday: [{start:'06:00',end:'18:00'}] } → { monday: ['morning','afternoon'] }
+ */
+export function weeklySlotsToBl(
+  weekly: Record<string, (TimeSlot | string)[]>
+): Record<string, string[]> {
+  const blockMins: Record<string, { s: number; e: number }> = {
+    morning:   { s: 360,  e: 720  },  // 06:00–12:00
+    afternoon: { s: 720,  e: 1080 },  // 12:00–18:00
+    evening:   { s: 1080, e: 1380 },  // 18:00–23:00
+    overnight: { s: 1380, e: 1440 },  // 23:00–24:00
+  };
+  const result: Record<string, string[]> = {};
+  for (const [day, slots] of Object.entries(weekly)) {
+    const active = new Set<string>();
+    for (const slot of slots) {
+      if (typeof slot === 'string') {
+        if (BLOCK_TO_TIMESLOT[slot]) active.add(slot);
+      } else {
+        const s = timeToMinutes(slot.start);
+        const eRaw = timeToMinutes(slot.end);
+        // If end ≤ start it crosses midnight (e.g. 23:00–06:00) — add 24h to end
+        const e = eRaw <= s ? eRaw + 1440 : eRaw;
+        for (const b of BLOCK_ORDER) {
+          const r = blockMins[b];
+          if (s < r.e && e > r.s) active.add(b);
+        }
+      }
+    }
+    result[day] = BLOCK_ORDER.filter(b => active.has(b));
+  }
+  return result;
+}
+
 export const availabilityService = {
     /**
      * Check if a caregiver is available at a specific date and time
@@ -52,8 +128,8 @@ export const availabilityService = {
     checkWeeklyAvailability: (
         caregiver: Caregiver,
         requestedDate: Date,
-        startTime: string,
-        duration: number
+        _startTime: string,
+        _duration: number
     ): boolean => {
         if (!caregiver.weeklyAvailability) {
             // If no availability set, assume available (legacy caregivers)
@@ -61,24 +137,16 @@ export const availabilityService = {
         }
 
         const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][requestedDate.getDay()] as keyof WeeklySchedule;
-        const daySlots = caregiver.weeklyAvailability[dayOfWeek];
+        const rawSlots = caregiver.weeklyAvailability[dayOfWeek] as (TimeSlot | string)[];
+        const daySlots = normalizeSlots(rawSlots || []);
 
-        if (!daySlots || daySlots.length === 0) {
+        if (daySlots.length === 0) {
             return false; // Not available on this day
         }
 
-        // Convert start time to minutes for easier comparison
-        const requestedStartMinutes = timeToMinutes(startTime);
-        const requestedEndMinutes = requestedStartMinutes + (duration * 60);
-
-        // Check if requested time falls within any of the caregiver's time slots
-        return daySlots.some(slot => {
-            const slotStartMinutes = timeToMinutes(slot.start);
-            const slotEndMinutes = timeToMinutes(slot.end);
-
-            // Check if requested time is completely within this slot
-            return requestedStartMinutes >= slotStartMinutes && requestedEndMinutes <= slotEndMinutes;
-        });
+        // Day has availability — allow any time on this day.
+        // Per-hour blocking (calendar conflicts) is handled separately.
+        return true;
     },
 
     /**

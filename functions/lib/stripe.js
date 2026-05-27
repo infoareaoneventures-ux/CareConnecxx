@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.reactivateSubscription = exports.createIdentityVerificationSession = exports.cancelSubscription = exports.getSubscriptionDetails = exports.stripeWebhook = exports.createCheckoutSession = void 0;
+exports.createCaregiverBillingPortalSession = exports.reactivateSubscription = exports.createIdentityVerificationSession = exports.cancelSubscription = exports.getSubscriptionDetails = exports.stripeWebhook = exports.createCheckoutSession = void 0;
 exports.getStripeClient = getStripeClient;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
@@ -757,6 +757,36 @@ exports.reactivateSubscription = functions.https.onCall(async (data, context) =>
     catch (error) {
         console.error('Error reactivating subscription:', error);
         throw new functions.https.HttpsError('internal', 'Failed to reactivate subscription');
+    }
+});
+/**
+ * Create a Stripe Billing Portal session for a caregiver to manage their
+ * membership subscription (update card, view invoices, cancel).
+ */
+exports.createCaregiverBillingPortalSession = functions.https.onCall(async (data, context) => {
+    var _a;
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+    }
+    const userId = context.auth.uid;
+    const returnUrl = (data === null || data === void 0 ? void 0 : data.returnUrl) || `${process.env.APP_URL || 'https://careconnex.app'}/caregiver/payments`;
+    try {
+        const customerDoc = await admin.firestore().collection('customers').doc(userId).get();
+        const customerId = (_a = customerDoc.data()) === null || _a === void 0 ? void 0 : _a.stripeCustomerId;
+        if (!customerId) {
+            throw new functions.https.HttpsError('not-found', 'No billing account found. Please purchase a membership first.');
+        }
+        const session = await stripe.billingPortal.sessions.create({
+            customer: customerId,
+            return_url: returnUrl,
+        });
+        return { url: session.url };
+    }
+    catch (error) {
+        if (error instanceof functions.https.HttpsError)
+            throw error;
+        console.error('Error creating billing portal session:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to open billing portal');
     }
 });
 // ── Auto-retry booking tasks when client adds a payment method ────────────────

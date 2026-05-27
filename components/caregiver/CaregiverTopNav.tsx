@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell, MessageSquare, Home, Calendar, Briefcase,
   BookOpen, Settings, X, MoreHorizontal, LogOut, User,
-  Users, CreditCard, Receipt,
+  Users, Wallet,
 } from 'lucide-react';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { authService } from '../../services/api';
@@ -83,7 +83,7 @@ export const CaregiverTopNav: React.FC = () => {
           <button
             onClick={() => setMoreOpen(o => !o)}
             className={`flex flex-col items-center gap-0.5 px-3 py-2 text-xs font-medium transition-colors ${
-              moreOpen || isActive('/caregiver/bookings') || isActive('/caregiver/profile') || isActive('/caregiver/settings') || isActive('/caregiver/families') || isActive('/caregiver/payout') || isActive('/caregiver/transactions')
+              moreOpen || isActive('/caregiver/bookings') || isActive('/caregiver/profile') || isActive('/caregiver/settings') || isActive('/caregiver/families') || isActive('/caregiver/payments')
                 ? 'text-primary-600'
                 : 'text-slate-500'
             }`}
@@ -119,9 +119,8 @@ export const CaregiverTopNav: React.FC = () => {
                   { icon: <BookOpen className="w-4 h-4" />, label: 'Bookings', path: '/caregiver/bookings' },
                   { icon: <User className="w-4 h-4" />, label: 'Profile', path: '/caregiver/profile' },
                   { icon: <Settings className="w-4 h-4" />, label: 'Settings', path: '/caregiver/settings' },
-                  { icon: <Users className="w-4 h-4" />, label: 'Your families', path: '/caregiver/families' },
-                  { icon: <CreditCard className="w-4 h-4" />, label: 'Payout and payment', path: '/caregiver/payout' },
-                  { icon: <Receipt className="w-4 h-4" />, label: 'Transactions', path: '/caregiver/transactions' },
+                  { icon: <Users className="w-4 h-4" />, label: 'My Families', path: '/caregiver/families' },
+                  { icon: <Wallet className="w-4 h-4" />, label: 'Payments', path: '/caregiver/payments' },
                 ].map(item => (
                   <button
                     key={item.path}

@@ -30,6 +30,7 @@ export const videoService = {
         jobTitle?: string,
         interviewType?: 'video' | 'phone' | 'in-person',
         caregiverPhoto?: string,
+        clientPhotoURL?: string,
     ): Promise<VideoInterview> {
         console.log('🎥 [VideoService] scheduleInterview called with:', {
             clientId,
@@ -76,6 +77,7 @@ export const videoService = {
                 ...(jobId ? { jobId } : {}),
                 ...(jobTitle ? { jobTitle } : {}),
                 ...(caregiverPhoto ? { caregiverPhoto } : {}),
+                ...(clientPhotoURL ? { clientPhotoURL } : {}),
             };
 
             console.log('📝 [VideoService] Attempting to write to Firestore:', interviewData);

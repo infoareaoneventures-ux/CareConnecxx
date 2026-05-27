@@ -13,7 +13,7 @@ import { Button } from '../ui/Button';
 import { dbService, shiftHoursService } from '../../services/api';
 import { db } from '../../lib/firebase';
 import { AddToastFunction, Appointment } from '../../types';
-import { SubmitShiftHoursModal } from '../payroll/SubmitShiftHoursModal';
+import { SubmitShiftHoursModal, CompletedShift } from '../payroll/SubmitShiftHoursModal';
 
 interface CaregiverPaymentsProps {
   caregiverId: string;
@@ -52,8 +52,8 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
 
   // Shift hours state (per-appointment, replaces weekly timesheets)
   const [shiftRows, setShiftRows] = useState<any[]>([]);
-  const [completedAppts, setCompletedAppts] = useState<Appointment[]>([]);
-  const [submitModalAppt, setSubmitModalAppt] = useState<Appointment | null>(null);
+  const [completedShifts, setCompletedShifts] = useState<CompletedShift[]>([]);
+  const [submitModalShift, setSubmitModalShift] = useState<CompletedShift | null>(null);
 
   useEffect(() => {
     if (!caregiverId) return;
@@ -63,19 +63,19 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
 
   useEffect(() => {
     if (!caregiverId || !db) return;
-    const unsub = db.collection('appointments')
+    const unsub = db.collection('shifts')
       .where('caregiverId', '==', caregiverId)
       .where('status', '==', 'completed')
       .onSnapshot(snap => {
-        setCompletedAppts(snap.docs.map(d => ({ id: d.id, ...d.data() } as any)));
+        setCompletedShifts(snap.docs.map(d => ({ id: d.id, ...d.data() } as CompletedShift)));
       });
     return () => unsub();
   }, [caregiverId]);
 
   const submittableAppts = useMemo(() => {
     const withShift = new Set(shiftRows.map(r => r.appointmentId));
-    return completedAppts.filter(a => !withShift.has(a.id));
-  }, [completedAppts, shiftRows]);
+    return completedShifts.filter(s => !withShift.has(s.id));
+  }, [completedShifts, shiftRows]);
 
   const pendingRows = shiftRows.filter(r => ['pending_client_review', 'correction_proposed'].includes(r.status));
   const historyRows = shiftRows.filter(r => !['pending_client_review', 'correction_proposed'].includes(r.status));
@@ -226,14 +226,14 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
               </div>
             ) : (
               <div className="space-y-2">
-                {submittableAppts.map(appt => (
-                  <div key={appt.id} className="bg-white rounded-xl border border-slate-200 p-4 flex items-center justify-between">
+                {submittableAppts.map(shift => (
+                  <div key={shift.id} className="bg-white rounded-xl border border-slate-200 p-4 flex items-center justify-between">
                     <div>
-                      <p className="font-medium text-slate-900">{appt.clientName}</p>
-                      <p className="text-sm text-slate-500">{appt.date} · scheduled {appt.duration}h · {appt.paymentMethod === 'cash' ? 'Cash' : 'Credit'}</p>
+                      <p className="font-medium text-slate-900">{shift.clientName}</p>
+                      <p className="text-sm text-slate-500">{shift.date} · {shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''} · {shift.paymentMethod === 'cash' ? 'Cash' : 'Credit'}</p>
                     </div>
                     <button
-                      onClick={() => setSubmitModalAppt(appt)}
+                      onClick={() => setSubmitModalShift(shift)}
                       className="px-3 py-1.5 rounded-lg bg-primary-600 text-white text-sm font-medium hover:bg-primary-700"
                     >
                       Submit hours
@@ -257,10 +257,10 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
                   <PendingShiftRow
                     key={row.id}
                     row={row}
-                    onRespond={async (action) => {
+                    onRespond={async (action: 'accept' | 'counter_propose') => {
                       try {
                         await shiftHoursService.respondToCorrection(row.appointmentId, action);
-                        onShowToast?.(action === 'accept' ? 'Correction accepted' : 'Sent to admin for review', 'success');
+                        onShowToast?.(action === 'accept' ? 'Correction accepted' : 'Counter-proposal sent to client', 'success');
                       } catch (e: any) {
                         onShowToast?.(e?.message || 'Failed', 'error');
                       }
@@ -287,11 +287,11 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
             )}
           </section>
 
-          {submitModalAppt && (
+          {submitModalShift && (
             <SubmitShiftHoursModal
-              appointment={submitModalAppt}
-              onClose={() => setSubmitModalAppt(null)}
-              onSubmitted={() => { setSubmitModalAppt(null); onShowToast?.('Hours submitted', 'success'); }}
+              shift={submitModalShift}
+              onClose={() => setSubmitModalShift(null)}
+              onSubmitted={() => { setSubmitModalShift(null); onShowToast?.('Hours submitted', 'success'); }}
               onError={msg => onShowToast?.(msg, 'error')}
             />
           )}
@@ -441,7 +441,7 @@ const statusLabel: Record<string, string> = {
   payment_failed: 'Payment failed',
 };
 
-const PendingShiftRow: React.FC<{ row: any; onRespond: (action: 'accept' | 'reject') => void }> = ({ row, onRespond }) => {
+const PendingShiftRow: React.FC<{ row: any; onRespond: (action: 'accept' | 'counter_propose') => void }> = ({ row, onRespond }) => {
   if (row.status === 'correction_proposed') {
     return (
       <div className="bg-primary-50 border border-primary-200 rounded-xl p-4">
@@ -460,8 +460,8 @@ const PendingShiftRow: React.FC<{ row: any; onRespond: (action: 'accept' | 'reje
           <button onClick={() => onRespond('accept')} className="px-3 py-1.5 rounded-lg bg-primary-600 text-white text-sm font-medium">
             Accept {row.proposedTotalHours}h
           </button>
-          <button onClick={() => onRespond('reject')} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium">
-            Reject, send to admin
+          <button onClick={() => onRespond('counter_propose')} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium">
+            Counter / send back
           </button>
         </div>
       </div>

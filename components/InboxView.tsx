@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Send, Search, Phone, Video, MoreVertical, CheckCheck, Flag } from 'lucide-react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { ChevronLeft, Send, Search, Phone, Video, MoreVertical, CheckCheck, Flag, Lock } from 'lucide-react';
 import { chatService, ChatRoom, Message } from '../services/chatService';
 import { authService } from '../services/api';
 import { ViewType } from '../types';
@@ -68,10 +68,24 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const navigate = useNavigate();
   const currentUser = authService.getCurrentUser();
   const currentUid = currentUser?.uid ?? '';
   const currentName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'You';
   const isClient = userType === 'client';
+
+  // For caregivers: check if they have passed membership + background check
+  const [caregiverVerified, setCaregiverVerified] = useState(true);
+  useEffect(() => {
+    if (isClient || !currentUid || !db) return;
+    db.collection('caregivers').doc(currentUid).get().then(snap => {
+      const d = snap.data() as any;
+      if (!d) return;
+      const hasPaid = !!(d.membershipPaid === true || (d.membershipStatus && d.membershipStatus !== 'none' && d.membershipStatus !== 'inactive'));
+      const bgOk = ['checkr_clear', 'approved'].includes(d.verificationStatus) || d.backgroundCheckStatus === 'clear' || d.backgroundCheckComplete === true;
+      setCaregiverVerified(hasPaid && bgOk);
+    }).catch(() => {});
+  }, [currentUid, isClient]);
 
   const handleBlock = async (contactId: string, contactName: string) => {
     if (!currentUid || !contactId) return;
@@ -395,27 +409,42 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
             {/* Input */}
             <div className="px-4 py-3 bg-white border-t border-slate-100">
-              <div className="flex gap-2 items-center">
-                <input
-                  ref={inputRef}
-                  value={inputText}
-                  onChange={e => setInputText(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                  placeholder="Type a message…"
-                  className="flex-1 px-4 py-2.5 bg-slate-100 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 transition-all"
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={!inputText.trim() || sending}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${
-                    inputText.trim() && !sending
-                      ? isClient ? 'bg-primary-600 hover:bg-primary-700 text-white' : 'bg-accent-500 hover:bg-accent-600 text-white'
-                      : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                  }`}
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
+              {!isClient && !caregiverVerified ? (
+                <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                  <div className="flex items-center gap-2 text-amber-700">
+                    <Lock className="w-4 h-4 flex-shrink-0" />
+                    <span className="text-sm font-medium">Complete verification to send messages</span>
+                  </div>
+                  <button
+                    onClick={() => navigate('/caregiver/dashboard')}
+                    className="text-xs font-semibold text-amber-700 hover:text-amber-800 underline whitespace-nowrap"
+                  >
+                    Go to dashboard →
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2 items-center">
+                  <input
+                    ref={inputRef}
+                    value={inputText}
+                    onChange={e => setInputText(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                    placeholder="Type a message…"
+                    className="flex-1 px-4 py-2.5 bg-slate-100 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 transition-all"
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={!inputText.trim() || sending}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${
+                      inputText.trim() && !sending
+                        ? isClient ? 'bg-primary-600 hover:bg-primary-700 text-white' : 'bg-accent-500 hover:bg-accent-600 text-white'
+                        : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
             </div>
           </>
         ) : (

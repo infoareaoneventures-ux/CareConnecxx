@@ -1,19 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Calendar as CalendarIcon, MapPin, User, CheckCircle,
-  XCircle, Plus, MessageSquare, ChevronLeft, ChevronRight, DollarSign,
-  Video, Phone, Home,
+  Calendar as CalendarIcon, MapPin, User,
+  XCircle, X, Plus, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
+  Video, Phone, Home, CheckCircle, Loader2, Hourglass,
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
 import { useCareConnex } from '../context/CareConnexContext';
+import { availabilityService } from '../services/availabilityService';
 import { ClientNavigation } from './client/ClientNavigation';
 
 interface Shift {
   id: string;
   caregiverId: string;
   caregiverName: string;
+  caregiverPhotoURL?: string | null;
   clientId: string;
   date: string;
   startTime: string;
@@ -21,7 +23,12 @@ interface Shift {
   status: 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
   address: string;
   notes?: string;
+  completionNotes?: string;
   tasksCompleted?: string[];
+  careNeeds?: string[];
+  careRecipients?: Array<{ name: string; relationship?: string; age?: string; photoURL?: string | null; careNeeds?: string[]; careNeedDetails?: Record<string, string[]> }>;
+  startedAt?: any;
+  completedAt?: any;
   createdBy: 'client' | 'caregiver';
   paid?: boolean;
   paidAt?: string;
@@ -45,6 +52,21 @@ interface InterviewEvent {
 function localDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+function fmtTs(ts: any): string {
+  if (!ts) return '';
+  const d = ts?.toDate ? ts.toDate() : new Date(ts);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+function fmtDuration(start: any, end: any): string {
+  if (!start || !end) return '';
+  const s = start?.toDate ? start.toDate() : new Date(start);
+  const e = end?.toDate   ? end.toDate()   : new Date(end);
+  const mins = Math.round((e.getTime() - s.getTime()) / 60000);
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
 
 function parseInterview(id: string, data: any): InterviewEvent {
   const dt = new Date(data.scheduledTime);
@@ -56,8 +78,8 @@ function parseInterview(id: string, data: any): InterviewEvent {
   };
 }
 
-const H_START = 6;
-const H_END   = 22;
+const H_START = 0;
+const H_END   = 24;
 const CELL_H  = 56;
 const TOTAL_H = (H_END - H_START) * CELL_H;
 const HOURS   = Array.from({ length: H_END - H_START }, (_, i) => i + H_START);
@@ -66,6 +88,17 @@ const MONTH_NAMES = [
   'January','February','March','April','May','June',
   'July','August','September','October','November','December',
 ];
+
+// 15-minute-interval time options for the visit time pickers
+const TIME_OPTIONS: Array<{ value: string; label: string }> = Array.from({ length: 96 }, (_, i) => {
+  const h = Math.floor(i / 4);
+  const m = (i % 4) * 15;
+  const value = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const period = h < 12 ? 'AM' : 'PM';
+  const dh = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  const label = `${dh}:${String(m).padStart(2, '0')} ${period}`;
+  return { value, label };
+});
 
 function parseH(t?: string): number {
   if (!t) return 9;
@@ -77,9 +110,15 @@ function fmtH(h: number): string {
   const whole = Math.floor(h);
   const mins  = Math.round((h - whole) * 60);
   if (whole === 12) return mins ? `12:${String(mins).padStart(2,'0')}pm` : '12pm';
-  if (whole === 0)  return '12am';
+  if (whole === 0)  return mins ? `12:${String(mins).padStart(2,'0')}am` : '12am';
   if (whole < 12)   return mins ? `${whole}:${String(mins).padStart(2,'0')}am` : `${whole}am`;
   return mins ? `${whole-12}:${String(mins).padStart(2,'0')}pm` : `${whole-12}pm`;
+}
+
+/** Convert "HH:MM" 24-hr string → "12:xx am/pm" */
+function fmt12(t?: string): string {
+  if (!t) return '';
+  return fmtH(parseH(t));
 }
 
 function statusStyle(status: Shift['status']): string {
@@ -87,7 +126,7 @@ function statusStyle(status: Shift['status']): string {
     case 'scheduled':   return 'bg-primary-500 border-primary-600';
     case 'in-progress': return 'bg-accent-500 border-accent-600';
     case 'completed':   return 'bg-slate-400 border-slate-500';
-    case 'cancelled':   return 'bg-red-400 border-red-500';
+    case 'cancelled':   return 'bg-rose-600 border-rose-700';
     default:            return 'bg-slate-400 border-slate-500';
   }
 }
@@ -97,7 +136,7 @@ function statusBadge(status: Shift['status']): string {
     case 'scheduled':   return 'bg-primary-100 text-primary-700 border-primary-200';
     case 'in-progress': return 'bg-accent-100 text-accent-700 border-accent-200';
     case 'completed':   return 'bg-green-100 text-green-700 border-green-200';
-    case 'cancelled':   return 'bg-red-100 text-red-700 border-red-200';
+    case 'cancelled':   return 'bg-rose-100 text-rose-700 border-rose-200';
     default:            return 'bg-slate-100 text-slate-700';
   }
 }
@@ -121,18 +160,181 @@ export default function Schedule() {
   const [shifts,     setShifts]     = useState<Shift[]>([]);
   const [interviews, setInterviews] = useState<InterviewEvent[]>([]);
   const [loading,    setLoading]    = useState(true);
-  const [caregivers, setCaregivers] = useState<{ id: string; name: string }[]>([]);
+  const [caregivers, setCaregivers] = useState<{ id: string; name: string; address?: string; bookingId?: string; schedule?: Record<string, Array<{ start: string; end: string }>> }[]>([]);
+  const [pendingAmendments, setPendingAmendments] = useState<Array<{
+    id: string; caregiverName: string; newDays: Record<string, Array<{ start: string; end: string }>>; startDate?: string; ongoing?: boolean; endDate?: string;
+  }>>([]);
 
   const [selectedShift,     setSelectedShift]     = useState<Shift | null>(null);
   const [selectedInterview, setSelectedInterview] = useState<InterviewEvent | null>(null);
+  const [expandedDates,     setExpandedDates]     = useState<Record<string, boolean>>({});
   const [selectedDay,       setSelectedDay]       = useState(localDate(new Date()));
   const [showAddModal,      setShowAddModal]      = useState(false);
-  const [newShift, setNewShift] = useState({
-    caregiverId: '', date: '', startTime: '09:00', endTime: '13:00', notes: '',
-  });
+  const [visitCaregiverId,   setVisitCaregiverId]   = useState('');
+  const [selectedDays,       setSelectedDays]       = useState<string[]>([]);
+  const [dayTimes,           setDayTimes]           = useState<Record<string, { date: string; start: string; end: string }>>({});
+  const [visitNotes,         setVisitNotes]         = useState('');
+  const [visitStartDate,     setVisitStartDate]     = useState('');
+  const [visitEndOption,     setVisitEndOption]     = useState<'ongoing' | 'end_date'>('ongoing');
+  const [visitEndDate,       setVisitEndDate]       = useState('');
+  // Day-of-week → time blocks from actual scheduled shifts for the selected caregiver
+  const [cgShiftBlocks, setCgShiftBlocks] = useState<Record<string, Array<{ start: string; end: string }>>>({});
 
   useEffect(() => { fetchShifts(); }, [monthDate]);
-  useEffect(() => { fetchHiredCaregivers(); fetchInterviews(); }, []);
+  useEffect(() => { fetchHiredCaregivers(); fetchInterviews(); generateMissingShifts(); }, []);
+
+  // When the caregiver selection changes in the Request Visit modal,
+  // load their upcoming scheduled shifts and build a day-of-week → blocks map.
+  // Include clientId filter so the query satisfies Firestore security rules.
+  useEffect(() => {
+    if (!visitCaregiverId || !db) { setCgShiftBlocks({}); return; }
+    const user = auth.currentUser;
+    if (!user) return;
+    const _t = new Date();
+    const today = `${_t.getFullYear()}-${String(_t.getMonth()+1).padStart(2,'0')}-${String(_t.getDate()).padStart(2,'0')}`;
+    const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    db.collection('shifts')
+      .where('clientId', '==', user.uid)
+      .where('caregiverId', '==', visitCaregiverId)
+      .where('status', '==', 'scheduled')
+      .get()
+      .then(snap => {
+        const blocks: Record<string, Array<{ start: string; end: string }>> = {};
+        snap.docs.forEach(d => {
+          const data = d.data();
+          if (!data.date || data.date < today) return;
+          const dow = DAY_NAMES[new Date(data.date + 'T12:00:00').getDay()];
+          if (!blocks[dow]) blocks[dow] = [];
+          if (data.startTime && data.endTime) {
+            // Avoid duplicate blocks already covered by the regular schedule
+            const already = blocks[dow].some(b => b.start === data.startTime && b.end === data.endTime);
+            if (!already) blocks[dow].push({ start: data.startTime, end: data.endTime });
+          }
+        });
+        setCgShiftBlocks(blocks);
+      })
+      .catch(() => setCgShiftBlocks({}));
+  }, [visitCaregiverId]);
+
+  // Subscribe to pending booking amendments so client sees "Awaiting response"
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (!user || !db) return;
+    const unsub = db.collection('booking_amendments')
+      .where('clientId', '==', user.uid)
+      .where('status', '==', 'pending')
+      .onSnapshot(
+        snap => setPendingAmendments(snap.docs.map(d => ({ id: d.id, ...d.data() } as any))),
+        () => {}
+      );
+    return () => unsub();
+  }, []);
+
+  // If no shifts exist for an accepted booking, generate 4 weeks client-side.
+  // This runs once on mount and acts as a safety net when the Cloud Function hasn't fired yet.
+  const generateMissingShifts = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      const bookingsSnap = await db.collection('booking_requests')
+        .where('clientId', '==', user.uid)
+        .where('status', '==', 'accepted')
+        .get();
+      if (bookingsSnap.empty) return;
+
+      const ALL_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const normDay = (d: string) => d.trim().charAt(0).toUpperCase() + d.trim().slice(1, 3).toLowerCase();
+      const addDays = (dateStr: string, days: number) => {
+        const d = new Date(dateStr + 'T12:00:00');
+        d.setDate(d.getDate() + days);
+        return d.toISOString().split('T')[0];
+      };
+      const nextOccurrence = (fromDate: string, dayName: string) => {
+        const target = ALL_DAYS.indexOf(normDay(dayName));
+        if (target === -1) return fromDate;
+        const base = new Date(fromDate + 'T12:00:00');
+        const diff = (target - base.getDay() + 7) % 7;
+        base.setDate(base.getDate() + diff);
+        return base.toISOString().split('T')[0];
+      };
+
+      const today = new Date().toISOString().split('T')[0];
+      const generateTo = addDays(today, 27);
+
+      for (const bookingDoc of bookingsSnap.docs) {
+        const booking = bookingDoc.data();
+        const bookingId = bookingDoc.id;
+
+        // Check if shifts already exist for this booking
+        const existingSnap = await db.collection('shifts')
+          .where('bookingRequestId', '==', bookingId)
+          .where('status', '==', 'scheduled')
+          .limit(1)
+          .get();
+        if (!existingSnap.empty) continue; // already has shifts
+
+        const dayShiftTimes: Record<string, Array<{ start: string; end: string }>> =
+          booking.schedule?.dayShiftTimes || {};
+        if (Object.keys(dayShiftTimes).length === 0) continue;
+
+        const startDate: string = booking.schedule?.startDate || today;
+        const generateFrom = startDate >= today ? startDate : today;
+        const endDate: string | null = booking.schedule?.ongoing ? null : (booking.schedule?.endDate || null);
+        if (endDate && generateFrom > endDate) continue;
+
+        const shiftBase = {
+          clientId: user.uid,
+          clientName: booking.clientName || '',
+          caregiverId: booking.caregiverId || '',
+          caregiverName: booking.caregiverName || '',
+          caregiverPhotoURL: booking.caregiverPhotoURL || null,
+          status: 'scheduled' as const,
+          address: booking.address || '',
+          rate: booking.rate ?? null,
+          notes: booking.notes || '',
+          careRecipients: booking.careRecipients || [],
+          bookingRequestId: bookingId,
+          recurringWeekly: true,
+          tasksCompleted: [],
+        };
+
+        const batch = db.batch();
+        let count = 0;
+
+        Object.entries(dayShiftTimes).forEach(([day, blocks]) => {
+          (blocks as Array<{ start: string; end: string }>)
+            .filter(b => b.start && b.end)
+            .forEach(b => {
+              let dateStr = nextOccurrence(generateFrom, day);
+              while (dateStr <= generateTo) {
+                if (endDate && dateStr > endDate) break;
+                if (count < 490) { // stay under Firestore batch limit
+                  batch.set(db.collection('shifts').doc(), {
+                    ...shiftBase,
+                    date: dateStr,
+                    startTime: b.start,
+                    endTime: b.end,
+                  });
+                  count++;
+                }
+                dateStr = addDays(dateStr, 7);
+              }
+            });
+        });
+
+        if (count > 0) {
+          await batch.commit();
+          console.log(`generateMissingShifts: created ${count} shifts for booking ${bookingId}`);
+        }
+      }
+
+      // Refresh the calendar after generating
+      fetchShifts();
+    } catch (e) {
+      console.error('generateMissingShifts error:', e);
+    }
+  };
 
   const fetchShifts = async () => {
     try {
@@ -180,48 +382,115 @@ export default function Schedule() {
     try {
       const user = auth.currentUser;
       if (!user) return;
-      const snap = await db.collection('connections')
-        .where('clientId', '==', user.uid)
-        .where('status', '==', 'active')
-        .get();
-      const list: { id: string; name: string }[] = [];
-      snap.forEach(doc => list.push({ id: doc.data().caregiverId, name: doc.data().caregiverName }));
+
+      // Only include bookings that have at least one scheduled shift —
+      // past bookings (all shifts done) are excluded; use Re-book instead.
+      const [bookingsSnap, shiftsSnap] = await Promise.all([
+        db.collection('booking_requests')
+          .where('clientId', '==', user.uid)
+          .where('status', '==', 'accepted')
+          .get(),
+        db.collection('shifts')
+          .where('clientId', '==', user.uid)
+          .where('status', '==', 'scheduled')
+          .get(),
+      ]);
+
+      // Build set of booking IDs that still have scheduled shifts
+      const activeBookingIds = new Set<string>();
+      shiftsSnap.docs.forEach(d => {
+        const bid = d.data().bookingRequestId;
+        if (bid) activeBookingIds.add(bid);
+      });
+
+      const seen = new Set<string>();
+      const list: { id: string; name: string; address?: string; bookingId?: string; schedule?: Record<string, Array<{ start: string; end: string }>> }[] = [];
+      bookingsSnap.forEach(doc => {
+        const d = doc.data();
+        // Skip if booking has no scheduled shifts (effectively past)
+        if (!activeBookingIds.has(doc.id)) return;
+        if (d.caregiverId && !seen.has(d.caregiverId)) {
+          seen.add(d.caregiverId);
+          list.push({
+            id: d.caregiverId,
+            name: d.caregiverName || 'Caregiver',
+            address: d.address || '',
+            bookingId: doc.id,
+            schedule: d.schedule?.dayShiftTimes || {},
+          });
+        }
+      });
       setCaregivers(list);
     } catch (e) { console.error(e); }
+  };
+
+  const resetVisitModal = () => {
+    setVisitCaregiverId('');
+    setSelectedDays([]);
+    setDayTimes({});
+    setVisitNotes('');
+    setVisitStartDate('');
+    setVisitEndOption('ongoing');
+    setVisitEndDate('');
   };
 
   const handleAddShift = async () => {
     try {
       const user = auth.currentUser;
       if (!user) return;
-      const cg = caregivers.find(c => c.id === newShift.caregiverId);
-      await db.collection('shifts').add({
+      const cg = caregivers.find(c => c.id === visitCaregiverId);
+
+      // Build newDays from selectedDays + dayTimes
+      const newDays: Record<string, Array<{ start: string; end: string }>> = {};
+      for (const day of selectedDays) {
+        const times = dayTimes[day];
+        if (!times?.start || !times?.end) continue;
+        newDays[day] = [{ start: times.start, end: times.end }];
+      }
+
+      const _td2 = new Date();
+      const todayStr = `${_td2.getFullYear()}-${String(_td2.getMonth()+1).padStart(2,'0')}-${String(_td2.getDate()).padStart(2,'0')}`;
+      const isOngoing = visitEndOption === 'ongoing';
+
+      await db.collection('booking_amendments').add({
+        bookingRequestId: cg?.bookingId || null,
         clientId: user.uid,
-        caregiverId: newShift.caregiverId,
+        clientName: user.displayName || '',
+        caregiverId: visitCaregiverId,
         caregiverName: cg?.name || 'Unknown',
-        date: newShift.date, startTime: newShift.startTime, endTime: newShift.endTime,
-        status: 'scheduled', address: 'Client Address', notes: newShift.notes,
-        tasksCompleted: [], createdBy: 'client',
+        status: 'pending',
+        type: 'add_recurring_days',
+        newDays,
+        notes: visitNotes,
+        startDate: visitStartDate || todayStr,
+        endDate: isOngoing ? null : (visitEndDate || null),
+        ongoing: isOngoing,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
-      await db.collection('notifications').add({
-        userId: newShift.caregiverId, type: 'new_shift',
-        title: 'New Shift Scheduled',
-        message: `New shift on ${newShift.date} at ${newShift.startTime}`,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(), read: false,
-      });
-      setShowAddModal(false);
-      setNewShift({ caregiverId: '', date: '', startTime: '09:00', endTime: '13:00', notes: '' });
-      fetchShifts();
-    } catch (e) { console.error(e); addToast('Failed to add shift. Please try again.', 'error'); }
-  };
 
-  const handleComplete = async (id: string) => {
-    await db.collection('shifts').doc(id).update({
-      status: 'completed', completedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    });
-    setSelectedShift(null);
-    fetchShifts();
+      const dayList = selectedDays.join(', ');
+      const isOneDay = !isOngoing && visitStartDate && visitEndDate && visitStartDate === visitEndDate;
+      await db.collection('users').doc(visitCaregiverId).collection('notifications').add({
+        userId: visitCaregiverId,
+        type: 'extra_visit_request',
+        title: isOneDay ? 'Extra Visit Requested' : 'Schedule Change Requested',
+        message: isOneDay
+          ? `Your client requested an extra visit on ${new Date(visitStartDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}.`
+          : `Your client wants to add ${dayList} to your regular schedule.`,
+        read: false,
+        isRead: false,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+
+      setShowAddModal(false);
+      resetVisitModal();
+      addToast('Visit request sent — waiting for caregiver to accept.', 'success');
+      fetchShifts();
+    } catch (e) {
+      console.error(e);
+      addToast('Failed to send request. Please try again.', 'error');
+    }
   };
 
   const handleCancel = async (id: string) => {
@@ -233,11 +502,6 @@ export default function Schedule() {
     fetchShifts();
   };
 
-  const handleMarkPaid = async (id: string) => {
-    await db.collection('shifts').doc(id).update({ paid: true, paidAt: new Date().toISOString() });
-    setShifts(prev => prev.map(s => s.id === id ? { ...s, paid: true } : s));
-    setSelectedShift(prev => prev?.id === id ? { ...prev, paid: true } : prev);
-  };
 
   // ── Week helpers ─────────────────────────────────────────────────────────
   const today = new Date();
@@ -328,97 +592,319 @@ export default function Schedule() {
   const groupedDates = Object.keys(groupedEvents).sort();
 
   // ── Detail panels ────────────────────────────────────────────────────────
-  const ShiftDetail = ({ shift, onClose }: { shift: Shift; onClose: () => void }) => (
+  const ShiftDetail = ({ shift, onClose }: { shift: Shift; onClose: () => void }) => {
+    const cgInitials = shift.caregiverName.split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase();
+    return (
     <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
       <div className="flex items-start justify-between mb-4">
-        <div>
-          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${statusBadge(shift.status)}`}>
-            {shift.status.replace('-',' ').replace(/\b\w/g, l => l.toUpperCase())}
-          </span>
-          <h3 className="font-bold text-slate-900 mt-2">{shift.caregiverName}</h3>
-          <p className="text-sm text-slate-500">{shift.date} · {shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center shrink-0">
+            {shift.caregiverPhotoURL
+              ? <img src={shift.caregiverPhotoURL} alt={shift.caregiverName} className="w-full h-full object-cover" />
+              : <span className="text-sm font-bold text-primary-600">{cgInitials}</span>}
+          </div>
+          <div>
+            <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
+              {shift.status.replace('-',' ').replace(/\b\w/g, l => l.toUpperCase())}
+            </span>
+            <h3 className="font-bold text-slate-900 mt-1">{shift.caregiverName}</h3>
+            <p className="text-sm text-slate-500">{shift.date} · {fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
+          </div>
         </div>
         <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg font-bold">×</button>
       </div>
-      <div className="space-y-2 text-sm mb-4">
+      <div className="space-y-3 text-sm mb-4">
+        {/* Address */}
         <div className="flex items-start gap-2 text-slate-600">
           <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-slate-400" />
           <span>{shift.address}</span>
         </div>
-        {shift.notes && <div className="p-3 bg-slate-50 rounded-xl text-slate-600">{shift.notes}</div>}
-        {shift.tasksCompleted && shift.tasksCompleted.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-2">
-            {shift.tasksCompleted.map((t, i) => (
-              <span key={i} className="text-xs bg-primary-50 text-primary-700 border border-primary-200 px-2 py-0.5 rounded-full">{t}</span>
-            ))}
+        {/* Scheduled + Actual times */}
+        <div className="space-y-1">
+          <div className="flex items-center gap-3 text-xs">
+            <span className="w-20 text-slate-400 shrink-0">Scheduled</span>
+            <span className="font-semibold text-slate-700">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</span>
+          </div>
+          {(shift.startedAt || shift.completedAt) && (() => {
+            const s = fmtTs(shift.startedAt), e = fmtTs(shift.completedAt), d = fmtDuration(shift.startedAt, shift.completedAt);
+            return (
+              <div className="flex items-center gap-3 text-xs">
+                <span className="w-20 text-slate-400 shrink-0">Started</span>
+                <span className="font-semibold text-slate-700">
+                  {s}{e ? <span className="text-slate-400 font-normal"> · Ended </span> : ''}{e}
+                  {d && <span className="text-primary-600 font-semibold"> · {d}</span>}
+                </span>
+              </div>
+            );
+          })()}
+        </div>
+        {/* Tasks per recipient — completion state card format */}
+        {(() => {
+          const doneRaw: string[] = shift.tasksCompleted || [];
+          const recipients = shift.careRecipients || [];
+          const hasRecipients = recipients.some(r => (r.careNeeds || []).length > 0);
+          if (!hasRecipients && (shift.careNeeds || []).length === 0) return null;
+
+          // Compute total/done for header count
+          let totalT = 0; let doneT = 0;
+          if (hasRecipients) {
+            recipients.forEach((r, ri) => {
+              (r.careNeeds || []).forEach(cat => {
+                const subs = (r.careNeedDetails || {})[cat] || [];
+                if (subs.length > 0) { totalT += subs.length; doneT += subs.filter((sub: string) => doneRaw.includes(`${ri}_${cat}_${sub}`)).length; }
+                else { totalT += 1; doneT += doneRaw.includes(`${ri}_${cat}`) ? 1 : 0; }
+              });
+            });
+          } else {
+            totalT = (shift.careNeeds || []).length;
+            doneT = doneRaw.filter((k: string) => (shift.careNeeds || []).includes(k)).length;
+          }
+
+          const renderCards = (careNeeds: string[], careNeedDetails: Record<string, string[]>, ri: number) => (
+            <div className="space-y-1.5">
+              {careNeeds.map((category, ci) => {
+                const subtasks = careNeedDetails[category] || [];
+                const doneSubCount = subtasks.filter((sub: string) => doneRaw.includes(`${ri}_${category}_${sub}`)).length;
+                const catDone = subtasks.length > 0 ? doneSubCount === subtasks.length : doneRaw.includes(`${ri}_${category}`);
+                return (
+                  <div key={ci} className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className={`flex items-center gap-2 px-3 py-2 ${catDone ? 'bg-green-50' : 'bg-slate-50'}`}>
+                      <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${catDone ? 'text-green-500' : 'text-slate-300'}`} />
+                      <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{category}</p>
+                      {subtasks.length > 0 && doneSubCount > 0 && (
+                        <span className={`text-[10px] font-semibold ${catDone ? 'text-green-600' : 'text-slate-400'}`}>{doneSubCount}/{subtasks.length}</span>
+                      )}
+                    </div>
+                    {subtasks.length > 0 && (
+                      <div className="px-3 py-2 space-y-1">
+                        {subtasks.map((sub: string, si: number) => {
+                          const done = doneRaw.includes(`${ri}_${category}_${sub}`);
+                          return (
+                            <div key={si} className={`flex items-center gap-2 text-xs font-medium ${done ? 'text-green-700' : 'text-slate-400'}`}>
+                              <CheckCircle className={`w-3.5 h-3.5 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                              {sub}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+
+          return (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tasks</p>
+                {totalT > 0 && (
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${doneT === totalT ? 'bg-green-100 text-green-700' : doneT > 0 ? 'bg-slate-100 text-slate-500' : 'bg-slate-100 text-slate-500'}`}>
+                    {doneT}/{totalT}
+                  </span>
+                )}
+              </div>
+              {hasRecipients
+                ? recipients.map((r, ri) => {
+                    const needs = r.careNeeds || [];
+                    if (needs.length === 0) return null;
+                    return (
+                      <div key={ri} className="mb-3">
+                        {(
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <div className="w-6 h-6 rounded-full overflow-hidden bg-primary-100 shrink-0 flex items-center justify-center">
+                              {r.photoURL
+                                ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
+                                : <span className="text-[9px] font-bold text-primary-600">{r.name.split(' ').map((p: string) => p[0]).join('').slice(0,2).toUpperCase()}</span>}
+                            </div>
+                            <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.age ? ` · Age ${r.age}` : ''}</p>
+                          </div>
+                        )}
+                        {renderCards(needs, r.careNeedDetails || {}, ri)}
+                      </div>
+                    );
+                  })
+                : renderCards(shift.careNeeds || [], {}, 0)}
+            </div>
+          );
+        })()}
+        {/* Notes */}
+        {shift.notes && <div className="p-3 bg-slate-50 rounded-xl text-slate-600 text-xs">{shift.notes}</div>}
+        {shift.completionNotes && (
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shift Notes</p>
+            <p className="text-xs text-slate-600">{shift.completionNotes}</p>
           </div>
         )}
       </div>
       {shift.status === 'scheduled' && (
         <div className="flex gap-2">
-          <button onClick={() => handleComplete(shift.id)} className="flex-1 py-2 bg-green-600 text-white text-sm font-semibold rounded-xl hover:bg-green-700">
-            <CheckCircle className="w-4 h-4 inline mr-1" />Mark Complete
+          <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center justify-center gap-1.5">
+            <MessageSquare className="w-4 h-4" />Message
           </button>
-          <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="px-3 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600">
-            <MessageSquare className="w-4 h-4" />
-          </button>
-          <button onClick={() => handleCancel(shift.id)} className="px-3 py-2 border border-red-200 rounded-xl hover:bg-red-50 text-red-500">
-            <XCircle className="w-4 h-4" />
+          <button onClick={() => handleCancel(shift.id)} className="flex-1 py-2 border border-red-200 rounded-xl hover:bg-red-50 text-red-500 text-sm font-medium flex items-center justify-center gap-1.5">
+            <XCircle className="w-4 h-4" />Cancel
           </button>
         </div>
       )}
       {shift.status === 'completed' && (
         <div className="flex items-center gap-2">
-          {shift.paid ? (
-            <span className="flex items-center gap-1.5 px-3 py-2 bg-green-50 text-green-700 text-sm font-semibold rounded-xl border border-green-200">
-              <CheckCircle className="w-4 h-4" /> Paid
-            </span>
-          ) : (
-            <button onClick={() => handleMarkPaid(shift.id)} className="flex-1 py-2 bg-primary-600 text-white text-sm font-semibold rounded-xl hover:bg-primary-700">
-              <DollarSign className="w-4 h-4 inline mr-1" />Mark Paid
-            </button>
-          )}
-          <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="px-3 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600">
-            <MessageSquare className="w-4 h-4" />
+          <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center justify-center gap-1.5">
+            <MessageSquare className="w-4 h-4" />Message
           </button>
         </div>
       )}
     </div>
   );
+  };
 
   const InterviewDetail = ({ interview, onClose }: { interview: InterviewEvent; onClose: () => void }) => {
-    const TypeIcon = interview.interviewType === 'phone' ? Phone : interview.interviewType === 'in-person' ? Home : Video;
+    const [job, setJob]             = useState<any>(null);
+    const [cancelling, setCancelling] = useState(false);
+
+    const TypeIcon  = interview.interviewType === 'phone' ? Phone : interview.interviewType === 'in-person' ? Home : Video;
     const typeLabel = interview.interviewType === 'phone' ? 'Phone Call' : interview.interviewType === 'in-person' ? 'In Person' : 'Video Call';
-    const statusLabel = interview.status === 'requested' ? 'Pending' : interview.status.charAt(0).toUpperCase() + interview.status.slice(1);
+    const statusLabel = interview.status === 'requested' ? 'Pending'
+      : interview.status === 'in-progress' ? 'In Progress'
+      : interview.status.charAt(0).toUpperCase() + interview.status.slice(1);
+    const statusColor = interview.status === 'completed'   ? 'bg-green-100 text-green-700 border-green-200'
+      : interview.status === 'cancelled' || interview.status === 'declined' ? 'bg-slate-100 text-slate-500 border-slate-200'
+      : interview.status === 'in-progress' ? 'bg-orange-100 text-orange-700 border-orange-200'
+      : 'bg-purple-100 text-purple-700 border-purple-200';
+
+    const initials = interview.caregiverName.split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase();
+
+    useEffect(() => {
+      if (!interview.jobId) return;
+      db.collection('job_posts').doc(interview.jobId).get()
+        .then(doc => { if (doc.exists) setJob(doc.data()); })
+        .catch(() => {});
+    }, [interview.jobId]);
+
+    const handleCancel = async () => {
+      if (!window.confirm('Cancel this interview?')) return;
+      setCancelling(true);
+      try {
+        await db.collection('video_interviews').doc(interview.id).update({
+          status: 'cancelled', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'cancelled' as const } : iv));
+        setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'cancelled' as const } : prev);
+      } catch { } finally { setCancelling(false); }
+    };
+
+    const careTypes: string[] = job?.careTypes || job?.requirements || [];
+    const days:      string[] = job?.daysOfWeek || [];
+    const times:     string[] = (job?.timeOfDay || []).map((t: string) => t.charAt(0).toUpperCase() + t.slice(1));
+    const freq:      string | undefined = job?.jobFrequency;
+    const rate:      number | undefined = job?.rate;
+    const location:  string | null = job?.location || (job?.city ? [job.city, job.state].filter(Boolean).join(', ') : null);
+
     return (
       <div className="bg-white rounded-2xl border border-purple-100 p-5 shadow-sm">
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-full border bg-purple-100 text-purple-700 border-purple-200">
-              Interview · {statusLabel}
-            </span>
-            <h3 className="font-bold text-slate-900 mt-2">{interview.caregiverName}</h3>
-            <p className="text-sm text-slate-500">
-              {new Date(interview.scheduledTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-              {' · '}
-              {new Date(`2000-01-01T${interview.startTime}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
-            </p>
+        {/* Header: avatar + name + status */}
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full overflow-hidden bg-purple-100 flex items-center justify-center shrink-0">
+              {(interview as any).caregiverPhoto
+                ? <img src={(interview as any).caregiverPhoto} alt={interview.caregiverName} className="w-full h-full object-cover" />
+                : <span className="text-sm font-bold text-purple-600">{initials}</span>}
+            </div>
+            <div>
+              <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusColor}`}>
+                Interview · {statusLabel}
+              </span>
+              <h3 className="font-bold text-slate-900 mt-1">{interview.caregiverName}</h3>
+            </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg font-bold">×</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
         </div>
+
+        {/* Date + time */}
+        <div className="flex items-center gap-2 text-sm text-slate-500 mb-3">
+          <CalendarIcon className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          <span>
+            {new Date(interview.scheduledTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+            {' · '}
+            {new Date(`2000-01-01T${interview.startTime}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+          </span>
+        </div>
+
         <div className="space-y-2 text-sm">
+          {/* Interview type */}
           <div className="flex items-center gap-2 text-slate-600">
-            <TypeIcon className="w-3.5 h-3.5" /><span>{typeLabel}</span>
+            <TypeIcon className="w-3.5 h-3.5 shrink-0" /><span>{typeLabel}</span>
           </div>
-          {interview.jobTitle && (
-            <p className="text-xs text-slate-500">Related to: <span className="font-medium text-slate-700">{interview.jobTitle}</span></p>
+
+          {/* Location */}
+          {location && (
+            <div className="flex items-center gap-2 text-slate-500">
+              <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span className="text-xs">{location}</span>
+            </div>
           )}
-          {interview.notes && <div className="p-3 bg-slate-50 rounded-xl text-slate-600 mt-2 break-words overflow-hidden max-h-24 overflow-y-auto text-xs">{interview.notes}</div>}
+
+          {/* Care type chips */}
+          {careTypes.length > 0 && (
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              {careTypes.map((c: string) => (
+                <span key={c} className="text-xs px-2 py-0.5 bg-teal-50 text-teal-700 rounded-full border border-teal-100">{c}</span>
+              ))}
+            </div>
+          )}
+
+          {/* Days of week */}
+          {days.length > 0 && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-600 flex-wrap">
+              <span className="text-slate-400 shrink-0">Days:</span>
+              {days.map((d: string) => (
+                <span key={d} className="px-1.5 py-0.5 bg-slate-100 rounded text-slate-700 font-medium">{d}</span>
+              ))}
+            </div>
+          )}
+
+          {/* Time of day */}
+          {times.length > 0 && (
+            <p className="text-xs text-slate-500"><span className="text-slate-400">Time:</span> {times.join(', ')}</p>
+          )}
+
+          {/* Frequency + rate */}
+          {(freq || rate) && (
+            <p className="text-xs text-slate-500">
+              {freq && <span className="capitalize font-medium text-slate-600">{freq.replace('-', ' ')}</span>}
+              {freq && rate && ' · '}
+              {rate && <span className="font-medium text-slate-600">${rate}/hr</span>}
+            </p>
+          )}
+
+          {/* Notes */}
+          {interview.notes && (
+            <div className="p-3 bg-slate-50 rounded-xl text-slate-600 break-words text-xs max-h-24 overflow-y-auto mt-1">
+              {interview.notes}
+            </div>
+          )}
         </div>
-        <div className="mt-4">
-          <button onClick={() => navigate(`/client/inbox?caregiver=${interview.caregiverId}`)} className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm">
-            <MessageSquare className="w-4 h-4" /> Message
-          </button>
+
+        {/* Actions */}
+        <div className="mt-4 flex flex-col gap-2">
+          {/* Join Call for video + accepted/in-progress */}
+          {interview.interviewType === 'video' && (interview.status === 'accepted' || interview.status === 'in-progress') && (
+            <button onClick={() => navigate('/client/video')}
+              className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
+              <Video className="w-4 h-4" /> Join Call
+            </button>
+          )}
+          <div className="flex gap-2">
+            <button onClick={() => navigate('/client/inbox')}
+              className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm flex items-center justify-center gap-1.5">
+              <MessageSquare className="w-4 h-4" /> Message
+            </button>
+            {(interview.status === 'requested' || interview.status === 'accepted') && (
+              <button onClick={handleCancel} disabled={cancelling}
+                className="px-3 py-2 border border-red-200 rounded-xl hover:bg-red-50 text-red-500 text-sm flex items-center justify-center gap-1.5">
+                {cancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />} Cancel
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -450,15 +936,54 @@ export default function Schedule() {
                   </button>
                 ))}
               </div>
-              <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 transition-colors">
-                <Plus className="w-4 h-4" />Add Shift
-              </button>
+              {caregivers.length > 0 && (
+                <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 transition-colors">
+                  <Plus className="w-4 h-4" />Request Visit
+                </button>
+              )}
             </div>
           </div>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6">
+
+        {/* ── Shared legend (all views) ─────────────────────────────────── */}
+        <div className="flex items-center gap-5 px-4 py-2.5 mb-4 bg-white rounded-xl border border-slate-200 text-xs text-slate-500 flex-wrap">
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-500 inline-block" />Scheduled</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-accent-500 inline-block" />In Progress</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" />Completed</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-rose-600 inline-block" />Cancelled</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-purple-500 inline-block" />Interviews</span>
+        </div>
+
+        {/* ── Pending visit requests (awaiting caregiver response) ───────── */}
+        {pendingAmendments.length > 0 && (
+          <div className="mb-4 space-y-2">
+            {pendingAmendments.map(a => {
+              const dayList = Object.entries(a.newDays || {})
+                .map(([day, blocks]) =>
+                  `${day} ${(blocks as Array<{start:string;end:string}>).map(b => `${b.start}–${b.end}`).join(', ')}`
+                ).join(' · ');
+              return (
+                <div key={a.id} className="bg-amber-50 rounded-xl border border-amber-200 p-4 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center shrink-0">
+                      <Hourglass className="w-5 h-5 text-amber-600" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-900 text-sm truncate">{a.caregiverName}</p>
+                      <p className="text-xs text-slate-500 truncate">{dayList}</p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-semibold text-amber-700 bg-amber-100 border border-amber-200 px-2 py-1 rounded-lg shrink-0 whitespace-nowrap">
+                    Awaiting response
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* ── Week view ──────────────────────────────────────────────────── */}
         {view === 'week' && (
@@ -472,14 +997,6 @@ export default function Schedule() {
 
             <div className="flex gap-4">
               <div className="flex-1 min-w-0 bg-white rounded-2xl border border-slate-200 overflow-hidden">
-                {/* Legend */}
-                <div className="flex items-center gap-5 px-4 py-2.5 border-b border-slate-100 bg-slate-50 text-xs text-slate-500 flex-wrap">
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-500 inline-block" />Scheduled</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-accent-500 inline-block" />In Progress</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" />Completed</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-400 inline-block" />Cancelled</span>
-                  <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-purple-500 inline-block" />Interviews</span>
-                </div>
 
                 <div className="overflow-x-auto">
                   <div style={{ minWidth: 520 }}>
@@ -536,7 +1053,7 @@ export default function Schedule() {
                                       className={`absolute rounded-md border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)}`}
                                       style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '2px', right: hasBoth ? '50%' : '2px' }}>
                                       <p className="px-1.5 pt-1 text-xs font-bold text-white leading-tight truncate">{shift.caregiverName.split(' ')[0]}</p>
-                                      <p className="px-1.5 text-xs text-white/80">{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+                                      <p className="px-1.5 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
                                     </button>
                                   );
                                 })}
@@ -627,7 +1144,7 @@ export default function Schedule() {
                                   className={`absolute rounded-lg border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)}`}
                                   style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '4px', right: dayInterviews.length > 0 ? '50%' : '4px' }}>
                                   <p className="px-2 pt-1.5 text-sm font-bold text-white leading-tight truncate">{shift.caregiverName}</p>
-                                  <p className="px-2 text-xs text-white/80">{shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''}</p>
+                                  <p className="px-2 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
                                   {shift.notes && <p className="px-2 text-xs text-white/70 truncate mt-0.5">{shift.notes}</p>}
                                 </button>
                               );
@@ -699,7 +1216,7 @@ export default function Schedule() {
                           <div className="flex gap-0.5 mt-0.5 flex-wrap justify-center">
                             {dayS.slice(0, 2).map((s, i) => (
                               <span key={`s-${i}`} className={`w-1.5 h-1.5 rounded-full ${
-                                isSel ? 'bg-white' : s.status === 'scheduled' ? 'bg-primary-500' : s.status === 'in-progress' ? 'bg-accent-500' : s.status === 'completed' ? 'bg-green-500' : 'bg-red-400'
+                                isSel ? 'bg-white' : s.status === 'scheduled' ? 'bg-primary-500' : s.status === 'in-progress' ? 'bg-accent-500' : s.status === 'completed' ? 'bg-green-500' : 'bg-rose-600'
                               }`} />
                             ))}
                             {dayI.slice(0, 1).map((_, i) => (
@@ -733,7 +1250,7 @@ export default function Schedule() {
                           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
                             {shift.status.replace('-',' ').replace(/\b\w/g, l=>l.toUpperCase())}
                           </span>
-                          <span className="text-sm font-bold text-slate-700">{shift.startTime}{shift.endTime ? `–${shift.endTime}` : ''}</span>
+                          <span className="text-sm font-bold text-slate-700">{fmt12(shift.startTime)}{shift.endTime ? `–${fmt12(shift.endTime)}` : ''}</span>
                         </div>
                         <div className="flex items-center gap-2 mb-2">
                           <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
@@ -743,8 +1260,8 @@ export default function Schedule() {
                         </div>
                         {shift.status === 'scheduled' && (
                           <div className="flex gap-2 mt-3">
-                            <button onClick={() => handleComplete(shift.id)} className="flex-1 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-lg hover:bg-green-700">Mark Complete</button>
-                            <button onClick={() => handleCancel(shift.id)} className="px-2.5 py-1.5 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 text-xs">Cancel</button>
+                            <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="flex-1 py-1.5 border border-slate-200 text-slate-600 text-xs font-medium rounded-lg hover:bg-slate-50">Message</button>
+                            <button onClick={() => handleCancel(shift.id)} className="flex-1 py-1.5 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 text-xs">Cancel</button>
                           </div>
                         )}
                       </div>
@@ -789,7 +1306,7 @@ export default function Schedule() {
                       </div>
                       <div className="min-w-0">
                         <p className="font-medium text-slate-900 text-sm truncate">{s.caregiverName}</p>
-                        <p className="text-xs text-slate-500">{s.startTime}{s.endTime ? ` – ${s.endTime}` : ''}</p>
+                        <p className="text-xs text-slate-500">{fmt12(s.startTime)}{s.endTime ? ` – ${fmt12(s.endTime)}` : ''}</p>
                       </div>
                     </div>
                   ))}
@@ -825,7 +1342,7 @@ export default function Schedule() {
                 { id: 'this-month', label: 'This Month' },
                 { id: 'last-30',    label: 'Last 30 Days' },
               ] as const).map(f => (
-                <button key={f.id} onClick={() => setDateFilter(f.id)}
+                <button key={f.id} onClick={() => { setDateFilter(f.id); setExpandedDates({}); }}
                   className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${dateFilter === f.id ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}>
                   {f.label}
                 </button>
@@ -840,7 +1357,12 @@ export default function Schedule() {
             ) : (
               <div className="flex gap-4">
                 <div className="flex-1 min-w-0 space-y-6">
-                  {groupedDates.map(date => (
+                  {groupedDates.map(date => {
+                    const allEvents = groupedEvents[date];
+                    const isDateExpanded = !!expandedDates[date];
+                    const visibleEvents = isDateExpanded ? allEvents : allEvents.slice(0, 2);
+                    const hiddenCount = allEvents.length - 2;
+                    return (
                     <div key={date}>
                       <div className="flex items-center gap-2 mb-2 px-1">
                         <h3 className="text-sm font-bold text-slate-700">
@@ -851,14 +1373,14 @@ export default function Schedule() {
                         )}
                       </div>
                       <div className="space-y-2">
-                        {groupedEvents[date].map((e, i) => {
+                        {visibleEvents.map((e, i) => {
                           if (e.kind === 'shift') {
                             const s = e.shift;
                             return (
                               <div key={i}
                                 onClick={() => { setSelectedShift(s); setSelectedInterview(null); }}
                                 className="flex items-center gap-3 p-4 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-slate-300 hover:shadow-sm transition-all">
-                                <div className={`w-1 self-stretch rounded-full flex-shrink-0 ${s.status === 'scheduled' ? 'bg-primary-500' : s.status === 'in-progress' ? 'bg-accent-500' : s.status === 'completed' ? 'bg-slate-400' : 'bg-red-400'}`} />
+                                <div className={`w-1 self-stretch rounded-full flex-shrink-0 ${s.status === 'scheduled' ? 'bg-primary-500' : s.status === 'in-progress' ? 'bg-accent-500' : s.status === 'completed' ? 'bg-slate-400' : 'bg-rose-600'}`} />
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 mb-1">
                                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusBadge(s.status)}`}>
@@ -902,8 +1424,20 @@ export default function Schedule() {
                           }
                         })}
                       </div>
+                      {hiddenCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setExpandedDates(prev => ({ ...prev, [date]: !prev[date] }))}
+                          className="w-full mt-1 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-500 hover:text-slate-700 flex items-center justify-center gap-1 transition-colors"
+                        >
+                          {isDateExpanded
+                            ? <><ChevronUp className="w-3.5 h-3.5" /> Show less</>
+                            : <><ChevronDown className="w-3.5 h-3.5" /> Show {hiddenCount} more shift{hiddenCount !== 1 ? 's' : ''}</>
+                          }
+                        </button>
+                      )}
                     </div>
-                  ))}
+                  ); })}
                 </div>
 
                 {/* Detail panel */}
@@ -923,54 +1457,317 @@ export default function Schedule() {
         )}
       </main>
 
-      {/* ── Add Shift Modal ───────────────────────────────────────────────── */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">Schedule a Shift</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Caregiver</label>
-                <select value={newShift.caregiverId} onChange={e => setNewShift({ ...newShift, caregiverId: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200">
-                  <option value="">Select caregiver</option>
-                  {caregivers.map(cg => <option key={cg.id} value={cg.id}>{cg.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Date</label>
-                <input type="date" value={newShift.date} onChange={e => setNewShift({ ...newShift, date: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Start</label>
-                  <input type="time" value={newShift.startTime} onChange={e => setNewShift({ ...newShift, startTime: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200" />
+      {/* ── Request Extra Visit Modal ─────────────────────────────────────── */}
+      {showAddModal && (() => {
+        const selectedCg = caregivers.find(c => c.id === visitCaregiverId);
+        const schedule = selectedCg?.schedule || {};
+        const DAY_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const VISIT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+        // ── Availability helpers ──────────────────────────────────────────
+        const DAY_NAME_TO_IDX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const getNextDateForDay = (dayName: string, fromDateStr: string): Date | null => {
+          if (!fromDateStr) return null;
+          const fromDate = new Date(fromDateStr + 'T12:00:00');
+          const targetDow = DAY_NAME_TO_IDX[dayName];
+          if (targetDow === undefined) return null;
+          const diff = (targetDow - fromDate.getDay() + 7) % 7;
+          const result = new Date(fromDate);
+          result.setDate(result.getDate() + diff);
+          return result;
+        };
+
+        // Days whose requested times fall outside the caregiver's weekly availability
+        const weeklyUnavailableDays: string[] = selectedCg ? selectedDays.filter(day => {
+          const t = dayTimes[day];
+          if (!t?.start || !t?.end) return false;
+          const checkDate = getNextDateForDay(day, visitStartDate);
+          if (!checkDate) return false;
+          const [sh, sm] = t.start.split(':').map(Number);
+          const [eh, em] = t.end.split(':').map(Number);
+          const durationHours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+          if (durationHours <= 0) return false;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return !availabilityService.checkWeeklyAvailability(selectedCg as any, checkDate, t.start, durationHours);
+        }) : [];
+        const scheduledDays = DAY_ORDER.filter(d => schedule[d]?.some(b => b.start && b.end));
+        // Merge regular schedule blocks + actual shift blocks for overlap checking
+        const allBlocksForDay = (day: string) => {
+          const schedBlocks = (schedule[day] || []).filter(b => b.start && b.end);
+          const shiftBlocks = (cgShiftBlocks[day] || []).filter(b => b.start && b.end);
+          // Deduplicate
+          const seen = new Set<string>();
+          return [...schedBlocks, ...shiftBlocks].filter(b => {
+            const key = `${b.start}-${b.end}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        };
+
+        // Check if a proposed [newStart, newEnd) overlaps any existing block for that day
+        const hasOverlap = (day: string, newStart: string, newEnd: string) => {
+          const [nsh, nsm] = newStart.split(':').map(Number);
+          const [neh, nem] = newEnd.split(':').map(Number);
+          const ns = nsh * 60 + nsm, ne = neh * 60 + nem;
+          return allBlocksForDay(day).some(b => {
+            const [bsh, bsm] = b.start.split(':').map(Number);
+            const [beh, bem] = b.end.split(':').map(Number);
+            const bs = bsh * 60 + bsm, be = beh * 60 + bem;
+            return ns < be && ne > bs;
+          });
+        };
+
+        const overlappingDays = selectedDays.filter(day => {
+          const t = dayTimes[day];
+          return t?.start && t?.end && hasOverlap(day, t.start, t.end);
+        });
+
+        const canSubmit =
+          !!visitCaregiverId &&
+          selectedDays.length > 0 &&
+          !!visitStartDate &&
+          (visitEndOption === 'ongoing' || !!visitEndDate) &&
+          overlappingDays.length === 0 &&
+          weeklyUnavailableDays.length === 0;
+
+        // Returns start-time options for a day, excluding times that fall inside an existing block
+        const getStartOptions = (day: string) => {
+          const blocks = allBlocksForDay(day);
+          return TIME_OPTIONS.filter(opt => {
+            const [oh, om] = opt.value.split(':').map(Number);
+            const mins = oh * 60 + om;
+            return !blocks.some(b => {
+              const [bsh, bsm] = b.start.split(':').map(Number);
+              const [beh, bem] = b.end.split(':').map(Number);
+              return mins > bsh * 60 + bsm && mins < beh * 60 + bem;
+            });
+          });
+        };
+        // Returns end-time options: must be after startVal and must not cross into the next existing block
+        const getEndOptions = (day: string, startVal: string) => {
+          const [sh, sm] = (startVal || '09:00').split(':').map(Number);
+          const startMins = sh * 60 + sm;
+          const blocks = allBlocksForDay(day);
+          // Find the earliest existing-block start that comes after our chosen start
+          const nextBlockStart = blocks
+            .map(b => { const [bsh, bsm] = b.start.split(':').map(Number); return bsh * 60 + bsm; })
+            .filter(bs => bs > startMins)
+            .sort((a, z) => a - z)[0];
+          return TIME_OPTIONS.filter(opt => {
+            const [oh, om] = opt.value.split(':').map(Number);
+            const mins = oh * 60 + om;
+            if (mins <= startMins) return false;
+            if (nextBlockStart !== undefined && mins > nextBlockStart) return false;
+            return true;
+          });
+        };
+        return (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] flex flex-col">
+
+              {/* Header */}
+              <div className="px-6 pt-6 pb-4 border-b border-slate-100 shrink-0">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">Request Visit</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Add a visit outside your regular schedule</p>
+                  </div>
+                  <button onClick={() => { setShowAddModal(false); resetVisitModal(); }}
+                    className="text-slate-400 hover:text-slate-600 p-1 -mr-1 -mt-1 text-xl font-bold leading-none">×</button>
                 </div>
+              </div>
+
+              {/* Scrollable body */}
+              <div className="overflow-y-auto flex-1 px-6 py-4 space-y-5">
+
+                {/* Caregiver */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">End</label>
-                  <input type="time" value={newShift.endTime} onChange={e => setNewShift({ ...newShift, endTime: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200" />
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Caregiver</label>
+                  <select value={visitCaregiverId} onChange={e => setVisitCaregiverId(e.target.value)}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white">
+                    <option value="">Select caregiver</option>
+                    {caregivers.map(cg => <option key={cg.id} value={cg.id}>{cg.name}</option>)}
+                  </select>
                 </div>
+
+                {visitCaregiverId && <>
+
+                {/* Regular schedule preview */}
+                {selectedCg && scheduledDays.length > 0 && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Regular Schedule</p>
+                    <div className="space-y-0.5">
+                      {scheduledDays.map(day =>
+                        (schedule[day] || []).filter(b => b.start && b.end).map((b, i) => (
+                          <div key={`${day}-${i}`} className="flex items-center gap-2 text-xs text-slate-600">
+                            <span className="font-semibold w-8">{day}</span>
+                            <span>{fmtH(parseH(b.start))} – {fmtH(parseH(b.end))}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Schedule dates */}
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Schedule</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-slate-500 block mb-1">Start date</label>
+                      <input
+                        type="date"
+                        value={visitStartDate}
+                        onChange={e => { const _n = new Date(); const _min = `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`; const v = e.target.value; setVisitStartDate(v && v < _min ? _min : v); }}
+                        min={(() => { const _n = new Date(); return `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`; })()}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 block mb-1">End date</label>
+                      <input
+                        type="date"
+                        value={visitEndDate}
+                        onChange={e => {
+                          setVisitEndDate(e.target.value);
+                          if (e.target.value) setVisitEndOption('end_date');
+                        }}
+                        min={visitStartDate || (() => { const _n = new Date(); return `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`; })()}
+                        disabled={visitEndOption === 'ongoing'}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white disabled:bg-slate-50 disabled:text-slate-400"
+                      />
+                      <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={visitEndOption === 'ongoing'}
+                          onChange={e => {
+                            setVisitEndOption(e.target.checked ? 'ongoing' : 'end_date');
+                            if (e.target.checked) setVisitEndDate('');
+                          }}
+                          className="w-3.5 h-3.5 accent-primary-600"
+                        />
+                        <span className="text-xs text-slate-500">Ongoing</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Shift times per day */}
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Shift times per day</p>
+
+                  {selectedDays.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic mb-2">No days added yet.</p>
+                  ) : (
+                    <div className="space-y-2 mb-3">
+                      {selectedDays.map(day => (
+                        <div key={day} className="space-y-1">
+                        {overlappingDays.includes(day) && (
+                          <p className="text-xs text-red-600 font-medium flex items-center gap-1">
+                            <span>⚠</span> {day} overlaps an existing shift — adjust the time.
+                          </p>
+                        )}
+                        {weeklyUnavailableDays.includes(day) && (
+                          <p className="text-xs text-amber-600 font-medium flex items-center gap-1">
+                            <span>⚠</span> {day} is outside {selectedCg?.name?.split(' ')[0] || 'the caregiver'}'s available hours — adjust the time or day.
+                          </p>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-slate-700 w-8 flex-shrink-0">{day}</span>
+                          <select
+                            value={dayTimes[day]?.start || '09:00'}
+                            onChange={e => {
+                              const newStart = e.target.value;
+                              const [sh, sm] = newStart.split(':').map(Number);
+                              const startMins = sh * 60 + sm;
+                              const [eh, em] = (dayTimes[day]?.end || '13:00').split(':').map(Number);
+                              const endMins = eh * 60 + em;
+                              const endOpts = getEndOptions(day, newStart);
+                              const newEnd = endMins > startMins && endOpts.some(o => o.value === (dayTimes[day]?.end || '13:00'))
+                                ? (dayTimes[day]?.end || '13:00')
+                                : endOpts[0]?.value || '13:00';
+                              setDayTimes(prev => ({ ...prev, [day]: { ...prev[day], start: newStart, end: newEnd } }));
+                            }}
+                            className="flex-1 px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                          >
+                            {getStartOptions(day).map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                          <span className="text-xs text-slate-400 flex-shrink-0">to</span>
+                          <select
+                            value={dayTimes[day]?.end || '13:00'}
+                            onChange={e => setDayTimes(prev => ({ ...prev, [day]: { ...prev[day], end: e.target.value } }))}
+                            className="flex-1 px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                          >
+                            {getEndOptions(day, dayTimes[day]?.start || '09:00').map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => {
+                              setSelectedDays(prev => prev.filter(d => d !== day));
+                              setDayTimes(prev => { const next = { ...prev }; delete next[day]; return next; });
+                            }}
+                            className="text-slate-300 hover:text-red-400 transition-colors text-lg leading-none flex-shrink-0 p-0.5"
+                          >×</button>
+                        </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Add a day chips */}
+                  {VISIT_DAYS.some(d => !selectedDays.includes(d)) && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {VISIT_DAYS.filter(d => !selectedDays.includes(d)).map(day => (
+                        <button key={day}
+                          onClick={() => {
+                            setSelectedDays(prev => [...prev, day]);
+                            setDayTimes(prev => ({ ...prev, [day]: { date: '', start: '09:00', end: '13:00' } }));
+                          }}
+                          className="flex items-center gap-0.5 px-2.5 py-1 text-xs font-medium border border-dashed border-slate-300 text-slate-500 rounded-full hover:border-primary-400 hover:text-primary-600 transition-colors">
+                          <span className="text-sm leading-none">+</span>{day}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Notes */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Notes (optional)</label>
+                  <textarea value={visitNotes} onChange={e => setVisitNotes(e.target.value)}
+                    placeholder="Any special instructions…"
+                    rows={2}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 resize-none" />
+                </div>
+
+                </>}
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Notes (optional)</label>
-                <textarea value={newShift.notes} onChange={e => setNewShift({ ...newShift, notes: e.target.value })}
-                  placeholder="Any special instructions…"
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 h-20 resize-none" />
+
+              {/* Footer */}
+              <div className="px-6 pb-6 pt-4 border-t border-slate-100 shrink-0">
+                <div className="flex gap-3">
+                  <button onClick={() => { setShowAddModal(false); resetVisitModal(); }}
+                    className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50">
+                    Cancel
+                  </button>
+                  <button onClick={handleAddShift} disabled={!canSubmit}
+                    className="flex-1 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                    Send Request
+                  </button>
+                </div>
+                <p className="text-xs text-slate-400 text-center mt-2">
+                  Your caregiver will need to accept before these visits are added to the schedule.
+                </p>
               </div>
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button onClick={() => setShowAddModal(false)} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
-              <button onClick={handleAddShift} disabled={!newShift.caregiverId || !newShift.date}
-                className="flex-1 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                Add Shift
-              </button>
+
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

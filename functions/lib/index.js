@@ -36,7 +36,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.zepSetup = exports.chatWithCara = exports.createWebOnboardingSession = exports.send1099Notifications = exports.submitGpsCheckin = exports.sendJobMatchNotifications = exports.getMatchPatterns = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.sendOnboardingReengagement = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.sendThirtyMinShiftReminders = exports.sendClientThirtyMinReminders = exports.sendClientDayBeforeReminders = exports.sendDayBeforeShiftReminders = exports.sendPreShiftFamilyCheckin = exports.sendShiftTaskNudges = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.familySilenceCheckinJob = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.dailyContactCardShare = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
+exports.zepSetup = exports.chatWithCara = exports.createWebOnboardingSession = exports.send1099Notifications = exports.submitGpsCheckin = exports.sendJobMatchNotifications = exports.getMatchPatterns = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.sendOnboardingReengagement = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.sendThirtyMinShiftReminders = exports.sendClientThirtyMinReminders = exports.sendClientDayBeforeReminders = exports.sendDayBeforeShiftReminders = exports.sendPreShiftFamilyCheckin = exports.sendShiftTaskNudges = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.familySilenceCheckinJob = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.dailyContactCardShare = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.onShiftStatusChanged = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions"));
 // Initialize Admin globally if not already done
@@ -87,12 +87,13 @@ __exportStar(require("./paymentMethods"), exports);
 __exportStar(require("./linq/webhooks"), exports);
 __exportStar(require("./triggers/userCreated"), exports);
 // Linq Sprint 2 — proactive care alerts + emergency replacement
-__exportStar(require("./triggers/journalCreated"), exports);
 __exportStar(require("./triggers/appointmentUpdated"), exports);
 var checkinAlert_1 = require("./triggers/checkinAlert");
 Object.defineProperty(exports, "onCheckinCreated", { enumerable: true, get: function () { return checkinAlert_1.onCheckinCreated; } });
 var familyEmergency_1 = require("./triggers/familyEmergency");
 Object.defineProperty(exports, "triggerFamilyEmergency", { enumerable: true, get: function () { return familyEmergency_1.triggerFamilyEmergency; } });
+var shiftStatusTrigger_1 = require("./triggers/shiftStatusTrigger");
+Object.defineProperty(exports, "onShiftStatusChanged", { enumerable: true, get: function () { return shiftStatusTrigger_1.onShiftStatusChanged; } });
 // Linq Sprint 3 — family group thread
 var familyGroupManager_1 = require("./agents/familyGroupManager");
 Object.defineProperty(exports, "createFamilyGroup", { enumerable: true, get: function () { return familyGroupManager_1.createFamilyGroup; } });
@@ -200,6 +201,7 @@ var taxReminder_1 = require("./scheduled/taxReminder");
 Object.defineProperty(exports, "send1099Notifications", { enumerable: true, get: function () { return taxReminder_1.send1099Notifications; } });
 // MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
 __exportStar(require("./migrations/migrateSeniorsToHousehold"), exports);
+// fixAcceptedCounterPay migration already executed — not exported
 // ── createWebOnboardingSession — authenticated callable, NEVER sends outbound SMS ──
 // Called from /start after the user verifies their phone with Firebase Phone Auth.
 // Records role + consent on a TTL'd bridge doc that the LINQ inbound webhook reads

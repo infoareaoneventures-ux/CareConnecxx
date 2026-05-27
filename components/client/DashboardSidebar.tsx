@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Heart, MessageSquare, Calendar, Phone, Mail, FileText, Home,
+  Heart, MessageSquare, Mail, FileText,
   Shield, Award, CheckCircle, Briefcase, Plus, Users, Bookmark, Search,
 } from 'lucide-react';
 import { Caregiver, ViewType } from '../../types';
@@ -258,25 +258,6 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
           >
             <FileText className="w-3.5 h-3.5" />
             Open Care Binder
-          </button>
-        </div>
-      </div>
-
-      {/* Care Journal */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
-          <Home className="w-4 h-4 text-accent-500" />
-          <h3 className="font-semibold text-slate-900 text-sm">Care Journal</h3>
-        </div>
-        <div className="p-4">
-          <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-            After each visit, your caregiver posts mood, meals, medications, and activities. Your family's daily update feed.
-          </p>
-          <button
-            onClick={() => onNavigate('care-journal')}
-            className="w-full flex items-center justify-center gap-1.5 py-2 bg-accent-500 hover:bg-accent-600 text-white text-xs font-semibold rounded-lg transition-colors"
-          >
-            View Journal Updates
           </button>
         </div>
       </div>

@@ -34,9 +34,7 @@ import { CallSupportButton, CallSupportCard } from './CallSupport';
 import { CaregiverProfileModal } from './CaregiverProfileModal';
 
 // Family Command Center Components
-import { DailySummary } from './careJournal/DailySummary';
-import { PeaceOfMindScore } from './family/PeaceOfMindScore';
-import { CareJournalEntry, MatchScore } from '../types';
+import { MatchScore } from '../types';
 
 // Phase 1 Components
 import { LiveCareUpdates } from './LiveCareUpdates';
@@ -45,7 +43,6 @@ import { LiveCareUpdates } from './LiveCareUpdates';
 import { CareTeam } from './family/CareTeam';
 import { MediaGallery } from './family/MediaGallery';
 import { SmartCarePlan } from './family/SmartCarePlan';
-import { WellnessScore } from './family/WellnessScore';
 
 // Referral Program
 import { ReferralProgram } from './referral/ReferralProgram';
@@ -133,44 +130,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
    // Senior-friendly: Show/hide advanced features
    const [showAdvancedFeatures, setShowAdvancedFeatures] = useState(false);
 
-   // Family Command Center - Care Journal State
-   const [careJournalEntries, setCareJournalEntries] = useState<CareJournalEntry[]>([]);
-   const [journalLoading, setJournalLoading] = useState(true);
-
    // AI Matching - Match Scores (calculated via useMemo below)
-
-   // Subscribe to care journal entries
-   useEffect(() => {
-      const currentUser = authService.getCurrentUser();
-      if (!currentUser?.uid) {
-         setJournalLoading(false);
-         return;
-      }
-
-      // Load initial entries
-      const loadEntries = async () => {
-         try {
-            const entries = await dbService.getCareJournalEntries(currentUser.uid, 30);
-            setCareJournalEntries(entries);
-         } catch (error) {
-            console.error('Failed to load care journal:', error);
-         } finally {
-            setJournalLoading(false);
-         }
-      };
-
-      loadEntries();
-
-      // Subscribe to real-time updates
-      const unsubscribe = dbService.subscribeToCareJournal(
-         currentUser.uid,
-         (entries) => {
-            setCareJournalEntries(entries);
-         }
-      );
-
-      return () => unsubscribe();
-   }, []);
 
    // Calculate match scores with useMemo - expensive calculation
    const matchScores = useMemo(() => {
@@ -459,35 +419,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             />
          </div>
 
-         {/* Quick Actions - Express Booking */}
-         {/* Family Command Center - Peace of Mind Score & Daily Summary */}
-         <div className="mb-8 grid md:grid-cols-2 gap-6">
-            {!journalLoading && (
-               <>
-                  <PeaceOfMindScore
-                     entries={careJournalEntries || []}
-                     seniorName={seniorProfile?.name || 'Your Loved One'}
-                     daysToAnalyze={7}
-                  />
-                  <WellnessScore
-                     entries={careJournalEntries || []}
-                     seniorName={seniorProfile?.name || 'Your Loved One'}
-                     daysToAnalyze={7}
-                  />
-               </>
-            )}
-         </div>
-
-         {/* Daily Summary - Full width for better readability */}
-         {!journalLoading && (
-            <div className="mb-8">
-               <DailySummary
-                  entries={careJournalEntries?.slice(0, 5) || []}
-                  seniorName={seniorProfile?.name || 'Your Loved One'}
-                  date={new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-               />
-            </div>
-         )}
 
          {/* Phase 1: Live Care Updates - Real-time visibility during today's shifts only */}
          {(() => {

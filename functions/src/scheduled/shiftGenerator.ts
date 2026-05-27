@@ -5,8 +5,14 @@ const db = admin.firestore();
 
 const ALL_DAYS_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+function normDay(day: string): string {
+  // Normalize 'MON' / 'monday' / 'Mon' → 'Mon' to match ALL_DAYS_ORDER
+  const d = day.trim();
+  return d.charAt(0).toUpperCase() + d.slice(1, 3).toLowerCase();
+}
+
 function nextOccurrenceOnOrAfter(fromDate: string, dayName: string): string {
-  const target = ALL_DAYS_ORDER.indexOf(dayName);
+  const target = ALL_DAYS_ORDER.indexOf(normDay(dayName));
   if (target === -1) return fromDate;
   const base = new Date(fromDate + 'T12:00:00');
   const diff = (target - base.getDay() + 7) % 7;
@@ -53,6 +59,7 @@ async function generateShiftsForBooking(
     caregiverPhotoURL,
     status:               'scheduled',
     address:              booking.address || '',
+    careNeeds:            booking.careNeeds || [],
     lifestylePreferences: booking.lifestylePreferences || [],
     rate:                 booking.rate ?? null,
     paymentMethod:        booking.paymentMethod || null,
@@ -111,9 +118,20 @@ export const onBookingAccepted = functions.firestore
     const before = change.before.exists ? change.before.data() : null;
     const after  = change.after.exists  ? change.after.data()  : null;
 
-    // Only fire when status transitions to 'accepted'
+    // Only fire when status is 'accepted'
     if (!after || after.status !== 'accepted') return;
-    if (before?.status === 'accepted') return; // already accepted, no-op
+
+    // If already accepted before, only re-generate if no scheduled shifts exist
+    if (before?.status === 'accepted') {
+      const bookingIdCheck = context.params.bookingId;
+      const existingSnap = await db.collection('shifts')
+        .where('bookingRequestId', '==', bookingIdCheck)
+        .where('status', '==', 'scheduled')
+        .limit(1)
+        .get();
+      if (!existingSnap.empty) return; // has shifts already, skip
+      // no shifts found — fall through and regenerate
+    }
 
     const bookingId = context.params.bookingId;
     const today = new Date().toISOString().split('T')[0];
@@ -166,6 +184,8 @@ export const onBookingAccepted = functions.firestore
  * Daily job: for every accepted booking, ensure there is at least 2 weeks of
  * scheduled shifts ahead. Generates more whenever the furthest scheduled shift
  * falls within 7 days of today.
+ * On the first run after a CLEANUP_SHIFTS env flag is set, it will first wipe
+ * all scheduled shifts and regenerate from scratch.
  */
 export const generateRollingShifts = functions.pubsub
   .schedule('every 24 hours')
@@ -181,6 +201,39 @@ export const generateRollingShifts = functions.pubsub
       console.log('generateRollingShifts: no accepted bookings');
       return;
     }
+
+    // ── ONE-TIME CLEANUP: wipe all scheduled shifts and regenerate ──
+    // Check a flag doc; if it exists we already cleaned up.
+    const flagRef = db.collection('_meta').doc('shiftsCleanedUp');
+    const flagSnap = await flagRef.get();
+    if (!flagSnap.exists) {
+      console.log('generateRollingShifts: running one-time cleanup...');
+      const scheduledSnap = await db.collection('shifts').where('status', '==', 'scheduled').get();
+      let deleted = 0;
+      for (let i = 0; i < scheduledSnap.docs.length; i += 499) {
+        const batch = db.batch();
+        scheduledSnap.docs.slice(i, i + 499).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+        deleted += Math.min(499, scheduledSnap.docs.length - i);
+      }
+      console.log(`generateRollingShifts: deleted ${deleted} bad shifts`);
+
+      // Regenerate 4 weeks for all accepted bookings immediately
+      const generateTo = addDays(today, 27);
+      let totalCreated = 0;
+      for (const bookingDoc of bookingsSnap.docs) {
+        try {
+          const n = await generateShiftsForBooking(bookingDoc.id, bookingDoc.data(), today, generateTo);
+          totalCreated += n;
+        } catch (err) {
+          console.error('cleanup regen error', bookingDoc.id, err);
+        }
+      }
+      await flagRef.set({ cleanedAt: admin.firestore.FieldValue.serverTimestamp() });
+      console.log(`generateRollingShifts: cleanup done — created ${totalCreated} shifts`);
+      return;
+    }
+    // ── END ONE-TIME CLEANUP ──
 
     let totalCreated = 0;
 

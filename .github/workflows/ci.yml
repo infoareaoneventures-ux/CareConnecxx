@@ -20,11 +20,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci && npm --prefix functions ci
 
       - name: Run unit tests
         run: npm test -- --run
@@ -50,4 +50,4 @@ jobs:
           VITE_STRIPE_PUBLISHABLE_KEY: pk_test_ci_placeholder
 
       - name: Build Cloud Functions
-        run: npm --prefix functions ci && npm --prefix functions run build
+        run: npm --prefix functions run build

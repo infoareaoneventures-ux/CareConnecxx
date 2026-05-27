@@ -135,6 +135,7 @@ export default function FindCaregivers() {
   const [clientLat, setClientLat] = useState<number | null>(null);
   const [clientLng, setClientLng] = useState<number | null>(null);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
+  const [bookedCaregiverIds, setBookedCaregiverIds] = useState<Set<string>>(new Set());
 
   // Filters
   const [nameQuery, setNameQuery] = useState('');
@@ -246,6 +247,17 @@ export default function FindCaregivers() {
         setClientOpenPosts(posts.filter((p: any) => p.status === 'open').map((p: any) => ({ id: p.id, title: p.title, startDate: p.startDate || p.date })));
       }).catch(() => {});
 
+      // Load accepted booking caregiver IDs so we can hide "Request Interview" for already-booked caregivers
+      db.collection('booking_requests')
+        .where('clientId', '==', user.uid)
+        .where('status', '==', 'accepted')
+        .get()
+        .then(snap => {
+          const ids = new Set<string>(snap.docs.map(d => d.data().caregiverId).filter(Boolean));
+          setBookedCaregiverIds(ids);
+        })
+        .catch(() => {});
+
       await fetchCaregivers(intakeData);
       await fetchFavorites();
       resolveClientLocation(user.uid); // fire-and-forget; updates distances when resolved
@@ -265,14 +277,19 @@ export default function FindCaregivers() {
 
       const [usersSnap, caregiversSnap] = await Promise.all([
         db.collection('users').where('role', '==', 'caregiver').limit(100).get(),
-        db.collection('caregivers').limit(100).get().catch(() => null),
+        db.collection('caregivers').where('onboardingStatus', '==', 'profile_complete').limit(100).get().catch(() => null),
       ]);
+
+      // Build set of visible caregiver IDs — anyone whose wizard is complete (onboardingStatus: profile_complete)
+      const approvedIds = new Set<string>(caregiversSnap?.docs.map(d => d.id) ?? []);
 
       const seen = new Set<string>();
       const caregiverList: Caregiver[] = [];
 
       const pushDoc = (doc: firebase.firestore.DocumentSnapshot) => {
         if (seen.has(doc.id)) return;
+        // Only show caregivers that have completed their profile wizard (onboardingStatus: profile_complete)
+        if (!approvedIds.has(doc.id)) return;
         const data = doc.data() || {};
         const firstName = data.firstName || data.name?.split(' ')[0] || '';
         const lastName = data.lastName || data.name?.split(' ').slice(1).join(' ') || '';
@@ -294,7 +311,7 @@ export default function FindCaregivers() {
           distance: data.distance ?? 0,
           lat: data.lat ?? data.latitude ?? data.location?.lat ?? data._geoloc?.lat,
           lng: data.lng ?? data.longitude ?? data.location?.lng ?? data._geoloc?.lng,
-          photoURL: data.photoURL || data.imageUrl || data.profilePhoto,
+          photoURL: data.photoURL || data.photo || data.imageUrl || data.profilePhoto,
           hasReliableTransportation: data.hasTransportation || data.hasReliableTransportation || false,
           skills: data.skills || data.specializations || data.specialties || [],
           certifications: data.certifications || [],
@@ -806,6 +823,7 @@ export default function FindCaregivers() {
                     key={cg.id}
                     caregiver={cg}
                     isFavorite={favorites.includes(cg.id)}
+                    isBooked={bookedCaregiverIds.has(cg.id)}
                     onToggleFavorite={() => toggleFavorite(cg.id)}
                     onViewProfile={() => setViewingCaregiver(cg)}
                     onMessage={() => handleMessage(cg.id, `${cg.firstName} ${cg.lastName}`.trim())}
@@ -906,6 +924,7 @@ interface CaregiverCardProps {
   caregiver: Caregiver & { matchScore?: AIMatchScore };
   isFavorite: boolean;
   isBestMatch?: boolean;
+  isBooked?: boolean;
   onToggleFavorite: () => void;
   onViewProfile: () => void;
   onMessage: () => void;
@@ -913,7 +932,7 @@ interface CaregiverCardProps {
 }
 
 const CaregiverCard: React.FC<CaregiverCardProps> = ({
-  caregiver, isFavorite, isBestMatch, onToggleFavorite, onViewProfile, onMessage, onRequestInterview,
+  caregiver, isFavorite, isBestMatch, isBooked, onToggleFavorite, onViewProfile, onMessage, onRequestInterview,
 }) => {
   const fullName = `${caregiver.firstName} ${caregiver.lastName}`.trim() || 'Caregiver';
 
@@ -1019,12 +1038,18 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
          >
             <MessageSquare className="w-4 h-4" /> Message
          </button>
-         <button
-            onClick={(e) => { e.stopPropagation(); onRequestInterview(); }}
-            className="w-full py-2 text-sm font-bold bg-primary-600 border-2 border-primary-600 text-white rounded-xl hover:bg-primary-700 hover:border-primary-700 transition-colors inline-flex items-center justify-center gap-1.5"
-         >
-            <Video className="w-4 h-4" /> Request Interview
-         </button>
+         {isBooked ? (
+            <div className="w-full py-2 text-sm font-bold bg-green-50 border-2 border-green-200 text-green-700 rounded-xl inline-flex items-center justify-center gap-1.5">
+              <CheckCircle className="w-4 h-4" /> Active Booking
+            </div>
+         ) : (
+            <button
+               onClick={(e) => { e.stopPropagation(); onRequestInterview(); }}
+               className="w-full py-2 text-sm font-bold bg-primary-600 border-2 border-primary-600 text-white rounded-xl hover:bg-primary-700 hover:border-primary-700 transition-colors inline-flex items-center justify-center gap-1.5"
+            >
+               <Video className="w-4 h-4" /> Request Interview
+            </button>
+         )}
       </div>
 
     </div>

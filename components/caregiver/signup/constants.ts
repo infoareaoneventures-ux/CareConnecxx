@@ -36,8 +36,8 @@ export const EXPERIENCE_LEVELS = [
 export const TIME_BLOCKS = [
   { id: 'morning', label: 'Morning', time: '6am - 12pm', icon: '☀️' },
   { id: 'afternoon', label: 'Afternoon', time: '12pm - 6pm', icon: '🌤' },
-  { id: 'evening', label: 'Evening', time: '6pm - 11pm', icon: '🌙' },
-  { id: 'overnight', label: 'Overnight', time: '11pm - 6am', icon: '🌑' },
+  { id: 'evening', label: 'Evening', time: '6pm - 12am', icon: '🌙' },
+  { id: 'overnight', label: 'Overnight', time: '12am - 6am', icon: '🌑' },
 ] as const;
 
 export const DAYS = [

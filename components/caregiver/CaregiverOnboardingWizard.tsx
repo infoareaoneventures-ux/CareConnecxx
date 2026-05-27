@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { dbService } from '../../services/api';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
+import { blocksToWeeklySlots } from '../../services/availabilityService';
 import { AddToastFunction } from '../../types';
 import {
   PRIMARY_SERVICES,
@@ -105,7 +106,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     setIsLoading(true);
     try {
       await dbService.updateUser('caregivers', uid, cleanData({
-        weeklyAvailability: form.weeklyAvailability,
+        weeklyAvailability: blocksToWeeklySlots(form.weeklyAvailability),
         jobTypes: form.jobTypes,
       }) as any);
       next();
@@ -164,6 +165,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
         bio: form.bio,
         onboardingStep: 2,
         onboardingStatus: 'profile_complete',
+        verificationStatus: 'profile_complete',
         location: [city, state].filter(Boolean).join(', ') || undefined,
       }) as any);
       next();
@@ -398,8 +400,8 @@ const AVAIL_DAYS = [
 const AVAIL_TIMES = [
   { id: 'morning',   label: 'Morning',   sub: '6am – 12pm' },
   { id: 'afternoon', label: 'Afternoon', sub: '12pm – 6pm' },
-  { id: 'evening',   label: 'Evening',   sub: '6pm – 11pm' },
-  { id: 'overnight', label: 'Overnight', sub: '11pm – 6am' },
+  { id: 'evening',   label: 'Evening',   sub: '6pm – 12am' },
+  { id: 'overnight', label: 'Overnight', sub: '12am – 6am' },
 ];
 
 const AvailabilityStep: React.FC<{

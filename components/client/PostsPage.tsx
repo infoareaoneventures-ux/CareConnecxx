@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Plus, Briefcase, Users, MapPin, Calendar, Loader2, MoreHorizontal,
   Clock, Star, MessageSquare, User, CheckCircle, XCircle, Clock3,
-  Video, Phone, ChevronRight, X, Send, Edit2, Pencil,
+  Video, Phone, ChevronRight, X, Send, Edit2, Pencil, RefreshCw,
 } from 'lucide-react';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
 import { EditJobPostModal } from './EditJobPostModal';
@@ -11,6 +11,7 @@ import { ClientNavigation } from './ClientNavigation';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { dbService } from '../../services/api';
 import { auth, db } from '../../lib/firebase';
+import { availabilityService, weeklySlotsToBl } from '../../services/availabilityService';
 import firebase from '../../lib/firebase';
 import { JobPost } from '../../types';
 
@@ -88,6 +89,7 @@ const pillBtn = (active: boolean) =>
 
 export const PostsPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { currentUser, addToast } = useCareConnex();
 
   const [posts, setPosts] = useState<JobPost[]>([]);
@@ -108,6 +110,21 @@ export const PostsPage: React.FC = () => {
   const [mainTab, setMainTab] = useState<MainTab>('posts');
   const [postsFilter, setPostsFilter] = useState<PostsFilter>('open');
 
+  // Auto-open booking modal when arriving from Re-book on My Care Team
+  useEffect(() => {
+    const rebookId = searchParams.get('rebook');
+    if (!rebookId || loadingInterviews || !interviews.length) return;
+    const interview = interviews.find(
+      i => i.caregiverId === rebookId && i.status === 'completed'
+    );
+    if (interview) {
+      setMainTab('interviews');
+      openSendBookingModal(interview);
+    }
+    // Clear param so refreshing doesn't re-trigger
+    setSearchParams({}, { replace: true });
+  }, [searchParams, interviews, loadingInterviews]);
+
   // Edit post modal
   const [editingPost, setEditingPost] = useState<JobPost | null>(null);
 
@@ -115,6 +132,8 @@ export const PostsPage: React.FC = () => {
   const [sendBookingFor, setSendBookingFor] = useState<Interview | null>(null);
   const [sendingBooking, setSendingBooking] = useState(false);
   const [bookingStatuses, setBookingStatuses] = useState<Record<string, { id: string; status: 'pending' | 'accepted' | 'declined' | 'cancelled' }>>({});
+  // Set of bookingRequestIds that still have at least one scheduled shift
+  const [activeBookingIds, setActiveBookingIds] = useState<Set<string>>(new Set());
   const [loadingCarePlan, setLoadingCarePlan] = useState(false);
   const [loadedPost, setLoadedPost] = useState<any>(null);
   const [loadedPlan, setLoadedPlan] = useState<{
@@ -144,6 +163,8 @@ export const PostsPage: React.FC = () => {
   const [editingBookingDetails, setEditingBookingDetails] = useState(false);
   const [scheduleConfirmed, setScheduleConfirmed] = useState(false);
   const [schedulePrePopulated, setSchedulePrePopulated] = useState(false);
+  const [cgWeeklyAvail, setCgWeeklyAvail] = useState<Record<string, any[]>>({});
+  const [cgBookedSlots, setCgBookedSlots] = useState<Record<string, Array<{s:number;e:number}>>>({});
 
   const LS_IVS_KEY = 'careconnex.posts.lastCheckedInterviews';
   const MIN_VALID_TS = new Date('2024-01-01').getTime();
@@ -407,19 +428,44 @@ export const PostsPage: React.FC = () => {
     const unsub = db.collection('booking_requests')
       .where('clientId', '==', currentUser.uid)
       .onSnapshot(snap => {
+        const STATUS_PRIORITY: Record<string, number> = { accepted: 4, pending: 3, declined: 2, cancelled: 1 };
         const map: Record<string, { id: string; status: 'pending' | 'accepted' | 'declined' | 'cancelled' }> = {};
         snap.docs.forEach(d => {
           const data = d.data();
           const key = `${data.caregiverId}_${data.jobId || data.interviewId || ''}`;
-          map[key] = { id: d.id, status: data.status };
+          const existing = map[key];
+          const newPriority = STATUS_PRIORITY[data.status] ?? 0;
+          const existingPriority = existing ? (STATUS_PRIORITY[existing.status] ?? 0) : -1;
+          if (newPriority > existingPriority) {
+            map[key] = { id: d.id, status: data.status };
+          }
         });
         setBookingStatuses(map);
       }, () => {});
     return () => unsub();
   }, [currentUser?.uid]);
 
+  // Track which bookings still have at least one scheduled shift (for Re-book button)
+  useEffect(() => {
+    if (!currentUser?.uid || !db) return;
+    const unsub = db.collection('shifts')
+      .where('clientId', '==', currentUser.uid)
+      .where('status', '==', 'scheduled')
+      .onSnapshot(snap => {
+        const ids = new Set<string>();
+        snap.docs.forEach(d => {
+          const bid = d.data().bookingRequestId;
+          if (bid) ids.add(bid);
+        });
+        setActiveBookingIds(ids);
+      }, () => {});
+    return () => unsub();
+  }, [currentUser?.uid]);
+
   const getRecipientKey = (firstName: string, lastName: string) =>
-    `${firstName.toLowerCase()}_${(lastName || 'noname').toLowerCase()}`.replace(/\s+/g, '_');
+    `${firstName.toLowerCase()}_${(lastName || 'noname').toLowerCase()}`
+      .replace(/\s+/g, '_')
+      .replace(/[~*/\[\].]/g, '');
 
   const openSendBookingModal = async (interview: Interview) => {
     setSendBookingFor(interview);
@@ -429,11 +475,15 @@ export const PostsPage: React.FC = () => {
     setEditingBookingDetails(false);
     setScheduleConfirmed(false);
     setSchedulePrePopulated(false);
+    setCgWeeklyAvail({});
+    setCgBookedSlots({});
     setBookingDraft({ note: '', selectedRecipientKeys: [], recipientDrafts: {}, lifestyleNotes: [], selectedAddress: '', emergencyContactFirstName: '', emergencyContactLastName: '', emergencyContactPhone: '', emergencyContactRelation: '', shiftStartDate: '', shiftEndDate: '', shiftOngoing: true, dayShiftTimes: {}, agreedRate: null, paymentMethod: '' });
     if (!currentUser?.uid || !db) { setLoadingCarePlan(false); return; }
     try {
-      // Use known booking doc ID if available (avoids needing a composite index)
-      const existingBookingId = bookingStatuses[`${interview.caregiverId}_${interview.jobId || interview.id}`]?.id;
+      // Only pre-fill from a previous booking when it's a genuine resend (declined/cancelled)
+      const existingBookingStatus = bookingStatuses[`${interview.caregiverId}_${interview.jobId || interview.id}`];
+      const isResendEligible = existingBookingStatus?.status === 'declined' || existingBookingStatus?.status === 'cancelled';
+      const existingBookingId = isResendEligible ? existingBookingStatus?.id : undefined;
       const [cpSnap, jpSnap, freshPostSnap, prevBookingSnap] = await Promise.all([
         db.collection('carePlans').doc(currentUser.uid).get().catch(() => null),
         db.collection('job_postings').doc(currentUser.uid).get().catch(() => null),
@@ -561,15 +611,49 @@ export const PostsPage: React.FC = () => {
         shiftEndDate: prevSchedule?.ongoing ? '' : (prevSchedule?.endDate || postForDraft?.endDate || ''),
         shiftOngoing: prevSchedule?.endDate ? false : true,
         dayShiftTimes: prevDayShiftTimes ?? Object.fromEntries(
-          (postForDraft?.daysOfWeek || []).map((day: string) => [day, [{ label: '', start: '', end: '' }]])
+          (postForDraft?.daysOfWeek || []).map((day: string) => {
+            const normalized = day.trim().charAt(0).toUpperCase() + day.trim().slice(1, 3).toLowerCase();
+            return [normalized, [{ label: '', start: '', end: '' }]];
+          })
         ),
         agreedRate: prevBookingData?.rate ?? null,
-        paymentMethod: prevBookingData?.paymentMethod || (postForDraft as any)?.paymentMethod || '',
+        paymentMethod: (() => {
+          const raw = (prevBookingData?.paymentMethod || (postForDraft as any)?.paymentMethod || '').toLowerCase();
+          return raw === 'cash' ? 'cash' : raw === 'card' || raw === 'credit' ? 'credit' : '';
+        })(),
         selectedAddress: prevBookingData?.address || '',
         note: prevBookingData?.notes || '',
         lifestyleNotes: prevBookingData?.lifestylePreferences || lifestyleNotes,
       });
       if (prevDayShiftTimes) { setSchedulePrePopulated(true); setScheduleConfirmed(true); }
+
+      // Load caregiver's weeklyAvailability + existing booked slots for blocking check
+      try {
+        const DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const BUFFER = 30;
+        const toMinLocal = (t: string) => { const [h, m] = (t || '00:00').split(':').map(Number); return h * 60 + m; };
+        const [cgSnap, apptSnap] = await Promise.all([
+          db.collection('caregivers').doc(interview.caregiverId).get(),
+          db.collection('appointments')
+            .where('caregiverId', '==', interview.caregiverId)
+            .where('status', 'in', ['confirmed', 'in-progress'])
+            .get().catch(() => null),
+        ]);
+        if (cgSnap.exists) setCgWeeklyAvail((cgSnap.data() as any)?.weeklyAvailability || {});
+        if (apptSnap) {
+          const booked: Record<string, Array<{s:number;e:number}>> = {};
+          apptSnap.docs.forEach(doc => {
+            const appt = doc.data();
+            if (!appt.date || !appt.time) return;
+            const dayAbbr = DAY_ABBR[new Date(appt.date + 'T12:00:00').getDay()];
+            if (!booked[dayAbbr]) booked[dayAbbr] = [];
+            const start = toMinLocal(appt.time);
+            const dur = appt.duration ? appt.duration * 60 : (appt.cost ? Math.round(appt.cost / (appt.hourlyRate || 25)) * 60 : 120);
+            booked[dayAbbr].push({ s: start - BUFFER, e: start + dur + BUFFER });
+          });
+          setCgBookedSlots(booked);
+        }
+      } catch { /* non-fatal */ }
     } catch (e) { console.error('openSendBookingModal error', e); }
     finally { setLoadingCarePlan(false); }
   };
@@ -582,7 +666,27 @@ export const PostsPage: React.FC = () => {
       const post = interview.jobId ? posts.find(p => p.id === interview.jobId) : undefined;
       const key = `${interview.caregiverId}_${interview.jobId || interview.id}`;
       const existing = bookingStatuses[key];
-      const isResend = existing?.status === 'declined';
+      const isResend = existing?.status === 'declined' || existing?.status === 'cancelled';
+
+      // Block duplicate bookings — never create a second doc when one is already active.
+      // Exception: if all shifts are completed/cancelled the booking is effectively done
+      // and a fresh re-booking should be allowed.
+      // Use the in-memory activeBookingIds set (kept in sync via real-time listener)
+      // instead of a raw shifts query — the query would be rejected by Firestore rules
+      // because it doesn't include clientId/caregiverId in the filter.
+      if (existing?.status === 'accepted') {
+        if (activeBookingIds.has(existing.id)) {
+          addToast('You already have an active booking with this caregiver.', 'info');
+          setSendingBooking(false);
+          return;
+        }
+        // Not in activeBookingIds — all shifts done, fall through to create a fresh one
+      }
+      if (existing?.status === 'pending') {
+        addToast('Your booking request is already pending a response.', 'info');
+        setSendingBooking(false);
+        return;
+      }
 
       // Prefer Auth photo; fall back to Firestore users document
       let clientPhotoURL: string | null = user.photoURL || null;
@@ -620,7 +724,10 @@ export const PostsPage: React.FC = () => {
         jobTitle: interview.jobTitle || post?.title || '',
         address: bookingDraft.selectedAddress || loadedPlan?.primaryAddress || (post ? [post.city, post.state, post.zipCode].filter(Boolean).join(', ') : ''),
         rate: bookingDraft.agreedRate ?? post?.rate ?? null,
-        paymentMethod: bookingDraft.paymentMethod || (post as any)?.paymentMethod || null,
+        paymentMethod: (() => {
+          const raw = (bookingDraft.paymentMethod || (post as any)?.paymentMethod || '').toLowerCase();
+          return raw === 'cash' ? 'cash' : raw ? 'credit' : null;
+        })(),
         careNeeds: [...new Set(Object.values(bookingDraft.recipientDrafts).flatMap(rd => rd.careNeeds))],
         careRecipients: selectedRecipients,
         lifestylePreferences: bookingDraft.lifestyleNotes,
@@ -629,15 +736,22 @@ export const PostsPage: React.FC = () => {
           phone: bookingDraft.emergencyContactPhone,
           relationship: bookingDraft.emergencyContactRelation,
         } : null,
-        schedule: {
-          days: Object.keys(bookingDraft.dayShiftTimes).length > 0
-            ? Object.keys(bookingDraft.dayShiftTimes).sort((a, b) => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(a) - ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(b))
-            : post?.daysOfWeek || [],
-          startDate: bookingDraft.shiftStartDate || post?.startDate || (post as any)?.date || null,
-          endDate: bookingDraft.shiftOngoing ? null : (bookingDraft.shiftEndDate || post?.endDate || null),
-          ongoing: bookingDraft.shiftOngoing,
-          dayShiftTimes: bookingDraft.dayShiftTimes,
-        },
+        schedule: (() => {
+          const DAY_ORDER = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+          const normDay = (d: string) => d.trim().charAt(0).toUpperCase() + d.trim().slice(1,3).toLowerCase();
+          const normalizedDST = Object.fromEntries(
+            Object.entries(bookingDraft.dayShiftTimes).map(([k, v]) => [normDay(k), v])
+          );
+          return {
+            days: Object.keys(normalizedDST).length > 0
+              ? Object.keys(normalizedDST).sort((a, b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b))
+              : (post?.daysOfWeek || []).map(normDay),
+            startDate: bookingDraft.shiftStartDate || post?.startDate || (post as any)?.date || null,
+            endDate: bookingDraft.shiftOngoing ? null : (bookingDraft.shiftEndDate || post?.endDate || null),
+            ongoing: bookingDraft.shiftOngoing,
+            dayShiftTimes: normalizedDST,
+          };
+        })(),
         notes: bookingDraft.note.trim() || null,
         interviewId: interview.id,
       };
@@ -1116,11 +1230,23 @@ export const PostsPage: React.FC = () => {
                                     <Clock3 className="w-3.5 h-3.5" /> Booking sent · Awaiting response
                                   </span>
                                 );
-                                if (booking?.status === 'accepted') return (
-                                  <span className="flex items-center gap-1.5 text-xs font-semibold text-green-700">
-                                    <CheckCircle className="w-3.5 h-3.5" /> Booking accepted
-                                  </span>
-                                );
+                                if (booking?.status === 'accepted') {
+                                  const hasActiveShifts = activeBookingIds.has(booking.id);
+                                  if (hasActiveShifts) return (
+                                    <span className="flex items-center gap-1.5 text-xs font-semibold text-green-700">
+                                      <CheckCircle className="w-3.5 h-3.5" /> Booking accepted
+                                    </span>
+                                  );
+                                  // All shifts completed — offer to re-book
+                                  return (
+                                    <button
+                                      onClick={() => openSendBookingModal(interview)}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700"
+                                    >
+                                      <RefreshCw className="w-3.5 h-3.5" /> Re-book
+                                    </button>
+                                  );
+                                }
                                 if (booking?.status === 'declined' || booking?.status === 'cancelled') return (
                                   <>
                                     <span className="flex items-center gap-1.5 text-xs text-red-600 font-medium">
@@ -1177,6 +1303,52 @@ export const PostsPage: React.FC = () => {
         const isResend = bookingStatuses[key]?.status === 'declined' || bookingStatuses[key]?.status === 'cancelled';
         const d = bookingDraft;
         const upd = (patch: Partial<typeof bookingDraft>) => setBookingDraft(prev => ({ ...prev, ...patch }));
+
+        // Save & Confirm button validation
+        const scheduleDays = Object.entries(d.dayShiftTimes);
+        const noScheduleDays = scheduleDays.length === 0;
+        const daysWithMissingTimes = scheduleDays
+          .filter(([, blocks]) => (blocks as any[]).some((b: any) => !b.start || !b.end))
+          .map(([day]) => day);
+        // Availability check — flag days outside caregiver's weekly availability
+        const ABBR_TO_FULL: Record<string, string> = { Sun:'sunday', Mon:'monday', Tue:'tuesday', Wed:'wednesday', Thu:'thursday', Fri:'friday', Sat:'saturday' };
+        const normalizedAvail = weeklySlotsToBl(cgWeeklyAvail) as Record<string, string[]>;
+        const hasCgAvail = Object.keys(cgWeeklyAvail).length > 0;
+        const availUnavailDays = hasCgAvail ? scheduleDays
+          .filter(([day, blocks]) => {
+            const filled = (blocks as any[]).filter((b: any) => b.start && b.end);
+            if (filled.length === 0) return false;
+            const fullDay = ABBR_TO_FULL[day] || ABBR_TO_FULL[day.slice(0,3)] || day.toLowerCase();
+            const daySlots = normalizedAvail[fullDay] || [];
+            if (daySlots.length === 0) return true; // no availability on this day
+            // Check each shift block against caregiver's availability
+            return filled.some((b: any) => {
+              const [sh, sm] = b.start.split(':').map(Number);
+              const [eh, em] = b.end.split(':').map(Number);
+              const dur = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+              if (dur <= 0) return false;
+              const fakeCaregiver = { weeklyAvailability: cgWeeklyAvail } as any;
+              const checkDate = (() => {
+                const today = new Date();
+                const targetDow = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'].indexOf(fullDay);
+                const diff = (targetDow - today.getDay() + 7) % 7;
+                const d2 = new Date(today); d2.setDate(today.getDate() + diff);
+                return d2;
+              })();
+              return !availabilityService.checkWeeklyAvailability(fakeCaregiver, checkDate, b.start, dur);
+            });
+          })
+          .map(([day]) => day)
+        : [];
+
+        const saveIsDisabled = !d.agreedRate || !d.paymentMethod || !d.selectedAddress || noScheduleDays || daysWithMissingTimes.length > 0;
+        const saveTip = !d.agreedRate ? 'Enter agreed rate to save'
+          : !d.paymentMethod ? 'Select a payment method to save'
+          : !d.selectedAddress ? 'Select a care location to save'
+          : noScheduleDays ? 'Add at least one day with shift times'
+          : daysWithMissingTimes.length > 0 ? `Set start & end time for: ${daysWithMissingTimes.join(', ')}`
+          : '';
+
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setSendBookingFor(null)} />
@@ -1193,8 +1365,8 @@ export const PostsPage: React.FC = () => {
                     editingBookingDetails ? (
                       <button type="button"
                         onClick={() => { setEditingBookingDetails(false); setScheduleConfirmed(true); }}
-                        disabled={!d.agreedRate || !d.paymentMethod || !d.selectedAddress}
-                        title={!d.agreedRate ? 'Enter agreed rate to save' : !d.paymentMethod ? 'Select a payment method to save' : !d.selectedAddress ? 'Select a care location to save' : ''}
+                        disabled={saveIsDisabled}
+                        title={saveTip}
                         className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
                         Save & Confirm
@@ -1280,11 +1452,11 @@ export const PostsPage: React.FC = () => {
                             <div>
                               <p className="text-xs font-semibold text-slate-500 mb-1.5">Payment method</p>
                               <div className="flex gap-2">
-                                {['Cash', 'Card'].map(method => (
-                                  <button key={method} type="button"
-                                    onClick={() => upd({ paymentMethod: d.paymentMethod === method ? '' : method })}
-                                    className={`text-xs px-4 py-1.5 rounded-full border transition-colors ${d.paymentMethod === method ? 'bg-primary-500 text-white border-primary-500' : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'}`}>
-                                    {method}
+                                {([{ value: 'cash', label: 'Cash' }, { value: 'credit', label: 'Card' }] as const).map(({ value, label }) => (
+                                  <button key={value} type="button"
+                                    onClick={() => upd({ paymentMethod: d.paymentMethod === value ? '' : value })}
+                                    className={`text-xs px-4 py-1.5 rounded-full border transition-colors ${d.paymentMethod === value ? 'bg-primary-500 text-white border-primary-500' : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'}`}>
+                                    {label}
                                   </button>
                                 ))}
                               </div>
@@ -1303,7 +1475,8 @@ export const PostsPage: React.FC = () => {
 
                     {/* Schedule — start date, end/ongoing, per-day shift times */}
                     {(() => {
-                      const todayIso = new Date().toISOString().split('T')[0];
+                      const _td = new Date();
+                      const todayIso = `${_td.getFullYear()}-${String(_td.getMonth()+1).padStart(2,'0')}-${String(_td.getDate()).padStart(2,'0')}`;
                       const fmtTime = (t: string, suffix = '') => {
                         if (!t) return '';
                         const nextDay = t.startsWith('~');
@@ -1322,12 +1495,77 @@ export const PostsPage: React.FC = () => {
                         const h = Math.floor(i / 4), m = (i % 4) * 15;
                         return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
                       });
+                      // ── Caregiver availability helpers ──────────────────
+                      const toMin = (t: string) => { const [h, m] = (t || '00:00').split(':').map(Number); return h * 60 + m; };
+                      // overnight is cross-midnight: e(360) < s(1380) → getDaySlots splits it
+                      const BLOCK_MINS: Record<string, {s:number;e:number}> = { morning:{s:360,e:720}, afternoon:{s:720,e:1080}, evening:{s:1080,e:1380}, overnight:{s:1380,e:360} };
+                      const getDaySlots = (abbr: string): Array<{s:number;e:number}> => {
+                        if (!hasCgAvail) return [];
+                        const full = ABBR_TO_FULL[abbr] || abbr.toLowerCase();
+                        const raw: any[] = cgWeeklyAvail[full] || [];
+                        const result: {s:number;e:number}[] = [];
+                        for (const sl of raw) {
+                          let s: number, e: number;
+                          if (typeof sl === 'string') {
+                            const bm = BLOCK_MINS[sl]; if (!bm) continue;
+                            s = bm.s; e = bm.e;
+                          } else {
+                            if (!sl?.start) continue;
+                            s = toMin(sl.start); e = toMin(sl.end);
+                          }
+                          if (e > 0 && e <= s) {
+                            // cross-midnight (overnight 23:00–06:00): split into two ranges
+                            result.push({s, e: 1440}); // 23:00–midnight
+                            result.push({s: 0, e});    // midnight–06:00
+                          } else {
+                            result.push({s, e: e > 0 ? e : 1440});
+                          }
+                        }
+                        return result;
+                      };
+                      const isDayAvailable = (abbr: string) => !hasCgAvail || getDaySlots(abbr).length > 0;
+                      const isBooked = (abbr: string, m: number) =>
+                        (cgBookedSlots[abbr] || []).some(b => m >= b.s && m < b.e);
+                      const availTimeOpts = (abbr: string) => {
+                        if (!hasCgAvail) return TIME_OPTS; // caregiver hasn't set any availability yet
+                        const slots = getDaySlots(abbr);
+                        if (slots.length === 0) return TIME_OPTS.filter(t => !isBooked(abbr, toMin(t))); // not in their schedule but warn-only — show all times
+                        return TIME_OPTS.filter(t => {
+                          const m = toMin(t);
+                          return slots.some(sl => m >= sl.s && m < sl.e) && !isBooked(abbr, m);
+                        });
+                      };
+                      const availEndOpts = (abbr: string, startT: string) => {
+                        if (!hasCgAvail) return TIME_OPTS.filter(t => !startT || t > startT);
+                        const slots = getDaySlots(abbr);
+                        if (slots.length === 0) return TIME_OPTS.filter(t => (!startT || t > startT) && !isBooked(abbr, toMin(t))); // warn-only day — show all end times
+                        const startM = startT ? toMin(startT) : 0;
+                        // Same-day end times (after start)
+                        const sameDayOpts = TIME_OPTS.filter(t => {
+                          if (startT && t <= startT) return false;
+                          const m = toMin(t);
+                          return slots.some(sl => m > sl.s && m <= sl.e) && !isBooked(abbr, m);
+                        });
+                        // Cross-midnight end times: if start is 23:00+, add ~HH:MM next-morning options
+                        let nextDayOpts: string[] = [];
+                        if (startM >= 1380) {
+                          const morningSlot = slots.find(sl => sl.s === 0 && sl.e > 0);
+                          if (morningSlot) {
+                            nextDayOpts = TIME_OPTS
+                              .filter(t => { const m = toMin(t); return m >= 0 && m <= morningSlot.e && !isBooked(abbr, m); })
+                              .map(t => `~${t}`);
+                          }
+                        }
+                        return [...sameDayOpts, ...nextDayOpts];
+                      };
                       const fmtTimeOpt = (t: string) => {
                         if (!t) return '';
-                        const [hh, mm] = t.split(':').map(Number);
+                        const isNext = t.startsWith('~');
+                        const raw = isNext ? t.slice(1) : t;
+                        const [hh, mm] = raw.split(':').map(Number);
                         const ap = hh < 12 ? 'AM' : 'PM';
                         const h12 = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh;
-                        return `${h12}:${String(mm).padStart(2,'0')} ${ap}`;
+                        return `${h12}:${String(mm).padStart(2,'0')} ${ap}${isNext ? ' +1' : ''}`;
                       };
                       const calcDayHours = (blocks: Array<{start:string;end:string}>) => {
                         return blocks.reduce((sum, b) => {
@@ -1360,7 +1598,7 @@ export const PostsPage: React.FC = () => {
                                   <div>
                                     <p className="text-xs font-semibold text-slate-500 mb-1">Start date</p>
                                     <input type="date" value={d.shiftStartDate} min={todayIso}
-                                      onChange={e => upd({ shiftStartDate: e.target.value })}
+                                      onChange={e => { const v = e.target.value; upd({ shiftStartDate: v && v < todayIso ? todayIso : v }); }}
                                       className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-300" />
                                   </div>
                                   <div>
@@ -1386,6 +1624,7 @@ export const PostsPage: React.FC = () => {
                                               <div className="flex items-center gap-2">
                                                 <p className="text-xs font-bold text-slate-700">{day}</p>
                                                 {(() => { const hrs = fmtHours(calcDayHours(d.dayShiftTimes[day] || [])); return hrs ? <span className="text-xs text-primary-600 font-semibold">{hrs}</span> : null; })()}
+                                                {!isDayAvailable(day) && <span className="text-[10px] font-semibold text-orange-600 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded-full">Not available</span>}
                                               </div>
                                               <button type="button" onClick={() => { const next = { ...d.dayShiftTimes }; delete next[day]; upd({ dayShiftTimes: next }); }} className="text-xs text-slate-400 hover:text-red-500 transition-colors">Remove</button>
                                             </div>
@@ -1396,15 +1635,14 @@ export const PostsPage: React.FC = () => {
                                                     onChange={e => { const nb = [...blocks]; nb[bi] = { ...block, start: e.target.value }; upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: nb } }); }}
                                                     className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary-300 bg-white">
                                                     <option value="">Start</option>
-                                                    {TIME_OPTS.map(t => <option key={t} value={t}>{fmtTimeOpt(t)}</option>)}
+                                                    {availTimeOpts(day).map(t => <option key={t} value={t}>{fmtTimeOpt(t)}</option>)}
                                                   </select>
                                                   <span className="text-xs text-slate-400 shrink-0">to</span>
-                                                  <select value={stripNextDay(block.end)}
+                                                  <select value={block.end}
                                                     onChange={e => { const nb = [...blocks]; nb[bi] = { ...block, end: e.target.value }; upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: nb } }); }}
                                                     className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary-300 bg-white">
                                                     <option value="">End</option>
-                                                    {TIME_OPTS.filter(t => !block.start || t > block.start).map(t => <option key={t} value={t}>{fmtTimeOpt(t)}</option>)}
-                                                    {block.start && TIME_OPTS.filter(t => t <= block.start).map(t => <option key={`nd-${t}`} value={t}>{fmtTimeOpt(t)} (next day)</option>)}
+                                                    {availEndOpts(day, stripNextDay(block.start)).map(t => <option key={t} value={t}>{fmtTimeOpt(t)}</option>)}
                                                   </select>
                                                 </div>
                                               ))}
@@ -1419,13 +1657,17 @@ export const PostsPage: React.FC = () => {
                                   <div>
                                     <p className="text-xs font-semibold text-slate-500 mb-2">Add a day</p>
                                     <div className="flex flex-wrap gap-1.5">
-                                      {availableDays.map(day => (
-                                        <button key={day} type="button"
-                                          onClick={() => upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: [{ label: '', start: '', end: '' }] } })}
-                                          className="text-xs px-3 py-1.5 rounded-lg border-2 border-dashed border-slate-300 text-slate-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
-                                          + {day}
-                                        </button>
-                                      ))}
+                                      {availableDays.map(day => {
+                                        const avail = isDayAvailable(day);
+                                        return (
+                                          <button key={day} type="button"
+                                            onClick={() => upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: [{ label: '', start: '', end: '' }] } })}
+                                            className={`text-xs px-3 py-1.5 rounded-lg border-2 border-dashed transition-colors ${avail ? 'border-slate-300 text-slate-500 hover:border-primary-400 hover:text-primary-600' : 'border-orange-200 text-orange-400 hover:border-orange-300'}`}
+                                            title={avail ? undefined : 'Caregiver not available this day'}>
+                                            + {day}
+                                          </button>
+                                        );
+                                      })}
                                     </div>
                                   </div>
                                 )}
@@ -2056,7 +2298,7 @@ export const PostsPage: React.FC = () => {
             rating: schedulingFor.rating,
             hourlyRate: schedulingFor.hourlyRate,
           } as any}
-          jobPosts={openPosts.map(p => ({ id: p.id, title: p.title, startDate: p.startDate || (p as any).date }))}
+          jobPosts={openPosts.map(p => ({ id: p.id, title: p.title, createdAt: p.createdAt }))}
           preselectedJobId={panelPostId || undefined}
           onClose={() => setSchedulingFor(null)}
           onSuccess={msg => { addToast(msg, 'success'); setSchedulingFor(null); }}

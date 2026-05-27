@@ -100,8 +100,8 @@ export const CaregiverSignupFlow: React.FC<CaregiverSignupFlowProps> = ({
           city: formData.city,
           state: formData.state,
           zipCode: formData.zipCode,
-          lat: coords?.lat ?? null,
-          lng: coords?.lng ?? null,
+          latitude: coords?.lat ?? null,
+          longitude: coords?.lng ?? null,
         }) as any);
       }
 

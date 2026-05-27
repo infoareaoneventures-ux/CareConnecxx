@@ -5,6 +5,7 @@ import { documentUploadService, DocumentType } from '../../services/documentUplo
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
 import type { Caregiver, CaregiverDocument, UserProfile } from '../../types';
+import { geocodeToLatLng } from '../../utils/geocode';
 
 const TRANSPORT_DOCS: { type: DocumentType; label: string; desc: string }[] = [
   { type: 'driversLicense', label: "Driver's License", desc: "Front of your valid driver's license" },
@@ -70,6 +71,7 @@ export const CaregiverAccountSettings: React.FC = () => {
   const [savingGender, setSavingGender] = useState(false);
   const [savingPhone, setSavingPhone] = useState(false);
   const [savingAddress, setSavingAddress] = useState(false);
+  const [zipLookingUp, setZipLookingUp] = useState(false);
 
   // Transport doc upload status
   const [transportStatus, setTransportStatus] = useState<Record<string, 'idle' | 'uploading' | 'done' | 'approved' | 'expired' | 'rejected' | 'error'>>({
@@ -164,12 +166,34 @@ export const CaregiverAccountSettings: React.FC = () => {
     finally { setSavingPhone(false); }
   };
 
+  const handleZipChange = async (val: string) => {
+    setZip(val);
+    if (val.length !== 5 || !/^\d{5}$/.test(val)) return;
+    setZipLookingUp(true);
+    try {
+      const res = await fetch(`https://api.zippopotam.us/us/${val}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const place = data.places?.[0];
+      if (place) {
+        setCity(place['place name'] || '');
+        setState(place['state abbreviation'] || '');
+      }
+    } catch { /* best effort */ }
+    finally { setZipLookingUp(false); }
+  };
+
   const saveAddress = async () => {
     if (!currentUser?.uid) return;
     setSavingAddress(true);
     try {
+      // Geocode so job-board distance filtering works instantly
+      const coords = await geocodeToLatLng(street, city, state, zip);
       await dbService.updateUser('caregivers', currentUser.uid, {
         street, zipCode: zip, city, state,
+        location: city && state ? `${city}, ${state}` : city || '',
+        latitude: coords?.lat ?? null,
+        longitude: coords?.lng ?? null,
       } as any);
       setEditingAddress(false);
       addToast('Address saved', 'success');
@@ -354,8 +378,11 @@ export const CaregiverAccountSettings: React.FC = () => {
                   <input value={street} onChange={e => setStreet(e.target.value)} placeholder="Street"
                     className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-primary-400" />
                   <div className="grid grid-cols-3 gap-2">
-                    <input value={zip} onChange={e => setZip(e.target.value)} placeholder="Zip"
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-primary-400" />
+                    <div className="relative">
+                      <input value={zip} onChange={e => handleZipChange(e.target.value)} placeholder="Zip" maxLength={5}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-primary-400" />
+                      {zipLookingUp && <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">…</span>}
+                    </div>
                     <input value={city} onChange={e => setCity(e.target.value)} placeholder="City"
                       className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-primary-400" />
                     <input value={state} onChange={e => setState(e.target.value)} placeholder="State"

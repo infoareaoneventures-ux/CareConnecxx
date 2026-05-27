@@ -9,6 +9,15 @@ import firebase from '../../lib/firebase';
 import { jobApplicationService, useMyApplications } from '../../hooks/useJobApplications';
 import { Skeleton } from '../ui/Skeleton';
 
+// Pure math — no API calls. Jobs store lat/lng at creation time.
+function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 3959;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 function hasValidTransportDocs(profile: Caregiver | null): boolean {
     if (!profile) return false;
     if (profile.transportationBadge === true) return true;
@@ -111,6 +120,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
 
     const [hiddenJobs, setHiddenJobs] = useState<JobPost[]>([]);
     const [hiddenJobsLoading, setHiddenJobsLoading] = useState(false);
+    const [cgLat, setCgLat] = useState<number | null>(null);
+    const [cgLng, setCgLng] = useState<number | null>(null);
 
     const LS_APPS_KEY = 'careconnex.jobboard.lastCheckedApps';
     const LS_IVS_KEY  = 'careconnex.jobboard.lastCheckedInterviews';
@@ -196,6 +207,19 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             );
         return unsubscribe;
     }, [activeTab, applications, onShowToast]);
+
+    // Resolve caregiver coords from profile — used for instant distance math against job.lat/job.lng
+    // Falls back to p.lat/p.lng for accounts created before the field-name standardisation
+    useEffect(() => {
+        if (!profile) return;
+        const p = profile as any;
+        const resolvedLat = p.latitude ?? p.lat ?? null;
+        const resolvedLng = p.longitude ?? p.lng ?? null;
+        if (resolvedLat && resolvedLng) {
+            setCgLat(resolvedLat);
+            setCgLng(resolvedLng);
+        }
+    }, [profile]);
 
     useEffect(() => {
         if (!profile?.uid) return;
@@ -408,6 +432,13 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         if (filterCareTypes.length > 0) {
             const jct: string[] = Array.isArray(job.careTypes) ? (job.careTypes as unknown as string[]) : [];
             if (!filterCareTypes.some(ct => jct.includes(ct))) return false;
+        }
+        // Filter out jobs beyond the caregiver's service radius (only when both sets of coords are known)
+        const jobLat = (job as any).lat;
+        const jobLng = (job as any).lng;
+        const cgRadius = (profile as any)?.serviceRadius || (profile as any)?.travelRadius || 0;
+        if (cgLat && cgLng && jobLat && jobLng && cgRadius > 0) {
+            if (haversineDistance(cgLat, cgLng, jobLat, jobLng) > cgRadius) return false;
         }
         return true;
     });
@@ -690,7 +721,9 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                     <h4 className="font-bold text-[var(--color-neutral-900)] text-lg">{job.title}</h4>
                                                     <div className="flex items-center text-sm text-[var(--color-neutral-500)] mt-1 gap-3 flex-wrap">
                                                         <span className="flex items-center"><MapPin className="w-3 h-3 mr-1" /> {job.location}</span>
-                                                        {typeof job.distance === 'number' && <span className="text-xs">({job.distance.toFixed(1)} mi)</span>}
+                                                        {cgLat && cgLng && (job as any).lat && (job as any).lng && (
+                                                            <span className="text-xs">({haversineDistance(cgLat, cgLng, (job as any).lat, (job as any).lng).toFixed(1)} mi away)</span>
+                                                        )}
                                                     </div>
                                                 </div>
                                                 <div className="text-right flex-shrink-0">

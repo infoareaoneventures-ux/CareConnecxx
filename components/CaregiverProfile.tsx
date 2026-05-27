@@ -127,7 +127,10 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
 
   // Derived display values from profile
   const displayServices: string[] = profile.services || profile.skills || editServices;
-  const displayLocation: string = profile.location || (profile.city && profile.state ? `${profile.city}, ${profile.state}` : editLocation);
+  // Location is always derived from the city/state saved in Account Settings — never from free-text input
+  const displayLocation: string = (profile.city && profile.state)
+    ? `${profile.city}, ${profile.state}`
+    : profile.city || profile.location || '';
   const displayRadius: string = String(profile.serviceRadius || editRadius);
   const displayAvailability: Record<string, string[]> = weeklySlotsToBl((profile.weeklyAvailability || {}) as Record<string, any[]>) as Record<string, string[]> || editAvailability;
   const displayLanguages: string[] = profile.languages || editLanguages;
@@ -626,21 +629,20 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 <h3 className="font-bold text-slate-900">Location &amp; Travel</h3>
                 <SectionActions
                   section="location"
-                  onEdit={() => { setEditLocation(displayLocation); setEditRadius(displayRadius); setEditingSection('location'); }}
-                  onSave={() => saveSection({ location: editLocation, serviceRadius: parseInt(editRadius) || 10 })}
+                  onEdit={() => { setEditRadius(displayRadius); setEditingSection('location'); }}
+                  onSave={() => saveSection({ serviceRadius: parseInt(editRadius) || 10 })}
                 />
               </div>
               {editingSection === 'location' ? (
                 <div className="space-y-4">
-                  <div>
-                    <label className="text-xs text-slate-500 block mb-1">City / Neighborhood</label>
-                    <input
-                      type="text"
-                      className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-100 focus:border-primary-400"
-                      value={editLocation}
-                      onChange={e => setEditLocation(e.target.value)}
-                      placeholder="e.g. San Jose, CA"
-                    />
+                  <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-50 rounded-xl px-3 py-2.5">
+                    <MapPin className="w-4 h-4 text-primary-400 flex-shrink-0" />
+                    <span>
+                      {displayLocation
+                        ? <>Lives in <span className="font-medium text-slate-700">{displayLocation}</span></>
+                        : <span className="italic">Update your address in Account Settings to set your location.</span>
+                      }
+                    </span>
                   </div>
                   <div>
                     <label className="text-xs text-slate-500 block mb-2">Willing to travel within</label>
@@ -669,7 +671,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                       Lives in {displayLocation}
                     </div>
                   ) : (
-                    <p className="text-sm text-slate-400 italic">Location not set. Tap Edit to add.</p>
+                    <p className="text-sm text-slate-400 italic">Add your address in Account Settings.</p>
                   )}
                   <div className="flex items-center gap-2 text-sm text-slate-600">
                     <MapPin className="w-4 h-4 text-slate-300 flex-shrink-0" />

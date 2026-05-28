@@ -887,6 +887,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Proactive reflection drafts — Cara's pending/approved SMS suggestions for human review.
+    // Admin-only UI surface (ProactiveReflectionDashboard). Cloud Functions use the Admin
+    // SDK and bypass rules entirely, so the sender + reflection cron are unaffected.
+    match /proactive_drafts/{draftId} {
+      allow read, write: if isAdmin();
+    }
+
     // DENY ALL OTHER ACCESS BY DEFAULT
     // ==========================================
     match /{document=**} {

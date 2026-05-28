@@ -29,6 +29,7 @@ import { pickSkill } from "./skillPicker";
 import { findSkill, buildSkillDirective } from "./skills";
 import { runAugmenters, type PromptAugmenter, type AugmenterContext } from "./promptAugmenters";
 import { experimentsAugmenter } from "./promptExperiments";
+import { DEFAULT_AUGMENTERS } from "./defaultPromptAugmenters";
 import "./experimentRegistry"; // side-effect: registers active experiments
 import {
   classifyEmotionalContext,
@@ -985,29 +986,14 @@ export async function runQaAgent(params: {
     turnCount: Math.floor(history.length / 2),
     metrics,
   };
-  const PIPELINE: PromptAugmenter[] = [experimentsAugmenter];
+  const PIPELINE: PromptAugmenter[] = [
+    experimentsAugmenter,
+    ...DEFAULT_AUGMENTERS,
+  ];
   const augResult = await runAugmenters(systemPrompt, PIPELINE, augmenterCtx);
   systemPrompt = augResult.systemPrompt;
   if (augResult.applied.length) {
     metrics.augmentersApplied = augResult.applied;
-  }
-
-  // Unconfirmed-identity directive — set when the phone exists in our system
-  // but onboarding has not completed and the user declined (or hasn't yet
-  // accepted) the onboarding offer. Cara must NOT reference any senior, care
-  // plan, appointment, or care-team data because that data may belong to a
-  // different person on the same family link. Cara should answer general
-  // questions only and steer toward completing onboarding when relevant.
-  if ((session as any)?.__unconfirmedIdentity) {
-    systemPrompt +=
-      "\n\nUNCONFIRMED IDENTITY: This phone is in the system but the speaker has not completed onboarding, " +
-      "so we do not know who they are or what care plan they belong to. " +
-      "Do NOT mention any senior, caregiver, appointment, interview, care plan, family group, or other person's data — " +
-      "treat as if you have no profile context (because what's on file may be someone else's). " +
-      "Do NOT call any tool that reads or writes care data (matching, booking, journal, scheduling, payments). " +
-      "If they ask whether you know them, say plainly: \"I have your number on file but not your name yet — " +
-      "we never finished setting up your account. Want to do that now?\" " +
-      "Otherwise answer general questions about CareConnex (what we do, pricing, how it works) and gently nudge toward setup.";
   }
 
   // Profile review mode — flipped by the inbound webhook when classifyIntent
@@ -1036,16 +1022,6 @@ export async function runQaAgent(params: {
       "Step 4 — Use update_senior_profile for emergency contact, physician, diagnoses, allergies. Use update_care_plan for medications, careNeeds, dietary, special instructions. Use update_memory_file for durable narrative facts (personality, routines, family). " +
       "Step 5 — After each successful patch, ask if there's anything else to fix (ONE question). When the family says \"that's it\", \"all good\", \"nothing else\", or equivalent, keep the closing reply warm and short. " +
       "EXIT SIGNAL: when and only when the family has confirmed they're done, end your reply with the literal token [[EXIT_PROFILE_REVIEW]] on its own line. The post-processor strips the token before sending and clears the session flag. Do NOT emit the token while the user is still correcting fields.";
-  }
-
-  // Language directive — when the user has a non-English preference on file,
-  // tell Claude to respond in that language. Without this, all of Cara's
-  // generated prose stays English even when the user wrote in Spanish.
-  const preferredLanguage = (session as any)?.preferredLanguage as string | undefined;
-  if (preferredLanguage === "es") {
-    systemPrompt += "\n\nLANGUAGE: The family member speaks Spanish. Respond in warm, natural Spanish — " +
-      "keep the same tone as Cara's English voice (close, direct, no chatbot phrasing). Do not switch back " +
-      "to English unless the user does first.";
   }
 
   // Unconfirmed-identity short-circuits: skip all per-phone task/goal/agent
@@ -1093,24 +1069,12 @@ export async function runQaAgent(params: {
   try {
     if (!skipSend) await startTyping(chatId).catch(() => {});
 
-    // Re-inject persona + epistemic reminder to prevent voice drift. Earlier
-    // cadence (every 10 turns) was too late — drift starts ~turn 4–6, so by 10
-    // Cara has already broken character at least once. Re-inject on:
-    //   • every 4th turn (catches gradual drift), OR
-    //   • the turn immediately after the previous reply was modified by the
-    //     supervisor / linter (`recentLintViolation` is written at end of the
-    //     prior turn from `metrics.postProcessModified`)
-    const turnCount         = Math.floor(history.length / 2);
-    const recentLintViolation = !!(session as Record<string, unknown> | undefined)?.recentLintViolation;
-    if ((turnCount > 0 && turnCount % 4 === 0) || recentLintViolation) {
-      systemPrompt +=
-        "\n\n<system_reminder>You are Cara — warm, direct, specific. " +
-        "Text format only: no bullet points, no headers, no em-dashes. " +
-        "Keep replies under 300 characters when possible. " +
-        "Lead with the human before the data. " +
-        "Epistemic: only state facts from your context or tool results. If uncertain, say 'I don't have that info' rather than guessing. " +
-        "Tools available — use them for fresh data and to take real actions.</system_reminder>";
-    }
+    // The persona-reinject + epistemic guard now ships via the
+    // personaReinjectAugmenter (every 4th turn, or after a lint violation) —
+    // see defaultPromptAugmenters.ts. Other inline append blocks below will
+    // migrate the same way as we expand the augmenter registry.
+
+    const turnCount = Math.floor(history.length / 2);
 
     // Working-memory checklist (DeepAgents TodoListMiddleware port). When the
     // session has a non-empty todos list, surface it so Claude can pick up where

@@ -89,6 +89,9 @@ export { runNoVisitCheck } from './scheduled/noVisitCheck';
 // Sprint 4 — proactive reflection (hourly, drafts only, admin-review-first)
 export { runProactiveReflection, triggerProactiveReflectionNow } from './scheduled/proactiveReflection';
 
+// Proactive draft sender — every 5 min; consumes status="approved" drafts the admin reviewed.
+export { runProactiveDraftSender, triggerProactiveDraftSendNow, sendApprovedDraftNow } from './scheduled/proactiveDraftSender';
+
 // Transportation badge evaluation (daily) + on-demand refresh
 export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/transportBadge';
 

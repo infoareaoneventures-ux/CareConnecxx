@@ -22,6 +22,7 @@ import { CaregiverVerificationDashboard } from './admin/CaregiverVerificationDas
 import { CoordinatorManagement } from './admin/CoordinatorManagement';
 import { AdminBlogManager } from './admin/AdminBlogManager';
 import { AuditTrail } from './admin/AuditTrail';
+import { ProactiveReflectionDashboard } from './admin/ProactiveReflectionDashboard';
 
 interface AdminViewProps {
   onBack: () => void;
@@ -30,7 +31,8 @@ interface AdminViewProps {
 type TabId =
   | 'overview' | 'clients' | 'caregivers' | 'verification' | 'coordinators'
   | 'appointments' | 'reviews' | 'intakes' | 'matching' | 'assignments'
-  | 'finance' | 'disputes' | 'tickets' | 'messages' | 'blog' | 'audit';
+  | 'finance' | 'disputes' | 'tickets' | 'messages' | 'blog' | 'audit'
+  | 'proactive_drafts';
 
 const StatCard = ({ icon: Icon, label, value, trend, color, onClick }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -168,6 +170,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
       ],
     },
     {
+      label: 'AI Review',
+      items: [
+        { id: 'proactive_drafts' as TabId, label: 'Cara Drafts', icon: HeartHandshake },
+      ],
+    },
+    {
       label: 'Security',
       items: [
         { id: 'audit' as TabId, label: 'Audit Log', icon: Shield },
@@ -179,7 +187,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   const currentLabel = allNavItems.find(n => n.id === activeTab)?.label ?? '';
 
   // Tabs that fill the full content area without internal padding
-  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog'];
+  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog', 'proactive_drafts'];
   const isFullBleed = fullBleedTabs.includes(activeTab);
 
   return (
@@ -274,6 +282,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {activeTab === 'disputes'     && <AdminShiftHoursMediation />}
             {activeTab === 'messages'     && <AdminMessages />}
             {activeTab === 'blog'         && <AdminBlogManager />}
+            {activeTab === 'proactive_drafts' && <ProactiveReflectionDashboard onShowToast={(msg) => showToast(msg)} />}
           </div>
         ) : (
           <div className="flex-1 overflow-auto p-6 space-y-6">

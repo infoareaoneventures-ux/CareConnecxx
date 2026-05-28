@@ -2206,6 +2206,92 @@ export const dbService = {
         }
     },
 
+    // ==================== PROACTIVE REFLECTION DRAFTS ====================
+
+    /**
+     * Subscribe to proactive_drafts filtered by status, ordered newest-first.
+     * Returns the unsubscribe function. Empty status array = "all statuses".
+     */
+    subscribeProactiveDrafts: (
+        statuses: string[],
+        cb: (drafts: Array<Record<string, any>>) => void
+    ): (() => void) => {
+        if (!isConfigured || !db) {
+            cb([]);
+            return () => {};
+        }
+        let q: firebase.firestore.Query = db.collection('proactive_drafts');
+        if (statuses.length === 1) {
+            q = q.where('status', '==', statuses[0]);
+        } else if (statuses.length > 1) {
+            // Firestore 'in' supports up to 30 values — well above our 6-status union.
+            q = q.where('status', 'in', statuses);
+        }
+        return q.orderBy('createdAt', 'desc')
+            .limit(200)
+            .onSnapshot(
+                (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+                (err) => {
+                    console.error('subscribeProactiveDrafts:', err);
+                    cb([]);
+                }
+            );
+    },
+
+    approveProactiveDraft: async (
+        draftId: string,
+        adminUid: string,
+        reviewNote?: string
+    ): Promise<void> => {
+        if (!isConfigured || !db) throw new Error('Not connected');
+        const patch: Record<string, any> = {
+            status:     'approved',
+            approvedAt: new Date().toISOString(),
+            approvedBy: adminUid,
+        };
+        if (reviewNote && reviewNote.trim()) patch.approvalNote = reviewNote.trim();
+        await db.collection('proactive_drafts').doc(draftId).update(patch);
+    },
+
+    rejectProactiveDraft: async (
+        draftId: string,
+        adminUid: string,
+        reason: string
+    ): Promise<void> => {
+        if (!isConfigured || !db) throw new Error('Not connected');
+        if (!reason || !reason.trim()) throw new Error('Rejection requires a reason');
+        await db.collection('proactive_drafts').doc(draftId).update({
+            status:           'rejected',
+            rejectedAt:       new Date().toISOString(),
+            rejectedBy:       adminUid,
+            rejectionReason:  reason.trim(),
+        });
+    },
+
+    editProactiveDraftText: async (draftId: string, newText: string, adminUid: string): Promise<void> => {
+        if (!isConfigured || !db) throw new Error('Not connected');
+        const trimmed = (newText ?? '').trim();
+        if (!trimmed) throw new Error('Draft text cannot be empty');
+        if (trimmed.length > 1000) throw new Error('Draft text too long (max 1000 chars)');
+        await db.collection('proactive_drafts').doc(draftId).update({
+            draftText:    trimmed,
+            editedAt:     new Date().toISOString(),
+            editedBy:     adminUid,
+        });
+    },
+
+    /**
+     * Calls the sendApprovedDraftNow callable Cloud Function. Server validates
+     * admin auth + draft state and dispatches via the same path the scheduled
+     * sender uses, so behavior matches whether sent now or by the cron.
+     */
+    sendApprovedDraftNow: async (draftId: string): Promise<{ success: boolean; error?: string }> => {
+        if (!isConfigured) throw new Error('Not connected');
+        const fn = functions.httpsCallable('v1-sendApprovedDraftNow');
+        const result = await fn({ draftId });
+        return (result.data as { success: boolean; error?: string }) ?? { success: false, error: 'no response' };
+    },
+
     // ==================== COORDINATOR METHODS ====================
 
     getCareCoordinators: async (): Promise<any[]> => {

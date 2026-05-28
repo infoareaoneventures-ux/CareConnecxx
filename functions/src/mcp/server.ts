@@ -1,8 +1,18 @@
 import * as admin from "firebase-admin";
 import { runMatchingForClient } from "../agents/matchingAgent";
 import { logHealthDataAccessed, logBookingCreated, logAudit } from "../observability/auditLog";
-import { readMemoryFile, writeMemoryFile, MemoryFile } from "../memory/memoryFiles";
+import {
+  readMemoryFile,
+  writeMemoryFile,
+  editMemoryFile,
+  searchMemoryHybrid,
+  getMemoryContext,
+  listMemoryFiles,
+  MemoryFile,
+} from "../memory/memoryFiles";
 import { getPreferences } from "../memory/preferences";
+import { isHighRisk, proposePendingAction, buildPendingActionStub } from "../agents/pendingActions";
+import { runEphemeralSubAgent, buildTaskToolDescription, SUB_AGENT_REGISTRY } from "../agents/ephemeralSubAgents";
 
 const db = admin.firestore();
 
@@ -162,7 +172,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "read_memory_file",
-    description: "Read one of Cara's long-term memory files for a user (profile, health, family, recent_episodes, procedural).",
+    description: "Read one of Cara's long-term memory files for a user. Canonical files: profile, health, family, recent_episodes, procedural. May also be an ad-hoc slug returned by another tool (e.g. an offloaded large result like \"tool_get_invoice_history_...\").",
     input_schema: {
       type: "object",
       properties: {
@@ -183,6 +193,91 @@ export const MCP_TOOLS: McpTool[] = [
         content: { type: "string", description: "Markdown content to append to the file" },
       },
       required: ["userId", "file", "content"],
+    },
+  },
+  {
+    name: "edit_memory_file",
+    description:
+      "Surgically correct a stored fact in one of Cara's memory files by find/replace, instead of appending a duplicate. " +
+      "Use when a previously stored detail changes (e.g. the family says 'Mom is 82, not 78'). Returns how many occurrences were replaced.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:  { type: "string", description: "The user's ID" },
+        file:    { type: "string", description: "Memory file slug (e.g. profile, health, family, recent_episodes, procedural)" },
+        find:    { type: "string", description: "Exact text currently in the file to replace" },
+        replace: { type: "string", description: "Replacement text" },
+      },
+      required: ["userId", "file", "find", "replace"],
+    },
+  },
+  {
+    name: "search_memory",
+    description:
+      "Search across all of a user's long-term memory files for a keyword or phrase and return the matching sections. " +
+      "Use to retrieve a specific remembered detail without loading every memory file.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId: { type: "string", description: "The user's ID" },
+        query:  { type: "string", description: "Keyword or phrase to search for" },
+      },
+      required: ["userId", "query"],
+    },
+  },
+  {
+    name: "write_todos",
+    description:
+      "Scaffold a checklist of the steps you intend to take in this conversation. Use when the family's request has 3+ distinct steps " +
+      "(e.g. 'cancel Thursday, find a replacement for Friday, and let Marco know'). " +
+      "Items persist across turns until cleared, so on subsequent turns you can update statuses or add steps. " +
+      "Pass the full updated list each time — it overwrites the prior list. Don't use for simple single-step asks.",
+    input_schema: {
+      type: "object",
+      properties: {
+        phone: { type: "string", description: "Conversation key — the family member's phone number from the system context" },
+        items: {
+          type: "array",
+          description: "Ordered checklist. Each item: { task: short imperative description, status: 'pending' | 'in_progress' | 'completed' }",
+          items: {
+            type: "object",
+            properties: {
+              task:   { type: "string" },
+              status: { type: "string", enum: ["pending", "in_progress", "completed"] },
+            },
+            required: ["task", "status"],
+          },
+        },
+      },
+      required: ["phone", "items"],
+    },
+  },
+  {
+    name: "cara_knows",
+    description:
+      "Return a clean digest of everything Cara remembers about this family — senior profile, " +
+      "health, family relationships, recent episodes, procedural notes. " +
+      "Call when the family asks 'what do you know about Mom?', 'what's on file?', 'remind me what we've told you', " +
+      "'do you remember [topic]?', or any variation that asks Cara to surface her stored memory. " +
+      "Returns the raw memory context so you can summarize it warmly in 2–3 sentences (never as a bulleted list).",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId: { type: "string", description: "The family member's user ID" },
+      },
+      required: ["userId"],
+    },
+  },
+  {
+    name: "task",
+    description: buildTaskToolDescription(),
+    input_schema: {
+      type: "object",
+      properties: {
+        description:   { type: "string", description: "The specific work the sub-agent should do. Include all the context the sub-agent needs — it does not see the conversation history." },
+        subagent_type: { type: "string", enum: Object.keys(SUB_AGENT_REGISTRY), description: "Which sub-agent to delegate to." },
+      },
+      required: ["description", "subagent_type"],
     },
   },
   {
@@ -1362,6 +1457,8 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "log_health_flag",
   "read_memory_file",
   "update_memory_file",
+  "edit_memory_file",
+  "search_memory",
   "search_web",
   "perform_web_action",
   "list_user_reminders",
@@ -1560,6 +1657,38 @@ export async function handleToolCall(
   name: string,
   input: Record<string, unknown>
 ): Promise<unknown> {
+  // Runtime-enforced confirmation gate. High-risk tool calls (cancel_appointment,
+  // remove_family_member, cancel_subscription, etc.) are intercepted on the
+  // first call and turned into a pending-action stub for Claude to read.
+  // The re-run from approvalHandler sets _confirmedActionId to bypass the gate.
+  // See pendingActions.ts for the full design.
+  const confirmedActionId = input._confirmedActionId as string | undefined;
+  if (confirmedActionId) {
+    delete input._confirmedActionId;
+  } else if (isHighRisk(name, input)) {
+    const phone = input.phone as string | undefined;
+    if (!phone) {
+      // No phone means we can't enforce confirmation through the SMS round-trip
+      // (e.g. a future web-callable code path). Refuse rather than execute,
+      // since the safety guarantee is the whole point of the gate.
+      console.warn("MCP gate: high-risk tool called without phone — refusing", { name });
+      return toolError("PERMISSION_DENIED", "This action requires explicit confirmation and cannot be executed without an SMS session.");
+    }
+    const action = await proposePendingAction({
+      phone,
+      userId:    input.userId as string | undefined,
+      toolName:  name,
+      toolInput: input,
+    });
+    console.info("MCP gate: proposed pending action", {
+      phone,
+      actionId: action.id,
+      toolName: name,
+      preview:  action.preview,
+    });
+    return buildPendingActionStub(action);
+  }
+
   const nowIso = new Date().toISOString();
   const daysBack  = Math.min((input.daysBack as number) ?? 30, 90);
   const daysAgo   = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
@@ -1780,8 +1909,8 @@ export async function handleToolCall(
 
       case "read_memory_file": {
         if (!input.userId || !input.file) return toolError("INVALID_INPUT", "userId and file are required");
-        const VALID_FILES = new Set(["profile", "health", "family", "recent_episodes", "procedural"]);
-        if (!VALID_FILES.has(input.file as string)) return toolError("INVALID_INPUT", `file must be one of: ${[...VALID_FILES].join(", ")}`);
+        // Reads accept any slug (canonical or ad-hoc offloaded files); the storage
+        // layer sanitizes the name so it can never escape the user's prefix.
         logHealthDataAccessed(input.userId as string, input.userId as string, "mcp:read_memory_file").catch(() => {});
         const content = await readMemoryFile(input.userId as string, input.file as MemoryFile);
         return { success: true, content: content || "", empty: !content };
@@ -1798,6 +1927,88 @@ export async function handleToolCall(
           : input.content as string;
         await writeMemoryFile(input.userId as string, input.file as MemoryFile, updated);
         return { success: true, updated: true };
+      }
+
+      case "edit_memory_file": {
+        if (!input.userId || !input.file || !input.find) return toolError("INVALID_INPUT", "userId, file, and find are required");
+        logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:edit_memory_file", file: input.file } }).catch(() => {});
+        const replaced = await editMemoryFile(
+          input.userId as string,
+          input.file as MemoryFile,
+          input.find as string,
+          (input.replace as string) ?? ""
+        );
+        return { success: true, replaced, matched: replaced > 0 };
+      }
+
+      case "search_memory": {
+        if (!input.userId || !input.query) return toolError("INVALID_INPUT", "userId and query are required");
+        logHealthDataAccessed(input.userId as string, input.userId as string, "mcp:search_memory").catch(() => {});
+        // Hybrid: substring (exact) ∪ semantic (cosine over text-embedding-3-small).
+        // Falls back to substring automatically if the embedding API or key is unavailable.
+        const hits = await searchMemoryHybrid(input.userId as string, input.query as string);
+        return { success: true, hits, count: hits.length };
+      }
+
+      case "cara_knows": {
+        // Memory transparency surface (Sprint 3 / roadmap §5.3). Returns the
+        // family's full editable memory context — the same blob Cara already
+        // sees in-prompt, but surfaced so they can verify or correct it.
+        if (!input.userId) return toolError("INVALID_INPUT", "userId is required");
+        logHealthDataAccessed(input.userId as string, input.userId as string, "mcp:cara_knows").catch(() => {});
+        const [context, files] = await Promise.all([
+          getMemoryContext(input.userId as string),
+          listMemoryFiles(input.userId as string),
+        ]);
+        return {
+          success: true,
+          files,
+          context: context || "(no memory files on file yet — Cara is still building her picture of this family)",
+        };
+      }
+
+      case "task": {
+        // DeepAgents `task` pattern — dispatch to an ephemeral, stateless
+        // sub-agent (see agents/ephemeralSubAgents.ts). Sub-agent does its own
+        // narrow LLM call with a focused system prompt and returns one string.
+        const description   = input.description   as string | undefined;
+        const subagent_type = input.subagent_type as string | undefined;
+        if (!description || !subagent_type) {
+          return toolError("INVALID_INPUT", "description and subagent_type are required");
+        }
+        const result = await runEphemeralSubAgent({ description, subagentType: subagent_type });
+        return {
+          success:      true,
+          output:       result.output,
+          subagentType: result.subagentType,
+          durationMs:   result.durationMs,
+          modelUsed:    result.modelUsed,
+        };
+      }
+
+      case "write_todos": {
+        // Working-memory checklist (DeepAgents TodoListMiddleware port). Stored on
+        // agent_sessions; injected into Cara's system prompt at the start of each
+        // turn so she can see what's outstanding across the conversation.
+        const { phone, items } = input as { phone?: string; items?: Array<{ task: string; status: string }> };
+        if (!phone || !Array.isArray(items)) {
+          return toolError("INVALID_INPUT", "phone and items[] are required");
+        }
+        const allowed = new Set(["pending", "in_progress", "completed"]);
+        const sanitized = items
+          .filter((it) => it && typeof it.task === "string" && allowed.has(it.status))
+          .slice(0, 20) // cap — checklists this long usually mean Claude is over-decomposing
+          .map((it) => ({ task: it.task.slice(0, 200), status: it.status }));
+
+        await admin.firestore().collection("agent_sessions").doc(phone).set({
+          todos:          sanitized,
+          todosUpdatedAt: new Date().toISOString(),
+        }, { merge: true });
+
+        const pending     = sanitized.filter((t) => t.status === "pending").length;
+        const inProgress  = sanitized.filter((t) => t.status === "in_progress").length;
+        const completed   = sanitized.filter((t) => t.status === "completed").length;
+        return { success: true, count: sanitized.length, pending, inProgress, completed };
       }
 
       case "cancel_appointment": {

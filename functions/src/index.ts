@@ -86,6 +86,9 @@ export { sendMonthlyHealthTrends, triggerHealthTrendsNow } from './scheduled/hea
 // Linq proactive — no-visit check-in (daily 9am ET)
 export { runNoVisitCheck } from './scheduled/noVisitCheck';
 
+// Sprint 4 — proactive reflection (hourly, drafts only, admin-review-first)
+export { runProactiveReflection, triggerProactiveReflectionNow } from './scheduled/proactiveReflection';
+
 // Transportation badge evaluation (daily) + on-demand refresh
 export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/transportBadge';
 

@@ -6,6 +6,8 @@ import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability
 import { classifyIntent } from "../agents/intentClassifier";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { handleTaskApproval, finalizeTaskApproval } from "../agents/taskApprovalHandler";
+import { getLatestPending } from "../agents/pendingActions";
+import { handlePendingApproval } from "../agents/approvalHandler";
 import { optOutPhoneNumber, optInPhoneNumber, setupCaraContactCard } from "../sms";
 import {
   handleOnboardingStep,
@@ -75,22 +77,40 @@ function verifySignature(
   signature: string,
   secret:    string
 ): boolean {
-  const secretKey = Buffer.from(secret, "base64");
-  const payload   = Buffer.concat([Buffer.from(`${timestamp}.`), rawBody]);
-  const hmac      = crypto.createHmac("sha256", secretKey).update(payload);
+  // Signature is HMAC-SHA256 over `{timestamp}.{payload}` (per Linq docs).
+  const payload = Buffer.concat([Buffer.from(`${timestamp}.`), rawBody]);
 
-  const expectedB64 = hmac.digest("base64");
-  const expectedHex = crypto.createHmac("sha256", secretKey).update(payload).digest("hex");
+  // Linq's docs don't pin down the secret's encoding or the signature's output
+  // encoding, so derive the HMAC key both ways and compare the signature against
+  // every common digest encoding. A match in any pair proves the sender holds the
+  // secret (which is the whole point); the extra candidates don't weaken anything
+  // since each still requires knowing the secret.
+  const keyCandidates: Buffer[] = [
+    Buffer.from(secret, "utf8"),    // secret used as a raw string key (Stripe-style; most providers)
+    Buffer.from(secret, "base64"),  // secret used as base64-encoded key bytes
+  ];
 
-  try {
-    if (signature.length === expectedB64.length)
-      return crypto.timingSafeEqual(Buffer.from(expectedB64), Buffer.from(signature));
-    if (signature.length === expectedHex.length)
-      return crypto.timingSafeEqual(Buffer.from(expectedHex), Buffer.from(signature));
-    return false;
-  } catch {
-    return false;
+  const safeEqual = (a: string, b: string): boolean => {
+    if (a.length !== b.length) return false;
+    try {
+      return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+    } catch {
+      return false;
+    }
+  };
+
+  for (const key of keyCandidates) {
+    const hmac = crypto.createHmac("sha256", key).update(payload).digest();
+    const expectedB64    = hmac.toString("base64");
+    const expectedB64Url = hmac.toString("base64url");
+    const expectedHex    = hmac.toString("hex");
+    if (safeEqual(expectedB64,    signature) ||
+        safeEqual(expectedB64Url, signature) ||
+        safeEqual(expectedHex,    signature)) {
+      return true;
+    }
   }
+  return false;
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
@@ -1723,15 +1743,20 @@ async function handleInbound(event: unknown): Promise<void> {
   const norm     = text.trim().toUpperCase();
   const stopWords = new Set(["STOP", "UNSUBSCRIBE", "QUIT", "END", "OPTOUT"]);
 
-  // ── Chat health gate — pause outbound on CRITICAL, honour OPTED_OUT ──────────
+  // ── Chat health gate — honour OPTED_OUT; do NOT mute direct replies ───────────
+  // We only hard-stop on OPTED_OUT (a real user opt-out we must respect). CRITICAL
+  // health reflects line/deliverability risk that matters for PROACTIVE/bulk sends
+  // (reminders, digests) — those are already gated by the global circuit breaker and
+  // sendIfNotDND. Suppressing a direct reply to a user who just texted in makes Cara
+  // look broken, so we log CRITICAL for observability but still respond. If Linq
+  // genuinely rejects the send, sendMessage surfaces that downstream.
   const chatHealth = (ev.data?.chat?.health_status?.status ?? "HEALTHY") as string;
   if (chatHealth === "OPTED_OUT" && !session.optedOut) {
     await db.collection("agent_sessions").doc(phone).update({ optedOut: true }).catch(() => {});
     return;
   }
   if (chatHealth === "CRITICAL") {
-    console.warn("handleInbound: chat health CRITICAL — skipping outbound response", { phone, chatId });
-    return;
+    console.warn("handleInbound: chat health CRITICAL — replying anyway (active inbound)", { phone, chatId });
   }
 
   // START — opt back in (must run BEFORE the opted-out early return, otherwise
@@ -2263,6 +2288,35 @@ async function handleInbound(event: unknown): Promise<void> {
         triggerId:     triggerDoc.id,
       });
       return;
+    }
+  }
+
+  // ── Pending irreversible-action approval — runtime-enforced HITL gate ──────
+  // When Cara proposed a high-risk action (cancel_appointment, cancel_subscription,
+  // remove_family_member, etc.) on a prior turn, the MCP gate stored a
+  // pending_action doc and Cara texted the family for confirmation. This block
+  // intercepts the family's reply BEFORE intent classification so we catch
+  // natural-language YES/NO ("yeah", "go ahead", "actually no") that the
+  // generalist 50-intent classifier would misroute. See pendingActions.ts +
+  // approvalHandler.ts for the full design.
+  {
+    const pending = await getLatestPending(phone).catch((err) => {
+      console.error("handleInbound: getLatestPending failed", err);
+      return null;
+    });
+    if (pending) {
+      const result = await handlePendingApproval({
+        phone,
+        chatId,
+        text,
+        userId:   session.userId,
+        userType: session.userType === "caregiver" ? "caregiver" : "client",
+        pending,
+      });
+      if (result.outcome === "handled") return;
+      // result.outcome === "fallthrough" — the family asked a question instead
+      // of approving/declining. Let the normal flow run so Cara can answer it;
+      // the pending action stays awaiting until they answer YES/NO or it expires.
     }
   }
 
@@ -4160,6 +4214,7 @@ async function handleInbound(event: unknown): Promise<void> {
         caregiverId: session.caregiverId,
         zepThreadId: (session as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as Record<string, unknown>,
+        intent,
       });
       await sendViaInteractionAgent(phone, {
         content:     qaReplyReschedule,
@@ -4335,6 +4390,7 @@ async function handleInbound(event: unknown): Promise<void> {
         caregiverId: session.caregiverId,
         zepThreadId: (session as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as Record<string, unknown>,
+        intent,
       });
       await sendViaInteractionAgent(phone, {
         content:     qaReplyInvoice,
@@ -4409,6 +4465,7 @@ async function handleInbound(event: unknown): Promise<void> {
         caregiverId: session.caregiverId,
         zepThreadId: (session as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as Record<string, unknown>,
+        intent,
       });
       await sendViaInteractionAgent(phone, {
         content:     qaReplyPlatform,
@@ -4431,6 +4488,7 @@ async function handleInbound(event: unknown): Promise<void> {
         caregiverId: session.caregiverId,
         zepThreadId: (session as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as Record<string, unknown>,
+        intent,
       });
       await sendViaInteractionAgent(phone, {
         content:     qaReply,
@@ -4491,6 +4549,27 @@ async function handleInbound(event: unknown): Promise<void> {
       // Fall through to QA agent if we couldn't match a specific known fact
     }
 
+    // ── Update onboarding — already-onboarded user wants to review/fix profile ─
+    // PARTIAL users (no userId/seniorId) hit the onboarding offer earlier in
+    // this handler and never reach here. For ONBOARDED users, flip a session
+    // flag and fall through to runQaAgent — qaAgent reads the flag and runs a
+    // structured profile-review sub-prompt (read current state, confirm in
+    // prose, patch fields one at a time via update_senior_profile /
+    // update_care_plan). 20-minute TTL prevents stale flags surviving across
+    // unrelated future conversations.
+    if (intent === "UPDATE_ONBOARDING" && session.userType !== "caregiver") {
+      const ttlMs = 20 * 60 * 1000;
+      const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+      await db.collection("agent_sessions").doc(phone).update({
+        profileReviewMode:      true,
+        profileReviewExpiresAt: expiresAt,
+      }).catch((err) => console.warn("profileReviewMode set failed", err));
+      // Mutate the in-memory session too so the directive fires THIS turn.
+      (session as any).profileReviewMode      = true;
+      (session as any).profileReviewExpiresAt = expiresAt;
+      // Fall through to runQaAgent below.
+    }
+
     // ── Default: QA agent ─────────────────────────────────────────────────────
     const zepThreadId = (session as any).zepThreadId as string | undefined;
 
@@ -4532,6 +4611,7 @@ async function handleInbound(event: unknown): Promise<void> {
       caregiverId: session.caregiverId,
       zepThreadId,
       session:     session as Record<string, unknown>,
+      intent,
     });
 
     if (zepThreadId && qaReply) {

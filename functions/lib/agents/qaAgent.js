@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.hasListShape = hasListShape;
 exports.setActiveGoal = setActiveGoal;
 exports.clearActiveGoal = clearActiveGoal;
 exports.runQaAgent = runQaAgent;
@@ -47,6 +48,8 @@ const preferences_1 = require("../memory/preferences");
 const learnedFacts_1 = require("../memory/learnedFacts");
 const zepClient_1 = require("../memory/zepClient");
 const memoryFiles_1 = require("../memory/memoryFiles");
+const contextManagement_1 = require("./contextManagement");
+const turnMetrics_1 = require("./turnMetrics");
 const server_1 = require("../mcp/server");
 const claudeRetry_1 = require("../utils/claudeRetry");
 const executionAgent_1 = require("./executionAgent");
@@ -182,6 +185,22 @@ async function saveConversationTurn(phone, userText, assistantReply) {
     await batch.commit().catch((err) => console.error("saveConversationTurn error:", err));
 }
 // ── System prompt builders ────────────────────────────────────────────────────
+// Sonnet 4.6 model-tuning suffix. Verbatim from LangChain's deepagents harness
+// profile for anthropic:claude-sonnet-4-6, which sources these fragments from
+// Anthropic's published Claude prompting best-practices. Appended last so the
+// model attends to them most strongly (closest to the conversation history).
+// Source: https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices
+const SONNET_46_PROMPT_SUFFIX = `<use_parallel_tool_calls>
+If you intend to call multiple tools and there are no dependencies between the tool calls, make all of the independent tool calls in parallel. Prioritize calling tools simultaneously whenever the actions can be done in parallel rather than sequentially. For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. Maximize use of parallel tool calls where possible to increase speed and efficiency. However, if some tool calls depend on previous calls to inform dependent values like the parameters, do NOT call these tools in parallel and instead call them sequentially. Never use placeholders or guess missing parameters in tool calls.
+</use_parallel_tool_calls>
+
+<investigate_before_answering>
+Never speculate about facts you have not verified. If the family references a specific person, appointment, or detail, you MUST call the relevant tool to look it up before answering. Never make any claims about a senior, caregiver, schedule, or billing item before investigating unless you are certain of the correct answer — give grounded, hallucination-free answers.
+</investigate_before_answering>
+
+<tool_result_reflection>
+After receiving tool results, carefully reflect on their quality and determine optimal next steps before proceeding. Use your reasoning to plan and iterate based on this new information, and then take the best next action.
+</tool_result_reflection>`;
 function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learnedFactsText, zepContext, memoryContext, activeVisit, bookingPatterns) {
     var _a, _b, _c, _d;
     const seniorName = (_a = senior === null || senior === void 0 ? void 0 : senior.name) !== null && _a !== void 0 ? _a : "your loved one";
@@ -253,6 +272,7 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         `The cached context above is a snapshot (up to 60s old). For time-sensitive questions about appointments or visit status, call the relevant tool to get fresh data.`,
         `If asked something outside those sources, say "I don't have that information yet" or "I don't see that in the notes."`,
         `Do not fill gaps with plausible-sounding details. Do not speculate beyond what's documented.`,
+        `Never invent a city, neighborhood, address, or zip code. If you need a location, use what's in the cached context above. If it isn't there, ASK — never substitute a plausible-sounding city (e.g. don't say "Santa Clara" when the context shows "Gilroy", and don't pick a city out of thin air just because one is geographically nearby).`,
         `If a tool result contains "_toolError": true, tell the user you can't access that right now and offer to try again.`,
         ``,
         `TOOLS — use them proactively and in sequence:`,
@@ -355,6 +375,9 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         ``,
         `She is not a chatbot. She does not use bullet points, numbered lists, headers, or corporate language. She keeps messages short because she respects people's time.`,
         ``,
+        `ONE THING AT A TIME (non-negotiable): when you need information from the family, ask for ONE thing per message. Wait for their reply. Acknowledge it in one short sentence. Then ask the next thing. Never ask for two or more pieces of information in the same message. Never use a numbered or bulleted list to collect data — that is a form, not a conversation.`,
+        `WRONG (do not do this): "I need a few things: 1. Your name 2. Your mom's name 3. Your city". RIGHT: ask "What's your name?" — then on the next turn, after they answer, "Got it. And what's your mom's name?"`,
+        ``,
         `When someone is worried, she acknowledges it before she solves it. When something is hard, she sits with it before offering action. When the senior does something good, she shares it like she noticed.`,
         ``,
         `She uses the senior's name — not "your loved one." She signs off with 💙 when a moment genuinely calls for it. Not as punctuation. As warmth.`,
@@ -378,6 +401,8 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         `- Repetition: if they ask something you've answered before, answer fully every time. Never say "as I mentioned" or "like I said".`,
         `- Health observations: attribute to the caregiver's notes ("Maria noted..." not "${seniorName} may be experiencing...").`,
         `- Never rush to action when emotions are high. Acknowledge before solving.`,
+        ``,
+        SONNET_46_PROMPT_SUFFIX,
     ].join("\n");
 }
 function buildCaregiverSystemPrompt(caregiver, todayAppt, zepContext, contextFlags) {
@@ -456,6 +481,8 @@ function buildCaregiverSystemPrompt(caregiver, todayAppt, zepContext, contextFla
         ``,
         `Safety: For any medical emergency at a client's home — "Call 911 immediately." Then notify the family.`,
         `Never promise specific payment deposit timing. Say "1–2 business days" only.`,
+        ``,
+        SONNET_46_PROMPT_SUFFIX,
     ].join("\n");
 }
 // ── Prefetch cache — populated by typing indicator handler ───────────────────
@@ -515,6 +542,27 @@ const HALLUCINATION_SIGNALS = [
 function detectLowConfidence(reply) {
     return HALLUCINATION_SIGNALS.some((r) => r.test(reply));
 }
+// ── List-shape detector ───────────────────────────────────────────────────────
+// Returns true when the reply looks like a numbered or bulleted list:
+//   - 2+ lines starting with digits followed by ". " or ") "
+//   - 2+ lines starting with "- " or "* " or "• "
+//   - inline numbered enumeration on a single line ("1. foo 2. bar 3. baz")
+// Conservative on purpose — we don't want to trigger on prose that happens to
+// include "1 thing" or a single inline reference. Two distinct list markers is
+// the bar.
+function hasListShape(reply) {
+    const numberedLineMatches = reply.match(/^\s*\d+[.)]\s+\S/gm);
+    if (numberedLineMatches && numberedLineMatches.length >= 2)
+        return true;
+    const bulletLineMatches = reply.match(/^\s*[-*•]\s+\S/gm);
+    if (bulletLineMatches && bulletLineMatches.length >= 2)
+        return true;
+    // Inline numbered enumeration — "1. foo 2. bar" on the same line.
+    const inlineNumbered = reply.match(/\b\d+\.\s+\S+/g);
+    if (inlineNumbered && inlineNumbered.length >= 3)
+        return true;
+    return false;
+}
 async function setActiveGoal(phone, type, description, context, turns = 3) {
     await db.collection("agent_sessions").doc(phone).update({
         activeGoal: {
@@ -565,12 +613,26 @@ async function resumeActiveGoal(phone, session) {
 }
 // ── Main QA function ──────────────────────────────────────────────────────────
 async function runQaAgent(params) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w;
     const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, sourceChannel } = params;
     // Tag the input so Claude can apply different judgment per channel.
     // [USER] messages may require a reply; [TRIGGER] / [AGENT] inputs may not.
     const channel = sourceChannel !== null && sourceChannel !== void 0 ? sourceChannel : "[USER]";
     const taggedText = channel === "[USER]" ? text : `${channel}\n${text}`;
+    // Telemetry: one structured log per turn. Mutated through the function;
+    // emitted once at return (success or error path). See turnMetrics.ts.
+    const inputChannel = (() => {
+        const c = channel.replace(/^\[/, "").replace(/[\]:].*$/, "");
+        return c === "USER" || c === "TRIGGER" || c === "AGENT" || c === "SYSTEM" ? c : "USER";
+    })();
+    const metrics = (0, turnMetrics_1.createTurnMetrics)({
+        phone,
+        userId,
+        userType,
+        pathway: "qa",
+        isRetry,
+        inputChannel,
+    });
     // DND check — skip if user has quiet hours enabled
     const prefs = await (0, preferences_1.getPreferences)(userId).catch(() => null);
     if (prefs && (0, preferences_1.isInDND)(prefs)) {
@@ -636,6 +698,7 @@ async function runQaAgent(params) {
         // SMS thread with Cara, not someone else's data.
         const unconfirmedIdentity = !!(session === null || session === void 0 ? void 0 : session.__unconfirmedIdentity);
         const prefetched = unconfirmedIdentity ? null : await getPrefetchedContext(phone);
+        metrics.prefetchHit = !!prefetched;
         let senior, journal, nextAppt, permissions;
         if (prefetched) {
             senior = prefetched.seniorProfile;
@@ -668,7 +731,7 @@ async function runQaAgent(params) {
                 const { detectAndApplyCorrection } = await Promise.resolve().then(() => __importStar(require("../memory/learnedFacts")));
                 correctionApplied = await detectAndApplyCorrection(userId, text, zepThreadId ? phone.replace(/\D/g, "") : undefined);
             }
-            catch (_r) {
+            catch (_x) {
                 // Non-critical
             }
         }
@@ -738,6 +801,32 @@ async function runQaAgent(params) {
                 "we never finished setting up your account. Want to do that now?\" " +
                 "Otherwise answer general questions about CareConnex (what we do, pricing, how it works) and gently nudge toward setup.";
     }
+    // Profile review mode — flipped by the inbound webhook when classifyIntent
+    // returns UPDATE_ONBOARDING. The user is already-onboarded but wants Cara to
+    // walk through what's on file and fix what's wrong. Without this directive
+    // Claude defaults to "ask for everything as a numbered list" — exactly the
+    // failure mode that prompted this code path. The directive forces her to:
+    //   1) read what's already on file (no re-asking for known fields)
+    //   2) summarize it in prose, ending with ONE question
+    //   3) patch corrections one at a time via update_senior_profile /
+    //      update_care_plan / update_memory_file (with the existing read-back-
+    //      and-confirm rule from the main system prompt)
+    // The 20-minute TTL is enforced here so a stale flag doesn't accidentally
+    // hijack an unrelated future conversation.
+    const reviewExpiresAt = session === null || session === void 0 ? void 0 : session.profileReviewExpiresAt;
+    const reviewModeActive = !!(session === null || session === void 0 ? void 0 : session.profileReviewMode) &&
+        (!reviewExpiresAt || new Date(reviewExpiresAt).getTime() > Date.now());
+    if (reviewModeActive && userType !== "caregiver") {
+        systemPrompt +=
+            "\n\nPROFILE REVIEW MODE (active this turn): The family just asked you to redo, fix, or update what's on file for their senior. " +
+                "Do NOT re-collect data from scratch. Do NOT send a numbered list. Do NOT ask for more than one thing in a single message. " +
+                "Step 1 — On your FIRST reply this mode is active, call get_care_plan to pull the current care plan, and combine it with the senior profile and learned facts already in your context above. " +
+                "Step 2 — Summarize what's on file in ONE short, warm prose sentence (e.g. \"I have Anita, 78, in Gilroy, needing help with bathing and meds.\") and end with ONE open question (\"Is any of that wrong?\" or \"What should we update?\"). Never invent a city or detail you can't see in the context. " +
+                "Step 3 — Wait for the family to name what's wrong. When they do, read the proposed change back in plain English (\"Got it — updating her name to Anita. Confirm?\") and wait for an explicit yes before calling the update tool. " +
+                "Step 4 — Use update_senior_profile for emergency contact, physician, diagnoses, allergies. Use update_care_plan for medications, careNeeds, dietary, special instructions. Use update_memory_file for durable narrative facts (personality, routines, family). " +
+                "Step 5 — After each successful patch, ask if there's anything else to fix (ONE question). When the family says \"that's it\", \"all good\", \"nothing else\", or equivalent, keep the closing reply warm and short. " +
+                "EXIT SIGNAL: when and only when the family has confirmed they're done, end your reply with the literal token [[EXIT_PROFILE_REVIEW]] on its own line. The post-processor strips the token before sending and clears the session flag. Do NOT emit the token while the user is still correcting fields.";
+    }
     // Language directive — when the user has a non-English preference on file,
     // tell Claude to respond in that language. Without this, all of Cara's
     // generated prose stays English even when the user wrote in Spanish.
@@ -780,6 +869,11 @@ async function runQaAgent(params) {
                     `Return the tool's reply EXACTLY as-is.`;
         }
     }
+    // Context load is everything from function entry up to here: DND check,
+    // prefetch lookup, parallel context fetch, system prompt assembly, session
+    // overlays. Captured before the typing indicator so we don't include the
+    // (network-bound) typing call in this measurement.
+    metrics.contextLoadMs = Date.now() - metrics.startedAt;
     try {
         if (!skipSend)
             await (0, client_1.startTyping)(chatId).catch(() => { });
@@ -817,6 +911,16 @@ async function runQaAgent(params) {
                 console.warn("qaAgent: turn budget exceeded, exiting tool loop", { userId, iteration });
                 break;
             }
+            // Defensive: ensure every assistant tool_use has a matching tool_result
+            // before we hand the array to Claude. Normally a no-op; non-zero patches
+            // indicate either max_tokens truncation on the previous iteration or a
+            // bug in the loop pairing.
+            const patched = (0, contextManagement_1.patchDanglingToolCalls)(messages);
+            if (patched > 0) {
+                console.warn("qaAgent: patched dangling tool calls", { userId, iteration, patched });
+                metrics.patchedOrphans = ((_p = metrics.patchedOrphans) !== null && _p !== void 0 ? _p : 0) + patched;
+            }
+            metrics.iterations = ((_q = metrics.iterations) !== null && _q !== void 0 ? _q : 0) + 1;
             const response = await (0, claudeRetry_1.callClaudeWithRetry)((0, claudeClient_1.getSharedClient)(), {
                 model: "claude-sonnet-4-6",
                 max_tokens: 600,
@@ -825,6 +929,26 @@ async function runQaAgent(params) {
                 tool_choice: { type: "auto" },
                 messages,
             }, { timeoutMs: 15000, maxAttempts: 1 });
+            // max_tokens cutoff while emitting tool_use blocks → tool input JSON may
+            // be truncated. We can't safely execute partially-specified tool calls
+            // (booking with missing args, message with missing body, etc.). Push the
+            // assistant message, let patchDanglingToolCalls inject placeholder tool
+            // results on the next iteration, and continue so Claude can recover.
+            if (response.stop_reason === "max_tokens" &&
+                response.content.some((b) => b.type === "tool_use")) {
+                console.warn("qaAgent: max_tokens with tool_use blocks — treating as truncated", {
+                    userId,
+                    iteration,
+                    toolNames: response.content
+                        .filter((b) => b.type === "tool_use")
+                        .map((b) => b.name),
+                });
+                metrics.truncations = ((_r = metrics.truncations) !== null && _r !== void 0 ? _r : 0) + 1;
+                messages.push({ role: "assistant", content: response.content });
+                // patchDanglingToolCalls at the top of the next iteration injects the
+                // placeholder tool_results, which Claude reads and recovers from.
+                continue;
+            }
             if (response.stop_reason === "tool_use") {
                 // Execute all tool calls in this turn
                 const toolResults = [];
@@ -835,7 +959,7 @@ async function runQaAgent(params) {
                         // the family knows something is happening and doesn't think Cara went silent.
                         if (!skipSend &&
                             block.name === "perform_web_action" &&
-                            (((_p = block.input) === null || _p === void 0 ? void 0 : _p.actionType) === "browse" || ((_q = block.input) === null || _q === void 0 ? void 0 : _q.loginAction))) {
+                            (((_s = block.input) === null || _s === void 0 ? void 0 : _s.actionType) === "browse" || ((_t = block.input) === null || _t === void 0 ? void 0 : _t.loginAction))) {
                             await sendSplit(chatId, "On it — give me a moment.").catch(() => { });
                         }
                         const toolHandler = userType === "caregiver" ? server_1.handleToolCallForCaregiver : server_1.handleToolCall;
@@ -852,6 +976,11 @@ async function runQaAgent(params) {
                                 message: "Tool unavailable — tell the user you don't have that information right now and offer to try again.",
                             };
                         });
+                        metrics.toolCalls = ((_u = metrics.toolCalls) !== null && _u !== void 0 ? _u : 0) + 1;
+                        ((_v = metrics.toolNames) !== null && _v !== void 0 ? _v : (metrics.toolNames = [])).push(block.name);
+                        if (result === null || result === void 0 ? void 0 : result._toolError) {
+                            metrics.toolErrors = ((_w = metrics.toolErrors) !== null && _w !== void 0 ? _w : 0) + 1;
+                        }
                         // Instrumentation for D4 — track success rate on the cancel path so
                         // we can decide if a dedicated cancelFlow is needed. Same pattern
                         // works for any high-stakes tool.
@@ -877,7 +1006,7 @@ async function runQaAgent(params) {
                         toolResults.push({
                             type: "tool_result",
                             tool_use_id: block.id,
-                            content: JSON.stringify(result),
+                            content: await (0, contextManagement_1.buildToolResultContent)(userId, block.name, result),
                         });
                     }
                 }
@@ -929,6 +1058,7 @@ async function runQaAgent(params) {
         const MEDICAL_CLAIM = /\b(doctor|diagnosis|medication|dosage|mg|ml|blood pressure|heart rate|fall|injury|hospital|symptom|condition)\b/i;
         if (detectLowConfidence(reply) && MEDICAL_CLAIM.test(reply)) {
             console.warn("qaAgent: grounding revision triggered", { userId, preview: reply.slice(0, 100) });
+            metrics.groundingTriggered = true;
             db.collection("agent_uncertainty_log").add({
                 userId, phone,
                 question: text.slice(0, 200),
@@ -947,7 +1077,7 @@ async function runQaAgent(params) {
                 if (grounded.trim())
                     reply = grounded.trim();
             }
-            catch (_s) {
+            catch (_y) {
                 // Non-critical — proceed with original reply
             }
         }
@@ -960,6 +1090,51 @@ async function runQaAgent(params) {
                 detectedAt: new Date().toISOString(),
             }).catch(() => { });
         }
+        // Format revision — if Claude produced list-shaped output (numbered list,
+        // bullet list, or multi-line "1.", "2.", "-", "•") despite the no-lists
+        // rule in the system prompt, rewrite to conversational prose before the
+        // user sees it. Same fail-open / 8-second timeout pattern as the grounding
+        // pass above. Defense in depth — the prompt is supposed to prevent this
+        // but the screenshot that started this fix proves Claude still slips up.
+        if (hasListShape(reply)) {
+            console.warn("qaAgent: format revision triggered (list-shaped reply)", { userId, preview: reply.slice(0, 120) });
+            metrics.formatRevisionTriggered = true;
+            db.collection("agent_uncertainty_log").add({
+                userId, phone,
+                question: text.slice(0, 200),
+                reply: reply.slice(0, 500),
+                detectedAt: new Date().toISOString(),
+                formatRevisionTriggered: true,
+            }).catch(() => { });
+            try {
+                const fmtController = new AbortController();
+                const fmtTimer = setTimeout(() => fmtController.abort(), 8000);
+                const rewritten = await (0, openaiClient_1.quickComplete)("You are a tone editor for Cara, a warm SMS care assistant. " +
+                    "Rewrite the message below into conversational prose. " +
+                    "Strict rules: NO numbered lists, NO bullet points, NO dashes-as-bullets, NO headers, NO markdown. " +
+                    "If the message asks for multiple pieces of information, keep ONLY the first question and drop the rest — Cara asks one thing at a time. " +
+                    "Preserve warm, direct tone. Output only the revised message; no explanation.", reply, { maxTokens: 300, signal: fmtController.signal });
+                clearTimeout(fmtTimer);
+                if (rewritten.trim())
+                    reply = rewritten.trim();
+            }
+            catch (_z) {
+                // Non-critical — proceed with original reply (the linter / supervisor still run)
+            }
+        }
+        // Profile review exit — Claude appends [[EXIT_PROFILE_REVIEW]] when the
+        // family has confirmed everything looks good. Strip the token before the
+        // user sees it and clear the session flag so subsequent turns get normal
+        // routing. Doing this BEFORE supervise() so the supervisor never sees the
+        // sentinel and accidentally "rewrites" it.
+        if (reply.includes("[[EXIT_PROFILE_REVIEW]]")) {
+            reply = reply.replace(/\[\[EXIT_PROFILE_REVIEW\]\]/g, "").trim();
+            db.collection("agent_sessions").doc(phone).update({
+                profileReviewMode: admin.firestore.FieldValue.delete(),
+                profileReviewExpiresAt: admin.firestore.FieldValue.delete(),
+            }).catch(() => { });
+        }
+        const preSuperviseReply = reply;
         reply = await (0, supervisor_1.supervise)(reply, { phone, role: userType }).catch((err) => {
             const errMsg = err instanceof Error ? err.message : String(err);
             console.error("qaAgent: supervisor threw, sending unsupervised", errMsg);
@@ -978,15 +1153,23 @@ async function runQaAgent(params) {
             }).catch(() => { });
             return reply;
         });
+        metrics.postProcessModified = reply !== preSuperviseReply;
+        metrics.exhausted = !preSuperviseReply.trim();
         await saveConversationTurn(phone, text, reply);
         if (!skipSend)
             await sendSplit(chatId, reply);
+        // After the reply is sent: fold older turns into the rolling summary so long
+        // conversations stay coherent without bloating the per-turn context.
+        await (0, contextManagement_1.maybeRollUpHistory)(phone);
+        (0, turnMetrics_1.emitTurnMetrics)(metrics, { reply });
         return reply;
     }
     catch (err) {
         console.error("qaAgent error:", err);
-        if (skipSend)
+        if (skipSend) {
+            (0, turnMetrics_1.emitTurnMetrics)(metrics, { error: err });
             throw err;
+        }
         // Don't broadcast brokenness. Send a natural-sounding deflection that
         // doesn't tell the user Cara is failing, and create an admin alert so
         // the team can follow up if needed.
@@ -1002,6 +1185,7 @@ async function runQaAgent(params) {
             createdAt: new Date().toISOString(),
             resolved: false,
         }).catch(() => { });
+        (0, turnMetrics_1.emitTurnMetrics)(metrics, { reply: errMsg, error: err });
         return errMsg;
     }
 }
@@ -1017,6 +1201,13 @@ async function runQaAgent(params) {
 async function runQuickReply(params) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
     const { text, phone, chatId, userId, seniorId, userType = "client" } = params;
+    const metrics = (0, turnMetrics_1.createTurnMetrics)({
+        phone,
+        userId,
+        userType,
+        pathway: "quick",
+        inputChannel: "USER",
+    });
     // Pre-fetch lightweight context in parallel — used to make greetings smart.
     // Each loader is wrapped so a single failure doesn't break the reply.
     const [history, nextAppt, pendingTask, pendingTimesheets, activeAgent, seniorProfile] = await Promise.all([
@@ -1044,6 +1235,7 @@ async function runQuickReply(params) {
         (0, executionAgent_1.getActiveAgentForUser)(phone).catch(() => null),
         userType === "client" && seniorId ? getSeniorProfile(seniorId).catch(() => null) : Promise.resolve(null),
     ]);
+    metrics.contextLoadMs = Date.now() - metrics.startedAt;
     const recent = history.slice(-4);
     // Build a context snippet listing the most relevant fact Cara could lead with.
     // Cara picks one (or none) to mention naturally — she doesn't list them all.
@@ -1111,6 +1303,8 @@ async function runQuickReply(params) {
         reply = "Hey! How's everything going?";
     await saveConversationTurn(phone, text, reply);
     await (0, client_1.sendMessage)(chatId, reply).catch(() => { });
+    await (0, contextManagement_1.maybeRollUpHistory)(phone);
+    (0, turnMetrics_1.emitTurnMetrics)(metrics, { reply });
     return reply;
 }
 // Trivial-message eligibility check used by the webhook before runQaAgent.

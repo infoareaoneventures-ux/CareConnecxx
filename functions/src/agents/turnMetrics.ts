@@ -48,9 +48,16 @@ export interface TurnMetrics {
   // Quality signals
   prefetchHit?:             boolean;
   zepUnavailable?:          boolean;
-  groundingTriggered?:      boolean;
-  formatRevisionTriggered?: boolean;
-  postProcessModified?:     boolean; // supervise() changed the reply text
+  groundingTriggered?:      boolean;  // grounding pass fired (detected hedging+medical)
+  formatRevisionTriggered?: boolean;  // format pass fired (detected list-shape)
+  postProcessModified?:     boolean;  // ANY post-process rewrite changed the reply (derived)
+
+  // Sprint 8: discrete "did the rewrite actually change the text?" flags. The
+  // *Triggered flags above record that a pass FIRED; these record that it
+  // MODIFIED. postProcessModified is now derived = grounding||format||supervisor.
+  groundingRewriteApplied?:   boolean;
+  formatRewriteApplied?:      boolean;
+  supervisorRewriteApplied?:  boolean;
 
   // Conversational state
   emotionalContext?: "calm" | "anxious" | "grieving" | "frustrated" | "rushed" | "celebratory";
@@ -62,6 +69,16 @@ export interface TurnMetrics {
   // whether the false-positive rate is low enough to add an auto-rewrite.
   confidenceClaimDetected?:  boolean; // unattributed proper-name + factual claim
   promiseWithoutToolCall?:   boolean; // "let me check" with metrics.toolCalls === 0
+
+  // Sprint 8: tone-warmth-v1 adherence proxy. True when the reply opens with an
+  // empathy reflection AND the turn was non-calm. Lets us measure whether the
+  // experiment's treatment arm actually changed behavior.
+  warmthReflectionIncluded?: boolean;
+
+  // Sprint 8: which memory tier supplied context this turn, and how many
+  // learned facts were retrieved. Lets us measure recall health over time.
+  memoryRecallTier?:     "zep" | "memoryFiles" | "learnedFacts" | "none";
+  memoryFactsRetrieved?: number;
 
   // Prompt-augmentation pipeline (Sprint 7).
   // augmentersApplied — kebab-case names of every PromptAugmenter that emitted a non-empty directive.

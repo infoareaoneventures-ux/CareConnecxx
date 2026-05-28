@@ -625,6 +625,13 @@ export function detectPromiseWithoutToolCall(reply: string, toolCalls: number): 
   return PROMISE_PATTERNS.test(reply);
 }
 
+// Sprint 8: empathy-opener detector for tone-warmth-v1 adherence. Matches the
+// reflection patterns the experiment's treatment arm asks for ("That sounds…",
+// "I hear you", "That fear makes sense", etc.) on the first sentence of the
+// reply. Deliberately permissive on the opener but anchored at string start.
+export const WARMTH_REFLECTION_OPENERS =
+  /^(that (sounds|makes sense|fear|must|'s a lot|'s hard|'s scary)|i (hear|can hear|can imagine|can only imagine)|i'?m so sorry|you('| a)re (right|not alone)|of course you|it makes sense|hearing that)/i;
+
 // ── List-shape detector ───────────────────────────────────────────────────────
 // Returns true when the reply looks like a numbered or bulleted list:
 //   - 2+ lines starting with digits followed by ". " or ") "
@@ -944,6 +951,21 @@ export async function runQaAgent(params: {
     const factsText = facts.length
       ? facts.map((f) => `- ${f.fact} (${f.category})`).join("\n")
       : undefined;
+
+    // Sprint 8: record which memory tier supplied context this turn. Derived
+    // from the already-loaded locals — no extra reads, no loader signature
+    // changes. Zep is "available" only when it returned real content (not the
+    // injected unavailable marker).
+    const zepLive = !!zepContext && zepContext !== ZEP_UNAVAILABLE_MARKER;
+    metrics.memoryRecallTier = zepLive
+      ? "zep"
+      : memoryContext
+        ? "memoryFiles"
+        : facts.length
+          ? "learnedFacts"
+          : "none";
+    metrics.memoryFactsRetrieved = facts.length;
+    if (zepContext === ZEP_UNAVAILABLE_MARKER) metrics.zepUnavailable = true;
 
     systemPrompt = buildClientSystemPrompt(
       senior, journal, nextAppt, permissions, factsText,
@@ -1427,7 +1449,10 @@ export async function runQaAgent(params: {
           { maxTokens: 300, signal: groundedController.signal },
         );
         clearTimeout(groundedTimer);
-        if (grounded.trim()) reply = grounded.trim();
+        if (grounded.trim() && grounded.trim() !== reply) {
+          reply = grounded.trim();
+          metrics.groundingRewriteApplied = true;
+        }
       } catch {
         // Non-critical — proceed with original reply
       }
@@ -1470,7 +1495,10 @@ export async function runQaAgent(params: {
           { maxTokens: 300, signal: fmtController.signal },
         );
         clearTimeout(fmtTimer);
-        if (rewritten.trim()) reply = rewritten.trim();
+        if (rewritten.trim() && rewritten.trim() !== reply) {
+          reply = rewritten.trim();
+          metrics.formatRewriteApplied = true;
+        }
       } catch {
         // Non-critical — proceed with original reply (the linter / supervisor still run)
       }
@@ -1519,8 +1547,24 @@ export async function runQaAgent(params: {
       }).catch(() => {/* non-critical */});
       return reply;
     });
-    metrics.postProcessModified = reply !== preSuperviseReply;
+    metrics.supervisorRewriteApplied = reply !== preSuperviseReply;
     metrics.exhausted = !preSuperviseReply.trim();
+
+    // Sprint 8: postProcessModified is now DERIVED from the three discrete
+    // rewrite-applied flags (kept for one sprint of dashboard compatibility).
+    metrics.postProcessModified =
+      !!metrics.groundingRewriteApplied ||
+      !!metrics.formatRewriteApplied ||
+      !!metrics.supervisorRewriteApplied;
+
+    // Sprint 8: tone-warmth-v1 adherence proxy. Did Cara open with an empathy
+    // reflection on a non-calm turn? Regex on the first sentence — cheap,
+    // deterministic, no extra LLM call. Measured on the FINAL (post-supervise)
+    // reply since that's what the family actually receives.
+    if (metrics.emotionalContext && metrics.emotionalContext !== "calm") {
+      const firstSentence = reply.split(/(?<=[.!?])\s/)[0] ?? reply;
+      metrics.warmthReflectionIncluded = WARMTH_REFLECTION_OPENERS.test(firstSentence);
+    }
 
     // Persist the lint-violation signal for the NEXT turn's persona re-inject
     // decision. Written unconditionally (true/false) so the flag doesn't go stale.

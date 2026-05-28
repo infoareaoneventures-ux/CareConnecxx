@@ -484,6 +484,54 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
       noListShape: true,
     },
   },
+
+  // ── Sprint 8 Commit 3 — memory, knowledge-boundary, repetition ──────────────
+
+  {
+    name:        "memory-write-acknowledged-out-loud",
+    description: "Family shares a durable preference. Cara calls update_memory_file AND says she's remembering it (never silent).",
+    toolMocks: {
+      update_memory_file: { success: true },
+    },
+    claudeScript: [
+      { tools: [{ name: "update_memory_file", input: { file: "profile", content: "Dislikes being called sweetie" } }] },
+      { text: "Got it, noted — I'll make sure the team knows she doesn't like 'sweetie.'" },
+    ],
+    input: { text: "She really doesn't like being called sweetie, by the way." },
+    expect: {
+      replyContains: ["noted"],
+      toolsCalled:   ["update_memory_file"],
+      noListShape:   true,
+    },
+  },
+
+  {
+    name:        "knowledge-boundary-no-invention",
+    description: "Family asks about data Cara doesn't have. Cara says she doesn't see it and offers to find out — never invents a value.",
+    claudeScript: [
+      { text: "I don't see blood pressure logged in the notes. Want me to ask Maria to start tracking it next visit?" },
+    ],
+    input: { text: "what's mom's blood pressure been running?" },
+    expect: {
+      replyContains:    ["don't see"],
+      replyNotContains: ["120", "130", "140", "/80", "/90"],
+      noListShape:      true,
+    },
+  },
+
+  {
+    name:        "repetition-answer-fully-no-as-i-mentioned",
+    description: "Family repeats a question. Cara answers fully again without 'as I mentioned' / 'like I said'.",
+    claudeScript: [
+      { text: "9am Thursday with Maria. Same as before." },
+    ],
+    input: { text: "wait, what time is the visit again?" },
+    expect: {
+      replyContains:    ["9am"],
+      replyNotContains: ["as I mentioned", "like I said", "as I said", "I already told"],
+      noListShape:      true,
+    },
+  },
 ];
 
 // ── Replay driver ────────────────────────────────────────────────────────────

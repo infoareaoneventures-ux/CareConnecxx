@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.WARMTH_REFLECTION_OPENERS = void 0;
 exports.detectConfidenceClaim = detectConfidenceClaim;
 exports.detectPromiseWithoutToolCall = detectPromiseWithoutToolCall;
 exports.hasListShape = hasListShape;
@@ -589,6 +590,11 @@ function detectPromiseWithoutToolCall(reply, toolCalls) {
         return false;
     return PROMISE_PATTERNS.test(reply);
 }
+// Sprint 8: empathy-opener detector for tone-warmth-v1 adherence. Matches the
+// reflection patterns the experiment's treatment arm asks for ("That sounds…",
+// "I hear you", "That fear makes sense", etc.) on the first sentence of the
+// reply. Deliberately permissive on the opener but anchored at string start.
+exports.WARMTH_REFLECTION_OPENERS = /^(that (sounds|makes sense|fear|must|'s a lot|'s hard|'s scary)|i (hear|can hear|can imagine|can only imagine)|i'?m so sorry|you('| a)re (right|not alone)|of course you|it makes sense|hearing that)/i;
 // ── List-shape detector ───────────────────────────────────────────────────────
 // Returns true when the reply looks like a numbered or bulleted list:
 //   - 2+ lines starting with digits followed by ". " or ") "
@@ -660,7 +666,7 @@ async function resumeActiveGoal(phone, session) {
 }
 // ── Main QA function ──────────────────────────────────────────────────────────
 async function runQaAgent(params) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z;
     const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, sourceChannel, intent } = params;
     // Tag the input so Claude can apply different judgment per channel.
     // [USER] messages may require a reply; [TRIGGER] / [AGENT] inputs may not.
@@ -791,7 +797,7 @@ async function runQaAgent(params) {
                 const { detectAndApplyCorrection } = await Promise.resolve().then(() => __importStar(require("../memory/learnedFacts")));
                 correctionApplied = await detectAndApplyCorrection(userId, text, zepThreadId ? phone.replace(/\D/g, "") : undefined);
             }
-            catch (_z) {
+            catch (_0) {
                 // Non-critical
             }
         }
@@ -835,6 +841,21 @@ async function runQaAgent(params) {
         const factsText = facts.length
             ? facts.map((f) => `- ${f.fact} (${f.category})`).join("\n")
             : undefined;
+        // Sprint 8: record which memory tier supplied context this turn. Derived
+        // from the already-loaded locals — no extra reads, no loader signature
+        // changes. Zep is "available" only when it returned real content (not the
+        // injected unavailable marker).
+        const zepLive = !!zepContext && zepContext !== ZEP_UNAVAILABLE_MARKER;
+        metrics.memoryRecallTier = zepLive
+            ? "zep"
+            : memoryContext
+                ? "memoryFiles"
+                : facts.length
+                    ? "learnedFacts"
+                    : "none";
+        metrics.memoryFactsRetrieved = facts.length;
+        if (zepContext === ZEP_UNAVAILABLE_MARKER)
+            metrics.zepUnavailable = true;
         systemPrompt = buildClientSystemPrompt(senior, journal, nextAppt, permissions, factsText, zepContext || undefined, memoryContext || undefined, activeVisit, bookingPatterns || undefined);
         // If correction was applied, log it so caller knows (useful for debugging)
         if (correctionApplied) {
@@ -1266,10 +1287,12 @@ async function runQaAgent(params) {
                     "Replace hedged claims with 'I don't have that information' or attribute them to documented sources. " +
                     "Keep the same warm tone and length. Output only the revised message.", reply, { maxTokens: 300, signal: groundedController.signal });
                 clearTimeout(groundedTimer);
-                if (grounded.trim())
+                if (grounded.trim() && grounded.trim() !== reply) {
                     reply = grounded.trim();
+                    metrics.groundingRewriteApplied = true;
+                }
             }
-            catch (_0) {
+            catch (_1) {
                 // Non-critical — proceed with original reply
             }
         }
@@ -1307,10 +1330,12 @@ async function runQaAgent(params) {
                     "If the message asks for multiple pieces of information, keep ONLY the first question and drop the rest — Cara asks one thing at a time. " +
                     "Preserve warm, direct tone. Output only the revised message; no explanation.", reply, { maxTokens: 300, signal: fmtController.signal });
                 clearTimeout(fmtTimer);
-                if (rewritten.trim())
+                if (rewritten.trim() && rewritten.trim() !== reply) {
                     reply = rewritten.trim();
+                    metrics.formatRewriteApplied = true;
+                }
             }
-            catch (_1) {
+            catch (_2) {
                 // Non-critical — proceed with original reply (the linter / supervisor still run)
             }
         }
@@ -1355,8 +1380,22 @@ async function runQaAgent(params) {
             }).catch(() => { });
             return reply;
         });
-        metrics.postProcessModified = reply !== preSuperviseReply;
+        metrics.supervisorRewriteApplied = reply !== preSuperviseReply;
         metrics.exhausted = !preSuperviseReply.trim();
+        // Sprint 8: postProcessModified is now DERIVED from the three discrete
+        // rewrite-applied flags (kept for one sprint of dashboard compatibility).
+        metrics.postProcessModified =
+            !!metrics.groundingRewriteApplied ||
+                !!metrics.formatRewriteApplied ||
+                !!metrics.supervisorRewriteApplied;
+        // Sprint 8: tone-warmth-v1 adherence proxy. Did Cara open with an empathy
+        // reflection on a non-calm turn? Regex on the first sentence — cheap,
+        // deterministic, no extra LLM call. Measured on the FINAL (post-supervise)
+        // reply since that's what the family actually receives.
+        if (metrics.emotionalContext && metrics.emotionalContext !== "calm") {
+            const firstSentence = (_z = reply.split(/(?<=[.!?])\s/)[0]) !== null && _z !== void 0 ? _z : reply;
+            metrics.warmthReflectionIncluded = exports.WARMTH_REFLECTION_OPENERS.test(firstSentence);
+        }
         // Persist the lint-violation signal for the NEXT turn's persona re-inject
         // decision. Written unconditionally (true/false) so the flag doesn't go stale.
         db.collection("agent_sessions").doc(phone).update({

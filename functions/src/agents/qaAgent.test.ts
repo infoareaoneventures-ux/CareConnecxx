@@ -24,7 +24,7 @@ vi.mock("../linq/client",          () => ({ sendMessage: vi.fn(), startTyping: v
 vi.mock("./executionAgent",        () => ({ getActiveAgentForUser: vi.fn() }));
 vi.mock("./contextManagement",     () => ({ maybeRollUpHistory: vi.fn(), buildToolResultContent: vi.fn() }));
 
-import { hasListShape, detectConfidenceClaim, detectPromiseWithoutToolCall } from "./qaAgent";
+import { hasListShape, detectConfidenceClaim, detectPromiseWithoutToolCall, WARMTH_REFLECTION_OPENERS } from "./qaAgent";
 
 describe("hasListShape", () => {
   it.each([
@@ -86,5 +86,28 @@ describe("detectPromiseWithoutToolCall", () => {
   it("does NOT flag prose without promise phrasing", () => {
     expect(detectPromiseWithoutToolCall("Thursday 9am.", 0)).toBe(false);
     expect(detectPromiseWithoutToolCall("She's doing well today.", 0)).toBe(false);
+  });
+});
+
+describe("WARMTH_REFLECTION_OPENERS", () => {
+  it.each([
+    "That sounds exhausting — let me look.",
+    "That fear makes sense, and you noticing this matters.",
+    "I hear you, and that's not okay.",
+    "I can imagine how hard that is.",
+    "I'm so sorry.",
+    "You're right, that shouldn't have happened.",
+    "It makes sense you'd be worried.",
+  ])("matches empathy opener %p", (s) => {
+    expect(WARMTH_REFLECTION_OPENERS.test(s)).toBe(true);
+  });
+
+  it.each([
+    "9am Thursday with Maria.",
+    "Maria's coming at 9.",
+    "Yes, Alice has 10am free.",
+    "I've cancelled the visit.",
+  ])("does NOT match transactional opener %p", (s) => {
+    expect(WARMTH_REFLECTION_OPENERS.test(s)).toBe(false);
   });
 });

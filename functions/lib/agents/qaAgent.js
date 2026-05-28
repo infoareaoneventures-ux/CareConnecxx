@@ -68,6 +68,7 @@ const promptAugmenters_1 = require("./promptAugmenters");
 const promptExperiments_1 = require("./promptExperiments");
 const defaultPromptAugmenters_1 = require("./defaultPromptAugmenters");
 require("./experimentRegistry"); // side-effect: registers active experiments
+const turnCheckpoint_1 = require("./turnCheckpoint");
 const emotionalContext_1 = require("./emotionalContext");
 const db = admin.firestore();
 // ── Context loaders ───────────────────────────────────────────────────────────
@@ -695,6 +696,34 @@ async function runQaAgent(params) {
         }
         return "";
     }
+    // Sprint 8: post-process turn resume. If a prior attempt at THIS exact inbound
+    // produced a reply but then crashed in the post-process phase (grounding/
+    // format/supervise/send), a non-expired checkpoint exists. Resume from it:
+    // re-run the safety supervisor and send, WITHOUT re-invoking Claude or any
+    // tool — so no booking/message side effects fire twice. No-op unless the
+    // CARA_CHECKPOINT_RESUME flag is on and the stored text hash matches.
+    if (!skipSend) {
+        const checkpoint = await (0, turnCheckpoint_1.loadCheckpoint)(phone, text).catch(() => null);
+        if (checkpoint) {
+            metrics.resumedFromCheckpoint = true;
+            metrics.checkpointPhase = checkpoint.phase;
+            console.info("qaAgent: resuming from checkpoint", { phone, phase: checkpoint.phase });
+            let resumedReply = checkpoint.reply;
+            // Re-run the safety supervisor (a gate, not optional style polish). Fail
+            // open to the raw reply if it throws — getting the message out beats
+            // re-silencing the family.
+            resumedReply = await (0, supervisor_1.supervise)(resumedReply, { phone, role: userType }).catch(() => resumedReply);
+            await saveConversationTurn(phone, text, resumedReply);
+            await sendSplit(chatId, resumedReply);
+            await (0, turnCheckpoint_1.clearCheckpoint)(phone);
+            await (0, contextManagement_1.maybeRollUpHistory)(phone);
+            (0, turnMetrics_1.emitTurnMetrics)(metrics, { reply: resumedReply });
+            return resumedReply;
+        }
+    }
+    // Precompute the inbound hash once — reused by the loop_complete checkpoint
+    // write below. Cheap (FNV-1a over the trimmed text).
+    const turnTextHash = (0, turnCheckpoint_1.hashText)(text);
     // Kick off emotional-posture classification in parallel with the heavy I/O
     // below. Result is awaited once at prompt-build time. Latency cost is hidden
     // behind the existing Firestore / Zep fetches. Errors → "calm" (the
@@ -1235,6 +1264,10 @@ async function runQaAgent(params) {
                 break;
             }
         }
+        // Sprint 8: did the tool loop produce a genuine reply (vs. the exhausted
+        // fallback below)? Only genuine replies are checkpointed — the exhausted
+        // path schedules its own retry via proactive_triggers and must not resume.
+        const loopProducedReply = !!reply;
         if (!reply) {
             console.warn("qaAgent: tool-use loop exhausted without text reply", { userId, isRetry, preview: text.slice(0, 80) });
             if (!isRetry) {
@@ -1266,6 +1299,14 @@ async function runQaAgent(params) {
                 }).catch(() => { });
                 reply = "Let me come back to you on that one shortly.";
             }
+        }
+        // Sprint 8: checkpoint the raw reply now that the tool loop is done. If the
+        // post-process phase below (grounding/format/supervise) or the send crashes,
+        // a retry resumes from here instead of re-running the whole tool loop. Fire-
+        // and-forget (no-op unless CARA_CHECKPOINT_RESUME is on). Only genuine loop
+        // replies — never the exhausted fallback stubs.
+        if (loopProducedReply && !skipSend) {
+            (0, turnCheckpoint_1.writeCheckpoint)(phone, "loop_complete", turnTextHash, reply).catch(() => { });
         }
         // Grounding revision — when medical claims + hedging co-occur, ask Claude to strip speculation
         const MEDICAL_CLAIM = /\b(doctor|diagnosis|medication|dosage|mg|ml|blood pressure|heart rate|fall|injury|hospital|symptom|condition)\b/i;
@@ -1404,6 +1445,11 @@ async function runQaAgent(params) {
         await saveConversationTurn(phone, text, reply);
         if (!skipSend)
             await sendSplit(chatId, reply);
+        // Sprint 8: turn finished cleanly — clear any checkpoint so a later inbound
+        // never resumes this (now-delivered) reply. No-op if the flag is off or no
+        // checkpoint was written.
+        if (!skipSend)
+            await (0, turnCheckpoint_1.clearCheckpoint)(phone).catch(() => { });
         // After the reply is sent: fold older turns into the rolling summary so long
         // conversations stay coherent without bloating the per-turn context.
         await (0, contextManagement_1.maybeRollUpHistory)(phone);

@@ -894,6 +894,13 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Turn checkpoints — server-only resume state for in-flight qaAgent turns.
+    // Written/read exclusively by Cloud Functions via the Admin SDK (which
+    // bypasses rules). No client should ever touch these, so deny outright.
+    match /agent_turn_checkpoints/{phone} {
+      allow read, write: if false;
+    }
+
     // DENY ALL OTHER ACCESS BY DEFAULT
     // ==========================================
     match /{document=**} {

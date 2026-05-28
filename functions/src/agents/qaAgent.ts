@@ -31,6 +31,7 @@ import { runAugmenters, type PromptAugmenter, type AugmenterContext } from "./pr
 import { experimentsAugmenter } from "./promptExperiments";
 import { DEFAULT_AUGMENTERS } from "./defaultPromptAugmenters";
 import "./experimentRegistry"; // side-effect: registers active experiments
+import { loadCheckpoint, writeCheckpoint, clearCheckpoint, hashText } from "./turnCheckpoint";
 import {
   classifyEmotionalContext,
   classifyEmotionalTopic,
@@ -792,6 +793,36 @@ export async function runQaAgent(params: {
     return "";
   }
 
+  // Sprint 8: post-process turn resume. If a prior attempt at THIS exact inbound
+  // produced a reply but then crashed in the post-process phase (grounding/
+  // format/supervise/send), a non-expired checkpoint exists. Resume from it:
+  // re-run the safety supervisor and send, WITHOUT re-invoking Claude or any
+  // tool — so no booking/message side effects fire twice. No-op unless the
+  // CARA_CHECKPOINT_RESUME flag is on and the stored text hash matches.
+  if (!skipSend) {
+    const checkpoint = await loadCheckpoint(phone, text).catch(() => null);
+    if (checkpoint) {
+      metrics.resumedFromCheckpoint = true;
+      metrics.checkpointPhase = checkpoint.phase;
+      console.info("qaAgent: resuming from checkpoint", { phone, phase: checkpoint.phase });
+      let resumedReply = checkpoint.reply;
+      // Re-run the safety supervisor (a gate, not optional style polish). Fail
+      // open to the raw reply if it throws — getting the message out beats
+      // re-silencing the family.
+      resumedReply = await supervise(resumedReply, { phone, role: userType }).catch(() => resumedReply);
+      await saveConversationTurn(phone, text, resumedReply);
+      await sendSplit(chatId, resumedReply);
+      await clearCheckpoint(phone);
+      await maybeRollUpHistory(phone);
+      emitTurnMetrics(metrics, { reply: resumedReply });
+      return resumedReply;
+    }
+  }
+
+  // Precompute the inbound hash once — reused by the loop_complete checkpoint
+  // write below. Cheap (FNV-1a over the trimmed text).
+  const turnTextHash = hashText(text);
+
   // Kick off emotional-posture classification in parallel with the heavy I/O
   // below. Result is awaited once at prompt-build time. Latency cost is hidden
   // behind the existing Firestore / Zep fetches. Errors → "calm" (the
@@ -1392,6 +1423,11 @@ export async function runQaAgent(params: {
       }
     }
 
+    // Sprint 8: did the tool loop produce a genuine reply (vs. the exhausted
+    // fallback below)? Only genuine replies are checkpointed — the exhausted
+    // path schedules its own retry via proactive_triggers and must not resume.
+    const loopProducedReply = !!reply;
+
     if (!reply) {
       console.warn("qaAgent: tool-use loop exhausted without text reply", { userId, isRetry, preview: text.slice(0, 80) });
 
@@ -1423,6 +1459,15 @@ export async function runQaAgent(params: {
         }).catch(() => {});
         reply = "Let me come back to you on that one shortly.";
       }
+    }
+
+    // Sprint 8: checkpoint the raw reply now that the tool loop is done. If the
+    // post-process phase below (grounding/format/supervise) or the send crashes,
+    // a retry resumes from here instead of re-running the whole tool loop. Fire-
+    // and-forget (no-op unless CARA_CHECKPOINT_RESUME is on). Only genuine loop
+    // replies — never the exhausted fallback stubs.
+    if (loopProducedReply && !skipSend) {
+      writeCheckpoint(phone, "loop_complete", turnTextHash, reply).catch(() => {});
     }
 
     // Grounding revision — when medical claims + hedging co-occur, ask Claude to strip speculation
@@ -1574,6 +1619,11 @@ export async function runQaAgent(params: {
 
     await saveConversationTurn(phone, text, reply);
     if (!skipSend) await sendSplit(chatId, reply);
+
+    // Sprint 8: turn finished cleanly — clear any checkpoint so a later inbound
+    // never resumes this (now-delivered) reply. No-op if the flag is off or no
+    // checkpoint was written.
+    if (!skipSend) await clearCheckpoint(phone).catch(() => {});
 
     // After the reply is sent: fold older turns into the rolling summary so long
     // conversations stay coherent without bloating the per-turn context.

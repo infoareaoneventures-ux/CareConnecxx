@@ -80,6 +80,11 @@ export interface TurnMetrics {
   memoryRecallTier?:     "zep" | "memoryFiles" | "learnedFacts" | "none";
   memoryFactsRetrieved?: number;
 
+  // Sprint 8: turn checkpoint resume. resumedFromCheckpoint is true when this
+  // turn skipped the tool loop and resumed a prior crashed turn's reply.
+  resumedFromCheckpoint?: boolean;
+  checkpointPhase?:       string;
+
   // Prompt-augmentation pipeline (Sprint 7).
   // augmentersApplied — kebab-case names of every PromptAugmenter that emitted a non-empty directive.
   // experiments      — experimentKey → variantName for each active A/B experiment the user is in.

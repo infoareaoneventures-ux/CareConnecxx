@@ -203,6 +203,15 @@ vi.mock("./contextManagement", () => ({
   truncateOldToolCallArgs:   vi.fn(() => 0),
 }));
 vi.mock("./toolCapabilities", () => ({ selectToolsForIntent: (tools: unknown[]) => tools }));
+// Checkpointing disabled in transcript replays — we exercise the normal path,
+// not resume. Stub to inert no-ops so the flag/env doesn't matter.
+vi.mock("./turnCheckpoint", () => ({
+  loadCheckpoint:            vi.fn(async () => null),
+  writeCheckpoint:           vi.fn(async () => undefined),
+  clearCheckpoint:           vi.fn(async () => undefined),
+  hashText:                  (s: string) => s,
+  isCheckpointResumeEnabled: () => false,
+}));
 // experimentRegistry is NOT mocked — we want the real registrations so transcripts
 // can assert on experiment cohort behavior (tone-warmth-v1, etc.).
 

@@ -25,6 +25,8 @@ import { VOICE_EXEMPLARS } from "./voiceExemplars";
 import { computeVoiceProfile, buildVoiceDirective } from "./voiceMirror";
 import { decideRecovery } from "./recoveryDecision";
 import { runEphemeralSubAgent } from "./ephemeralSubAgents";
+import { pickSkill } from "./skillPicker";
+import { findSkill, buildSkillDirective } from "./skills";
 import {
   classifyEmotionalContext,
   blendEmotionalContext,
@@ -755,6 +757,13 @@ export async function runQaAgent(params: {
     ? classifyEmotionalContext(text)
     : Promise.resolve("calm");
 
+  // Skill picker — same parallel pattern. At most one skill is chosen per turn
+  // and its body is injected into the system prompt below. Failure → null,
+  // which means "no skill" (Sonnet falls back to its base behavior).
+  const skillPickPromise = channel === "[USER]"
+    ? pickSkill(text).then(r => r.skill).catch(() => null as string | null)
+    : Promise.resolve(null as string | null);
+
   let systemPrompt: string;
   let history: Array<{ role: "user" | "assistant"; content: string }>;
 
@@ -936,6 +945,18 @@ export async function runQaAgent(params: {
   const emotionalDirective = buildEmotionalContextDirective(blended.value);
   if (emotionalDirective) {
     systemPrompt += `\n\n${emotionalDirective}`;
+  }
+
+  // Skill injection — at most one skill body per turn, picked in parallel
+  // above. Anchored at the end where Sonnet attends most. Falls back to no
+  // skill on any error.
+  const pickedSkillName = await skillPickPromise.catch(() => null);
+  if (pickedSkillName) {
+    const skill = findSkill(pickedSkillName);
+    if (skill) {
+      systemPrompt += `\n\n${buildSkillDirective(skill)}`;
+      metrics.skill = skill.name;
+    }
   }
   if (blended.persist) {
     db.collection("agent_sessions").doc(phone).update({

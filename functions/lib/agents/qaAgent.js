@@ -59,6 +59,8 @@ const voiceExemplars_1 = require("./voiceExemplars");
 const voiceMirror_1 = require("./voiceMirror");
 const recoveryDecision_1 = require("./recoveryDecision");
 const ephemeralSubAgents_1 = require("./ephemeralSubAgents");
+const skillPicker_1 = require("./skillPicker");
+const skills_1 = require("./skills");
 const emotionalContext_1 = require("./emotionalContext");
 const db = admin.firestore();
 // ── Context loaders ───────────────────────────────────────────────────────────
@@ -661,6 +663,12 @@ async function runQaAgent(params) {
     const emotionalClassifyPromise = channel === "[USER]"
         ? (0, emotionalContext_1.classifyEmotionalContext)(text)
         : Promise.resolve("calm");
+    // Skill picker — same parallel pattern. At most one skill is chosen per turn
+    // and its body is injected into the system prompt below. Failure → null,
+    // which means "no skill" (Sonnet falls back to its base behavior).
+    const skillPickPromise = channel === "[USER]"
+        ? (0, skillPicker_1.pickSkill)(text).then(r => r.skill).catch(() => null)
+        : Promise.resolve(null);
     let systemPrompt;
     let history;
     // Sentinel injected when Zep fails. Claude sees this in the system prompt and
@@ -819,6 +827,17 @@ async function runQaAgent(params) {
     const emotionalDirective = (0, emotionalContext_1.buildEmotionalContextDirective)(blended.value);
     if (emotionalDirective) {
         systemPrompt += `\n\n${emotionalDirective}`;
+    }
+    // Skill injection — at most one skill body per turn, picked in parallel
+    // above. Anchored at the end where Sonnet attends most. Falls back to no
+    // skill on any error.
+    const pickedSkillName = await skillPickPromise.catch(() => null);
+    if (pickedSkillName) {
+        const skill = (0, skills_1.findSkill)(pickedSkillName);
+        if (skill) {
+            systemPrompt += `\n\n${(0, skills_1.buildSkillDirective)(skill)}`;
+            metrics.skill = skill.name;
+        }
     }
     if (blended.persist) {
         db.collection("agent_sessions").doc(phone).update({

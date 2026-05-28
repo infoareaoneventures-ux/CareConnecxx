@@ -54,6 +54,7 @@ export interface TurnMetrics {
 
   // Conversational state
   emotionalContext?: "calm" | "anxious" | "grieving" | "frustrated" | "rushed" | "celebratory";
+  skill?:            string;  // name of the Agent Skill injected this turn, if any
 
   // Output
   replyLength?: number;

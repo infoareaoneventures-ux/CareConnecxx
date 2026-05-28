@@ -6,6 +6,7 @@ vi.mock("../utils/openaiClient", () => ({
 
 import {
   classifyEmotionalContext,
+  classifyEmotionalTopic,
   blendEmotionalContext,
   buildEmotionalContextDirective,
   EMOTIONAL_CONTEXT_TTL_MS,
@@ -156,5 +157,73 @@ describe("buildEmotionalContextDirective", () => {
   it("celebratory directive matches warmth without overdoing", () => {
     const d = buildEmotionalContextDirective("celebratory");
     expect(d).toMatch(/good news|celebrat|warm/i);
+  });
+});
+
+describe("classifyEmotionalTopic", () => {
+  it("returns general for empty input", () => {
+    expect(classifyEmotionalTopic("")).toBe("general");
+    expect(classifyEmotionalTopic("   ")).toBe("general");
+  });
+
+  it("classifies health-marker phrases as health", () => {
+    expect(classifyEmotionalTopic("Mom hasn't been eating")).toBe("health");
+    expect(classifyEmotionalTopic("She fell this morning, I'm worried about her hip")).toBe("health");
+    expect(classifyEmotionalTopic("dad missed his medication yesterday")).toBe("health");
+    expect(classifyEmotionalTopic("blood pressure has been high lately")).toBe("health");
+  });
+
+  it("classifies logistics-marker phrases as logistics", () => {
+    expect(classifyEmotionalTopic("can we reschedule Thursday")).toBe("logistics");
+    expect(classifyEmotionalTopic("what's this charge on my invoice from last week")).toBe("logistics");
+    expect(classifyEmotionalTopic("what time is the visit tomorrow")).toBe("logistics");
+    expect(classifyEmotionalTopic("can you cancel the booking")).toBe("logistics");
+  });
+
+  it("falls back to general for ambiguous prose", () => {
+    expect(classifyEmotionalTopic("hi just checking in")).toBe("general");
+    expect(classifyEmotionalTopic("everything good here")).toBe("general");
+    expect(classifyEmotionalTopic("hope you're well")).toBe("general");
+  });
+
+  it("when both health and logistics markers appear, prefers health (higher stakes)", () => {
+    expect(classifyEmotionalTopic("Mom's been having chest pain — can we reschedule the visit today?")).toBe("health");
+  });
+});
+
+describe("buildEmotionalContextDirective with topic", () => {
+  it("default topic 'general' produces no topic-specific addendum", () => {
+    const d = buildEmotionalContextDirective("anxious");
+    expect(d).not.toMatch(/Topic is/i);
+  });
+
+  it("anxious + health appends a health-grounding addendum", () => {
+    const d = buildEmotionalContextDirective("anxious", "health");
+    expect(d).toMatch(/Topic is health/i);
+    expect(d).toMatch(/journal|notes|care_plan|get_care_journal/i);
+  });
+
+  it("anxious + logistics appends a logistics-clarity addendum", () => {
+    const d = buildEmotionalContextDirective("anxious", "logistics");
+    expect(d).toMatch(/Topic is logistics/i);
+    expect(d).toMatch(/clear specific answer|time|name|yes\/no/i);
+  });
+
+  it("frustrated + health appends a care-grounding addendum", () => {
+    const d = buildEmotionalContextDirective("frustrated", "health");
+    expect(d).toMatch(/Topic is health/i);
+    expect(d).toMatch(/journal|get_care_journal/i);
+  });
+
+  it("frustrated + logistics tells Cara to fix logistics directly", () => {
+    const d = buildEmotionalContextDirective("frustrated", "logistics");
+    expect(d).toMatch(/Topic is logistics/i);
+    expect(d).toMatch(/fix the logistics directly|cancel, reschedule/i);
+  });
+
+  it("grieving / rushed / celebratory branches do NOT emit topic addendum (out of scope)", () => {
+    expect(buildEmotionalContextDirective("grieving", "health")).not.toMatch(/Topic is/i);
+    expect(buildEmotionalContextDirective("rushed", "logistics")).not.toMatch(/Topic is/i);
+    expect(buildEmotionalContextDirective("celebratory", "health")).not.toMatch(/Topic is/i);
   });
 });

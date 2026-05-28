@@ -33,9 +33,11 @@ import { DEFAULT_AUGMENTERS } from "./defaultPromptAugmenters";
 import "./experimentRegistry"; // side-effect: registers active experiments
 import {
   classifyEmotionalContext,
+  classifyEmotionalTopic,
   blendEmotionalContext,
   buildEmotionalContextDirective,
   type EmotionalContext,
+  type EmotionalTopic,
   type StoredEmotionalContext,
 } from "./emotionalContext";
 
@@ -593,6 +595,36 @@ function detectLowConfidence(reply: string): boolean {
   return HALLUCINATION_SIGNALS.some((r) => r.test(reply));
 }
 
+// Sprint 8: confident-speculation detector. Catches the failure mode where
+// Cara asserts a fact about a specific caregiver/availability/condition that
+// she hasn't actually verified — distinct from hedging (handled above).
+// LOG-ONLY this sprint: we measure the false-positive rate before deciding
+// whether to add a rewrite path.
+const CONFIDENCE_CLAIM_PATTERNS = [
+  // Proper-name + availability/state claim ("Maria is free", "Alice is sick")
+  /\b[A-Z][a-z]+(?:'s| is)\s+(free|available|booked|coming|out|sick|here|on|off|done)\b/,
+  // "I confirmed/scheduled/cancelled X" without any tool record
+  /\b(I (?:confirmed|scheduled|cancelled|booked|moved|paid|refunded))\b/i,
+];
+
+export function detectConfidenceClaim(reply: string): boolean {
+  return CONFIDENCE_CLAIM_PATTERNS.some((r) => r.test(reply));
+}
+
+// Sprint 8: promise-without-tool-call detector. The system prompt bans
+// phrases like "let me check" unless a tool was actually called the same
+// turn, but the prompt rule isn't enforced. This flag lets us measure how
+// often Cara violates the rule, without changing reply text.
+// Match either "let me check/look/..." OR "I'll check/look/..." with up to two
+// intervening words between the verb's particle (e.g. "look ... up"). The
+// adverb/object slot covers "look that up", "look it up for you", etc.
+const PROMISE_PATTERNS = /\b(let me\s+(?:check|look|pull|find|see|grab|get)|I'?ll\s+(?:check|look|pull|find|grab|get|come back))\b/i;
+
+export function detectPromiseWithoutToolCall(reply: string, toolCalls: number): boolean {
+  if (toolCalls > 0) return false;
+  return PROMISE_PATTERNS.test(reply);
+}
+
 // ── List-shape detector ───────────────────────────────────────────────────────
 // Returns true when the reply looks like a numbered or bulleted list:
 //   - 2+ lines starting with digits followed by ". " or ") "
@@ -946,7 +978,16 @@ export async function runQaAgent(params: {
     | undefined;
   const blended = blendEmotionalContext(storedEmotion, currentEmotion);
   metrics.emotionalContext = blended.value;
-  const emotionalDirective = buildEmotionalContextDirective(blended.value);
+
+  // Sprint 8: classify topic (health / logistics / general) — synchronous,
+  // regex-based, no model call. Threaded into the directive so anxious-about-
+  // health gets different guidance than anxious-about-logistics.
+  const emotionalTopic: EmotionalTopic = channel === "[USER]"
+    ? classifyEmotionalTopic(text)
+    : "general";
+  metrics.emotionalTopic = emotionalTopic;
+
+  const emotionalDirective = buildEmotionalContextDirective(blended.value, emotionalTopic);
   if (emotionalDirective) {
     systemPrompt += `\n\n${emotionalDirective}`;
   }
@@ -1446,6 +1487,17 @@ export async function runQaAgent(params: {
         profileReviewMode:      admin.firestore.FieldValue.delete(),
         profileReviewExpiresAt: admin.firestore.FieldValue.delete(),
       }).catch(() => { /* non-critical — TTL guard in build handles stale flags */ });
+    }
+
+    // Sprint 8: log-only conversational-quality detectors. Run on the final
+    // reply BEFORE supervise() rewrites it so the metrics reflect what Claude
+    // actually produced, not the post-processed version. Pure observation —
+    // no reply text changes.
+    if (detectConfidenceClaim(reply)) {
+      metrics.confidenceClaimDetected = true;
+    }
+    if (detectPromiseWithoutToolCall(reply, metrics.toolCalls ?? 0)) {
+      metrics.promiseWithoutToolCall = true;
     }
 
     const preSuperviseReply = reply;

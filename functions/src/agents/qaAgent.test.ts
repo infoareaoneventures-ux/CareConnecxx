@@ -24,7 +24,7 @@ vi.mock("../linq/client",          () => ({ sendMessage: vi.fn(), startTyping: v
 vi.mock("./executionAgent",        () => ({ getActiveAgentForUser: vi.fn() }));
 vi.mock("./contextManagement",     () => ({ maybeRollUpHistory: vi.fn(), buildToolResultContent: vi.fn() }));
 
-import { hasListShape } from "./qaAgent";
+import { hasListShape, detectConfidenceClaim, detectPromiseWithoutToolCall } from "./qaAgent";
 
 describe("hasListShape", () => {
   it.each([
@@ -48,5 +48,43 @@ describe("hasListShape", () => {
     ["",                                            "empty string"],
   ])("does NOT flag %p (%s)", (input) => {
     expect(hasListShape(input)).toBe(false);
+  });
+});
+
+describe("detectConfidenceClaim", () => {
+  it.each([
+    ["Maria is free Wednesday.",            "proper-name availability assertion"],
+    ["Alice is sick today.",                "proper-name state assertion"],
+    ["Sarah is coming at 9.",               "proper-name schedule assertion"],
+    ["I confirmed the appointment.",        "first-person done-claim"],
+  ])("flags %p (%s)", (input) => {
+    expect(detectConfidenceClaim(input)).toBe(true);
+  });
+
+  it.each([
+    ["Maria's notes mention smaller meals.",    "proper-name + ordinary verb, not a state claim"],
+    ["I'll ask Alice about Wednesday.",         "future-tense ask, not a confident claim"],
+    ["Let me check her schedule.",              "promise without assertion"],
+    ["",                                         "empty"],
+  ])("does NOT flag %p (%s)", (input) => {
+    expect(detectConfidenceClaim(input)).toBe(false);
+  });
+});
+
+describe("detectPromiseWithoutToolCall", () => {
+  it("flags 'let me check' when zero tools were called", () => {
+    expect(detectPromiseWithoutToolCall("Let me check her schedule.", 0)).toBe(true);
+    expect(detectPromiseWithoutToolCall("I'll look that up for you.", 0)).toBe(true);
+    expect(detectPromiseWithoutToolCall("I'll come back to you on that one.", 0)).toBe(true);
+  });
+
+  it("does NOT flag when at least one tool was called", () => {
+    expect(detectPromiseWithoutToolCall("Let me check her schedule.", 1)).toBe(false);
+    expect(detectPromiseWithoutToolCall("I'll look that up for you.", 2)).toBe(false);
+  });
+
+  it("does NOT flag prose without promise phrasing", () => {
+    expect(detectPromiseWithoutToolCall("Thursday 9am.", 0)).toBe(false);
+    expect(detectPromiseWithoutToolCall("She's doing well today.", 0)).toBe(false);
   });
 });

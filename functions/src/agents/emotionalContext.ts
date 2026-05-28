@@ -17,6 +17,54 @@ const VALID = new Set<EmotionalContext>([
   "calm", "anxious", "grieving", "frustrated", "rushed", "celebratory",
 ]);
 
+// Topic dimension — orthogonal to emotional posture. Anxious-about-HEALTH
+// needs reassurance + journal/notes grounding; anxious-about-LOGISTICS
+// needs a fast yes/no/specific answer. We don't burn a model call for this —
+// just a cheap regex scan with fail-open to "general".
+export type EmotionalTopic = "health" | "logistics" | "general";
+
+// NOTE: truncated stems use `\w*` (not a trailing `\b`) so they match the full
+// inflected word — `reschedul\w*` matches "reschedule"/"rescheduling", whereas
+// `reschedul\b` would never match (the word continues past the boundary).
+const HEALTH_PATTERNS = [
+  /\b(pain|hurt\w*|bleed\w*|fever|temperature|breath\w*|chest|fall\w*|fell)\b/i,
+  /\b(med|meds|medication\w*|prescript\w*|pill|dose|insulin|inhaler|oxygen)\b/i,
+  /\b(doctor|dr\.|physician|nurse|hospital|emergency room|appointment with)\b/i,
+  /\b(blood pressure|bp|heart rate|pulse|sugar|glucose|a1c)\b/i,
+  /\b(sleep\w*|appetite|eat\w*|drink\w*|bathroom|incontinen\w*)\b/i,
+  /\b(confus\w*|dementia|alzheimer\w*|memory|forgot|forget|forgetting)\b/i,
+  /\b(mood|sad|crying|withdrawn|agitat\w*)\b/i,
+];
+
+const LOGISTICS_PATTERNS = [
+  /\b(book\w*|reschedul\w*|cancel\w*|swap|move|moving|change|changing)\b/i,
+  /\b(invoic\w*|bill\w*|charg\w*|payment|refund\w*|payout|subscription|membership)\b/i,
+  /\b(when|what time|how long|hours?|schedul\w*|calendar|availability)\b/i,
+  /\b(visit|shift|appointment|interview)\s+(time|date|day|hour)/i,
+  /\b(passcode|login|password|portal|account|sign in)\b/i,
+  /\b(address|directions|location|where)\b/i,
+];
+
+/**
+ * Classify the topic of the inbound message — orthogonal to emotional
+ * posture. Synchronous, regex-based, no model call, fail-open to "general".
+ *
+ * Used to nuance the emotional directive: "anxious + health" gets a
+ * different addendum than "anxious + logistics". Topic isn't persisted
+ * across turns (unlike posture) — each inbound is reclassified fresh.
+ */
+export function classifyEmotionalTopic(text: string): EmotionalTopic {
+  const trimmed = (text ?? "").trim();
+  if (!trimmed) return "general";
+  const healthHits   = HEALTH_PATTERNS.filter(r => r.test(trimmed)).length;
+  const logisticsHits = LOGISTICS_PATTERNS.filter(r => r.test(trimmed)).length;
+  // When both are present, prefer health — it's the higher-stakes dimension
+  // and the more conservative default for an eldercare agent.
+  if (healthHits > 0 && healthHits >= logisticsHits) return "health";
+  if (logisticsHits > 0) return "logistics";
+  return "general";
+}
+
 // 12-hour TTL — a tone signal carries forward across the day. After 12h with
 // no reinforcement (no non-calm classification), the session resets to calm.
 export const EMOTIONAL_CONTEXT_TTL_MS = 12 * 60 * 60 * 1000;
@@ -107,17 +155,32 @@ export function blendEmotionalContext(
  *
  * "calm" returns an empty string — no directive needed for the default tone,
  * and emitting one would unnecessarily invalidate the prompt cache.
+ *
+ * Sprint 8: optional `topic` parameter (Health / Logistics / General) lets
+ * anxious & frustrated branches nuance their guidance — health concerns need
+ * grounding in journal/notes; logistics needs a fast specific answer.
  */
-export function buildEmotionalContextDirective(value: EmotionalContext): string {
+export function buildEmotionalContextDirective(
+  value: EmotionalContext,
+  topic: EmotionalTopic = "general",
+): string {
   switch (value) {
-    case "anxious":
+    case "anxious": {
+      const topicLine =
+        topic === "health"
+          ? "Topic is health: ground reassurance in journal/notes/care_plan data — call get_care_journal or get_senior_profile before stating anything specific about their condition."
+          : topic === "logistics"
+            ? "Topic is logistics: give a clear specific answer (time, name, yes/no) fast; reassurance is a single sentence at most."
+            : "";
       return [
         "<emotional_context>",
         "The family is anxious. Lead with reassurance and concrete next steps before details.",
         "Shorter sentences. Acknowledge the worry by name (\"I can hear how worried you are\") once, then act.",
         "Do not pile on caveats, disclaimers, or \"please consult a professional\" hedges — they read as cold here.",
+        ...(topicLine ? [topicLine] : []),
         "</emotional_context>",
       ].join("\n");
+    }
     case "grieving":
       return [
         "<emotional_context>",
@@ -126,14 +189,22 @@ export function buildEmotionalContextDirective(value: EmotionalContext): string 
         "If they raise a task, handle it gently and quietly; don't celebrate completion.",
         "</emotional_context>",
       ].join("\n");
-    case "frustrated":
+    case "frustrated": {
+      const topicLine =
+        topic === "health"
+          ? "Topic is health/care: acknowledge the specific care concern by name and pull recent journal notes (get_care_journal) before responding so your acknowledgment is grounded."
+          : topic === "logistics"
+            ? "Topic is logistics: fix the logistics directly in this turn — cancel, reschedule, refund, message the caregiver. Don't ask permission for the obvious next step."
+            : "";
       return [
         "<emotional_context>",
         "The family is frustrated. Own it without excuse-making. Skip filler and meta-talk.",
         "Acknowledge the specific thing that went wrong in one sentence, then say exactly what you'll do.",
         "Never say \"I understand how you feel.\" Show you understand by acting.",
+        ...(topicLine ? [topicLine] : []),
         "</emotional_context>",
       ].join("\n");
+    }
     case "rushed":
       return [
         "<emotional_context>",

@@ -54,7 +54,14 @@ export interface TurnMetrics {
 
   // Conversational state
   emotionalContext?: "calm" | "anxious" | "grieving" | "frustrated" | "rushed" | "celebratory";
+  emotionalTopic?:   "health" | "logistics" | "general"; // Sprint 8
   skill?:            string;  // name of the Agent Skill injected this turn, if any
+
+  // Sprint 8: log-only conversational-quality detectors. No reply rewriting
+  // attached to these flags; we measure baseline rates first, then decide
+  // whether the false-positive rate is low enough to add an auto-rewrite.
+  confidenceClaimDetected?:  boolean; // unattributed proper-name + factual claim
+  promiseWithoutToolCall?:   boolean; // "let me check" with metrics.toolCalls === 0
 
   // Prompt-augmentation pipeline (Sprint 7).
   // augmentersApplied — kebab-case names of every PromptAugmenter that emitted a non-empty directive.

@@ -163,6 +163,7 @@ vi.mock("../memory/preferences",  () => ({ getPreferences: vi.fn(async () => nul
 // Emotional / skill / voice / recovery — neutral defaults.
 vi.mock("./emotionalContext", () => ({
   classifyEmotionalContext:      vi.fn(async () => "calm"),
+  classifyEmotionalTopic:         () => "general",
   blendEmotionalContext:         (_s: unknown, c: string) => ({ value: c, persist: null }),
   buildEmotionalContextDirective: () => "",
 }));

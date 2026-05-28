@@ -33,6 +33,8 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.detectConfidenceClaim = detectConfidenceClaim;
+exports.detectPromiseWithoutToolCall = detectPromiseWithoutToolCall;
 exports.hasListShape = hasListShape;
 exports.setActiveGoal = setActiveGoal;
 exports.clearActiveGoal = clearActiveGoal;
@@ -560,6 +562,33 @@ const HALLUCINATION_SIGNALS = [
 function detectLowConfidence(reply) {
     return HALLUCINATION_SIGNALS.some((r) => r.test(reply));
 }
+// Sprint 8: confident-speculation detector. Catches the failure mode where
+// Cara asserts a fact about a specific caregiver/availability/condition that
+// she hasn't actually verified — distinct from hedging (handled above).
+// LOG-ONLY this sprint: we measure the false-positive rate before deciding
+// whether to add a rewrite path.
+const CONFIDENCE_CLAIM_PATTERNS = [
+    // Proper-name + availability/state claim ("Maria is free", "Alice is sick")
+    /\b[A-Z][a-z]+(?:'s| is)\s+(free|available|booked|coming|out|sick|here|on|off|done)\b/,
+    // "I confirmed/scheduled/cancelled X" without any tool record
+    /\b(I (?:confirmed|scheduled|cancelled|booked|moved|paid|refunded))\b/i,
+];
+function detectConfidenceClaim(reply) {
+    return CONFIDENCE_CLAIM_PATTERNS.some((r) => r.test(reply));
+}
+// Sprint 8: promise-without-tool-call detector. The system prompt bans
+// phrases like "let me check" unless a tool was actually called the same
+// turn, but the prompt rule isn't enforced. This flag lets us measure how
+// often Cara violates the rule, without changing reply text.
+// Match either "let me check/look/..." OR "I'll check/look/..." with up to two
+// intervening words between the verb's particle (e.g. "look ... up"). The
+// adverb/object slot covers "look that up", "look it up for you", etc.
+const PROMISE_PATTERNS = /\b(let me\s+(?:check|look|pull|find|see|grab|get)|I'?ll\s+(?:check|look|pull|find|grab|get|come back))\b/i;
+function detectPromiseWithoutToolCall(reply, toolCalls) {
+    if (toolCalls > 0)
+        return false;
+    return PROMISE_PATTERNS.test(reply);
+}
 // ── List-shape detector ───────────────────────────────────────────────────────
 // Returns true when the reply looks like a numbered or bulleted list:
 //   - 2+ lines starting with digits followed by ". " or ") "
@@ -631,7 +660,7 @@ async function resumeActiveGoal(phone, session) {
 }
 // ── Main QA function ──────────────────────────────────────────────────────────
 async function runQaAgent(params) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
     const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, sourceChannel, intent } = params;
     // Tag the input so Claude can apply different judgment per channel.
     // [USER] messages may require a reply; [TRIGGER] / [AGENT] inputs may not.
@@ -762,7 +791,7 @@ async function runQaAgent(params) {
                 const { detectAndApplyCorrection } = await Promise.resolve().then(() => __importStar(require("../memory/learnedFacts")));
                 correctionApplied = await detectAndApplyCorrection(userId, text, zepThreadId ? phone.replace(/\D/g, "") : undefined);
             }
-            catch (_y) {
+            catch (_z) {
                 // Non-critical
             }
         }
@@ -828,7 +857,14 @@ async function runQaAgent(params) {
     const storedEmotion = session === null || session === void 0 ? void 0 : session.emotionalContext;
     const blended = (0, emotionalContext_1.blendEmotionalContext)(storedEmotion, currentEmotion);
     metrics.emotionalContext = blended.value;
-    const emotionalDirective = (0, emotionalContext_1.buildEmotionalContextDirective)(blended.value);
+    // Sprint 8: classify topic (health / logistics / general) — synchronous,
+    // regex-based, no model call. Threaded into the directive so anxious-about-
+    // health gets different guidance than anxious-about-logistics.
+    const emotionalTopic = channel === "[USER]"
+        ? (0, emotionalContext_1.classifyEmotionalTopic)(text)
+        : "general";
+    metrics.emotionalTopic = emotionalTopic;
+    const emotionalDirective = (0, emotionalContext_1.buildEmotionalContextDirective)(blended.value, emotionalTopic);
     if (emotionalDirective) {
         systemPrompt += `\n\n${emotionalDirective}`;
     }
@@ -1233,7 +1269,7 @@ async function runQaAgent(params) {
                 if (grounded.trim())
                     reply = grounded.trim();
             }
-            catch (_z) {
+            catch (_0) {
                 // Non-critical — proceed with original reply
             }
         }
@@ -1274,7 +1310,7 @@ async function runQaAgent(params) {
                 if (rewritten.trim())
                     reply = rewritten.trim();
             }
-            catch (_0) {
+            catch (_1) {
                 // Non-critical — proceed with original reply (the linter / supervisor still run)
             }
         }
@@ -1289,6 +1325,16 @@ async function runQaAgent(params) {
                 profileReviewMode: admin.firestore.FieldValue.delete(),
                 profileReviewExpiresAt: admin.firestore.FieldValue.delete(),
             }).catch(() => { });
+        }
+        // Sprint 8: log-only conversational-quality detectors. Run on the final
+        // reply BEFORE supervise() rewrites it so the metrics reflect what Claude
+        // actually produced, not the post-processed version. Pure observation —
+        // no reply text changes.
+        if (detectConfidenceClaim(reply)) {
+            metrics.confidenceClaimDetected = true;
+        }
+        if (detectPromiseWithoutToolCall(reply, (_y = metrics.toolCalls) !== null && _y !== void 0 ? _y : 0)) {
+            metrics.promiseWithoutToolCall = true;
         }
         const preSuperviseReply = reply;
         reply = await (0, supervisor_1.supervise)(reply, { phone, role: userType }).catch((err) => {

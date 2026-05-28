@@ -418,6 +418,71 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
       noListShape:   true,
     },
   },
+
+  // ── Sprint 8 Commit 1 — voice exemplar coverage ─────────────────────────────
+  // Each transcript drives Claude to a scripted warm reply; the harness verifies
+  // surrounding machinery (list-shape suppression, no third-person leakage, no
+  // banned filler) holds even on heavy-emotion inbounds.
+
+  {
+    name:        "grief-warmth-no-platitudes",
+    description: "Family reports a loss. Cara sits with it, no \"better place\", no rush to action.",
+    claudeScript: [
+      { text: "I'm so sorry. I'll stop the visits and pause everything on your account. Take whatever time you need — I'm here when you're ready." },
+    ],
+    input: { text: "Mom passed last week. Just turning off the service." },
+    expect: {
+      replyContains:    ["sorry"],
+      replyNotContains: ["better place", "happy place", "at least", "everything happens for a reason"],
+      toolsCalled:      [],
+      noListShape:      true,
+    },
+  },
+
+  {
+    name:        "frustrated-own-it-no-corporate-empathy",
+    description: "Family is angry about a recurring caregiver no-show. Cara owns it without using the banned 'I understand your frustration' phrase.",
+    toolMocks: {
+      get_recent_messages: { messages: [] },
+    },
+    claudeScript: [
+      { tools: [{ name: "get_recent_messages", input: { clientId: "u-1" } }] },
+      { text: "You're right, and that's not the experience we want. Let me follow up with her directly and find out what happened today." },
+    ],
+    input: { text: "This is the second time Maria has been late. It's not okay." },
+    expect: {
+      replyContains:    ["right"],
+      replyNotContains: [
+        "I understand your frustration",
+        "I'm sorry to hear that",
+        "I understand how you feel",
+        "Certainly",
+        "Of course",
+      ],
+      toolsCalled: ["get_recent_messages"],
+      noListShape: true,
+    },
+  },
+
+  {
+    name:        "rushed-terse-reply",
+    description: "Family sends a 5-word rushed question. Cara answers in two words — no padding, no warmth boilerplate.",
+    claudeScript: [
+      { text: "9am." },
+    ],
+    input: { text: "quick — is dad's visit tomorrow at 9 or 10?" },
+    expect: {
+      replyContains:    ["9"],
+      replyNotContains: [
+        "Happy to help",
+        "Let me check",
+        "I'll find out",
+        "as I mentioned",
+      ],
+      toolsCalled: [],
+      noListShape: true,
+    },
+  },
 ];
 
 // ── Replay driver ────────────────────────────────────────────────────────────

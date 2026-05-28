@@ -14,6 +14,7 @@
 // `cara.turn { experiments: { <key>: <variant>, ... } }` in Cloud Logging.
 
 import { registerExperiment } from "./promptExperiments";
+import { VOICE_ANTI_EXEMPLARS } from "./voiceAntiExemplars";
 
 // ── tone-warmth-v1 ────────────────────────────────────────────────────────────
 // Hypothesis: an explicit warmth/empathy directive on the first turn of a
@@ -32,5 +33,24 @@ registerExperiment({
       "Example: \"That sounds exhausting — let me look.\" Skip if the message is purely transactional.",
   },
   // Client cohort only — caregiver tone is already calibrated separately.
+  predicate: (ctx) => ctx.userType === "client",
+});
+
+// ── anti-exemplars-v1 ────────────────────────────────────────────────────────
+// Hypothesis: BAD→GOOD rewrites in the prompt reduce confident speculation,
+// hedging, and list-shape outputs on inbound replies. Known risk: showing
+// BAD examples can sometimes increase the chance the model produces them —
+// so we gate behind an A/B rather than ship to all users.
+// Status: ACTIVE — client cohort only. 50/50 control vs treat. Sticky per
+// userId. Promote to base voice (and retire) once groundingRewriteApplied +
+// formatRewriteApplied rates demonstrably drop on the treat arm without
+// `confidenceClaimDetected` getting worse.
+registerExperiment({
+  key:         "anti-exemplars-v1",
+  description: "Injects BAD→GOOD rewrite block to suppress speculation, hedging, list-shape, empty promises",
+  variants: {
+    control: "",
+    treat:   VOICE_ANTI_EXEMPLARS,
+  },
   predicate: (ctx) => ctx.userType === "client",
 });

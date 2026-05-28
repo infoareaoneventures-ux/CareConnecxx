@@ -1,0 +1,407 @@
+// Golden transcript regression harness for runQaAgent.
+//
+// Each transcript fully describes a turn: the user's message, what context
+// (senior, journal, history) should be on file, what tools should be mocked
+// and how they should respond, the scripted Claude responses (tool_use rounds
+// + final text), and the assertions on the resulting reply / tool-call trace.
+//
+// Adding a transcript:
+//   1) Append an entry to GOLDEN_TRANSCRIPTS below.
+//   2) Provide claudeScript[] — one entry per Claude call. Each entry is either
+//      { tools: [...] } (emits a tool_use message) or { text: "..." } (emits an
+//      end_turn text message). Last entry should typically be a text response.
+//   3) Provide toolMocks{} — name → fixed JSON result.
+//   4) Provide expect{} — replyContains, toolsCalled, noListShape.
+//
+// The harness mocks firebase-admin so every Firestore read returns empty
+// unless the transcript supplies `context.docs[path]` overrides. That keeps
+// transcripts focused on the agent behavior rather than the storage shape.
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// ── Shared fixture state — populated per-transcript inside beforeEach ─────────
+
+interface ClaudeResponseScript {
+  tools?: Array<{ name: string; input: Record<string, unknown> }>;
+  text?:  string;
+}
+
+interface FixtureState {
+  // Firestore overrides: path → doc data. Falsy / missing → exists:false.
+  docs:        Map<string, Record<string, unknown> | null>;
+  // Tool name → static result OR function returning result.
+  toolMocks:   Map<string, unknown | ((input: unknown) => unknown)>;
+  // Scripted Claude responses. Each next call pops index 0.
+  claudeScript: ClaudeResponseScript[];
+  // Captured tool calls in order they were executed.
+  toolCalls:   string[];
+  // Captured Linq sendMessage chunks.
+  sentChunks:  string[];
+}
+
+const STATE: FixtureState = {
+  docs:         new Map(),
+  toolMocks:    new Map(),
+  claudeScript: [],
+  toolCalls:    [],
+  sentChunks:   [],
+};
+
+function resetState(): void {
+  STATE.docs.clear();
+  STATE.toolMocks.clear();
+  STATE.claudeScript.length = 0;
+  STATE.toolCalls.length    = 0;
+  STATE.sentChunks.length   = 0;
+}
+
+// ── Module mocks (hoisted by vi.mock) ────────────────────────────────────────
+
+// Firestore stub. doc().get() reads from STATE.docs; writes / updates are no-ops.
+vi.mock("firebase-admin", () => {
+  const buildDocRef = (path: string) => ({
+    get: vi.fn(async () => {
+      const data = STATE.docs.get(path);
+      if (data) return { exists: true, data: () => data, ref: { delete: vi.fn() } };
+      return { exists: false, data: () => undefined, ref: { delete: vi.fn() } };
+    }),
+    update: vi.fn(async () => undefined),
+    set:    vi.fn(async () => undefined),
+    delete: vi.fn(async () => undefined),
+    collection: (subName: string) => buildCollection(`${path}/${subName}`),
+    ref:    { delete: vi.fn() },
+  });
+
+  const buildCollection = (path: string) => {
+    const docFn = vi.fn((id?: string) => buildDocRef(id ? `${path}/${id}` : `${path}/<auto>`));
+    type DummyQuery = {
+      where:   (...args: unknown[]) => DummyQuery;
+      orderBy: (...args: unknown[]) => DummyQuery;
+      limit:   (...args: unknown[]) => DummyQuery;
+      get:     () => Promise<{ empty: boolean; size: number; docs: Array<{ data: () => unknown; id: string; ref: { delete: ReturnType<typeof vi.fn> } }> }>;
+    };
+    const queryProxy: DummyQuery = {
+      where:   () => queryProxy,
+      orderBy: () => queryProxy,
+      limit:   () => queryProxy,
+      get:     async () => ({ empty: true, size: 0, docs: [] }),
+    };
+    return {
+      doc: docFn,
+      add: vi.fn(async () => ({ id: "auto-id" })),
+      where:   queryProxy.where,
+      orderBy: queryProxy.orderBy,
+      limit:   queryProxy.limit,
+      get:     queryProxy.get,
+    };
+  };
+
+  const firestoreFn = () => ({ collection: (name: string) => buildCollection(name), batch: () => ({ set: vi.fn(), commit: async () => undefined }) });
+  return {
+    __esModule: true,
+    default: { firestore: Object.assign(firestoreFn, { FieldValue: { delete: vi.fn(() => "__DELETE__"), arrayUnion: vi.fn((x) => x) } }) },
+    firestore: Object.assign(firestoreFn, { FieldValue: { delete: vi.fn(() => "__DELETE__"), arrayUnion: vi.fn((x) => x) } }),
+  };
+});
+
+// Claude client + retry — pop scripted responses from STATE.claudeScript.
+vi.mock("../utils/claudeClient", () => ({ getSharedClient: () => ({}) }));
+vi.mock("../utils/claudeRetry", () => ({
+  callClaudeWithRetry: vi.fn(async () => {
+    const step = STATE.claudeScript.shift();
+    if (!step) {
+      // Unexpected extra Claude call — return a benign empty end_turn so the
+      // test fails on assertions rather than blowing up here.
+      return { content: [{ type: "text", text: "" }], stop_reason: "end_turn" };
+    }
+    if (step.tools && step.tools.length) {
+      return {
+        content: step.tools.map((t, i) => ({
+          type: "tool_use",
+          id:   `toolu_${i}`,
+          name: t.name,
+          input: t.input,
+        })),
+        stop_reason: "tool_use",
+      };
+    }
+    return {
+      content: [{ type: "text", text: step.text ?? "" }],
+      stop_reason: "end_turn",
+    };
+  }),
+}));
+
+// OpenAI stub. quickComplete returns its input unchanged so any internal
+// "rewrite the reply" passes don't mutate the assertion target.
+vi.mock("../utils/openaiClient", () => ({
+  quickComplete:   vi.fn(async (_sys: string, user: string) => user),
+  getOpenAIClient: () => ({ chat: { completions: { create: vi.fn() } } }),
+}));
+
+// Linq — capture sent chunks; no-op on typing.
+vi.mock("../linq/client", () => ({
+  sendMessage:   vi.fn(async (_chatId: string, body: unknown) => {
+    STATE.sentChunks.push(typeof body === "string" ? body : JSON.stringify(body));
+    return { message_id: "x" };
+  }),
+  startTyping:   vi.fn(async () => undefined),
+  stopTyping:    vi.fn(async () => undefined),
+  sendVoiceMemo: vi.fn(async () => undefined),
+}));
+
+// Safety / lint — identity.
+vi.mock("../safety/supervisor", () => ({ supervise: (m: string) => Promise.resolve(m) }));
+vi.mock("../safety/linter",     () => ({ lintMessage: (m: string) => m }));
+
+// Memory stubs — empty by default.
+vi.mock("../memory/zepClient",    () => ({ getZepContext: vi.fn(async () => ""), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
+vi.mock("../memory/memoryFiles",  () => ({ getMemoryContext: vi.fn(async () => ""), initializeMemoryFiles: vi.fn(async () => undefined) }));
+vi.mock("../memory/learnedFacts", () => ({ getRelevantFacts: vi.fn(async () => []), detectAndApplyCorrection: vi.fn(async () => false) }));
+vi.mock("../memory/preferences",  () => ({ getPreferences: vi.fn(async () => null), isInDND: () => false }));
+
+// Emotional / skill / voice / recovery — neutral defaults.
+vi.mock("./emotionalContext", () => ({
+  classifyEmotionalContext:      vi.fn(async () => "calm"),
+  blendEmotionalContext:         (_s: unknown, c: string) => ({ value: c, persist: null }),
+  buildEmotionalContextDirective: () => "",
+}));
+vi.mock("./skillPicker", () => ({ pickSkill: vi.fn(async () => ({ skill: null, durationMs: 0 })) }));
+vi.mock("./skills",      () => ({ findSkill: vi.fn(() => null), buildSkillDirective: vi.fn(() => "") }));
+vi.mock("./voiceMirror", () => ({ computeVoiceProfile: vi.fn(() => null), buildVoiceDirective: vi.fn(() => "") }));
+vi.mock("./recoveryDecision", () => ({
+  decideRecovery: vi.fn(() => ({ shouldFire: false, consecutiveErrorIterations: 0 })),
+  RECOVERY_THRESHOLD: 2,
+}));
+vi.mock("./ephemeralSubAgents", () => ({ runEphemeralSubAgent: vi.fn(async () => ({ output: "", durationMs: 0 })) }));
+
+// MCP tool surface — empty tool list (the agent only runs scripted Claude
+// responses, so tool defs aren't validated). handleToolCall reads STATE.toolMocks.
+vi.mock("../mcp/server", () => ({
+  MCP_TOOLS:        [],
+  CAREGIVER_TOOLS:  [],
+  handleToolCall:   vi.fn(async (name: string, _input: Record<string, unknown>) => {
+    STATE.toolCalls.push(name);
+    const mock = STATE.toolMocks.get(name);
+    if (typeof mock === "function") return (mock as (i: unknown) => unknown)(_input);
+    return mock ?? { ok: true };
+  }),
+  handleToolCallForCaregiver: vi.fn(async (name: string, _input: Record<string, unknown>) => {
+    STATE.toolCalls.push(name);
+    const mock = STATE.toolMocks.get(name);
+    if (typeof mock === "function") return (mock as (i: unknown) => unknown)(_input);
+    return mock ?? { ok: true };
+  }),
+}));
+
+vi.mock("./executionAgent",    () => ({ getActiveAgentForUser: vi.fn(async () => null) }));
+vi.mock("./contextManagement", () => ({
+  maybeRollUpHistory:        vi.fn(async () => undefined),
+  buildToolResultContent:    vi.fn(async (_u: string, _n: string, r: unknown) => JSON.stringify(r)),
+  patchDanglingToolCalls:    vi.fn(() => 0),
+  truncateOldToolCallArgs:   vi.fn(() => 0),
+}));
+vi.mock("./toolCapabilities", () => ({ selectToolsForIntent: (tools: unknown[]) => tools }));
+vi.mock("./experimentRegistry", () => ({}));
+
+// ── Import qaAgent AFTER mocks are declared ──────────────────────────────────
+
+import { runQaAgent, hasListShape } from "./qaAgent";
+
+// ── Transcript schema ────────────────────────────────────────────────────────
+
+interface GoldenTranscript {
+  name:        string;
+  description: string;
+  userType?:   "client" | "caregiver";
+  userId?:     string;
+  seniorId?:   string;
+  phone?:      string;
+  chatId?:     string;
+  // Per-transcript Firestore doc overrides: path → data
+  docs?:       Record<string, Record<string, unknown>>;
+  toolMocks?:  Record<string, unknown>;
+  claudeScript: ClaudeResponseScript[];
+  input: {
+    text:    string;
+  };
+  expect: {
+    replyContains?:    string[];
+    replyNotContains?: string[];
+    toolsCalled?:      string[];   // expected order — at minimum
+    noListShape?:      boolean;
+  };
+}
+
+// ── Transcripts ──────────────────────────────────────────────────────────────
+
+const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
+  {
+    name:        "greeting-no-context-warm-hello",
+    description: "User says 'hi' with no special context. Cara replies warmly without a 'what do you need' open-ended ask.",
+    claudeScript: [
+      { text: "Hey! How's everything going with Mom today?" },
+    ],
+    input: { text: "hi" },
+    expect: {
+      replyContains:    ["Hey"],
+      replyNotContains: ["what can I help", "What can I help"],
+      toolsCalled:      [],
+      noListShape:      true,
+    },
+  },
+
+  {
+    name:        "appointment-question-calls-tool-and-answers",
+    description: "Family asks about next visit — Cara calls get_upcoming_appointments before answering.",
+    toolMocks: {
+      get_upcoming_appointments: {
+        appointments: [{ date: "2026-06-01", startTime: "9:00", caregiverName: "Maria" }],
+      },
+    },
+    claudeScript: [
+      { tools: [{ name: "get_upcoming_appointments", input: { clientId: "u-1" } }] },
+      { text: "Maria's coming Monday June 1st at 9. Anything you want me to pass along?" },
+    ],
+    input: { text: "when is the next visit?" },
+    expect: {
+      replyContains: ["Maria"],
+      toolsCalled:   ["get_upcoming_appointments"],
+      noListShape:   true,
+    },
+  },
+
+  {
+    name:        "no-list-shape-in-reply",
+    description: "Even if Claude produces clean prose with a single inline number, no list-shape post-processor should fire.",
+    claudeScript: [
+      { text: "She turns 78 next month — what a milestone." },
+    ],
+    input: { text: "how old is mom?" },
+    expect: {
+      replyContains: ["78"],
+      noListShape:   true,
+    },
+  },
+
+  {
+    name:        "multi-step-tool-chain-cancel-then-find-replacement",
+    description: "Family wants to cancel + find replacement — Cara executes the chain in order.",
+    toolMocks: {
+      cancel_appointment:         { success: true, appointmentId: "appt-99" },
+      find_replacement_caregivers: { matches: [{ id: "cg-1", name: "Alex" }] },
+    },
+    claudeScript: [
+      { tools: [{ name: "cancel_appointment", input: { appointmentId: "appt-99" } }] },
+      { tools: [{ name: "find_replacement_caregivers", input: { clientId: "u-1" } }] },
+      { text: "Cancelled the visit and pulled Alex as a backup. Want me to set up a quick intro?" },
+    ],
+    input: { text: "cancel monday's visit and find me someone else" },
+    expect: {
+      replyContains: ["Alex"],
+      toolsCalled:   ["cancel_appointment", "find_replacement_caregivers"],
+      noListShape:   true,
+    },
+  },
+
+  {
+    name:        "caregiver-pathway-uses-caregiver-toolset",
+    description: "Caregiver asks about earnings — handled via the caregiver tool handler, not the client one.",
+    userType: "caregiver",
+    toolMocks: {
+      get_caregiver_earnings: { last30Days: 1450 },
+    },
+    claudeScript: [
+      { tools: [{ name: "get_caregiver_earnings", input: {} }] },
+      { text: "You've earned $1,450 in the last 30 days." },
+    ],
+    input: { text: "how much have I made this month?" },
+    expect: {
+      replyContains: ["1,450", "30 days"],
+      toolsCalled:   ["get_caregiver_earnings"],
+      noListShape:   true,
+    },
+  },
+];
+
+// ── Replay driver ────────────────────────────────────────────────────────────
+
+async function replayTranscript(t: GoldenTranscript): Promise<{
+  reply:      string;
+  toolCalls:  string[];
+  sentChunks: string[];
+}> {
+  resetState();
+
+  // Seed Firestore overrides
+  if (t.docs) {
+    for (const [path, data] of Object.entries(t.docs)) {
+      STATE.docs.set(path, data);
+    }
+  }
+
+  // Seed tool mocks
+  if (t.toolMocks) {
+    for (const [name, result] of Object.entries(t.toolMocks)) {
+      STATE.toolMocks.set(name, result);
+    }
+  }
+
+  // Seed Claude script
+  for (const step of t.claudeScript) {
+    STATE.claudeScript.push(step);
+  }
+
+  const reply = await runQaAgent({
+    text:     t.input.text,
+    phone:    t.phone    ?? "+15555550100",
+    chatId:   t.chatId   ?? "chat-1",
+    userId:   t.userId   ?? "u-1",
+    seniorId: t.seniorId ?? "s-1",
+    userType: t.userType ?? "client",
+    skipSend: false,
+  });
+
+  return {
+    reply,
+    toolCalls:  [...STATE.toolCalls],
+    sentChunks: [...STATE.sentChunks],
+  };
+}
+
+// ── Test runner ──────────────────────────────────────────────────────────────
+
+describe("golden transcripts", () => {
+  beforeEach(() => resetState());
+
+  for (const t of GOLDEN_TRANSCRIPTS) {
+    it(`replays "${t.name}" — ${t.description}`, async () => {
+      const out = await replayTranscript(t);
+
+      if (t.expect.replyContains) {
+        for (const substr of t.expect.replyContains) {
+          expect(out.reply).toContain(substr);
+        }
+      }
+      if (t.expect.replyNotContains) {
+        for (const banned of t.expect.replyNotContains) {
+          expect(out.reply.toLowerCase()).not.toContain(banned.toLowerCase());
+        }
+      }
+      if (t.expect.toolsCalled) {
+        // Allow extra tool calls beyond the expected (sub-set match in order).
+        // This keeps transcripts resilient to additive tool calls (logging,
+        // metrics) that we don't care about asserting.
+        let cursor = 0;
+        for (const expected of t.expect.toolsCalled) {
+          const idx = out.toolCalls.indexOf(expected, cursor);
+          expect(idx, `expected "${expected}" in tool calls ${JSON.stringify(out.toolCalls)}`).toBeGreaterThanOrEqual(0);
+          cursor = idx + 1;
+        }
+      }
+      if (t.expect.noListShape) {
+        expect(hasListShape(out.reply), `reply has list shape: ${out.reply}`).toBe(false);
+      }
+    });
+  }
+});

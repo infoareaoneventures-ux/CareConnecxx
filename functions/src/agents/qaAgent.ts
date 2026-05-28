@@ -27,6 +27,9 @@ import { decideRecovery } from "./recoveryDecision";
 import { runEphemeralSubAgent } from "./ephemeralSubAgents";
 import { pickSkill } from "./skillPicker";
 import { findSkill, buildSkillDirective } from "./skills";
+import { runAugmenters, type PromptAugmenter, type AugmenterContext } from "./promptAugmenters";
+import { experimentsAugmenter } from "./promptExperiments";
+import "./experimentRegistry"; // side-effect: registers active experiments
 import {
   classifyEmotionalContext,
   blendEmotionalContext,
@@ -967,6 +970,27 @@ export async function runQaAgent(params: {
   // Inject session identifiers — Claude must never ask the user for clientId, userId, or phone.
   // These are always known from the session and are also auto-injected into every tool call.
   systemPrompt += `\n\nSESSION (do not ask the user for these — use them when tools require clientId, userId, or phone):\nclientId = "${userId}" | userId = "${userId}" | phone = "${phone}"`;
+
+  // Sprint 7 — composable prompt augmenters. Today this only runs the A/B
+  // experiments augmenter; future PRs migrate the inline `systemPrompt += ...`
+  // chain below into this registry one directive at a time. The pipeline is
+  // append-only and predicate-gated, so it can't break existing behavior.
+  const augmenterCtx: AugmenterContext = {
+    text,
+    phone,
+    userId,
+    seniorId,
+    userType,
+    session,
+    turnCount: Math.floor(history.length / 2),
+    metrics,
+  };
+  const PIPELINE: PromptAugmenter[] = [experimentsAugmenter];
+  const augResult = await runAugmenters(systemPrompt, PIPELINE, augmenterCtx);
+  systemPrompt = augResult.systemPrompt;
+  if (augResult.applied.length) {
+    metrics.augmentersApplied = augResult.applied;
+  }
 
   // Unconfirmed-identity directive — set when the phone exists in our system
   // but onboarding has not completed and the user declined (or hasn't yet

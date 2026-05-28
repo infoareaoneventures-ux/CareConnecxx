@@ -61,6 +61,9 @@ const recoveryDecision_1 = require("./recoveryDecision");
 const ephemeralSubAgents_1 = require("./ephemeralSubAgents");
 const skillPicker_1 = require("./skillPicker");
 const skills_1 = require("./skills");
+const promptAugmenters_1 = require("./promptAugmenters");
+const promptExperiments_1 = require("./promptExperiments");
+require("./experimentRegistry"); // side-effect: registers active experiments
 const emotionalContext_1 = require("./emotionalContext");
 const db = admin.firestore();
 // ── Context loaders ───────────────────────────────────────────────────────────
@@ -847,6 +850,26 @@ async function runQaAgent(params) {
     // Inject session identifiers — Claude must never ask the user for clientId, userId, or phone.
     // These are always known from the session and are also auto-injected into every tool call.
     systemPrompt += `\n\nSESSION (do not ask the user for these — use them when tools require clientId, userId, or phone):\nclientId = "${userId}" | userId = "${userId}" | phone = "${phone}"`;
+    // Sprint 7 — composable prompt augmenters. Today this only runs the A/B
+    // experiments augmenter; future PRs migrate the inline `systemPrompt += ...`
+    // chain below into this registry one directive at a time. The pipeline is
+    // append-only and predicate-gated, so it can't break existing behavior.
+    const augmenterCtx = {
+        text,
+        phone,
+        userId,
+        seniorId,
+        userType,
+        session,
+        turnCount: Math.floor(history.length / 2),
+        metrics,
+    };
+    const PIPELINE = [promptExperiments_1.experimentsAugmenter];
+    const augResult = await (0, promptAugmenters_1.runAugmenters)(systemPrompt, PIPELINE, augmenterCtx);
+    systemPrompt = augResult.systemPrompt;
+    if (augResult.applied.length) {
+        metrics.augmentersApplied = augResult.applied;
+    }
     // Unconfirmed-identity directive — set when the phone exists in our system
     // but onboarding has not completed and the user declined (or hasn't yet
     // accepted) the onboarding offer. Cara must NOT reference any senior, care

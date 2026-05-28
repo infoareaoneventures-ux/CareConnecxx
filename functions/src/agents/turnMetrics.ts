@@ -56,6 +56,12 @@ export interface TurnMetrics {
   emotionalContext?: "calm" | "anxious" | "grieving" | "frustrated" | "rushed" | "celebratory";
   skill?:            string;  // name of the Agent Skill injected this turn, if any
 
+  // Prompt-augmentation pipeline (Sprint 7).
+  // augmentersApplied — kebab-case names of every PromptAugmenter that emitted a non-empty directive.
+  // experiments      — experimentKey → variantName for each active A/B experiment the user is in.
+  augmentersApplied?: string[];
+  experiments?:       Record<string, string>;
+
   // Output
   replyLength?: number;
   replyEmpty?:  boolean;

@@ -28,6 +28,10 @@ const BANNED_PHRASES: string[] = [
   "Let me know if you need anything else",
   "Let me know if there's anything else",
   "Is there anything else I can",
+  // Bureaucratic / customer-service tone — Cara is a friend, not a clerk
+  "Go ahead and share",
+  "on file for you",
+  "everything on file",
 ];
 
 // Patterns that make text feel robotic or formal

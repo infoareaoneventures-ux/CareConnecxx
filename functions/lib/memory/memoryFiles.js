@@ -33,9 +33,12 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.listMemoryFiles = listMemoryFiles;
 exports.readMemoryFile = readMemoryFile;
 exports.writeMemoryFile = writeMemoryFile;
 exports.appendToMemoryFile = appendToMemoryFile;
+exports.editMemoryFile = editMemoryFile;
+exports.searchMemory = searchMemory;
 exports.getMemoryContext = getMemoryContext;
 exports.initializeMemoryFiles = initializeMemoryFiles;
 exports.handleMemoryQuery = handleMemoryQuery;
@@ -46,8 +49,26 @@ const jsonUtils_1 = require("../utils/jsonUtils");
 const storage = admin.storage();
 const db = admin.firestore();
 const ALL_FILES = ["profile", "health", "family", "recent_episodes", "procedural"];
+// Restrict slugs to a safe charset so a file name can never escape the user's prefix.
+function sanitizeFileName(file) {
+    const slug = String(file).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 64);
+    return slug || "untitled";
+}
 function filePath(userId, file) {
-    return `memory/${userId}/${file}.md`;
+    return `memory/${userId}/${sanitizeFileName(file)}.md`;
+}
+// Enumerate the memory files that actually exist for a user (canonical + ad-hoc).
+async function listMemoryFiles(userId) {
+    try {
+        const bucket = storage.bucket();
+        const [files] = await bucket.getFiles({ prefix: `memory/${userId}/` });
+        return files
+            .map((f) => f.name.slice(`memory/${userId}/`.length).replace(/\.md$/, ""))
+            .filter(Boolean);
+    }
+    catch (_a) {
+        return [];
+    }
 }
 async function readMemoryFile(userId, file) {
     try {
@@ -73,9 +94,51 @@ async function appendToMemoryFile(userId, file, entry) {
         : entry;
     await writeMemoryFile(userId, file, updated);
 }
-// Returns all 5 files concatenated, trimmed to ~3000 tokens (~12 000 chars)
+// Surgical find/replace within a single memory file — for correcting a stored fact
+// ("Mom is 82 not 78") without rewriting the whole file or appending a duplicate.
+// Returns the number of occurrences replaced (0 = no match, file left untouched).
+async function editMemoryFile(userId, file, find, replace) {
+    if (!find)
+        return 0;
+    const existing = await readMemoryFile(userId, file);
+    if (!existing || !existing.includes(find))
+        return 0;
+    const count = existing.split(find).length - 1;
+    const updated = existing.split(find).join(replace);
+    await writeMemoryFile(userId, file, updated);
+    return count;
+}
+// Substring search across all of a user's memory files. Returns the matching
+// sections so the QA agent can retrieve a fact without injecting all ~12K chars.
+async function searchMemory(userId, query) {
+    const q = query.trim().toLowerCase();
+    if (!q)
+        return [];
+    const files = await listMemoryFiles(userId);
+    const hits = [];
+    for (const file of files) {
+        const content = await readMemoryFile(userId, file);
+        if (!content)
+            continue;
+        // Split into blocks on blank lines so a hit returns a coherent chunk of context.
+        for (const block of content.split(/\n\s*\n/)) {
+            if (block.toLowerCase().includes(q)) {
+                hits.push({ file, section: block.trim().slice(0, 800) });
+            }
+        }
+    }
+    return hits;
+}
+// Returns existing files concatenated, trimmed to ~3000 tokens (~12 000 chars).
+// Enumerates the user's bucket prefix so ad-hoc files are included, with the five
+// canonical files ordered first.
 async function getMemoryContext(userId) {
-    const parts = await Promise.all(ALL_FILES.map(async (file) => {
+    const present = await listMemoryFiles(userId);
+    const ordered = [
+        ...ALL_FILES.filter((f) => present.includes(f)),
+        ...present.filter((f) => !ALL_FILES.includes(f)).sort(),
+    ];
+    const parts = await Promise.all(ordered.map(async (file) => {
         const content = await readMemoryFile(userId, file);
         return content ? `## ${file}\n${content}` : "";
     }));

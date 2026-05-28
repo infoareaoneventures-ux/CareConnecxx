@@ -1,16 +1,40 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { safeParseJson } from "../utils/jsonUtils";
+import { embedText, embedMany, splitIntoBlocks, rankBySimilarity, EMBED_MODEL } from "./embeddings";
 
 const storage = admin.storage();
 const db      = admin.firestore();
 
-export type MemoryFile = "profile" | "health" | "family" | "recent_episodes" | "procedural";
+// The five canonical files Cara initializes and consolidates into. Callers may also
+// read/write arbitrary slugs (the `(string & {})` keeps autocomplete for the canonical
+// names while still accepting any other string — e.g. offloaded tool results).
+export type CanonicalMemoryFile = "profile" | "health" | "family" | "recent_episodes" | "procedural";
+export type MemoryFile = CanonicalMemoryFile | (string & {});
 
-const ALL_FILES: MemoryFile[] = ["profile", "health", "family", "recent_episodes", "procedural"];
+const ALL_FILES: CanonicalMemoryFile[] = ["profile", "health", "family", "recent_episodes", "procedural"];
+
+// Restrict slugs to a safe charset so a file name can never escape the user's prefix.
+function sanitizeFileName(file: string): string {
+  const slug = String(file).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 64);
+  return slug || "untitled";
+}
 
 function filePath(userId: string, file: MemoryFile): string {
-  return `memory/${userId}/${file}.md`;
+  return `memory/${userId}/${sanitizeFileName(file)}.md`;
+}
+
+// Enumerate the memory files that actually exist for a user (canonical + ad-hoc).
+export async function listMemoryFiles(userId: string): Promise<string[]> {
+  try {
+    const bucket = storage.bucket();
+    const [files] = await bucket.getFiles({ prefix: `memory/${userId}/` });
+    return files
+      .map((f) => f.name.slice(`memory/${userId}/`.length).replace(/\.md$/, ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 export async function readMemoryFile(userId: string, file: MemoryFile): Promise<string> {
@@ -33,6 +57,56 @@ export async function writeMemoryFile(
     contentType: "text/markdown",
     metadata:    { cacheControl: "no-cache" },
   });
+
+  // Refresh block embeddings for this file. Failure is non-fatal — substring
+  // search still works; we just lose semantic recall until the next write.
+  reindexMemoryFileEmbeddings(userId, file, content).catch((err) => {
+    console.warn("[memoryFiles] reindex failed:", err instanceof Error ? err.message : err);
+  });
+}
+
+// Replace all embeddings for a single memory file. Idempotent. Skipped silently
+// when no blocks pass the size filter or when the OpenAI key is absent (embedMany
+// returns nulls, which we filter out).
+async function reindexMemoryFileEmbeddings(
+  userId: string,
+  file:   MemoryFile,
+  content:string,
+): Promise<void> {
+  const slug   = sanitizeFileName(file);
+  const blocks = splitIntoBlocks(content);
+
+  const col = db.collection("memory_embeddings").doc(userId).collection("blocks");
+
+  // Delete prior embeddings for this file (whole-file rewrite, so no diffing).
+  const prior = await col.where("file", "==", slug).get();
+  if (!prior.empty) {
+    const batch = db.batch();
+    prior.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+
+  if (blocks.length === 0) return;
+
+  const vectors = await embedMany(blocks);
+  const batch   = db.batch();
+  const nowIso  = new Date().toISOString();
+  let wrote     = 0;
+
+  for (let i = 0; i < blocks.length; i++) {
+    const vec = vectors[i];
+    if (!vec) continue; // embedding API failed for this block — skip
+    const ref = col.doc();
+    batch.set(ref, {
+      file:        slug,
+      block:       blocks[i].slice(0, 800),
+      embedding:   vec,
+      model:       EMBED_MODEL,
+      updatedAt:   nowIso,
+    });
+    wrote++;
+  }
+  if (wrote > 0) await batch.commit();
 }
 
 export async function appendToMemoryFile(
@@ -47,10 +121,126 @@ export async function appendToMemoryFile(
   await writeMemoryFile(userId, file, updated);
 }
 
-// Returns all 5 files concatenated, trimmed to ~3000 tokens (~12 000 chars)
+// Surgical find/replace within a single memory file — for correcting a stored fact
+// ("Mom is 82 not 78") without rewriting the whole file or appending a duplicate.
+// Returns the number of occurrences replaced (0 = no match, file left untouched).
+export async function editMemoryFile(
+  userId: string,
+  file: MemoryFile,
+  find: string,
+  replace: string
+): Promise<number> {
+  if (!find) return 0;
+  const existing = await readMemoryFile(userId, file);
+  if (!existing || !existing.includes(find)) return 0;
+  const count   = existing.split(find).length - 1;
+  const updated = existing.split(find).join(replace);
+  await writeMemoryFile(userId, file, updated);
+  return count;
+}
+
+export interface MemorySearchHit {
+  file:    string;
+  section: string; // the matching block (paragraph or heading section)
+  source?: "substring" | "semantic";
+  score?:  number; // cosine similarity for semantic hits, 1.0 for substring
+}
+
+// Substring search across all of a user's memory files. Returns the matching
+// sections so the QA agent can retrieve a fact without injecting all ~12K chars.
+export async function searchMemory(userId: string, query: string): Promise<MemorySearchHit[]> {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+
+  const files = await listMemoryFiles(userId);
+  const hits: MemorySearchHit[] = [];
+
+  for (const file of files) {
+    const content = await readMemoryFile(userId, file);
+    if (!content) continue;
+    // Split into blocks on blank lines so a hit returns a coherent chunk of context.
+    for (const block of content.split(/\n\s*\n/)) {
+      if (block.toLowerCase().includes(q)) {
+        hits.push({ file, section: block.trim().slice(0, 800), source: "substring", score: 1 });
+      }
+    }
+  }
+  return hits;
+}
+
+/**
+ * Hybrid memory search — substring (exact) ∪ semantic (cosine over embeddings).
+ *
+ * Substring is run unconditionally so we never regress on exact-match recall.
+ * Semantic recall pulls in synonym / paraphrase matches that substring would miss
+ * ("T2DM" → "diabetes", "tripped Tuesday" → "fall"). If the embedding API fails
+ * or the key is missing, this collapses cleanly to substring-only.
+ */
+export async function searchMemoryHybrid(
+  userId: string,
+  query:  string,
+  topK = 8,
+): Promise<MemorySearchHit[]> {
+  const q = (query ?? "").trim();
+  if (!q) return [];
+
+  // Run substring + query embedding in parallel — substring is local-ish (Storage
+  // reads), embedding is one OpenAI call; we don't want to serialize them.
+  const [substringHits, queryEmbed] = await Promise.all([
+    searchMemory(userId, q),
+    embedText(q),
+  ]);
+
+  let semanticHits: MemorySearchHit[] = [];
+  if (queryEmbed) {
+    try {
+      const snap = await db
+        .collection("memory_embeddings")
+        .doc(userId)
+        .collection("blocks")
+        .get();
+      const candidates = snap.docs.map((d) => {
+        const data = d.data() as { file: string; block: string; embedding: number[] };
+        return { file: data.file, block: data.block, embedding: data.embedding };
+      });
+      const ranked = rankBySimilarity(candidates, queryEmbed, topK);
+      semanticHits = ranked.map((r) => ({
+        file:    r.file,
+        section: r.block,
+        source:  "semantic" as const,
+        score:   r._sim,
+      }));
+    } catch (err) {
+      console.warn("[memoryFiles] semantic search failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Dedup on (file, section) — prefer substring hits (score=1) over semantic.
+  const seen = new Map<string, MemorySearchHit>();
+  for (const hit of [...substringHits, ...semanticHits]) {
+    const key = `${hit.file}::${hit.section.slice(0, 200)}`;
+    const existing = seen.get(key);
+    if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) {
+      seen.set(key, hit);
+    }
+  }
+  return Array.from(seen.values())
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, topK);
+}
+
+// Returns existing files concatenated, trimmed to ~3000 tokens (~12 000 chars).
+// Enumerates the user's bucket prefix so ad-hoc files are included, with the five
+// canonical files ordered first.
 export async function getMemoryContext(userId: string): Promise<string> {
+  const present = await listMemoryFiles(userId);
+  const ordered = [
+    ...ALL_FILES.filter((f) => present.includes(f)),
+    ...present.filter((f) => !ALL_FILES.includes(f as CanonicalMemoryFile)).sort(),
+  ];
+
   const parts = await Promise.all(
-    ALL_FILES.map(async (file) => {
+    ordered.map(async (file) => {
       const content = await readMemoryFile(userId, file);
       return content ? `## ${file}\n${content}` : "";
     })
@@ -199,7 +389,7 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
 
   const appliedUpdates: Array<{ file: MemoryFile; append: string }> = [];
   for (const { file, append } of updates) {
-    if (ALL_FILES.includes(file) && append) {
+    if ((ALL_FILES as readonly string[]).includes(file) && append) {
       await appendToMemoryFile(userId, file, append).catch(() => {});
       appliedUpdates.push({ file, append });
     }

@@ -118,7 +118,11 @@ describe("booking tools", () => {
     it("cancels and returns notification.sent=true when caregiver phone reachable", async () => {
       hoisted.docState.set("appointments/a1", { clientId: "c1", status: "confirmed", caregiverId: "cg1", date: "2026-06-01", caregiverName: "Alice" });
       hoisted.docState.set("caregivers/cg1", { phone: "+15555550101" });
-      const r = await handleToolCall("cancel_appointment", { appointmentId: "a1", clientId: "c1" }) as any;
+      // _confirmedActionId bypasses the runtime HITL gate so we can test the
+      // tool body directly. In production this flag is injected only by
+      // approvalHandler after a confirmed YES; tests treat themselves as
+      // post-approval execution. See pendingActions.ts.
+      const r = await handleToolCall("cancel_appointment", { appointmentId: "a1", clientId: "c1", _confirmedActionId: "test" }) as any;
       expect(r.success).toBe(true);
       expect(r.cancelled).toBe(true);
       expect(r.notification.sent).toBe(true);
@@ -128,7 +132,7 @@ describe("booking tools", () => {
     it("returns notification.sent=false when caregiver has no phone", async () => {
       hoisted.docState.set("appointments/a1", { clientId: "c1", status: "confirmed", caregiverId: "cg1", date: "2026-06-01" });
       hoisted.docState.set("caregivers/cg1", {});
-      const r = await handleToolCall("cancel_appointment", { appointmentId: "a1", clientId: "c1" }) as any;
+      const r = await handleToolCall("cancel_appointment", { appointmentId: "a1", clientId: "c1", _confirmedActionId: "test" }) as any;
       expect(r.success).toBe(true);
       expect(r.notification.sent).toBe(false);
       expect(r.notification.reason).toBe("no_caregiver_phone");
@@ -138,7 +142,7 @@ describe("booking tools", () => {
       hoisted.docState.set("appointments/a1", { clientId: "c1", status: "confirmed", caregiverId: "cg1", date: "2026-06-01" });
       hoisted.docState.set("caregivers/cg1", { phone: "+15555550101" });
       trySend.mockResolvedValueOnce({ sent: false, reason: "linq_send_failed", error: "timeout" });
-      const r = await handleToolCall("cancel_appointment", { appointmentId: "a1", clientId: "c1" }) as any;
+      const r = await handleToolCall("cancel_appointment", { appointmentId: "a1", clientId: "c1", _confirmedActionId: "test" }) as any;
       expect(r.success).toBe(true);          // cancellation succeeded
       expect(r.notification.sent).toBe(false); // but the caregiver wasn't reached
     });

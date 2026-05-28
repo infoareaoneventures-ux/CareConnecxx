@@ -102,7 +102,8 @@ describe("safety tools", () => {
     });
 
     it("arrayUnions target + creates admin_alert", async () => {
-      const r = await handleToolCall("block_user", { userId: "u1", targetUserId: "u2", reason: "spam" }) as any;
+      // _confirmedActionId bypasses the runtime HITL gate (see pendingActions.ts).
+      const r = await handleToolCall("block_user", { userId: "u1", targetUserId: "u2", reason: "spam", _confirmedActionId: "test" }) as any;
       expect(r.success).toBe(true);
       expect(r.blocked).toBe(true);
       const userSet = hoisted.sets.find(s => s.path === "users/u1");
@@ -137,6 +138,7 @@ describe("safety tools", () => {
       const r = await handleToolCall("report_user", {
         userId: "u1", targetUserId: "u2",
         category: "harassment", description: "Sent abusive messages",
+        _confirmedActionId: "test", // bypass HITL gate
       }) as any;
       expect(r.success).toBe(true);
       expect(r.reported).toBe(true);
@@ -153,6 +155,7 @@ describe("safety tools", () => {
       const r = await handleToolCall("report_user", {
         userId: "u1", targetUserId: "u2",
         category: "other", description: longDesc,
+        _confirmedActionId: "test", // bypass HITL gate
       }) as any;
       expect(r.success).toBe(true);
       const report = hoisted.adds.find(a => a.path === "reports");

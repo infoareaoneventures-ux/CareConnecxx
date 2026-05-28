@@ -139,13 +139,15 @@ describe("family tools", () => {
 
     it("rejects when senior belongs to different client", async () => {
       hoisted.docState.set("senior_profiles/s1", { userId: "OTHER" });
-      const r = await handleToolCall("remove_family_member", { seniorId: "s1", phone: "+15555550111", clientId: "c1" }) as any;
+      // _confirmedActionId bypasses the runtime HITL gate (see pendingActions.ts)
+      // so the tool body's IDOR check runs instead of the gate's confirmation flow.
+      const r = await handleToolCall("remove_family_member", { seniorId: "s1", phone: "+15555550111", clientId: "c1", _confirmedActionId: "test" }) as any;
       expect(r._toolError).toBe(true);
     });
 
     it("removes member and notifies them they were removed", async () => {
       hoisted.docState.set("senior_profiles/s1", { userId: "c1", familyMembers: [{ phone: "+15555550111", name: "Aunt Mae" }] });
-      const r = await handleToolCall("remove_family_member", { seniorId: "s1", phone: "+15555550111", clientId: "c1" }) as any;
+      const r = await handleToolCall("remove_family_member", { seniorId: "s1", phone: "+15555550111", clientId: "c1", _confirmedActionId: "test" }) as any;
       expect(r.success).toBe(true);
       expect(r.notification.sent).toBe(true);
       expect(trySend).toHaveBeenCalledWith("+15555550111", expect.stringContaining("removed from"), "mcp:remove_family_member");

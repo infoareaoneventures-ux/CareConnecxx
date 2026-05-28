@@ -3,7 +3,6 @@ import { sendMessage, getOrCreateSession } from "../linq/client";
 import { notifyAdminBookingConfirmed } from "../notifications";
 import { logBookingCreated } from "../observability/auditLog";
 import { closeJobPost } from "../triggers/jobNotifications";
-import type { RecurringSchedule } from "../scheduled/recurringScheduler";
 import { generateCaraMessage } from "../utils/caraMessage";
 
 async function hasConflict(
@@ -54,36 +53,34 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
 
   // Atomically claim the task — prevents duplicate execution from concurrent YES replies.
   // Transitions: awaiting_approval → processing (success) | expired (timed out) | no-op (already claimed).
-  let task: BookingTask | null = null;
-  let didExpire = false;
-
-  await db.runTransaction(async (t) => {
+  // We return from the transaction (instead of assigning to outer let-variables)
+  // so TS narrows the result correctly downstream.
+  const txResult = await db.runTransaction(async (t): Promise<{ task: BookingTask; didExpire: boolean } | null> => {
     const snap = await t.get(taskRef);
     if (!snap.exists) throw new Error(`agent_tasks/${taskId} not found`);
     const data = snap.data() as BookingTask;
 
-    if (data.status !== "awaiting_approval") return; // Already claimed or processed — no-op
+    if (data.status !== "awaiting_approval") return null; // Already claimed or processed — no-op
 
     if (new Date(data.expiresAt) < new Date()) {
       t.update(taskRef, { status: "expired" });
-      task = data;
-      didExpire = true;
-      return;
+      return { task: data, didExpire: true };
     }
 
     t.update(taskRef, { status: "processing" });
-    task = data;
+    return { task: data, didExpire: false };
   });
 
-  if (!task) return; // Already processed by a concurrent caller
+  if (!txResult) return; // Already processed by a concurrent caller
+  const { task, didExpire } = txResult;
 
   if (didExpire) {
     const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
     if (sessionSnap.exists) {
       const timeoutMsg = await generateCaraMessage({
         audience: "family",
-        context:  `The booking for ${(task as BookingTask).caregiverName} has timed out. Bookings expire after 2 hours to keep availability current. Offer to restart it and tell them to reply YES to pick up where they left off.`,
-        fallback: `The booking for ${(task as BookingTask).caregiverName} timed out. Those expire after 2 hours to keep availability current.\n\nWant me to start it again? Reply YES and I'll pull up where we left off.`,
+        context:  `The booking for ${task.caregiverName} has timed out. Bookings expire after 2 hours to keep availability current. Offer to restart it and tell them to reply YES to pick up where they left off.`,
+        fallback: `The booking for ${task.caregiverName} timed out. Those expire after 2 hours to keep availability current.\n\nWant me to start it again? Reply YES and I'll pull up where we left off.`,
         maxTokens: 80,
       });
       await sendMessage(sessionSnap.data()!.chatId, timeoutMsg);
@@ -121,7 +118,7 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       const goalSet = await setActiveGoal(
         clientPhone,
         "booking",
-        `Rebook after conflict with ${(task as BookingTask).caregiverName} on ${appt.date}`,
+        `Rebook after conflict with ${task.caregiverName} on ${appt.date}`,
         { originalDate: appt.date, startTime: appt.startTime, endTime: appt.endTime, durationHours: appt.durationHours }
       ).then(() => true).catch((err) => {
         console.error("bookingExecutor: setActiveGoal failed", err);

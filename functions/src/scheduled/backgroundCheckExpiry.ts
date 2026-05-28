@@ -38,7 +38,7 @@ export const checkBackgroundCheckExpiry = functions.pubsub
 
       const bgCheckData   = cg.backgroundCheckData as Record<string, unknown> | undefined;
       const completedAtRaw = bgCheckData?.completedAt as string | undefined;
-      const caregiverName  = cg.name ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim() || "Unknown";
+      const caregiverName  = (cg.name ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "Unknown";
 
       // Skip if no completedAt date
       if (!completedAtRaw) continue;

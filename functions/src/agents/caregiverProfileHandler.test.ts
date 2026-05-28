@@ -11,7 +11,7 @@ const hoisted = vi.hoisted(() => {
   const parseWithClaude     = vi.fn();
   const quickComplete       = vi.fn();
   const generateCaraMessage = vi.fn().mockResolvedValue("ack");
-  const generateToken       = vi.fn(() => "token-abc");
+  const generateToken       = vi.fn((..._args: unknown[]) => "token-abc");
 
   return { updateMock, docGetMock, collectionMock, sendMessage, parseWithClaude, quickComplete, generateCaraMessage, generateToken };
 });

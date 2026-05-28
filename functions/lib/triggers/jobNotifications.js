@@ -256,6 +256,7 @@ async function handleJobResponse(phone, text, chatId, session) {
             .then(snap => {
             if (!snap.empty)
                 return snap.docs[0].ref.update({ status: "declined", declinedAt: new Date().toISOString() });
+            return undefined;
         })
             .catch(() => { });
         notifyFamilyIfAllDeclined(jobId).catch(err => console.error("[handleJobResponse] notifyFamilyIfAllDeclined failed:", err));

@@ -106,7 +106,7 @@ exports.onAdminAlertCreated = functions.firestore
     if (adminPhone && typeof type === "string" && PUSH_NOTIFY_TYPES.has(type)) {
         await (0, caraAgent_1.sendViaInteractionAgent)(adminPhone, {
             content: `Cara Alert: ${type} — check admin dashboard.`,
-            urgency: "urgent",
+            urgency: "immediate",
             sourceAgent: "admin_alert_notifier",
             canDrop: false,
         }).catch(err => console.error(`[onAdminAlertCreated] Push notification failed for alert ${alertId}:`, err));

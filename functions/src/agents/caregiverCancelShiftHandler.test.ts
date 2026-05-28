@@ -229,9 +229,6 @@ describe("handleCaregiverCancelShift", () => {
     };
 
     await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "I'm sick", session, CHAT);
-    // Flush microtask + macrotask queues so fire-and-forget `import(...).then(...)` resolves
-    await new Promise(r => setTimeout(r, 20));
-    await new Promise(r => setTimeout(r, 20));
 
     // Appointment marked cancelled
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -251,11 +248,15 @@ describe("handleCaregiverCancelShift", () => {
       urgency: "immediate",
       canDrop: false,
     }));
-    // Replacement agent fired
-    expect(hoisted.runEmergencyReplacement).toHaveBeenCalledWith(expect.objectContaining({
-      appointmentId: "shift-1",
-      clientId:      "client-1",
-    }));
+    // Replacement agent fires from a fire-and-forget dynamic import — wait for
+    // the call to land instead of a fixed setTimeout (which raced under parallel
+    // runs and produced an intermittent failure here).
+    await vi.waitFor(() => {
+      expect(hoisted.runEmergencyReplacement).toHaveBeenCalledWith(expect.objectContaining({
+        appointmentId: "shift-1",
+        clientId:      "client-1",
+      }));
+    }, { timeout: 2000, interval: 25 });
   });
 
   it("ask_reason — isQuestionOrOther answers and does NOT cancel", async () => {

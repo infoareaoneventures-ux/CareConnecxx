@@ -49,6 +49,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TOOL_RESULT_OFFLOAD_THRESHOLD = exports.ROLLUP_TRIGGER = exports.HISTORY_WINDOW = void 0;
 exports.maybeRollUpHistory = maybeRollUpHistory;
 exports.buildToolResultContent = buildToolResultContent;
+exports.truncateOldToolCallArgs = truncateOldToolCallArgs;
 exports.patchDanglingToolCalls = patchDanglingToolCalls;
 const admin = __importStar(require("firebase-admin"));
 const openaiClient_1 = require("../utils/openaiClient");
@@ -126,6 +127,51 @@ async function buildToolResultContent(userId, toolName, result) {
     catch (_a) {
         return full.slice(0, exports.TOOL_RESULT_OFFLOAD_THRESHOLD);
     }
+}
+// Truncate `input` payloads on tool_use blocks in older assistant messages.
+//
+// During long tool-use loops Claude's `input` arguments (e.g. care plan diffs,
+// booking JSON, web action descriptions) stay in the prompt forever. Once the
+// turn has moved on, the tool's RESULT is what matters; the original args
+// just inflate the prompt and slow every subsequent iteration.
+//
+// This mirrors deepagents' `TruncateArgsSettings` pre-pass — a cheap step
+// before the full summarization rollup that often defers a rollup entirely.
+//
+// We only touch messages older than `keepLast` (default 5) so the most recent
+// tool calls — where Claude may still be reasoning about its own args — stay
+// intact. The matching `tool_result` blocks are untouched; result content is
+// already capped by `buildToolResultContent`.
+//
+// Mutates `messages` in place. Returns the number of tool_use args truncated.
+//
+// Pattern source: third_party/deepagents/libs/deepagents/deepagents/middleware/summarization.py
+function truncateOldToolCallArgs(messages, keepLast = 5, maxArgLen = 200) {
+    var _a;
+    let truncated = 0;
+    const cutoff = Math.max(0, messages.length - keepLast);
+    for (let i = 0; i < cutoff; i++) {
+        const msg = messages[i];
+        if (msg.role !== "assistant" || typeof msg.content === "string")
+            continue;
+        for (const block of msg.content) {
+            if (block.type !== "tool_use")
+                continue;
+            // Already truncated on a prior pass — skip so the count doesn't grow.
+            const existing = block.input;
+            if (existing && existing._truncated === true)
+                continue;
+            const argsStr = JSON.stringify((_a = block.input) !== null && _a !== void 0 ? _a : {});
+            if (argsStr.length <= maxArgLen)
+                continue;
+            block.input = {
+                _truncated: true,
+                preview: argsStr.slice(0, maxArgLen) + "...",
+            };
+            truncated++;
+        }
+    }
+    return truncated;
 }
 // Defensive safety net for orphan tool_use blocks.
 //

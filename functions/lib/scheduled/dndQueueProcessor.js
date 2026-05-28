@@ -56,7 +56,7 @@ exports.processDndQueue = functions.pubsub
         try {
             await (0, caraAgent_1.sendViaInteractionAgent)(msg.phone, {
                 content: msg.content,
-                urgency: (_a = msg.urgency) !== null && _a !== void 0 ? _a : "standard",
+                urgency: ((_a = msg.urgency) !== null && _a !== void 0 ? _a : "standard"),
                 sourceAgent: (_b = msg.sourceAgent) !== null && _b !== void 0 ? _b : "dnd_queue",
                 canDrop: (_c = msg.canDrop) !== null && _c !== void 0 ? _c : true,
             });

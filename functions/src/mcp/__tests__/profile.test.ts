@@ -50,11 +50,7 @@ const hoisted = vi.hoisted(() => {
     }),
   });
   // Make where/orderBy/limit chain back to itself with .get
-  const ChainProto = {
-    where:   vi.fn(function chain(this: any) { return this; }),
-    orderBy: vi.fn(function chain(this: any) { return this; }),
-    limit:   vi.fn(function chain(this: any) { return this; }),
-  };
+  // (Previously stored as ChainProto; now inlined where needed below.)
 
   const collectionMock = vi.fn((p: string) => makeCollRef(p));
 

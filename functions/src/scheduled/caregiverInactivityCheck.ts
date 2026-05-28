@@ -32,7 +32,7 @@ export const checkCaregiverInactivity = functions.pubsub
       const cgId = cgDoc.id;
 
       const firstName    = (cg.firstName ?? cg.name ?? "there") as string;
-      const caregiverName = cg.name ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim() || "Unknown";
+      const caregiverName = (cg.name ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "Unknown";
 
       try {
         // ── 14-day inactivity check ───────────────────────────────────────────

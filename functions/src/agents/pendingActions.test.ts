@@ -10,8 +10,8 @@ const hoisted = vi.hoisted(() => {
     get: vi.fn(async () => {
       const data = docs.get(id);
       return data
-        ? { exists: true, id, data: () => data, ref: makeDocRef(id) }
-        : { exists: false, id, data: () => undefined };
+        ? { exists: true, id, data: ((): Record<string, unknown> => data), ref: makeDocRef(id) }
+        : { exists: false, id, data: ((): undefined => undefined) };
     }),
     update: vi.fn(async (patch: Record<string, unknown>) => {
       const cur = docs.get(id);

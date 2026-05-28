@@ -10,7 +10,7 @@ const db = admin.firestore();
  */
 export async function handleEarningsView(
   caregiverId: string,
-  sendMessage: (msg: string) => Promise<void>
+  sendMessage: (msg: string) => Promise<unknown>
 ): Promise<void> {
   const now     = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)

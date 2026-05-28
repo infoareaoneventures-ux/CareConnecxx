@@ -122,7 +122,6 @@ async function handleMsAskWhat(
 
   if (changeWhat === "times_only") {
     await updateStep(phone, "ms_ask_times");
-    const data = await getScheduleData(phone);
     await sendMessage(chatId,
       `What time would you like care to start and end?\n\n` +
       `(e.g. "9am to 3pm", "10:00 to 16:00")`

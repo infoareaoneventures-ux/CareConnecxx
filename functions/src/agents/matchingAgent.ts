@@ -200,7 +200,7 @@ export async function runMatchingForClient(
         overallScore: x.ruleScore,
         confidence:   x.ruleScore >= 80 ? "high" as const : x.ruleScore >= 65 ? "medium" as const : "low" as const,
         reasoning:    [
-          x.signals.skillsCoveragePercent > 60
+          (x.signals.skillsCoveragePercent ?? 0) > 60
             ? `Covers ${x.signals.skillsCoveragePercent}% of care needs` : "Available caregiver",
         ],
         redFlags: [],

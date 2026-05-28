@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import type Anthropic from "@anthropic-ai/sdk";
 import { getSharedClient } from "../utils/claudeClient";
 
 const db = admin.firestore();
@@ -62,7 +63,7 @@ export async function getActiveAgentForUser(
 
   // Sort in memory — avoids requiring a composite Firestore index
   const sorted = snap.docs
-    .map(d => ({ id: d.id, ...(d.data() as ExecutionAgentDoc) }))
+    .map(d => ({ ...(d.data() as ExecutionAgentDoc), id: d.id }))
     .sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt));
 
   return sorted[0] ?? null;

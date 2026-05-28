@@ -95,7 +95,7 @@ export async function handleAvailabilityUpdate(
   phone:       string,
   text:        string,
   session:     Record<string, unknown>,
-  sendMessage: (msg: string) => Promise<void>
+  sendMessage: (msg: string) => Promise<unknown>
 ): Promise<void> {
   const step = (session.availabilityStep as string) ?? "start";
 

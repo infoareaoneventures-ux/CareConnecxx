@@ -58,26 +58,25 @@ async function executeBookings(taskId, clientPhone) {
     const taskRef = db.collection("agent_tasks").doc(taskId);
     // Atomically claim the task — prevents duplicate execution from concurrent YES replies.
     // Transitions: awaiting_approval → processing (success) | expired (timed out) | no-op (already claimed).
-    let task = null;
-    let didExpire = false;
-    await db.runTransaction(async (t) => {
+    // We return from the transaction (instead of assigning to outer let-variables)
+    // so TS narrows the result correctly downstream.
+    const txResult = await db.runTransaction(async (t) => {
         const snap = await t.get(taskRef);
         if (!snap.exists)
             throw new Error(`agent_tasks/${taskId} not found`);
         const data = snap.data();
         if (data.status !== "awaiting_approval")
-            return; // Already claimed or processed — no-op
+            return null; // Already claimed or processed — no-op
         if (new Date(data.expiresAt) < new Date()) {
             t.update(taskRef, { status: "expired" });
-            task = data;
-            didExpire = true;
-            return;
+            return { task: data, didExpire: true };
         }
         t.update(taskRef, { status: "processing" });
-        task = data;
+        return { task: data, didExpire: false };
     });
-    if (!task)
+    if (!txResult)
         return; // Already processed by a concurrent caller
+    const { task, didExpire } = txResult;
     if (didExpire) {
         const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
         if (sessionSnap.exists) {

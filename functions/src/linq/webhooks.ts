@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability, markChatRead, AgentSession, LinqService } from "./client";
 import { classifyIntent } from "../agents/intentClassifier";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
-import { handleTaskApproval, finalizeTaskApproval } from "../agents/taskApprovalHandler";
+import { handleTaskApproval } from "../agents/taskApprovalHandler";
 import { getLatestPending } from "../agents/pendingActions";
 import { handlePendingApproval } from "../agents/approvalHandler";
 import { optOutPhoneNumber, optInPhoneNumber, setupCaraContactCard } from "../sms";
@@ -25,7 +25,7 @@ import {
   writeInterviewOutcomeSignal,
 } from "../agents/interviewAgent";
 import { executeBookings, createBookingTask } from "../agents/bookingExecutor";
-import { detectCrisis, isLikelyRealCrisis, MEDICAL_RESPONSE, EMOTIONAL_RESPONSE } from "../safety/crisisDetector";
+import { detectCrisis, isLikelyRealCrisis } from "../safety/crisisDetector";
 import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
 import { logCrisisDetected } from "../observability/auditLog";
 import { isBereavementTrigger, activateBereavementMode } from "../agents/bereavement";
@@ -379,9 +379,9 @@ async function handleShiftConfirmation(
     }
 
     // Trigger replacement agent (fire-and-forget)
-    import("../agents/replacementAgent").then(({ findReplacement }) => {
-      if (typeof findReplacement === "function") {
-        findReplacement({
+    import("../agents/replacementAgent").then(({ runEmergencyReplacement }) => {
+      if (typeof runEmergencyReplacement === "function") {
+        runEmergencyReplacement({
           appointmentId: info.appointmentId,
           clientId:      info.clientId,
           date:          info.appointmentDate,
@@ -2458,7 +2458,7 @@ async function handleInbound(event: unknown): Promise<void> {
           session.caregiverId,
           phone,
           text,
-          session as Record<string, unknown>,
+          session as unknown as Record<string, unknown>,
           chatId,
           "reactivate",
         );
@@ -2848,7 +2848,7 @@ async function handleInbound(event: unknown): Promise<void> {
           cgDoc?.data()?.name ?? "Caregiver",
           phone,
           text,
-          session as Record<string, unknown>,
+          session as unknown as Record<string, unknown>,
           chatId
         );
       } finally {
@@ -2880,7 +2880,7 @@ async function handleInbound(event: unknown): Promise<void> {
             cgDoc?.data()?.name ?? "Caregiver",
             phone,
             text,
-            session as Record<string, unknown>,
+            session as unknown as Record<string, unknown>,
             chatId,
           );
         } finally {
@@ -2907,7 +2907,7 @@ async function handleInbound(event: unknown): Promise<void> {
             session.caregiverId,
             phone,
             text,
-            session as Record<string, unknown>,
+            session as unknown as Record<string, unknown>,
             chatId,
           );
         } finally {
@@ -3067,13 +3067,13 @@ async function handleInbound(event: unknown): Promise<void> {
 
   // ── Credential collection (portal logins) ─────────────────────────────────
   // Must run before intent classification — password messages must not be logged.
-  if ((session as Record<string, unknown>).collectingCredential) {
+  if ((session as unknown as Record<string, unknown>).collectingCredential) {
     const { handleCredentialReply } = await import("../browser/credentialCollector");
     const handled = await handleCredentialReply({
       phone,
       userId: session.userId ?? "",
       text,
-      session: session as Record<string, unknown>,
+      session: session as unknown as Record<string, unknown>,
     });
     if (handled) return;
   }
@@ -3130,7 +3130,7 @@ async function handleInbound(event: unknown): Promise<void> {
       await handleRefundRequest(
         refundClientId,
         text,
-        session as Record<string, unknown>,
+        session as unknown as Record<string, unknown>,
         (msg: string) => sendMessage(chatId, msg)
       );
     } finally {
@@ -3163,7 +3163,7 @@ async function handleInbound(event: unknown): Promise<void> {
         (session.userId ?? phone) as string,
         phone,
         text,
-        session as Record<string, unknown>,
+        session as unknown as Record<string, unknown>,
         (msg: string) => sendMessage(chatId, msg)
       );
     } finally {
@@ -3180,7 +3180,7 @@ async function handleInbound(event: unknown): Promise<void> {
         (session.caregiverId ?? session.userId ?? phone) as string,
         phone,
         text,
-        session as Record<string, unknown>,
+        session as unknown as Record<string, unknown>,
         (msg: string) => sendMessage(chatId, msg)
       );
     } finally {
@@ -3197,7 +3197,7 @@ async function handleInbound(event: unknown): Promise<void> {
         session.userId ?? phone,
         phone,
         text,
-        session as Record<string, unknown>,
+        session as unknown as Record<string, unknown>,
         chatId
       );
     } finally {
@@ -3534,7 +3534,7 @@ async function handleInbound(event: unknown): Promise<void> {
     }
     if (norm === "CONFIRM" && (session as any).pendingTaskConfirm) {
       const { finalizeTaskApproval } = await import("../agents/taskApprovalHandler");
-      await finalizeTaskApproval(phone, chatId, session as Record<string, unknown>);
+      await finalizeTaskApproval(phone, chatId, session as unknown as Record<string, unknown>);
       return;
     }
     if (norm === "SKIP" && (session as any).pendingTaskConfirm) {
@@ -4169,14 +4169,14 @@ async function handleInbound(event: unknown): Promise<void> {
     // ── Schedule request — set up a personal recurring reminder ─────────────
     if (intent === "SCHEDULE_REQUEST") {
       const { handleScheduleRequest } = await import("../agents/schedulingHandler");
-      await handleScheduleRequest(phone, text, session as Record<string, unknown>);
+      await handleScheduleRequest(phone, text, session as unknown as Record<string, unknown>);
       return;
     }
 
     // ── Trigger management — view or cancel personal reminders ───────────────
     if (intent === "TRIGGER_MANAGEMENT") {
       const { handleTriggerManagement } = await import("../agents/schedulingHandler");
-      await handleTriggerManagement(phone, text, session as Record<string, unknown>);
+      await handleTriggerManagement(phone, text, session as unknown as Record<string, unknown>);
       return;
     }
 
@@ -4212,8 +4212,8 @@ async function handleInbound(event: unknown): Promise<void> {
         seniorId:    session.seniorId    ?? session.userId ?? "",
         userType:    "client",
         caregiverId: session.caregiverId,
-        zepThreadId: (session as Record<string, unknown>).zepThreadId as string | undefined,
-        session:     session as Record<string, unknown>,
+        zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
+        session:     session as unknown as Record<string, unknown>,
         intent,
       });
       await sendViaInteractionAgent(phone, {
@@ -4244,7 +4244,7 @@ async function handleInbound(event: unknown): Promise<void> {
           phone,
           text,
           // Session has no swapStep yet — handler defaults to "identify_shift"
-          session as Record<string, unknown>,
+          session as unknown as Record<string, unknown>,
           chatId
         );
       } finally {
@@ -4265,7 +4265,7 @@ async function handleInbound(event: unknown): Promise<void> {
           cgDoc?.data()?.name ?? "Caregiver",
           phone,
           text,
-          session as Record<string, unknown>,
+          session as unknown as Record<string, unknown>,
           chatId,
         );
       } finally {
@@ -4288,7 +4288,7 @@ async function handleInbound(event: unknown): Promise<void> {
             stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
           });
           const enrichedSession = {
-            ...(session as Record<string, unknown>),
+            ...(session as unknown as Record<string, unknown>),
             profileUpdateStep:  "collect",
             profileUpdateField: profileField,
           };
@@ -4328,7 +4328,7 @@ async function handleInbound(event: unknown): Promise<void> {
           phone,
           text,
           // Session has no clientSwapStep yet — handler defaults to "identify_appointment"
-          session as Record<string, unknown>,
+          session as unknown as Record<string, unknown>,
           chatId
         );
       } finally {
@@ -4369,7 +4369,7 @@ async function handleInbound(event: unknown): Promise<void> {
       await handleRefundRequest(
         refundClientId,
         text,
-        session as Record<string, unknown>,
+        session as unknown as Record<string, unknown>,
         (msg: string) => sendMessage(chatId, msg)
       );
       return;
@@ -4388,8 +4388,8 @@ async function handleInbound(event: unknown): Promise<void> {
         seniorId:    session.seniorId    ?? session.userId ?? "",
         userType:    "client",
         caregiverId: session.caregiverId,
-        zepThreadId: (session as Record<string, unknown>).zepThreadId as string | undefined,
-        session:     session as Record<string, unknown>,
+        zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
+        session:     session as unknown as Record<string, unknown>,
         intent,
       });
       await sendViaInteractionAgent(phone, {
@@ -4409,7 +4409,7 @@ async function handleInbound(event: unknown): Promise<void> {
           (session.userId ?? phone) as string,
           phone,
           text,
-          { ...session as Record<string, unknown>, timesheetStep: "start" },
+          { ...session as unknown as Record<string, unknown>, timesheetStep: "start" },
           (msg: string) => sendMessage(chatId, msg)
         );
       } finally {
@@ -4439,7 +4439,7 @@ async function handleInbound(event: unknown): Promise<void> {
           cgId,
           phone,
           text,
-          { ...session as Record<string, unknown>, availabilityStep: "start" },
+          { ...session as unknown as Record<string, unknown>, availabilityStep: "start" },
           (msg: string) => sendMessage(chatId, msg)
         );
       } finally {
@@ -4463,8 +4463,8 @@ async function handleInbound(event: unknown): Promise<void> {
         seniorId:    session.seniorId    ?? session.userId ?? "",
         userType:    session.userType    ?? "client",
         caregiverId: session.caregiverId,
-        zepThreadId: (session as Record<string, unknown>).zepThreadId as string | undefined,
-        session:     session as Record<string, unknown>,
+        zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
+        session:     session as unknown as Record<string, unknown>,
         intent,
       });
       await sendViaInteractionAgent(phone, {
@@ -4486,8 +4486,8 @@ async function handleInbound(event: unknown): Promise<void> {
         seniorId:    session.seniorId    ?? session.userId ?? "",
         userType:    "client",
         caregiverId: session.caregiverId,
-        zepThreadId: (session as Record<string, unknown>).zepThreadId as string | undefined,
-        session:     session as Record<string, unknown>,
+        zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
+        session:     session as unknown as Record<string, unknown>,
         intent,
       });
       await sendViaInteractionAgent(phone, {
@@ -4610,7 +4610,7 @@ async function handleInbound(event: unknown): Promise<void> {
       userType:    session.userType ?? "client",
       caregiverId: session.caregiverId,
       zepThreadId,
-      session:     session as Record<string, unknown>,
+      session:     session as unknown as Record<string, unknown>,
       intent,
     });
 

@@ -13,6 +13,7 @@ export type AuditEventType =
   | "booking_cancelled"
   | "caregiver_matched"
   | "permissions_updated"
+  | "preferences_updated"
   | "crisis_detected"
   | "session_created"
   | "safety_violation"
@@ -33,7 +34,23 @@ export type AuditEventType =
   | "instant_payout_requested"
   | "shift_hours_submitted"
   | "shift_hours_reviewed"
-  | "support_ticket_created";
+  | "support_ticket_created"
+  | "interview_responded"
+  | "job_post_edited"
+  | "job_post_cancelled"
+  | "caregiver_sent_message"
+  | "caregiver_availability_updated"
+  | "billing_portal_opened"
+  | "care_plan_restored"
+  | "email_change_requested"
+  | "favorite_saved"
+  | "favorite_removed"
+  | "user_blocked"
+  | "user_unblocked"
+  | "user_reported"
+  | "journal_liked"
+  | "journal_unliked"
+  | "journal_comment_added";
 
 export interface AuditEvent {
   eventType: AuditEventType;

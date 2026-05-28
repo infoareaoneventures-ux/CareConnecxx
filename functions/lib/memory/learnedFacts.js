@@ -39,10 +39,26 @@ exports.updateOrRetractFact = updateOrRetractFact;
 exports.detectAndApplyCorrection = detectAndApplyCorrection;
 const admin = __importStar(require("firebase-admin"));
 const openaiClient_1 = require("../utils/openaiClient");
+const embeddings_1 = require("./embeddings");
 const db = admin.firestore();
 // Normalize a fact string for deduplication comparison
 function normalizeFact(fact) {
     return fact.toLowerCase().replace(/\s+/g, " ").trim();
+}
+// Recency decay applied at QUERY time (not at write time — stored weight is the
+// underlying truth). Half-life of 90 days, so a fact mentioned 90 days ago has
+// half the effective weight of one mentioned today. Prevents old facts from
+// dominating retrieval just because they accumulated weight long ago.
+const DECAY_HALF_LIFE_DAYS = 90;
+function effectiveWeight(weight, lastMentionedAt) {
+    if (!lastMentionedAt)
+        return weight;
+    const ts = Date.parse(lastMentionedAt);
+    if (!Number.isFinite(ts))
+        return weight;
+    const daysAgo = Math.max(0, (Date.now() - ts) / (1000 * 60 * 60 * 24));
+    const decay = Math.pow(0.5, daysAgo / DECAY_HALF_LIFE_DAYS);
+    return weight * decay;
 }
 // Strip common LLM JSON wrappers (markdown code fences, leading prose).
 // gpt-4o-mini and Claude both occasionally return JSON wrapped in ```json ... ```
@@ -103,15 +119,10 @@ async function extractAndStoreFacts(userId, text, zepUserId) {
             });
         }
         else {
-            await factsCol.add({
-                userId,
-                fact: item.fact,
-                _norm: norm,
-                weight: 1,
-                category: item.category,
-                createdAt: nowIso,
-                lastMentionedAt: nowIso,
-            });
+            // Embed the fact for later semantic retrieval. Fail-open: null embedding
+            // is fine, the fact still stores and substring/weight retrieval still works.
+            const embedding = await (0, embeddings_1.embedText)(item.fact);
+            await factsCol.add(Object.assign({ userId, fact: item.fact, _norm: norm, weight: 1, category: item.category, createdAt: nowIso, lastMentionedAt: nowIso }, (embedding ? { embedding, embeddingModel: embeddings_1.EMBED_MODEL } : {})));
             newFacts.push({ fact: item.fact, category: item.category });
         }
     }
@@ -130,26 +141,66 @@ async function extractAndStoreFacts(userId, text, zepUserId) {
         }).catch(() => { });
     }
 }
-async function getRelevantFacts(userId, _topic) {
-    // Fetch top-20 by weight, then filter superseded client-side (avoids composite index)
+async function getRelevantFacts(userId, topic) {
+    // Fetch top-30 by stored weight (oversample) then re-rank by EFFECTIVE weight
+    // = weight × half-life-decay(daysSinceLastMention). Oversampling lets a
+    // recent-low-weight fact beat a stale-high-weight fact, which is the whole
+    // point of decay. Filter superseded client-side (avoids composite index).
     const snap = await db
         .collection("learned_facts")
         .doc(userId)
         .collection("facts")
         .orderBy("weight", "desc")
-        .limit(20)
+        .limit(30)
         .get();
-    return snap.docs
+    const active = snap.docs
         .filter((d) => !d.data().supersededAt)
-        .slice(0, 10)
-        .map((d) => ({
-        userId: d.data().userId,
-        fact: d.data().fact,
-        weight: d.data().weight,
-        category: d.data().category,
-        createdAt: d.data().createdAt,
-        lastMentionedAt: d.data().lastMentionedAt,
-        _docId: d.id,
+        .map((d) => {
+        var _a;
+        return ({
+            userId: d.data().userId,
+            fact: d.data().fact,
+            weight: d.data().weight,
+            category: d.data().category,
+            createdAt: d.data().createdAt,
+            lastMentionedAt: d.data().lastMentionedAt,
+            _docId: d.id,
+            _embedding: d.data().embedding,
+            _effectiveWeight: effectiveWeight((_a = d.data().weight) !== null && _a !== void 0 ? _a : 1, d.data().lastMentionedAt),
+        });
+    })
+        .sort((a, b) => b._effectiveWeight - a._effectiveWeight);
+    // When a topic is supplied, re-rank by semantic similarity over the weight-top-20.
+    // This blends weight (frequency × salience) with topical relevance — a fact about
+    // medications still wins over an irrelevant high-weight family fact when the
+    // user asks about meds. Fail-open: if the topic embedding fails, fall back to
+    // weight ordering.
+    if (topic && topic.trim()) {
+        const queryEmbed = await (0, embeddings_1.embedText)(topic);
+        if (queryEmbed) {
+            const withEmbed = active.filter((f) => Array.isArray(f._embedding));
+            if (withEmbed.length > 0) {
+                const ranked = (0, embeddings_1.rankBySimilarity)(withEmbed.map((f) => (Object.assign(Object.assign({}, f), { embedding: f._embedding }))), queryEmbed, 10);
+                return ranked.map((r) => ({
+                    userId: r.userId,
+                    fact: r.fact,
+                    weight: r.weight,
+                    category: r.category,
+                    createdAt: r.createdAt,
+                    lastMentionedAt: r.lastMentionedAt,
+                    _docId: r._docId,
+                }));
+            }
+        }
+    }
+    return active.slice(0, 10).map((f) => ({
+        userId: f.userId,
+        fact: f.fact,
+        weight: f.weight,
+        category: f.category,
+        createdAt: f.createdAt,
+        lastMentionedAt: f.lastMentionedAt,
+        _docId: f._docId,
     }));
 }
 // Soft-delete an existing fact and optionally replace it with a corrected version.
@@ -162,20 +213,15 @@ async function updateOrRetractFact(userId, oldDocId, newFact, zepUserId) {
     const oldRef = factsCol.doc(oldDocId);
     const newRef = newFact ? factsCol.doc() : null;
     let oldFactText;
+    // Embed the corrected fact BEFORE opening the transaction (no network calls
+    // allowed inside Firestore transactions). Embedding is best-effort.
+    const newEmbedding = newFact ? await (0, embeddings_1.embedText)(newFact.fact) : null;
     await db.runTransaction(async (t) => {
         var _a;
         const oldSnap = await t.get(oldRef);
         oldFactText = oldSnap.exists ? (_a = oldSnap.data()) === null || _a === void 0 ? void 0 : _a.fact : undefined;
         if (newRef && newFact) {
-            t.set(newRef, {
-                userId,
-                fact: newFact.fact,
-                _norm: normalizeFact(newFact.fact),
-                weight: 2, // user explicitly stated — start higher than passive extraction
-                category: newFact.category,
-                createdAt: nowIso,
-                lastMentionedAt: nowIso,
-            });
+            t.set(newRef, Object.assign({ userId, fact: newFact.fact, _norm: normalizeFact(newFact.fact), weight: 2, category: newFact.category, createdAt: nowIso, lastMentionedAt: nowIso }, (newEmbedding ? { embedding: newEmbedding, embeddingModel: embeddings_1.EMBED_MODEL } : {})));
         }
         t.update(oldRef, Object.assign({ supersededAt: nowIso }, (newRef ? { supersededBy: newRef.id } : {})));
     });

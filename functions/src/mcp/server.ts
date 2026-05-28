@@ -1647,7 +1647,7 @@ export function handlePromptGet(name: string, args: Record<string, string>): str
 }
 
 // Structured error response so Claude can reason about failures rather than hallucinating
-function toolError(code: "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE", message: string) {
+function toolError(code: "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN", message: string) {
   return { _toolError: true, success: false, code, message };
 }
 
@@ -2215,9 +2215,6 @@ export async function handleToolCall(
         try {
           // ── Login-required portal actions ──────────────────────────────────
           if (loginAction) {
-            const { PortalService } = await import("../browser/credentialVault");
-            void PortalService; // type-only import reference
-
             switch (loginAction) {
               case "schedule_appointment": {
                 const portalSvc = (input.portalService as string | undefined ?? "mychart") as import("../browser/credentialVault").PortalService;
@@ -2352,7 +2349,7 @@ export async function handleToolCall(
     }
 
     if (name === "suggest_upcoming_care") {
-      const { clientId, phone } = input as { clientId: string; phone?: string };
+      const { clientId } = input as { clientId: string; phone?: string };
       const nextWeekStart = new Date();
       nextWeekStart.setDate(nextWeekStart.getDate() + 1);
       const nextWeekEnd = new Date();
@@ -3581,7 +3578,7 @@ export async function handleToolCall(
 
     // ── initiate_client_swap ────────────────────────────────────────────────
     if (name === "initiate_client_swap") {
-      const { clientId, appointmentId } = input as Record<string, string>;
+      const { appointmentId } = input as Record<string, string>;
       const appt = await db.collection("appointments").doc(appointmentId).get();
       if (!appt.exists) return toolError("NOT_FOUND", "Appointment not found");
       const data = appt.data()!;

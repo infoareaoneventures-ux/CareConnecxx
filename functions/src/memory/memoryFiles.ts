@@ -299,7 +299,7 @@ export async function initializeMemoryFiles(
 export async function handleMemoryQuery(
   userId: string,
   chatId: string,
-  sendMessage: (id: string, msg: string) => Promise<void>,
+  sendMessage: (id: string, msg: string) => Promise<unknown>,
   zepContext?: string
 ): Promise<void> {
   const fileContext = await getMemoryContext(userId);

@@ -731,7 +731,6 @@ async function handleClientPlanReply(phone, chatId, text, session) {
 async function handleClientSendPayment(phone, chatId, session) {
     var _a, _b, _c, _d, _e;
     const d = (_a = session.onboardingData) !== null && _a !== void 0 ? _a : {};
-    const token = (0, tokenService_1.generateToken)({ phone, task: "payment" });
     const caraPhone = encodeURIComponent((_b = process.env.LINQ_PHONE_NUMBER) !== null && _b !== void 0 ? _b : "");
     let checkoutUrl = `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`;
     try {

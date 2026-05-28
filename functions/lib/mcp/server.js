@@ -2131,8 +2131,6 @@ async function handleToolCall(name, input) {
                 try {
                     // ── Login-required portal actions ──────────────────────────────────
                     if (loginAction) {
-                        const { PortalService } = await Promise.resolve().then(() => __importStar(require("../browser/credentialVault")));
-                        void PortalService; // type-only import reference
                         switch (loginAction) {
                             case "schedule_appointment": {
                                 const portalSvc = ((_10 = input.portalService) !== null && _10 !== void 0 ? _10 : "mychart");
@@ -2256,7 +2254,7 @@ async function handleToolCall(name, input) {
                 break;
         }
         if (name === "suggest_upcoming_care") {
-            const { clientId, phone } = input;
+            const { clientId } = input;
             const nextWeekStart = new Date();
             nextWeekStart.setDate(nextWeekStart.getDate() + 1);
             const nextWeekEnd = new Date();
@@ -3543,7 +3541,7 @@ async function handleToolCall(name, input) {
         }
         // ── initiate_client_swap ────────────────────────────────────────────────
         if (name === "initiate_client_swap") {
-            const { clientId, appointmentId } = input;
+            const { appointmentId } = input;
             const appt = await db.collection("appointments").doc(appointmentId).get();
             if (!appt.exists)
                 return toolError("NOT_FOUND", "Appointment not found");

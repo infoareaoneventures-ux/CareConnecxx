@@ -32,7 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.contactReplacementCandidate = contactReplacementCandidate;
 exports.handleNoReplacementsFound = handleNoReplacementsFound;
@@ -43,7 +42,6 @@ const caraAgent_1 = require("./caraAgent");
 const replacementScorer_1 = require("./replacementScorer");
 const triggerEngine_1 = require("../triggers/triggerEngine");
 const db = admin.firestore();
-const SUPPORT_PHONE = (_a = process.env.SUPPORT_PHONE) !== null && _a !== void 0 ? _a : "1-800-555-0199";
 // ── Contact a replacement candidate via Linq ──────────────────────────────────
 async function contactReplacementCandidate(caregiver, appt, taskId) {
     var _a, _b, _c, _d, _e, _f;

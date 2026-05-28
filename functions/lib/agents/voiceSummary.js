@@ -70,6 +70,6 @@ async function sendVoiceSummary(chatId, summaryText, seniorId) {
         action: "read",
         expires: Date.now() + 60 * 60 * 1000,
     });
-    await (0, client_1.sendVoiceMemo)(chatId, url);
+    await (0, client_1.sendVoiceMemo)(chatId, { url });
 }
 //# sourceMappingURL=voiceSummary.js.map

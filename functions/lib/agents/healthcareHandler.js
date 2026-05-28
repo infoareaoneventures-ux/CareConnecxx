@@ -151,7 +151,7 @@ async function executeAppointmentBooking(phone, sendMessage, data, userId) {
 }
 // ── Prescription refill execution ─────────────────────────────────────────────
 async function executePharmacyRefill(phone, sendMessage, data, userId) {
-    var _a, _b;
+    var _a;
     const pharmacy = ((_a = data.pharmacyService) !== null && _a !== void 0 ? _a : "cvs");
     const hasCred = await (0, credentialVault_1.hasCredential)(userId, pharmacy);
     if (!hasCred) {
@@ -160,7 +160,6 @@ async function executePharmacyRefill(phone, sendMessage, data, userId) {
             `Reply "save my ${pharmacy} login" and I'll securely store it.`);
         return;
     }
-    const medLabel = (_b = data.medicationName) !== null && _b !== void 0 ? _b : "the prescription";
     await sendMessage(`Requesting the refill at ${pharmacy.toUpperCase()} — give me a moment...`);
     const result = await (0, careWebActions_1.requestPharmacyRefill)({
         userId,

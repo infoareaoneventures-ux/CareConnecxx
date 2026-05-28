@@ -24,7 +24,7 @@ export const processDndQueue = functions.pubsub
       try {
         await sendViaInteractionAgent(msg.phone as string, {
           content:     msg.content     as string,
-          urgency:     (msg.urgency    as string) ?? "standard",
+          urgency:     ((msg.urgency    as "low" | "immediate" | "standard" | undefined) ?? "standard"),
           sourceAgent: (msg.sourceAgent as string) ?? "dnd_queue",
           canDrop:     (msg.canDrop    as boolean) ?? true,
         });

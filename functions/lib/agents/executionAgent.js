@@ -72,7 +72,7 @@ async function getActiveAgentForUser(ownerPhone, type) {
         return null;
     // Sort in memory — avoids requiring a composite Firestore index
     const sorted = snap.docs
-        .map(d => (Object.assign({ id: d.id }, d.data())))
+        .map(d => (Object.assign(Object.assign({}, d.data()), { id: d.id })))
         .sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt));
     return (_a = sorted[0]) !== null && _a !== void 0 ? _a : null;
 }

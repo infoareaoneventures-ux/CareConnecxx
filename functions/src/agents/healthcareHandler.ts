@@ -115,7 +115,7 @@ function formatProviderResults(
 
 async function doProviderSearch(
   phone: string,
-  sendMessage: (msg: string) => Promise<void>,
+  sendMessage: (msg: string) => Promise<unknown>,
   data: HealthcareFlowData,
   userId: string
 ): Promise<void> {
@@ -139,7 +139,7 @@ async function doProviderSearch(
 
 async function executeAppointmentBooking(
   phone: string,
-  sendMessage: (msg: string) => Promise<void>,
+  sendMessage: (msg: string) => Promise<unknown>,
   data: HealthcareFlowData,
   userId: string
 ): Promise<void> {
@@ -196,7 +196,7 @@ async function executeAppointmentBooking(
 
 async function executePharmacyRefill(
   phone: string,
-  sendMessage: (msg: string) => Promise<void>,
+  sendMessage: (msg: string) => Promise<unknown>,
   data: HealthcareFlowData,
   userId: string
 ): Promise<void> {
@@ -212,7 +212,6 @@ async function executePharmacyRefill(
     return;
   }
 
-  const medLabel = data.medicationName ?? "the prescription";
   await sendMessage(`Requesting the refill at ${pharmacy.toUpperCase()} — give me a moment...`);
 
   const result = await requestPharmacyRefill({
@@ -250,7 +249,7 @@ export async function startHealthcareFlow(
   text: string,
   session: AgentSession,
   intent: string,
-  sendMessage: (msg: string) => Promise<void>
+  sendMessage: (msg: string) => Promise<unknown>
 ): Promise<void> {
   const userId = session.userId ?? phone;
 
@@ -455,7 +454,7 @@ export async function resumeHealthcareFlow(
   chatId: string,
   text: string,
   session: AgentSession,
-  sendMessage: (msg: string) => Promise<void>
+  sendMessage: (msg: string) => Promise<unknown>
 ): Promise<void> {
   const step = (session as any).healthcareFlowStep as string;
   const data = ((session as any).healthcareFlowData ?? {}) as HealthcareFlowData;

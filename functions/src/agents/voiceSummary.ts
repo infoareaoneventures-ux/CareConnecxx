@@ -45,5 +45,5 @@ export async function sendVoiceSummary(
     expires: Date.now() + 60 * 60 * 1000,
   });
 
-  await sendVoiceMemo(chatId, url);
+  await sendVoiceMemo(chatId, { url });
 }

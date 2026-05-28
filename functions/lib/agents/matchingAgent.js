@@ -155,22 +155,22 @@ async function runMatchingForClient(phone, chatId, intake, session) {
             console.warn("[matchingAgent] Claude scoring failed, falling back to rule scores:", err);
             // Fallback: convert rule signals to MatchScoreResult shape
             claudeScores = new Map(topCandidates.map(x => {
-                var _a, _b, _c;
+                var _a, _b, _c, _d;
                 return [x.c.id, {
                         caregiverId: x.c.id,
                         overallScore: x.ruleScore,
                         confidence: x.ruleScore >= 80 ? "high" : x.ruleScore >= 65 ? "medium" : "low",
                         reasoning: [
-                            x.signals.skillsCoveragePercent > 60
+                            ((_a = x.signals.skillsCoveragePercent) !== null && _a !== void 0 ? _a : 0) > 60
                                 ? `Covers ${x.signals.skillsCoveragePercent}% of care needs` : "Available caregiver",
                         ],
                         redFlags: [],
                         factors: {
-                            skillsMatch: (_a = x.signals.skillsCoveragePercent) !== null && _a !== void 0 ? _a : 50,
-                            availability: (_b = x.signals.scheduleOverlapPercent) !== null && _b !== void 0 ? _b : 60,
+                            skillsMatch: (_b = x.signals.skillsCoveragePercent) !== null && _b !== void 0 ? _b : 50,
+                            availability: (_c = x.signals.scheduleOverlapPercent) !== null && _c !== void 0 ? _c : 60,
                             distance: x.signals.distanceMiles != null
                                 ? Math.max(0, 100 - x.signals.distanceMiles * 3) : 50,
-                            experience: Math.min(100, ((_c = x.signals.yearsExperience) !== null && _c !== void 0 ? _c : 0) * 10),
+                            experience: Math.min(100, ((_d = x.signals.yearsExperience) !== null && _d !== void 0 ? _d : 0) * 10),
                             personalityFit: 75,
                             languageMatch: 75,
                         },

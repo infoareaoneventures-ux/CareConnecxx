@@ -1,4 +1,4 @@
-import axios, { AxiosError } from "axios";
+import axios, { AxiosError, AxiosResponse } from "axios";
 import * as admin from "firebase-admin";
 import { v4 as uuidv4 } from "uuid";
 import { supervise, SuperviseContext } from "../safety/supervisor";
@@ -204,7 +204,7 @@ export async function sendMessage(
   // Top-level parts (without the wrapper) returns error 1005 "at least one part required".
   const body = { message: { ...message, idempotency_key: message.idempotency_key ?? uuidv4() } };
 
-  let res: Awaited<ReturnType<typeof axios.post>>;
+  let res: AxiosResponse<{ id?: string; message_id?: string }>;
   try {
     res = await withRetry(() =>
       axios.post(

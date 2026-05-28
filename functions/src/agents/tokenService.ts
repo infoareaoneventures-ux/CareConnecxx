@@ -9,7 +9,8 @@ export type TokenTask =
   | "stripe_connect"
   | "quick_confirm"
   | "interview_confirm"
-  | "booking_confirm";
+  | "booking_confirm"
+  | "caregiver_membership";
 
 export interface TokenPayload {
   phone:        string;

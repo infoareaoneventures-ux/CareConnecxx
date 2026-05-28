@@ -3,8 +3,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const hoisted = vi.hoisted(() => ({
   quickCompleteMock:    vi.fn(),
   sendMessageMock:      vi.fn(async () => undefined),
-  handleToolCallMock:   vi.fn(async () => ({ success: true })),
-  handleToolCallForCaregiverMock: vi.fn(async () => ({ success: true })),
+  handleToolCallMock:   vi.fn(async (_n: string, _i: Record<string, unknown>): Promise<Record<string, unknown>> => ({ success: true })),
+  handleToolCallForCaregiverMock: vi.fn(async (_n: string, _i: Record<string, unknown>): Promise<Record<string, unknown>> => ({ success: true })),
   resolvePendingMock:   vi.fn(async () => undefined),
 }));
 

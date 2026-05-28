@@ -36,7 +36,7 @@ export async function handleRefundRequest(
   clientId: string,
   text: string,
   session: Record<string, unknown>,
-  sendMessage: (msg: string) => Promise<void>
+  sendMessage: (msg: string) => Promise<unknown>
 ): Promise<void> {
   const step = (session.refundStep as string) ?? "identify_visit";
 

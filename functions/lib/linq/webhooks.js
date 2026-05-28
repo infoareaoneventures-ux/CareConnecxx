@@ -332,9 +332,9 @@ async function handleShiftConfirmation(phone, chatId, text, session) {
             });
         }
         // Trigger replacement agent (fire-and-forget)
-        Promise.resolve().then(() => __importStar(require("../agents/replacementAgent"))).then(({ findReplacement }) => {
-            if (typeof findReplacement === "function") {
-                findReplacement({
+        Promise.resolve().then(() => __importStar(require("../agents/replacementAgent"))).then(({ runEmergencyReplacement }) => {
+            if (typeof runEmergencyReplacement === "function") {
+                runEmergencyReplacement({
                     appointmentId: info.appointmentId,
                     clientId: info.clientId,
                     date: info.appointmentDate,
@@ -3700,6 +3700,7 @@ async function handleInbound(event) {
                 caregiverId: session.caregiverId,
                 zepThreadId: session.zepThreadId,
                 session: session,
+                intent,
             });
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
                 content: qaReplyReschedule,
@@ -3841,6 +3842,7 @@ async function handleInbound(event) {
                 caregiverId: session.caregiverId,
                 zepThreadId: session.zepThreadId,
                 session: session,
+                intent,
             });
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
                 content: qaReplyInvoice,
@@ -3906,6 +3908,7 @@ async function handleInbound(event) {
                 caregiverId: session.caregiverId,
                 zepThreadId: session.zepThreadId,
                 session: session,
+                intent,
             });
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
                 content: qaReplyPlatform,
@@ -3927,6 +3930,7 @@ async function handleInbound(event) {
                 caregiverId: session.caregiverId,
                 zepThreadId: session.zepThreadId,
                 session: session,
+                intent,
             });
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
                 content: qaReply,
@@ -4034,6 +4038,7 @@ async function handleInbound(event) {
             caregiverId: session.caregiverId,
             zepThreadId,
             session: session,
+            intent,
         });
         if (zepThreadId && qaReply) {
             (0, zepClient_1.addAssistantMessageToZep)({

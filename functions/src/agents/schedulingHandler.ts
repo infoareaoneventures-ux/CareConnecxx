@@ -52,7 +52,6 @@ export async function handleScheduleRequest(
   session:     Record<string, unknown>
 ): Promise<void> {
   const userId = (session.userId ?? phone) as string;
-  const chatId = session.chatId as string;
 
   const parsed = await parseScheduleRequest(userMessage);
   if (!parsed) {

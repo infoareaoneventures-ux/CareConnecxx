@@ -39,6 +39,7 @@ exports.writeMemoryFile = writeMemoryFile;
 exports.appendToMemoryFile = appendToMemoryFile;
 exports.editMemoryFile = editMemoryFile;
 exports.searchMemory = searchMemory;
+exports.searchMemoryHybrid = searchMemoryHybrid;
 exports.getMemoryContext = getMemoryContext;
 exports.initializeMemoryFiles = initializeMemoryFiles;
 exports.handleMemoryQuery = handleMemoryQuery;
@@ -46,6 +47,7 @@ exports.consolidateMemoryForUser = consolidateMemoryForUser;
 const admin = __importStar(require("firebase-admin"));
 const claudeClient_1 = require("../utils/claudeClient");
 const jsonUtils_1 = require("../utils/jsonUtils");
+const embeddings_1 = require("./embeddings");
 const storage = admin.storage();
 const db = admin.firestore();
 const ALL_FILES = ["profile", "health", "family", "recent_episodes", "procedural"];
@@ -86,6 +88,48 @@ async function writeMemoryFile(userId, file, content) {
         contentType: "text/markdown",
         metadata: { cacheControl: "no-cache" },
     });
+    // Refresh block embeddings for this file. Failure is non-fatal — substring
+    // search still works; we just lose semantic recall until the next write.
+    reindexMemoryFileEmbeddings(userId, file, content).catch((err) => {
+        console.warn("[memoryFiles] reindex failed:", err instanceof Error ? err.message : err);
+    });
+}
+// Replace all embeddings for a single memory file. Idempotent. Skipped silently
+// when no blocks pass the size filter or when the OpenAI key is absent (embedMany
+// returns nulls, which we filter out).
+async function reindexMemoryFileEmbeddings(userId, file, content) {
+    const slug = sanitizeFileName(file);
+    const blocks = (0, embeddings_1.splitIntoBlocks)(content);
+    const col = db.collection("memory_embeddings").doc(userId).collection("blocks");
+    // Delete prior embeddings for this file (whole-file rewrite, so no diffing).
+    const prior = await col.where("file", "==", slug).get();
+    if (!prior.empty) {
+        const batch = db.batch();
+        prior.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+    }
+    if (blocks.length === 0)
+        return;
+    const vectors = await (0, embeddings_1.embedMany)(blocks);
+    const batch = db.batch();
+    const nowIso = new Date().toISOString();
+    let wrote = 0;
+    for (let i = 0; i < blocks.length; i++) {
+        const vec = vectors[i];
+        if (!vec)
+            continue; // embedding API failed for this block — skip
+        const ref = col.doc();
+        batch.set(ref, {
+            file: slug,
+            block: blocks[i].slice(0, 800),
+            embedding: vec,
+            model: embeddings_1.EMBED_MODEL,
+            updatedAt: nowIso,
+        });
+        wrote++;
+    }
+    if (wrote > 0)
+        await batch.commit();
 }
 async function appendToMemoryFile(userId, file, entry) {
     const existing = await readMemoryFile(userId, file);
@@ -123,11 +167,67 @@ async function searchMemory(userId, query) {
         // Split into blocks on blank lines so a hit returns a coherent chunk of context.
         for (const block of content.split(/\n\s*\n/)) {
             if (block.toLowerCase().includes(q)) {
-                hits.push({ file, section: block.trim().slice(0, 800) });
+                hits.push({ file, section: block.trim().slice(0, 800), source: "substring", score: 1 });
             }
         }
     }
     return hits;
+}
+/**
+ * Hybrid memory search — substring (exact) ∪ semantic (cosine over embeddings).
+ *
+ * Substring is run unconditionally so we never regress on exact-match recall.
+ * Semantic recall pulls in synonym / paraphrase matches that substring would miss
+ * ("T2DM" → "diabetes", "tripped Tuesday" → "fall"). If the embedding API fails
+ * or the key is missing, this collapses cleanly to substring-only.
+ */
+async function searchMemoryHybrid(userId, query, topK = 8) {
+    var _a, _b;
+    const q = (query !== null && query !== void 0 ? query : "").trim();
+    if (!q)
+        return [];
+    // Run substring + query embedding in parallel — substring is local-ish (Storage
+    // reads), embedding is one OpenAI call; we don't want to serialize them.
+    const [substringHits, queryEmbed] = await Promise.all([
+        searchMemory(userId, q),
+        (0, embeddings_1.embedText)(q),
+    ]);
+    let semanticHits = [];
+    if (queryEmbed) {
+        try {
+            const snap = await db
+                .collection("memory_embeddings")
+                .doc(userId)
+                .collection("blocks")
+                .get();
+            const candidates = snap.docs.map((d) => {
+                const data = d.data();
+                return { file: data.file, block: data.block, embedding: data.embedding };
+            });
+            const ranked = (0, embeddings_1.rankBySimilarity)(candidates, queryEmbed, topK);
+            semanticHits = ranked.map((r) => ({
+                file: r.file,
+                section: r.block,
+                source: "semantic",
+                score: r._sim,
+            }));
+        }
+        catch (err) {
+            console.warn("[memoryFiles] semantic search failed:", err instanceof Error ? err.message : err);
+        }
+    }
+    // Dedup on (file, section) — prefer substring hits (score=1) over semantic.
+    const seen = new Map();
+    for (const hit of [...substringHits, ...semanticHits]) {
+        const key = `${hit.file}::${hit.section.slice(0, 200)}`;
+        const existing = seen.get(key);
+        if (!existing || ((_a = hit.score) !== null && _a !== void 0 ? _a : 0) > ((_b = existing.score) !== null && _b !== void 0 ? _b : 0)) {
+            seen.set(key, hit);
+        }
+    }
+    return Array.from(seen.values())
+        .sort((a, b) => { var _a, _b; return ((_a = b.score) !== null && _a !== void 0 ? _a : 0) - ((_b = a.score) !== null && _b !== void 0 ? _b : 0); })
+        .slice(0, topK);
 }
 // Returns existing files concatenated, trimmed to ~3000 tokens (~12 000 chars).
 // Enumerates the user's bucket prefix so ad-hoc files are included, with the five

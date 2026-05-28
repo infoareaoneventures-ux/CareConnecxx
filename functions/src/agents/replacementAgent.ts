@@ -6,8 +6,6 @@ import { scheduleTrigger } from "../triggers/triggerEngine";
 
 const db = admin.firestore();
 
-const SUPPORT_PHONE = process.env.SUPPORT_PHONE ?? "1-800-555-0199";
-
 // ── Contact a replacement candidate via Linq ──────────────────────────────────
 
 export async function contactReplacementCandidate(

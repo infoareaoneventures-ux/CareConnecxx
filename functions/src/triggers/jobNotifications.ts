@@ -272,6 +272,7 @@ export async function handleJobResponse(
       .get()
       .then(snap => {
         if (!snap.empty) return snap.docs[0].ref.update({ status: "declined", declinedAt: new Date().toISOString() });
+        return undefined;
       })
       .catch(() => {});
 

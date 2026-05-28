@@ -35,7 +35,6 @@ async function parseScheduleRequest(userMessage) {
 async function handleScheduleRequest(phone, userMessage, session) {
     var _a, _b;
     const userId = ((_a = session.userId) !== null && _a !== void 0 ? _a : phone);
-    const chatId = session.chatId;
     const parsed = await parseScheduleRequest(userMessage);
     if (!parsed) {
         await (0, caraAgent_1.sendViaInteractionAgent)(phone, {

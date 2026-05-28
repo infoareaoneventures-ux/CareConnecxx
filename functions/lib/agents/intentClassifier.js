@@ -17,6 +17,7 @@ const VALID_INTENTS = new Set([
     "PAUSE_ACCOUNT", "REACTIVATE", "INSTANT_PAYOUT",
     "FIND_NEARBY_PROVIDER", "BOOK_DOCTOR_APPOINTMENT",
     "PRESCRIPTION_REFILL", "NEW_PRESCRIPTION",
+    "UPDATE_ONBOARDING",
 ]);
 // CANCEL is intentionally NOT here — it cancels a visit, not the account
 const STOP_WORDS = new Set(["STOP", "UNSUBSCRIBE", "QUIT", "END"]);
@@ -32,7 +33,7 @@ async function classifyIntent(text, hasPendingTask) {
     const timer = setTimeout(() => controller.abort(), 6000);
     try {
         const raw = await (0, openaiClient_1.quickComplete)("You classify a message sent to an AI care assistant named Cara. " +
-            "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, REQUEST_REFUND, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, SWAP_REQUEST, CLIENT_SWAP_REQUEST, CANCEL_SHIFT, UPDATE_RATE, UPDATE_SKILLS, UPDATE_BIO, UPDATE_PHOTO, PAUSE_ACCOUNT, REACTIVATE, INSTANT_PAYOUT, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, QUESTION.\n" +
+            "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, REQUEST_REFUND, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, SWAP_REQUEST, CLIENT_SWAP_REQUEST, CANCEL_SHIFT, UPDATE_RATE, UPDATE_SKILLS, UPDATE_BIO, UPDATE_PHOTO, PAUSE_ACCOUNT, REACTIVATE, INSTANT_PAYOUT, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, UPDATE_ONBOARDING, QUESTION.\n" +
             "STOP = opting out of all messages.\n" +
             "TASK_REPLY = responding to a numbered list (1, 2, or 3).\n" +
             "BOOKING_CONFIRM = confirming or approving a booking, schedule, or action (e.g. 'yes', 'sure', 'sounds good', 'let's do it', 'book it', 'go ahead', 'that works', 'perfect', 'confirmed', 'ok', 'yep').\n" +
@@ -80,6 +81,7 @@ async function classifyIntent(text, hasPendingTask) {
             "BOOK_DOCTOR_APPOINTMENT = asking Cara to book or schedule a doctor appointment on their behalf (e.g. 'book an appointment with Dr. Smith', 'schedule a checkup for mom', 'can you make an appointment with my doctor', 'book me in with Dr. Johnson next week', 'I need to see a doctor — can you book it').\n" +
             "PRESCRIPTION_REFILL = asking Cara to refill or renew an existing prescription at a pharmacy (e.g. 'refill mom's blood pressure medication', 'can you renew my prescription at CVS', 'I need a refill on Lisinopril', 'refill my prescription', 'request a refill at Walgreens', 'renew dad's medication').\n" +
             "NEW_PRESCRIPTION = asking for a brand new prescription for a new condition or medication not previously prescribed (e.g. 'I need a prescription for anxiety', 'get me a prescription for something for the pain', 'mom needs a prescription for her new diagnosis', 'can you help me get a new prescription').\n" +
+            "UPDATE_ONBOARDING = an already-onboarded family member wants to redo, fix, restart, or update the profile/onboarding info on file (senior name, age, city, care needs, etc.) — NOT a one-field correction (those are FACT_CORRECTION). Use this when the user references the whole setup as wrong, missing, or never finished (e.g. 'can you help me redo my onboarding', 'redo my profile', 'start over with my info', 'the onboarding never happened', 'that never happened, can you help me onboard', 'fix what's on file', 'my info is wrong', 'update what you know about mom', 'walk me through onboarding again', 'I never finished setting up').\n" +
             "QUESTION = anything else.", text, { maxTokens: 10, signal: controller.signal });
         clearTimeout(timer);
         const label = raw.trim().toUpperCase();

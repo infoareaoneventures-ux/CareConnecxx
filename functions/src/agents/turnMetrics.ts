@@ -43,6 +43,7 @@ export interface TurnMetrics {
   patchedOrphans?: number;    // placeholders injected by patchDanglingToolCalls
   toolArgsTruncated?: number; // tool_use input args clipped by truncateOldToolCallArgs
   exhausted?:      boolean;   // loop exited the for-block without producing reply text
+  recoveryFired?:  boolean;   // recovery sub-agent fired after 2+ consecutive error iterations
 
   // Quality signals
   prefetchHit?:             boolean;

@@ -53,6 +53,13 @@ const turnMetrics_1 = require("./turnMetrics");
 const server_1 = require("../mcp/server");
 const claudeRetry_1 = require("../utils/claudeRetry");
 const executionAgent_1 = require("./executionAgent");
+const toolCapabilities_1 = require("./toolCapabilities");
+const memoryGuidelines_1 = require("./memoryGuidelines");
+const voiceExemplars_1 = require("./voiceExemplars");
+const voiceMirror_1 = require("./voiceMirror");
+const recoveryDecision_1 = require("./recoveryDecision");
+const ephemeralSubAgents_1 = require("./ephemeralSubAgents");
+const emotionalContext_1 = require("./emotionalContext");
 const db = admin.firestore();
 // ── Context loaders ───────────────────────────────────────────────────────────
 async function getSeniorProfile(seniorId) {
@@ -286,6 +293,7 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         `  · request_booking — when they want to book a visit`,
         `  · log_health_flag — when they report a concern about ${seniorName}`,
         `  · get_pending_tasks — call this when the family says hello or asks if anything needs attention`,
+        `  · cara_knows — call when the family asks what you remember about ${seniorName}, what's on file, or to verify what you've been told. Summarize the returned context warmly in 2–3 sentences as prose, never a list.`,
         `  · search_web / perform_web_action — look up doctors, pharmacies, book appointments, request refills`,
         `  · manage_credentials — list, check, or delete stored portal logins`,
         `  · suggest_upcoming_care — call this proactively during casual conversation to check if ${seniorName} has upcoming care coverage. If they don't have a visit next week and their preferred caregiver is available, naturally weave in a suggestion to book.`,
@@ -401,6 +409,10 @@ function buildClientSystemPrompt(senior, journal, nextAppt, permissions, learned
         `- Repetition: if they ask something you've answered before, answer fully every time. Never say "as I mentioned" or "like I said".`,
         `- Health observations: attribute to the caregiver's notes ("Maria noted..." not "${seniorName} may be experiencing...").`,
         `- Never rush to action when emotions are high. Acknowledge before solving.`,
+        ``,
+        memoryGuidelines_1.MEMORY_GUIDELINES,
+        ``,
+        voiceExemplars_1.VOICE_EXEMPLARS,
         ``,
         SONNET_46_PROMPT_SUFFIX,
     ].join("\n");
@@ -613,8 +625,8 @@ async function resumeActiveGoal(phone, session) {
 }
 // ── Main QA function ──────────────────────────────────────────────────────────
 async function runQaAgent(params) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w;
-    const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, sourceChannel } = params;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
+    const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, sourceChannel, intent } = params;
     // Tag the input so Claude can apply different judgment per channel.
     // [USER] messages may require a reply; [TRIGGER] / [AGENT] inputs may not.
     const channel = sourceChannel !== null && sourceChannel !== void 0 ? sourceChannel : "[USER]";
@@ -642,6 +654,13 @@ async function runQaAgent(params) {
         }
         return "";
     }
+    // Kick off emotional-posture classification in parallel with the heavy I/O
+    // below. Result is awaited once at prompt-build time. Latency cost is hidden
+    // behind the existing Firestore / Zep fetches. Errors → "calm" (the
+    // classifier already swallows them), so this is fire-and-await-safe.
+    const emotionalClassifyPromise = channel === "[USER]"
+        ? (0, emotionalContext_1.classifyEmotionalContext)(text)
+        : Promise.resolve("calm");
     let systemPrompt;
     let history;
     // Sentinel injected when Zep fails. Claude sees this in the system prompt and
@@ -731,7 +750,7 @@ async function runQaAgent(params) {
                 const { detectAndApplyCorrection } = await Promise.resolve().then(() => __importStar(require("../memory/learnedFacts")));
                 correctionApplied = await detectAndApplyCorrection(userId, text, zepThreadId ? phone.replace(/\D/g, "") : undefined);
             }
-            catch (_x) {
+            catch (_y) {
                 // Non-critical
             }
         }
@@ -780,6 +799,31 @@ async function runQaAgent(params) {
         if (correctionApplied) {
             console.info("qaAgent: fact correction applied before prompt build", { userId });
         }
+    }
+    // Voice mirror — derive style stats from the family's own inbound history
+    // and inject a one-line directive so Cara's surface register (length, emoji
+    // use, language, formality) tracks theirs. No-op when the sample is too
+    // small to be meaningful, so brand-new conversations get default voice.
+    const voiceDirective = (0, voiceMirror_1.buildVoiceDirective)((0, voiceMirror_1.computeVoiceProfile)(history));
+    if (voiceDirective) {
+        systemPrompt += `\n\n${voiceDirective}`;
+    }
+    // Emotional context — blend the current turn's classification with any
+    // 12h-TTL stored posture (grief/anxiety persists across turns). Inject
+    // directive at end of prompt (highest model attention). Persist when the
+    // posture changes or a non-calm signal arrives.
+    const currentEmotion = await emotionalClassifyPromise.catch(() => "calm");
+    const storedEmotion = session === null || session === void 0 ? void 0 : session.emotionalContext;
+    const blended = (0, emotionalContext_1.blendEmotionalContext)(storedEmotion, currentEmotion);
+    metrics.emotionalContext = blended.value;
+    const emotionalDirective = (0, emotionalContext_1.buildEmotionalContextDirective)(blended.value);
+    if (emotionalDirective) {
+        systemPrompt += `\n\n${emotionalDirective}`;
+    }
+    if (blended.persist) {
+        db.collection("agent_sessions").doc(phone).update({
+            emotionalContext: blended.persist,
+        }).catch(() => { });
     }
     // Inject session identifiers — Claude must never ask the user for clientId, userId, or phone.
     // These are always known from the session and are also auto-injected into every tool call.
@@ -877,9 +921,16 @@ async function runQaAgent(params) {
     try {
         if (!skipSend)
             await (0, client_1.startTyping)(chatId).catch(() => { });
-        // Re-inject persona + epistemic reminder every 10 turns to prevent voice drift
+        // Re-inject persona + epistemic reminder to prevent voice drift. Earlier
+        // cadence (every 10 turns) was too late — drift starts ~turn 4–6, so by 10
+        // Cara has already broken character at least once. Re-inject on:
+        //   • every 4th turn (catches gradual drift), OR
+        //   • the turn immediately after the previous reply was modified by the
+        //     supervisor / linter (`recentLintViolation` is written at end of the
+        //     prior turn from `metrics.postProcessModified`)
         const turnCount = Math.floor(history.length / 2);
-        if (turnCount > 0 && turnCount % 10 === 0) {
+        const recentLintViolation = !!(session === null || session === void 0 ? void 0 : session.recentLintViolation);
+        if ((turnCount > 0 && turnCount % 4 === 0) || recentLintViolation) {
             systemPrompt +=
                 "\n\n<system_reminder>You are Cara — warm, direct, specific. " +
                     "Text format only: no bullet points, no headers, no em-dashes. " +
@@ -888,8 +939,45 @@ async function runQaAgent(params) {
                     "Epistemic: only state facts from your context or tool results. If uncertain, say 'I don't have that info' rather than guessing. " +
                     "Tools available — use them for fresh data and to take real actions.</system_reminder>";
         }
+        // Working-memory checklist (DeepAgents TodoListMiddleware port). When the
+        // session has a non-empty todos list, surface it so Claude can pick up where
+        // she left off across turns. Cleared/managed by the write_todos tool.
+        const sessionTodos = session === null || session === void 0 ? void 0 : session.todos;
+        if (Array.isArray(sessionTodos) && sessionTodos.length > 0) {
+            const lines = sessionTodos.map((t, i) => {
+                const mark = t.status === "completed" ? "✓" : t.status === "in_progress" ? "→" : "·";
+                return `${mark} ${i + 1}. ${t.task}`;
+            }).join("\n");
+            systemPrompt +=
+                "\n\n<active_todos>\nFrom earlier in this conversation, the outstanding checklist is:\n" +
+                    lines +
+                    "\n\nKeep working through these. Call write_todos again to update statuses as you finish each, " +
+                    "or to add new items if scope grows. Don't repeat work already marked completed.\n</active_todos>";
+        }
+        else if (turnCount === 0) {
+            // First inbound — gently nudge Claude to scaffold a checklist for genuinely
+            // multi-step requests. (Don't nag on every turn — once they get going,
+            // the in-prompt active_todos block above carries the load.)
+            systemPrompt +=
+                "\n\n<planning_hint>If this request has 3+ distinct steps " +
+                    "(e.g. cancel X, find replacement Y, notify Z), call write_todos first to scaffold " +
+                    "the plan before doing any of them. Skip for simple single-step asks.</planning_hint>";
+        }
         // Select tools based on user type — caregivers get a focused subset
-        const activeTools = userType === "caregiver" ? server_1.CAREGIVER_TOOLS : server_1.MCP_TOOLS;
+        // (~35 of ~88 tools). For clients, filter further by the classified
+        // intent's required capabilities; broad / ambiguous intents (QUESTION,
+        // TASK_REPLY, UPDATE_ONBOARDING, null) keep the full surface. Filtering
+        // reduces wrong-tool calls and prompt-cache decode cost; core tools
+        // (senior profile, pending tasks, etc.) are always included.
+        const baseTools = userType === "caregiver" ? server_1.CAREGIVER_TOOLS : server_1.MCP_TOOLS;
+        const activeTools = userType === "caregiver"
+            ? baseTools
+            : (0, toolCapabilities_1.selectToolsForIntent)(baseTools, intent !== null && intent !== void 0 ? intent : null);
+        if (activeTools.length !== baseTools.length) {
+            console.info("qaAgent: tool surface filtered", {
+                userId, intent, before: baseTools.length, after: activeTools.length,
+            });
+        }
         // Tool-use loop — Claude calls tools until it has what it needs, then produces a reply
         const messages = [
             ...history,
@@ -906,10 +994,24 @@ async function runQaAgent(params) {
         // once the running total exceeds the budget.
         const TURN_BUDGET_MS = 60000;
         const turnStart = Date.now();
+        // Recovery tracking — if Sonnet hits two consecutive iterations where every
+        // tool_use returned an error, ask the recovery sub-agent for a different
+        // plan ONCE and inject it into the next user message. Fires at most one
+        // time per turn so we don't compound latency.
+        let consecutiveErrorIterations = 0;
+        let recoveryFired = false;
+        const toolErrorTrail = [];
         for (let iteration = 0; iteration < 5; iteration++) {
             if (Date.now() - turnStart > TURN_BUDGET_MS) {
                 console.warn("qaAgent: turn budget exceeded, exiting tool loop", { userId, iteration });
                 break;
+            }
+            // Clip oversized tool_use args in older messages — the result is what
+            // matters past the first turn or two, and full args bloat every cached
+            // prompt thereafter. Cheap pre-pass before patch + Claude call.
+            const argsClipped = (0, contextManagement_1.truncateOldToolCallArgs)(messages);
+            if (argsClipped > 0) {
+                metrics.toolArgsTruncated = ((_p = metrics.toolArgsTruncated) !== null && _p !== void 0 ? _p : 0) + argsClipped;
             }
             // Defensive: ensure every assistant tool_use has a matching tool_result
             // before we hand the array to Claude. Normally a no-op; non-zero patches
@@ -918,9 +1020,9 @@ async function runQaAgent(params) {
             const patched = (0, contextManagement_1.patchDanglingToolCalls)(messages);
             if (patched > 0) {
                 console.warn("qaAgent: patched dangling tool calls", { userId, iteration, patched });
-                metrics.patchedOrphans = ((_p = metrics.patchedOrphans) !== null && _p !== void 0 ? _p : 0) + patched;
+                metrics.patchedOrphans = ((_q = metrics.patchedOrphans) !== null && _q !== void 0 ? _q : 0) + patched;
             }
-            metrics.iterations = ((_q = metrics.iterations) !== null && _q !== void 0 ? _q : 0) + 1;
+            metrics.iterations = ((_r = metrics.iterations) !== null && _r !== void 0 ? _r : 0) + 1;
             const response = await (0, claudeRetry_1.callClaudeWithRetry)((0, claudeClient_1.getSharedClient)(), {
                 model: "claude-sonnet-4-6",
                 max_tokens: 600,
@@ -943,7 +1045,7 @@ async function runQaAgent(params) {
                         .filter((b) => b.type === "tool_use")
                         .map((b) => b.name),
                 });
-                metrics.truncations = ((_r = metrics.truncations) !== null && _r !== void 0 ? _r : 0) + 1;
+                metrics.truncations = ((_s = metrics.truncations) !== null && _s !== void 0 ? _s : 0) + 1;
                 messages.push({ role: "assistant", content: response.content });
                 // patchDanglingToolCalls at the top of the next iteration injects the
                 // placeholder tool_results, which Claude reads and recovers from.
@@ -952,6 +1054,8 @@ async function runQaAgent(params) {
             if (response.stop_reason === "tool_use") {
                 // Execute all tool calls in this turn
                 const toolResults = [];
+                let iterationToolCalls = 0;
+                let iterationToolErrors = 0;
                 for (const block of response.content) {
                     if (block.type === "tool_use") {
                         _toolCallsOut === null || _toolCallsOut === void 0 ? void 0 : _toolCallsOut.push(block.name);
@@ -959,7 +1063,7 @@ async function runQaAgent(params) {
                         // the family knows something is happening and doesn't think Cara went silent.
                         if (!skipSend &&
                             block.name === "perform_web_action" &&
-                            (((_s = block.input) === null || _s === void 0 ? void 0 : _s.actionType) === "browse" || ((_t = block.input) === null || _t === void 0 ? void 0 : _t.loginAction))) {
+                            (((_t = block.input) === null || _t === void 0 ? void 0 : _t.actionType) === "browse" || ((_u = block.input) === null || _u === void 0 ? void 0 : _u.loginAction))) {
                             await sendSplit(chatId, "On it — give me a moment.").catch(() => { });
                         }
                         const toolHandler = userType === "caregiver" ? server_1.handleToolCallForCaregiver : server_1.handleToolCall;
@@ -976,10 +1080,20 @@ async function runQaAgent(params) {
                                 message: "Tool unavailable — tell the user you don't have that information right now and offer to try again.",
                             };
                         });
-                        metrics.toolCalls = ((_u = metrics.toolCalls) !== null && _u !== void 0 ? _u : 0) + 1;
-                        ((_v = metrics.toolNames) !== null && _v !== void 0 ? _v : (metrics.toolNames = [])).push(block.name);
-                        if (result === null || result === void 0 ? void 0 : result._toolError) {
-                            metrics.toolErrors = ((_w = metrics.toolErrors) !== null && _w !== void 0 ? _w : 0) + 1;
+                        metrics.toolCalls = ((_v = metrics.toolCalls) !== null && _v !== void 0 ? _v : 0) + 1;
+                        ((_w = metrics.toolNames) !== null && _w !== void 0 ? _w : (metrics.toolNames = [])).push(block.name);
+                        iterationToolCalls += 1;
+                        const errored = !!(result === null || result === void 0 ? void 0 : result._toolError)
+                            || !!(result === null || result === void 0 ? void 0 : result.error);
+                        if (errored) {
+                            metrics.toolErrors = ((_x = metrics.toolErrors) !== null && _x !== void 0 ? _x : 0) + 1;
+                            iterationToolErrors += 1;
+                            if (toolErrorTrail.length < 6) {
+                                toolErrorTrail.push({
+                                    tool: block.name,
+                                    preview: JSON.stringify(result).slice(0, 200),
+                                });
+                            }
                         }
                         // Instrumentation for D4 — track success rate on the cancel path so
                         // we can decide if a dedicated cancelFlow is needed. Same pattern
@@ -1012,6 +1126,41 @@ async function runQaAgent(params) {
                 }
                 messages.push({ role: "assistant", content: response.content });
                 messages.push({ role: "user", content: toolResults });
+                // Recovery — delegated to the pure policy in recoveryDecision.ts.
+                // Fires on the 2nd consecutive iteration where every tool_use errored,
+                // at most once per turn. Appends a <recovery_suggestion> user-channel
+                // block so Sonnet attends to it on the next iteration.
+                const decision = (0, recoveryDecision_1.decideRecovery)({ consecutiveErrorIterations, alreadyFired: recoveryFired }, { toolCalls: iterationToolCalls, toolErrors: iterationToolErrors });
+                consecutiveErrorIterations = decision.consecutiveErrorIterations;
+                if (decision.shouldFire) {
+                    recoveryFired = true;
+                    metrics.recoveryFired = true;
+                    try {
+                        const errSummary = toolErrorTrail
+                            .map(e => `- ${e.tool}: ${e.preview}`)
+                            .join("\n");
+                        const recoveryDescription = `Original user request: ${text.slice(0, 400)}\n\n` +
+                            `Tools tried and the errors they returned:\n${errSummary}\n\n` +
+                            `Suggest a different approach.`;
+                        const rec = await (0, ephemeralSubAgents_1.runEphemeralSubAgent)({
+                            subagentType: "recovery",
+                            description: recoveryDescription,
+                            maxTokens: 200,
+                        });
+                        messages.push({
+                            role: "user",
+                            content: `<recovery_suggestion>\n${rec.output}\n</recovery_suggestion>`,
+                        });
+                        console.info("qaAgent.recoveryFired", {
+                            userId,
+                            consecutiveErrorIterations,
+                            durationMs: rec.durationMs,
+                        });
+                    }
+                    catch (err) {
+                        console.warn("qaAgent: recovery sub-agent threw — continuing without hint", err);
+                    }
+                }
             }
             else {
                 reply = response.content
@@ -1077,7 +1226,7 @@ async function runQaAgent(params) {
                 if (grounded.trim())
                     reply = grounded.trim();
             }
-            catch (_y) {
+            catch (_z) {
                 // Non-critical — proceed with original reply
             }
         }
@@ -1118,7 +1267,7 @@ async function runQaAgent(params) {
                 if (rewritten.trim())
                     reply = rewritten.trim();
             }
-            catch (_z) {
+            catch (_0) {
                 // Non-critical — proceed with original reply (the linter / supervisor still run)
             }
         }
@@ -1155,6 +1304,11 @@ async function runQaAgent(params) {
         });
         metrics.postProcessModified = reply !== preSuperviseReply;
         metrics.exhausted = !preSuperviseReply.trim();
+        // Persist the lint-violation signal for the NEXT turn's persona re-inject
+        // decision. Written unconditionally (true/false) so the flag doesn't go stale.
+        db.collection("agent_sessions").doc(phone).update({
+            recentLintViolation: metrics.postProcessModified,
+        }).catch(() => { });
         await saveConversationTurn(phone, text, reply);
         if (!skipSend)
             await sendSplit(chatId, reply);

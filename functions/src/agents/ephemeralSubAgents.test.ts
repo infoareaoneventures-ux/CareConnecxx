@@ -23,6 +23,8 @@ import {
   runEphemeralSubAgent,
   SUB_AGENT_REGISTRY,
   buildTaskToolDescription,
+  INTERNAL_SUB_AGENT_NAMES,
+  getPublicSubAgentNames,
 } from "./ephemeralSubAgents";
 import { quickComplete } from "../utils/openaiClient";
 
@@ -119,14 +121,39 @@ describe("runEphemeralSubAgent", () => {
 });
 
 describe("buildTaskToolDescription", () => {
-  it("includes every registered sub-agent by name", () => {
+  it("includes every PUBLIC sub-agent by name", () => {
     const desc = buildTaskToolDescription();
-    for (const name of Object.keys(SUB_AGENT_REGISTRY)) {
+    for (const name of getPublicSubAgentNames()) {
       expect(desc).toContain(name);
+    }
+  });
+
+  it("excludes internal sub-agents (recovery is parent-invoked only)", () => {
+    const desc = buildTaskToolDescription();
+    for (const name of INTERNAL_SUB_AGENT_NAMES) {
+      expect(desc).not.toContain(name);
     }
   });
 
   it("mentions parallel-callable", () => {
     expect(buildTaskToolDescription()).toMatch(/parallel/i);
+  });
+});
+
+describe("recovery sub-agent (internal)", () => {
+  it("is registered and marked internal", () => {
+    expect(SUB_AGENT_REGISTRY["recovery"]).toBeDefined();
+    expect(INTERNAL_SUB_AGENT_NAMES.has("recovery")).toBe(true);
+    expect(getPublicSubAgentNames()).not.toContain("recovery");
+  });
+
+  it("routes recovery to Sonnet (nuanced reasoning)", async () => {
+    const result = await runEphemeralSubAgent({
+      subagentType: "recovery",
+      description:
+        "User asked to cancel Thursday's shift. Tried cancel_appointment twice — both returned APPOINTMENT_NOT_FOUND.",
+    });
+    expect(result.modelUsed).toBe("claude-sonnet-4-6");
+    expect(result.output.length).toBeGreaterThan(0);
   });
 });

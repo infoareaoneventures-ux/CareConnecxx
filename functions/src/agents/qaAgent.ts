@@ -23,6 +23,8 @@ import type { Intent } from "./intentClassifier";
 import { MEMORY_GUIDELINES } from "./memoryGuidelines";
 import { VOICE_EXEMPLARS } from "./voiceExemplars";
 import { computeVoiceProfile, buildVoiceDirective } from "./voiceMirror";
+import { decideRecovery } from "./recoveryDecision";
+import { runEphemeralSubAgent } from "./ephemeralSubAgents";
 import {
   classifyEmotionalContext,
   blendEmotionalContext,
@@ -1123,6 +1125,13 @@ export async function runQaAgent(params: {
     // once the running total exceeds the budget.
     const TURN_BUDGET_MS = 60_000;
     const turnStart = Date.now();
+    // Recovery tracking — if Sonnet hits two consecutive iterations where every
+    // tool_use returned an error, ask the recovery sub-agent for a different
+    // plan ONCE and inject it into the next user message. Fires at most one
+    // time per turn so we don't compound latency.
+    let consecutiveErrorIterations = 0;
+    let recoveryFired              = false;
+    const toolErrorTrail: { tool: string; preview: string }[] = [];
     for (let iteration = 0; iteration < 5; iteration++) {
       if (Date.now() - turnStart > TURN_BUDGET_MS) {
         console.warn("qaAgent: turn budget exceeded, exiting tool loop", { userId, iteration });
@@ -1181,6 +1190,8 @@ export async function runQaAgent(params: {
       if (response.stop_reason === "tool_use") {
         // Execute all tool calls in this turn
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        let iterationToolCalls = 0;
+        let iterationToolErrors = 0;
         for (const block of response.content) {
           if (block.type === "tool_use") {
             _toolCallsOut?.push(block.name);
@@ -1214,8 +1225,18 @@ export async function runQaAgent(params: {
               });
             metrics.toolCalls = (metrics.toolCalls ?? 0) + 1;
             (metrics.toolNames ??= []).push(block.name);
-            if ((result as { _toolError?: boolean })?._toolError) {
+            iterationToolCalls += 1;
+            const errored = !!(result as { _toolError?: boolean; error?: unknown })?._toolError
+              || !!(result as { error?: unknown })?.error;
+            if (errored) {
               metrics.toolErrors = (metrics.toolErrors ?? 0) + 1;
+              iterationToolErrors += 1;
+              if (toolErrorTrail.length < 6) {
+                toolErrorTrail.push({
+                  tool:    block.name,
+                  preview: JSON.stringify(result).slice(0, 200),
+                });
+              }
             }
 
             // Instrumentation for D4 — track success rate on the cancel path so
@@ -1250,6 +1271,45 @@ export async function runQaAgent(params: {
         }
         messages.push({ role: "assistant", content: response.content });
         messages.push({ role: "user",      content: toolResults });
+
+        // Recovery — delegated to the pure policy in recoveryDecision.ts.
+        // Fires on the 2nd consecutive iteration where every tool_use errored,
+        // at most once per turn. Appends a <recovery_suggestion> user-channel
+        // block so Sonnet attends to it on the next iteration.
+        const decision = decideRecovery(
+          { consecutiveErrorIterations, alreadyFired: recoveryFired },
+          { toolCalls: iterationToolCalls, toolErrors: iterationToolErrors },
+        );
+        consecutiveErrorIterations = decision.consecutiveErrorIterations;
+        if (decision.shouldFire) {
+          recoveryFired = true;
+          metrics.recoveryFired = true;
+          try {
+            const errSummary = toolErrorTrail
+              .map(e => `- ${e.tool}: ${e.preview}`)
+              .join("\n");
+            const recoveryDescription =
+              `Original user request: ${text.slice(0, 400)}\n\n` +
+              `Tools tried and the errors they returned:\n${errSummary}\n\n` +
+              `Suggest a different approach.`;
+            const rec = await runEphemeralSubAgent({
+              subagentType: "recovery",
+              description:  recoveryDescription,
+              maxTokens:    200,
+            });
+            messages.push({
+              role:    "user",
+              content: `<recovery_suggestion>\n${rec.output}\n</recovery_suggestion>`,
+            });
+            console.info("qaAgent.recoveryFired", {
+              userId,
+              consecutiveErrorIterations,
+              durationMs: rec.durationMs,
+            });
+          } catch (err) {
+            console.warn("qaAgent: recovery sub-agent threw — continuing without hint", err);
+          }
+        }
       } else {
         reply = response.content
           .filter((b) => b.type === "text")

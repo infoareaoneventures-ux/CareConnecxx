@@ -12,7 +12,7 @@ import {
 } from "../memory/memoryFiles";
 import { getPreferences } from "../memory/preferences";
 import { isHighRisk, proposePendingAction, buildPendingActionStub } from "../agents/pendingActions";
-import { runEphemeralSubAgent, buildTaskToolDescription, SUB_AGENT_REGISTRY } from "../agents/ephemeralSubAgents";
+import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
 
 const db = admin.firestore();
 
@@ -275,7 +275,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         description:   { type: "string", description: "The specific work the sub-agent should do. Include all the context the sub-agent needs — it does not see the conversation history." },
-        subagent_type: { type: "string", enum: Object.keys(SUB_AGENT_REGISTRY), description: "Which sub-agent to delegate to." },
+        subagent_type: { type: "string", enum: getPublicSubAgentNames(), description: "Which sub-agent to delegate to." },
       },
       required: ["description", "subagent_type"],
     },
@@ -1975,6 +1975,9 @@ export async function handleToolCall(
         const subagent_type = input.subagent_type as string | undefined;
         if (!description || !subagent_type) {
           return toolError("INVALID_INPUT", "description and subagent_type are required");
+        }
+        if (INTERNAL_SUB_AGENT_NAMES.has(subagent_type)) {
+          return toolError("INVALID_INPUT", `subagent_type "${subagent_type}" is internal-only and cannot be invoked via task.`);
         }
         const result = await runEphemeralSubAgent({ description, subagentType: subagent_type });
         return {

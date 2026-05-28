@@ -55,6 +55,7 @@ const auditLog_1 = require("../observability/auditLog");
 const memoryFiles_1 = require("../memory/memoryFiles");
 const preferences_1 = require("../memory/preferences");
 const pendingActions_1 = require("../agents/pendingActions");
+const ephemeralSubAgents_1 = require("../agents/ephemeralSubAgents");
 const db = admin.firestore();
 exports.MCP_TOOLS = [
     {
@@ -249,6 +250,59 @@ exports.MCP_TOOLS = [
                 query: { type: "string", description: "Keyword or phrase to search for" },
             },
             required: ["userId", "query"],
+        },
+    },
+    {
+        name: "write_todos",
+        description: "Scaffold a checklist of the steps you intend to take in this conversation. Use when the family's request has 3+ distinct steps " +
+            "(e.g. 'cancel Thursday, find a replacement for Friday, and let Marco know'). " +
+            "Items persist across turns until cleared, so on subsequent turns you can update statuses or add steps. " +
+            "Pass the full updated list each time — it overwrites the prior list. Don't use for simple single-step asks.",
+        input_schema: {
+            type: "object",
+            properties: {
+                phone: { type: "string", description: "Conversation key — the family member's phone number from the system context" },
+                items: {
+                    type: "array",
+                    description: "Ordered checklist. Each item: { task: short imperative description, status: 'pending' | 'in_progress' | 'completed' }",
+                    items: {
+                        type: "object",
+                        properties: {
+                            task: { type: "string" },
+                            status: { type: "string", enum: ["pending", "in_progress", "completed"] },
+                        },
+                        required: ["task", "status"],
+                    },
+                },
+            },
+            required: ["phone", "items"],
+        },
+    },
+    {
+        name: "cara_knows",
+        description: "Return a clean digest of everything Cara remembers about this family — senior profile, " +
+            "health, family relationships, recent episodes, procedural notes. " +
+            "Call when the family asks 'what do you know about Mom?', 'what's on file?', 'remind me what we've told you', " +
+            "'do you remember [topic]?', or any variation that asks Cara to surface her stored memory. " +
+            "Returns the raw memory context so you can summarize it warmly in 2–3 sentences (never as a bulleted list).",
+        input_schema: {
+            type: "object",
+            properties: {
+                userId: { type: "string", description: "The family member's user ID" },
+            },
+            required: ["userId"],
+        },
+    },
+    {
+        name: "task",
+        description: (0, ephemeralSubAgents_1.buildTaskToolDescription)(),
+        input_schema: {
+            type: "object",
+            properties: {
+                description: { type: "string", description: "The specific work the sub-agent should do. Include all the context the sub-agent needs — it does not see the conversation history." },
+                subagent_type: { type: "string", enum: (0, ephemeralSubAgents_1.getPublicSubAgentNames)(), description: "Which sub-agent to delegate to." },
+            },
+            required: ["description", "subagent_type"],
         },
     },
     {
@@ -1823,8 +1877,70 @@ async function handleToolCall(name, input) {
                 if (!input.userId || !input.query)
                     return toolError("INVALID_INPUT", "userId and query are required");
                 (0, auditLog_1.logHealthDataAccessed)(input.userId, input.userId, "mcp:search_memory").catch(() => { });
-                const hits = await (0, memoryFiles_1.searchMemory)(input.userId, input.query);
+                // Hybrid: substring (exact) ∪ semantic (cosine over text-embedding-3-small).
+                // Falls back to substring automatically if the embedding API or key is unavailable.
+                const hits = await (0, memoryFiles_1.searchMemoryHybrid)(input.userId, input.query);
                 return { success: true, hits, count: hits.length };
+            }
+            case "cara_knows": {
+                // Memory transparency surface (Sprint 3 / roadmap §5.3). Returns the
+                // family's full editable memory context — the same blob Cara already
+                // sees in-prompt, but surfaced so they can verify or correct it.
+                if (!input.userId)
+                    return toolError("INVALID_INPUT", "userId is required");
+                (0, auditLog_1.logHealthDataAccessed)(input.userId, input.userId, "mcp:cara_knows").catch(() => { });
+                const [context, files] = await Promise.all([
+                    (0, memoryFiles_1.getMemoryContext)(input.userId),
+                    (0, memoryFiles_1.listMemoryFiles)(input.userId),
+                ]);
+                return {
+                    success: true,
+                    files,
+                    context: context || "(no memory files on file yet — Cara is still building her picture of this family)",
+                };
+            }
+            case "task": {
+                // DeepAgents `task` pattern — dispatch to an ephemeral, stateless
+                // sub-agent (see agents/ephemeralSubAgents.ts). Sub-agent does its own
+                // narrow LLM call with a focused system prompt and returns one string.
+                const description = input.description;
+                const subagent_type = input.subagent_type;
+                if (!description || !subagent_type) {
+                    return toolError("INVALID_INPUT", "description and subagent_type are required");
+                }
+                if (ephemeralSubAgents_1.INTERNAL_SUB_AGENT_NAMES.has(subagent_type)) {
+                    return toolError("INVALID_INPUT", `subagent_type "${subagent_type}" is internal-only and cannot be invoked via task.`);
+                }
+                const result = await (0, ephemeralSubAgents_1.runEphemeralSubAgent)({ description, subagentType: subagent_type });
+                return {
+                    success: true,
+                    output: result.output,
+                    subagentType: result.subagentType,
+                    durationMs: result.durationMs,
+                    modelUsed: result.modelUsed,
+                };
+            }
+            case "write_todos": {
+                // Working-memory checklist (DeepAgents TodoListMiddleware port). Stored on
+                // agent_sessions; injected into Cara's system prompt at the start of each
+                // turn so she can see what's outstanding across the conversation.
+                const { phone, items } = input;
+                if (!phone || !Array.isArray(items)) {
+                    return toolError("INVALID_INPUT", "phone and items[] are required");
+                }
+                const allowed = new Set(["pending", "in_progress", "completed"]);
+                const sanitized = items
+                    .filter((it) => it && typeof it.task === "string" && allowed.has(it.status))
+                    .slice(0, 20) // cap — checklists this long usually mean Claude is over-decomposing
+                    .map((it) => ({ task: it.task.slice(0, 200), status: it.status }));
+                await admin.firestore().collection("agent_sessions").doc(phone).set({
+                    todos: sanitized,
+                    todosUpdatedAt: new Date().toISOString(),
+                }, { merge: true });
+                const pending = sanitized.filter((t) => t.status === "pending").length;
+                const inProgress = sanitized.filter((t) => t.status === "in_progress").length;
+                const completed = sanitized.filter((t) => t.status === "completed").length;
+                return { success: true, count: sanitized.length, pending, inProgress, completed };
             }
             case "cancel_appointment": {
                 const { appointmentId, clientId, reason } = input;

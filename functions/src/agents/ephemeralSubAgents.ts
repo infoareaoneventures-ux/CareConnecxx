@@ -82,7 +82,33 @@ export const SUB_AGENT_REGISTRY: Record<string, SubAgentDefinition> = {
       "the current monthly total, the new monthly total, the delta in dollars, and whether it's an increase or decrease. " +
       "Use plain language (\"about $X more per month\"). No tables, no math notation.",
   },
+
+  // Internal — invoked automatically by the qaAgent tool loop after 2+
+  // consecutive tool-error iterations. NOT meant for the main agent to call
+  // directly (excluded from buildTaskToolDescription and the `task` enum).
+  recovery: {
+    name:        "recovery",
+    description:
+      "(Internal) Diagnose why the main agent keeps hitting tool errors and propose a different approach.",
+    needsSonnet: true,
+    inputs:
+      "description should contain: the original user request, the tools tried, and the recent error messages.",
+    systemPrompt:
+      "You are a recovery analyst for an SMS care-coordination agent (Cara). The main agent has hit two or more consecutive tool errors in a single turn. " +
+      "Your job: read the situation, then return TWO short sentences. " +
+      "Sentence 1: the most likely reason the tools are failing (wrong tool, missing arg, retrying an unavailable resource, etc). " +
+      "Sentence 2: a concrete different approach (a different tool, asking the user one clarifying question, or replying without tools). " +
+      "Never propose retrying the exact same call. Never apologize. No headers, no lists, no markdown.",
+  },
 };
+
+/** Sub-agent names the parent agent must NOT invoke via `task` (internal-only). */
+export const INTERNAL_SUB_AGENT_NAMES = new Set<string>(["recovery"]);
+
+/** Sub-agent names the parent agent CAN invoke via the `task` MCP tool. */
+export function getPublicSubAgentNames(): string[] {
+  return Object.keys(SUB_AGENT_REGISTRY).filter(n => !INTERNAL_SUB_AGENT_NAMES.has(n));
+}
 
 export interface RunSubAgentResult {
   output:        string;
@@ -178,9 +204,9 @@ export async function runEphemeralSubAgent(opts: {
  * us hardcoding tool variants per type. Single tool, multiple targets.
  */
 export function buildTaskToolDescription(): string {
-  const lines = Object.values(SUB_AGENT_REGISTRY).map(
-    (d) => `  • ${d.name}: ${d.description}`,
-  );
+  const lines = Object.values(SUB_AGENT_REGISTRY)
+    .filter(d => !INTERNAL_SUB_AGENT_NAMES.has(d.name))
+    .map(d => `  • ${d.name}: ${d.description}`);
   return [
     "Delegate a focused analytical chunk to an ephemeral sub-agent. The sub-agent has its own focused system prompt and returns a single text result.",
     "Use this when a turn needs a distinct piece of analysis that would otherwise pollute your main reasoning (e.g. summarizing many journal entries, comparing caregivers, computing budget impact).",

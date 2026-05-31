@@ -3,7 +3,14 @@ import { quickComplete } from "../utils/openaiClient";
 import { unwrapJson } from "../utils/jsonUtils";
 import axios from "axios";
 import Stripe from "stripe";
-import { sendMessage, AgentSession } from "../linq/client";
+import { sendMessage, signalThinking, AgentSession } from "../linq/client";
+import {
+  classifyEmotionalContext,
+  classifyEmotionalTopic,
+  blendEmotionalContext,
+  buildEmotionalContextDirective,
+  StoredEmotionalContext,
+} from "./emotionalContext";
 import { generateToken } from "./tokenService";
 import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../notifications";
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
@@ -220,6 +227,24 @@ export async function handleOnboardingStep(
     return;
   }
 
+  // ── Emotional context (both flows) ──────────────────────────────────────────
+  // Onboarding is where families first say the hard things ("Mom has Alzheimer's
+  // and I'm scared"). Classify the posture once per turn, blend with any 12h-TTL
+  // stored posture (reuses the same engine + session field as the QA agent), and
+  // stash the directive on the session so step handlers can reflect the feeling
+  // before logistics. Skipped for the OTP step and the RESUME sentinel — no
+  // emotional content there, and it saves a model call.
+  if (step !== "verify_phone" && text !== "__RESUME__") {
+    const current = await classifyEmotionalContext(text).catch(() => "calm" as const);
+    const stored  = (session as any).emotionalContext as StoredEmotionalContext | undefined;
+    const blended = blendEmotionalContext(stored, current);
+    if (blended.persist) {
+      await updateSession(phone, { emotionalContext: blended.persist }).catch(() => {});
+    }
+    (session as any)._emotionalDirective =
+      buildEmotionalContextDirective(blended.value, classifyEmotionalTopic(text));
+  }
+
   // ── Multi-field absorption (client flow only) ───────────────────────────────
   // For any client step, scan the user's message for ALL fields present, save
   // them, and auto-skip any subsequent steps whose target field is already
@@ -286,6 +311,7 @@ export async function handleOnboardingStep(
       && !step.endsWith("_send_bgcheck") && !step.endsWith("_awaiting_bgcheck")
       && !step.endsWith("_send_stripe_connect") && !step.endsWith("_awaiting_stripe")
       && !step.endsWith("_send_membership") && !step.endsWith("_awaiting_membership")
+      && step !== "client_confirm_intake"
       && !step.startsWith("job_")) {
     const correction = await detectCorrection(text);
     if (correction) {
@@ -321,6 +347,10 @@ export async function handleOnboardingStep(
     case "client_ask_needs":      return handleClientAskNeeds(phone, chatId, text, session);
     case "client_ask_location":   return handleClientAskLocation(phone, chatId, text, session);
     case "client_ask_schedule":   return handleClientAskSchedule(phone, chatId, text, session);
+    case "client_ask_start":        return handleClientAskStart(phone, chatId, text, session);
+    case "client_ask_preferences":  return handleClientAskPreferences(phone, chatId, text, session);
+    case "client_ask_budget":       return handleClientAskBudget(phone, chatId, text, session);
+    case "client_confirm_intake":   return handleClientConfirmIntake(phone, chatId, text, session);
     case "client_ask_plan":       return handleClientPlanReply(phone, chatId, text, session);
     case "client_send_payment":   return handleClientSendPayment(phone, chatId, session);
     case "client_awaiting_identity": {
@@ -336,6 +366,7 @@ export async function handleOnboardingStep(
     case "client_awaiting_payment":
       await sendMessage(chatId, "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳");
       return;
+    case "job_confirm_prefill":  return handleJobConfirmPrefill(phone, chatId, text, session);
     case "job_ask_start":        return handleJobAskStart(phone, chatId, text, session);
     case "job_ask_frequency":    return handleJobAskFrequency(phone, chatId, text, session);
     case "job_ask_days":         return handleJobAskDays(phone, chatId, text, session);
@@ -351,6 +382,7 @@ export async function handleOnboardingStep(
     case "caregiver_ask_location":    return handleCaregiverAskLocation(phone, chatId, text, session);
     case "caregiver_ask_experience":  return handleCaregiverAskExperience(phone, chatId, text, session);
     case "caregiver_ask_specialties": return handleCaregiverAskSpecialties(phone, chatId, text, session);
+    case "caregiver_ask_profile":      return handleCaregiverAskProfile(phone, chatId, text, session);
     case "caregiver_ask_availability": return handleCaregiverAskAvailability(phone, chatId, text, session);
     case "caregiver_ask_job_type":     return handleCaregiverAskJobType(phone, chatId, text, session);
     case "caregiver_ask_rate":         return handleCaregiverAskRate(phone, chatId, text, session);
@@ -574,11 +606,18 @@ async function handleClientAskNeeds(phone: string, chatId: string, text: string,
   await mergeOnboardingData(phone, { age, careNeeds, conditions });
   await updateSession(phone, { onboardingStep: "client_ask_location" });
   const seniorName = session.onboardingData?.seniorName;
+  const condLabel = conditions.length > 0 ? conditions.join(", ") : (careNeeds.length > 0 ? careNeeds.join(", ") : "");
   const msg5 = await generateCaraMessage({
     audience: "family",
-    context: `Cara is collecting onboarding info for a family. They just shared care needs for ${seniorName ?? "their loved one"}. Ask what city and zip code ${seniorName ?? "they"} lives in.`,
+    context:
+      `Cara is collecting onboarding info for a family caring for ${seniorName ?? "their loved one"}. ` +
+      `They just shared the care situation${condLabel ? ` (${condLabel})` : ""}. ` +
+      `If the situation is emotionally heavy (memory care, a serious diagnosis, or the family sounds worried), ` +
+      `acknowledge that weight warmly in one short sentence first — no platitudes, no clinical hedging. ` +
+      `Then ask what city and zip code ${seniorName ?? "they"} lives in so you can find specialists nearby.`,
     fallback: `And where does ${seniorName ?? "they"} live?`,
-    maxTokens: 80,
+    emotionalDirective: (session as any)._emotionalDirective,
+    maxTokens: 120,
   });
   await sendMessage(chatId, msg5);
 }
@@ -645,9 +684,197 @@ async function handleClientAskSchedule(phone: string, chatId: string, text: stri
   } catch { /* keep defaults */ }
 
   await mergeOnboardingData(phone, { daysPerWeek, timeOfDay, hoursPerDay });
-  // Refresh session so handleClientShowCaregivers has the full onboardingData
+  await updateSession(phone, { onboardingStep: "client_ask_start" });
+  const dSched = session.onboardingData ?? {};
+  const seniorSched = (dSched.seniorName as string) ?? "your loved one";
+  const startMsg = await generateCaraMessage({
+    audience: "family",
+    context: `Cara is onboarding a family for ${seniorSched}. They just gave their schedule. Acknowledge it in one short line, then ask when they'd like care to start — right away, or a specific date.`,
+    fallback: `Got it. And when would you like care to start for ${seniorSched} — right away, or a specific date?`,
+    emotionalDirective: (session as any)._emotionalDirective,
+    maxTokens: 90,
+  });
+  await sendMessage(chatId, startMsg);
+}
+
+// ── New intake steps: start date → preferences → budget → playback confirm ─────
+
+async function handleClientAskStart(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "When would you like care to start — right away, or a specific date?");
+    return;
+  }
+  const parsed = await parseWithClaude(
+    "Extract when the family wants care to start. Reply with a short phrase: \"asap\" if they want it right away/" +
+    "urgently, the specific date in their own words if they gave one, or \"flexible\" if they're unsure. Just the phrase.",
+    text
+  );
+  const startDate = (!parsed || parsed === "__parse_error__") ? "flexible" : parsed;
+  await mergeOnboardingData(phone, { startDate });
+  await updateSession(phone, { onboardingStep: "client_ask_preferences" });
+  const prefMsg = await generateCaraMessage({
+    audience: "family",
+    context: `Cara is onboarding a family; care should start "${startDate}". Acknowledge briefly, then ask if they have any preferences for the caregiver — gender, language, or whether they need someone who can drive. Make clear it's optional and they can just say "no preference".`,
+    fallback: "Any preferences for the caregiver — gender, language, or someone who can drive? Totally optional — just say \"no preference\" if not.",
+    emotionalDirective: (session as any)._emotionalDirective,
+    maxTokens: 90,
+  });
+  await sendMessage(chatId, prefMsg);
+}
+
+async function handleClientAskPreferences(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "Any preferences for the caregiver — gender, language, driving? (or \"no preference\")");
+    return;
+  }
+  const raw = await parseWithClaude(
+    "Extract caregiver preferences. Reply in JSON: {\"gender\":\"\",\"language\":\"\",\"driving\":false,\"other\":\"\"}. " +
+    "gender: \"female\"/\"male\" or \"\" if none. language: a language name or \"\". driving: true only if they need " +
+    "someone who can drive. other: any other preference (pets, smoking, non-smoker, etc.) or \"\". If they say no " +
+    "preference, return all empty/false.",
+    text
+  );
+  let prefs: { gender?: string; language?: string; driving?: boolean; other?: string } = {};
+  try { prefs = JSON.parse(raw); } catch { /* none */ }
+  await mergeOnboardingData(phone, {
+    caregiverPreferences: prefs,
+    // Top-level keys the matching engine reads directly (matchingAgent + claudeMatching).
+    genderPreference:   prefs.gender   ?? "",
+    languagePreference: prefs.language ?? "",
+    needsDriving:       prefs.driving === true,
+    otherPreference:    prefs.other    ?? "",
+  });
+  await updateSession(phone, { onboardingStep: "client_ask_budget" });
+  const d = session.onboardingData ?? {};
+  const city = (d.city as string) ?? "";
+  const rangeHint = city ? `Caregivers near ${city} typically run $18–28/hr` : "Caregivers typically run $18–28/hr";
+  const budgetMsg = await generateCaraMessage({
+    audience: "family",
+    context: `Cara is onboarding a family. They just shared caregiver preferences. Now ask about budget. In one line make clear the caregiver's hourly pay is SEPARATE from the CareConnex membership, include this hint verbatim: "${rangeHint}", and ask if they have an hourly budget in mind (they can say "not sure"). Warm and brief.`,
+    fallback: `One more — caregivers are paid hourly, separate from your CareConnex membership. ${rangeHint}. Do you have an hourly budget in mind? ("not sure" is totally fine)`,
+    maxTokens: 110,
+  });
+  await sendMessage(chatId, budgetMsg);
+}
+
+async function handleClientAskBudget(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "Do you have an hourly budget in mind? (\"not sure\" is fine)");
+    return;
+  }
+  const raw = await parseWithClaude(
+    "Extract the family's hourly budget. Reply in JSON: {\"min\":0,\"max\":0}. If one number, set both to it. " +
+    "If a range, set min and max. If they're not sure / no budget, return {\"min\":0,\"max\":0}.",
+    text
+  );
+  let budget = { min: 0, max: 0 };
+  try { const p = JSON.parse(raw); budget = { min: Number(p.min) || 0, max: Number(p.max) || 0 }; } catch { /* none */ }
+  // Store budgetMax top-level too — the matching engine reads it directly.
+  await mergeOnboardingData(phone, { budget, budgetMin: budget.min, budgetMax: budget.max });
+  await updateSession(phone, { onboardingStep: "client_confirm_intake" });
   const refreshed = await db.collection("agent_sessions").doc(phone).get();
-  await handleClientShowCaregivers(phone, chatId, refreshed.data() as AgentSession);
+  const rs = refreshed.data() as AgentSession;
+  await sendClientIntakeSummary(chatId, rs);
+}
+
+// Plain-text playback of everything Cara captured — a confirmation gate before
+// the paywall so a parse error can't slip through unnoticed.
+function buildIntakeSummary(d: Record<string, unknown>): string {
+  const seniorName = (d.seniorName as string) || "your loved one";
+  const age        = d.age ? `${d.age}` : "";
+  const conditions = Array.isArray(d.conditions) && d.conditions.length
+    ? (d.conditions as string[]).join(", ")
+    : Array.isArray(d.careNeeds) && (d.careNeeds as string[]).length
+      ? (d.careNeeds as string[]).join(", ")
+      : "";
+  const loc   = [d.city, d.zipCode].filter(Boolean).join(" ");
+  const days  = d.daysPerWeek ? `${d.daysPerWeek} day${Number(d.daysPerWeek) === 1 ? "" : "s"}/week` : "";
+  const tod   = (d.timeOfDay as string) || "";
+  const sched = [days, tod].filter(Boolean).join(", ");
+  const start = (d.startDate as string) || "";
+  const prefs = (d.caregiverPreferences as Record<string, unknown> | undefined) ?? {};
+  const prefBits: string[] = [];
+  if (prefs.gender)   prefBits.push(String(prefs.gender));
+  if (prefs.language) prefBits.push(`${prefs.language}-speaking`);
+  if (prefs.driving)  prefBits.push("can drive");
+  if (prefs.other)    prefBits.push(String(prefs.other));
+  const b = (d.budget as { min?: number; max?: number } | undefined) ?? {};
+  const budget = (b.min || b.max)
+    ? (b.min === b.max ? `$${b.max}/hr` : `$${b.min}–${b.max}/hr`)
+    : "";
+
+  const lines = ["Here's what I've got:"];
+  lines.push(`• Care for ${seniorName}${age || conditions ? ` (${[age, conditions].filter(Boolean).join(", ")})` : ""}`);
+  if (loc)            lines.push(`• In ${loc}`);
+  if (sched)          lines.push(`• ${sched}`);
+  if (start)          lines.push(`• Starting: ${start}`);
+  if (prefBits.length) lines.push(`• Preference: ${prefBits.join(", ")}`);
+  if (budget)         lines.push(`• Budget: ${budget}`);
+  lines.push("", "Did I get that right? Reply YES to see your matches, or tell me what to fix.");
+  return lines.join("\n");
+}
+
+async function sendClientIntakeSummary(chatId: string, session: AgentSession): Promise<void> {
+  await sendMessage(chatId, buildIntakeSummary(session.onboardingData ?? {}));
+}
+
+// Pull any corrected intake fields out of a free-text edit at the confirm step.
+async function extractIntakeCorrections(text: string): Promise<Record<string, unknown>> {
+  const raw = await parseWithClaude(
+    "The family is correcting their care intake. Extract ONLY the fields they're changing; omit the rest. " +
+    "Return raw JSON with any of: {\"seniorName\":\"\",\"age\":0,\"careNeeds\":[],\"conditions\":[],\"city\":\"\"," +
+    "\"zipCode\":\"\",\"daysPerWeek\":0,\"timeOfDay\":\"\",\"hoursPerDay\":0,\"startDate\":\"\",\"budget\":{\"min\":0,\"max\":0}}. " +
+    "Only include a field if they clearly changed it.",
+    text
+  ).catch(() => "{}");
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v === null || v === undefined) continue;
+      if (typeof v === "string" && v.trim() === "") continue;
+      if (typeof v === "number" && v === 0) continue;
+      if (Array.isArray(v) && v.length === 0) continue;
+      if (k === "budget") {
+        const bv = v as { min?: number; max?: number };
+        if (!bv.min && !bv.max) continue;
+      }
+      out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function handleClientConfirmIntake(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  const intent = await parseWithClaude(
+    '"yes", "yep", "correct", "looks good", "that\'s right", "go", "perfect" → confirm. ' +
+    'Anything that corrects/changes a detail, or says no → edit. Reply with exactly one word: confirm or edit.',
+    text
+  );
+  if (intent === "confirm") {
+    const refreshed = await db.collection("agent_sessions").doc(phone).get();
+    const rs = refreshed.data() as AgentSession;
+    (rs as any)._emotionalDirective = (session as any)._emotionalDirective;
+    await handleClientShowCaregivers(phone, chatId, rs);
+    return;
+  }
+  const corrections = await extractIntakeCorrections(text);
+  if (Object.keys(corrections).length > 0) {
+    await mergeOnboardingData(phone, corrections);
+    const refreshed = await db.collection("agent_sessions").doc(phone).get();
+    await sendMessage(chatId, "Got it — updated.");
+    await sendClientIntakeSummary(chatId, refreshed.data() as AgentSession);
+  } else {
+    await sendMessage(chatId, "No problem — tell me what to change and I'll fix it. Or reply YES to go ahead.");
+  }
 }
 
 async function createClientIdentitySession(phone: string): Promise<string> {
@@ -671,19 +898,38 @@ async function handleClientShowCaregivers(
   const seniorName = (d.seniorName as string) ?? "your loved one";
   const careNeeds: string[] = Array.isArray(d.careNeeds) ? d.careNeeds : [];
 
-  // Query caregivers by city; fall back to any active caregivers
-  let snap = await db
+  // Query caregivers in their city first. If none, WIDEN to any active caregiver
+  // (nearest available) rather than dead-ending — and only if there's truly zero
+  // supply anywhere do we honestly hold and skip the paywall.
+  const localSnap = await db
     .collection("caregivers")
     .where("status", "==", "active")
     .where("city",   "==", city)
     .limit(5)
     .get();
-  if (snap.empty) {
-    snap = await db.collection("caregivers").where("status", "==", "active").limit(5).get();
-  }
 
-  const docs  = snap.docs.map(doc => doc.data());
-  const total = snap.size;
+  let docs: FirebaseFirestore.DocumentData[];
+  let total: number;
+  let widened = false;
+
+  if (!localSnap.empty) {
+    docs  = localSnap.docs.map(doc => doc.data());
+    total = localSnap.size;
+  } else {
+    const widerSnap = await db.collection("caregivers").where("status", "==", "active").limit(5).get();
+    if (widerSnap.empty) {
+      // No supply at all — don't take payment for something we can't deliver.
+      await updateSession(phone, { onboardingStep: "complete", awaitingSupply: true });
+      await sendMessage(chatId,
+        `I don't have caregivers available in ${city || "your area"} just yet — but I've saved everything about ` +
+        `${seniorName}'s care, and I'll text you the moment the right person is available. No charge until then. 💙`
+      );
+      return;
+    }
+    docs    = widerSnap.docs.map(doc => doc.data());
+    total   = widerSnap.size;
+    widened = true;
+  }
 
   const preview = docs.slice(0, 3).map(c => {
     const name  = (c.name ?? "Caregiver") as string;
@@ -699,44 +945,97 @@ async function handleClientShowCaregivers(
     ? careNeeds.slice(0, 2).join(" & ")
     : "care";
 
-  const caregiverMsg =
-    `I found ${total > 5 ? "6+" : total} caregiver${total !== 1 ? "s" : ""} near ${locationLabel} ` +
-    `who can help with ${needsLabel}:\n\n${total > 0 ? preview + "\n\n" : ""}` +
-    `To connect ${seniorName} with them, I need to quickly verify your identity — takes 30 seconds:`;
+  const caregiverMsg = widened
+    ? `I don't have caregivers right in ${locationLabel} yet, but here are the nearest ones available:\n\n${preview}\n\n` +
+      `Here's how I'd get ${seniorName} connected with one:`
+    : `I found ${total > 5 ? "6+" : total} caregiver${total !== 1 ? "s" : ""} near ${locationLabel} ` +
+      `who can help with ${needsLabel}:\n\n${preview}\n\n` +
+      `Here's how I'd get ${seniorName} connected with them:`;
 
   await sendMessage(chatId, caregiverMsg);
 
-  // Send identity link immediately (back-to-back, no reply needed)
-  let identityUrl: string;
-  try {
-    identityUrl = await createClientIdentitySession(phone);
-  } catch (err) {
-    console.error("createClientIdentitySession error — skipping identity, advancing to plan:", err);
-    await updateSession(phone, { onboardingStep: "client_ask_plan" });
-    await handleClientAskPlan(phone, chatId);
-    return;
-  }
-
-  await sendMessage(chatId, { parts: [{ type: "link", url: identityUrl, value: "🔒 Verify My Identity →" }] });
-  await updateSession(phone, { onboardingStep: "client_awaiting_identity" });
+  // Value first (real caregivers shown above), then price, THEN identity, THEN
+  // payment — so a family never has to scan a government ID before they even
+  // know what CareConnex costs. handleClientPresentPlan sets up the price.
+  await updateSession(phone, { onboardingStep: "client_ask_plan" });
+  await handleClientPresentPlan(phone, chatId, session);
 }
 
-async function handleClientAskPlan(phone: string, chatId: string): Promise<void> {
-  await sendMessage(chatId,
-    `Almost done! Choose your plan:\n\n` +
-    `1️⃣ Basic — $49/mo\n` +
-    `   · AI care assistant (Cara)\n` +
-    `   · Weekly care summaries\n\n` +
-    `2️⃣ Family — $99/mo\n` +
-    `   · Everything in Basic\n` +
-    `   · Group family updates\n` +
-    `   · Priority matching\n\n` +
-    `3️⃣ Premium — $199/mo\n` +
-    `   · Everything in Family\n` +
-    `   · 24/7 urgent response\n` +
-    `   · Dedicated care coordinator\n\n` +
-    `Reply 1, 2, or 3.`
-  );
+// When a caregiver activates, re-engage families we honestly held (awaitingSupply)
+// in that city: clear the flag, tell them care is now available, and drop them
+// back into the show-caregivers → price flow (which now has real supply).
+async function notifyWaitlistedFamilies(caregiverCity: string): Promise<void> {
+  if (!caregiverCity) return;
+  const cityLower = caregiverCity.toLowerCase();
+  const snap = await db.collection("agent_sessions").where("awaitingSupply", "==", true).get();
+  for (const doc of snap.docs) {
+    try {
+      const s      = doc.data() as AgentSession;
+      const famCity = ((s.onboardingData?.city as string) ?? "").toLowerCase();
+      if (!famCity || famCity !== cityLower) continue;
+      const chatId = s.chatId;
+      if (!chatId) continue;
+      const seniorName = (s.onboardingData?.seniorName as string) ?? "your loved one";
+      await db.collection("agent_sessions").doc(doc.id).update({ awaitingSupply: false }).catch(() => {});
+      await sendMessage(chatId,
+        `Good news — a caregiver just became available near ${caregiverCity}! Let me show you who can help ${seniorName}.`
+      );
+      await handleClientShowCaregivers(doc.id, chatId, s);
+    } catch (err) {
+      console.error("[notifyWaitlistedFamilies] error for", doc.id, err);
+    }
+  }
+}
+
+// Resolve the single configured client price. The 3-tier STRIPE_PLAN_*_PRICE_ID
+// vars are not set in prod — only one monthly price exists — so picking a tier
+// used to hand Stripe an empty priceId. Lead with the one real price.
+function resolveClientPriceId(): string {
+  return process.env.STRIPE_MEMBERSHIP_PRICE_ID
+    ?? process.env.STRIPE_PRICE_MONTHLY
+    ?? process.env.STRIPE_PLAN_FAMILY_PRICE_ID
+    ?? "";
+}
+
+// Single source of truth for the displayed price: read the amount straight from
+// the live Stripe price object so the copy can never drift from what the family
+// is actually charged. Returns "" on any error (copy degrades to generic).
+async function describeClientPrice(priceId: string): Promise<string> {
+  try {
+    if (!priceId) return "";
+    const price = await getStripe().prices.retrieve(priceId);
+    if (price.unit_amount == null) return "";
+    const dollars = price.unit_amount / 100;
+    const amount  = Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;
+    const interval = price.recurring?.interval;
+    return interval ? `${amount}/${interval === "month" ? "mo" : interval}` : amount;
+  } catch (err) {
+    console.error("describeClientPrice error:", err);
+    return "";
+  }
+}
+
+async function handleClientPresentPlan(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  const d          = session.onboardingData ?? {};
+  const seniorName = (d.seniorName as string) ?? "your loved one";
+  const priceId    = resolveClientPriceId();
+  await mergeOnboardingData(phone, { selectedPlan: "CareConnex", selectedPlanPriceId: priceId });
+  const priceLabel = await describeClientPrice(priceId);
+
+  const msg = await generateCaraMessage({
+    audience: "family",
+    context:
+      `Cara just showed a family real local caregivers for ${seniorName}. Now state the price in one warm, simple ` +
+      `message: CareConnex is ${priceLabel || "a simple monthly membership"}, and for that Cara coordinates ` +
+      `everything for ${seniorName} — scheduling, weekly summaries, and keeping the whole family in the loop. ` +
+      `2-3 sentences, no bullet lists, no pressure. End by asking if they'd like you to set them up (they can reply YES, or ask about options).`,
+    fallback:
+      `CareConnex is ${priceLabel || "one simple monthly membership"} — I coordinate everything for ${seniorName}: ` +
+      `scheduling, weekly summaries, and keeping your whole family in the loop. Want me to set you up? (reply YES)`,
+    emotionalDirective: (session as any)._emotionalDirective,
+    maxTokens: 130,
+  });
+  await sendMessage(chatId, msg);
 }
 
 async function handleClientPlanReply(
@@ -745,41 +1044,87 @@ async function handleClientPlanReply(
   text:   string,
   session: AgentSession
 ): Promise<void> {
-  const raw = await parseWithClaude(
-    '"1", "basic", "cheapest", "starter" → basic. ' +
-    '"2", "family", "middle", "group" → family. ' +
-    '"3", "premium", "best", "top", "priority", "coordinator" → premium. ' +
-    'Reply with exactly one word: basic, family, or premium. If unclear, reply: unclear',
-    text
-  );
-  const plans: Record<string, { name: string; priceId: string }> = {
-    basic:   { name: "Basic",   priceId: process.env.STRIPE_PLAN_BASIC_PRICE_ID   ?? "" },
-    family:  { name: "Family",  priceId: process.env.STRIPE_PLAN_FAMILY_PRICE_ID  ?? "" },
-    premium: { name: "Premium", priceId: process.env.STRIPE_PLAN_PREMIUM_PRICE_ID ?? "" },
-  };
-  const plan = plans[raw];
-  if (!plan) {
-    await sendMessage(chatId, "Just reply 1, 2, or 3 to choose your plan — or tell me which tier you'd like (Basic, Family, or Premium).");
+  // Mid-flow question (e.g. "is it monthly?") — answer, then re-offer.
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "Want me to set you up? Reply YES and I'll get you verified and your matches connected.");
     return;
   }
-  await mergeOnboardingData(phone, { selectedPlan: plan.name, selectedPlanPriceId: plan.priceId });
-  await updateSession(phone, { onboardingStep: "client_send_payment" });
-  await handleClientSendPayment(phone, chatId, session);
+
+  const intent = await parseWithClaude(
+    '"yes", "ok", "sure", "1", "sounds good", "let\'s do it", "sign me up" → confirm. ' +
+    '"what are my options", "other plans", "cheaper", "more expensive", "upgrade", "tiers", "premium", "basic" → options. ' +
+    'Anything unclear → unclear. Reply with exactly one word: confirm, options, or unclear.',
+    text
+  );
+
+  if (intent === "options") {
+    await sendMessage(chatId,
+      "Right now everyone starts on the same simple membership — it covers me coordinating care, weekly summaries, " +
+      "and family updates. Once you're set up, I can add things like 24/7 urgent response or a dedicated coordinator " +
+      "if you ever want them. Want me to set you up? (reply YES)"
+    );
+    return;
+  }
+  if (intent !== "confirm") {
+    await sendMessage(chatId, "Just reply YES when you're ready and I'll get you connected with caregivers — happy to answer anything first.");
+    return;
+  }
+
+  // Confirmed → ensure a price is stored, then send the identity link.
+  const d = session.onboardingData ?? {};
+  let priceId = (d.selectedPlanPriceId as string) ?? "";
+  if (!priceId) {
+    priceId = resolveClientPriceId();
+    await mergeOnboardingData(phone, { selectedPlan: "CareConnex", selectedPlanPriceId: priceId });
+  }
+
+  await signalThinking(chatId, session.service);
+  let identityUrl: string;
+  try {
+    identityUrl = await createClientIdentitySession(phone);
+  } catch (err) {
+    console.error("createClientIdentitySession error — falling back to payment:", err);
+    await updateSession(phone, { onboardingStep: "client_send_payment" });
+    await handleClientSendPayment(phone, chatId, session);
+    return;
+  }
+  await sendMessage(chatId,
+    "Perfect. Quick 30-second identity check first — it's how I keep every family on the platform real and safe:"
+  );
+  await sendMessage(chatId, { parts: [{ type: "link", value: identityUrl }] });
+  await updateSession(phone, { onboardingStep: "client_awaiting_identity" });
 }
 
 async function handleClientSendPayment(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const d    = session.onboardingData ?? {};
 
   const caraPhone = encodeURIComponent(process.env.LINQ_PHONE_NUMBER ?? "");
+  const priceId   = ((d.selectedPlanPriceId as string) || resolveClientPriceId()).trim();
   let checkoutUrl = `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`;
+  await signalThinking(chatId, session.service);
   try {
-    const stripeSession = await getStripe().checkout.sessions.create({
-      mode:               "setup",
-      payment_method_types: ["card"],
-      success_url:        `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`,
-      cancel_url:         `${APP_URL}/start`,
-      metadata:           { phone, task: "client_payment_setup" },
-    });
+    // Real recurring membership — mode "subscription" actually starts billing.
+    // (Falls back to setup/card-on-file only if no price is configured, so the
+    // flow never hard-fails — but with STRIPE_MEMBERSHIP_PRICE_ID set this bills.)
+    const stripeSession = priceId
+      ? await getStripe().checkout.sessions.create({
+          mode:                 "subscription",
+          payment_method_types: ["card"],
+          line_items:           [{ price: priceId, quantity: 1 }],
+          success_url:          `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`,
+          cancel_url:           `${APP_URL}/start`,
+          metadata:             { phone, task: "client_payment_setup" },
+          subscription_data:    { metadata: { phone } },
+        })
+      : await getStripe().checkout.sessions.create({
+          mode:                 "setup",
+          payment_method_types: ["card"],
+          success_url:          `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`,
+          cancel_url:           `${APP_URL}/start`,
+          metadata:             { phone, task: "client_payment_setup" },
+        });
     checkoutUrl = stripeSession.url ?? checkoutUrl;
   } catch (err) {
     console.error("handleClientSendPayment stripe error:", err);
@@ -788,12 +1133,12 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
   await updateSession(phone, { onboardingStep: "client_awaiting_payment" });
   const msg7 = await generateCaraMessage({
     audience: "family",
-    context: `Cara has collected everything needed to start finding caregivers for ${d.seniorName ?? "a loved one"}. Let the family know warmly, then tell them the one last step is to add a payment method so caregivers know they're ready to book, and that it takes about 30 seconds.`,
-    fallback: `Perfect — I have everything I need to start finding caregivers for ${d.seniorName ?? "your loved one"}.\n\nOne last step: add a payment method so caregivers know you're ready to book.\nTakes about 30 seconds:`,
+    context: `Cara has collected everything needed to start finding caregivers for ${d.seniorName ?? "a loved one"}. Let the family know warmly, then tell them the last step is to start their membership so Cara can begin coordinating care, and that it takes about 30 seconds.`,
+    fallback: `Perfect — I have everything I need to start finding caregivers for ${d.seniorName ?? "your loved one"}.\n\nLast step: start your membership so I can begin coordinating care.\nTakes about 30 seconds:`,
     maxTokens: 100,
   });
   await sendMessage(chatId, msg7);
-  await sendMessage(chatId, { parts: [{ type: "link", url: checkoutUrl, value: "💳 Add Payment Method →" }] });
+  await sendMessage(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
   await sendMessage(chatId, "I'll start searching while you set that up.");
 }
 
@@ -840,6 +1185,42 @@ async function handleCaregiverAskLocation(phone: string, chatId: string, text: s
   try { const p = JSON.parse(raw); city = p.city ?? ""; zipCode = p.zipCode ?? ""; } catch { /* keep defaults */ }
 
   await mergeOnboardingData(phone, { city, zipCode });
+
+  // Value hook (founder direction): the moment a caregiver shares their location,
+  // show REAL local demand so the platform proves it's legit before we ask for
+  // anything. Honest empty state when nothing is open yet — no fabricated jobs.
+  if (city) {
+    try {
+      const openSnap = await db.collection("job_posts").where("status", "==", "open").limit(50).get();
+      const cityLower = city.toLowerCase();
+      const localJobs = openSnap.docs.filter((doc) => {
+        const c = doc.data().location?.city;
+        return c && String(c).toLowerCase() === cityLower;
+      }).slice(0, 3);
+
+      if (localJobs.length > 0) {
+        const lines = localJobs.map((doc, i) => {
+          const j = doc.data();
+          const needs = (j.careTypes ?? []).join(", ") || "general care";
+          const rate  = j.hourlyRate ? ` · $${j.hourlyRate}/hr` : "";
+          return `${i + 1}. ${needs}${rate}`;
+        }).join("\n");
+        await sendMessage(chatId,
+          `Good news — there ${localJobs.length === 1 ? "is" : "are"} ${localJobs.length} open care ` +
+          `${localJobs.length === 1 ? "job" : "jobs"} near ${city} right now:\n\n${lines}\n\n` +
+          `Finish your quick profile and you'll be able to apply.`
+        );
+      } else {
+        await sendMessage(chatId,
+          `I don't have open jobs in ${city} this minute — new ones post daily and I'll text you ` +
+          `the moment one matches your skills. Let's finish your profile so you're ready to apply.`
+        );
+      }
+    } catch (err) {
+      console.error("[handleCaregiverAskLocation] local job teaser failed:", err);
+    }
+  }
+
   await updateSession(phone, { onboardingStep: "caregiver_ask_experience" });
   const d = session.onboardingData ?? {};
   const msg10intro = await generateCaraMessage({
@@ -871,7 +1252,10 @@ async function handleCaregiverAskExperience(phone: string, chatId: string, text:
   await updateSession(phone, { onboardingStep: "caregiver_ask_specialties" });
   const msg11intro = await generateCaraMessage({
     audience: "caregiver",
-    context: "Cara is onboarding a caregiver. They just shared their years of experience and certifications. Ask what types of care they specialize in.",
+    context:
+      `Cara is onboarding a caregiver who just told her they have ${yearsExperience || "some"} years of experience` +
+      `${certifications.length ? ` and these certifications: ${certifications.join(", ")}` : ""}. ` +
+      `Acknowledge that warmly in one short line (genuine, not flattery clichés), then ask what types of care they specialize in.`,
     fallback: "What types of care do you specialize in?",
     maxTokens: 80,
   });
@@ -895,10 +1279,49 @@ async function handleCaregiverAskSpecialties(phone: string, chatId: string, text
   try { const p = JSON.parse(raw); specialties = p.specialties ?? []; } catch { /* keep defaults */ }
 
   await mergeOnboardingData(phone, { specialties });
+  await updateSession(phone, { onboardingStep: "caregiver_ask_profile" });
+  const msgProfile = await generateCaraMessage({
+    audience: "caregiver",
+    context:
+      `Cara is onboarding a caregiver who just shared their specialties${specialties.length ? `: ${specialties.join(", ")}` : ""}. ` +
+      `Acknowledge it warmly in one short line, then ask three quick profile details families use when matching: ` +
+      `whether they're male or female (some families have a preference), what languages they speak, and whether they can ` +
+      `drive clients to appointments. Keep it light and quick.`,
+    fallback: "A few quick details families use to match — are you male or female, what languages do you speak, and can you drive clients to appointments?",
+    maxTokens: 100,
+  });
+  await sendMessage(chatId, msgProfile);
+}
+
+async function handleCaregiverAskProfile(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "Are you male or female, what languages do you speak, and can you drive clients to appointments?");
+    return;
+  }
+  const raw = await parseWithClaude(
+    "Extract the caregiver's gender, the languages they speak, and whether they can drive clients. " +
+    "Reply in JSON: {\"gender\":\"\",\"languages\":[],\"canDrive\":false}. " +
+    "gender: \"female\"/\"male\"/\"other\" or \"\" if not stated. languages: array of language names; if they're writing " +
+    "in English and didn't specify, include \"English\". canDrive: true if they say they can drive / have a car or " +
+    "license, false otherwise.",
+    text
+  );
+  let gender = "";
+  let languages: string[] = [];
+  let canDrive = false;
+  try {
+    const p = JSON.parse(raw);
+    gender    = p.gender ?? "";
+    languages = Array.isArray(p.languages) ? p.languages : [];
+    canDrive  = p.canDrive === true;
+  } catch { /* none */ }
+  await mergeOnboardingData(phone, { gender, languages, canDrive });
   await updateSession(phone, { onboardingStep: "caregiver_ask_availability" });
   const msg12 = await generateCaraMessage({
     audience: "caregiver",
-    context: "Cara is onboarding a caregiver. They just described their care specialties. Ask what days and hours they're generally available to work.",
+    context: "Cara is onboarding a caregiver who just shared a couple profile details. Acknowledge briefly, then ask what days and hours they're generally available to work.",
     fallback: "What days and hours are you generally available to work?",
     maxTokens: 80,
   });
@@ -921,8 +1344,17 @@ async function handleCaregiverAskAvailability(phone: string, chatId: string, tex
 
   await mergeOnboardingData(phone, { availability: { days, hours } });
   await updateSession(phone, { onboardingStep: "caregiver_ask_job_type" });
+  const availIntro = await generateCaraMessage({
+    audience: "caregiver",
+    context:
+      `Cara is onboarding a caregiver who just shared their availability${hours ? ` (${hours})` : ""}. ` +
+      `Acknowledge it warmly in one short line, then lead into asking whether they want occasional, part-time, or ` +
+      `full-time work. Do NOT list the numbered options yourself — Cara appends those on the next line.`,
+    fallback: "Got it, thanks!",
+    maxTokens: 60,
+  });
   await sendMessage(chatId,
-    "Are you looking for occasional fill-in shifts, part-time (less than 25 hrs/week), or full-time work?\n\n" +
+    `${availIntro}\n\nAre you looking for occasional fill-in shifts, part-time (less than 25 hrs/week), or full-time work?\n\n` +
     "Reply 1 for Occasional, 2 for Part-time, or 3 for Full-time."
   );
 }
@@ -950,7 +1382,15 @@ async function handleCaregiverAskRate(phone: string, chatId: string, text: strin
 
   await mergeOnboardingData(phone, { hourlyRate });
   await updateSession(phone, { onboardingStep: "caregiver_ask_email" });
-  await sendMessage(chatId, "What's your email address? I'll use it to set up your payout account.");
+  const rateIntro = await generateCaraMessage({
+    audience: "caregiver",
+    context:
+      `Cara is onboarding a caregiver who just set their rate at $${hourlyRate}/hr. Acknowledge it in one short, ` +
+      `genuine line (no flattery clichés), then ask for their email address, mentioning it's used to set up their payout account.`,
+    fallback: `$${hourlyRate}/hr works. What's your email address? I'll use it to set up your payout account.`,
+    maxTokens: 70,
+  });
+  await sendMessage(chatId, rateIntro);
 }
 
 async function handleCaregiverAskJobType(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
@@ -996,7 +1436,7 @@ async function handleCaregiverAskEmail(phone: string, chatId: string, text: stri
   await mergeOnboardingData(phone, { email });
   await updateSession(phone, { onboardingStep: "caregiver_ask_bio" });
   await sendMessage(chatId,
-    "Last question before your photo — tell me about your approach to care in a sentence or two. Families will see this on your profile."
+    "Got it, thank you. Last question before your photo — tell me about your approach to care in a sentence or two. Families will see this on your profile."
   );
 }
 
@@ -1045,8 +1485,9 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
   const token   = generateToken({ phone, task: "caregiver_membership" });
   let checkoutUrl = `${APP_URL}/done?task=caregiver_membership&t=${token}`;
 
+  await signalThinking(chatId, session.service);
   try {
-    const membershipPriceId = process.env.STRIPE_CAREGIVER_ANNUAL_PRICE_ID ?? process.env.VITE_STRIPE_CAREGIVER_ANNUAL ?? "";
+    const membershipPriceId = process.env.STRIPE_CAREGIVER_ANNUAL_PRICE_ID ?? process.env.STRIPE_CAREGIVER_ANNUAL ?? process.env.VITE_STRIPE_CAREGIVER_ANNUAL ?? "";
     const mvrPriceId        = (process.env.STRIPE_MVR_PRICE_ID ?? "").trim();
 
     if (membershipPriceId) {
@@ -1057,13 +1498,17 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
         lineItems.push({ price: mvrPriceId, quantity: 1 });
       }
 
+      // Recurring annual membership (mode "subscription" → renews yearly).
+      // NOTE: STRIPE_CAREGIVER_ANNUAL must be a *recurring* annual price in Stripe.
+      // The optional MVR add-on is a one-time price, added to the first invoice.
       const stripeSession = await getStripe().checkout.sessions.create({
-        mode:                 "payment",
+        mode:                 "subscription",
         payment_method_types: ["card"],
         line_items:           lineItems,
         success_url:          `${APP_URL}/done?task=caregiver_membership&t=${token}`,
         cancel_url:           `${APP_URL}/start`,
         metadata:             { phone, task: "caregiver_membership", includeMVR: wantsMvr ? "true" : "false" },
+        subscription_data:    { metadata: { phone, kind: "caregiver_membership" } },
       });
       checkoutUrl = stripeSession.url ?? checkoutUrl;
     }
@@ -1081,10 +1526,10 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
     membershipCheckoutUrl: checkoutUrl,
   });
   await sendMessage(chatId,
-    "Almost there! There's a $24.95/year platform fee that gives you access to the job board, " +
-    `bookings, and Cara's scheduling tools.${mvrLine}\n\nTap to pay and activate your account:`
+    "You're almost ready to apply! Activate your membership ($24.95/year) to unlock applying to the " +
+    `jobs near you, getting booked, and Cara's scheduling + payout tools.${mvrLine}\n\nTap to activate:`
   );
-  await sendMessage(chatId, { parts: [{ type: "link", url: checkoutUrl, value: "💳 Pay Now →" }] });
+  await sendMessage(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
 }
 
 async function handleCaregiverResendMembership(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
@@ -1097,7 +1542,7 @@ async function handleCaregiverResendMembership(phone: string, chatId: string, se
   const url = (session as any).membershipCheckoutUrl as string | undefined;
   if (url) {
     await sendMessage(chatId, "Tap the link below to complete your membership payment:");
-    await sendMessage(chatId, { parts: [{ type: "link", url, value: "💳 Pay $24.95/year →" }] });
+    await sendMessage(chatId, { parts: [{ type: "link", value: url }] });
   } else {
     // Re-generate if URL was lost
     await handleCaregiverSendMembership(phone, chatId, session);
@@ -1114,7 +1559,7 @@ async function handleCaregiverSendPhoto(phone: string, chatId: string, session: 
     `Almost there${d.name ? `, ${d.name}` : ""}. One more thing — families want to see who they're trusting.\n\n` +
     `Tap to add your profile photo:`
   );
-  await sendMessage(chatId, { parts: [{ type: "link", url: photoUrl, value: "📷 Upload Photo →" }] });
+  await sendMessage(chatId, { parts: [{ type: "link", value: photoUrl }] });
 }
 
 async function handleCaregiverSendDocuments(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -1123,11 +1568,12 @@ async function handleCaregiverSendDocuments(phone: string, chatId: string, sessi
 
   await updateSession(phone, { onboardingStep: "caregiver_awaiting_documents" });
   await sendMessage(chatId, "Do you have certifications to upload? (CNA license, CPR card, etc.)\n\nTap to upload, or reply SKIP:");
-  await sendMessage(chatId, { parts: [{ type: "link", url: docUrl, value: "📄 Upload Documents →" }] });
+  await sendMessage(chatId, { parts: [{ type: "link", value: docUrl }] });
 }
 
 async function handleCaregiverSendBgcheck(phone: string, chatId: string, session: AgentSession): Promise<void> {
   let inviteUrl = `${APP_URL}/done?task=background_check`;
+  await signalThinking(chatId, session.service);
   try {
     const d = session.onboardingData ?? {};
     const nameParts = ((d.name ?? "") as string).split(" ");
@@ -1176,14 +1622,62 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
     "Almost done! A background check is required for all caregivers.\n\n" +
     "Tap to get started — usually takes about 5 minutes:"
   );
-  await sendMessage(chatId, { parts: [{ type: "link", url: inviteUrl, value: "✅ Start Background Check →" }] });
+  await sendMessage(chatId, { parts: [{ type: "link", value: inviteUrl }] });
   await sendMessage(chatId, "I'll text you when results come in (usually 1–3 days).");
+}
+
+// Re-issue a Checkr background-check link for an already-onboarded caregiver whose
+// check expired / is expiring (they replied "RENEW" to the expiry nudge). Mirrors the
+// onboarding invitation logic but updates the EXISTING caregiver doc instead of creating one.
+export async function sendBgCheckRenewalLink(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  let inviteUrl = `${APP_URL}/done?task=background_check`;
+  try {
+    // Resolve the caregiver's name: prefer the caregivers doc, fall back to session.
+    let firstName = "";
+    let lastName  = "";
+    const caregiverId = session.caregiverId;
+    if (caregiverId) {
+      const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
+      const parts = ((cgSnap.data()?.name ?? "") as string).split(" ");
+      firstName = parts[0] ?? "";
+      lastName  = parts.slice(1).join(" ");
+    }
+    if (!firstName) {
+      const parts = (((session.onboardingData ?? {}).name ?? "") as string).split(" ");
+      firstName = parts[0] ?? "";
+      lastName  = parts.slice(1).join(" ");
+    }
+
+    const checkrPkg = process.env.CHECKR_PACKAGE ?? "tasker_standard";
+    const resp = await axios.post(
+      "https://api.checkr.com/v1/invitations",
+      { package: checkrPkg, first_name: firstName, last_name: lastName },
+      { auth: { username: process.env.CHECKR_API_KEY ?? "", password: "" } }
+    );
+    inviteUrl = resp.data?.invitation_url ?? inviteUrl;
+
+    const candidateId = (resp.data?.candidate_id ?? resp.data?.id) as string | undefined;
+    if (caregiverId) {
+      await db.collection("caregivers").doc(caregiverId).update({
+        "backgroundCheckData.checkrCandidateId": candidateId ?? null,
+        "backgroundCheckData.status":            "pending",
+        "backgroundCheckData.submittedAt":       new Date().toISOString(),
+      }).catch(() => {});
+    }
+  } catch (err) {
+    console.error("[sendBgCheckRenewalLink] Checkr invitation error:", err);
+  }
+
+  await sendMessage(chatId, "Here's your background check renewal link — usually about 5 minutes:");
+  await sendMessage(chatId, { parts: [{ type: "link", value: inviteUrl }] });
+  await sendMessage(chatId, "I'll text you the moment results come in (usually 1–3 days). Bookings stay paused until it clears.");
 }
 
 async function handleCaregiverSendStripeConnect(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const token = generateToken({ phone, task: "stripe_connect" });
   let connectUrl = `${APP_URL}/done?task=stripe_connect&t=${token}`;
 
+  await signalThinking(chatId, session.service);
   try {
     const d = session.onboardingData ?? {};
     const account = await getStripe().accounts.create({
@@ -1208,7 +1702,146 @@ async function handleCaregiverSendStripeConnect(phone: string, chatId: string, s
   await sendMessage(chatId,
     "Last step — set up your payout account so you can get paid after every visit:\n"
   );
-  await sendMessage(chatId, { parts: [{ type: "link", url: connectUrl, value: "💰 Set Up Payouts →" }] });
+  await sendMessage(chatId, { parts: [{ type: "link", value: connectUrl }] });
+}
+
+// ── On-demand onboarding link (re)send ────────────────────────────────────────
+// Called by the QA agent's `send_onboarding_link` MCP tool so Cara can fulfil
+// "send me the subscription/identity/photo/… link" requests directly instead of
+// deflecting to a support ticket or promising a link it never sends.
+//
+// Unlike the onboarding step handlers above, this sends ONLY the tappable link
+// part (the agent supplies the surrounding context in its reply) and does NOT
+// advance onboarding state. Resource-creating links (membership, background
+// check, payouts) reuse a stored URL/account when present so repeat requests
+// don't create duplicate Stripe/Checkr resources.
+
+export type OnboardingLinkType =
+  | "client_payment"
+  | "client_identity"
+  | "caregiver_membership"
+  | "caregiver_photo"
+  | "caregiver_documents"
+  | "caregiver_background_check"
+  | "caregiver_payouts";
+
+export async function sendOnboardingLink(
+  phone: string,
+  linkType: OnboardingLinkType
+): Promise<{ success: boolean; linkType: OnboardingLinkType }> {
+  const snap = await db.collection("agent_sessions").doc(phone).get();
+  if (!snap.exists) throw new Error(`sendOnboardingLink: no session for ${phone}`);
+  const session   = snap.data() as AgentSession & Record<string, unknown>;
+  const chatId    = session.chatId;
+  if (!chatId) throw new Error(`sendOnboardingLink: no chatId for ${phone}`);
+  const d         = (session.onboardingData ?? {}) as Record<string, unknown>;
+  const caraPhone = encodeURIComponent(process.env.LINQ_PHONE_NUMBER ?? "");
+
+  let url: string;
+
+  switch (linkType) {
+    case "client_identity": {
+      url = await createClientIdentitySession(phone);
+      break;
+    }
+
+    case "client_payment": {
+      url = `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`;
+      const stripeSession = await getStripe().checkout.sessions.create({
+        mode:                 "setup",
+        payment_method_types: ["card"],
+        success_url:          `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`,
+        cancel_url:           `${APP_URL}/start`,
+        metadata:             { phone, task: "client_payment_setup" },
+      });
+      url = stripeSession.url ?? url;
+      break;
+    }
+
+    case "caregiver_membership": {
+      const stored = session.membershipCheckoutUrl as string | undefined;
+      if (stored) { url = stored; break; }
+      const token = generateToken({ phone, task: "caregiver_membership" });
+      url = `${APP_URL}/done?task=caregiver_membership&t=${token}`;
+      const membershipPriceId = process.env.STRIPE_CAREGIVER_ANNUAL_PRICE_ID ?? process.env.STRIPE_CAREGIVER_ANNUAL ?? process.env.VITE_STRIPE_CAREGIVER_ANNUAL ?? "";
+      if (membershipPriceId) {
+        const wantsMvr   = (d.wantsMvr as boolean | undefined) ?? false;
+        const mvrPriceId = (process.env.STRIPE_MVR_PRICE_ID ?? "").trim();
+        const lineItems: { price: string; quantity: number }[] = [{ price: membershipPriceId, quantity: 1 }];
+        if (wantsMvr && mvrPriceId && !mvrPriceId.startsWith("FILL_IN")) lineItems.push({ price: mvrPriceId, quantity: 1 });
+        const stripeSession = await getStripe().checkout.sessions.create({
+          mode:                 "subscription",
+          payment_method_types: ["card"],
+          line_items:           lineItems,
+          success_url:          `${APP_URL}/done?task=caregiver_membership&t=${token}`,
+          cancel_url:           `${APP_URL}/start`,
+          metadata:             { phone, task: "caregiver_membership", includeMVR: wantsMvr ? "true" : "false" },
+          subscription_data:    { metadata: { phone, kind: "caregiver_membership" } },
+        });
+        url = stripeSession.url ?? url;
+      }
+      await updateSession(phone, { membershipCheckoutUrl: url });
+      break;
+    }
+
+    case "caregiver_photo": {
+      url = `${APP_URL}/upload/photo?t=${generateToken({ phone, task: "photo_upload" })}`;
+      break;
+    }
+
+    case "caregiver_documents": {
+      url = `${APP_URL}/upload/document?t=${generateToken({ phone, task: "doc_upload" })}`;
+      break;
+    }
+
+    case "caregiver_background_check": {
+      const stored = session.bgcheckInviteUrl as string | undefined;
+      if (stored) { url = stored; break; }
+      url = `${APP_URL}/done?task=background_check`;
+      const nameParts = ((d.name ?? "") as string).split(" ");
+      const mvrPaid   = (session.mvrPaid as boolean | undefined) === true;
+      const checkrPkg = mvrPaid
+        ? (process.env.CHECKR_PACKAGE_MVR ?? "tasker_standard")
+        : (process.env.CHECKR_PACKAGE     ?? "tasker_standard");
+      const resp = await axios.post(
+        "https://api.checkr.com/v1/invitations",
+        { package: checkrPkg, first_name: nameParts[0] ?? "", last_name: nameParts.slice(1).join(" ") ?? "" },
+        { auth: { username: process.env.CHECKR_API_KEY ?? "", password: "" } }
+      );
+      url = resp.data?.invitation_url ?? url;
+      await updateSession(phone, { bgcheckInviteUrl: url });
+      break;
+    }
+
+    case "caregiver_payouts": {
+      const token = generateToken({ phone, task: "stripe_connect" });
+      let accountId = d.stripeAccountId as string | undefined;
+      if (!accountId) {
+        const account = await getStripe().accounts.create({
+          type:     "express",
+          country:  "US",
+          email:    (d.email ?? "") as string,
+          metadata: { phone, caregiverName: (d.name ?? "") as string },
+        });
+        accountId = account.id;
+        await mergeOnboardingData(phone, { stripeAccountId: accountId });
+      }
+      const link = await getStripe().accountLinks.create({
+        account:     accountId,
+        type:        "account_onboarding",
+        return_url:  `${APP_URL}/done?task=stripe_connect&t=${token}`,
+        refresh_url: `${APP_URL}/done?task=stripe_connect&t=${token}`,
+      });
+      url = link.url;
+      break;
+    }
+
+    default:
+      throw new Error(`sendOnboardingLink: unknown linkType ${linkType as string}`);
+  }
+
+  await sendMessage(chatId, { parts: [{ type: "link", value: url }] });
+  return { success: true, linkType };
 }
 
 // ── Resend a stuck onboarding link (called by stale-session nudge after 7 days) ─
@@ -1298,6 +1931,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         await db.collection("users").doc(uid).set({
           membershipStatus:   "active",
           subscriptionActive: true,
+          ...(taskData ? { stripeSubscriptionId: taskData } : {}),
           phone,
           firstName:          (d.firstName ?? "") as string,
           updatedAt:          admin.firestore.FieldValue.serverTimestamp(),
@@ -1393,9 +2027,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         timeOfDay:   d.timeOfDay    as string | undefined,
       }).catch((err) => console.error("pushOnboardingDataToZep error:", err));
 
-      // Advance to job posting flow instead of going straight to permissions
-      await updateSession(phone, { onboardingStep: "job_ask_start" });
-      await handleJobAskStart(phone, chatId, "", session);
+      // We already collected schedule, care needs, and budget during intake —
+      // don't make them re-answer it all. Pre-fill the job post and ask for a
+      // single confirmation (they can still choose to edit, which drops into the
+      // full step-by-step flow).
+      await presentPrefilledJobPost(phone, chatId, session);
       break;
     }
 
@@ -1472,8 +2108,10 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           }, { merge: true });
         }
 
-        await updateSession(phone, { onboardingStep: "client_ask_plan" });
-        await handleClientAskPlan(phone, chatId);
+        // New order: plan/price was accepted before identity, so once identity
+        // clears we go straight to collecting payment (card on file).
+        await updateSession(phone, { onboardingStep: "client_send_payment" });
+        await handleClientSendPayment(phone, chatId, session);
       } else if (step === "caregiver_awaiting_identity") {
         await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
         await handleCaregiverSendBgcheck(phone, chatId, session);
@@ -1503,6 +2141,10 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         email:           d.email   ?? null,
         bio:             d.bio     ?? null,
         jobType:         d.jobType ?? null,
+        gender:          d.gender    ?? null,
+        languages:       Array.isArray(d.languages) ? d.languages : [],
+        canDrive:        d.canDrive ?? null,
+        membershipSubscriptionId: (session as any).caregiverSubscriptionId ?? null,
         status:          "active",
       };
 
@@ -1523,6 +2165,13 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         caregiverId,
         onboardingStep: "caregiver_ask_permissions",
       });
+
+      // Waitlist trigger: a new active caregiver just landed. Notify any families
+      // we honestly held (awaitingSupply) in this caregiver's city that care is
+      // now available, and clear the flag so they're not pinged twice.
+      notifyWaitlistedFamilies((d.city as string) ?? "").catch((err) =>
+        console.error("notifyWaitlistedFamilies error:", err)
+      );
 
       // Silently create Firebase Auth account so web dashboard login works later
       await createFirebaseAuthAccount(phone, (d.name ?? "") as string);
@@ -1590,6 +2239,108 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
 // ── JOB POSTING FLOW ──────────────────────────────────────────────────────────
 // Triggered after client pays membership. Mirrors the 6-step PostJobFlow web
 // form and writes to the same Firestore collections so the web dashboard syncs.
+
+// Map an intake time-of-day phrase to the job post's slot enum.
+function mapTimeOfDayToSlots(tod: string): string[] {
+  const t = (tod || "").toLowerCase();
+  if (t.includes("all") || t.includes("any")) return ["Morning", "Afternoon", "Evening"];
+  const slots: string[] = [];
+  if (t.includes("morning") || t.includes("am"))                       slots.push("Morning");
+  if (t.includes("afternoon") || t.includes("noon"))                   slots.push("Afternoon");
+  if (t.includes("evening") || t.includes("night") || t.includes("pm")) slots.push("Evening");
+  if (t.includes("overnight") || t.includes("24"))                     slots.push("Overnight");
+  return slots.length ? slots : ["Morning"];
+}
+
+// Derive a ready-to-post job draft from the intake we ALREADY collected, so the
+// client confirms once instead of re-answering schedule/needs/budget after paying.
+function deriveJobDataFromIntake(d: Record<string, unknown>): Record<string, unknown> {
+  const daysPerWeek = Number(d.daysPerWeek ?? 0);
+  const frequency   = daysPerWeek >= 5 ? "full_time" : daysPerWeek >= 3 ? "part_time" : "occasional";
+  const conditions  = (Array.isArray(d.conditions) ? d.conditions : []) as string[];
+  const careNeeds   = (Array.isArray(d.careNeeds)  ? d.careNeeds  : []) as string[];
+  const heavy       = [...conditions, ...careNeeds].join(" ").toLowerCase();
+  const careLevel   = /dementia|alzheimer|medical|wound|catheter|feeding|insulin/.test(heavy)
+    ? "intensive"
+    : (careNeeds.length || conditions.length) ? "moderate" : "light";
+  const budgetMax   = Number(d.budgetMax ?? 0);
+  const budgetMin   = Number(d.budgetMin ?? 0);
+  const hourlyRate: number | string = budgetMax || budgetMin || "flexible";
+  return {
+    jobStartDate:     (d.startDate as string) || "ASAP",
+    jobFrequency:     frequency,
+    jobDays:          [],
+    jobTimeOfDay:     mapTimeOfDayToSlots((d.timeOfDay as string) ?? ""),
+    jobCareNeeds:     careNeeds.length ? careNeeds : conditions,
+    jobCareLevel:     careLevel,
+    jobHourlyRate:    hourlyRate,
+    jobPaymentMethod: "card",
+    petsInHome:       false,
+    smokingHousehold: false,
+  };
+}
+
+async function presentPrefilledJobPost(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  const d       = session.onboardingData ?? {};
+  const jobData = deriveJobDataFromIntake(d);
+  await mergeOnboardingData(phone, jobData);
+  await updateSession(phone, { onboardingStep: "job_confirm_prefill" });
+
+  const seniorName = (d.seniorName as string) ?? "your loved one";
+  const freqMap: Record<string, string> = { occasional: "Occasional", part_time: "Part-time", full_time: "Full-time" };
+  const rateLabel  = jobData.jobHourlyRate === "flexible" ? "flexible rate" : `$${jobData.jobHourlyRate}/hr`;
+  const needs      = (jobData.jobCareNeeds as string[]).join(", ") || "general care";
+
+  await sendMessage(chatId,
+    `Membership active — thank you! I'll post ${seniorName}'s care request using what you already told me:\n\n` +
+    `📅 Start ${jobData.jobStartDate} · ${freqMap[jobData.jobFrequency as string]} · ${(jobData.jobTimeOfDay as string[]).join(", ")}\n` +
+    `💛 ${needs}\n` +
+    `💰 ${rateLabel}\n\n` +
+    `Want me to post it as-is? Reply YES, or tell me what to change.`
+  );
+}
+
+async function handleJobConfirmPrefill(
+  phone: string, chatId: string, text: string, session: AgentSession
+): Promise<void> {
+  const intent = await parseWithClaude(
+    '"yes","yep","post it","go","looks good","sounds good","sure","ok","perfect" → confirm. ' +
+    'Anything that asks to change/edit a detail, or says no → edit. Reply with exactly one word: confirm or edit.',
+    text
+  );
+
+  if (intent !== "confirm") {
+    // Let them adjust everything via the detailed step-by-step flow.
+    await updateSession(phone, { onboardingStep: "job_ask_start" });
+    await sendMessage(chatId, "No problem — let's set it up together.");
+    await handleJobAskStart(phone, chatId, "", session);
+    return;
+  }
+
+  const uid = session.userId as string | undefined;
+  if (!uid) {
+    await updateSession(phone, { onboardingStep: "job_ask_start" });
+    await handleJobAskStart(phone, chatId, "", session);
+    return;
+  }
+  try {
+    const refreshed  = await db.collection("agent_sessions").doc(phone).get();
+    const onboarding = (refreshed.data()?.onboardingData ?? {}) as Record<string, unknown>;
+    const jobId = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
+    const city  = (onboarding.city as string) ?? "your area";
+    await updateSession(phone, { onboardingStep: "client_ask_permissions" });
+    await sendMessage(chatId,
+      `Your care request is live! 🎉 I've notified caregivers within 25 miles of ${city} and I'll message you the moment someone applies.`
+    );
+    const { sendClientPermissionsFlow } = await import("./permissionsConversation");
+    const freshSnap = await db.collection("agent_sessions").doc(phone).get();
+    await sendClientPermissionsFlow(phone, chatId, freshSnap.data() as AgentSession);
+    console.log(`[handleJobConfirmPrefill] Job posted: ${jobId} for uid=${uid}`);
+  } catch (err) {
+    console.error("[handleJobConfirmPrefill] buildAndSaveJobPost error:", err);
+    await sendMessage(chatId, "There was a problem posting your request — our team has been notified. You can also post it at " + APP_URL + "/client/post-job");
+  }
+}
 
 async function handleJobAskStart(
   phone: string, chatId: string, _text: string, session: AgentSession

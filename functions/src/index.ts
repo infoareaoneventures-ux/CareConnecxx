@@ -6,6 +6,15 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 
+// Webhook payloads from Linq sometimes lack optional fields (message_id is
+// absent on certain message.sent / reaction events). Writing those undefined
+// values into Firestore throws SYNCHRONOUSLY from validateUserInput, bypassing
+// .catch handlers and bubbling up to the webhook's top-level error handler —
+// which then ack'd Linq but skipped the qaAgent reply, surfacing as Cara's
+// "Give me a few minutes" deflection. Enabling ignoreUndefinedProperties on
+// the default Firestore instance silently drops undefined fields instead.
+admin.firestore().settings({ ignoreUndefinedProperties: true });
+
 // BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID, CREDENTIAL_VAULT_KEY are injected
 // via Firebase Secret Manager on linqWebhook (runWith secrets). Locally, load from .env.
 

@@ -41,6 +41,8 @@ export const triggerFamilyEmergency = functions.https.onCall(async (data, contex
       urgency:     "immediate",
       sourceAgent: "emergency_replacement",
       canDrop:     false,
+      // Life-critical — force SMS so delivery never silently fails on iMessage.
+      preferredService: "SMS",
     });
   }
 

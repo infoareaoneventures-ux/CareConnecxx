@@ -121,6 +121,10 @@ export async function runEmergencyReplacement(params: {
   const { appointmentId, clientId, clientPhone, appt } = params;
   const now = new Date().toISOString();
 
+  // This is a safety-critical path: the family has been told coverage is being found.
+  // A thrown error must NOT be silently swallowed by a fire-and-forget caller, so we
+  // catch at the top level and raise an admin alert.
+  try {
   // Mark replacement as in-progress so Cara can tell the family what's happening
   await db.collection("agent_tasks_active").doc(clientPhone).set({
     type:        "emergency_replacement",
@@ -224,4 +228,20 @@ export async function runEmergencyReplacement(params: {
     taskId:        taskRef.id,
     sentAt:        now,
   });
+  } catch (err) {
+    console.error("[runEmergencyReplacement] failed:", err);
+    await db.collection("admin_alerts").add({
+      type:          "emergency_replacement_failed",
+      severity:      "critical",
+      appointmentId,
+      clientId,
+      clientPhone,
+      error:         String((err as any)?.message ?? err),
+      createdAt:     new Date().toISOString(),
+    }).catch(() => {});
+    // Best-effort: clear the in-progress marker so Cara doesn't claim it's still searching.
+    await db.collection("agent_tasks_active").doc(clientPhone).delete().catch(() => {});
+    // Do not re-throw: the alert + cleanup above is the full handling. Re-throwing would
+    // double-alert (the webhooks caller also catches) and serves no recovery purpose.
+  }
 }

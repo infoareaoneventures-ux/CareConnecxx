@@ -40,11 +40,13 @@ const caraAgent_1 = require("../agents/caraAgent");
 const caraMessage_1 = require("../utils/caraMessage");
 const db = admin.firestore();
 /**
- * Daily re-engagement nudge for caregivers who stalled mid-onboarding.
+ * Daily re-engagement nudge for BOTH clients and caregivers who stalled
+ * mid-onboarding.
  *
- * Target: agent_sessions where userType="caregiver", onboardingStep ≠ "complete",
- * and lastInboundAt is between 24h and 14 days ago. Caps at one nudge per 72h
- * per caregiver via `lastReengagementNudgeAt` to avoid pestering.
+ * Target: agent_sessions where onboardingStep ≠ "complete" and lastInboundAt is
+ * between 24h and 14 days ago. Caps at one nudge per 72h per user via
+ * `lastReengagementNudgeAt` to avoid pestering. Copy is audience-aware (family
+ * vs caregiver).
  *
  * The companion stale-session checkpoint logic in webhooks.ts already handles
  * RESUME/START OVER replies; this job's job is just to remind them to come back.
@@ -58,13 +60,11 @@ exports.sendOnboardingReengagement = functions.pubsub
     const twentyFourHrAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString();
     const fourteenDayAgo = new Date(now - 14 * 24 * 60 * 60 * 1000).toISOString();
     const seventyTwoHrAgo = new Date(now - 72 * 60 * 60 * 1000).toISOString();
-    // We can't compound-filter on userType + onboardingStep + lastInboundAt without
-    // a composite index. Filter on userType and let in-loop checks handle the rest.
-    const sessionsSnap = await db.collection("agent_sessions")
-        .where("userType", "==", "caregiver")
-        .get();
+    // Pull all sessions and let in-loop checks handle step/recency/role — clients
+    // stall too (identity, payment, intake), and they were previously never nudged.
+    const sessionsSnap = await db.collection("agent_sessions").get();
     if (sessionsSnap.empty) {
-        console.log("[onboardingReengagement] No caregiver sessions found.");
+        console.log("[onboardingReengagement] No sessions found.");
         return;
     }
     let nudgesSent = 0;
@@ -110,14 +110,23 @@ exports.sendOnboardingReengagement = functions.pubsub
             const onboardingData = ((_a = session.onboardingData) !== null && _a !== void 0 ? _a : {});
             const firstName = ((_c = (_b = onboardingData.name) !== null && _b !== void 0 ? _b : onboardingData.firstName) !== null && _c !== void 0 ? _c : "there");
             const stepLabel = humanLabelForStep(onboardingStep);
+            const isCaregiver = session.userType === "caregiver";
             const msg = await (0, caraMessage_1.generateCaraMessage)({
-                audience: "caregiver",
-                context: `Caregiver first name: ${firstName.split(" ")[0]}. ` +
-                    `They started signing up but stalled at: "${stepLabel}". ` +
-                    "Send a short warm reminder (1-2 sentences) inviting them to pick up where they left off. " +
-                    "Mention that they're close to being able to take jobs. Don't be pushy.",
-                fallback: `Hey ${firstName.split(" ")[0]}, you're just a step or two away from being able to take jobs on CareConnex. ` +
-                    `Want to pick up where you left off? Reply RESUME to continue.`,
+                audience: isCaregiver ? "caregiver" : "family",
+                context: isCaregiver
+                    ? `Caregiver first name: ${firstName.split(" ")[0]}. ` +
+                        `They started signing up but stalled at: "${stepLabel}". ` +
+                        "Send a short warm reminder (1-2 sentences) inviting them to pick up where they left off. " +
+                        "Mention that they're close to being able to take jobs. Don't be pushy."
+                    : `Family member first name: ${firstName.split(" ")[0]}. ` +
+                        `They started getting care set up but stalled at: "${stepLabel}". ` +
+                        "Send a short warm reminder (1-2 sentences) inviting them to pick up where they left off. " +
+                        "Mention they're close to seeing their caregiver matches. Don't be pushy.",
+                fallback: isCaregiver
+                    ? `Hey ${firstName.split(" ")[0]}, you're just a step or two away from being able to take jobs on CareConnex. ` +
+                        `Want to pick up where you left off? Reply RESUME to continue.`
+                    : `Hi ${firstName.split(" ")[0]}, you're just a step or two away from seeing your caregiver matches. ` +
+                        `Want to pick up where you left off? Reply RESUME to continue.`,
                 maxTokens: 100,
             });
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
@@ -143,10 +152,27 @@ function humanLabelForStep(step) {
     const map = {
         verify_phone: "verifying your phone number",
         ask_role: "picking a role",
+        // Client steps
+        client_ask_name: "sharing your name",
+        client_ask_senior: "telling me who needs care",
+        client_ask_needs: "describing the care needs",
+        client_ask_location: "sharing the location",
+        client_ask_schedule: "setting the schedule",
+        client_ask_start: "choosing a start date",
+        client_ask_preferences: "sharing caregiver preferences",
+        client_ask_budget: "sharing a budget",
+        client_confirm_intake: "confirming the details",
+        client_ask_plan: "choosing your membership",
+        client_send_payment: "starting your membership",
+        client_awaiting_identity: "verifying your identity",
+        client_awaiting_payment: "starting your membership",
+        job_confirm_prefill: "posting your care request",
+        // Caregiver steps
         caregiver_ask_name: "sharing your name",
         caregiver_ask_location: "telling me your city",
         caregiver_ask_experience: "sharing your experience",
         caregiver_ask_specialties: "listing your specialties",
+        caregiver_ask_profile: "a couple profile details",
         caregiver_ask_availability: "sharing your availability",
         caregiver_ask_job_type: "choosing job type",
         caregiver_ask_rate: "setting your rate",

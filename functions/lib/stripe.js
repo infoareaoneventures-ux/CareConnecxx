@@ -231,12 +231,23 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
  * For caregiver payments: auto-initiate Checkr background check + set verificationStatus submitted
  */
 async function handleCheckoutSessionCompleted(session) {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
     // Cara iMessage onboarding — advance step when client finishes payment setup
     if (((_a = session.metadata) === null || _a === void 0 ? void 0 : _a.task) === 'client_payment_setup' && ((_b = session.metadata) === null || _b === void 0 ? void 0 : _b.phone)) {
         try {
+            const phone = session.metadata.phone;
+            const subscriptionId = typeof session.subscription === 'string'
+                ? session.subscription
+                : (_d = (_c = session.subscription) === null || _c === void 0 ? void 0 : _c.id) !== null && _d !== void 0 ? _d : '';
+            const customerId = typeof session.customer === 'string'
+                ? session.customer
+                : (_f = (_e = session.customer) === null || _e === void 0 ? void 0 : _e.id) !== null && _f !== void 0 ? _f : '';
+            if (subscriptionId || customerId) {
+                await admin.firestore().collection('agent_sessions').doc(phone).update(Object.assign(Object.assign({}, (subscriptionId ? { stripeSubscriptionId: subscriptionId } : {})), (customerId ? { stripeCustomerId: customerId } : {}))).catch(() => { });
+            }
+            // Pass the subscription id through so the user doc records a REAL subscription.
             const { advanceOnboardingStep } = await Promise.resolve().then(() => __importStar(require('./agents/onboardingConversation')));
-            await advanceOnboardingStep(session.metadata.phone, 'payment', '');
+            await advanceOnboardingStep(phone, 'payment', subscriptionId);
         }
         catch (err) {
             console.error('advanceOnboardingStep(payment) error:', err);
@@ -244,12 +255,20 @@ async function handleCheckoutSessionCompleted(session) {
         return;
     }
     // Cara iMessage onboarding — caregiver membership payment complete
-    if (((_c = session.metadata) === null || _c === void 0 ? void 0 : _c.task) === 'caregiver_membership' && ((_d = session.metadata) === null || _d === void 0 ? void 0 : _d.phone)) {
+    if (((_g = session.metadata) === null || _g === void 0 ? void 0 : _g.task) === 'caregiver_membership' && ((_h = session.metadata) === null || _h === void 0 ? void 0 : _h.phone)) {
         try {
             const phone = session.metadata.phone;
+            const subscriptionId = typeof session.subscription === 'string'
+                ? session.subscription
+                : (_k = (_j = session.subscription) === null || _j === void 0 ? void 0 : _j.id) !== null && _k !== void 0 ? _k : '';
+            const update = {};
             // If MVR was included in the checkout, flag the session so Checkr uses the MVR package
-            if (((_e = session.metadata) === null || _e === void 0 ? void 0 : _e.includeMVR) === 'true') {
-                await admin.firestore().collection('agent_sessions').doc(phone).update({ mvrPaid: true });
+            if (((_l = session.metadata) === null || _l === void 0 ? void 0 : _l.includeMVR) === 'true')
+                update.mvrPaid = true;
+            if (subscriptionId)
+                update.caregiverSubscriptionId = subscriptionId;
+            if (Object.keys(update).length) {
+                await admin.firestore().collection('agent_sessions').doc(phone).update(update).catch(() => { });
             }
             const { advanceOnboardingStep } = await Promise.resolve().then(() => __importStar(require('./agents/onboardingConversation')));
             await advanceOnboardingStep(phone, 'membership', '');
@@ -259,7 +278,7 @@ async function handleCheckoutSessionCompleted(session) {
         }
         return;
     }
-    const userId = (_f = session.metadata) === null || _f === void 0 ? void 0 : _f.firebaseUID;
+    const userId = (_m = session.metadata) === null || _m === void 0 ? void 0 : _m.firebaseUID;
     if (!userId)
         return;
     await admin.firestore().collection('users').doc(userId).set({
@@ -302,7 +321,7 @@ async function handleCheckoutSessionCompleted(session) {
     const lastName = caregiverData.lastName || nameParts.slice(1).join(' ') || '';
     const zipCode = (caregiverData.zipCode || caregiverData.zip || '').trim();
     const state = (caregiverData.state || '').trim();
-    const includeMVRFlag = ((_g = session.metadata) === null || _g === void 0 ? void 0 : _g.includeMVR) === 'true';
+    const includeMVRFlag = ((_o = session.metadata) === null || _o === void 0 ? void 0 : _o.includeMVR) === 'true';
     if (!firstName || !lastName || !zipCode) {
         console.warn(`Caregiver ${userId} missing profile fields — marking paid, deferring Checkr`);
         await admin.firestore().collection('caregivers').doc(userId).set(Object.assign({ membershipPaid: true, checkrInitPending: true }, (includeMVRFlag && { mvrPaid: true })), { merge: true });
@@ -437,6 +456,8 @@ async function handleInvoicePaymentFailed(invoice) {
                 urgency: "immediate",
                 sourceAgent: "billing",
                 canDrop: false,
+                // Billing/legal notice — force SMS for reliable delivery, never iMessage.
+                preferredService: "SMS",
             });
         }
     }
@@ -666,8 +687,16 @@ async function handleIdentityVerificationEvent(session) {
             }
         }
         else if (status === 'requires_input' || status === 'canceled') {
-            // Let the client retry
-            await sendToPhone(phone, "It looks like we need a little more info to verify you — tap the link above and try again.").catch((err) => console.error('identity retry message error:', err));
+            // Let the client retry — send a FRESH link (the original may have scrolled
+            // off or been consumed), not just "tap the link above".
+            await sendToPhone(phone, "Hmm, that ID check didn't go through — it happens. Here's a fresh link to try again:").catch((err) => console.error('identity retry message error:', err));
+            try {
+                const { sendOnboardingLink } = await Promise.resolve().then(() => __importStar(require('./agents/onboardingConversation')));
+                await sendOnboardingLink(phone, 'client_identity');
+            }
+            catch (err) {
+                console.error('identity retry link error:', err);
+            }
         }
         // Don't return — also update Firestore users doc if firebaseUID is present
     }

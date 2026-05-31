@@ -81,6 +81,9 @@ exports.t = {
     crisis_medical: (lang) => lang === "es"
         ? "🚨 Esto suena a una emergencia. Por favor llama al 911 o ve a la sala de emergencias más cercana de inmediato.\n\nSi necesitas que avise al equipo de cuidado, responde NOTIFICAR."
         : "🚨 This sounds like an emergency. Please call 911 or go to your nearest ER immediately.\n\nIf you need me to notify the care team, reply NOTIFY.",
+    crisis_notify_sent: (lang) => lang === "es"
+        ? "Listo — avisé a tu equipo de cuidado y a nuestro personal de soporte. Por favor llama al 911 si es una emergencia que pone en peligro la vida."
+        : "Done — I've alerted your care team and our support staff. Please still call 911 if this is life-threatening.",
     crisis_emotional: (lang) => lang === "es"
         ? "Te escucho, y me alegra mucho que me escribieras. 💙\n\nPor favor llama o envía un mensaje al 988 (Línea de Prevención del Suicidio y Crisis) — están disponibles 24/7 y les importas.\n\nYo también estoy aquí. ¿Quieres hablar?"
         : "I hear you, and I'm really glad you reached out. 💙\n\nPlease call or text 988 (Suicide & Crisis Lifeline) — they're available 24/7 and they care.\n\nI'm here too. Do you want to talk?",

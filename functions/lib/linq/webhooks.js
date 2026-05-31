@@ -73,7 +73,6 @@ const jobNotifications_1 = require("../triggers/jobNotifications");
 const zepClient_1 = require("../memory/zepClient");
 const openaiClient_1 = require("../utils/openaiClient");
 const voiceTranscription_1 = require("../utils/voiceTranscription");
-const phoneVerification_1 = require("../utils/phoneVerification");
 const personaShiftDetector_1 = require("../utils/personaShiftDetector");
 const language_1 = require("../utils/language");
 const db = admin.firestore();
@@ -246,6 +245,76 @@ async function handleArrived(phone, chatId, session) {
     sendArrivalCarePlanBriefing(chatId, apptData).catch(() => { });
 }
 // ── Day-before shift confirmation handler ────────────────────────────────────
+// Family replied "NOTIFY" after a medical-crisis message. Alert the care team:
+// a guaranteed critical admin alert, plus best-effort SMS to family-group members
+// and the senior's assigned caregiver(s).
+async function handleCrisisNotify(phone, chatId, session, pending) {
+    var _a, _b, _c, _d, _e, _f;
+    // Clear the armed flag first so a repeat NOTIFY doesn't double-fire.
+    await db.collection("agent_sessions").doc(phone).update({
+        pendingCrisisNotify: admin.firestore.FieldValue.delete(),
+    }).catch(() => { });
+    const lang = (0, language_1.languageFromSession)(session);
+    const userId = (_a = session.userId) !== null && _a !== void 0 ? _a : phone;
+    const seniorName = (_d = (_b = session.seniorName) !== null && _b !== void 0 ? _b : (_c = session.onboardingData) === null || _c === void 0 ? void 0 : _c.seniorName) !== null && _d !== void 0 ? _d : "your loved one";
+    // 1) GUARANTEED: critical admin alert so support staff is paged.
+    await db.collection("admin_alerts").add({
+        type: "crisis_notify_requested",
+        severity: "critical",
+        phone,
+        userId,
+        seniorName,
+        crisisText: (_e = pending === null || pending === void 0 ? void 0 : pending.text) !== null && _e !== void 0 ? _e : "",
+        createdAt: new Date().toISOString(),
+    }).catch((err) => console.error("[handleCrisisNotify] admin_alert write failed:", err));
+    // 2) BEST-EFFORT: alert family-group members.
+    try {
+        const membersSnap = await db.collection("family_group_members")
+            .where("primaryPhone", "==", phone).get();
+        await Promise.all(membersSnap.docs.map((d) => {
+            const mPhone = d.data().memberPhone;
+            if (!mPhone)
+                return Promise.resolve();
+            return (0, caraAgent_1.sendViaInteractionAgent)(mPhone, {
+                content: `⚠️ A medical emergency was just reported for ${seniorName}. If you can help, please reach out now. Call 911 if it's life-threatening.`,
+                urgency: "immediate",
+                sourceAgent: "crisis_notify",
+                canDrop: false,
+            }).catch(() => { });
+        }));
+    }
+    catch (err) {
+        console.error("[handleCrisisNotify] family notify failed:", err);
+    }
+    // 3) BEST-EFFORT: alert the assigned caregiver(s) on the senior's active appointments.
+    try {
+        const apptSnap = await db.collection("appointments")
+            .where("clientId", "==", userId)
+            .where("status", "in", ["confirmed", "in-progress", "pending_caregiver_confirmation"])
+            .limit(5).get();
+        const caregiverPhones = new Set();
+        for (const doc of apptSnap.docs) {
+            const cgId = doc.data().caregiverId;
+            if (!cgId)
+                continue;
+            const cgSnap = await db.collection("caregivers").doc(cgId).get();
+            const cgPhone = (_f = cgSnap.data()) === null || _f === void 0 ? void 0 : _f.phone;
+            if (cgPhone)
+                caregiverPhones.add(cgPhone);
+        }
+        await Promise.all([...caregiverPhones].map((cgPhone) => (0, caraAgent_1.sendViaInteractionAgent)(cgPhone, {
+            content: `⚠️ A medical emergency was just reported for ${seniorName}, your care client. Please check in if you're able. Call 911 if it's life-threatening.`,
+            urgency: "immediate",
+            sourceAgent: "crisis_notify",
+            canDrop: false,
+        }).catch(() => { })));
+    }
+    catch (err) {
+        console.error("[handleCrisisNotify] caregiver notify failed:", err);
+    }
+    // 4) Confirm to the family.
+    await (0, client_1.sendMessage)(chatId, language_1.t.crisis_notify_sent(lang));
+}
 async function handleShiftConfirmation(phone, chatId, text, session) {
     const info = session.pendingShiftConfirmation;
     // Parse YES / NO / question
@@ -331,18 +400,53 @@ async function handleShiftConfirmation(phone, chatId, text, session) {
                 canDrop: false,
             });
         }
-        // Trigger replacement agent (fire-and-forget)
-        Promise.resolve().then(() => __importStar(require("../agents/replacementAgent"))).then(({ runEmergencyReplacement }) => {
-            if (typeof runEmergencyReplacement === "function") {
-                runEmergencyReplacement({
-                    appointmentId: info.appointmentId,
-                    clientId: info.clientId,
-                    date: info.appointmentDate,
-                    startTime: info.startTime,
-                    seniorName: info.seniorName,
-                }).catch(() => { });
-            }
-        }).catch(() => { });
+        // Trigger replacement agent (fire-and-forget). runEmergencyReplacement requires
+        // { appointmentId, clientId, clientPhone, appt } — we must load the appointment to
+        // build `appt` (caregiverId/time/date) and pass the family's phone. A failure here
+        // is safety-critical (the family was just told coverage is being found), so we alert
+        // admins on any error instead of silently swallowing it.
+        if (clientPhone) {
+            (async () => {
+                var _a;
+                try {
+                    const apptSnap = await db.collection("appointments").doc(info.appointmentId).get();
+                    const appt = Object.assign(Object.assign({}, (apptSnap.data() || {})), { caregiverName: info.caregiverName, date: info.appointmentDate, time: info.startTime });
+                    const { runEmergencyReplacement } = await Promise.resolve().then(() => __importStar(require("../agents/replacementAgent")));
+                    if (typeof runEmergencyReplacement === "function") {
+                        await runEmergencyReplacement({
+                            appointmentId: info.appointmentId,
+                            clientId: info.clientId,
+                            clientPhone,
+                            appt,
+                        });
+                    }
+                }
+                catch (err) {
+                    console.error("[handleShiftConfirmation] emergency replacement failed:", err);
+                    await db.collection("admin_alerts").add({
+                        type: "emergency_replacement_failed",
+                        severity: "critical",
+                        appointmentId: info.appointmentId,
+                        clientId: info.clientId,
+                        clientPhone,
+                        seniorName: info.seniorName,
+                        error: String((_a = err === null || err === void 0 ? void 0 : err.message) !== null && _a !== void 0 ? _a : err),
+                        createdAt: new Date().toISOString(),
+                    }).catch(() => { });
+                }
+            })();
+        }
+        else {
+            console.error("[handleShiftConfirmation] no clientPhone for appointment", info.appointmentId, "— cannot run replacement");
+            await db.collection("admin_alerts").add({
+                type: "emergency_replacement_no_client_phone",
+                severity: "critical",
+                appointmentId: info.appointmentId,
+                clientId: info.clientId,
+                seniorName: info.seniorName,
+                createdAt: new Date().toISOString(),
+            }).catch(() => { });
+        }
     }
     else {
         // QUESTION or unclear — answer the question, then re-ask the confirmation.
@@ -1256,6 +1360,11 @@ async function handleInbound(event) {
                 if (transcript) {
                     text = transcript;
                     isMediaOnly = false;
+                    // Re-mark read now that the audio attachment is fully committed on
+                    // Linq's side. The initial markChatRead at t=0 races with audio
+                    // ingestion, so a voice memo otherwise shows "Delivered" but not
+                    // "Read" (unlike text, which is committed before the webhook fires).
+                    (0, client_1.markChatRead)(chatId).catch(() => { });
                     console.info("voiceMemo transcribed", {
                         phone,
                         chatId,
@@ -1290,15 +1399,40 @@ async function handleInbound(event) {
     }
     // ── New user — texted first (MO consent) ────────────────────────────────────
     if (!sessionSnap.exists) {
-        // Check if this phone belongs to a secondary family group member
+        // Check if this phone belongs to a secondary family group member.
+        // Two sources must be reconciled: the SMS-keyword path writes the primary
+        // session's `groupMembers` array, while the MCP `add_family_member` tool path
+        // writes the `family_group_members` collection. Check BOTH or an MCP-added
+        // member ("add my sister") would fall through to fresh onboarding and create a
+        // DUPLICATE account.
+        let primarySession = null;
+        let primaryPhone = "";
         const groupSnap = await db.collection("agent_sessions")
             .where("groupMembers", "array-contains", phone)
             .limit(1)
             .get();
         if (!groupSnap.empty) {
-            // Route as secondary family member using primary's session context
-            const primarySession = groupSnap.docs[0].data();
-            const primaryPhone = groupSnap.docs[0].id;
+            primarySession = groupSnap.docs[0].data();
+            primaryPhone = groupSnap.docs[0].id;
+        }
+        else {
+            // Fallback: look up the collection-based membership record (MCP-added members).
+            const memberSnap = await db.collection("family_group_members")
+                .where("memberPhone", "==", phone)
+                .limit(1)
+                .get();
+            if (!memberSnap.empty) {
+                const pPhone = memberSnap.docs[0].data().primaryPhone;
+                if (pPhone) {
+                    const pSnap = await db.collection("agent_sessions").doc(pPhone).get();
+                    if (pSnap.exists) {
+                        primarySession = pSnap.data();
+                        primaryPhone = pPhone;
+                    }
+                }
+            }
+        }
+        if (primarySession) {
             // Detect messaging capability so session reflects real service (SMS vs iMessage vs RCS)
             const secondaryCap = await (0, client_1.checkCapability)(phone);
             const secondaryService = secondaryCap.iMessage ? "iMessage" : secondaryCap.RCS ? "RCS" : "SMS";
@@ -1414,20 +1548,19 @@ async function handleInbound(event) {
                 (0, client_1.shareContactCard)(chatId).catch(() => { });
             return;
         }
-        // Phone-possession check: send a 6-digit OTP that the real owner of this
-        // number will receive via their carrier. A spoofed sender can't read it.
-        // Session is created in verify_phone step; nothing else happens until the
-        // code comes back.
-        const otp = (0, phoneVerification_1.generateOtp)();
+        // No web session and no prior history — a cold inbound. Phone verification
+        // happens on the WEBSITE (Firebase Phone Auth) before createWebOnboardingSession,
+        // not over SMS — so we do NOT gate the thread behind an OTP. Lead with a proper
+        // Cara intro and start onboarding right here in the thread; the inbound number
+        // is the conversation identity.
         await db.collection("agent_sessions").doc(phone).set({
             chatId,
             phone,
             service,
             userType: null,
-            onboardingStep: "verify_phone",
+            onboardingStep: "ask_role",
             optedIn: true,
             optedOut: false,
-            otp,
             preferredLanguage,
             createdAt: new Date().toISOString(),
         });
@@ -1436,7 +1569,18 @@ async function handleInbound(event) {
         await (0, zepClient_1.initializeZepOnFirstContact)(phone).catch((err) => console.error("Zep init failed (first contact):", err));
         if (service === "iMessage")
             await (0, client_1.startTyping)(chatId).catch(() => { });
-        await (0, client_1.sendMessage)(chatId, language_1.t.otp_greeting((0, phoneVerification_1.formatOtpForDisplay)(otp.code), preferredLanguage));
+        const coldIntro = preferredLanguage === "es"
+            ? "¡Hola! Soy Cara, tu coordinadora de cuidados con IA. Ayudo a las familias a encontrar cuidadores de " +
+                "confianza con verificación de antecedentes — y a los cuidadores a encontrar trabajo — todo aquí por mensaje.\n\n" +
+                "¿Buscas cuidado para un ser querido, o eres un cuidador?\n\n" +
+                "1️⃣  Necesito cuidado para alguien\n" +
+                "2️⃣  Soy cuidador buscando trabajo"
+            : "Hi — I'm Cara, your AI care coordinator. I help families find trusted, background-checked caregivers — " +
+                "and help caregivers find work — all right here by text.\n\n" +
+                "Are you looking for care for a loved one, or are you a caregiver?\n\n" +
+                "1️⃣  I need care for someone\n" +
+                "2️⃣  I'm a caregiver looking for work";
+        await (0, client_1.sendMessage)(chatId, coldIntro);
         // Share contact card AFTER the first outbound message — Linq requires at least
         // one outbound message in history before the share endpoint accepts the call.
         if (service === "iMessage")
@@ -1468,7 +1612,8 @@ async function handleInbound(event) {
         if (startWords.has(norm)) {
             await (0, sms_1.optInPhoneNumber)(phone);
             const lang = (0, language_1.languageFromSession)(session);
-            await (0, client_1.sendMessage)(chatId, language_1.t.opt_in_welcome_back(lang));
+            // TCPA opt-in confirmation must land reliably — force SMS, never iMessage.
+            await (0, client_1.sendMessage)(chatId, language_1.t.opt_in_welcome_back(lang), { preferredService: "SMS" });
             return;
         }
         return;
@@ -1480,6 +1625,11 @@ async function handleInbound(event) {
     // classifier receives an empty string.
     if (isMediaOnly) {
         await (0, client_1.stopTyping)(chatId).catch(() => { });
+        // Re-mark read now the media attachment is fully committed on Linq's side.
+        // The initial markChatRead at t=0 races with attachment ingestion, so
+        // media (stickers, voice memos, images) otherwise shows "Delivered" but
+        // not "Read" (unlike text, which is committed before the webhook fires).
+        (0, client_1.markChatRead)(chatId).catch(() => { });
         const partTypes = inboundParts.map((p) => { var _a; return String((_a = p.type) !== null && _a !== void 0 ? _a : "").toLowerCase(); });
         const hasVoiceMemo = (0, voiceTranscription_1.extractVoiceMemoPart)(inboundParts) !== null;
         if (partTypes.includes("sticker")) {
@@ -1576,7 +1726,8 @@ async function handleInbound(event) {
     if (stopWords.has(norm)) {
         await (0, sms_1.optOutPhoneNumber)(phone);
         const lang = (0, language_1.languageFromSession)(session);
-        await (0, client_1.sendMessage)(chatId, language_1.t.opt_out_confirmation(lang));
+        // TCPA opt-out confirmation must land reliably — force SMS, never iMessage.
+        await (0, client_1.sendMessage)(chatId, language_1.t.opt_out_confirmation(lang), { preferredService: "SMS" });
         return;
     }
     // ── Subscription lapse — graceful degradation for clients with lapsed billing ─
@@ -1586,7 +1737,8 @@ async function handleInbound(event) {
         const subStatus = (_5 = userSnap === null || userSnap === void 0 ? void 0 : userSnap.data()) === null || _5 === void 0 ? void 0 : _5.subscriptionStatus;
         if (subStatus === "past_due" || subStatus === "canceled" || subStatus === "unpaid") {
             await (0, client_1.sendMessage)(chatId, "Your Cara membership needs attention — there was an issue with your payment.\n\n" +
-                "To keep your care coordination active, please update your billing at cara.app/billing or reply HELP to reach our support team.");
+                "To keep your care coordination active, please update your billing at cara.app/billing or reply HELP to reach our support team.", { preferredService: "SMS" } // billing/legal notice — force SMS, never iMessage
+            );
             return;
         }
     }
@@ -1596,12 +1748,39 @@ async function handleInbound(event) {
     // Keyword fast-path identifies POTENTIAL crisis (sub-millisecond). For real
     // hits we then run a 1.2s LLM verification to filter out quotes/jokes/
     // hypotheticals — fail-safe to crisis on timeout/error.
+    // ── Crisis "NOTIFY" follow-up ───────────────────────────────────────────────
+    // The medical-crisis message tells the family "reply NOTIFY" to alert the care
+    // team. Catch that reply here (strict keyword protocol — allowed without an LLM)
+    // before crisis re-detection, so it isn't routed to the generic QA agent.
+    {
+        const pendingNotify = session.pendingCrisisNotify;
+        const normNotify = text.trim().toUpperCase();
+        if (pendingNotify && (normNotify.includes("NOTIFY") || normNotify.includes("NOTIFICAR"))) {
+            await handleCrisisNotify(phone, chatId, session, pendingNotify);
+            return;
+        }
+    }
+    // ── Caregiver "RENEW" — re-issue an expired/expiring background check link ───
+    // The bg-check expiry nudge tells caregivers to "reply RENEW". Strict keyword
+    // protocol (allowed without an LLM), gated to caregiver sessions.
+    {
+        const normRenew = text.trim().toUpperCase();
+        if (session.userType === "caregiver" && (normRenew === "RENEW" || normRenew === "RENOVAR")) {
+            const { sendBgCheckRenewalLink } = await Promise.resolve().then(() => __importStar(require("../agents/onboardingConversation")));
+            await sendBgCheckRenewalLink(phone, chatId, session);
+            return;
+        }
+    }
     const crisis = (0, crisisDetector_1.detectCrisis)(text);
     const sessionLang = (0, language_1.languageFromSession)(session);
     if (crisis === "medical") {
         if (await (0, crisisDetector_1.isLikelyRealCrisis)(text, "medical")) {
             await (0, client_1.sendMessage)(chatId, language_1.t.crisis_medical(sessionLang));
             (0, auditLog_1.logCrisisDetected)(phone, "medical", text).catch(() => { });
+            // Arm the NOTIFY follow-up so the family's "NOTIFY" reply reaches the care team.
+            await db.collection("agent_sessions").doc(phone).update({
+                pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString() },
+            }).catch(() => { });
             return;
         }
         console.info("crisisDetector: medical keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
@@ -4078,7 +4257,7 @@ async function handleInbound(event) {
 }
 // ── message.failed handler ────────────────────────────────────────────────────
 async function handleMessageFailed(event) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
     const ev = event;
     const chatId = (_a = ev.data) === null || _a === void 0 ? void 0 : _a.chat_id;
     const messageId = (_b = ev.data) === null || _b === void 0 ? void 0 : _b.message_id;
@@ -4094,6 +4273,63 @@ async function handleMessageFailed(event) {
         failedAt: (_f = (_e = ev.data) === null || _e === void 0 ? void 0 : _e.failed_at) !== null && _f !== void 0 ? _f : now,
         createdAt: now,
     }).catch(() => { });
+    // ── Forced-iMessage → SMS retry ─────────────────────────────────────────────
+    // Forced iMessage has no automatic fallback, so a failure here means the
+    // recipient isn't reachable on iMessage. If this message was a tracked
+    // forced-iMessage send, re-send the identical content over SMS instead of
+    // paging ops. (Records are written by trackForcedIMessage in client.ts.)
+    if (messageId) {
+        const retryRef = db.collection("agent_imessage_retry").doc(messageId);
+        const retrySnap = await retryRef.get().catch(() => null);
+        if (retrySnap === null || retrySnap === void 0 ? void 0 : retrySnap.exists) {
+            const rec = retrySnap.data();
+            if (!rec.retried) {
+                // Resolve phone via the session that owns this chat to honour opt-out.
+                const sessSnap = await db.collection("agent_sessions")
+                    .where("chatId", "==", (_g = rec.chatId) !== null && _g !== void 0 ? _g : chatId)
+                    .limit(1)
+                    .get()
+                    .catch(() => null);
+                const sess = (_h = sessSnap === null || sessSnap === void 0 ? void 0 : sessSnap.docs[0]) === null || _h === void 0 ? void 0 : _h.data();
+                await retryRef.update({ retried: true, retriedAt: now }).catch(() => { });
+                if ((sess === null || sess === void 0 ? void 0 : sess.optedOut) || (sess === null || sess === void 0 ? void 0 : sess.optedIn) === false) {
+                    console.warn("message.failed: forced-iMessage failed but recipient opted out — no SMS retry", { chatId, messageId });
+                    await retryRef.delete().catch(() => { });
+                }
+                else {
+                    try {
+                        await (0, client_1.sendMessage)((_j = rec.chatId) !== null && _j !== void 0 ? _j : chatId, { parts: ((_k = rec.parts) !== null && _k !== void 0 ? _k : []) }, { preferredService: "SMS" });
+                        await db.collection("agent_error_log").add({
+                            type: "message.failed.retried_sms",
+                            chatId: (_l = rec.chatId) !== null && _l !== void 0 ? _l : chatId,
+                            messageId,
+                            errorCode,
+                            reason,
+                            createdAt: now,
+                        }).catch(() => { });
+                        await retryRef.delete().catch(() => { });
+                        console.info("message.failed: forced-iMessage failed, re-sent over SMS", { chatId, messageId });
+                        return; // recovered — skip the high-severity admin alert below
+                    }
+                    catch (retryErr) {
+                        console.error("message.failed: SMS retry failed", { chatId, messageId, retryErr });
+                        await db.collection("admin_alerts").add({
+                            type: "linq_imessage_sms_retry_failed",
+                            chatId: (_m = rec.chatId) !== null && _m !== void 0 ? _m : chatId,
+                            messageId,
+                            errorCode,
+                            reason,
+                            severity: "high",
+                            createdAt: now,
+                            resolved: false,
+                        }).catch(() => { });
+                        console.warn("linqWebhook: message.failed", { chatId, messageId, errorCode, reason });
+                        return;
+                    }
+                }
+            }
+        }
+    }
     await db.collection("admin_alerts").add({
         type: "linq_message_failed",
         chatId,
@@ -4363,6 +4599,9 @@ exports.linqWebhook = functions
                     }
                 })
                     .catch(() => { });
+                // Delivered = the forced-iMessage send succeeded; drop its retry record.
+                // (Stragglers without a delivered/failed event auto-expire via TTL.)
+                await db.collection("agent_imessage_retry").doc(delivMsgId).delete().catch(() => { });
                 break;
             }
             case "message.failed":

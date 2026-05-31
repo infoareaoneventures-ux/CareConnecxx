@@ -24,11 +24,14 @@ async function generateCaraMessage(opts) {
             ? baseVoice +
                 " The recipient speaks Spanish — write your message in warm, natural Spanish. Same tone as Cara's English voice."
             : baseVoice;
+        const content = opts.emotionalDirective
+            ? `${opts.context}\n\n${opts.emotionalDirective}`
+            : opts.context;
         const resp = await (0, claudeClient_1.getSharedClient)().messages.create({
             model: "claude-haiku-4-5-20251001",
             max_tokens: (_a = opts.maxTokens) !== null && _a !== void 0 ? _a : 180,
             system: voice,
-            messages: [{ role: "user", content: opts.context }],
+            messages: [{ role: "user", content }],
         });
         const out = ((_b = resp.content[0].text) !== null && _b !== void 0 ? _b : "").trim();
         return out || opts.fallback;

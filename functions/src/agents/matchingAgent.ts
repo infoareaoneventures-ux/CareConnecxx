@@ -32,6 +32,8 @@ interface CaregiverCandidate {
   pendingBackgroundCheck?:  boolean;
   genderPreference?:        string;
   gender?:                  string;
+  languages?:               string[];
+  canDrive?:                boolean;
   backgroundCheckStatus?:   string;   // "clear" | "pending" | "consider" | "suspended"
   certifications?:          string[];
 }
@@ -84,13 +86,23 @@ function computeRuleSignals(
   if (intakeDays > 5 && !cgHours.includes("weekend")) scheduleOverlap = Math.min(scheduleOverlap, 70);
 
   // Quick rule-based score for pre-filtering only (not the final score)
-  const ruleScore = Math.round(
+  let ruleScore = Math.round(
     skillsCoverage                             * 0.35 +
     (distanceMiles <= 5 ? 100 : distanceMiles <= 15 ? 70 : 30) * 0.20 +
     Math.min(Math.round((caregiver.rating ?? 3.5) / 5 * 100), 100) * 0.20 +
     scheduleOverlap                            * 0.15 +
     75                                         * 0.10  // personality placeholder
   );
+
+  // Soft preference penalties — keep mismatches IN the pool (so we never dead-end
+  // a family with no matches) but push them down so better-fitting caregivers
+  // surface first. Claude does the nuanced scoring; this just orders the top 15.
+  const budgetMax  = Number(intake.budgetMax ?? 0);
+  const genderPref = ((intake.genderPreference ?? "") as string).toLowerCase();
+  if (budgetMax > 0 && caregiver.hourlyRate > budgetMax) ruleScore -= 20;
+  if (genderPref && caregiver.gender && caregiver.gender.toLowerCase() !== genderPref) ruleScore -= 15;
+  if (intake.needsDriving === true && caregiver.canDrive === false) ruleScore -= 10;
+  ruleScore = Math.max(0, ruleScore);
 
   const signals: CandidateSignals = {
     caregiverId:           caregiver.id,
@@ -102,6 +114,9 @@ function computeRuleSignals(
     yearsExperience:       caregiver.yearsExperience,
     isVerified:            !caregiver.pendingBackgroundCheck,
     certifications:        caregiver.certifications,
+    languages:             caregiver.languages,
+    gender:                caregiver.gender,
+    canDrive:              caregiver.canDrive,
     personalityTags:       [],
     hourlyRate:            caregiver.hourlyRate,
     hasDementiaCert:       detectDementiaCert(allSkills),
@@ -180,6 +195,8 @@ export async function runMatchingForClient(
       needs,
       genderPreference:   (intake.genderPreference ?? "") as string,
       languagePreference: (intake.languagePreference ?? "") as string,
+      budgetMax:          Number(intake.budgetMax ?? 0) || undefined,
+      needsDriving:       intake.needsDriving === true,
       personality:        (intake.seniorPersonality ?? "") as string,
       name:               (intake.seniorName ?? "") as string,
     };
@@ -399,7 +416,9 @@ export async function runMatchingForClient(
       `- Follow-up turns: answer questions about the specific caregivers from the details above\n` +
       `- If asked about a caregiver not in this list, say you only have details for the ones you presented\n\n` +
       `Rules: plain text only, no bullet points, no headers. Warm, direct, specific. ` +
-      `Under 300 characters per message when possible. End the intro with "Which ones would you like to meet?"`;
+      `Under 300 characters per message when possible. ` +
+      `When you reference a Profile link, copy the URL EXACTLY as shown above including the https:// prefix — never shorten, paraphrase, or drop the scheme (clients need to be able to tap it). ` +
+      `End the intro with "Which ones would you like to meet?"`;
 
     // Roster check — reuse existing agent if one is active for this user
     const existingAgent = await getActiveAgentForUser(phone, "matching");
@@ -423,9 +442,27 @@ export async function runMatchingForClient(
     // First agent turn generates the intro message — route through interaction agent
     // so it gets supervisor lint, DND respect, and proper chunking.
     const introMessage = await runExecutionAgentTurn(agentId, "Introduce these caregivers to the family now.");
+
+    // Deterministic fallback: the structured summary already contains every name,
+    // rate, profile URL, and specialty. This is what we send if the LLM intro is
+    // empty OR drops any caregiver's name or tappable profile link — a family making
+    // a high-stakes decision must never receive a name-less, link-less message.
+    const deterministicIntro =
+      `I found ${matchData.length} caregiver${matchData.length > 1 ? "s" : ""} for ${seniorName}:\n\n` +
+      `${matchSummary}\n\n` +
+      `Which ones would you like to meet?`;
+
+    const introComplete =
+      !!introMessage &&
+      matchData.every(m => introMessage.includes(m.name) && introMessage.includes(m.profileUrl));
+    if (!introComplete && introMessage) {
+      console.warn("[matchingAgent] LLM intro dropped a name/profile URL — sending deterministic summary instead", { phone });
+    }
+    const finalIntro = introComplete ? introMessage : deterministicIntro;
+
     const { sendViaInteractionAgent } = await import("./caraAgent");
     await sendViaInteractionAgent(phone, {
-      content:     introMessage || `Here are ${top3.length} caregivers I found for ${seniorName}. Which would you like to meet?`,
+      content:     finalIntro,
       urgency:     "immediate",
       sourceAgent: "matching",
       canDrop:     false,

@@ -25,6 +25,13 @@ export async function generateCaraMessage(opts: {
   maxTokens?: number;
   /** ISO language code — "es" makes Cara reply in Spanish; default English. */
   language?: "en" | "es";
+  /**
+   * Optional <emotional_context> directive from emotionalContext.ts. When the
+   * sender is anxious/grieving/etc., this tells Cara to reflect the feeling
+   * before logistics. Appended to the context so onboarding messages carry the
+   * same emotional intelligence as the main QA agent. Empty/undefined = no-op.
+   */
+  emotionalDirective?: string;
 }): Promise<string> {
   try {
     const baseVoice = opts.audience === "caregiver" ? CAREGIVER_VOICE : FAMILY_VOICE;
@@ -32,11 +39,14 @@ export async function generateCaraMessage(opts: {
       ? baseVoice +
         " The recipient speaks Spanish — write your message in warm, natural Spanish. Same tone as Cara's English voice."
       : baseVoice;
+    const content = opts.emotionalDirective
+      ? `${opts.context}\n\n${opts.emotionalDirective}`
+      : opts.context;
     const resp = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: opts.maxTokens ?? 180,
       system:     voice,
-      messages:   [{ role: "user", content: opts.context }],
+      messages:   [{ role: "user", content }],
     });
     const out = ((resp.content[0] as { text: string }).text ?? "").trim();
     return out || opts.fallback;

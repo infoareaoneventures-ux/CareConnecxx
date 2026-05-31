@@ -5,7 +5,7 @@
 
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import { sendToPhone, listPhoneNumbers, createOrUpdateContactCard } from "./linq/client";
+import { sendToPhone, listPhoneNumbers, createOrUpdateContactCard, LinqService } from "./linq/client";
 import { checkRateLimit, RATE_LIMITS, getClientIdentifier } from "./rateLimit";
 
 const db = admin.firestore();
@@ -36,6 +36,12 @@ function validateUserId(userId: string): void {
 export interface SMSPayload {
   to:      string;
   message: string;
+  /**
+   * Optional Linq protocol override. Omit for automatic iMessage → RCS → SMS.
+   * Set "SMS" for compliance/opt-out and deliverability-critical sends that
+   * must never use iMessage. See /guides/messaging/protocol-selection/.
+   */
+  preferredService?: LinqService;
 }
 
 export interface SMSResult {
@@ -122,7 +128,7 @@ export async function sendSMS(payload: SMSPayload): Promise<SMSResult> {
         ? payload.message.substring(0, 1597) + "..."
         : payload.message;
 
-    await sendToPhone(payload.to, message);
+    await sendToPhone(payload.to, message, { preferredService: payload.preferredService });
     return { success: true };
   } catch (error: any) {
     console.error(`Failed to send message to ${payload.to}:`, error);
@@ -152,14 +158,18 @@ export async function getUserPhone(userId: string): Promise<string | null> {
   }
 }
 
-export async function sendSMSToUser(userId: string, message: string): Promise<SMSResult> {
+export async function sendSMSToUser(
+  userId: string,
+  message: string,
+  preferredService?: LinqService
+): Promise<SMSResult> {
   validateUserId(userId);
   validateString(message, "message", 1600);
 
   const phone = await getUserPhone(userId);
   if (!phone) return { success: false, error: "No phone number on file" };
 
-  return sendSMS({ to: phone, message });
+  return sendSMS({ to: phone, message, preferredService });
 }
 
 // ── Templates (unchanged) ─────────────────────────────────────────────────────

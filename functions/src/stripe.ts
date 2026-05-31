@@ -230,8 +230,22 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
   // Cara iMessage onboarding — advance step when client finishes payment setup
   if (session.metadata?.task === 'client_payment_setup' && session.metadata?.phone) {
     try {
+      const phone = session.metadata.phone;
+      const subscriptionId = typeof session.subscription === 'string'
+        ? session.subscription
+        : (session.subscription as any)?.id ?? '';
+      const customerId = typeof session.customer === 'string'
+        ? session.customer
+        : (session.customer as any)?.id ?? '';
+      if (subscriptionId || customerId) {
+        await admin.firestore().collection('agent_sessions').doc(phone).update({
+          ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
+          ...(customerId ? { stripeCustomerId: customerId } : {}),
+        }).catch(() => {});
+      }
+      // Pass the subscription id through so the user doc records a REAL subscription.
       const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
-      await advanceOnboardingStep(session.metadata.phone, 'payment', '');
+      await advanceOnboardingStep(phone, 'payment', subscriptionId);
     } catch (err) {
       console.error('advanceOnboardingStep(payment) error:', err);
     }
@@ -242,9 +256,15 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
   if (session.metadata?.task === 'caregiver_membership' && session.metadata?.phone) {
     try {
       const phone = session.metadata.phone;
+      const subscriptionId = typeof session.subscription === 'string'
+        ? session.subscription
+        : (session.subscription as any)?.id ?? '';
+      const update: Record<string, unknown> = {};
       // If MVR was included in the checkout, flag the session so Checkr uses the MVR package
-      if (session.metadata?.includeMVR === 'true') {
-        await admin.firestore().collection('agent_sessions').doc(phone).update({ mvrPaid: true });
+      if (session.metadata?.includeMVR === 'true') update.mvrPaid = true;
+      if (subscriptionId) update.caregiverSubscriptionId = subscriptionId;
+      if (Object.keys(update).length) {
+        await admin.firestore().collection('agent_sessions').doc(phone).update(update).catch(() => {});
       }
       const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
       await advanceOnboardingStep(phone, 'membership', '');
@@ -471,6 +491,8 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
         urgency:     "immediate",
         sourceAgent: "billing",
         canDrop:     false,
+        // Billing/legal notice — force SMS for reliable delivery, never iMessage.
+        preferredService: "SMS",
       });
     }
   } catch (err) {
@@ -722,10 +744,17 @@ async function handleIdentityVerificationEvent(session: Stripe.Identity.Verifica
         console.error('advanceOnboardingStep(identity) error:', err);
       }
     } else if (status === 'requires_input' || status === 'canceled') {
-      // Let the client retry
+      // Let the client retry — send a FRESH link (the original may have scrolled
+      // off or been consumed), not just "tap the link above".
       await sendToPhone(phone,
-        "It looks like we need a little more info to verify you — tap the link above and try again."
+        "Hmm, that ID check didn't go through — it happens. Here's a fresh link to try again:"
       ).catch((err: unknown) => console.error('identity retry message error:', err));
+      try {
+        const { sendOnboardingLink } = await import('./agents/onboardingConversation');
+        await sendOnboardingLink(phone, 'client_identity');
+      } catch (err) {
+        console.error('identity retry link error:', err);
+      }
     }
     // Don't return — also update Firestore users doc if firebaseUID is present
   }

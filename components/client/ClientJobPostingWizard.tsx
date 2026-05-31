@@ -130,7 +130,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     careNeeds: [],
     petsInHome: false,
     smokingHousehold: false,
-    rate: 25,
+    rate: undefined,
     rateFlexible: false,
     paymentMethod: '',
     jobDescription: '',
@@ -250,7 +250,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     if (step === 9) return form.careRecipientFirstName.trim().length > 0;
     if (step === 10) return form.emergencyFirstName.trim().length > 0 && form.emergencyPhone.trim().length >= 10;
     if (step === 11) return form.careNeeds.length > 0;
-    if (step === 12) return !!form.paymentMethod;
+    if (step === 12) return !!form.paymentMethod && !!form.rate && form.rate > 0;
     return true;
   };
 

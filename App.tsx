@@ -66,6 +66,8 @@ const PhoneSignupPage     = lazy(() => import('./components/auth/PhoneSignupPage
 const AuthLoginPage       = lazy(() => import('./components/auth/LoginPage'));
 const UploadPage          = lazy(() => import('./components/pages/UploadPage'));
 const GenericSuccessPage  = lazy(() => import('./components/pages/GenericSuccessPage'));
+const CaregiverSignupFlow = lazy(() => import('./components/caregiver/signup/CaregiverSignupFlow').then(m => ({ default: m.CaregiverSignupFlow })));
+const ClientSignup = lazy(() => import('./components/ClientSignup').then(m => ({ default: m.ClientSignup })));
 const TermsOfServicePage  = lazy(() => import('./components/pages/TermsOfServicePage'));
 const PrivacyPolicyPage   = lazy(() => import('./components/pages/PrivacyPolicyPage'));
 
@@ -210,6 +212,8 @@ const AppContent: React.FC = () => {
       case 'forgot-password-client': navigate('/client/forgot-password'); break;
       case 'forgot-password-caregiver': navigate('/caregiver/forgot-password'); break;
       case 'caregiver-signup': navigate('/caregiver/signup'); break;
+      case 'client-apply': navigate('/client/apply'); break;
+      case 'caregiver-apply': navigate('/caregiver/apply'); break;
       case 'caregiver-login': navigate('/caregiver/login'); break;
       case 'client': navigate('/client/dashboard'); break;
       case 'client-profile': navigate('/client/profile'); break;
@@ -296,6 +300,8 @@ const AppContent: React.FC = () => {
           <Route path="/client/forgot-password" element={<ForgotPassword userType="client" onNavigate={handleNavigation} onShowToast={addToast} />} />
 
           <Route path="/caregiver/signup" element={<Navigate to="/start?role=caregiver" replace />} />
+          <Route path="/client/apply" element={<PublicOnlyRoute element={<ClientSignup onNavigate={handleNavigation} onShowToast={addToast} />} />} />
+          <Route path="/caregiver/apply" element={<PublicOnlyRoute element={<CaregiverSignupFlow onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/caregiver/login" element={<PublicOnlyRoute element={<CaregiverLogin onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/caregiver/forgot-password" element={<ForgotPassword userType="caregiver" onNavigate={handleNavigation} onShowToast={addToast} />} />
 

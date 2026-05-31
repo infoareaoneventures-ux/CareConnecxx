@@ -1075,6 +1075,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
 
                                         {/* Footer: Details + Accept/Decline */}
                                         {(() => {
+                                            const isAdminApproved = (profile as any)?.verificationStatus === 'approved' || profile?.verified === true;
                                             const hasPaid = !!(
                                                 (profile as any)?.membershipPaid === true ||
                                                 ((profile as any)?.membershipStatus && (profile as any)?.membershipStatus !== 'none' && (profile as any)?.membershipStatus !== 'inactive')
@@ -1083,7 +1084,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                             const bgOk = ['checkr_clear', 'approved'].includes(bgStatus) ||
                                                 (profile as any)?.backgroundCheckStatus === 'clear' ||
                                                 (profile as any)?.backgroundCheckComplete === true;
-                                            const canRespond = hasPaid && bgOk;
+                                            const canRespond = isAdminApproved || (hasPaid && bgOk);
                                             return (
                                                 <div className="mt-3">
                                                     {iv.status === 'pending' && !canRespond ? (

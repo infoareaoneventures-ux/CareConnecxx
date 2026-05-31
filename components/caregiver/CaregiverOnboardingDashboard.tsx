@@ -78,13 +78,7 @@ const CaregiverProgressCard: React.FC<{
     cardDesc = 'Unlock full access to jobs, messaging, and your caregiver profile.';
     cardCta = {
       label: 'Activate membership',
-      onClick: async () => {
-        await dbService.updateUser('caregivers', (profile as any).uid, {
-          membershipPaid: true,
-          membershipStatus: 'active',
-        } as any);
-        window.location.reload();
-      },
+      onClick: () => onNavigate('caregiver-membership'),
     };
   } else if (activeStep === 3) {
     cardTitle = 'Start your background check';

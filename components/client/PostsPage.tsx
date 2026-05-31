@@ -11,7 +11,6 @@ import { ClientNavigation } from './ClientNavigation';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { dbService } from '../../services/api';
 import { auth, db } from '../../lib/firebase';
-import { availabilityService, weeklySlotsToBl } from '../../services/availabilityService';
 import firebase from '../../lib/firebase';
 import { JobPost } from '../../types';
 
@@ -1310,36 +1309,8 @@ export const PostsPage: React.FC = () => {
         const daysWithMissingTimes = scheduleDays
           .filter(([, blocks]) => (blocks as any[]).some((b: any) => !b.start || !b.end))
           .map(([day]) => day);
-        // Availability check — flag days outside caregiver's weekly availability
         const ABBR_TO_FULL: Record<string, string> = { Sun:'sunday', Mon:'monday', Tue:'tuesday', Wed:'wednesday', Thu:'thursday', Fri:'friday', Sat:'saturday' };
-        const normalizedAvail = weeklySlotsToBl(cgWeeklyAvail) as Record<string, string[]>;
         const hasCgAvail = Object.keys(cgWeeklyAvail).length > 0;
-        const availUnavailDays = hasCgAvail ? scheduleDays
-          .filter(([day, blocks]) => {
-            const filled = (blocks as any[]).filter((b: any) => b.start && b.end);
-            if (filled.length === 0) return false;
-            const fullDay = ABBR_TO_FULL[day] || ABBR_TO_FULL[day.slice(0,3)] || day.toLowerCase();
-            const daySlots = normalizedAvail[fullDay] || [];
-            if (daySlots.length === 0) return true; // no availability on this day
-            // Check each shift block against caregiver's availability
-            return filled.some((b: any) => {
-              const [sh, sm] = b.start.split(':').map(Number);
-              const [eh, em] = b.end.split(':').map(Number);
-              const dur = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
-              if (dur <= 0) return false;
-              const fakeCaregiver = { weeklyAvailability: cgWeeklyAvail } as any;
-              const checkDate = (() => {
-                const today = new Date();
-                const targetDow = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'].indexOf(fullDay);
-                const diff = (targetDow - today.getDay() + 7) % 7;
-                const d2 = new Date(today); d2.setDate(today.getDate() + diff);
-                return d2;
-              })();
-              return !availabilityService.checkWeeklyAvailability(fakeCaregiver, checkDate, b.start, dur);
-            });
-          })
-          .map(([day]) => day)
-        : [];
 
         const saveIsDisabled = !d.agreedRate || !d.paymentMethod || !d.selectedAddress || noScheduleDays || daysWithMissingTimes.length > 0;
         const saveTip = !d.agreedRate ? 'Enter agreed rate to save'
@@ -1624,7 +1595,7 @@ export const PostsPage: React.FC = () => {
                                               <div className="flex items-center gap-2">
                                                 <p className="text-xs font-bold text-slate-700">{day}</p>
                                                 {(() => { const hrs = fmtHours(calcDayHours(d.dayShiftTimes[day] || [])); return hrs ? <span className="text-xs text-primary-600 font-semibold">{hrs}</span> : null; })()}
-                                                {!isDayAvailable(day) && <span className="text-[10px] font-semibold text-orange-600 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded-full">Not available</span>}
+                                                {!isDayAvailable(day) && <span className="text-[10px] font-semibold text-orange-600 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded-full">Outside preferred hours</span>}
                                               </div>
                                               <button type="button" onClick={() => { const next = { ...d.dayShiftTimes }; delete next[day]; upd({ dayShiftTimes: next }); }} className="text-xs text-slate-400 hover:text-red-500 transition-colors">Remove</button>
                                             </div>
@@ -1653,19 +1624,65 @@ export const PostsPage: React.FC = () => {
                                     </div>
                                   </div>
                                 )}
+                                {/* Add a day pills */}
                                 {availableDays.length > 0 && (
                                   <div>
                                     <p className="text-xs font-semibold text-slate-500 mb-2">Add a day</p>
                                     <div className="flex flex-wrap gap-1.5">
                                       {availableDays.map(day => {
-                                        const avail = isDayAvailable(day);
+                                        const dayAvail = isDayAvailable(day);
+                                        const fmtM = (m: number) => {
+                                          const h = Math.floor(m / 60) % 24;
+                                          const mn = m % 60;
+                                          const dh = h === 0 ? 12 : h > 12 ? h - 12 : h;
+                                          const p = h >= 12 ? 'pm' : 'am';
+                                          return mn === 0 ? `${dh}${p}` : `${dh}:${String(mn).padStart(2,'0')}${p}`;
+                                        };
+                                        const slots = hasCgAvail ? getDaySlots(day).filter(sl => sl.s < 1440) : [];
+                                        const bookings = (cgBookedSlots[day] || []).sort((a, b) => a.s - b.s);
+                                        // Subtract bookings from each slot to get net free intervals
+                                        const freeIntervals = slots.flatMap(sl => {
+                                          const slE = sl.e || 1440;
+                                          let free = [{ s: sl.s, e: slE }];
+                                          for (const bk of bookings.filter(b => b.s < slE && b.e > sl.s)) {
+                                            free = free.flatMap(iv => {
+                                              if (bk.e <= iv.s || bk.s >= iv.e) return [iv];
+                                              const parts = [];
+                                              if (bk.s > iv.s) parts.push({ s: iv.s, e: bk.s });
+                                              if (bk.e < iv.e) parts.push({ s: bk.e, e: iv.e });
+                                              return parts;
+                                            });
+                                          }
+                                          return free.filter(iv => iv.e > iv.s);
+                                        });
+                                        const freeStr = freeIntervals.length
+                                          ? freeIntervals.map(iv => `${fmtM(iv.s)}–${fmtM(iv.e)}`).join(', ')
+                                          : '';
+                                        const fullyBooked = slots.length > 0 && freeIntervals.length === 0;
+                                        const isUnavailable = !dayAvail || fullyBooked;
+                                        const hasTooltip = slots.length > 0 || !dayAvail;
                                         return (
-                                          <button key={day} type="button"
-                                            onClick={() => upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: [{ label: '', start: '', end: '' }] } })}
-                                            className={`text-xs px-3 py-1.5 rounded-lg border-2 border-dashed transition-colors ${avail ? 'border-slate-300 text-slate-500 hover:border-primary-400 hover:text-primary-600' : 'border-orange-200 text-orange-400 hover:border-orange-300'}`}
-                                            title={avail ? undefined : 'Caregiver not available this day'}>
-                                            + {day}
-                                          </button>
+                                          <div key={day} className="relative group">
+                                            <button type="button"
+                                              onClick={() => upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: [{ label: '', start: '', end: '' }] } })}
+                                              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                                                isUnavailable
+                                                  ? 'border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100 hover:border-orange-300'
+                                                  : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-primary-50 hover:border-primary-300 hover:text-primary-700'
+                                              }`}>
+                                              + {day}
+                                            </button>
+                                            {hasTooltip && (
+                                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 pointer-events-none hidden group-hover:block">
+                                                <div className="bg-slate-800 text-white rounded-lg px-3 py-2 shadow-xl text-[11px] whitespace-nowrap">
+                                                  {fullyBooked && <div className="text-orange-300 font-medium">Not available — fully booked</div>}
+                                                  {!fullyBooked && dayAvail && freeStr && <div className="text-emerald-300 font-medium">Free: {freeStr}</div>}
+                                                  {!dayAvail && <div className="text-orange-300">Outside preferred hours</div>}
+                                                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800" />
+                                                </div>
+                                              </div>
+                                            )}
+                                          </div>
                                         );
                                       })}
                                     </div>
@@ -1737,7 +1754,7 @@ export const PostsPage: React.FC = () => {
                     {/* Recipients — selectable cards */}
                     {loadedPlan && loadedPlan.recipients.length > 0 && (
                       <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care Recipients <span className="font-normal normal-case text-slate-400">— tap to include</span></p>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care Recipients {editingBookingDetails && <span className="font-normal normal-case text-slate-400">— tap to include</span>}</p>
                         <div className="flex flex-col gap-2">
                           {loadedPlan.recipients.map(r => {
                             const selected = d.selectedRecipientKeys.includes(r.key);
@@ -1745,6 +1762,7 @@ export const PostsPage: React.FC = () => {
                               <button
                                 key={r.key}
                                 type="button"
+                                disabled={!editingBookingDetails}
                                 onClick={() => {
                                   const limit = post?.recipientsCount ?? loadedPlan.recipients.length;
                                   let newKeys: string[];
@@ -1758,7 +1776,7 @@ export const PostsPage: React.FC = () => {
                                   }
                                   setBookingDraft(prev => ({ ...prev, selectedRecipientKeys: newKeys }));
                                 }}
-                                className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left transition-colors ${selected ? 'border-primary-500 bg-primary-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                                className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left transition-colors ${selected ? 'border-primary-500 bg-primary-50' : 'border-slate-200 bg-white'} ${editingBookingDetails ? 'hover:border-slate-300 cursor-pointer' : 'cursor-default'}`}
                               >
                                 {/* Avatar */}
                                 <div className="w-10 h-10 rounded-full overflow-hidden shrink-0 bg-primary-100 flex items-center justify-center">

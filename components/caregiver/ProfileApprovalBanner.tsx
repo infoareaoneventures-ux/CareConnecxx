@@ -10,12 +10,15 @@ interface ProfileApprovalBannerProps {
     backgroundCheckData?: { checkrCandidateId?: string };
   };
   onViewChecklist?: () => void;
+  hasEngagement?: boolean;
 }
 
-export const ProfileApprovalBanner: React.FC<ProfileApprovalBannerProps> = ({ profile }) => {
+export const ProfileApprovalBanner: React.FC<ProfileApprovalBannerProps> = ({ profile, hasEngagement }) => {
   const isApproved = (profile.verificationStatus === 'approved' || profile.verified === true)
     && profile.verificationStatus !== 'info_requested'
     && profile.verificationStatus !== 'rejected';
+
+  if (isApproved && hasEngagement) return null;
 
   if (isApproved) {
     return (

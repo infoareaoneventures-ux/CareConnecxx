@@ -12,6 +12,7 @@ import { useAccessGates } from '../hooks/useAccessGates';
 import { useCareConnex } from '../context/CareConnexContext';
 import { dbService } from '../services/api';
 import { ClientNavigation } from './client/ClientNavigation';
+import { LeaveReviewModal } from './client/LeaveReviewModal';
 import { TIME_BLOCKS, DAYS } from './caregiver/signup/constants';
 import { weeklySlotsToBl } from '../services/availabilityService';
 
@@ -46,7 +47,7 @@ interface CaregiverProfile {
   lastActiveIso?: string;
 }
 
-type Review = { id: string; reviewerName: string; rating: number; comment: string; dateIso: string };
+type Review = { id: string; reviewerName: string; reviewerPhoto?: string | null; rating: number; comment: string; dateIso: string; wouldRecommend?: boolean | null };
 
 
 function mapRawToProfile(id: string, data: any): CaregiverProfile {
@@ -110,6 +111,10 @@ export default function ClientCaregiverProfile({
   const [showInterviewModal, setShowInterviewModal] = useState(false);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
   const [isBooked, setIsBooked] = useState(false);
+  const [hasCompletedShift, setHasCompletedShift] = useState(false);
+  const [hasReviewed, setHasReviewed] = useState(false);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [showAllReviews, setShowAllReviews] = useState(false);
   const { gate, Modals: GateModals } = useAccessGates();
   const { addToast } = useCareConnex();
 
@@ -131,6 +136,25 @@ export default function ClientCaregiverProfile({
         .limit(1)
         .get()
         .then(snap => setIsBooked(!snap.empty))
+        .catch(() => {});
+
+      // Check for a completed shift with this caregiver
+      db!.collection('shifts')
+        .where('clientId', '==', uid)
+        .where('caregiverId', '==', caregiverId)
+        .where('status', '==', 'completed')
+        .limit(1)
+        .get()
+        .then(snap => setHasCompletedShift(!snap.empty))
+        .catch(() => {});
+
+      // Check if the client has already left a review for this caregiver
+      db!.collection('reviews')
+        .where('clientId', '==', uid)
+        .where('caregiverId', '==', caregiverId)
+        .limit(1)
+        .get()
+        .then(snap => setHasReviewed(!snap.empty))
         .catch(() => {});
     }
   }, [caregiverId]);
@@ -158,7 +182,7 @@ export default function ClientCaregiverProfile({
     try {
       const snap = await db!.collection('reviews')
         .where('caregiverId', '==', id)
-        .orderBy('rating', 'desc')
+        .orderBy('createdAt', 'desc')
         .limit(20)
         .get();
       setReviews(snap.docs.map(d => {
@@ -166,9 +190,12 @@ export default function ClientCaregiverProfile({
         return {
           id: d.id,
           reviewerName: r.clientName || 'A client',
+          reviewerPhoto: r.clientPhotoURL || null,
           rating: r.rating || 5,
           comment: r.comment || r.feedback || '',
           dateIso: r.date || r.createdAt || new Date().toISOString(),
+          wouldRecommend: r.wouldRecommend ?? null,
+          categories: r.categories || null,
         };
       }));
     } catch {
@@ -441,28 +468,91 @@ export default function ClientCaregiverProfile({
             </Section>
 
             {/* Reviews */}
-            <Section title={`Reviews${caregiver.reviewCount > 0 ? ` (${caregiver.reviewCount})` : ''}`}>
+            <Section
+              title={`Reviews${caregiver.reviewCount > 0 ? ` (${caregiver.reviewCount})` : ''}`}
+              action={
+                hasCompletedShift && !hasReviewed ? (
+                  <button onClick={() => setShowReviewModal(true)}
+                    className="px-3 py-1.5 border border-primary-200 text-primary-600 font-semibold text-xs rounded-full hover:bg-primary-50 transition-colors flex items-center gap-1">
+                    <Star className="w-3 h-3" /> Leave a Review
+                  </button>
+                ) : hasReviewed ? (
+                  <span className="text-xs text-green-600 font-medium flex items-center gap-1">
+                    <CheckCircle className="w-3.5 h-3.5" /> Reviewed
+                  </span>
+                ) : undefined
+              }>
+
+              {reviews.length > 0 && (() => {
+                const withAnswer = reviews.filter(r => r.wouldRecommend !== null && r.wouldRecommend !== undefined);
+                const pct = withAnswer.length > 0 ? Math.round((withAnswer.filter(r => r.wouldRecommend).length / withAnswer.length) * 100) : null;
+                const catKeys = ['punctuality','professionalism','communication','careQuality'] as const;
+                const catLabels: Record<string, string> = { punctuality:'Punctuality', professionalism:'Professionalism', communication:'Communication', careQuality:'Quality of Care' };
+                const catAvgs = catKeys.map(k => {
+                  const vals = reviews.map(r => (r as any).categories?.[k]).filter((v: any) => v > 0);
+                  return { key: k, label: catLabels[k], avg: vals.length > 0 ? vals.reduce((a: number, b: number) => a + b, 0) / vals.length : null };
+                }).filter(c => c.avg !== null);
+                if (!pct && catAvgs.length === 0) return null;
+                return (
+                  <div className="mb-4 pb-4 border-b border-slate-100 space-y-2">
+                    {pct !== null && (
+                      <p className="text-xs text-slate-500">
+                        <span className="font-semibold text-green-600">{pct}%</span> of clients would recommend
+                      </p>
+                    )}
+                    {catAvgs.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        {catAvgs.map(c => (
+                          <div key={c.key} className="flex items-center gap-3">
+                            <span className="text-xs text-slate-500 w-32 shrink-0">{c.label}</span>
+                            <div className="flex gap-0.5">
+                              {[1,2,3,4,5].map(s => (
+                                <Star key={s} className={`w-3 h-3 ${s <= Math.round(c.avg!) ? 'fill-yellow-400 text-yellow-400' : 'text-slate-200 fill-current'}`} />
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {reviews.length === 0 ? (
                 <div className="text-center py-6">
                   <Star className="w-8 h-8 text-slate-200 mx-auto mb-2" />
                   <p className="text-sm text-slate-400">No reviews yet.</p>
                 </div>
               ) : (
-                <div className="divide-y divide-slate-100">
-                  {reviews.map(r => (
-                    <div key={r.id} className="py-3 first:pt-0 last:pb-0">
-                      <div className="flex items-center justify-between mb-0.5">
-                        <p className="text-sm font-semibold text-slate-900">{r.reviewerName}</p>
-                        <span className="text-xs text-slate-400">{new Date(r.dateIso).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</span>
+                <div>
+                  <div className="divide-y divide-slate-100">
+                    {(showAllReviews ? reviews : reviews.slice(0, 3)).map(r => (
+                      <div key={r.id} className="py-3 first:pt-0 last:pb-0 flex items-start gap-3">
+                        <div className="w-8 h-8 rounded-full bg-primary-100 overflow-hidden flex items-center justify-center text-primary-700 font-bold text-sm flex-shrink-0">
+                          {r.reviewerPhoto
+                            ? <img src={r.reviewerPhoto} alt={r.reviewerName} className="w-full h-full object-cover" />
+                            : (r.reviewerName || 'C').charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <p className="text-sm font-semibold text-slate-900">{r.reviewerName}</p>
+                            <span className="text-xs text-slate-400">{new Date(r.dateIso).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</span>
+                          </div>
+                          <div className="flex gap-0.5 mb-1">
+                            {[...Array(5)].map((_, i) => (
+                              <Star key={i} className={`w-3.5 h-3.5 ${i < r.rating ? 'text-accent-400 fill-current' : 'text-slate-200 fill-current'}`} />
+                            ))}
+                          </div>
+                          {r.comment && <p className="text-sm text-slate-600 leading-relaxed">{r.comment}</p>}
+                        </div>
                       </div>
-                      <div className="flex gap-0.5 mb-1">
-                        {[...Array(5)].map((_, i) => (
-                          <Star key={i} className={`w-3.5 h-3.5 ${i < r.rating ? 'text-accent-400 fill-current' : 'text-slate-200 fill-current'}`} />
-                        ))}
-                      </div>
-                      {r.comment && <p className="text-sm text-slate-600 leading-relaxed">{r.comment}</p>}
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                  {reviews.length > 3 && (
+                    <button onClick={() => setShowAllReviews(v => !v)}
+                      className="mt-3 text-sm text-primary-600 font-semibold hover:text-primary-700 transition-colors">
+                      {showAllReviews ? 'Show less' : `See all ${reviews.length} reviews`}
+                    </button>
+                  )}
                 </div>
               )}
             </Section>
@@ -473,6 +563,18 @@ export default function ClientCaregiverProfile({
       </main>
 
       <GateModals />
+
+      {showReviewModal && caregiver && (
+        <LeaveReviewModal
+          caregiverId={caregiver.id}
+          caregiverName={`${caregiver.firstName} ${caregiver.lastName}`.trim()}
+          onClose={() => setShowReviewModal(false)}
+          onSubmitted={() => {
+            setHasReviewed(true);
+            fetchReviews(caregiver.id);
+          }}
+        />
+      )}
 
       {showInterviewModal && caregiver && (
         <ScheduleInterviewModal
@@ -500,9 +602,12 @@ export default function ClientCaregiverProfile({
   );
 }
 
-const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+const Section: React.FC<{ title: string; children: React.ReactNode; action?: React.ReactNode }> = ({ title, children, action }) => (
   <div className="bg-white border border-slate-200 rounded-2xl p-5">
-    <h2 className="font-bold text-slate-900 mb-3">{title}</h2>
+    <div className="flex items-center justify-between mb-3">
+      <h2 className="font-bold text-slate-900">{title}</h2>
+      {action}
+    </div>
     {children}
   </div>
 );

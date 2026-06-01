@@ -7,6 +7,7 @@ import { AvatarUpload } from './ui/AvatarUpload';
 import { Badge } from './ui/Badge';
 import { ViewType, AddToastFunction, Review, Caregiver } from '../types';
 import { dbService, authService } from '../services/api';
+import { db } from '../lib/firebase';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../services/availabilityService';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 import { ProfileApprovalBanner } from './caregiver/ProfileApprovalBanner';
@@ -49,6 +50,19 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   const [editActiveTimes, setEditActiveTimes] = useState<string[]>([]);
 
   const currentUser = authService.getCurrentUser();
+  const [hasEngagement, setHasEngagement] = useState(false);
+
+  useEffect(() => {
+    if (!currentUser?.uid || !db) return;
+    const uid = currentUser.uid;
+    Promise.all([
+      db.collection('job_applications').where('caregiverId', '==', uid).limit(1).get().catch(() => null),
+      db.collection('video_interviews').where('caregiverId', '==', uid).limit(1).get().catch(() => null),
+      db.collection('interview_requests').where('caregiverId', '==', uid).limit(1).get().catch(() => null),
+    ]).then(([apps, vids, reqs]) => {
+      if (!apps?.empty || !vids?.empty || !reqs?.empty) setHasEngagement(true);
+    });
+  }, [currentUser?.uid]);
 
   useEffect(() => {
     let unsubscribeReviews: (() => void) | undefined;
@@ -185,7 +199,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
           <h1 className="text-2xl font-bold text-slate-900 ml-2">My Profile</h1>
         </div>
 
-        <ProfileApprovalBanner profile={profile as any} />
+        <ProfileApprovalBanner profile={profile as any} hasEngagement={hasEngagement} />
 
         {/* Hero card */}
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-6">
@@ -691,6 +705,40 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                   </span>
                 )}
               </div>
+              {reviews.length > 0 && (() => {
+                const withAnswer = reviews.filter(r => (r as any).wouldRecommend !== null && (r as any).wouldRecommend !== undefined);
+                const pct = withAnswer.length > 0 ? Math.round((withAnswer.filter(r => (r as any).wouldRecommend).length / withAnswer.length) * 100) : null;
+                const catKeys = ['punctuality','professionalism','communication','careQuality'];
+                const catLabels: Record<string, string> = { punctuality:'Punctuality', professionalism:'Professionalism', communication:'Communication', careQuality:'Quality of Care' };
+                const catAvgs = catKeys.map(k => {
+                  const vals = reviews.map(r => (r as any).categories?.[k]).filter((v: any) => v > 0);
+                  return { key: k, label: catLabels[k], avg: vals.length > 0 ? vals.reduce((a: number, b: number) => a + b, 0) / vals.length : null };
+                }).filter(c => c.avg !== null);
+                if (!pct && catAvgs.length === 0) return null;
+                return (
+                  <div className="mb-4 pb-4 border-b border-slate-100 space-y-2">
+                    {pct !== null && (
+                      <p className="text-xs text-slate-500">
+                        <span className="font-semibold text-green-600">{pct}%</span> of clients would recommend
+                      </p>
+                    )}
+                    {catAvgs.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        {catAvgs.map(c => (
+                          <div key={c.key} className="flex items-center gap-3">
+                            <span className="text-xs text-slate-500 w-32 shrink-0">{c.label}</span>
+                            <div className="flex gap-0.5">
+                              {[1,2,3,4,5].map(s => (
+                                <Star key={s} className={`w-3 h-3 ${s <= Math.round(c.avg!) ? 'text-accent-400' : 'text-slate-200'}`} fill="currentColor" />
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {reviews.length === 0 ? (
                 <div className="text-center py-6">
                   <Star className="w-8 h-8 text-slate-200 mx-auto mb-2" />
@@ -701,8 +749,10 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 <div className="space-y-4">
                   {reviews.map(review => (
                     <div key={review.id} className="flex items-start gap-3 pt-4 first:pt-0 border-t border-slate-100 first:border-0">
-                      <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-sm flex-shrink-0">
-                        {(review.clientName || 'F').charAt(0).toUpperCase()}
+                      <div className="w-9 h-9 rounded-full bg-primary-100 overflow-hidden flex items-center justify-center text-primary-700 font-bold text-sm flex-shrink-0">
+                        {(review as any).clientPhotoURL
+                          ? <img src={(review as any).clientPhotoURL} alt={review.clientName} className="w-full h-full object-cover" />
+                          : (review.clientName || 'F').charAt(0).toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-0.5">

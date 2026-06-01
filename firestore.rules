@@ -762,6 +762,15 @@ service cloud.firestore {
     }
     
     // ==========================================
+    // CAREGIVER BOOKED SLOTS (availability summary — no sensitive data)
+    // Maintained by Cloud Functions; clients read to check caregiver availability
+    // ==========================================
+    match /caregiver_booked_slots/{caregiverId} {
+      allow read: if isAuthenticated();
+      allow write: if false; // Cloud Functions only (admin SDK)
+    }
+
+    // ==========================================
     // CLIENT MATCHES (AI-generated, background)
     // ==========================================
     match /clientMatches/{clientId} {

@@ -626,32 +626,14 @@ export const PostsPage: React.FC = () => {
       });
       if (prevDayShiftTimes) { setSchedulePrePopulated(true); setScheduleConfirmed(true); }
 
-      // Load caregiver's weeklyAvailability + existing booked slots for blocking check
+      // Load caregiver's weeklyAvailability + booked slots from lightweight summary doc
       try {
-        const DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-        const BUFFER = 30;
-        const toMinLocal = (t: string) => { const [h, m] = (t || '00:00').split(':').map(Number); return h * 60 + m; };
-        const [cgSnap, apptSnap] = await Promise.all([
+        const [cgSnap, bookedSnap] = await Promise.all([
           db.collection('caregivers').doc(interview.caregiverId).get(),
-          db.collection('appointments')
-            .where('caregiverId', '==', interview.caregiverId)
-            .where('status', 'in', ['confirmed', 'in-progress'])
-            .get().catch(() => null),
+          db.collection('caregiver_booked_slots').doc(interview.caregiverId).get().catch(() => null),
         ]);
         if (cgSnap.exists) setCgWeeklyAvail((cgSnap.data() as any)?.weeklyAvailability || {});
-        if (apptSnap) {
-          const booked: Record<string, Array<{s:number;e:number}>> = {};
-          apptSnap.docs.forEach(doc => {
-            const appt = doc.data();
-            if (!appt.date || !appt.time) return;
-            const dayAbbr = DAY_ABBR[new Date(appt.date + 'T12:00:00').getDay()];
-            if (!booked[dayAbbr]) booked[dayAbbr] = [];
-            const start = toMinLocal(appt.time);
-            const dur = appt.duration ? appt.duration * 60 : (appt.cost ? Math.round(appt.cost / (appt.hourlyRate || 25)) * 60 : 120);
-            booked[dayAbbr].push({ s: start - BUFFER, e: start + dur + BUFFER });
-          });
-          setCgBookedSlots(booked);
-        }
+        if (bookedSnap?.exists) setCgBookedSlots((bookedSnap.data() as any)?.slots || {});
       } catch { /* non-fatal */ }
     } catch (e) { console.error('openSendBookingModal error', e); }
     finally { setLoadingCarePlan(false); }
@@ -1495,39 +1477,35 @@ export const PostsPage: React.FC = () => {
                         return result;
                       };
                       const isDayAvailable = (abbr: string) => !hasCgAvail || getDaySlots(abbr).length > 0;
-                      const isBooked = (abbr: string, m: number) =>
-                        (cgBookedSlots[abbr] || []).some(b => m >= b.s && m < b.e);
-                      const availTimeOpts = (abbr: string) => {
-                        if (!hasCgAvail) return TIME_OPTS; // caregiver hasn't set any availability yet
-                        const slots = getDaySlots(abbr);
-                        if (slots.length === 0) return TIME_OPTS.filter(t => !isBooked(abbr, toMin(t))); // not in their schedule but warn-only — show all times
-                        return TIME_OPTS.filter(t => {
-                          const m = toMin(t);
-                          return slots.some(sl => m >= sl.s && m < sl.e) && !isBooked(abbr, m);
-                        });
+                      const availTimeOpts = (abbr: string, extraBusy: Array<{s:number;e:number}> = []) => {
+                        const allBusy = [...(cgBookedSlots[abbr] || []), ...extraBusy];
+                        return TIME_OPTS.filter(t => !allBusy.some(b => toMin(t) >= b.s && toMin(t) < b.e));
                       };
-                      const availEndOpts = (abbr: string, startT: string) => {
-                        if (!hasCgAvail) return TIME_OPTS.filter(t => !startT || t > startT);
-                        const slots = getDaySlots(abbr);
-                        if (slots.length === 0) return TIME_OPTS.filter(t => (!startT || t > startT) && !isBooked(abbr, toMin(t))); // warn-only day — show all end times
+                      const availEndOpts = (abbr: string, startT: string, extraBusy: Array<{s:number;e:number}> = []) => {
                         const startM = startT ? toMin(startT) : 0;
-                        // Same-day end times (after start)
+                        const allBusy = [...(cgBookedSlots[abbr] || []), ...extraBusy];
                         const sameDayOpts = TIME_OPTS.filter(t => {
                           if (startT && t <= startT) return false;
-                          const m = toMin(t);
-                          return slots.some(sl => m > sl.s && m <= sl.e) && !isBooked(abbr, m);
+                          const eM = toMin(t);
+                          if (allBusy.some(b => b.s < eM && b.e > startM)) return false;
+                          return true;
                         });
-                        // Cross-midnight end times: if start is 23:00+, add ~HH:MM next-morning options
-                        let nextDayOpts: string[] = [];
-                        if (startM >= 1380) {
-                          const morningSlot = slots.find(sl => sl.s === 0 && sl.e > 0);
-                          if (morningSlot) {
-                            nextDayOpts = TIME_OPTS
-                              .filter(t => { const m = toMin(t); return m >= 0 && m <= morningSlot.e && !isBooked(abbr, m); })
-                              .map(t => `~${t}`);
-                          }
-                        }
+                        const nextDayOpts = allBusy.some(b => b.s < 1440 && b.e > startM) ? [] : ['~00:00'];
                         return [...sameDayOpts, ...nextDayOpts];
+                      };
+                      const blockEndMin = (end: string) => end === '~00:00' ? 1440 : toMin(stripNextDay(end));
+                      const otherBlocksBusy = (abbr: string, excludeIdx: number): Array<{s:number;e:number}> =>
+                        (d.dayShiftTimes[abbr] || [])
+                          .filter((b, i) => i !== excludeIdx && b.start && b.end)
+                          .map(b => ({ s: toMin(stripNextDay(b.start)), e: blockEndMin(b.end) }));
+                      const isBlockOutsidePreferred = (abbr: string, start: string, end: string) => {
+                        if (!hasCgAvail) return false;
+                        const slots = getDaySlots(abbr);
+                        if (slots.length === 0) return false; // day-level badge already shown
+                        const inSlot = (m: number) => slots.some(sl => m >= sl.s && m <= sl.e);
+                        if (start && !inSlot(toMin(start))) return true;
+                        if (end && !inSlot(end === '~00:00' ? 1440 : toMin(stripNextDay(end)))) return true;
+                        return false;
                       };
                       const fmtTimeOpt = (t: string) => {
                         if (!t) return '';
@@ -1536,7 +1514,7 @@ export const PostsPage: React.FC = () => {
                         const [hh, mm] = raw.split(':').map(Number);
                         const ap = hh < 12 ? 'AM' : 'PM';
                         const h12 = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh;
-                        return `${h12}:${String(mm).padStart(2,'0')} ${ap}${isNext ? ' +1' : ''}`;
+                        return `${h12}:${String(mm).padStart(2,'0')} ${ap}`;
                       };
                       const calcDayHours = (blocks: Array<{start:string;end:string}>) => {
                         return blocks.reduce((sum, b) => {
@@ -1595,28 +1573,44 @@ export const PostsPage: React.FC = () => {
                                               <div className="flex items-center gap-2">
                                                 <p className="text-xs font-bold text-slate-700">{day}</p>
                                                 {(() => { const hrs = fmtHours(calcDayHours(d.dayShiftTimes[day] || [])); return hrs ? <span className="text-xs text-primary-600 font-semibold">{hrs}</span> : null; })()}
-                                                {!isDayAvailable(day) && <span className="text-[10px] font-semibold text-orange-600 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded-full">Outside preferred hours</span>}
+                                                {!isDayAvailable(day) && <span className="text-[10px] font-semibold text-orange-600 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded-full">Outside available hours</span>}
                                               </div>
                                               <button type="button" onClick={() => { const next = { ...d.dayShiftTimes }; delete next[day]; upd({ dayShiftTimes: next }); }} className="text-xs text-slate-400 hover:text-red-500 transition-colors">Remove</button>
                                             </div>
                                             <div className="space-y-1.5">
                                               {blocks.map((block, bi) => (
-                                                <div key={bi} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                                                <div key={bi} className="flex flex-col gap-1">
+                                                  {isBlockOutsidePreferred(day, stripNextDay(block.start), block.end) && (
+                                                    <span className="text-[10px] font-semibold text-orange-600 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded-full self-start">Outside available hours</span>
+                                                  )}
+                                                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
                                                   <select value={stripNextDay(block.start)}
                                                     onChange={e => { const nb = [...blocks]; nb[bi] = { ...block, start: e.target.value }; upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: nb } }); }}
                                                     className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary-300 bg-white">
                                                     <option value="">Start</option>
-                                                    {availTimeOpts(day).map(t => <option key={t} value={t}>{fmtTimeOpt(t)}</option>)}
+                                                    {availTimeOpts(day, otherBlocksBusy(day, bi)).map(t => <option key={t} value={t}>{fmtTimeOpt(t)}</option>)}
                                                   </select>
                                                   <span className="text-xs text-slate-400 shrink-0">to</span>
                                                   <select value={block.end}
                                                     onChange={e => { const nb = [...blocks]; nb[bi] = { ...block, end: e.target.value }; upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: nb } }); }}
                                                     className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary-300 bg-white">
                                                     <option value="">End</option>
-                                                    {availEndOpts(day, stripNextDay(block.start)).map(t => <option key={t} value={t}>{fmtTimeOpt(t)}</option>)}
+                                                    {availEndOpts(day, stripNextDay(block.start), otherBlocksBusy(day, bi)).map(t => <option key={t} value={t}>{fmtTimeOpt(t)}</option>)}
                                                   </select>
+                                                  {blocks.length > 1 && (
+                                                    <button type="button" onClick={() => { const nb = blocks.filter((_, i) => i !== bi); upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: nb } }); }} className="text-slate-300 hover:text-red-400 transition-colors ml-1 shrink-0">✕</button>
+                                                  )}
+                                                </div>
                                                 </div>
                                               ))}
+                                              {blocks.every(b => b.start && b.end) && availTimeOpts(day, blocks.filter(b => b.start && b.end).map(b => ({ s: toMin(stripNextDay(b.start)), e: blockEndMin(b.end) }))).length > 0 && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: [...blocks, { label: '', start: '', end: '' }] } })}
+                                                  className="text-xs text-primary-600 hover:text-primary-800 font-medium mt-1 self-start">
+                                                  + Add time
+                                                </button>
+                                              )}
                                             </div>
                                           </div>
                                         );
@@ -1628,7 +1622,7 @@ export const PostsPage: React.FC = () => {
                                 {availableDays.length > 0 && (
                                   <div>
                                     <p className="text-xs font-semibold text-slate-500 mb-2">Add a day</p>
-                                    <div className="flex flex-wrap gap-1.5">
+                                    <div className="flex flex-nowrap gap-1">
                                       {availableDays.map(day => {
                                         const dayAvail = isDayAvailable(day);
                                         const fmtM = (m: number) => {
@@ -1655,17 +1649,29 @@ export const PostsPage: React.FC = () => {
                                           }
                                           return free.filter(iv => iv.e > iv.s);
                                         });
-                                        const freeStr = freeIntervals.length
-                                          ? freeIntervals.map(iv => `${fmtM(iv.s)}–${fmtM(iv.e)}`).join(', ')
-                                          : '';
+                                        const mergeIvs = (ivs: Array<{s:number;e:number}>) => {
+                                          if (!ivs.length) return [];
+                                          const sorted = [...ivs].sort((a,b) => a.s - b.s);
+                                          const out = [{ ...sorted[0] }];
+                                          for (let i = 1; i < sorted.length; i++) {
+                                            const last = out[out.length - 1];
+                                            if (sorted[i].s <= last.e) last.e = Math.max(last.e, sorted[i].e);
+                                            else out.push({ ...sorted[i] });
+                                          }
+                                          return out;
+                                        };
+                                        const freeStr = mergeIvs(freeIntervals).map(iv => `${fmtM(iv.s)}–${fmtM(iv.e)}`).join(', ');
                                         const fullyBooked = slots.length > 0 && freeIntervals.length === 0;
                                         const isUnavailable = !dayAvail || fullyBooked;
-                                        const hasTooltip = slots.length > 0 || !dayAvail;
+                                        const busyStr = bookings.length > 0
+                                          ? mergeIvs(bookings).map(b => `${fmtM(b.s)}–${fmtM(b.e)}`).join(', ')
+                                          : '';
+                                        const hasTooltip = slots.length > 0 || !dayAvail || busyStr.length > 0;
                                         return (
                                           <div key={day} className="relative group">
                                             <button type="button"
                                               onClick={() => upd({ dayShiftTimes: { ...d.dayShiftTimes, [day]: [{ label: '', start: '', end: '' }] } })}
-                                              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                                              className={`text-xs font-semibold px-2 py-1 rounded-full border transition-colors ${
                                                 isUnavailable
                                                   ? 'border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100 hover:border-orange-300'
                                                   : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-primary-50 hover:border-primary-300 hover:text-primary-700'
@@ -1676,8 +1682,9 @@ export const PostsPage: React.FC = () => {
                                               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 pointer-events-none hidden group-hover:block">
                                                 <div className="bg-slate-800 text-white rounded-lg px-3 py-2 shadow-xl text-[11px] whitespace-nowrap">
                                                   {fullyBooked && <div className="text-orange-300 font-medium">Not available — fully booked</div>}
-                                                  {!fullyBooked && dayAvail && freeStr && <div className="text-emerald-300 font-medium">Free: {freeStr}</div>}
-                                                  {!dayAvail && <div className="text-orange-300">Outside preferred hours</div>}
+                                                  {!fullyBooked && dayAvail && freeStr && <div className="text-emerald-300 font-medium">Available: {freeStr}</div>}
+                                                  {!dayAvail && <div className="text-orange-300">Outside available hours</div>}
+                                                  {busyStr && <div className="text-orange-300 font-medium">Busy: {busyStr}</div>}
                                                   <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800" />
                                                 </div>
                                               </div>

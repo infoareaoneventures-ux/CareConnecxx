@@ -40,7 +40,7 @@ export interface JobPostFormData {
   careLevel: JobCareLevel | '';
 
   // Step 4: Rate & Payment
-  rate: number;
+  rate: number | undefined;
   rateFlexible: boolean;
   paymentMethod: JobPaymentMethod | '';
 
@@ -78,7 +78,7 @@ export const INITIAL_FORM_DATA: JobPostFormData = {
   petsInHome: false,
   smokingHousehold: false,
 
-  rate: 28,
+  rate: undefined,
   rateFlexible: false,
   paymentMethod: '',
 

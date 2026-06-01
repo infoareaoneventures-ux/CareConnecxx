@@ -37,7 +37,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendJobMatchNotifications = exports.getMatchPatterns = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.sendOnboardingReengagement = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.sendThirtyMinShiftReminders = exports.sendClientThirtyMinReminders = exports.sendClientDayBeforeReminders = exports.sendDayBeforeShiftReminders = exports.sendPreShiftFamilyCheckin = exports.sendShiftTaskNudges = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.familySilenceCheckinJob = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.dailyContactCardShare = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.sendApprovedDraftNow = exports.triggerProactiveDraftSendNow = exports.runProactiveDraftSender = exports.triggerProactiveReflectionNow = exports.runProactiveReflection = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.onShiftStatusChanged = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
-exports.zepSetup = exports.chatWithCara = exports.createWebOnboardingSession = exports.initiateCara = exports.send1099Notifications = exports.submitGpsCheckin = void 0;
+exports.onReviewWritten = exports.onShiftWritten = exports.zepSetup = exports.chatWithCara = exports.createWebOnboardingSession = exports.initiateCara = exports.send1099Notifications = exports.submitGpsCheckin = void 0;
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions"));
 // Initialize Admin globally if not already done
@@ -426,5 +426,100 @@ exports.zepSetup = functions.https.onRequest(async (req, res) => {
         }
     }
     res.json(results);
+});
+// ── Caregiver booked slots sync ──────────────────────────────────────────────
+// Keeps caregiver_booked_slots/{caregiverId} up-to-date whenever a shift
+// is created, updated, or deleted. Clients read this lightweight doc (no
+// sensitive data) to display availability in the booking modal tooltip.
+const ACTIVE_STATUSES = new Set(['pending', 'scheduled', 'in-progress']);
+const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+async function rebuildBookedSlots(caregiverId) {
+    const db = admin.firestore();
+    const snap = await db.collection('shifts')
+        .where('caregiverId', '==', caregiverId)
+        .where('status', 'in', ['pending', 'scheduled', 'in-progress'])
+        .get();
+    const slots = {};
+    snap.docs.forEach(doc => {
+        const shift = doc.data();
+        if (!shift.date || !shift.startTime)
+            return;
+        const day = DAY_ABBR[new Date(shift.date + 'T12:00:00').getDay()];
+        if (!slots[day])
+            slots[day] = [];
+        const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+        const s = toMin(shift.startTime);
+        const e = shift.endTime ? toMin(shift.endTime) : s + 120;
+        slots[day].push({ s, e });
+    });
+    // Deduplicate recurring shifts with identical time ranges on the same day
+    Object.keys(slots).forEach(day => {
+        const seen = new Set();
+        slots[day] = slots[day].filter(slot => {
+            const key = `${slot.s}-${slot.e}`;
+            if (seen.has(key))
+                return false;
+            seen.add(key);
+            return true;
+        });
+    });
+    await db.collection('caregiver_booked_slots').doc(caregiverId).set({ slots, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+}
+exports.onShiftWritten = functions.firestore
+    .document('shifts/{shiftId}')
+    .onWrite(async (change) => {
+    var _a;
+    const after = change.after.exists ? change.after.data() : null;
+    const before = change.before.exists ? change.before.data() : null;
+    const caregiverId = (_a = (after !== null && after !== void 0 ? after : before)) === null || _a === void 0 ? void 0 : _a.caregiverId;
+    if (!caregiverId)
+        return;
+    // Only rebuild when status or timing changes
+    const statusChanged = (after === null || after === void 0 ? void 0 : after.status) !== (before === null || before === void 0 ? void 0 : before.status);
+    const timeChanged = (after === null || after === void 0 ? void 0 : after.startTime) !== (before === null || before === void 0 ? void 0 : before.startTime) || (after === null || after === void 0 ? void 0 : after.endTime) !== (before === null || before === void 0 ? void 0 : before.endTime) || (after === null || after === void 0 ? void 0 : after.date) !== (before === null || before === void 0 ? void 0 : before.date);
+    if (!statusChanged && !timeChanged && change.after.exists && change.before.exists)
+        return;
+    await rebuildBookedSlots(caregiverId);
+});
+// ── Caregiver rating aggregation ─────────────────────────────────────────────
+// Fires whenever a review is created or deleted. Recalculates the caregiver's
+// aggregated rating from all reviews using admin access (bypasses client rules).
+exports.onReviewWritten = functions.firestore
+    .document('reviews/{reviewId}')
+    .onWrite(async (change) => {
+    var _a;
+    const after = change.after.exists ? change.after.data() : null;
+    const before = change.before.exists ? change.before.data() : null;
+    const caregiverId = (_a = (after !== null && after !== void 0 ? after : before)) === null || _a === void 0 ? void 0 : _a.caregiverId;
+    if (!caregiverId)
+        return;
+    const db = admin.firestore();
+    const snap = await db.collection('reviews')
+        .where('caregiverId', '==', caregiverId)
+        .get();
+    const reviews = snap.docs.map(d => d.data());
+    const count = reviews.length;
+    if (count === 0) {
+        await db.collection('caregivers').doc(caregiverId).update({
+            rating: 0, reviewCount: 0,
+            fiveStarCount: 0, fourStarCount: 0, threeStarCount: 0, twoStarCount: 0, oneStarCount: 0,
+        }).catch(() => { });
+        return;
+    }
+    const avg = reviews.reduce((sum, r) => sum + (r.rating || 0), 0) / count;
+    const stars = { fiveStarCount: 0, fourStarCount: 0, threeStarCount: 0, twoStarCount: 0, oneStarCount: 0 };
+    reviews.forEach(r => {
+        if (r.rating === 5)
+            stars.fiveStarCount++;
+        else if (r.rating === 4)
+            stars.fourStarCount++;
+        else if (r.rating === 3)
+            stars.threeStarCount++;
+        else if (r.rating === 2)
+            stars.twoStarCount++;
+        else if (r.rating === 1)
+            stars.oneStarCount++;
+    });
+    await db.collection('caregivers').doc(caregiverId).update(Object.assign({ rating: Math.round(avg * 10) / 10, reviewCount: count }, stars)).catch(() => { });
 });
 //# sourceMappingURL=index.js.map

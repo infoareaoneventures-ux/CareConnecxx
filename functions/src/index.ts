@@ -411,3 +411,103 @@ export const zepSetup = functions.https.onRequest(async (req, res) => {
   res.json(results);
 });
 
+
+// ── Caregiver booked slots sync ──────────────────────────────────────────────
+// Keeps caregiver_booked_slots/{caregiverId} up-to-date whenever a shift
+// is created, updated, or deleted. Clients read this lightweight doc (no
+// sensitive data) to display availability in the booking modal tooltip.
+
+const ACTIVE_STATUSES = new Set(['pending', 'scheduled', 'in-progress']);
+const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+async function rebuildBookedSlots(caregiverId: string): Promise<void> {
+  const db = admin.firestore();
+  const snap = await db.collection('shifts')
+    .where('caregiverId', '==', caregiverId)
+    .where('status', 'in', ['pending', 'scheduled', 'in-progress'])
+    .get();
+
+  const slots: Record<string, Array<{ s: number; e: number }>> = {};
+  snap.docs.forEach(doc => {
+    const shift = doc.data();
+    if (!shift.date || !shift.startTime) return;
+    const day = DAY_ABBR[new Date(shift.date + 'T12:00:00').getDay()];
+    if (!slots[day]) slots[day] = [];
+    const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    const s = toMin(shift.startTime);
+    const e = shift.endTime ? toMin(shift.endTime) : s + 120;
+    slots[day].push({ s, e });
+  });
+
+  // Deduplicate recurring shifts with identical time ranges on the same day
+  Object.keys(slots).forEach(day => {
+    const seen = new Set<string>();
+    slots[day] = slots[day].filter(slot => {
+      const key = `${slot.s}-${slot.e}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  });
+
+  await db.collection('caregiver_booked_slots').doc(caregiverId).set({ slots, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+}
+
+export const onShiftWritten = functions.firestore
+  .document('shifts/{shiftId}')
+  .onWrite(async (change) => {
+    const after  = change.after.exists  ? change.after.data()  : null;
+    const before = change.before.exists ? change.before.data() : null;
+    const caregiverId = (after ?? before)?.caregiverId;
+    if (!caregiverId) return;
+    // Only rebuild when status or timing changes
+    const statusChanged = after?.status !== before?.status;
+    const timeChanged   = after?.startTime !== before?.startTime || after?.endTime !== before?.endTime || after?.date !== before?.date;
+    if (!statusChanged && !timeChanged && change.after.exists && change.before.exists) return;
+    await rebuildBookedSlots(caregiverId);
+  });
+
+// ── Caregiver rating aggregation ─────────────────────────────────────────────
+// Fires whenever a review is created or deleted. Recalculates the caregiver's
+// aggregated rating from all reviews using admin access (bypasses client rules).
+
+export const onReviewWritten = functions.firestore
+  .document('reviews/{reviewId}')
+  .onWrite(async (change) => {
+    const after  = change.after.exists  ? change.after.data()  : null;
+    const before = change.before.exists ? change.before.data() : null;
+    const caregiverId = (after ?? before)?.caregiverId;
+    if (!caregiverId) return;
+
+    const db = admin.firestore();
+    const snap = await db.collection('reviews')
+      .where('caregiverId', '==', caregiverId)
+      .get();
+
+    const reviews = snap.docs.map(d => d.data());
+    const count = reviews.length;
+
+    if (count === 0) {
+      await db.collection('caregivers').doc(caregiverId).update({
+        rating: 0, reviewCount: 0,
+        fiveStarCount: 0, fourStarCount: 0, threeStarCount: 0, twoStarCount: 0, oneStarCount: 0,
+      }).catch(() => {});
+      return;
+    }
+
+    const avg = reviews.reduce((sum, r) => sum + (r.rating || 0), 0) / count;
+    const stars = { fiveStarCount: 0, fourStarCount: 0, threeStarCount: 0, twoStarCount: 0, oneStarCount: 0 };
+    reviews.forEach(r => {
+      if (r.rating === 5) stars.fiveStarCount++;
+      else if (r.rating === 4) stars.fourStarCount++;
+      else if (r.rating === 3) stars.threeStarCount++;
+      else if (r.rating === 2) stars.twoStarCount++;
+      else if (r.rating === 1) stars.oneStarCount++;
+    });
+
+    await db.collection('caregivers').doc(caregiverId).update({
+      rating: Math.round(avg * 10) / 10,
+      reviewCount: count,
+      ...stars,
+    }).catch(() => {});
+  });

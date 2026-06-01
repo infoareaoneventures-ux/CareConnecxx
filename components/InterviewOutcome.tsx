@@ -29,10 +29,12 @@ export default function InterviewOutcome() {
     if (!interviewId) { setLoading(false); return; }
 
     const findInterview = async () => {
+      const fdb = db;
+      if (!fdb) { setLoading(false); return; }
       const candidates = ['video_interviews', 'interview_requests', 'interviews'];
       for (const collection of candidates) {
         try {
-          const doc = await db.collection(collection).doc(interviewId).get();
+          const doc = await fdb.collection(collection).doc(interviewId).get();
           if (doc.exists) {
             const d = doc.data()!;
             const scheduledDate = d.scheduledDate?.toDate?.()
@@ -67,13 +69,18 @@ export default function InterviewOutcome() {
     if (!interview) return;
 
     try {
+      const fdb = db;
+      if (!auth || !fdb) {
+        addToast('Failed to submit outcome. Please try again.', 'error');
+        return;
+      }
       const user = auth.currentUser;
       if (!user) {
         navigate('/login');
         return;
       }
 
-      await db.collection(interview._collection).doc(interviewId).update({
+      await fdb.collection(interview._collection).doc(interviewId).update({
         status: selectedOutcome,
         outcomeNotes: notes,
         outcomeSubmittedAt: firebase.firestore.FieldValue.serverTimestamp()

@@ -48,11 +48,13 @@ export default function QuickConfirmPage() {
 
   async function confirmBooking() {
     if (!task || !selected || !taskId) return;
+    const fdb = db;
+    if (!fdb) { setState('error'); return; }
     setState('confirming');
 
     try {
       // Write approval
-      await addDoc(collection(db, 'agent_approvals'), {
+      await addDoc(collection(fdb, 'agent_approvals'), {
         taskId,
         selectedCaregiverId: selected.caregiverId,
         selectedCaregiver:   selected.name,
@@ -61,7 +63,7 @@ export default function QuickConfirmPage() {
       });
 
       // Update task status
-      await updateDoc(doc(db, 'agent_tasks', taskId), { status: 'completed' });
+      await updateDoc(doc(fdb, 'agent_tasks', taskId), { status: 'completed' });
 
       setState('confirmed');
     } catch {

@@ -51,7 +51,11 @@ exports.sendStaleSessionNudges = functions.pubsub
     const WEBHOOK_AWAITING_STEPS = [
         "caregiver_awaiting_bgcheck",
         "caregiver_awaiting_stripe",
+        "caregiver_awaiting_membership",
+        "caregiver_awaiting_photo",
+        "caregiver_awaiting_documents",
         "client_awaiting_payment",
+        "client_awaiting_identity",
     ];
     const stuckSnap = await db.collection("agent_sessions")
         .where("onboardingStep", "in", WEBHOOK_AWAITING_STEPS)
@@ -125,11 +129,23 @@ exports.sendStaleSessionNudges = functions.pubsub
                             `Most caregivers on Cara charge $18-28/hr. ` +
                             `You can always update it later. No pressure to get it perfect now.`;
                 }
-                else if (step === "caregiver_send_photo") {
+                else if (step === "caregiver_send_photo" || step === "caregiver_awaiting_photo") {
                     message =
                         `${greeting} Your profile is almost live.\n\n` +
                             `Adding a photo makes families much more likely to request an interview. ` +
-                            `A clear headshot is all you need. Ready to finish up?`;
+                            `A clear headshot is all you need. Reply here and I'll send the link again.`;
+                }
+                else if (step === "caregiver_send_membership" || step === "caregiver_awaiting_membership") {
+                    message =
+                        `${greeting} You're one step from being able to apply to jobs near you.\n\n` +
+                            `Activating your $24.95/year membership unlocks getting booked and Cara's payout tools. ` +
+                            `Reply here and I'll send the link again.`;
+                }
+                else if (step === "caregiver_send_documents" || step === "caregiver_awaiting_documents") {
+                    message =
+                        `${greeting} Almost done — just your certifications left (CNA, CPR, etc.).\n\n` +
+                            `You can upload them now or reply SKIP to keep going. ` +
+                            `Reply here and I'll send the upload link again.`;
                 }
                 else {
                     message =
@@ -142,6 +158,11 @@ exports.sendStaleSessionNudges = functions.pubsub
                     message =
                         `${greeting} The last step is adding a payment method so caregivers can get paid after each visit.\n\n` +
                             `Takes about 30 seconds. No charges until you book a caregiver.`;
+                }
+                else if (step === "client_awaiting_identity") {
+                    message =
+                        `${greeting} Just one quick identity check left — it's a 30-second step that keeps every family on the platform safe.\n\n` +
+                            `Reply here and I'll send you a fresh link.`;
                 }
                 else if (step === "client_ask_schedule") {
                     message =

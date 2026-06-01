@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Context Files (read before any architectural decision)
+
+CLAUDE.md is the canonical guide for *how* the code works (stack, conventions, Cara rules). The `context/` directory holds the living product spec — read these first:
+
+1. [`context/project-overview.md`](context/project-overview.md) — what we're building, goals, scope, and **release-gating success criteria**.
+2. [`context/ui-context.md`](context/ui-context.md) — theme, color tokens, typography, component conventions.
+3. [`context/progress-tracker.md`](context/progress-tracker.md) — current phase, completed work, ranked backlog, open questions.
+
+**Update `context/progress-tracker.md` after every meaningful implementation change.** If a change alters architecture, scope, or standards, update the relevant context file (or CLAUDE.md) before continuing. Do not add new point-in-time report files to the repo root — record status in the progress tracker.
+
 ## Project Overview
 
 CareConnex is a SaaS platform connecting families with caregivers. It's a React + TypeScript SPA backed by Firebase, with Stripe for payments, AI/ML-powered caregiver matching, Twilio Video for interviews, and Checkr for background checks.
@@ -79,10 +89,10 @@ React Router v6 in `App.tsx`. Landing page and critical auth routes are eagerly 
 ### User Roles
 Two distinct user roles share the same Firebase Auth:
 - **Clients** (families): $29.95/month Stripe subscription (`VITE_STRIPE_PRICE_ID`)
-- **Caregivers**: $24.95/year membership (`VITE_STRIPE_CAREGIVER_ANNUAL`) + 8-step onboarding in `components/caregiver/signup/steps/`
+- **Caregivers**: $24.95/year membership (`VITE_STRIPE_CAREGIVER_ANNUAL`), onboarded conversationally via Cara over SMS
 
 ### Caregiver Onboarding
-8-step signup flow: `components/caregiver/signup/steps/Step1GetStarted.tsx` through Step 8. Steps include profile, credentials, background check (Checkr), intro video upload, and Stripe Connect setup.
+The canonical caregiver onboarding is **Cara's SMS conversation** in `functions/src/agents/onboardingConversation.ts` (the `caregiver_*` steps). The web entry point `/start?role=caregiver` (`components/auth/onboarding/OnboardingFlow.tsx`) only verifies the phone, then hands off to Cara via SMS. Cara collects profile → credentials → photo/document upload → membership (Stripe) → background check (Checkr) → Stripe Connect payout setup, and finalizes the `caregivers` doc with `onboardingStatus: 'profile_complete'` (which gates visibility in `FindCaregivers`). `components/caregiver/CaregiverOnboardingWizard.tsx` is a web fallback that re-collects the same profile data only for caregivers left in the `'incomplete'` state.
 
 ## Environment Variables
 

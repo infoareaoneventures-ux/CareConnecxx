@@ -77,13 +77,14 @@ export const useNotifications = (userId: string | null) => {
   }, []);
 
   const markAllAsRead = useCallback(async () => {
-    if (!db || notifications.length === 0) return;
-    
-    const batch = writeBatch(db);
+    const fdb = db;
+    if (!fdb || notifications.length === 0) return;
+
+    const batch = writeBatch(fdb);
     notifications
       .filter(n => !n.isRead)
       .forEach(n => {
-        batch.update(doc(db, 'notifications', n.id), {
+        batch.update(doc(fdb, 'notifications', n.id), {
           isRead: true,
           readAt: serverTimestamp()
         });

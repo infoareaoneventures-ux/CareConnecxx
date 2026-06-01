@@ -179,6 +179,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         setHiddenJobsLoading(true);
         const hiddenIds: string[] = JSON.parse(localStorage.getItem('careconnex.hiddenJobs') || '[]');
         if (hiddenIds.length === 0) { setHiddenJobs([]); setHiddenJobsLoading(false); return; }
+        if (!db) { setHiddenJobsLoading(false); return; }
         db.collection('job_posts').where('status', '==', 'open').get().then(snap => {
             const all = snap.docs.map(d => ({ id: d.id, ...d.data() })) as JobPost[];
             setHiddenJobs(all.filter(j => hiddenIds.includes(j.id)));
@@ -187,6 +188,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
 
     useEffect(() => {
         if (activeTab !== 'available') return;
+        if (!db) { setJobsLoading(false); return; }
         setJobsLoading(true);
         const unsubscribe = db.collection('job_posts')
             .where('status', '==', 'open')
@@ -223,6 +225,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
 
     useEffect(() => {
         if (!profile?.uid) return;
+        const fdb = db;
+        if (!fdb) { setInterviewsLoading(false); return; }
         setInterviewsLoading(true);
 
         let requestData: InterviewItem[] = [];
@@ -246,7 +250,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             if (resolvedCount >= 2) setInterviewsLoading(false);
         };
 
-        const unsub1 = db.collection('interview_requests')
+        const unsub1 = fdb.collection('interview_requests')
             .where('caregiverId', '==', profile.uid)
             .onSnapshot(snap => {
                 requestData = snap.docs.map(doc => {
@@ -258,7 +262,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                 merge();
             }, () => merge());
 
-        const unsub2 = db.collection('video_interviews')
+        const unsub2 = fdb.collection('video_interviews')
             .where('caregiverId', '==', profile.uid)
             .onSnapshot(snap => {
                 videoData = snap.docs.map(doc => {
@@ -290,7 +294,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         try {
             await jobApplicationService.applyToJob(
                 applyingJob.id, applyingJob.title, applyingJob.clientId, applyingJob.clientName,
-                { caregiverId: profile.uid, caregiverName: profile.name, caregiverPhoto: profile.photo || profile.imageUrl || '', experience: profile.experience ?? 0, rating: profile.rating ?? null, skills: profile.skills || profile.certifications || [] },
+                { caregiverId: profile.uid, caregiverName: profile.name, caregiverPhoto: profile.photo || profile.imageUrl || '', experience: profile.experience ?? 0, rating: profile.rating ?? undefined, skills: profile.skills || profile.certifications || [] },
                 coverLetter,
             );
             onShowToast(`Application submitted for ${applyingJob.title}!`, 'success');
@@ -306,8 +310,10 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     };
 
     const handleViewJobDetails = async (jobId: string) => {
+        const fdb = db;
+        if (!fdb) { onShowToast('Failed to load job details', 'error'); return; }
         try {
-            const doc = await db.collection('job_posts').doc(jobId).get();
+            const doc = await fdb.collection('job_posts').doc(jobId).get();
             if (doc.exists) {
                 setViewingJob({ id: doc.id, ...doc.data() } as JobPost);
             } else {

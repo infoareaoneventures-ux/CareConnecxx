@@ -39,7 +39,13 @@ export default function WeeklySummary() {
 
   const fetchWeekData = async () => {
     try {
-      const user = auth.currentUser;
+      const fauth = auth;
+      const fdb = db;
+      if (!fauth || !fdb) {
+        navigate('/login');
+        return;
+      }
+      const user = fauth.currentUser;
       if (!user) {
         navigate('/login');
         return;
@@ -57,7 +63,7 @@ export default function WeeklySummary() {
       const endStr = endOfWeek.toISOString().split('T')[0];
 
       // Query real appointments for the week
-      const snap = await db.collection('appointments')
+      const snap = await fdb.collection('appointments')
         .where('clientId', '==', user.uid)
         .where('status', 'in', ['completed', 'confirmed', 'pending_payment'])
         .get();
@@ -111,8 +117,10 @@ export default function WeeklySummary() {
 
   const handleMarkAsPaid = async (visitId: string) => {
     try {
+      const fdb = db;
+      if (!fdb) return;
       // Update in Firestore
-      await db.collection('appointments').doc(visitId).update({
+      await fdb.collection('appointments').doc(visitId).update({
         paymentStatus: 'paid',
         paidAt: firebase.firestore.FieldValue.serverTimestamp()
       });

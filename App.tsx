@@ -341,8 +341,8 @@ const AppContent: React.FC = () => {
           />} />} />
 
           <Route path="/caregiver/dashboard" element={<CaregiverRoute element={<CaregiverDashboard onNavigate={handleNavigation} />} />} />
-          <Route path="/caregiver/profile" element={<CaregiverProfile onNavigate={handleNavigation} onShowToast={addToast} />} />
-          <Route path="/caregiver/inbox" element={<InboxView userType="caregiver" onNavigate={handleNavigation} onShowToast={addToast} />} />
+          <Route path="/caregiver/profile" element={<CaregiverRoute element={<CaregiverProfile onNavigate={handleNavigation} onShowToast={addToast} />} />} />
+          <Route path="/caregiver/inbox" element={<CaregiverRoute element={<InboxView userType="caregiver" onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/caregiver/calendar" element={<CaregiverRoute element={<CaregiverCalendarPage onNavigate={handleNavigation} />} />} />
           <Route path="/caregiver/membership" element={<CaregiverRoute element={<CaregiverMembership onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/caregiver/bookings" element={<CaregiverRoute element={<CaregiverBookingsPage />} />} />

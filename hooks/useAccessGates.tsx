@@ -31,10 +31,11 @@ export function useAccessGates() {
   const [pending, setPending] = useState<PendingGate>(null);
 
   useEffect(() => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) { setReady(true); return; }
+    const uid = auth?.currentUser?.uid;
+    const fdb = db;
+    if (!uid || !fdb) { setReady(true); return; }
 
-    const unsub = db.collection('users').doc(uid).onSnapshot(doc => {
+    const unsub = fdb.collection('users').doc(uid).onSnapshot(doc => {
       const data = (doc.data() as any) || {};
       const adminApproved = data.approvedBy === 'admin';
       setIdentityStatus(adminApproved ? 'verified' : (data.identityCheckStatus || 'not_started'));
@@ -50,11 +51,26 @@ export function useAccessGates() {
   const membershipActiveGated = bypass || membershipActive;
 
   const gate = useCallback((action: GateAction, caregiverName: string | undefined, onPass: () => void) => {
-    if (!identityVerified) {
+    // Payment FIRST — capture subscription intent at the moment it's hottest.
+    // Identity verification is deferred to after payment (handled next) so we
+    // don't stack two friction steps onto the same conversion moment. Identity
+    // still gates the action itself — it just no longer blocks the paywall.
+    if (!membershipActiveGated) {
       setPending({ action, caregiverName, onPass });
+      // Record a paywall-view signal so the daily win-back job can nudge this
+      // family (referencing the caregiver they tried to reach) if they don't
+      // convert. Fire-and-forget — never block the modal on this write.
+      const uid = auth?.currentUser?.uid;
+      const fdb = db;
+      if (uid && fdb) {
+        fdb.collection('users').doc(uid).set({
+          lastPaywallViewedAt: new Date().toISOString(),
+          paywallContext: { caregiverName: caregiverName ?? null, action },
+        }, { merge: true }).catch(() => {});
+      }
       return;
     }
-    if (!membershipActiveGated) {
+    if (!identityVerified) {
       setPending({ action, caregiverName, onPass });
       return;
     }
@@ -77,22 +93,24 @@ export function useAccessGates() {
   const Modals: React.FC = () => {
     if (!pending || bypass) return null;
 
-    if (!identityVerified) {
-      return (
-        <IdentityGateModal
-          caregiverName={pending.caregiverName}
-          onClose={dismiss}
-          onGetVerified={handleGetVerified}
-        />
-      );
-    }
-
+    // Payment gate first (mirrors the reordering in `gate`)…
     if (!membershipActive) {
       return (
         <PlanSelectModal
           onClose={dismiss}
           caregiverName={pending.caregiverName}
           context={pending.action}
+        />
+      );
+    }
+
+    // …then identity verification before the action completes.
+    if (!identityVerified) {
+      return (
+        <IdentityGateModal
+          caregiverName={pending.caregiverName}
+          onClose={dismiss}
+          onGetVerified={handleGetVerified}
         />
       );
     }

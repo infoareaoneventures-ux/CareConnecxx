@@ -278,7 +278,7 @@ export const InvoicingTab = () => {
                         <div>
                             <p><strong>Client:</strong> {selectedInvoice.clientName}</p>
                             <p><strong>Caregiver:</strong> {selectedInvoice.caregiverName}</p>
-                            <p><strong>Care Period:</strong> {selectedInvoice.carePeriod.start} to {selectedInvoice.carePeriod.end}</p>
+                            <p><strong>Care Period:</strong> {selectedInvoice.carePeriod?.start} to {selectedInvoice.carePeriod?.end}</p>
                         </div>
                         <div>
                             <p><strong>Date Issued:</strong> {new Date(selectedInvoice.createdAt).toLocaleDateString()}</p>
@@ -298,7 +298,7 @@ export const InvoicingTab = () => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {selectedInvoice.lineItems.map((item, i) => (
+                                {selectedInvoice.lineItems?.map((item, i) => (
                                     <tr key={i} className="border-b">
                                         <td className="py-2">{item.date}</td>
                                         <td className="py-2 text-slate-500 text-xs">{item.tasks?.join(', ')}</td>
@@ -311,10 +311,10 @@ export const InvoicingTab = () => {
                         </table>
                         <div className="flex justify-end text-right space-y-1">
                             <div>
-                                <p>Subtotal: ${selectedInvoice.subtotal.toFixed(2)}</p>
-                                <p>Taxes: ${selectedInvoice.taxes.toFixed(2)}</p>
-                                <p>Fees: ${selectedInvoice.fees.toFixed(2)}</p>
-                                <p className="text-xl font-bold mt-2">Total: ${selectedInvoice.total.toFixed(2)}</p>
+                                <p>Subtotal: ${(selectedInvoice.subtotal ?? 0).toFixed(2)}</p>
+                                <p>Taxes: ${(selectedInvoice.taxes ?? 0).toFixed(2)}</p>
+                                <p>Fees: ${(selectedInvoice.fees ?? 0).toFixed(2)}</p>
+                                <p className="text-xl font-bold mt-2">Total: ${(selectedInvoice.total ?? 0).toFixed(2)}</p>
                             </div>
                         </div>
                     </div>

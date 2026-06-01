@@ -83,7 +83,7 @@ function extractFeatures(
     : true;
   
   // Price fit (lower rates better for part-time, less important for full-time)
-  const careHours = senior.scheduleNeeded?.length * 4 || 20; // Estimate
+  const careHours = (senior.scheduleNeeded?.length ?? 0) * 4 || 20; // Estimate
   const priceFit = caregiver.hourlyRate < 25 || careHours > 15;
   
   return {

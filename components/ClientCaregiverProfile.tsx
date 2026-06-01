@@ -122,7 +122,7 @@ export default function ClientCaregiverProfile({
     if (!caregiverId) return;
     fetchCaregiverProfile(caregiverId);
     fetchReviews(caregiverId);
-    const uid = auth.currentUser?.uid;
+    const uid = auth!.currentUser?.uid;
     if (uid) {
       dbService.getJobPostsByClient(uid).then(posts => {
         setClientOpenPosts(posts.filter((p: any) => p.status === 'open').map((p: any) => ({ id: p.id, title: p.title, startDate: p.startDate || p.date })));
@@ -209,8 +209,8 @@ export default function ClientCaregiverProfile({
     if (!caregiver) return;
     gate('message', fullName, async () => {
       try {
-        const uid = auth.currentUser?.uid;
-        const name = auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Client';
+        const uid = auth!.currentUser?.uid;
+        const name = auth!.currentUser?.displayName || auth!.currentUser?.email?.split('@')[0] || 'Client';
         if (uid) {
           const roomId = await chatService.getOrCreateChatRoom(uid, name, caregiver.id, fullName);
           navigate(`/client/inbox?room=${roomId}`);

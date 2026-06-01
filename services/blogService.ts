@@ -32,12 +32,12 @@ function slugify(title: string): string {
 
 export const blogService = {
   async getAll(): Promise<BlogPost[]> {
-    const snap = await db.collection(COLLECTION).orderBy('publishDate', 'desc').get();
+    const snap = await db!.collection(COLLECTION).orderBy('publishDate', 'desc').get();
     return snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as BlogPost));
   },
 
   async getPublished(): Promise<BlogPost[]> {
-    const snap = await db
+    const snap = await db!
       .collection(COLLECTION)
       .where('status', '==', 'published')
       .orderBy('publishDate', 'desc')
@@ -46,7 +46,7 @@ export const blogService = {
   },
 
   async getBySlug(slug: string): Promise<BlogPost | null> {
-    const snap = await db
+    const snap = await db!
       .collection(COLLECTION)
       .where('slug', '==', slug)
       .where('status', '==', 'published')
@@ -60,7 +60,7 @@ export const blogService = {
   async create(post: Omit<BlogPost, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
     const now = new Date().toISOString();
     const slug = post.slug || slugify(post.title);
-    const ref = await db.collection(COLLECTION).add({
+    const ref = await db!.collection(COLLECTION).add({
       ...post,
       slug,
       createdAt: now,
@@ -70,19 +70,19 @@ export const blogService = {
   },
 
   async update(id: string, updates: Partial<BlogPost>): Promise<void> {
-    await db.collection(COLLECTION).doc(id).update({
+    await db!.collection(COLLECTION).doc(id).update({
       ...updates,
       updatedAt: new Date().toISOString(),
     });
   },
 
   async delete(id: string): Promise<void> {
-    await db.collection(COLLECTION).doc(id).delete();
+    await db!.collection(COLLECTION).doc(id).delete();
   },
 
   async toggleStatus(id: string, current: 'draft' | 'published'): Promise<void> {
     const next = current === 'published' ? 'draft' : 'published';
-    await db.collection(COLLECTION).doc(id).update({
+    await db!.collection(COLLECTION).doc(id).update({
       status: next,
       updatedAt: new Date().toISOString(),
     });

@@ -106,6 +106,11 @@ export default function Agreement() {
     }
 
     try {
+      if (!auth || !db) {
+        addToast('Service not available. Please try again.', 'error');
+        return;
+      }
+      const fdb = db;
       const user = auth.currentUser;
       if (!user) {
         navigate('/login');
@@ -113,7 +118,7 @@ export default function Agreement() {
       }
 
       // Save agreement to Firestore
-      await db.collection('agreements').add({
+      await fdb.collection('agreements').add({
         clientId: user.uid,
         caregiverId: caregiverId,
         hourlyRate: agreement.hourlyRate,

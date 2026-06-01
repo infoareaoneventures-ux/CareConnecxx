@@ -66,10 +66,12 @@ export const ratingService = {
    * Submit a review for a caregiver
    */
   async submitReview(reviewData: Omit<Review, 'id' | 'createdAt' | 'timestamp'>): Promise<string> {
-    const batch = writeBatch(db);
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+    const batch = writeBatch(fdb);
 
     // Add the review
-    const reviewRef = doc(collection(db, 'reviews'));
+    const reviewRef = doc(collection(fdb, 'reviews'));
     const review = {
       ...reviewData,
       createdAt: new Date().toISOString(),
@@ -78,7 +80,7 @@ export const ratingService = {
     batch.set(reviewRef, review);
 
     // Update appointment to mark as reviewed
-    const appointmentRef = doc(db, 'appointments', reviewData.appointmentId);
+    const appointmentRef = doc(fdb, 'appointments', reviewData.appointmentId);
     batch.update(appointmentRef, { hasReview: true });
 
     // Update caregiver's rating stats
@@ -97,7 +99,9 @@ export const ratingService = {
     newRating: number,
     categories: Review['categories']
   ): Promise<void> {
-    const caregiverRef = doc(db, 'caregivers', caregiverId);
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+    const caregiverRef = doc(fdb, 'caregivers', caregiverId);
     const caregiverSnap = await getDoc(caregiverRef);
 
     if (!caregiverSnap.exists()) return;
@@ -154,6 +158,7 @@ export const ratingService = {
    * Get reviews for a caregiver
    */
   async getCaregiverReviews(caregiverId: string, maxResults: number = 20): Promise<Review[]> {
+    if (!db) return [];
     const q = query(
       collection(db, 'reviews'),
       where('caregiverId', '==', caregiverId),
@@ -173,6 +178,7 @@ export const ratingService = {
    * Get caregiver rating summary
    */
   async getCaregiverRatingSummary(caregiverId: string): Promise<CaregiverRating | null> {
+    if (!db) return null;
     const caregiverRef = doc(db, 'caregivers', caregiverId);
     const caregiverSnap = await getDoc(caregiverRef);
 
@@ -204,6 +210,7 @@ export const ratingService = {
    * Check if a client can review an appointment
    */
   async canReviewAppointment(clientId: string, appointmentId: string): Promise<boolean> {
+    if (!db) return false;
     // Check if appointment exists and belongs to client
     const appointmentRef = doc(db, 'appointments', appointmentId);
     const appointmentSnap = await getDoc(appointmentRef);
@@ -228,6 +235,7 @@ export const ratingService = {
    * Get review by appointment ID
    */
   async getReviewByAppointment(appointmentId: string): Promise<Review | null> {
+    if (!db) return null;
     const q = query(
       collection(db, 'reviews'),
       where('appointmentId', '==', appointmentId)
@@ -244,6 +252,7 @@ export const ratingService = {
    * Caregiver responds to a review
    */
   async respondToReview(reviewId: string, responseText: string): Promise<void> {
+    if (!db) throw new Error('Firestore not initialized');
     const reviewRef = doc(db, 'reviews', reviewId);
     await updateDoc(reviewRef, {
       response: {
@@ -259,6 +268,7 @@ export const ratingService = {
   async getTopRatedCaregivers(minReviews: number = 5, maxResults: number = 10): Promise<string[]> {
     // This would ideally be a Firebase function or require a composite index
     // For now, we'll query all caregivers and filter client-side
+    if (!db) return [];
     const q = query(
       collection(db, 'caregivers'),
       where('verified', '==', true),

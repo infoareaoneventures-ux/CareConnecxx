@@ -138,6 +138,7 @@ class PushNotificationService {
    * Save FCM token to user's Firestore document
    */
   private async saveTokenToUser(userId: string, token: string): Promise<void> {
+    if (!db) return;
     try {
       const userRef = doc(db, 'users', userId);
       
@@ -162,6 +163,7 @@ class PushNotificationService {
    */
   async removeToken(userId: string): Promise<void> {
     if (!this.currentToken) return;
+    if (!db) return;
 
     try {
       const userRef = doc(db, 'users', userId);

@@ -63,7 +63,11 @@ import {
 } from "../memory/zepClient";
 import { quickComplete } from "../utils/openaiClient";
 import { extractVoiceMemoPart, transcribeVoiceMemo } from "../utils/voiceTranscription";
+import { extractLocationPart, reverseGeocode, SharedLocation } from "../utils/locationShare";
+import { extractMediaPart, downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/mediaIntake";
+import { classifyMedia } from "../utils/visionVerify";
 import { detectPersonaShift } from "../utils/personaShiftDetector";
+import { collectKnownNames } from "../utils/knownNames";
 import { detectLanguage, languageFromSession, t as tr, flowLabel } from "../utils/language";
 
 const db = admin.firestore();
@@ -1664,6 +1668,43 @@ async function handleInbound(event: unknown): Promise<void> {
     }
   }
 
+  // ── Shared location pin (iMessage / RCS) ───────────────────────────────────
+  // Users can tap ➕ → Share Location instead of typing an address. Linq delivers
+  // the pin as a non-text part. Extract it once here; onboarding location steps
+  // use the raw coords directly, and the QA/anytime path gets a synthesized text
+  // line so the agent can reason about it (e.g. update an address) with its tools.
+  let inboundLocation: SharedLocation | null = null;
+  if (text === "") {
+    inboundLocation = extractLocationPart(inboundParts);
+    if (inboundLocation) {
+      isMediaOnly = false;
+      // Re-mark read now the attachment is committed on Linq's side (same race
+      // fix as voice memos — the t=0 markChatRead can land before ingestion).
+      markChatRead(chatId).catch(() => {/* non-critical */});
+      console.info("locationShare received", {
+        phone, chatId, lat: inboundLocation.lat, lng: inboundLocation.lng,
+      });
+    }
+  }
+
+  // ── Shared image / document (iMessage / RCS) ───────────────────────────────
+  // Caregivers text a headshot or a CNA/CPR card instead of using the web upload
+  // link. Detect it once here; onboarding photo/doc/identity steps consume it
+  // directly (vision-gated), and the completed-session "anytime" path below
+  // classifies + smart-routes it. (Voice memos / location pins already claimed
+  // their parts above, so text is still "" only for true image/doc media.)
+  let inboundMedia: InboundMediaPart | null = null;
+  if (text === "" && !inboundLocation) {
+    inboundMedia = extractMediaPart(inboundParts);
+    if (inboundMedia) {
+      isMediaOnly = false;
+      markChatRead(chatId).catch(() => {/* non-critical */});
+      console.info("inboundMedia received", {
+        phone, chatId, kind: inboundMedia.kind, content_type: inboundMedia.content_type,
+      });
+    }
+  }
+
   const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
 
   // Track last-inbound time so the silence detector (scheduled function) can
@@ -2126,6 +2167,10 @@ async function handleInbound(event: unknown): Promise<void> {
   // ── Persona-shift resolution ────────────────────────────────────────────────
   // If we previously asked "is this still about [seniorName]?", interpret
   // this inbound as the answer and either resume or block the original action.
+  // Tracks whether we resolved a pending persona check on THIS turn — without it,
+  // a confirmed "YES" restores the original text and falls straight back into the
+  // detector below, which re-flags the same name and re-asks forever (infinite loop).
+  let personaResolvedThisTurn = false;
   {
     const pending = (session as any).pendingPersonaResolve as {
       originalText: string;
@@ -2172,14 +2217,16 @@ async function handleInbound(event: unknown): Promise<void> {
         );
         return;
       }
-      // isSame === true → fall through and process the ORIGINAL text as if just received
+      // isSame === true → fall through and process the ORIGINAL text as if just received.
+      // Mark resolved so the detector below doesn't re-flag the same name this turn.
       text = pending.originalText;
+      personaResolvedThisTurn = true;
     }
   }
 
   // ── Persona shift detection — flag and pause when a different person seems to be texting ─
   // Only relevant for complete client sessions; onboarding flows already self-reset via START OVER.
-  if (session.onboardingStep === "complete" && session.userType === "client") {
+  if (session.onboardingStep === "complete" && session.userType === "client" && !personaResolvedThisTurn) {
     const sessionSeniorName =
       ((session as any).onboardingData?.seniorName as string | undefined) ??
       ((session as any).seniorName as string | undefined);
@@ -2187,6 +2234,9 @@ async function handleInbound(event: unknown): Promise<void> {
       text,
       sessionSenior: sessionSeniorName,
       sessionRole:   session.userType,
+      // Names Cara already expects on this account (client, recipients, family,
+      // caregivers) so a known name or caregiver-logistics question never trips it.
+      knownNames:    collectKnownNames(session as unknown as Record<string, unknown>),
     }).catch(() => null);
 
     if (shift) {
@@ -2405,7 +2455,11 @@ async function handleInbound(event: unknown): Promise<void> {
       await handleCaregiverPermissionsReply(phone, chatId, text, session, caregiverId);
       return;
     }
-    await handleOnboardingStep(phone, chatId, text, session);
+    await handleOnboardingStep(phone, chatId, text, session, {
+      service,
+      inboundLocation: inboundLocation ?? undefined,
+      inboundMedia:    inboundMedia ?? undefined,
+    });
 
     // After each onboarding step, push the progress event to Zep as structured JSON
     // so Zep's knowledge graph captures names, conditions, care needs as they're collected.
@@ -2440,6 +2494,78 @@ async function handleInbound(event: unknown): Promise<void> {
   if (await isRateLimited(phone)) {
     console.warn("handleInbound: phone exceeded 120 msgs/hr rate limit — dropping silently", { phone });
     return;
+  }
+
+  // ── Shared location (anytime / completed session) ──────────────────────────
+  // A pin arrived but we're past onboarding. Persist the raw coords so MCP tools
+  // can read them, then synthesize a text line so the QA agent reasons about it
+  // (e.g. "update my address") through normal routing — no special-case branch.
+  if (inboundLocation && text === "") {
+    const rev = await reverseGeocode(inboundLocation.lat, inboundLocation.lng);
+    await db.collection("agent_sessions").doc(phone).update({
+      lastSharedLocation: {
+        lat: inboundLocation.lat,
+        lng: inboundLocation.lng,
+        ...(rev ? { city: rev.city, zipCode: rev.zipCode, region: rev.region ?? "" } : {}),
+        at:  new Date().toISOString(),
+      },
+    }).catch(() => {/* non-critical */});
+    text = `[The user shared their location: ${inboundLocation.lat}, ${inboundLocation.lng}` +
+      (rev ? ` — ${rev.city}, ${rev.region ?? ""} ${rev.zipCode}`.replace(/\s+/g, " ").trimEnd() : "") +
+      `]`;
+  }
+
+  // ── Shared image / document (anytime / completed session) ──────────────────
+  // A photo/document arrived past onboarding. Classify it with gpt-4o vision and
+  // smart-route: a new credential → attach to the caregiver profile for review;
+  // anything else → store it, synthesize a descriptive line, and hand to the QA
+  // agent so it can act with its tools (no special-case branch needed).
+  if (inboundMedia && text === "") {
+    try {
+      await stopTyping(chatId).catch(() => {});
+      const dl  = await downloadMedia(inboundMedia);
+      const url = await storeInboundMedia({
+        phone, kind: inboundMedia.kind, buffer: dl.buffer,
+        content_type: dl.content_type, ext: dl.ext,
+      });
+      const cls = await classifyMedia(dl.buffer, dl.content_type);
+
+      await db.collection("agent_sessions").doc(phone).update({
+        lastSharedMedia: {
+          url, kind: inboundMedia.kind, category: cls.category,
+          description: cls.description, details: cls.details ?? "",
+          at: new Date().toISOString(),
+        },
+      }).catch(() => {/* non-critical */});
+
+      const caregiverId = (session as any).caregiverId as string | undefined;
+      if (cls.category === "credential" && caregiverId) {
+        // New credential from an active caregiver → queue on their profile for
+        // the team to verify, and confirm conversationally. (Additive: never
+        // overwrites verified credentials.)
+        await db.collection("caregivers").doc(caregiverId).update({
+          pendingDocuments: admin.firestore.FieldValue.arrayUnion({
+            url, source: "sms", description: cls.description,
+            details: cls.details ?? "", at: new Date().toISOString(),
+          }),
+        }).catch((err) => console.error("anytime credential attach failed", err));
+        await sendMessage(chatId,
+          "Got it — I've added that to your profile and flagged it for our team to verify. Thank you! 📄"
+        );
+        return;
+      }
+
+      // Everything else → let the QA agent reason about it via normal routing.
+      text = `[The user sent ${inboundMedia.kind === "image" ? "a photo" : "a document"}: ` +
+        `${cls.description}${cls.details ? ` (${cls.details})` : ""}. ` +
+        `It has been saved at ${url}.]`;
+    } catch (err) {
+      console.error("anytime media handling failed", { phone, chatId, err: (err as Error)?.message });
+      await sendMessage(chatId,
+        "I got your file but had trouble opening it — could you try sending it again, or tell me what it is?"
+      );
+      return;
+    }
   }
 
   // ── Universal state-machine escape hatch ──────────────────────────────────────

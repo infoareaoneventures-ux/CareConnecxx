@@ -60,8 +60,10 @@ export const BrowseCaregivers: React.FC = () => {
   useEffect(() => {
     let isMounted = true;
     const loadCaregivers = async () => {
+      const fdb = db;
+      if (!fdb) return;
       try {
-        const snap = await db.collection('caregivers')
+        const snap = await fdb.collection('caregivers')
           .orderBy('rating', 'desc')
           .limit(40)
           .get();
@@ -70,7 +72,7 @@ export const BrowseCaregivers: React.FC = () => {
         // Load saved favorites for this user
         let savedFavs: Set<string> = new Set();
         if (uid) {
-          const userDoc = await db.collection('users').doc(uid).get();
+          const userDoc = await fdb.collection('users').doc(uid).get();
           const favs: string[] = userDoc.data()?.savedCaregivers || [];
           savedFavs = new Set(favs);
         }

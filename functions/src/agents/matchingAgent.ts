@@ -387,6 +387,10 @@ export async function runMatchingForClient(
         allReasons:   ms.reasoning,
         overallScore: ms.overallScore,
         profileUrl:   `${appUrl}/caregiver/${c.id}`,
+        // Headshot (persisted from web upload OR a photo texted to Cara). Sent as
+        // an image bubble before each caregiver's profile link so families see a
+        // face, not a generic preview card. Null for legacy caregivers w/o a photo.
+        photo:        ((c as any).profilePhoto ?? (c as any).photoURL ?? null) as string | null,
         specialties:  c.specialties ?? [],
         yearsExp:     c.yearsExperience ?? null,
         city:         c.city ?? "",
@@ -412,13 +416,12 @@ export async function runMatchingForClient(
       `Care needs: ${needs.join(", ") || "general"}` +
       factsContext +
       `\n\nYour job:\n` +
-      `- First turn: write a warm, specific intro message presenting these caregivers\n` +
+      `- First turn: write ONE warm, specific opening line letting the family know you found ${matchData.length} caregiver${matchData.length > 1 ? "s" : ""} for ${seniorName} near them. Do NOT list them, do NOT include any URLs — a photo of each caregiver with their profile link is sent right after your message.\n` +
       `- Follow-up turns: answer questions about the specific caregivers from the details above\n` +
       `- If asked about a caregiver not in this list, say you only have details for the ones you presented\n\n` +
       `Rules: plain text only, no bullet points, no headers. Warm, direct, specific. ` +
-      `Under 300 characters per message when possible. ` +
-      `When you reference a Profile link, copy the URL EXACTLY as shown above including the https:// prefix — never shorten, paraphrase, or drop the scheme (clients need to be able to tap it). ` +
-      `End the intro with "Which ones would you like to meet?"`;
+      `Under 220 characters for the opening line. ` +
+      `When you reference a Profile link, copy the URL EXACTLY as shown above including the https:// prefix — never shorten, paraphrase, or drop the scheme (clients need to be able to tap it).`;
 
     // Roster check — reuse existing agent if one is active for this user
     const existingAgent = await getActiveAgentForUser(phone, "matching");
@@ -439,34 +442,49 @@ export async function runMatchingForClient(
       });
     }
 
-    // First agent turn generates the intro message — route through interaction agent
-    // so it gets supervisor lint, DND respect, and proper chunking.
-    const introMessage = await runExecutionAgentTurn(agentId, "Introduce these caregivers to the family now.");
+    // First agent turn generates the warm opening line — route through interaction
+    // agent so it gets supervisor lint, DND respect, and proper chunking. The
+    // per-caregiver photo gallery (below) carries the names + tappable links.
+    const introMessage = await runExecutionAgentTurn(agentId, "Write the warm opening line now.");
 
-    // Deterministic fallback: the structured summary already contains every name,
-    // rate, profile URL, and specialty. This is what we send if the LLM intro is
-    // empty OR drops any caregiver's name or tappable profile link — a family making
-    // a high-stakes decision must never receive a name-less, link-less message.
-    const deterministicIntro =
-      `I found ${matchData.length} caregiver${matchData.length > 1 ? "s" : ""} for ${seniorName}:\n\n` +
-      `${matchSummary}\n\n` +
-      `Which ones would you like to meet?`;
-
-    const introComplete =
-      !!introMessage &&
-      matchData.every(m => introMessage.includes(m.name) && introMessage.includes(m.profileUrl));
-    if (!introComplete && introMessage) {
-      console.warn("[matchingAgent] LLM intro dropped a name/profile URL — sending deterministic summary instead", { phone });
-    }
-    const finalIntro = introComplete ? introMessage : deterministicIntro;
+    // Deterministic fallback header if the LLM line comes back empty — a family
+    // must never get silence. (Names + links are guaranteed by the gallery below.)
+    const headerLine = (introMessage ?? "").trim() ||
+      `I found ${matchData.length} caregiver${matchData.length > 1 ? "s" : ""} for ${seniorName} near you 👇`;
 
     const { sendViaInteractionAgent } = await import("./caraAgent");
     await sendViaInteractionAgent(phone, {
-      content:     finalIntro,
+      content:     headerLine,
       urgency:     "immediate",
       sourceAgent: "matching",
       canDrop:     false,
     });
+
+    // Per-caregiver gallery: for each match send their headshot (if we have one)
+    // as an image bubble, then a factual caption with the tappable profile link.
+    // sendMessage auto-splits the URL into a rich link card on iMessage/RCS and
+    // leaves it as a plain tappable URL on SMS. Photo bubble is skipped for legacy
+    // caregivers without a stored photo — they still get the caption + link.
+    for (const m of matchData) {
+      try {
+        if (m.photo) {
+          await sendMessage(chatId, { parts: [{ type: "media", url: m.photo }] });
+          await new Promise<void>((r) => setTimeout(r, 400));
+        }
+        const trust    = m.trustScore >= 60 ? ` · ${m.trustScore}⭐ Trust` : "";
+        const specs     = m.specialties.length ? `\n${m.specialties.slice(0, 3).join(", ")}` : "";
+        const bgPending = m.pendingBg ? `\n⏳ Background check in progress` : "";
+        await sendMessage(chatId,
+          `${m.index}. ${m.name} — $${m.hourlyRate}/hr${trust}${specs}${bgPending}\n` +
+          `Tap to view ${m.name.split(" ")[0]}'s profile: ${m.profileUrl}`
+        );
+        await new Promise<void>((r) => setTimeout(r, 400));
+      } catch (err) {
+        console.warn("[matchingAgent] gallery send failed for caregiver", { phone, id: m.id, err: (err as Error)?.message });
+      }
+    }
+
+    await sendMessage(chatId, "Which ones would you like to meet? Just reply with a name or number.");
 
     // Store match list in session for follow-up; embed active goal context so
     // interview selection can pre-populate booking dates without re-prompting the family
@@ -488,6 +506,11 @@ export async function runMatchingForClient(
       // than 2 hours are treated as expired and cleared on next inbound.
       pendingMatchesSetAt: new Date().toISOString(),
     });
+
+    // Register these caregivers' names so the persona-shift detector never
+    // mistakes "send me <caregiver>'s profile" for a different care recipient.
+    const { addKnownNames } = await import("../utils/knownNames");
+    await addKnownNames(phone, top3.map((c) => c.name));
   } catch (err) {
     console.error("runMatchingForClient error:", err);
     await sendMessage(chatId,

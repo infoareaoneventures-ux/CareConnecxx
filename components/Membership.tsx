@@ -44,7 +44,7 @@ export default function Membership() {
 
   const loadSubscriptionStatus = async () => {
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         navigate('/login');
         return;
@@ -348,7 +348,7 @@ export default function Membership() {
       {showPlanModal && (
         <PlanSelectModal
           onClose={() => setShowPlanModal(false)}
-          currentPriceId={subscription?.priceId}
+          currentPriceId={subscription?.priceId ?? undefined}
         />
       )}
     </div>

@@ -22,11 +22,13 @@ export default function InterviewConfirmation() {
 
   const checkPendingInterviews = async () => {
     try {
+      if (!auth || !db) return;
+      const fdb = db;
       const user = auth.currentUser;
       if (!user) return;
 
       // Query Firestore for pending interviews
-      const snapshot = await db.collection('interviews')
+      const snapshot = await fdb.collection('interviews')
         .where('clientId', '==', user.uid)
         .where('status', '==', 'pending')
         .get();

@@ -795,12 +795,13 @@ export const dbService = {
     acceptJob: async (jobId: string, caregiver: Caregiver) => {
         // SECURITY FIX: Wrap in transaction to prevent race conditions
         if (isConfigured && db) {
+            const fdb = db;
             const DEFAULT_HOURS_PER_VISIT = 3; // Standard visit duration
-            
-            const jobRef = db.collection('job_posts').doc(jobId);
+
+            const jobRef = fdb.collection('job_posts').doc(jobId);
             
             try {
-                const result = await db.runTransaction(async (transaction) => {
+                const result = await fdb.runTransaction(async (transaction) => {
                     // Read job within transaction for atomicity
                     const jobDoc = await transaction.get(jobRef);
                     if (!jobDoc.exists) throw new Error("Job not found");
@@ -818,7 +819,7 @@ export const dbService = {
                     }
 
                     // Create appointment atomically
-                    const appointmentRef = db.collection('appointments').doc();
+                    const appointmentRef = fdb.collection('appointments').doc();
                     transaction.set(appointmentRef, {
                         caregiverId: caregiver.id,
                         caregiverName: caregiver.name,
@@ -868,16 +869,17 @@ export const dbService = {
         }
 
         if (isConfigured && db) {
+            const fdb = db;
             // BUG FIX: Wrap transaction in try-catch for better error handling
             try {
-                const appointment = await db.runTransaction(async (transaction) => {
+                const appointment = await fdb.runTransaction(async (transaction) => {
                 // Extract date and time for availability check
                 const { caregiverId, date, time, clientId } = appointmentData;
                 
                 // CRITICAL FIX: Use atomic lock acquisition to prevent race conditions
                 // The lock document ID is based on the time slot - if it exists, someone else is booking
                 const lockId = `${caregiverId}_${date}_${time}`;
-                const lockRef = db.collection('appointment_locks').doc(lockId);
+                const lockRef = fdb.collection('appointment_locks').doc(lockId);
                 
                 // Try to create lock atomically
                 const lockDoc = await transaction.get(lockRef);
@@ -900,7 +902,7 @@ export const dbService = {
                 
                 // Check for double-booking: Query for existing appointments
                 // These queries are now part of the transaction for true atomicity
-                const existingApptsQuery = db.collection('appointments')
+                const existingApptsQuery = fdb.collection('appointments')
                     .where('caregiverId', '==', caregiverId)
                     .where('date', '==', date)
                     .where('time', '==', time)
@@ -914,7 +916,7 @@ export const dbService = {
                 }
                 
                 // Also check if client has a conflicting appointment
-                const clientApptsQuery = db.collection('appointments')
+                const clientApptsQuery = fdb.collection('appointments')
                     .where('clientId', '==', clientId)
                     .where('date', '==', date)
                     .where('time', '==', time)
@@ -928,7 +930,7 @@ export const dbService = {
                 }
                 
                 // Create appointment atomically
-                const docRef = db.collection('appointments').doc();
+                const docRef = fdb.collection('appointments').doc();
                 const docId = docRef.id;
 
                 // Determine status based on booking type
@@ -1055,7 +1057,7 @@ export const dbService = {
             if (!apptDoc.exists) throw new Error('Appointment not found');
 
             const data = apptDoc.data();
-            if (data?.clientId !== auth.currentUser?.uid && data?.caregiverId !== auth.currentUser?.uid) {
+            if (data?.clientId !== auth?.currentUser?.uid && data?.caregiverId !== auth?.currentUser?.uid) {
                 throw new Error('Unauthorized');
             }
 
@@ -1104,7 +1106,7 @@ export const dbService = {
             if (!apptDoc.exists) throw new Error('Appointment not found');
 
             const data = apptDoc.data();
-            if (data?.clientId !== auth.currentUser?.uid && data?.caregiverId !== auth.currentUser?.uid) {
+            if (data?.clientId !== auth?.currentUser?.uid && data?.caregiverId !== auth?.currentUser?.uid) {
                 throw new Error('Unauthorized');
             }
 
@@ -1125,7 +1127,7 @@ export const dbService = {
             if (!apptDoc.exists) throw new Error('Appointment not found');
 
             const data = apptDoc.data();
-            if (data?.clientId !== auth.currentUser?.uid && data?.caregiverId !== auth.currentUser?.uid) {
+            if (data?.clientId !== auth?.currentUser?.uid && data?.caregiverId !== auth?.currentUser?.uid) {
                 throw new Error('Unauthorized');
             }
 
@@ -1479,7 +1481,7 @@ export const dbService = {
                 const userDoc = await db.collection('users').doc(uid).get();
                 if (userDoc.exists) {
                     const userData = userDoc.data() as any;
-                    return { id: 0, uid, name: userData.name, personality: 'Introvert', needs: [], location: '' } as Senior;
+                    return { id: 0, uid, name: userData.name, personality: 'Introvert', needs: [], location: '' } as unknown as Senior;
                 }
                 return null;
             } catch (e: any) {
@@ -1553,7 +1555,7 @@ export const dbService = {
                         id: docSnap.id,
                         ...data,
                         messages: []
-                    } as Thread);
+                    } as unknown as Thread);
                 }
                 onUpdate(threads);
             }, (error) => {
@@ -2286,7 +2288,7 @@ export const dbService = {
      * sender uses, so behavior matches whether sent now or by the cron.
      */
     sendApprovedDraftNow: async (draftId: string): Promise<{ success: boolean; error?: string }> => {
-        if (!isConfigured) throw new Error('Not connected');
+        if (!isConfigured || !functions) throw new Error('Not connected');
         const fn = functions.httpsCallable('v1-sendApprovedDraftNow');
         const result = await fn({ draftId });
         return (result.data as { success: boolean; error?: string }) ?? { success: false, error: 'no response' };
@@ -2819,7 +2821,7 @@ export const dbService = {
         }
         
         const snapshot = await query.orderBy('createdAt', 'desc').get();
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        return snapshot.docs.map((doc: firebase.firestore.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
     },
 
     updateMatchAssignment: async (assignmentId: string, updates: any) => {
@@ -2838,7 +2840,7 @@ export const dbService = {
         const approvedMatch = {
             ...matchData,
             approvedAt: new Date().toISOString(),
-            approvedBy: auth.currentUser?.uid,
+            approvedBy: auth?.currentUser?.uid,
             status: 'pre_confirmed'
         };
         
@@ -2849,8 +2851,9 @@ export const dbService = {
 
     sendMatchesToClient: async (assignmentId: string, clientId: string) => {
         if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        const assignment = await db.collection('match_assignments').doc(assignmentId).get();
+        const fdb = db;
+
+        const assignment = await fdb.collection('match_assignments').doc(assignmentId).get();
         const data = assignment.data();
         
         if (!data || data.approvedMatches.length < 5) {
@@ -2858,19 +2861,19 @@ export const dbService = {
         }
         
         // Copy approved matches to client's subcollection
-        const batch = db.batch();
-        
+        const batch = fdb.batch();
+
         data.approvedMatches.forEach((match: any, index: number) => {
-            const matchRef = db.collection('users').doc(clientId).collection('approved_matches').doc();
+            const matchRef = fdb.collection('users').doc(clientId).collection('approved_matches').doc();
             batch.set(matchRef, {
                 ...match,
                 assignmentId,
                 priority: index + 1
             });
         });
-        
+
         // Update assignment status
-        batch.update(db.collection('match_assignments').doc(assignmentId), {
+        batch.update(fdb.collection('match_assignments').doc(assignmentId), {
             status: 'sent_to_client',
             sentToClientAt: new Date().toISOString()
         });
@@ -2924,7 +2927,7 @@ export const dbService = {
         }
         
         const snapshot = await query.orderBy('createdAt', 'desc').get();
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        return snapshot.docs.map((doc: firebase.firestore.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
     },
 
     updateInterviewRequest: async (requestId: string, updates: any) => {
@@ -2996,7 +2999,7 @@ export const dbService = {
         }
         
         const snapshot = await query.orderBy('requestedAt', 'desc').get();
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        return snapshot.docs.map((doc: firebase.firestore.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
     },
 
     updateHireRequestStatus: async (requestId: string, updates: {
@@ -3231,7 +3234,7 @@ export const shiftHoursService = {
         endTime: string,
         lineItems?: Array<{ type: string; label: string; note: string; amount: number }>,
     ) => {
-        if (!isConfigured) throw new Error('Firebase not configured');
+        if (!isConfigured || !functions) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-submitShiftHours');
         const res = await fn({ shiftId, startTime, endTime, lineItems: lineItems ?? [] });
         return res.data as { success: boolean; shiftId: string; totalHours: number };
@@ -3242,7 +3245,7 @@ export const shiftHoursService = {
         action: 'approve' | 'propose_correction' | 'accept_counter' | 'escalate',
         proposed?: { startTime: string; endTime: string; reason?: string; lineItems?: Array<{ type: string; label: string; note: string; amount: number }> }
     ) => {
-        if (!isConfigured) throw new Error('Firebase not configured');
+        if (!isConfigured || !functions) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-reviewShiftHours');
         const res = await fn({
             appointmentId,
@@ -3260,7 +3263,7 @@ export const shiftHoursService = {
         action: 'accept' | 'counter_propose',
         counter?: { startTime: string; endTime: string; note?: string; lineItems?: Array<{ type: string; label: string; note: string; amount: number }> }
     ) => {
-        if (!isConfigured) throw new Error('Firebase not configured');
+        if (!isConfigured || !functions) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-respondToCorrection');
         const res = await fn({
             appointmentId,
@@ -3274,21 +3277,21 @@ export const shiftHoursService = {
     },
 
     adminResolve: async (appointmentId: string, finalStartTime: string, finalEndTime: string, note?: string) => {
-        if (!isConfigured) throw new Error('Firebase not configured');
+        if (!isConfigured || !functions) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-adminResolveShiftHours');
         const res = await fn({ appointmentId, finalStartTime, finalEndTime, note });
         return res.data as { success: boolean };
     },
 
     retryPayment: async (appointmentId: string) => {
-        if (!isConfigured) throw new Error('Firebase not configured');
+        if (!isConfigured || !functions) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-retryShiftPayment');
         const res = await fn({ appointmentId });
         return res.data as { success: boolean; error?: string };
     },
 
     updateBookingPaymentMethod: async (appointmentId: string, paymentMethod: 'cash' | 'credit') => {
-        if (!isConfigured) throw new Error('Firebase not configured');
+        if (!isConfigured || !functions) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-updateBookingPaymentMethod');
         const res = await fn({ appointmentId, paymentMethod });
         return res.data as { success: boolean };

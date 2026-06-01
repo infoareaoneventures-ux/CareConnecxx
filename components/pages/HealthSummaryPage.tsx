@@ -31,8 +31,10 @@ export default function HealthSummaryPage() {
   }, [token]);
 
   async function loadTrend(t: string) {
+    const fdb = db;
+    if (!fdb) { setState('notfound'); return; }
     try {
-      const snap = await getDoc(doc(db, 'health_summaries', t));
+      const snap = await getDoc(doc(fdb, 'health_summaries', t));
       if (!snap.exists()) { setState('notfound'); return; }
 
       const data = snap.data() as HealthTrend;

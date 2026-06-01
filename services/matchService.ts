@@ -531,10 +531,10 @@ export const matchService = {
         if (factors.similarSeniorsScore >= 75) {
             insights.push(`Seniors similar to ${senior.name || 'your loved one'} have given ${caregiver.name} excellent reviews`);
         }
-        if (factors.retentionScore >= 80) {
+        if ((factors.retentionScore ?? 0) >= 80) {
             insights.push(`${factors.retentionScore}% of families continue booking ${caregiver.name} long-term`);
         }
-        if (factors.acceptanceProbability >= 85) {
+        if ((factors.acceptanceProbability ?? 0) >= 85) {
             insights.push(`${caregiver.name} usually accepts shifts at this time`);
         }
         if (factors.successProbability >= 85) {

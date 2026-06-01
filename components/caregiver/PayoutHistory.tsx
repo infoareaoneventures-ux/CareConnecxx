@@ -21,7 +21,7 @@ export const PayoutHistory: React.FC<PayoutHistoryProps> = ({ uid }) => {
     const [payouts, setPayouts] = useState<PayoutRecord[] | null>(null);
 
     useEffect(() => {
-        if (!uid) return;
+        if (!uid || !db) return;
         const unsub = db.collection('caregivers').doc(uid).collection('payouts')
             .orderBy('createdAt', 'desc')
             .limit(25)

@@ -19,6 +19,33 @@ import { buildAndSaveJobPost } from "./buildJobPost";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { generateOtp, verifyOtp, formatOtpForDisplay, OtpState } from "../utils/phoneVerification";
 import { languageFromSession, t as tr } from "../utils/language";
+import { reverseGeocode, SharedLocation } from "../utils/locationShare";
+import { downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/mediaIntake";
+import { addKnownNames } from "../utils/knownNames";
+import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
+
+/** iMessage/RCS can share a location pin; plain SMS cannot. */
+function isRichService(service?: string): boolean {
+  const s = (service ?? "").toLowerCase();
+  return s === "imessage" || s === "rcs";
+}
+
+/**
+ * The "where are you" question. On iMessage/RCS, invite the one-tap location
+ * share; on SMS keep the plain typed prompt (location-sharing is impossible there).
+ */
+function locationPrompt(base: string, service?: string): string {
+  return isRichService(service)
+    ? `${base}\n\nOr just tap ➕ and share your location — one tap, no typing.`
+    : base;
+}
+
+/** Options threaded from the inbound webhook into the onboarding dispatcher. */
+export interface OnboardingStepOptions {
+  service?:         string;
+  inboundLocation?: SharedLocation;
+  inboundMedia?:    InboundMediaPart;
+}
 
 const db = admin.firestore();
 
@@ -210,10 +237,20 @@ export async function handleOnboardingStep(
   phone:   string,
   chatId:  string,
   text:    string,
-  session: AgentSession
+  session: AgentSession,
+  opts:    OnboardingStepOptions = {}
 ): Promise<void> {
   let step = session.onboardingStep ?? "";
   const norm = text.trim().toUpperCase();
+  const { service, inboundLocation, inboundMedia } = opts;
+
+  // ── Inbound image / document (vision-gated) ─────────────────────────────────
+  // A texted photo/document with no text. Route by the current step before any
+  // text-based detectors run (they'd misfire on empty text). The handler decides
+  // whether the media fits this step; if not, it nudges the user back on track.
+  if (inboundMedia && text === "") {
+    return handleInboundMedia(phone, chatId, session, inboundMedia, step);
+  }
 
   // Global: "start over" resets
   if (norm === "START OVER" || norm === "RESTART") {
@@ -233,8 +270,9 @@ export async function handleOnboardingStep(
   // stored posture (reuses the same engine + session field as the QA agent), and
   // stash the directive on the session so step handlers can reflect the feeling
   // before logistics. Skipped for the OTP step and the RESUME sentinel — no
-  // emotional content there, and it saves a model call.
-  if (step !== "verify_phone" && text !== "__RESUME__") {
+  // emotional content there, and it saves a model call. Also skipped for a bare
+  // location pin (no text → no sentiment to classify).
+  if (step !== "verify_phone" && text !== "__RESUME__" && !(inboundLocation && text === "")) {
     const current = await classifyEmotionalContext(text).catch(() => "calm" as const);
     const stored  = (session as any).emotionalContext as StoredEmotionalContext | undefined;
     const blended = blendEmotionalContext(stored, current);
@@ -332,7 +370,10 @@ export async function handleOnboardingStep(
         caregiver_ask_rate:    "What's your hourly rate?",
         caregiver_ask_email:   "What's your email address?",
       };
-      const repeat = stepMessages[step] ?? "Could you continue where we left off?";
+      let repeat = stepMessages[step] ?? "Could you continue where we left off?";
+      if (step === "client_ask_location" || step === "caregiver_ask_location") {
+        repeat = locationPrompt(repeat, service);
+      }
       await sendMessage(chatId, `Got it — updated.\n\n${repeat}`);
       return;
     }
@@ -344,8 +385,8 @@ export async function handleOnboardingStep(
     case "ask_role":              return handleAskRole(phone, chatId, text);
     case "client_ask_name":       return handleClientAskName(phone, chatId, text, session);
     case "client_ask_senior":     return handleClientAskSenior(phone, chatId, text, session);
-    case "client_ask_needs":      return handleClientAskNeeds(phone, chatId, text, session);
-    case "client_ask_location":   return handleClientAskLocation(phone, chatId, text, session);
+    case "client_ask_needs":      return handleClientAskNeeds(phone, chatId, text, session, service);
+    case "client_ask_location":   return handleClientAskLocation(phone, chatId, text, session, opts);
     case "client_ask_schedule":   return handleClientAskSchedule(phone, chatId, text, session);
     case "client_ask_start":        return handleClientAskStart(phone, chatId, text, session);
     case "client_ask_preferences":  return handleClientAskPreferences(phone, chatId, text, session);
@@ -378,8 +419,8 @@ export async function handleOnboardingStep(
     case "job_ask_pay_method":   return handleJobAskPayMethod(phone, chatId, text, session);
     case "job_ask_description":  return handleJobAskDescription(phone, chatId, text, session);
     case "job_confirm_post":     return handleJobConfirmPost(phone, chatId, text, session);
-    case "caregiver_ask_name":        return handleCaregiverAskName(phone, chatId, text, session);
-    case "caregiver_ask_location":    return handleCaregiverAskLocation(phone, chatId, text, session);
+    case "caregiver_ask_name":        return handleCaregiverAskName(phone, chatId, text, session, service);
+    case "caregiver_ask_location":    return handleCaregiverAskLocation(phone, chatId, text, session, opts);
     case "caregiver_ask_experience":  return handleCaregiverAskExperience(phone, chatId, text, session);
     case "caregiver_ask_specialties": return handleCaregiverAskSpecialties(phone, chatId, text, session);
     case "caregiver_ask_profile":      return handleCaregiverAskProfile(phone, chatId, text, session);
@@ -581,7 +622,7 @@ async function handleClientAskSenior(phone: string, chatId: string, text: string
   await sendMessage(chatId, msg4);
 }
 
-async function handleClientAskNeeds(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+async function handleClientAskNeeds(phone: string, chatId: string, text: string, session: AgentSession, service?: string): Promise<void> {
   if (await isQuestionOrOther(text)) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
@@ -619,14 +660,38 @@ async function handleClientAskNeeds(phone: string, chatId: string, text: string,
     emotionalDirective: (session as any)._emotionalDirective,
     maxTokens: 120,
   });
-  await sendMessage(chatId, msg5);
+  await sendMessage(chatId, locationPrompt(msg5, service));
 }
 
-async function handleClientAskLocation(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+async function handleClientAskLocation(phone: string, chatId: string, text: string, session: AgentSession, opts: OnboardingStepOptions = {}): Promise<void> {
+  const { service, inboundLocation } = opts;
+
+  // One-tap location pin (iMessage/RCS): use the coords directly, reverse-geocode
+  // to backfill city/zip for the rest of the city-centric flow, and store raw
+  // lat/lng for true haversine matching. No parseWithClaude needed.
+  if (inboundLocation) {
+    const rev = await reverseGeocode(inboundLocation.lat, inboundLocation.lng);
+    const city = rev?.city ?? "", zipCode = rev?.zipCode ?? "";
+    await mergeOnboardingData(phone, { city, zipCode, lat: inboundLocation.lat, lng: inboundLocation.lng });
+    await updateSession(phone, { onboardingStep: "client_ask_schedule" });
+    const d = session.onboardingData ?? {};
+    const ack = city
+      ? `Got it — pinned you to ${city}${zipCode ? ` ${zipCode}` : ""}. `
+      : "Got your location, thanks! ";
+    const msgPin = await generateCaraMessage({
+      audience: "family",
+      context: `Cara just received the family's shared location${city ? ` (${city})` : ""}. Acknowledge it warmly in one short line, then ask how often ${d.seniorName ?? "their loved one"} needs a caregiver and what times of day work best.`,
+      fallback: `${ack}How often does ${d.seniorName ?? "they"} need someone, and what times of day work best?`,
+      maxTokens: 90,
+    });
+    await sendMessage(chatId, msgPin);
+    return;
+  }
+
   if (await isQuestionOrOther(text)) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, "What city and zip code are you in? (e.g. \"Austin, TX 78701\")");
+    await sendMessage(chatId, locationPrompt("What city and zip code are you in? (e.g. \"Austin, TX 78701\")", service));
     return;
   }
   const raw = await parseWithClaude(
@@ -643,7 +708,7 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
   } catch { /* keep defaults */ }
 
   if (!city && !zipCode) {
-    await sendMessage(chatId, "Hmm, I didn't catch that. Could you share your city and zip code? (e.g. \"Austin, TX 78701\")");
+    await sendMessage(chatId, locationPrompt("Hmm, I didn't catch that. Could you share your city and zip code? (e.g. \"Austin, TX 78701\")", service));
     return;
   }
 
@@ -1144,7 +1209,7 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
 
 // ── CAREGIVER FLOW ────────────────────────────────────────────────────────────
 
-async function handleCaregiverAskName(phone: string, chatId: string, text: string, session?: AgentSession): Promise<void> {
+async function handleCaregiverAskName(phone: string, chatId: string, text: string, session?: AgentSession, service?: string): Promise<void> {
   if (await isQuestionOrOther(text)) {
     const answer = await answerQuestionMidFlow(text, session ?? ({ onboardingData: {} } as AgentSession));
     await sendMessage(chatId, answer);
@@ -1167,57 +1232,83 @@ async function handleCaregiverAskName(phone: string, chatId: string, text: strin
     fallback: `Hi ${name} — what city and zip code do you work in?`,
     maxTokens: 80,
   });
-  await sendMessage(chatId, msg9);
+  await sendMessage(chatId, locationPrompt(msg9, service));
 }
 
-async function handleCaregiverAskLocation(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "What city and zip code do you work in?");
-    return;
-  }
-  const raw = await parseWithClaude(
-    'Extract city and zipCode from this message. Reply in JSON: {"city":"...","zipCode":"..."}',
-    text
-  );
-  let city = "", zipCode = "";
-  try { const p = JSON.parse(raw); city = p.city ?? ""; zipCode = p.zipCode ?? ""; } catch { /* keep defaults */ }
+/**
+ * Live local-demand snapshot for a caregiver's city. Returns the count of open
+ * jobs and up to 3 formatted lines (care type · rate). Used both at the location
+ * step (early "this is legit" proof) and re-cited at the membership ask so the
+ * value is fresh and concrete at the moment we ask for payment. Never fabricates
+ * — an empty result means there genuinely are no open jobs in that city.
+ */
+async function getLocalJobTeaser(city: string): Promise<{ count: number; lines: string }> {
+  if (!city) return { count: 0, lines: "" };
+  try {
+    const openSnap = await db.collection("job_posts").where("status", "==", "open").limit(50).get();
+    const cityLower = city.toLowerCase();
+    const localJobs = openSnap.docs.filter((doc) => {
+      const c = doc.data().location?.city;
+      return c && String(c).toLowerCase() === cityLower;
+    }).slice(0, 3);
 
-  await mergeOnboardingData(phone, { city, zipCode });
+    const lines = localJobs.map((doc, i) => {
+      const j = doc.data();
+      const needs = (j.careTypes ?? []).join(", ") || "general care";
+      const rate  = j.hourlyRate ? ` · $${j.hourlyRate}/hr` : "";
+      return `${i + 1}. ${needs}${rate}`;
+    }).join("\n");
+
+    return { count: localJobs.length, lines };
+  } catch (err) {
+    console.error("[getLocalJobTeaser] failed:", err);
+    return { count: 0, lines: "" };
+  }
+}
+
+async function handleCaregiverAskLocation(phone: string, chatId: string, text: string, session: AgentSession, opts: OnboardingStepOptions = {}): Promise<void> {
+  const { service, inboundLocation } = opts;
+  let city = "", zipCode = "";
+  let coords: { lat: number; lng: number } | undefined;
+
+  if (inboundLocation) {
+    // One-tap location pin: reverse-geocode to backfill city/zip (keeps the
+    // city-keyed local-job teaser working) and keep raw coords for matching.
+    const rev = await reverseGeocode(inboundLocation.lat, inboundLocation.lng);
+    city = rev?.city ?? ""; zipCode = rev?.zipCode ?? "";
+    coords = { lat: inboundLocation.lat, lng: inboundLocation.lng };
+  } else {
+    if (await isQuestionOrOther(text)) {
+      const answer = await answerQuestionMidFlow(text, session);
+      await sendMessage(chatId, answer);
+      await sendMessage(chatId, locationPrompt("What city and zip code do you work in?", service));
+      return;
+    }
+    const raw = await parseWithClaude(
+      'Extract city and zipCode from this message. Reply in JSON: {"city":"...","zipCode":"..."}',
+      text
+    );
+    try { const p = JSON.parse(raw); city = p.city ?? ""; zipCode = p.zipCode ?? ""; } catch { /* keep defaults */ }
+  }
+
+  await mergeOnboardingData(phone, { city, zipCode, ...(coords ? { lat: coords.lat, lng: coords.lng } : {}) });
 
   // Value hook (founder direction): the moment a caregiver shares their location,
   // show REAL local demand so the platform proves it's legit before we ask for
   // anything. Honest empty state when nothing is open yet — no fabricated jobs.
   if (city) {
-    try {
-      const openSnap = await db.collection("job_posts").where("status", "==", "open").limit(50).get();
-      const cityLower = city.toLowerCase();
-      const localJobs = openSnap.docs.filter((doc) => {
-        const c = doc.data().location?.city;
-        return c && String(c).toLowerCase() === cityLower;
-      }).slice(0, 3);
-
-      if (localJobs.length > 0) {
-        const lines = localJobs.map((doc, i) => {
-          const j = doc.data();
-          const needs = (j.careTypes ?? []).join(", ") || "general care";
-          const rate  = j.hourlyRate ? ` · $${j.hourlyRate}/hr` : "";
-          return `${i + 1}. ${needs}${rate}`;
-        }).join("\n");
-        await sendMessage(chatId,
-          `Good news — there ${localJobs.length === 1 ? "is" : "are"} ${localJobs.length} open care ` +
-          `${localJobs.length === 1 ? "job" : "jobs"} near ${city} right now:\n\n${lines}\n\n` +
-          `Finish your quick profile and you'll be able to apply.`
-        );
-      } else {
-        await sendMessage(chatId,
-          `I don't have open jobs in ${city} this minute — new ones post daily and I'll text you ` +
-          `the moment one matches your skills. Let's finish your profile so you're ready to apply.`
-        );
-      }
-    } catch (err) {
-      console.error("[handleCaregiverAskLocation] local job teaser failed:", err);
+    const { count, lines } = await getLocalJobTeaser(city);
+    if (count > 0) {
+      await sendMessage(chatId,
+        `Good news — there ${count === 1 ? "is" : "are"} ${count} open care ` +
+        `${count === 1 ? "job" : "jobs"} near ${city} right now:\n\n${lines}\n\n` +
+        `Finish your quick profile and you'll be able to apply.`
+      );
+    } else {
+      await sendMessage(chatId,
+        `I don't have open jobs in ${city} this minute — new ones post daily and I'll text you ` +
+        `the moment one matches your skills. Let's finish your profile so you're ready to apply.`
+      );
     }
   }
 
@@ -1501,9 +1592,11 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
       // Recurring annual membership (mode "subscription" → renews yearly).
       // NOTE: STRIPE_CAREGIVER_ANNUAL must be a *recurring* annual price in Stripe.
       // The optional MVR add-on is a one-time price, added to the first invoice.
+      // We intentionally omit payment_method_types so Checkout uses the account's
+      // automatic payment methods — this surfaces Apple Pay / Google Pay / Link
+      // (caregivers are mobile-first over SMS), which an explicit ["card"] list suppresses.
       const stripeSession = await getStripe().checkout.sessions.create({
         mode:                 "subscription",
-        payment_method_types: ["card"],
         line_items:           lineItems,
         success_url:          `${APP_URL}/done?task=caregiver_membership&t=${token}`,
         cancel_url:           `${APP_URL}/start`,
@@ -1520,13 +1613,22 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
     ? "\n\nYour order includes the $24.95/yr membership + MVR driver check."
     : "";
 
+  // Re-cite the live local demand the caregiver saw at the location step — fresh
+  // at the moment of payment — so the ask is anchored to concrete, current jobs
+  // rather than a generic "jobs near you". Honest if supply has since dried up.
+  const city = (d.city as string | undefined) ?? "";
+  const { count: openJobCount } = await getLocalJobTeaser(city);
+  const demandLine = openJobCount > 0
+    ? `The ${openJobCount} open care ${openJobCount === 1 ? "job" : "jobs"} near ${city} ${openJobCount === 1 ? "is" : "are"} still waiting — `
+    : "";
+
   // Store URL on session so we can resend it
   await updateSession(phone, {
     onboardingStep:        "caregiver_awaiting_membership",
     membershipCheckoutUrl: checkoutUrl,
   });
   await sendMessage(chatId,
-    "You're almost ready to apply! Activate your membership ($24.95/year) to unlock applying to the " +
+    `${demandLine}You're almost ready to apply! Activate your membership ($24.95/year) to unlock applying to the ` +
     `jobs near you, getting booked, and Cara's scheduling + payout tools.${mvrLine}\n\nTap to activate:`
   );
   await sendMessage(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
@@ -1569,6 +1671,105 @@ async function handleCaregiverSendDocuments(phone: string, chatId: string, sessi
   await updateSession(phone, { onboardingStep: "caregiver_awaiting_documents" });
   await sendMessage(chatId, "Do you have certifications to upload? (CNA license, CPR card, etc.)\n\nTap to upload, or reply SKIP:");
   await sendMessage(chatId, { parts: [{ type: "link", value: docUrl }] });
+}
+
+// ── Inbound media during onboarding (texted photo / document) ─────────────────
+// A caregiver snaps a headshot or a CNA/CPR card and texts it instead of using
+// the web upload link. Route by the current step; gate with gpt-4o vision and
+// warmly re-ask on a bad shot rather than advancing. Anything sent at a step
+// that isn't expecting a file gets a gentle nudge back on track.
+async function handleInboundMedia(
+  phone:   string,
+  chatId:  string,
+  session: AgentSession,
+  media:   InboundMediaPart,
+  step:    string
+): Promise<void> {
+  if (step === "caregiver_send_photo" || step === "caregiver_awaiting_photo") {
+    return handleInboundProfilePhoto(phone, chatId, media);
+  }
+  if (step === "caregiver_send_documents" || step === "caregiver_awaiting_documents") {
+    return handleInboundDocument(phone, chatId, media);
+  }
+  // Not a file-collecting step. Acknowledge warmly and steer back to the task.
+  if (step === "client_awaiting_identity") {
+    await sendMessage(chatId,
+      "Thanks for sending that! For your security, identity verification has to go " +
+      "through the secure link I sent — a texted photo can't complete it. Tap that " +
+      "link when you're ready and I'll take it from there."
+    );
+    return;
+  }
+  await sendMessage(chatId,
+    "Got your file, thank you! I'm not at that step just yet — let's finish what we " +
+    "were on and I'll ask for anything I need. What were you going to say?"
+  );
+}
+
+async function handleInboundProfilePhoto(
+  phone:  string,
+  chatId: string,
+  media:  InboundMediaPart
+): Promise<void> {
+  try {
+    const dl = await downloadMedia(media);
+    const verdict = await verifyProfilePhoto(dl.buffer, dl.content_type);
+    if (!verdict.ok) {
+      // Keep them at the photo step and warmly ask for a better shot.
+      const why = verdict.reason ? ` (${verdict.reason})` : "";
+      await sendMessage(chatId,
+        `Thanks${why ? "" : "!"} That photo didn't quite work for your profile${why}. ` +
+        `Could you send one clear, well-lit photo of your face? You can also tap the upload link I sent.`
+      );
+      return;
+    }
+    const url = await storeInboundMedia({
+      phone, kind: "image", buffer: dl.buffer,
+      content_type: dl.content_type, ext: dl.ext,
+    });
+    await sendMessage(chatId, "Perfect — got your photo! 📸");
+    // Reuse the canonical upload-complete path so downstream behavior (advance to
+    // documents) is identical to the web upload flow.
+    await advanceOnboardingStep(phone, "photo_upload", url);
+  } catch (err) {
+    console.error("handleInboundProfilePhoto failed", { phone, err: (err as Error)?.message });
+    await sendMessage(chatId,
+      "I had trouble opening that photo — could you try sending it again, or tap the upload link I sent?"
+    );
+  }
+}
+
+async function handleInboundDocument(
+  phone:  string,
+  chatId: string,
+  media:  InboundMediaPart
+): Promise<void> {
+  try {
+    const dl = await downloadMedia(media);
+    const verdict = await verifyDocument(dl.buffer, dl.content_type);
+    if (!verdict.ok) {
+      const why = verdict.reason ? ` ${verdict.reason}` : "";
+      await sendMessage(chatId,
+        `Thanks for that!${why} Could you resend a clear photo of your certification ` +
+        `(CNA license, CPR card, etc.)? Or reply SKIP to move on — you can always add it later.`
+      );
+      return;
+    }
+    const url = await storeInboundMedia({
+      phone, kind: "document", buffer: dl.buffer,
+      content_type: dl.content_type, ext: dl.ext,
+    });
+    const label = verdict.docType && verdict.docType !== "document" && verdict.docType !== "unknown"
+      ? `your ${verdict.docType}`
+      : "your certification";
+    await sendMessage(chatId, `Got ${label} — saved. ✅`);
+    await advanceOnboardingStep(phone, "doc_upload", url);
+  } catch (err) {
+    console.error("handleInboundDocument failed", { phone, err: (err as Error)?.message });
+    await sendMessage(chatId,
+      "I had trouble opening that document — could you try again, or reply SKIP to continue?"
+    );
+  }
 }
 
 async function handleCaregiverSendBgcheck(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -1875,6 +2076,43 @@ export async function resendStuckStep(phone: string): Promise<boolean> {
       await handleClientSendPayment(phone, chatId, session);
       return true;
     }
+    case "client_awaiting_identity": {
+      // Re-issue a fresh Stripe Identity link. Mirror handleClientPlanReply's
+      // inline send; fall back to payment if Identity can't be created.
+      await signalThinking(chatId, session.service);
+      let identityUrl: string;
+      try {
+        identityUrl = await createClientIdentitySession(phone);
+      } catch (err) {
+        console.error("resendStuckStep(identity) createClientIdentitySession error:", err);
+        await updateSession(phone, { onboardingStep: "client_send_payment" });
+        await handleClientSendPayment(phone, chatId, session);
+        return true;
+      }
+      await sendMessage(chatId,
+        "Picking up where we left off — here's a fresh link for the quick 30-second identity check:"
+      );
+      await sendMessage(chatId, { parts: [{ type: "link", value: identityUrl }] });
+      return true;
+    }
+    case "caregiver_awaiting_membership":
+    case "caregiver_send_membership": {
+      // Prefer the stored checkout URL; regenerate if it was lost.
+      await handleCaregiverResendMembership(phone, chatId, session);
+      return true;
+    }
+    case "caregiver_awaiting_photo":
+    case "caregiver_send_photo": {
+      // Re-send a fresh photo-upload link
+      await handleCaregiverSendPhoto(phone, chatId, session);
+      return true;
+    }
+    case "caregiver_awaiting_documents":
+    case "caregiver_send_documents": {
+      // Re-send a fresh document-upload link
+      await handleCaregiverSendDocuments(phone, chatId, session);
+      return true;
+    }
     default:
       return false;
   }
@@ -1905,6 +2143,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       });
 
       const d = session.onboardingData ?? {};
+      // Raw coords (present only when the family shared a location pin) — unlock
+      // true haversine distance in aiMatching instead of city/zip proxy buckets.
+      const lat = typeof d.lat === "number" ? d.lat as number : undefined;
+      const lng = typeof d.lng === "number" ? d.lng as number : undefined;
+      const hasCoords = lat !== undefined && lng !== undefined;
 
       // Get or create Firebase Auth UID (may already exist from identity step)
       let uid = session.userId as string | undefined;
@@ -1965,7 +2208,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
               updatedAt:   new Date().toISOString(),
             },
           },
-          locationPool: [{ city, zipCode, primary: true }],
+          locationPool: [{ city, zipCode, primary: true, ...(hasCoords ? { lat, lng } : {}) }],
           updatedAt: new Date().toISOString(),
         }, { merge: true });
       }
@@ -1982,6 +2225,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         conditions:  d.conditions,
         city:        d.city,
         zipCode:     d.zipCode,
+        ...(hasCoords ? { lat, lng, location: { lat, lng } } : {}),
         daysPerWeek: d.daysPerWeek,
         timeOfDay:   d.timeOfDay,
         hoursPerDay: d.hoursPerDay,
@@ -1997,6 +2241,10 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         phone,
         city:       (d.city ?? "") as string,
       }).catch((err) => console.error("notifyAdminNewClientSignup error:", err));
+
+      // Seed the known-names registry with the client + care recipient so the
+      // persona-shift detector recognizes both from day one.
+      await addKnownNames(phone, [d.firstName as string, d.seniorName as string]);
 
       // Initialize memory files with onboarding data
       initializeMemoryFiles(uid ?? phone, {
@@ -2036,12 +2284,24 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
     }
 
     case "photo_upload": {
+      // Persist the uploaded photo URL so it lands on the caregiver doc at
+      // finalization (taskData is the Storage URL — from the web upload page OR
+      // a texted headshot). Previously this URL was dropped on the floor.
+      if (taskData) await mergeOnboardingData(phone, { profilePhoto: taskData });
       await updateSession(phone, { onboardingStep: "caregiver_send_documents" });
       await handleCaregiverSendDocuments(phone, chatId, session);
       break;
     }
 
     case "doc_upload": {
+      // Append the document URL to onboardingData.documents (web upload OR texted
+      // certification) so it carries onto the caregiver doc at finalization.
+      if (taskData) {
+        const existingDocs = Array.isArray((session.onboardingData ?? {}).documents)
+          ? ((session.onboardingData ?? {}).documents as string[])
+          : [];
+        await mergeOnboardingData(phone, { documents: [...existingDocs, taskData] });
+      }
       await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
       await handleCaregiverAskMvr(phone, chatId, session);
       break;
@@ -2127,11 +2387,20 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
 
       // Caregiver Stripe Connect complete → finalize caregiver doc
       const d = session.onboardingData ?? {};
+      // Raw coords (present only when the caregiver shared a location pin) — let
+      // aiMatching use true haversine distance instead of the city/zip proxy.
+      const cgLat = typeof d.lat === "number" ? d.lat as number : undefined;
+      const cgLng = typeof d.lng === "number" ? d.lng as number : undefined;
+      const cgHasCoords = cgLat !== undefined && cgLng !== undefined;
       const profileData = {
         phone,
         name:            d.name,
         city:            d.city,
         zipCode:         d.zipCode,
+        ...(cgHasCoords ? { lat: cgLat, lng: cgLng, location: { lat: cgLat, lng: cgLng } } : {}),
+        // Profile photo + uploaded credentials (web upload OR texted to Cara).
+        ...(d.profilePhoto ? { profilePhoto: d.profilePhoto, photoURL: d.profilePhoto } : {}),
+        ...(Array.isArray(d.documents) && d.documents.length ? { documents: d.documents } : {}),
         yearsExperience: d.yearsExperience,
         certifications:  d.certifications,
         specialties:     d.specialties,
@@ -2146,6 +2415,10 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         canDrive:        d.canDrive ?? null,
         membershipSubscriptionId: (session as any).caregiverSubscriptionId ?? null,
         status:          "active",
+        // Visibility gate: families' FindCaregivers query only loads caregivers
+        // where onboardingStatus === 'profile_complete'. Cara is the canonical
+        // onboarding path, so it must set this too (the web wizard already does).
+        onboardingStatus: "profile_complete",
       };
 
       let caregiverId: string;

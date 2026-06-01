@@ -15,7 +15,11 @@
       "Bash(ls App.tsx)",
       "Bash(ls components/client/IdentityCallback.tsx components/StripeCallback.tsx components/pages/UploadPage.tsx components/pages/GenericSuccessPage.tsx)",
       "Bash(ls src/App.tsx)",
-      "Bash(cd /d/CareConnecxx && grep -rn \"ConnectStatus\\\\|connect.*status\\\\|payoutsEnabled\\\\|getConnectAccount\\\\|account_onboarding\\\\|chargesEnabled\\\\|detailsSubmitted\" services/ functions/src/stripeConnect.ts 2>/dev/null | head -25)"
+      "Bash(cd /d/CareConnecxx && grep -rn \"ConnectStatus\\\\|connect.*status\\\\|payoutsEnabled\\\\|getConnectAccount\\\\|account_onboarding\\\\|chargesEnabled\\\\|detailsSubmitted\" services/ functions/src/stripeConnect.ts 2>/dev/null | head -25)",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-String -Pattern \"error TS\" | ForEach-Object { \\($_ -split \"\\\\\\(\"\\)[0] } | Sort-Object -Unique)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('test script:', p.scripts && p.scripts.test\\)\")",
+      "Bash(grep -l \"membership\\\\|Activate your membership\\\\|still waiting\\\\|jobs near\" src/agents/goldenTranscripts.test.ts)",
+      "Bash(echo \"TSC_EXIT:$?\")"
     ]
   },
   "hooks": {

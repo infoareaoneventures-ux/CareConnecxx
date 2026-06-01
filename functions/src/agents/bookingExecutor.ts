@@ -205,6 +205,12 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     totalCost:        task.totalCost,
   }).catch((err) => console.error("notifyAdminBookingConfirmed error:", err));
 
+  // This caregiver is now on the family's care team — register their name so the
+  // persona-shift detector treats future mentions as a known caregiver, not a
+  // different care recipient.
+  const { addKnownNames } = await import("../utils/knownNames");
+  await addKnownNames(clientPhone, [task.caregiverName]);
+
   const appUrl = process.env.APP_URL ?? "https://cara.app";
 
   // Confirm to family

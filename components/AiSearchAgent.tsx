@@ -100,6 +100,7 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
   const backendMatchesRef = useRef<Map<string, { score: number; reasons: string[] }> | null>(null);
   const loadBackendMatches = async (): Promise<Map<string, { score: number; reasons: string[] }>> => {
     if (backendMatchesRef.current) return backendMatchesRef.current;
+    if (!auth) return new Map();
     const user = auth.currentUser;
     if (!user) return new Map();
     const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), 5000));
@@ -675,7 +676,7 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
                         </div>
                         <div className="flex items-center text-xs text-slate-500 mt-1">
                           <Star className="w-3 h-3 text-accent-400 mr-1" fill="currentColor" />
-                          <span className="font-medium mr-1 text-slate-900">{caregiver.rating.toFixed(1)}</span>
+                          <span className="font-medium mr-1 text-slate-900">{(caregiver.rating ?? 0).toFixed(1)}</span>
                           <span className="text-slate-400 mr-2">({caregiver.matchScore}% Match)</span>
                           <MapPin className="w-3 h-3 mr-1" />
                           <span>{caregiver.distance} mi</span>

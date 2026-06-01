@@ -335,11 +335,11 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     const stored = recipientPlans[key];
     if (stored) {
       return {
-        careNeeds: wizardData?.careNeeds || [],
-        locations: wizardLocations.slice(0, 1),
-        notes: wizardData?.jobDescription || '',
-        careNeedDetails: {},
         ...stored,
+        careNeeds: stored.careNeeds ?? wizardData?.careNeeds ?? [],
+        locations: stored.locations ?? wizardLocations.slice(0, 1),
+        notes: stored.notes ?? wizardData?.jobDescription ?? '',
+        careNeedDetails: stored.careNeedDetails ?? {},
         lifestyle: { ...emptyLifestyle(), ...(stored.lifestyle || {}) },
         tasks: { ...emptyTasks(), ...(stored.tasks || {}) },
       };

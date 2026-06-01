@@ -106,9 +106,11 @@ export const AuditTrail: React.FC = () => {
   const [anomalies, setAnomalies] = useState<Set<string>>(new Set());
 
   const fetchPage = useCallback(async (cursor: QueryDocumentSnapshot<DocumentData> | null) => {
+    if (!db) return null;
+    const fdb = db;
     setLoading(true);
     try {
-      const col = collection(db, 'agent_audit_log');
+      const col = collection(fdb, 'agent_audit_log');
       let constraints: Parameters<typeof query>[1][] = [orderBy('timestamp', 'desc'), limit(PAGE_SIZE + 1)];
 
       if (filterType) constraints = [where('eventType', '==', filterType), ...constraints];

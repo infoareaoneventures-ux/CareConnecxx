@@ -181,6 +181,11 @@ async function executeBookings(taskId, clientPhone) {
         appointmentCount: task.appointments.length,
         totalCost: task.totalCost,
     }).catch((err) => console.error("notifyAdminBookingConfirmed error:", err));
+    // This caregiver is now on the family's care team — register their name so the
+    // persona-shift detector treats future mentions as a known caregiver, not a
+    // different care recipient.
+    const { addKnownNames } = await Promise.resolve().then(() => __importStar(require("../utils/knownNames")));
+    await addKnownNames(clientPhone, [task.caregiverName]);
     const appUrl = (_a = process.env.APP_URL) !== null && _a !== void 0 ? _a : "https://cara.app";
     // Confirm to family
     const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();

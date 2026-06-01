@@ -317,7 +317,9 @@ export const availabilityService = {
         try {
             // Single query for all candidates
             const caregiverIds = candidates.map(c => c.id);
-            const appointmentsSnap = await db
+            const fdb = db;
+            if (!fdb) throw new Error('Firestore not initialized');
+            const appointmentsSnap = await fdb
                 .collection('appointments')
                 .where('caregiverId', 'in', caregiverIds)
                 .where('date', '==', dateStr)

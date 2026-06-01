@@ -38,7 +38,7 @@ interface WizardForm {
   careNeeds: string[];
   petsInHome: boolean;
   smokingHousehold: boolean;
-  rate: number;
+  rate?: number;
   rateFlexible: boolean;
   paymentMethod: string;
   jobDescription: string;
@@ -139,8 +139,10 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
   // Pre-fill address and name from users doc
   useEffect(() => {
     const load = async () => {
+      const fdb = db;
+      if (!fdb) return;
       try {
-        const snap = await db.collection('users').doc(uid).get();
+        const snap = await fdb.collection('users').doc(uid).get();
         const d = snap.data() as any;
         if (d) {
           // Prefer dedicated fields; fall back to splitting combined `name`
@@ -250,7 +252,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     if (step === 9) return form.careRecipientFirstName.trim().length > 0;
     if (step === 10) return form.emergencyFirstName.trim().length > 0 && form.emergencyPhone.trim().length >= 10;
     if (step === 11) return form.careNeeds.length > 0;
-    if (step === 12) return !!form.paymentMethod && !!form.rate && form.rate > 0;
+    if (step === 12) return !!form.paymentMethod && !!form.rate && (form.rate ?? 0) > 0;
     return true;
   };
 
@@ -266,7 +268,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     setSaving(true);
     setSaveError(null);
     try {
-      await createJobPosting(uid, form);
+      await createJobPosting(uid, { ...form, rate: form.rate ?? 0 });
       try {
         const { caregivers } = await dbService.getCaregivers(50, null);
         setNearbyCount(caregivers.length);

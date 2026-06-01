@@ -14,10 +14,12 @@ export async function logMatchSignal(
     caregiverId: string,
     signal: MatchSignal
 ): Promise<void> {
+    const fdb = db;
+    if (!auth || !fdb) return;
     const user = auth.currentUser;
     if (!user || !caregiverId) return;
     try {
-        const ref = db
+        const ref = fdb
             .collection("users")
             .doc(user.uid)
             .collection("match_history")

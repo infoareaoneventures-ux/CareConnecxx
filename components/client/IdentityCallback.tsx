@@ -18,8 +18,9 @@ export default function IdentityCallback() {
   const [status, setStatus] = useState<Status>('waiting');
 
   useEffect(() => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) {
+    const uid = auth?.currentUser?.uid;
+    const fdb = db;
+    if (!uid || !fdb) {
       // SMS-originated users may not be logged in via web — just wait for webhook
       const timeout = window.setTimeout(() => {
         setStatus(prev => (prev === 'waiting' ? 'timeout' : prev));
@@ -27,7 +28,7 @@ export default function IdentityCallback() {
       return () => window.clearTimeout(timeout);
     }
 
-    const unsub = db.collection('users').doc(uid).onSnapshot(doc => {
+    const unsub = fdb.collection('users').doc(uid).onSnapshot(doc => {
       const s = (doc.data() as any)?.identityCheckStatus;
       if (s === 'verified') setStatus('verified');
       else if (s === 'requires_input') setStatus('requires_input');

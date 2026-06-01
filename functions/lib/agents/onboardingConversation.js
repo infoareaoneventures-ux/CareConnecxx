@@ -57,6 +57,24 @@ const buildJobPost_1 = require("./buildJobPost");
 const caraMessage_1 = require("../utils/caraMessage");
 const phoneVerification_1 = require("../utils/phoneVerification");
 const language_1 = require("../utils/language");
+const locationShare_1 = require("../utils/locationShare");
+const mediaIntake_1 = require("../utils/mediaIntake");
+const knownNames_1 = require("../utils/knownNames");
+const visionVerify_1 = require("../utils/visionVerify");
+/** iMessage/RCS can share a location pin; plain SMS cannot. */
+function isRichService(service) {
+    const s = (service !== null && service !== void 0 ? service : "").toLowerCase();
+    return s === "imessage" || s === "rcs";
+}
+/**
+ * The "where are you" question. On iMessage/RCS, invite the one-tap location
+ * share; on SMS keep the plain typed prompt (location-sharing is impossible there).
+ */
+function locationPrompt(base, service) {
+    return isRichService(service)
+        ? `${base}\n\nOr just tap ➕ and share your location — one tap, no typing.`
+        : base;
+}
 const db = admin.firestore();
 let _stripe = null;
 function getStripe() {
@@ -234,10 +252,18 @@ async function absorbClientFields(text, existing) {
     }
     return out;
 }
-async function handleOnboardingStep(phone, chatId, text, session) {
+async function handleOnboardingStep(phone, chatId, text, session, opts = {}) {
     var _a, _b, _c, _d, _e;
     let step = (_a = session.onboardingStep) !== null && _a !== void 0 ? _a : "";
     const norm = text.trim().toUpperCase();
+    const { service, inboundLocation, inboundMedia } = opts;
+    // ── Inbound image / document (vision-gated) ─────────────────────────────────
+    // A texted photo/document with no text. Route by the current step before any
+    // text-based detectors run (they'd misfire on empty text). The handler decides
+    // whether the media fits this step; if not, it nudges the user back on track.
+    if (inboundMedia && text === "") {
+        return handleInboundMedia(phone, chatId, session, inboundMedia, step);
+    }
     // Global: "start over" resets
     if (norm === "START OVER" || norm === "RESTART") {
         await updateSession(phone, { onboardingStep: "ask_role", onboardingData: {} });
@@ -253,8 +279,9 @@ async function handleOnboardingStep(phone, chatId, text, session) {
     // stored posture (reuses the same engine + session field as the QA agent), and
     // stash the directive on the session so step handlers can reflect the feeling
     // before logistics. Skipped for the OTP step and the RESUME sentinel — no
-    // emotional content there, and it saves a model call.
-    if (step !== "verify_phone" && text !== "__RESUME__") {
+    // emotional content there, and it saves a model call. Also skipped for a bare
+    // location pin (no text → no sentiment to classify).
+    if (step !== "verify_phone" && text !== "__RESUME__" && !(inboundLocation && text === "")) {
         const current = await (0, emotionalContext_1.classifyEmotionalContext)(text).catch(() => "calm");
         const stored = session.emotionalContext;
         const blended = (0, emotionalContext_1.blendEmotionalContext)(stored, current);
@@ -347,7 +374,10 @@ async function handleOnboardingStep(phone, chatId, text, session) {
                 caregiver_ask_rate: "What's your hourly rate?",
                 caregiver_ask_email: "What's your email address?",
             };
-            const repeat = (_e = stepMessages[step]) !== null && _e !== void 0 ? _e : "Could you continue where we left off?";
+            let repeat = (_e = stepMessages[step]) !== null && _e !== void 0 ? _e : "Could you continue where we left off?";
+            if (step === "client_ask_location" || step === "caregiver_ask_location") {
+                repeat = locationPrompt(repeat, service);
+            }
             await (0, client_1.sendMessage)(chatId, `Got it — updated.\n\n${repeat}`);
             return;
         }
@@ -358,8 +388,8 @@ async function handleOnboardingStep(phone, chatId, text, session) {
         case "ask_role": return handleAskRole(phone, chatId, text);
         case "client_ask_name": return handleClientAskName(phone, chatId, text, session);
         case "client_ask_senior": return handleClientAskSenior(phone, chatId, text, session);
-        case "client_ask_needs": return handleClientAskNeeds(phone, chatId, text, session);
-        case "client_ask_location": return handleClientAskLocation(phone, chatId, text, session);
+        case "client_ask_needs": return handleClientAskNeeds(phone, chatId, text, session, service);
+        case "client_ask_location": return handleClientAskLocation(phone, chatId, text, session, opts);
         case "client_ask_schedule": return handleClientAskSchedule(phone, chatId, text, session);
         case "client_ask_start": return handleClientAskStart(phone, chatId, text, session);
         case "client_ask_preferences": return handleClientAskPreferences(phone, chatId, text, session);
@@ -392,8 +422,8 @@ async function handleOnboardingStep(phone, chatId, text, session) {
         case "job_ask_pay_method": return handleJobAskPayMethod(phone, chatId, text, session);
         case "job_ask_description": return handleJobAskDescription(phone, chatId, text, session);
         case "job_confirm_post": return handleJobConfirmPost(phone, chatId, text, session);
-        case "caregiver_ask_name": return handleCaregiverAskName(phone, chatId, text, session);
-        case "caregiver_ask_location": return handleCaregiverAskLocation(phone, chatId, text, session);
+        case "caregiver_ask_name": return handleCaregiverAskName(phone, chatId, text, session, service);
+        case "caregiver_ask_location": return handleCaregiverAskLocation(phone, chatId, text, session, opts);
         case "caregiver_ask_experience": return handleCaregiverAskExperience(phone, chatId, text, session);
         case "caregiver_ask_specialties": return handleCaregiverAskSpecialties(phone, chatId, text, session);
         case "caregiver_ask_profile": return handleCaregiverAskProfile(phone, chatId, text, session);
@@ -569,7 +599,7 @@ async function handleClientAskSenior(phone, chatId, text, session) {
     });
     await (0, client_1.sendMessage)(chatId, msg4);
 }
-async function handleClientAskNeeds(phone, chatId, text, session) {
+async function handleClientAskNeeds(phone, chatId, text, session, service) {
     var _a, _b, _c, _d, _e, _f;
     if (await isQuestionOrOther(text)) {
         const answer = await answerQuestionMidFlow(text, session);
@@ -604,14 +634,36 @@ async function handleClientAskNeeds(phone, chatId, text, session) {
         emotionalDirective: session._emotionalDirective,
         maxTokens: 120,
     });
-    await (0, client_1.sendMessage)(chatId, msg5);
+    await (0, client_1.sendMessage)(chatId, locationPrompt(msg5, service));
 }
-async function handleClientAskLocation(phone, chatId, text, session) {
-    var _a, _b, _c, _d, _e, _f;
+async function handleClientAskLocation(phone, chatId, text, session, opts = {}) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+    const { service, inboundLocation } = opts;
+    // One-tap location pin (iMessage/RCS): use the coords directly, reverse-geocode
+    // to backfill city/zip for the rest of the city-centric flow, and store raw
+    // lat/lng for true haversine matching. No parseWithClaude needed.
+    if (inboundLocation) {
+        const rev = await (0, locationShare_1.reverseGeocode)(inboundLocation.lat, inboundLocation.lng);
+        const city = (_a = rev === null || rev === void 0 ? void 0 : rev.city) !== null && _a !== void 0 ? _a : "", zipCode = (_b = rev === null || rev === void 0 ? void 0 : rev.zipCode) !== null && _b !== void 0 ? _b : "";
+        await mergeOnboardingData(phone, { city, zipCode, lat: inboundLocation.lat, lng: inboundLocation.lng });
+        await updateSession(phone, { onboardingStep: "client_ask_schedule" });
+        const d = (_c = session.onboardingData) !== null && _c !== void 0 ? _c : {};
+        const ack = city
+            ? `Got it — pinned you to ${city}${zipCode ? ` ${zipCode}` : ""}. `
+            : "Got your location, thanks! ";
+        const msgPin = await (0, caraMessage_1.generateCaraMessage)({
+            audience: "family",
+            context: `Cara just received the family's shared location${city ? ` (${city})` : ""}. Acknowledge it warmly in one short line, then ask how often ${(_d = d.seniorName) !== null && _d !== void 0 ? _d : "their loved one"} needs a caregiver and what times of day work best.`,
+            fallback: `${ack}How often does ${(_e = d.seniorName) !== null && _e !== void 0 ? _e : "they"} need someone, and what times of day work best?`,
+            maxTokens: 90,
+        });
+        await (0, client_1.sendMessage)(chatId, msgPin);
+        return;
+    }
     if (await isQuestionOrOther(text)) {
         const answer = await answerQuestionMidFlow(text, session);
         await (0, client_1.sendMessage)(chatId, answer);
-        await (0, client_1.sendMessage)(chatId, "What city and zip code are you in? (e.g. \"Austin, TX 78701\")");
+        await (0, client_1.sendMessage)(chatId, locationPrompt("What city and zip code are you in? (e.g. \"Austin, TX 78701\")", service));
         return;
     }
     const raw = await parseWithClaude('Extract city and zipCode from this address text. Reply in JSON: {"city":"...","zipCode":"..."}', text);
@@ -619,22 +671,22 @@ async function handleClientAskLocation(phone, chatId, text, session) {
     try {
         if (raw !== "__parse_error__") {
             const parsed = JSON.parse(raw);
-            city = (_a = parsed.city) !== null && _a !== void 0 ? _a : "";
-            zipCode = (_b = parsed.zipCode) !== null && _b !== void 0 ? _b : "";
+            city = (_f = parsed.city) !== null && _f !== void 0 ? _f : "";
+            zipCode = (_g = parsed.zipCode) !== null && _g !== void 0 ? _g : "";
         }
     }
-    catch ( /* keep defaults */_g) { /* keep defaults */ }
+    catch ( /* keep defaults */_m) { /* keep defaults */ }
     if (!city && !zipCode) {
-        await (0, client_1.sendMessage)(chatId, "Hmm, I didn't catch that. Could you share your city and zip code? (e.g. \"Austin, TX 78701\")");
+        await (0, client_1.sendMessage)(chatId, locationPrompt("Hmm, I didn't catch that. Could you share your city and zip code? (e.g. \"Austin, TX 78701\")", service));
         return;
     }
     await mergeOnboardingData(phone, { city, zipCode });
     await updateSession(phone, { onboardingStep: "client_ask_schedule" });
-    const d = (_c = session.onboardingData) !== null && _c !== void 0 ? _c : {};
+    const d = (_h = session.onboardingData) !== null && _h !== void 0 ? _h : {};
     const msg6 = await (0, caraMessage_1.generateCaraMessage)({
         audience: "family",
-        context: `Cara is onboarding a family. They just gave the location where ${(_d = d.seniorName) !== null && _d !== void 0 ? _d : "their loved one"} lives. Ask how often ${(_e = d.seniorName) !== null && _e !== void 0 ? _e : "they"} needs a caregiver and what times of day work best.`,
-        fallback: `How often does ${(_f = d.seniorName) !== null && _f !== void 0 ? _f : "they"} need someone, and what times of day work best?`,
+        context: `Cara is onboarding a family. They just gave the location where ${(_j = d.seniorName) !== null && _j !== void 0 ? _j : "their loved one"} lives. Ask how often ${(_k = d.seniorName) !== null && _k !== void 0 ? _k : "they"} needs a caregiver and what times of day work best.`,
+        fallback: `How often does ${(_l = d.seniorName) !== null && _l !== void 0 ? _l : "they"} need someone, and what times of day work best?`,
         maxTokens: 80,
     });
     await (0, client_1.sendMessage)(chatId, msg6);
@@ -1093,7 +1145,7 @@ async function handleClientSendPayment(phone, chatId, session) {
     await (0, client_1.sendMessage)(chatId, "I'll start searching while you set that up.");
 }
 // ── CAREGIVER FLOW ────────────────────────────────────────────────────────────
-async function handleCaregiverAskName(phone, chatId, text, session) {
+async function handleCaregiverAskName(phone, chatId, text, session, service) {
     if (await isQuestionOrOther(text)) {
         const answer = await answerQuestionMidFlow(text, session !== null && session !== void 0 ? session : { onboardingData: {} });
         await (0, client_1.sendMessage)(chatId, answer);
@@ -1113,64 +1165,90 @@ async function handleCaregiverAskName(phone, chatId, text, session) {
         fallback: `Hi ${name} — what city and zip code do you work in?`,
         maxTokens: 80,
     });
-    await (0, client_1.sendMessage)(chatId, msg9);
+    await (0, client_1.sendMessage)(chatId, locationPrompt(msg9, service));
 }
-async function handleCaregiverAskLocation(phone, chatId, text, session) {
-    var _a, _b, _c, _d, _e;
-    if (await isQuestionOrOther(text)) {
-        const answer = await answerQuestionMidFlow(text, session);
-        await (0, client_1.sendMessage)(chatId, answer);
-        await (0, client_1.sendMessage)(chatId, "What city and zip code do you work in?");
-        return;
-    }
-    const raw = await parseWithClaude('Extract city and zipCode from this message. Reply in JSON: {"city":"...","zipCode":"..."}', text);
-    let city = "", zipCode = "";
+/**
+ * Live local-demand snapshot for a caregiver's city. Returns the count of open
+ * jobs and up to 3 formatted lines (care type · rate). Used both at the location
+ * step (early "this is legit" proof) and re-cited at the membership ask so the
+ * value is fresh and concrete at the moment we ask for payment. Never fabricates
+ * — an empty result means there genuinely are no open jobs in that city.
+ */
+async function getLocalJobTeaser(city) {
+    if (!city)
+        return { count: 0, lines: "" };
     try {
-        const p = JSON.parse(raw);
-        city = (_a = p.city) !== null && _a !== void 0 ? _a : "";
-        zipCode = (_b = p.zipCode) !== null && _b !== void 0 ? _b : "";
+        const openSnap = await db.collection("job_posts").where("status", "==", "open").limit(50).get();
+        const cityLower = city.toLowerCase();
+        const localJobs = openSnap.docs.filter((doc) => {
+            var _a;
+            const c = (_a = doc.data().location) === null || _a === void 0 ? void 0 : _a.city;
+            return c && String(c).toLowerCase() === cityLower;
+        }).slice(0, 3);
+        const lines = localJobs.map((doc, i) => {
+            var _a;
+            const j = doc.data();
+            const needs = ((_a = j.careTypes) !== null && _a !== void 0 ? _a : []).join(", ") || "general care";
+            const rate = j.hourlyRate ? ` · $${j.hourlyRate}/hr` : "";
+            return `${i + 1}. ${needs}${rate}`;
+        }).join("\n");
+        return { count: localJobs.length, lines };
     }
-    catch ( /* keep defaults */_f) { /* keep defaults */ }
-    await mergeOnboardingData(phone, { city, zipCode });
+    catch (err) {
+        console.error("[getLocalJobTeaser] failed:", err);
+        return { count: 0, lines: "" };
+    }
+}
+async function handleCaregiverAskLocation(phone, chatId, text, session, opts = {}) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const { service, inboundLocation } = opts;
+    let city = "", zipCode = "";
+    let coords;
+    if (inboundLocation) {
+        // One-tap location pin: reverse-geocode to backfill city/zip (keeps the
+        // city-keyed local-job teaser working) and keep raw coords for matching.
+        const rev = await (0, locationShare_1.reverseGeocode)(inboundLocation.lat, inboundLocation.lng);
+        city = (_a = rev === null || rev === void 0 ? void 0 : rev.city) !== null && _a !== void 0 ? _a : "";
+        zipCode = (_b = rev === null || rev === void 0 ? void 0 : rev.zipCode) !== null && _b !== void 0 ? _b : "";
+        coords = { lat: inboundLocation.lat, lng: inboundLocation.lng };
+    }
+    else {
+        if (await isQuestionOrOther(text)) {
+            const answer = await answerQuestionMidFlow(text, session);
+            await (0, client_1.sendMessage)(chatId, answer);
+            await (0, client_1.sendMessage)(chatId, locationPrompt("What city and zip code do you work in?", service));
+            return;
+        }
+        const raw = await parseWithClaude('Extract city and zipCode from this message. Reply in JSON: {"city":"...","zipCode":"..."}', text);
+        try {
+            const p = JSON.parse(raw);
+            city = (_c = p.city) !== null && _c !== void 0 ? _c : "";
+            zipCode = (_d = p.zipCode) !== null && _d !== void 0 ? _d : "";
+        }
+        catch ( /* keep defaults */_h) { /* keep defaults */ }
+    }
+    await mergeOnboardingData(phone, Object.assign({ city, zipCode }, (coords ? { lat: coords.lat, lng: coords.lng } : {})));
     // Value hook (founder direction): the moment a caregiver shares their location,
     // show REAL local demand so the platform proves it's legit before we ask for
     // anything. Honest empty state when nothing is open yet — no fabricated jobs.
     if (city) {
-        try {
-            const openSnap = await db.collection("job_posts").where("status", "==", "open").limit(50).get();
-            const cityLower = city.toLowerCase();
-            const localJobs = openSnap.docs.filter((doc) => {
-                var _a;
-                const c = (_a = doc.data().location) === null || _a === void 0 ? void 0 : _a.city;
-                return c && String(c).toLowerCase() === cityLower;
-            }).slice(0, 3);
-            if (localJobs.length > 0) {
-                const lines = localJobs.map((doc, i) => {
-                    var _a;
-                    const j = doc.data();
-                    const needs = ((_a = j.careTypes) !== null && _a !== void 0 ? _a : []).join(", ") || "general care";
-                    const rate = j.hourlyRate ? ` · $${j.hourlyRate}/hr` : "";
-                    return `${i + 1}. ${needs}${rate}`;
-                }).join("\n");
-                await (0, client_1.sendMessage)(chatId, `Good news — there ${localJobs.length === 1 ? "is" : "are"} ${localJobs.length} open care ` +
-                    `${localJobs.length === 1 ? "job" : "jobs"} near ${city} right now:\n\n${lines}\n\n` +
-                    `Finish your quick profile and you'll be able to apply.`);
-            }
-            else {
-                await (0, client_1.sendMessage)(chatId, `I don't have open jobs in ${city} this minute — new ones post daily and I'll text you ` +
-                    `the moment one matches your skills. Let's finish your profile so you're ready to apply.`);
-            }
+        const { count, lines } = await getLocalJobTeaser(city);
+        if (count > 0) {
+            await (0, client_1.sendMessage)(chatId, `Good news — there ${count === 1 ? "is" : "are"} ${count} open care ` +
+                `${count === 1 ? "job" : "jobs"} near ${city} right now:\n\n${lines}\n\n` +
+                `Finish your quick profile and you'll be able to apply.`);
         }
-        catch (err) {
-            console.error("[handleCaregiverAskLocation] local job teaser failed:", err);
+        else {
+            await (0, client_1.sendMessage)(chatId, `I don't have open jobs in ${city} this minute — new ones post daily and I'll text you ` +
+                `the moment one matches your skills. Let's finish your profile so you're ready to apply.`);
         }
     }
     await updateSession(phone, { onboardingStep: "caregiver_ask_experience" });
-    const d = (_c = session.onboardingData) !== null && _c !== void 0 ? _c : {};
+    const d = (_e = session.onboardingData) !== null && _e !== void 0 ? _e : {};
     const msg10intro = await (0, caraMessage_1.generateCaraMessage)({
         audience: "caregiver",
-        context: `Cara is onboarding caregiver ${(_d = d.name) !== null && _d !== void 0 ? _d : ""}. They just shared their city and zip code. Ask how many years of caregiving experience they have and whether they hold any certifications. Keep it warm and encouraging.`,
-        fallback: `Great, ${(_e = d.name) !== null && _e !== void 0 ? _e : ""}! How many years of caregiving experience do you have, and do you hold any certifications?`,
+        context: `Cara is onboarding caregiver ${(_f = d.name) !== null && _f !== void 0 ? _f : ""}. They just shared their city and zip code. Ask how many years of caregiving experience they have and whether they hold any certifications. Keep it warm and encouraging.`,
+        fallback: `Great, ${(_g = d.name) !== null && _g !== void 0 ? _g : ""}! How many years of caregiving experience do you have, and do you hold any certifications?`,
         maxTokens: 80,
     });
     await (0, client_1.sendMessage)(chatId, `${msg10intro}\n\nFor example: "5 years, CNA and CPR" or "2 years, no certifications".`);
@@ -1395,7 +1473,7 @@ async function handleCaregiverAskMvr(phone, chatId, textOrSession, session) {
     await handleCaregiverSendMembership(phone, chatId, session);
 }
 async function handleCaregiverSendMembership(phone, chatId, session) {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     const d = (_a = session.onboardingData) !== null && _a !== void 0 ? _a : {};
     const wantsMvr = (_b = d.wantsMvr) !== null && _b !== void 0 ? _b : false;
     const token = (0, tokenService_1.generateToken)({ phone, task: "caregiver_membership" });
@@ -1414,9 +1492,11 @@ async function handleCaregiverSendMembership(phone, chatId, session) {
             // Recurring annual membership (mode "subscription" → renews yearly).
             // NOTE: STRIPE_CAREGIVER_ANNUAL must be a *recurring* annual price in Stripe.
             // The optional MVR add-on is a one-time price, added to the first invoice.
+            // We intentionally omit payment_method_types so Checkout uses the account's
+            // automatic payment methods — this surfaces Apple Pay / Google Pay / Link
+            // (caregivers are mobile-first over SMS), which an explicit ["card"] list suppresses.
             const stripeSession = await getStripe().checkout.sessions.create({
                 mode: "subscription",
-                payment_method_types: ["card"],
                 line_items: lineItems,
                 success_url: `${APP_URL}/done?task=caregiver_membership&t=${token}`,
                 cancel_url: `${APP_URL}/start`,
@@ -1432,12 +1512,20 @@ async function handleCaregiverSendMembership(phone, chatId, session) {
     const mvrLine = wantsMvr
         ? "\n\nYour order includes the $24.95/yr membership + MVR driver check."
         : "";
+    // Re-cite the live local demand the caregiver saw at the location step — fresh
+    // at the moment of payment — so the ask is anchored to concrete, current jobs
+    // rather than a generic "jobs near you". Honest if supply has since dried up.
+    const city = (_h = d.city) !== null && _h !== void 0 ? _h : "";
+    const { count: openJobCount } = await getLocalJobTeaser(city);
+    const demandLine = openJobCount > 0
+        ? `The ${openJobCount} open care ${openJobCount === 1 ? "job" : "jobs"} near ${city} ${openJobCount === 1 ? "is" : "are"} still waiting — `
+        : "";
     // Store URL on session so we can resend it
     await updateSession(phone, {
         onboardingStep: "caregiver_awaiting_membership",
         membershipCheckoutUrl: checkoutUrl,
     });
-    await (0, client_1.sendMessage)(chatId, "You're almost ready to apply! Activate your membership ($24.95/year) to unlock applying to the " +
+    await (0, client_1.sendMessage)(chatId, `${demandLine}You're almost ready to apply! Activate your membership ($24.95/year) to unlock applying to the ` +
         `jobs near you, getting booked, and Cara's scheduling + payout tools.${mvrLine}\n\nTap to activate:`);
     await (0, client_1.sendMessage)(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
 }
@@ -1474,6 +1562,78 @@ async function handleCaregiverSendDocuments(phone, chatId, session) {
     await updateSession(phone, { onboardingStep: "caregiver_awaiting_documents" });
     await (0, client_1.sendMessage)(chatId, "Do you have certifications to upload? (CNA license, CPR card, etc.)\n\nTap to upload, or reply SKIP:");
     await (0, client_1.sendMessage)(chatId, { parts: [{ type: "link", value: docUrl }] });
+}
+// ── Inbound media during onboarding (texted photo / document) ─────────────────
+// A caregiver snaps a headshot or a CNA/CPR card and texts it instead of using
+// the web upload link. Route by the current step; gate with gpt-4o vision and
+// warmly re-ask on a bad shot rather than advancing. Anything sent at a step
+// that isn't expecting a file gets a gentle nudge back on track.
+async function handleInboundMedia(phone, chatId, session, media, step) {
+    if (step === "caregiver_send_photo" || step === "caregiver_awaiting_photo") {
+        return handleInboundProfilePhoto(phone, chatId, media);
+    }
+    if (step === "caregiver_send_documents" || step === "caregiver_awaiting_documents") {
+        return handleInboundDocument(phone, chatId, media);
+    }
+    // Not a file-collecting step. Acknowledge warmly and steer back to the task.
+    if (step === "client_awaiting_identity") {
+        await (0, client_1.sendMessage)(chatId, "Thanks for sending that! For your security, identity verification has to go " +
+            "through the secure link I sent — a texted photo can't complete it. Tap that " +
+            "link when you're ready and I'll take it from there.");
+        return;
+    }
+    await (0, client_1.sendMessage)(chatId, "Got your file, thank you! I'm not at that step just yet — let's finish what we " +
+        "were on and I'll ask for anything I need. What were you going to say?");
+}
+async function handleInboundProfilePhoto(phone, chatId, media) {
+    try {
+        const dl = await (0, mediaIntake_1.downloadMedia)(media);
+        const verdict = await (0, visionVerify_1.verifyProfilePhoto)(dl.buffer, dl.content_type);
+        if (!verdict.ok) {
+            // Keep them at the photo step and warmly ask for a better shot.
+            const why = verdict.reason ? ` (${verdict.reason})` : "";
+            await (0, client_1.sendMessage)(chatId, `Thanks${why ? "" : "!"} That photo didn't quite work for your profile${why}. ` +
+                `Could you send one clear, well-lit photo of your face? You can also tap the upload link I sent.`);
+            return;
+        }
+        const url = await (0, mediaIntake_1.storeInboundMedia)({
+            phone, kind: "image", buffer: dl.buffer,
+            content_type: dl.content_type, ext: dl.ext,
+        });
+        await (0, client_1.sendMessage)(chatId, "Perfect — got your photo! 📸");
+        // Reuse the canonical upload-complete path so downstream behavior (advance to
+        // documents) is identical to the web upload flow.
+        await advanceOnboardingStep(phone, "photo_upload", url);
+    }
+    catch (err) {
+        console.error("handleInboundProfilePhoto failed", { phone, err: err === null || err === void 0 ? void 0 : err.message });
+        await (0, client_1.sendMessage)(chatId, "I had trouble opening that photo — could you try sending it again, or tap the upload link I sent?");
+    }
+}
+async function handleInboundDocument(phone, chatId, media) {
+    try {
+        const dl = await (0, mediaIntake_1.downloadMedia)(media);
+        const verdict = await (0, visionVerify_1.verifyDocument)(dl.buffer, dl.content_type);
+        if (!verdict.ok) {
+            const why = verdict.reason ? ` ${verdict.reason}` : "";
+            await (0, client_1.sendMessage)(chatId, `Thanks for that!${why} Could you resend a clear photo of your certification ` +
+                `(CNA license, CPR card, etc.)? Or reply SKIP to move on — you can always add it later.`);
+            return;
+        }
+        const url = await (0, mediaIntake_1.storeInboundMedia)({
+            phone, kind: "document", buffer: dl.buffer,
+            content_type: dl.content_type, ext: dl.ext,
+        });
+        const label = verdict.docType && verdict.docType !== "document" && verdict.docType !== "unknown"
+            ? `your ${verdict.docType}`
+            : "your certification";
+        await (0, client_1.sendMessage)(chatId, `Got ${label} — saved. ✅`);
+        await advanceOnboardingStep(phone, "doc_upload", url);
+    }
+    catch (err) {
+        console.error("handleInboundDocument failed", { phone, err: err === null || err === void 0 ? void 0 : err.message });
+        await (0, client_1.sendMessage)(chatId, "I had trouble opening that document — could you try again, or reply SKIP to continue?");
+    }
 }
 async function handleCaregiverSendBgcheck(phone, chatId, session) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
@@ -1727,6 +1887,42 @@ async function resendStuckStep(phone) {
             await handleClientSendPayment(phone, chatId, session);
             return true;
         }
+        case "client_awaiting_identity": {
+            // Re-issue a fresh Stripe Identity link. Mirror handleClientPlanReply's
+            // inline send; fall back to payment if Identity can't be created.
+            await (0, client_1.signalThinking)(chatId, session.service);
+            let identityUrl;
+            try {
+                identityUrl = await createClientIdentitySession(phone);
+            }
+            catch (err) {
+                console.error("resendStuckStep(identity) createClientIdentitySession error:", err);
+                await updateSession(phone, { onboardingStep: "client_send_payment" });
+                await handleClientSendPayment(phone, chatId, session);
+                return true;
+            }
+            await (0, client_1.sendMessage)(chatId, "Picking up where we left off — here's a fresh link for the quick 30-second identity check:");
+            await (0, client_1.sendMessage)(chatId, { parts: [{ type: "link", value: identityUrl }] });
+            return true;
+        }
+        case "caregiver_awaiting_membership":
+        case "caregiver_send_membership": {
+            // Prefer the stored checkout URL; regenerate if it was lost.
+            await handleCaregiverResendMembership(phone, chatId, session);
+            return true;
+        }
+        case "caregiver_awaiting_photo":
+        case "caregiver_send_photo": {
+            // Re-send a fresh photo-upload link
+            await handleCaregiverSendPhoto(phone, chatId, session);
+            return true;
+        }
+        case "caregiver_awaiting_documents":
+        case "caregiver_send_documents": {
+            // Re-send a fresh document-upload link
+            await handleCaregiverSendDocuments(phone, chatId, session);
+            return true;
+        }
         default:
             return false;
     }
@@ -1734,7 +1930,7 @@ async function resendStuckStep(phone) {
 // ── Webhook-triggered step advancement ───────────────────────────────────────
 // Called from stripe.ts and checkr.ts when webhooks fire
 async function advanceOnboardingStep(phone, task, taskData) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8;
     const snap = await db.collection("agent_sessions").doc(phone).get();
     if (!snap.exists)
         return;
@@ -1757,6 +1953,11 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
             });
             const d = (_b = session.onboardingData) !== null && _b !== void 0 ? _b : {};
+            // Raw coords (present only when the family shared a location pin) — unlock
+            // true haversine distance in aiMatching instead of city/zip proxy buckets.
+            const lat = typeof d.lat === "number" ? d.lat : undefined;
+            const lng = typeof d.lng === "number" ? d.lng : undefined;
+            const hasCoords = lat !== undefined && lng !== undefined;
             // Get or create Firebase Auth UID (may already exist from identity step)
             let uid = session.userId;
             if (!uid) {
@@ -1764,7 +1965,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
                     const userRecord = await admin.auth().getUserByPhoneNumber(phone);
                     uid = userRecord.uid;
                 }
-                catch (_7) {
+                catch (_9) {
                     try {
                         const newUser = await admin.auth().createUser({
                             phoneNumber: phone,
@@ -1808,28 +2009,12 @@ async function advanceOnboardingStep(phone, task, taskData) {
                             updatedAt: new Date().toISOString(),
                         },
                     },
-                    locationPool: [{ city, zipCode, primary: true }],
+                    locationPool: [Object.assign({ city, zipCode, primary: true }, (hasCoords ? { lat, lng } : {}))],
                     updatedAt: new Date().toISOString(),
                 }, { merge: true });
             }
             // Write intake to Firestore for admin records
-            await db.collection("clientIntakes").add({
-                phone,
-                userId: uid !== null && uid !== void 0 ? uid : null,
-                firstName: d.firstName,
-                seniorName: d.seniorName,
-                relationship: d.relationship,
-                age: d.age,
-                careNeeds: d.careNeeds,
-                conditions: d.conditions,
-                city: d.city,
-                zipCode: d.zipCode,
-                daysPerWeek: d.daysPerWeek,
-                timeOfDay: d.timeOfDay,
-                hoursPerDay: d.hoursPerDay,
-                status: "pending",
-                createdAt: new Date().toISOString(),
-            });
+            await db.collection("clientIntakes").add(Object.assign(Object.assign({ phone, userId: uid !== null && uid !== void 0 ? uid : null, firstName: d.firstName, seniorName: d.seniorName, relationship: d.relationship, age: d.age, careNeeds: d.careNeeds, conditions: d.conditions, city: d.city, zipCode: d.zipCode }, (hasCoords ? { lat, lng, location: { lat, lng } } : {})), { daysPerWeek: d.daysPerWeek, timeOfDay: d.timeOfDay, hoursPerDay: d.hoursPerDay, status: "pending", createdAt: new Date().toISOString() }));
             // Notify admin of new client signup
             (0, notifications_1.notifyAdminNewClientSignup)({
                 clientId: uid !== null && uid !== void 0 ? uid : phone,
@@ -1838,6 +2023,9 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 phone,
                 city: ((_o = d.city) !== null && _o !== void 0 ? _o : ""),
             }).catch((err) => console.error("notifyAdminNewClientSignup error:", err));
+            // Seed the known-names registry with the client + care recipient so the
+            // persona-shift detector recognizes both from day one.
+            await (0, knownNames_1.addKnownNames)(phone, [d.firstName, d.seniorName]);
             // Initialize memory files with onboarding data
             (0, memoryFiles_1.initializeMemoryFiles)(uid !== null && uid !== void 0 ? uid : phone, {
                 seniorName: d.seniorName,
@@ -1872,11 +2060,24 @@ async function advanceOnboardingStep(phone, task, taskData) {
             break;
         }
         case "photo_upload": {
+            // Persist the uploaded photo URL so it lands on the caregiver doc at
+            // finalization (taskData is the Storage URL — from the web upload page OR
+            // a texted headshot). Previously this URL was dropped on the floor.
+            if (taskData)
+                await mergeOnboardingData(phone, { profilePhoto: taskData });
             await updateSession(phone, { onboardingStep: "caregiver_send_documents" });
             await handleCaregiverSendDocuments(phone, chatId, session);
             break;
         }
         case "doc_upload": {
+            // Append the document URL to onboardingData.documents (web upload OR texted
+            // certification) so it carries onto the caregiver doc at finalization.
+            if (taskData) {
+                const existingDocs = Array.isArray(((_r = session.onboardingData) !== null && _r !== void 0 ? _r : {}).documents)
+                    ? ((_s = session.onboardingData) !== null && _s !== void 0 ? _s : {}).documents
+                    : [];
+                await mergeOnboardingData(phone, { documents: [...existingDocs, taskData] });
+            }
             await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
             await handleCaregiverAskMvr(phone, chatId, session);
             break;
@@ -1903,7 +2104,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
             break;
         }
         case "identity": {
-            const step = (_r = session.onboardingStep) !== null && _r !== void 0 ? _r : "";
+            const step = (_t = session.onboardingStep) !== null && _t !== void 0 ? _t : "";
             if (step === "client_awaiting_identity") {
                 // Ensure Firebase Auth account exists and get UID so we can write to users/{uid}
                 let uid = session.userId;
@@ -1912,12 +2113,12 @@ async function advanceOnboardingStep(phone, task, taskData) {
                         const userRecord = await admin.auth().getUserByPhoneNumber(phone);
                         uid = userRecord.uid;
                     }
-                    catch (_8) {
+                    catch (_10) {
                         try {
-                            const d = (_s = session.onboardingData) !== null && _s !== void 0 ? _s : {};
+                            const d = (_u = session.onboardingData) !== null && _u !== void 0 ? _u : {};
                             const newUser = await admin.auth().createUser({
                                 phoneNumber: phone,
-                                displayName: ((_t = d.firstName) !== null && _t !== void 0 ? _t : ""),
+                                displayName: ((_v = d.firstName) !== null && _v !== void 0 ? _v : ""),
                             });
                             uid = newUser.uid;
                         }
@@ -1954,27 +2155,17 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
             });
             // Caregiver Stripe Connect complete → finalize caregiver doc
-            const d = (_u = session.onboardingData) !== null && _u !== void 0 ? _u : {};
-            const profileData = {
-                phone,
-                name: d.name,
-                city: d.city,
-                zipCode: d.zipCode,
-                yearsExperience: d.yearsExperience,
-                certifications: d.certifications,
-                specialties: d.specialties,
-                availability: d.availability,
-                hourlyRate: d.hourlyRate,
-                stripeAccountId: d.stripeAccountId,
-                email: (_v = d.email) !== null && _v !== void 0 ? _v : null,
-                bio: (_w = d.bio) !== null && _w !== void 0 ? _w : null,
-                jobType: (_x = d.jobType) !== null && _x !== void 0 ? _x : null,
-                gender: (_y = d.gender) !== null && _y !== void 0 ? _y : null,
-                languages: Array.isArray(d.languages) ? d.languages : [],
-                canDrive: (_z = d.canDrive) !== null && _z !== void 0 ? _z : null,
-                membershipSubscriptionId: (_0 = session.caregiverSubscriptionId) !== null && _0 !== void 0 ? _0 : null,
-                status: "active",
-            };
+            const d = (_w = session.onboardingData) !== null && _w !== void 0 ? _w : {};
+            // Raw coords (present only when the caregiver shared a location pin) — let
+            // aiMatching use true haversine distance instead of the city/zip proxy.
+            const cgLat = typeof d.lat === "number" ? d.lat : undefined;
+            const cgLng = typeof d.lng === "number" ? d.lng : undefined;
+            const cgHasCoords = cgLat !== undefined && cgLng !== undefined;
+            const profileData = Object.assign(Object.assign(Object.assign(Object.assign({ phone, name: d.name, city: d.city, zipCode: d.zipCode }, (cgHasCoords ? { lat: cgLat, lng: cgLng, location: { lat: cgLat, lng: cgLng } } : {})), (d.profilePhoto ? { profilePhoto: d.profilePhoto, photoURL: d.profilePhoto } : {})), (Array.isArray(d.documents) && d.documents.length ? { documents: d.documents } : {})), { yearsExperience: d.yearsExperience, certifications: d.certifications, specialties: d.specialties, availability: d.availability, hourlyRate: d.hourlyRate, stripeAccountId: d.stripeAccountId, email: (_x = d.email) !== null && _x !== void 0 ? _x : null, bio: (_y = d.bio) !== null && _y !== void 0 ? _y : null, jobType: (_z = d.jobType) !== null && _z !== void 0 ? _z : null, gender: (_0 = d.gender) !== null && _0 !== void 0 ? _0 : null, languages: Array.isArray(d.languages) ? d.languages : [], canDrive: (_1 = d.canDrive) !== null && _1 !== void 0 ? _1 : null, membershipSubscriptionId: (_2 = session.caregiverSubscriptionId) !== null && _2 !== void 0 ? _2 : null, status: "active", 
+                // Visibility gate: families' FindCaregivers query only loads caregivers
+                // where onboardingStatus === 'profile_complete'. Cara is the canonical
+                // onboarding path, so it must set this too (the web wizard already does).
+                onboardingStatus: "profile_complete" });
             let caregiverId;
             if (session.caregiverId) {
                 // Doc was pre-created during bg check — update it with full profile
@@ -1992,15 +2183,15 @@ async function advanceOnboardingStep(phone, task, taskData) {
             // Waitlist trigger: a new active caregiver just landed. Notify any families
             // we honestly held (awaitingSupply) in this caregiver's city that care is
             // now available, and clear the flag so they're not pinged twice.
-            notifyWaitlistedFamilies((_1 = d.city) !== null && _1 !== void 0 ? _1 : "").catch((err) => console.error("notifyWaitlistedFamilies error:", err));
+            notifyWaitlistedFamilies((_3 = d.city) !== null && _3 !== void 0 ? _3 : "").catch((err) => console.error("notifyWaitlistedFamilies error:", err));
             // Silently create Firebase Auth account so web dashboard login works later
-            await createFirebaseAuthAccount(phone, ((_2 = d.name) !== null && _2 !== void 0 ? _2 : ""));
+            await createFirebaseAuthAccount(phone, ((_4 = d.name) !== null && _4 !== void 0 ? _4 : ""));
             // Notify admin
             (0, notifications_1.notifyAdminNewCaregiverSignup)({
                 caregiverId,
-                name: ((_3 = d.name) !== null && _3 !== void 0 ? _3 : ""),
+                name: ((_5 = d.name) !== null && _5 !== void 0 ? _5 : ""),
                 phone,
-                city: ((_4 = d.city) !== null && _4 !== void 0 ? _4 : ""),
+                city: ((_6 = d.city) !== null && _6 !== void 0 ? _6 : ""),
             }).catch((err) => console.error("notifyAdminNewCaregiverSignup error:", err));
             await db.collection("admin_alerts").add({
                 type: "new_caregiver_signup",
@@ -2015,7 +2206,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 userId: (0, zepClient_1.getZepUserId)(phone),
                 data: {
                     user_type: "caregiver",
-                    user_name: ((_5 = d.name) !== null && _5 !== void 0 ? _5 : ""),
+                    user_name: ((_7 = d.name) !== null && _7 !== void 0 ? _7 : ""),
                     caregiver_city: d.city,
                     caregiver_years_experience: d.yearsExperience,
                     caregiver_specialties: Array.isArray(d.specialties) ? d.specialties : [],
@@ -2027,7 +2218,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 },
             }).catch((err) => console.error("addBusinessDataToZep caregiver error:", err));
             // Warm "you're approved" milestone message before handing off to permissions
-            const firstName = ((_6 = d.name) !== null && _6 !== void 0 ? _6 : "").split(" ")[0] || "you";
+            const firstName = ((_8 = d.name) !== null && _8 !== void 0 ? _8 : "").split(" ")[0] || "you";
             const specialties = Array.isArray(d.specialties) ? d.specialties.join(", ") : "";
             const activationMsg = await (0, caraMessage_1.generateCaraMessage)({
                 audience: "caregiver",

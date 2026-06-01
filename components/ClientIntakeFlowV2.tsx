@@ -186,6 +186,13 @@ export default function ClientIntakeFlowV2() {
     setError('');
 
     try {
+      const fdb = db;
+      if (!fdb) {
+        setError('Failed to save intake. Please try again.');
+        setIsSubmitting(false);
+        return;
+      }
+
       const user = auth?.currentUser;
       if (!user) {
         setError('Please sign in to complete intake');
@@ -203,10 +210,10 @@ export default function ClientIntakeFlowV2() {
         status: 'completed',
       };
 
-      await db.collection('clientIntakes').doc(user.uid).set(completeIntakeData, { merge: true });
-      
+      await fdb.collection('clientIntakes').doc(user.uid).set(completeIntakeData, { merge: true });
+
       // Update user status
-      await db.collection('users').doc(user.uid).update({
+      await fdb.collection('users').doc(user.uid).update({
         intakeCompleted: true,
         careRecipientName: `${intakeData.careRecipient.firstName} ${intakeData.careRecipient.lastName}`,
       });

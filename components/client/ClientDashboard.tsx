@@ -4,7 +4,7 @@ import { User, Loader2, Calendar, Phone, Heart, FileText, Edit, Clock, Home, Sea
 import { Button } from '../ui/Button';
 import { BookingModal } from '../BookingModal';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
-import { ViewType, Appointment, Caregiver, ClientIntakeData } from '../../types';
+import { ViewType, Appointment, Caregiver, ClientIntakeData, Senior } from '../../types';
 import { dbService, authService } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { useAccessGates } from '../../hooks/useAccessGates';
@@ -26,6 +26,92 @@ interface ClientDashboardProps {
   onNavigate: (view: ViewType, data?: any) => void;
 }
 
+// Best-effort geocode of a free-text location (city/zip) so proximity-based
+// matching can actually fire for families who only completed intake (which
+// stores city/state/zip but no lat/lng). Cached in-memory per session to avoid
+// repeat Nominatim calls. Returns null on any failure — matching still works
+// on the remaining signals (skills, schedule, rating) without it.
+const _geoCache = new Map<string, { lat: number; lng: number } | null>();
+async function geocodeLocation(query: string): Promise<{ lat: number; lng: number } | null> {
+  const q = query.trim();
+  if (!q) return null;
+  if (_geoCache.has(q)) return _geoCache.get(q)!;
+  try {
+    // Bound the call so a slow/unreachable geocoder can't stall dashboard load.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=us`,
+      { headers: { 'Accept-Language': 'en', 'User-Agent': 'CareConnex/1.0' }, signal: controller.signal }
+    ).finally(() => clearTimeout(timer));
+    const arr = await res.json();
+    if (Array.isArray(arr) && arr[0]?.lat && arr[0]?.lon) {
+      const v = { lat: parseFloat(arr[0].lat), lng: parseFloat(arr[0].lon) };
+      _geoCache.set(q, v);
+      return v;
+    }
+  } catch {
+    // network/parse failure — fall through to null
+  }
+  _geoCache.set(q, null);
+  return null;
+}
+
+// Assemble a Senior profile to drive matching. Prefers a saved senior_profiles
+// doc (which may carry lat/lng, gender preference, personality) and enriches it
+// with intake data (care types → needs, weekly schedule → days needed). Geocodes
+// the location best-effort when no coordinates exist so proximity scoring works.
+async function buildSeniorProfile(
+  uid: string,
+  intake: ClientIntakeData | null
+): Promise<Senior | null> {
+  let saved: Senior | null = null;
+  try {
+    saved = await dbService.getSeniorProfile(uid);
+  } catch {
+    // non-fatal — fall back to intake-only profile
+  }
+  if (!saved && !intake) return null;
+
+  const needs = (saved?.needs?.length ? saved.needs : intake?.careTypes) || [];
+  const scheduleNeeded = saved?.scheduleNeeded?.length
+    ? saved.scheduleNeeded
+    : Object.entries(intake?.weeklySchedule || {})
+        .filter(([, slots]) => Array.isArray(slots) && slots.length > 0)
+        .map(([day]) => day);
+  const location =
+    saved?.location || [intake?.city, intake?.state].filter(Boolean).join(', ');
+
+  let latitude = saved?.latitude;
+  let longitude = saved?.longitude;
+  if (latitude == null || longitude == null) {
+    const geoQuery =
+      [intake?.streetAddress, intake?.city, intake?.state, intake?.zipCode]
+        .filter(Boolean)
+        .join(', ') || location;
+    const geo = await geocodeLocation(geoQuery);
+    if (geo) {
+      latitude = geo.lat;
+      longitude = geo.lng;
+    }
+  }
+
+  return {
+    id: 0,
+    uid,
+    name: saved?.name || intake?.recipientName || 'Care recipient',
+    age: saved?.age || 0,
+    needs,
+    personality: saved?.personality || 'Ambivert',
+    location,
+    zipCode: intake?.zipCode || saved?.zipCode,
+    latitude,
+    longitude,
+    scheduleNeeded,
+    genderPreference: saved?.genderPreference,
+  };
+}
+
 export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -38,6 +124,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   // Loading states
   const [isLoading, setIsLoading] = useState(true);
   const [matchedCaregivers, setMatchedCaregivers] = useState<Caregiver[]>([]);
+  // 'matched' = personalized, proximity-filtered results from the matching engine;
+  // 'fallback' = generic top caregivers shown when we can't personalize yet.
+  const [matchSource, setMatchSource] = useState<'matched' | 'fallback'>('fallback');
+  // Human-readable area for honest copy (e.g. "San Jose, CA"); '' = unknown.
+  const [locationLabel, setLocationLabel] = useState<string>('');
 
   // Intake data state
   const [intakeData, setIntakeData] = useState<ClientIntakeData | null>(null);
@@ -94,22 +185,44 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       setIsLoading(true);
       try {
         // Fetch intake data from Firestore
+        let intakeLocal: ClientIntakeData | null = null;
         if (currentUser?.uid && db) {
           try {
             const intakeDoc = await db.collection('clientIntakes').doc(currentUser.uid).get();
             if (intakeDoc.exists) {
-              const data = intakeDoc.data() as ClientIntakeData;
-              setIntakeData(data);
+              intakeLocal = intakeDoc.data() as ClientIntakeData;
+              setIntakeData(intakeLocal);
             }
           } catch (intakeError) {
             console.warn('Could not load intake data:', intakeError);
           }
         }
-        
-        // Load caregivers — always show results regardless of intake completion
+
+        // Load caregivers — run REAL matching against this family's actual needs +
+        // location so the scores, ordering, and distances reflect fit (not a flat
+        // rating heuristic), and caregivers beyond the service radius drop out.
+        // Falls back to top caregivers if we can't personalize yet — never a dead end.
         try {
-          const { caregivers: matches } = await dbService.getCaregivers(6, null);
-          setMatchedCaregivers(matches);
+          const profile = await buildSeniorProfile(currentUser!.uid, intakeLocal);
+          let realMatches: Caregiver[] = [];
+          // Only attempt personalized matching when we have something to match on.
+          if (profile && ((profile.needs?.length ?? 0) > 0 || profile.latitude != null)) {
+            try {
+              realMatches = await dbService.getMatches(profile);
+            } catch (matchErr) {
+              console.warn('Personalized matching failed, falling back:', matchErr);
+            }
+          }
+
+          if (realMatches.length > 0) {
+            setMatchedCaregivers(realMatches.slice(0, 6));
+            setMatchSource('matched');
+          } else {
+            const { caregivers: matches } = await dbService.getCaregivers(6, null);
+            setMatchedCaregivers(matches);
+            setMatchSource('fallback');
+          }
+          setLocationLabel(profile?.location || '');
         } catch (caregiverError) {
           console.warn('Could not load caregivers:', caregiverError);
           setMatchedCaregivers([]);
@@ -250,10 +363,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const handleGatedMessage = (caregiver: Caregiver) =>
     gate('message', caregiver.name, () => handleChatClick(caregiver));
 
-  // Calculate match scores from real caregiver data (rating-based, deterministic)
+  // Match score per caregiver. When the matching engine produced a personalized,
+  // proximity-aware score, use it verbatim. Otherwise (generic fallback list) fall
+  // back to an honest rating/experience heuristic — never an inflated default.
   const matchScores = useMemo(() => {
     const scores: Record<string, number> = {};
     matchedCaregivers.forEach(caregiver => {
+      if (typeof caregiver.matchScore === 'number' && caregiver.matchScore > 0) {
+        scores[caregiver.id] = caregiver.matchScore;
+        return;
+      }
       const ratingScore = Math.round(((caregiver.rating ?? 4.0) / 5) * 25); // 0–25 pts
       const expScore = Math.min((caregiver.experience ?? 0) * 2, 15);   // 0–15 pts
       scores[caregiver.id] = Math.min(60 + ratingScore + expScore, 100);      // 60–100%
@@ -384,7 +503,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
         {/* Page header */}
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-slate-900">Caregivers Near You</h1>
-          <p className="text-slate-500 text-sm mt-0.5">Verified senior caregivers in Santa Clara County</p>
+          <p className="text-slate-500 text-sm mt-0.5">
+            {matchSource === 'matched'
+              ? `Verified caregivers matched to your needs${locationLabel ? ` near ${locationLabel}` : ''}`
+              : `Verified senior caregivers${locationLabel ? ` near ${locationLabel}` : ' near you'}`}
+          </p>
         </div>
 
         {/* Two Column Layout */}
@@ -393,13 +516,27 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           {/* LEFT — Caregiver cards (always shown) */}
           <div className="lg:col-span-2 space-y-6">
 
+            {/* Honest low-supply note — when personalized matching returns a thin
+                list, say so plainly rather than padding with distant caregivers. */}
+            {matchSource === 'matched' && matchedCaregivers.length > 0 && matchedCaregivers.length < 3 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+                Only {matchedCaregivers.length} caregiver{matchedCaregivers.length !== 1 ? 's' : ''} closely
+                {locationLabel ? ` match your needs near ${locationLabel}` : ' match your needs nearby'} right now.
+                We're adding caregivers in your area daily —{' '}
+                <button onClick={() => navigate('/client/find-caregivers')} className="font-semibold underline hover:text-amber-900">
+                  browse all caregivers
+                </button>{' '}
+                in the meantime.
+              </div>
+            )}
+
             {matchedCaregivers.length > 0 ? (
               <div id="caregiver-matches" className="grid sm:grid-cols-2 gap-4">
                 {matchedCaregivers.map((caregiver) => (
                   <CaregiverMatchCard
                     key={caregiver.id}
                     caregiver={caregiver}
-                    matchScore={matchScores[caregiver.id] || 95}
+                    matchScore={matchScores[caregiver.id] ?? 0}
                     matchReasons={getMatchReasons(caregiver)}
                     onBook={handleGatedBook}
                     onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}
@@ -448,7 +585,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
               return (
                 <section>
                   <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-lg font-bold text-slate-900">Top Rated in Santa Clara County</h2>
+                    <h2 className="text-lg font-bold text-slate-900">Top Rated Near You</h2>
                     <button onClick={() => navigate('/client/find-caregivers')} className="text-sm text-primary-600 font-medium hover:underline">See more →</button>
                   </div>
                   <div className="grid sm:grid-cols-2 gap-4">

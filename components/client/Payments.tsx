@@ -526,7 +526,7 @@ export const Payments: React.FC = () => {
   const [loadingCard, setLoadingCard] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
 
-  const user = auth.currentUser;
+  const user = auth?.currentUser ?? null;
 
   // Subscribe to shiftHours for this client
   useEffect(() => {

@@ -243,7 +243,7 @@ export const MatchingDashboard: React.FC<MatchingDashboardProps> = ({
                         const updated = await dbService.getMatchAssignments({ 
                           status: selectedAssignment.status 
                         });
-                        const found = updated.find(a => a.id === selectedAssignment.id);
+                        const found = updated.find((a: MatchAssignment) => a.id === selectedAssignment.id);
                         if (found) {
                           setSelectedAssignment(found);
                         }

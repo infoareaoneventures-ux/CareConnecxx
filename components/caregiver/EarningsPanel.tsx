@@ -36,6 +36,7 @@ export const EarningsPanel: React.FC<EarningsPanelProps> = ({ appointments, onSh
     // Load caregiver profile so we can gate the payout button on Stripe
     // Connect readiness.
     useEffect(() => {
+        if (!auth) return;
         const uid = auth.currentUser?.uid;
         if (!uid) return;
         let active = true;

@@ -12,7 +12,7 @@ let stripePromise: Promise<Stripe | null>;
 
 export const getStripe = () => {
   if (!stripePromise) {
-    stripePromise = loadStripe(STRIPE_PUBLISHABLE_KEY);
+    stripePromise = loadStripe(STRIPE_PUBLISHABLE_KEY ?? '');
   }
   return stripePromise;
 };
@@ -38,6 +38,7 @@ export const createCheckoutSession = async (successUrl: string, cancelUrl: strin
   if (isCreatingSession) return null;
   isCreatingSession = true;
   try {
+    if (!auth) throw new Error('Auth not initialized');
     const user = auth.currentUser;
     if (!user) throw new Error('User must be logged in');
 
@@ -62,6 +63,7 @@ export const createCaregiverCheckoutSession = async (
   cancelUrl: string,
   options?: { includeMVR?: boolean }
 ): Promise<string | null> => {
+  if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
 
@@ -84,6 +86,7 @@ export const createCaregiverCheckoutSession = async (
  * action). The user doc's `identityCheckStatus` is flipped to 'processing' server-side.
  */
 export const startIdentityVerification = async (returnUrl: string): Promise<void> => {
+  if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
   const functions = getFunctions();
@@ -97,12 +100,16 @@ export const startIdentityVerification = async (returnUrl: string): Promise<void
 // Get user's subscription status from Firestore
 export const getSubscriptionStatus = async (): Promise<SubscriptionStatus> => {
   try {
+    if (!auth || !db) {
+      return { status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false, priceId: null };
+    }
+    const fdb = db;
     const user = auth.currentUser;
     if (!user) {
       return { status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false, priceId: null };
     }
 
-    const doc = await db.collection('customers').doc(user.uid).collection('subscriptions').limit(1).get();
+    const doc = await fdb.collection('customers').doc(user.uid).collection('subscriptions').limit(1).get();
     
     if (doc.empty) {
       return { status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false, priceId: null };
@@ -123,6 +130,7 @@ export const getSubscriptionStatus = async (): Promise<SubscriptionStatus> => {
 
 // Listen to subscription changes in real-time
 export const listenToSubscriptionStatus = (userId: string, callback: (status: SubscriptionStatus) => void) => {
+  if (!db) return () => {};
   return db
     .collection('customers')
     .doc(userId)
@@ -148,13 +156,15 @@ export const listenToSubscriptionStatus = (userId: string, callback: (status: Su
 // Cancel subscription at period end
 export const cancelSubscription = async (): Promise<void> => {
   try {
+    if (!auth || !db) throw new Error('Firebase not initialized');
+    const fdb = db;
     const user = auth.currentUser;
     if (!user) {
       throw new Error('User must be logged in');
     }
 
     // Get active subscription
-    const subscriptions = await db
+    const subscriptions = await fdb
       .collection('customers')
       .doc(user.uid)
       .collection('subscriptions')
@@ -169,7 +179,7 @@ export const cancelSubscription = async (): Promise<void> => {
     const subscriptionId = subscriptions.docs[0].id;
 
     // Call cancel function
-    await db.collection('stripeSubscriptions').doc(subscriptionId).update({
+    await fdb.collection('stripeSubscriptions').doc(subscriptionId).update({
       cancelAtPeriodEnd: true,
       cancelledAt: new Date().toISOString()
     });
@@ -182,13 +192,15 @@ export const cancelSubscription = async (): Promise<void> => {
 // Reactivate canceled subscription
 export const reactivateSubscription = async (): Promise<void> => {
   try {
+    if (!auth || !db) throw new Error('Firebase not initialized');
+    const fdb = db;
     const user = auth.currentUser;
     if (!user) {
       throw new Error('User must be logged in');
     }
 
     // Get subscription with cancel_at_period_end
-    const subscriptions = await db
+    const subscriptions = await fdb
       .collection('customers')
       .doc(user.uid)
       .collection('subscriptions')
@@ -203,7 +215,7 @@ export const reactivateSubscription = async (): Promise<void> => {
     const subscriptionId = subscriptions.docs[0].id;
 
     // Reactivate
-    await db.collection('stripeSubscriptions').doc(subscriptionId).update({
+    await fdb.collection('stripeSubscriptions').doc(subscriptionId).update({
       cancelAtPeriodEnd: false,
       reactivatedAt: new Date().toISOString()
     });
@@ -231,10 +243,12 @@ export const hasActiveMembership = (status: SubscriptionStatus): boolean => {
 // regenerate a fresh account link so returning / incomplete caregivers can
 // resume onboarding.
 export const initiateOnboarding = async (): Promise<{ url: string }> => {
+  if (!auth || !db) throw new Error('Firebase not initialized');
+  const fdb = db;
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
 
-  const existing = await db.collection('caregivers').doc(user.uid).get();
+  const existing = await fdb.collection('caregivers').doc(user.uid).get();
   const existingAccountId = existing.data()?.stripeAccountId as string | undefined;
 
   const fns = getFunctions();
@@ -263,6 +277,7 @@ export interface ConnectAccountStatus {
 // Force a refresh of Stripe Connect account status on Firestore. Used on
 // return from the Stripe-hosted onboarding flow as a fallback to the webhook.
 export const checkOnboardingStatus = async (accountId: string): Promise<ConnectAccountStatus> => {
+  if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
   const fns = getFunctions();
@@ -281,6 +296,7 @@ export interface PayoutResult {
 }
 
 export const requestInstantPayout = async (): Promise<PayoutResult> => {
+  if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
   const fns = getFunctions();
@@ -290,6 +306,7 @@ export const requestInstantPayout = async (): Promise<PayoutResult> => {
 };
 
 export const requestStandardPayout = async (): Promise<PayoutResult> => {
+  if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
   const fns = getFunctions();
@@ -303,6 +320,7 @@ export const requestStandardPayout = async (): Promise<PayoutResult> => {
  * Reads stripeCustomerId from customers/{uid} (same collection used by checkout).
  */
 const createBillingPortalSession = async (returnPath: string): Promise<string> => {
+  if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
   const fns = getFunctions();
@@ -329,6 +347,7 @@ export const stripeService = {
   getSubscriptionStatus,
   listenToSubscriptionStatus,
   cancelSubscription: async () => {
+    if (!auth) throw new Error('Auth not initialized');
     const user = auth.currentUser;
     if (!user) throw new Error('User not authenticated');
     const functions = (await import('firebase/functions')).getFunctions();
@@ -336,6 +355,7 @@ export const stripeService = {
     await cancelFn({});
   },
   reactivateSubscription: async () => {
+    if (!auth) throw new Error('Auth not initialized');
     const user = auth.currentUser;
     if (!user) throw new Error('User not authenticated');
     const functions = (await import('firebase/functions')).getFunctions();

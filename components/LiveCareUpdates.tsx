@@ -36,6 +36,7 @@ export const LiveCareUpdates: React.FC<LiveCareUpdatesProps> = ({ appointmentId,
 
   useEffect(() => {
     if (!appointmentId) return;
+    if (!db) return;
 
     const unsubscribe = db
       .collection('appointments')

@@ -849,28 +849,32 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
 
     useEffect(() => {
       if (!interview.jobId) return;
-      db.collection('job_posts').doc(interview.jobId).get()
+      const fdb = db;
+      if (!fdb) return;
+      fdb.collection('job_posts').doc(interview.jobId).get()
         .then(doc => { if (doc.exists) setJob(doc.data()); })
         .catch(() => {});
     }, [interview.jobId]);
 
     useEffect(() => {
       if (!interview.clientId) return;
+      const fdb = db;
+      if (!fdb) return;
       // 1. Embedded directly on the interview doc (new interviews going forward)
       const embedded = (interview as any).clientPhotoURL || (interview as any).clientPhoto;
       if (embedded) { setClientPhoto(embedded); return; }
       const pickPhoto = (d: any) => d?.clientPhotoURL || d?.photoURL || d?.imageUrl || d?.photo || d?.avatar || null;
       // 2. users doc → 3. senior_profiles → 4. booking_requests (most reliable: PostsPage always writes clientPhotoURL there)
-      db.collection('users').doc(interview.clientId).get()
+      fdb.collection('users').doc(interview.clientId).get()
         .then(doc => {
           const photo = pickPhoto(doc.data());
           if (photo) { setClientPhoto(photo); return; }
-          return db.collection('senior_profiles').doc(interview.clientId).get()
+          return fdb.collection('senior_profiles').doc(interview.clientId).get()
             .then(sp => {
               const p = pickPhoto(sp.data());
               if (p) { setClientPhoto(p); return; }
               // Grab clientPhotoURL from the most recent booking request by this client
-              return db.collection('booking_requests')
+              return fdb.collection('booking_requests')
                 .where('clientId', '==', interview.clientId)
                 .limit(1)
                 .get()
@@ -886,12 +890,14 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     }, [interview.clientId]);
 
     const handleAccept = async () => {
+      const fdb = db;
+      if (!fdb) return;
       setAccepting(true);
       try {
-        await db.collection('video_interviews').doc(interview.id).update({
+        await fdb.collection('video_interviews').doc(interview.id).update({
           status: 'accepted', acceptedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
-        await db.collection('users').doc(interview.clientId).collection('notifications').add({
+        await fdb.collection('users').doc(interview.clientId).collection('notifications').add({
           type: 'interview_accepted', title: 'Interview Accepted',
           message: 'Your interview request has been accepted.',
           read: false, isRead: false, timestamp: new Date().toISOString(),
@@ -903,9 +909,11 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
 
     const handleDecline = async () => {
       if (!window.confirm('Decline this interview request?')) return;
+      const fdb = db;
+      if (!fdb) return;
       setDeclining(true);
       try {
-        await db.collection('video_interviews').doc(interview.id).update({
+        await fdb.collection('video_interviews').doc(interview.id).update({
           status: 'declined', declinedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'declined' as const } : iv));
@@ -915,9 +923,11 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
 
     const handleCancel = async () => {
       if (!window.confirm('Cancel this interview?')) return;
+      const fdb = db;
+      if (!fdb) return;
       setCancelling(true);
       try {
-        await db.collection('video_interviews').doc(interview.id).update({
+        await fdb.collection('video_interviews').doc(interview.id).update({
           status: 'cancelled', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'cancelled' as const } : iv));

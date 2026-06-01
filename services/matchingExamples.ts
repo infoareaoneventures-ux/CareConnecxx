@@ -165,8 +165,8 @@ export const searchWithAvailability = async (
 
   // 2. Get the recommended caregivers
   let candidates = aiResult.recommendedIds
-    .map(id => caregivers.find(c => c.id === id))
-    .filter((c): c is Caregiver => c !== undefined);
+    .map((id: string) => caregivers.find((c: Caregiver) => c.id === id))
+    .filter((c: Caregiver | undefined): c is Caregiver => c !== undefined);
 
   // 3. If specific time requested, check real availability
   if (requestedDate && requestedTime && requestedDuration) {
@@ -182,7 +182,7 @@ export const searchWithAvailability = async (
     );
     
     // Filter out unavailable caregivers
-    candidates = candidates.filter(c => c.matchScore > 0);
+    candidates = candidates.filter((c: Caregiver) => c.matchScore > 0);
   }
 
   // 4. Return top matches

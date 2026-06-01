@@ -89,8 +89,10 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
   const handleBlock = async (contactId: string, contactName: string) => {
     if (!currentUid || !contactId) return;
+    const fdb = db;
+    if (!fdb) return;
     try {
-      await db.collection('users').doc(currentUid).update({
+      await fdb.collection('users').doc(currentUid).update({
         blockedUsers: firebase.firestore.FieldValue.arrayUnion(contactId)
       });
       onShowToast?.(`${contactName} has been blocked.`, 'success');
@@ -102,8 +104,10 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
   const handleReportSubmit = async () => {
     if (!currentUid || !reportContactId || !reportReason) return;
+    const fdb = db;
+    if (!fdb) return;
     try {
-      await db.collection('reports').add({
+      await fdb.collection('reports').add({
         reportedBy: currentUid,
         reportedUser: reportContactId,
         reportedUserName: reportContactName,
@@ -173,8 +177,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
       // Notify the other participant via their notifications subcollection
       const contact = activeRoom ? getContact(activeRoom) : null;
-      if (contact?.id) {
-        db.collection('users').doc(contact.id).collection('notifications').add({
+      const fdb = db;
+      if (contact?.id && fdb) {
+        fdb.collection('users').doc(contact.id).collection('notifications').add({
           userId: contact.id,
           type: 'new_message',
           title: `New message from ${currentName}`,

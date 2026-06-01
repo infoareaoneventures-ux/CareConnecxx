@@ -59,9 +59,10 @@ export default defineConfig(({ mode }) => ({
         entryFileNames: 'assets/[name]-[hash].js',
         chunkFileNames: 'assets/[name]-[hash].js',
         assetFileNames: (assetInfo) => {
-          const info = assetInfo.name.split('.');
+          const assetName = assetInfo.name ?? '';
+          const info = assetName.split('.');
           const ext = info[info.length - 1];
-          if (/\.(png|jpe?g|gif|svg|webp|ico)$/i.test(assetInfo.name)) {
+          if (/\.(png|jpe?g|gif|svg|webp|ico)$/i.test(assetName)) {
             return 'assets/images/[name]-[hash][extname]';
           }
           if (ext === 'css') {

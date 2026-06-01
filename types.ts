@@ -343,6 +343,22 @@ export const MICRO_TASKS: MicroTask[] = [
   { id: 'wound', name: 'Wound Care', durationMin: 45, flatRate: 50, category: 'medical' }
 ];
 
+// --- CARE JOURNAL TYPES ---
+// Wellness/activity log entries used to compute family-facing wellness and
+// peace-of-mind scores (components/family/WellnessScore, PeaceOfMindScore).
+export interface CareJournalEntry {
+  id?: string;
+  timestamp: string;
+  note?: string;
+  activities?: string[];
+  wellness?: {
+    mood?: string;
+    wasActive?: boolean;
+    tookMeds?: boolean;
+    ateWell?: boolean;
+  };
+}
+
 // --- ADMIN TYPES ---
 export interface AdminUser {
   uid: string;

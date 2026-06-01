@@ -204,11 +204,16 @@ export const BookingModal: React.FC<BookingModalProps> = ({ caregiver, onClose, 
       : 3; // Default 3 hours for hourly
 
     // Generate recurring group ID if this is a recurring booking
-    const recurringGroupId = isRecurring ? db.collection('appointments').doc().id : undefined;
+    const fdb = db;
+    if (!fdb) {
+      setLoading(false);
+      return;
+    }
+    const recurringGroupId = isRecurring ? fdb.collection('appointments').doc().id : undefined;
     const dayOfWeek = selectedDate ? new Date(selectedDate).getDay() : undefined;
 
     const newAppt: Appointment = {
-      id: db.collection('appointments').doc().id,
+      id: fdb.collection('appointments').doc().id,
       clientId,
       caregiverId: caregiver.id,
       caregiverName: caregiver.name,

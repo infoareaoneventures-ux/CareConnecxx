@@ -128,6 +128,7 @@ export { processDndQueue } from './scheduled/dndQueueProcessor';
 export { expirePostVisitFeedback } from './scheduled/feedbackExpiry';
 export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';
 export { sendOnboardingReengagement } from './scheduled/onboardingReengagement';
+export { sendPaywallWinback } from './scheduled/paywallWinback';
 export { checkBackgroundCheckExpiry } from './scheduled/backgroundCheckExpiry';
 export { wellbeingCheckinJob } from './scheduled/wellbeingCheckin';
 

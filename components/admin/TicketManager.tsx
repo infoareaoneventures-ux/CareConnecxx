@@ -16,7 +16,9 @@ export const TicketManager: React.FC<TicketManagerProps> = ({ onShowToast }) => 
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const ticketsRef = collection(db, 'support_tickets');
+        const fdb = db;
+        if (!fdb) return;
+        const ticketsRef = collection(fdb, 'support_tickets');
         let q = query(ticketsRef, orderBy('createdAt', 'desc'));
 
         if (filter !== 'all') {
@@ -57,8 +59,13 @@ export const TicketManager: React.FC<TicketManagerProps> = ({ onShowToast }) => 
     };
 
     const updateTicketStatus = async (ticketId: string, newStatus: string) => {
+        const fdb = db;
+        if (!fdb) {
+            onShowToast('Failed to update ticket status', 'error');
+            return;
+        }
         try {
-            await updateDoc(doc(db, 'support_tickets', ticketId), {
+            await updateDoc(doc(fdb, 'support_tickets', ticketId), {
                 status: newStatus,
                 updatedAt: new Date().toISOString()
             });
@@ -188,10 +195,16 @@ const TicketDetailModal: React.FC<TicketDetailModalProps> = ({ ticket, onClose, 
             return;
         }
 
+        const fdb = db;
+        if (!fdb) {
+            onShowToast('Failed to send response', 'error');
+            return;
+        }
+
         setSending(true);
         try {
             // Add response to ticket's responses subcollection
-            await addDoc(collection(db, 'support_tickets', ticket.id!, 'responses'), {
+            await addDoc(collection(fdb, 'support_tickets', ticket.id!, 'responses'), {
                 message: adminResponse,
                 isAdmin: true,
                 createdAt: new Date().toISOString(),
@@ -200,7 +213,7 @@ const TicketDetailModal: React.FC<TicketDetailModalProps> = ({ ticket, onClose, 
 
             // Update ticket status to in-progress if it was open
             if (ticket.status === 'open') {
-                await updateDoc(doc(db, 'support_tickets', ticket.id!), {
+                await updateDoc(doc(fdb, 'support_tickets', ticket.id!), {
                     status: 'in-progress',
                     updatedAt: new Date().toISOString()
                 });

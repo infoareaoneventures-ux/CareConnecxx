@@ -8,11 +8,11 @@ export default function ClientProfileDashboard() {
   const navigate = useNavigate();
   const [intakeData, setIntakeData] = useState<ClientIntakeData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState(auth.currentUser);
+  const [user, setUser] = useState(auth?.currentUser);
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!auth.currentUser) {
+      if (!auth?.currentUser) {
         navigate('/login');
         return;
       }

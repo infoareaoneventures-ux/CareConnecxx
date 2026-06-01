@@ -36,7 +36,7 @@ export function PlanSelectModal({ onClose, currentPriceId, caregiverName, caregi
   const [error, setError] = useState<string | null>(null);
 
   const handleSelectPlan = async () => {
-    if (!auth.currentUser) {
+    if (!auth?.currentUser) {
       navigate('/login');
       return;
     }

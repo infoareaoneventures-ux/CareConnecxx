@@ -98,7 +98,7 @@ export const SimpleSearchWizard: React.FC<SimpleSearchWizardProps> = ({
             const requestedDate = new Date(year, month - 1, day);
 
             // --- Step 1: Try backend precomputed matches first ---
-            const user = auth.currentUser;
+            const user = auth?.currentUser ?? null;
             const backendData = user ? await dbService.getClientMatches(user.uid) : null;
 
             if (backendData?.topMatches?.length) {

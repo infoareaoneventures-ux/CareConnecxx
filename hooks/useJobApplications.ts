@@ -134,34 +134,35 @@ export const useJobApplications = (clientId: string | null) => {
   }, [clientId]);
 
   const acceptApplication = useCallback(async (applicationId: string, jobId: string) => {
-    if (!db) return;
-    
-    const batch = writeBatch(db);
-    
+    const fdb = db;
+    if (!fdb) return;
+
+    const batch = writeBatch(fdb);
+
     // Update application status
-    batch.update(doc(db, 'job_applications', applicationId), {
+    batch.update(doc(fdb, 'job_applications', applicationId), {
       status: 'accepted',
       updatedAt: serverTimestamp()
     });
-    
+
     // Reject other applications for this job
     const otherAppsQuery = query(
-      collection(db, 'job_applications'),
+      collection(fdb, 'job_applications'),
       where('jobId', '==', jobId),
       where('status', '==', 'pending')
     );
     const otherApps = await getDocs(otherAppsQuery);
     otherApps.forEach((appDoc) => {
       if (appDoc.id !== applicationId) {
-        batch.update(doc(db, 'job_applications', appDoc.id), {
+        batch.update(doc(fdb, 'job_applications', appDoc.id), {
           status: 'rejected',
           updatedAt: serverTimestamp()
         });
       }
     });
-    
+
     // Update job status
-    batch.update(doc(db, 'job_posts', jobId), {
+    batch.update(doc(fdb, 'job_posts', jobId), {
       status: 'filled',
       filledAt: serverTimestamp()
     });

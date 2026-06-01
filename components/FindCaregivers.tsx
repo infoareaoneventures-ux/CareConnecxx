@@ -129,13 +129,15 @@ export default function FindCaregivers() {
 
   const loadClientDataAndCaregivers = async () => {
     try {
+      if (!auth || !db) return;
+      const fdb = db;
       const user = auth.currentUser;
       if (!user) {
         navigate('/login');
         return;
       }
 
-      const intakeDoc = await db.collection('clientIntakes').doc(user.uid).get();
+      const intakeDoc = await fdb.collection('clientIntakes').doc(user.uid).get();
       let intakeData = null;
       if (intakeDoc.exists) {
         intakeData = intakeDoc.data();
@@ -143,7 +145,7 @@ export default function FindCaregivers() {
       }
 
       // Load accepted booking caregiver IDs — fire and forget
-      db.collection('booking_requests')
+      fdb.collection('booking_requests')
         .where('clientId', '==', user.uid)
         .where('status', '==', 'accepted')
         .get()
@@ -155,9 +157,9 @@ export default function FindCaregivers() {
 
       // ── Collect all client care location lat/lngs in parallel ──
       const [postsSnap, jpDoc, cpDoc] = await Promise.all([
-        db.collection('job_posts').where('clientId', '==', user.uid).where('status', '==', 'open').get(),
-        db.collection('job_postings').doc(user.uid).get(),
-        db.collection('carePlans').doc(user.uid).get(),
+        fdb.collection('job_posts').where('clientId', '==', user.uid).where('status', '==', 'open').get(),
+        fdb.collection('job_postings').doc(user.uid).get(),
+        fdb.collection('carePlans').doc(user.uid).get(),
       ]);
 
       // Populate clientOpenPosts from the same query
@@ -186,7 +188,7 @@ export default function FindCaregivers() {
 
       // 4. Fallback — signup address on users/{uid}
       if (locs.length === 0) {
-        const userDoc = await db.collection('users').doc(user.uid).get();
+        const userDoc = await fdb.collection('users').doc(user.uid).get();
         if (userDoc.exists) { const d = userDoc.data() as any; addLoc(d.latitude, d.longitude); }
       }
 
@@ -203,14 +205,16 @@ export default function FindCaregivers() {
 
   const fetchCaregivers = async (intakeData: any, clientLocs: { lat: number; lng: number }[]) => {
     try {
+      if (!auth || !db) return;
+      const fdb = db;
       const user = auth.currentUser;
       const precomputedData = user ? await dbService.getClientMatches(user.uid) : null;
       const precomputedMatches = precomputedData?.topMatches || [];
       const matchMap = new Map(precomputedMatches.map((m) => [m.caregiverId, m]));
 
       const [usersSnap, caregiversSnap] = await Promise.all([
-        db.collection('users').where('role', '==', 'caregiver').limit(100).get(),
-        db.collection('caregivers').where('onboardingStatus', '==', 'profile_complete').limit(100).get().catch(() => null),
+        fdb.collection('users').where('role', '==', 'caregiver').limit(100).get(),
+        fdb.collection('caregivers').where('onboardingStatus', '==', 'profile_complete').limit(100).get().catch(() => null),
       ]);
 
       // Build set of visible caregiver IDs — anyone whose wizard is complete (onboardingStatus: profile_complete)
@@ -313,7 +317,7 @@ export default function FindCaregivers() {
                   setTimeout(() => reject(new Error('Timeout')), 2000)
                 );
                 const matchScore = await Promise.race([matchScorePromise, timeoutPromise]);
-                return { ...caregiver, matchScore };
+                return { ...caregiver, matchScore: matchScore ?? undefined };
               } catch {
                 return caregiver;
               }
@@ -332,9 +336,11 @@ export default function FindCaregivers() {
 
   const fetchFavorites = async () => {
     try {
+      if (!auth || !db) return;
+      const fdb = db;
       const user = auth.currentUser;
       if (!user) return;
-      const userDoc = await db.collection('users').doc(user.uid).get();
+      const userDoc = await fdb.collection('users').doc(user.uid).get();
       setFavorites((userDoc.data() as any)?.savedCaregiverIds || []);
     } catch {
       // non-critical
@@ -343,6 +349,7 @@ export default function FindCaregivers() {
 
   const toggleFavorite = async (caregiverId: string) => {
     try {
+      if (!auth || !db) return;
       const user = auth.currentUser;
       if (!user) { navigate('/login'); return; }
       const userRef = db.collection('users').doc(user.uid);
@@ -362,9 +369,9 @@ export default function FindCaregivers() {
 
   const openChat = async (caregiverId: string, caregiverName: string) => {
     try {
-      const currentUid = auth.currentUser?.uid;
-      const currentName = auth.currentUser?.displayName
-        || auth.currentUser?.email?.split('@')[0]
+      const currentUid = auth?.currentUser?.uid;
+      const currentName = auth?.currentUser?.displayName
+        || auth?.currentUser?.email?.split('@')[0]
         || 'Client';
       if (currentUid) {
         const roomId = await chatService.getOrCreateChatRoom(currentUid, currentName, caregiverId, caregiverName);

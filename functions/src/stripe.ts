@@ -465,12 +465,45 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
+  // Stripe Smart Retries drive the actual retry attempts; each failed attempt
+  // re-fires this webhook. `attempt_count` tells us which attempt this is, and a
+  // null `next_payment_attempt` means Stripe has exhausted retries (final notice).
+  const attemptCount = invoice.attempt_count ?? 1;
+  const isFinalAttempt = invoice.next_payment_attempt == null;
+  const nextRetryDate = invoice.next_payment_attempt
+    ? new Date(invoice.next_payment_attempt * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    : null;
+
   // Update user status
   await admin.firestore().collection('users').doc(userId).update({
-    membershipStatus:   'payment_failed',
-    subscriptionStatus: 'past_due',
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    membershipStatus:    'payment_failed',
+    subscriptionStatus:  'past_due',
+    paymentFailureCount: attemptCount,
+    lastPaymentFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt:           admin.firestore.FieldValue.serverTimestamp(),
   });
+
+  // Escalating dunning communication — tone sharpens with each failed attempt,
+  // and the final attempt warns that access is about to end.
+  const billingUrl = "cara.app/billing";
+  let dunningMsg: string;
+  if (isFinalAttempt) {
+    dunningMsg =
+      "We weren't able to process your CareConnex membership payment after several tries, " +
+      `so your membership is now at risk of being canceled. To keep your access, please update your ` +
+      `payment method at ${billingUrl} today. Reply HELP if you need a hand.`;
+  } else if (attemptCount <= 1) {
+    dunningMsg =
+      "Heads up — we couldn't process your CareConnex membership payment. " +
+      `No action needed if your card just needs a moment, but you can update billing anytime at ${billingUrl}.` +
+      (nextRetryDate ? ` We'll retry on ${nextRetryDate}.` : "");
+  } else {
+    dunningMsg =
+      "We still haven't been able to process your CareConnex membership payment. " +
+      `Please update your payment method at ${billingUrl} to avoid an interruption.` +
+      (nextRetryDate ? ` Next retry: ${nextRetryDate}.` : "") +
+      " Reply HELP if you need assistance.";
+  }
 
   // Proactively text the client via Cara
   try {
@@ -484,10 +517,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
       const clientPhone = sessionSnap.docs[0].id;
       const { sendViaInteractionAgent } = await import("./agents/caraAgent");
       await sendViaInteractionAgent(clientPhone, {
-        content:
-          "There was an issue processing your Cara membership payment. " +
-          "To keep your care coordination uninterrupted, please update your billing at cara.app/billing. " +
-          "Reply HELP if you need assistance.",
+        content:     dunningMsg,
         urgency:     "immediate",
         sourceAgent: "billing",
         canDrop:     false,
@@ -499,7 +529,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
     console.error(`handleInvoicePaymentFailed: failed to notify client ${userId}:`, err);
   }
 
-  console.log(`Payment failed for user: ${userId}`);
+  console.log(`Payment failed for user: ${userId} (attempt ${attemptCount}, final: ${isFinalAttempt})`);
 }
 
 /**

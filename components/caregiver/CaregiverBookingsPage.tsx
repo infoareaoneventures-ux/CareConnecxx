@@ -846,6 +846,7 @@ const BookingGroupCard: React.FC<{
               </button>
               <button
                 onClick={async () => {
+                  if (!db) return;
                   await db.collection('booking_amendments').doc(amendment.id).update({
                     status: 'declined',
                     respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -1553,6 +1554,8 @@ export const CaregiverBookingsPage: React.FC = () => {
   };
 
   const handleAcceptAmendment = async (amendment: BookingAmendment) => {
+    const fdb = db;
+    if (!fdb) return;
     try {
       const addDaysLocal = (dateStr: string, days: number) => {
         const d = new Date(dateStr + 'T12:00:00');
@@ -1564,7 +1567,7 @@ export const CaregiverBookingsPage: React.FC = () => {
       const generateTo = addDaysLocal(generateFrom, 27);
 
       if (amendment.bookingRequestId) {
-        const bookingSnap = await db.collection('booking_requests').doc(amendment.bookingRequestId).get();
+        const bookingSnap = await fdb.collection('booking_requests').doc(amendment.bookingRequestId).get();
         if (bookingSnap.exists) {
           const booking = bookingSnap.data()!;
           const currentDST: Record<string, Array<{ start: string; end: string }>> = booking.schedule?.dayShiftTimes || {};
@@ -1582,7 +1585,7 @@ export const CaregiverBookingsPage: React.FC = () => {
               })()
             : currentDST;
           if (amendment.ongoing) {
-            await db.collection('booking_requests').doc(amendment.bookingRequestId).update({
+            await fdb.collection('booking_requests').doc(amendment.bookingRequestId).update({
               'schedule.dayShiftTimes': mergedDST,
               updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
@@ -1592,7 +1595,7 @@ export const CaregiverBookingsPage: React.FC = () => {
             : (amendment.endDate || (booking.schedule?.ongoing ? null : booking.schedule?.endDate || null));
           let cgPhotoURL: string | null = booking.caregiverPhotoURL || null;
           if (!cgPhotoURL && amendment.caregiverId) {
-            const cgSnap = await db.collection('caregivers').doc(amendment.caregiverId).get().catch(() => null);
+            const cgSnap = await fdb.collection('caregivers').doc(amendment.caregiverId).get().catch(() => null);
             const cgData = cgSnap?.data() as any;
             cgPhotoURL = cgData?.photo || cgData?.profilePhoto || cgData?.photoURL || cgData?.imageUrl || null;
           }
@@ -1618,14 +1621,14 @@ export const CaregiverBookingsPage: React.FC = () => {
             tasksCompleted: [],
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
           };
-          const batch = db.batch();
+          const batch = fdb.batch();
           let count = 0;
           for (const [day, blocks] of Object.entries(amendment.newDays)) {
             for (const block of blocks as Array<{ start: string; end: string }>) {
               let dateStr = nextOccurrence(generateFrom, day);
               while (dateStr <= generateTo && count < 490) {
                 if (endDate && dateStr > endDate) break;
-                batch.set(db.collection('shifts').doc(), {
+                batch.set(fdb.collection('shifts').doc(), {
                   ...shiftBase,
                   date: dateStr,
                   startTime: block.start,
@@ -1639,7 +1642,7 @@ export const CaregiverBookingsPage: React.FC = () => {
             }
           }
           if (count > 0) await batch.commit();
-          await db.collection('users').doc(amendment.clientId).collection('notifications').add({
+          await fdb.collection('users').doc(amendment.clientId).collection('notifications').add({
             userId: amendment.clientId,
             type: 'recurring_visit_accepted',
             title: 'Recurring Visit Accepted',
@@ -1650,7 +1653,7 @@ export const CaregiverBookingsPage: React.FC = () => {
           }).catch(() => {});
         }
       }
-      await db.collection('booking_amendments').doc(amendment.id).update({
+      await fdb.collection('booking_amendments').doc(amendment.id).update({
         status: 'accepted',
         respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
@@ -1754,6 +1757,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                           </button>
                           <button
                             onClick={async () => {
+                              if (!db) return;
                               await db.collection('booking_amendments').doc(a.id).update({
                                 status: 'declined',
                                 respondedAt: firebase.firestore.FieldValue.serverTimestamp(),

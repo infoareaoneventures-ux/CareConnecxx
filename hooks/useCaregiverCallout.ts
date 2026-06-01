@@ -117,9 +117,12 @@ export const useAppointmentForCallout = (appointmentId: string | null) => {
 
     setLoading(true);
     
+    const fdb = db;
+    if (!fdb) return;
+
     const fetchAppointment = async () => {
       try {
-        const docRef = doc(db, 'appointments', appointmentId);
+        const docRef = doc(fdb, 'appointments', appointmentId);
         const docSnap = await getDoc(docRef);
         
         if (docSnap.exists()) {

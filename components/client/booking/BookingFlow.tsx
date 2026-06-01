@@ -160,14 +160,16 @@ export default function BookingFlow() {
 
   const load = async () => {
     try {
+      if (!auth || !db) return;
+      const fdb = db;
       const uid = auth.currentUser?.uid;
       if (!uid) { navigate('/login'); return; }
 
       const [cgDoc, cgUserDoc, jobs, clientDoc] = await Promise.all([
-        db.collection('caregivers').doc(caregiverId!).get().catch(() => null),
-        db.collection('users').doc(caregiverId!).get(),
+        fdb.collection('caregivers').doc(caregiverId!).get().catch(() => null),
+        fdb.collection('users').doc(caregiverId!).get(),
         dbService.getJobPostsByClient(uid),
-        db.collection('users').doc(uid).get(),
+        fdb.collection('users').doc(uid).get(),
       ]);
 
       const cgData: any = { ...(cgDoc?.data() || {}), ...(cgUserDoc.data() || {}) };
@@ -250,6 +252,7 @@ export default function BookingFlow() {
       setSubmitting(true);
       setSubmitError(null);
       try {
+        if (!auth) throw new Error('Auth not initialized');
         const uid = auth.currentUser?.uid!;
         const clientName = auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Client';
         const caregiverName = `${caregiver.firstName} ${caregiver.lastName}`;
@@ -422,6 +425,7 @@ export default function BookingFlow() {
           onMessage={() => {
             setShowSpokenDialog(false);
             gate('message', `${caregiver.firstName} ${caregiver.lastName}`, async () => {
+              if (!auth) return;
               const uid = auth.currentUser?.uid!;
               const clientName = auth.currentUser?.displayName || 'Client';
               const roomId = await chatService.getOrCreateChatRoom(uid, clientName, caregiver.id, `${caregiver.firstName} ${caregiver.lastName}`);

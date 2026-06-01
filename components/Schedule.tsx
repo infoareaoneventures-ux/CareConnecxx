@@ -180,7 +180,8 @@ export default function Schedule() {
   // Also load caregiver weeklyAvailability + booked slots summary.
   // Include clientId filter so the query satisfies Firestore security rules.
   useEffect(() => {
-    if (!visitCaregiverId || !db) {
+    const fdb = db;
+    if (!visitCaregiverId || !fdb || !auth) {
       setCgShiftBlocks({});
       setCgWeeklyAvail({});
       setCgBookedSlots({});
@@ -191,8 +192,8 @@ export default function Schedule() {
 
     // Load caregiver weeklyAvailability + booked slots summary
     Promise.all([
-      db.collection('caregivers').doc(visitCaregiverId).get().catch(() => null),
-      db.collection('caregiver_booked_slots').doc(visitCaregiverId).get().catch(() => null),
+      fdb.collection('caregivers').doc(visitCaregiverId).get().catch(() => null),
+      fdb.collection('caregiver_booked_slots').doc(visitCaregiverId).get().catch(() => null),
     ]).then(([cgSnap, bookedSnap]) => {
       if (cgSnap?.exists) setCgWeeklyAvail((cgSnap.data() as any)?.weeklyAvailability || {});
       if (bookedSnap?.exists) setCgBookedSlots((bookedSnap.data() as any)?.slots || {});
@@ -202,7 +203,7 @@ export default function Schedule() {
     const _t = new Date();
     const today = `${_t.getFullYear()}-${String(_t.getMonth()+1).padStart(2,'0')}-${String(_t.getDate()).padStart(2,'0')}`;
     const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    db.collection('shifts')
+    fdb.collection('shifts')
       .where('clientId', '==', user.uid)
       .where('caregiverId', '==', visitCaregiverId)
       .where('status', '==', 'scheduled')
@@ -226,8 +227,9 @@ export default function Schedule() {
 
   // Subscribe to pending booking amendments so client sees "Awaiting response"
   useEffect(() => {
+    if (!auth || !db) return;
     const user = auth.currentUser;
-    if (!user || !db) return;
+    if (!user) return;
     const unsub = db.collection('booking_amendments')
       .where('clientId', '==', user.uid)
       .where('status', '==', 'pending')
@@ -242,10 +244,12 @@ export default function Schedule() {
   // This runs once on mount and acts as a safety net when the Cloud Function hasn't fired yet.
   const generateMissingShifts = async () => {
     try {
+      const fdb = db;
+      if (!fdb || !auth) return;
       const user = auth.currentUser;
       if (!user) return;
 
-      const bookingsSnap = await db.collection('booking_requests')
+      const bookingsSnap = await fdb.collection('booking_requests')
         .where('clientId', '==', user.uid)
         .where('status', '==', 'accepted')
         .get();
@@ -275,7 +279,7 @@ export default function Schedule() {
         const bookingId = bookingDoc.id;
 
         // Check if shifts already exist for this booking
-        const existingSnap = await db.collection('shifts')
+        const existingSnap = await fdb.collection('shifts')
           .where('bookingRequestId', '==', bookingId)
           .where('status', '==', 'scheduled')
           .limit(1)
@@ -307,7 +311,7 @@ export default function Schedule() {
           tasksCompleted: [],
         };
 
-        const batch = db.batch();
+        const batch = fdb.batch();
         let count = 0;
 
         Object.entries(dayShiftTimes).forEach(([day, blocks]) => {
@@ -318,7 +322,7 @@ export default function Schedule() {
               while (dateStr <= generateTo) {
                 if (endDate && dateStr > endDate) break;
                 if (count < 490) { // stay under Firestore batch limit
-                  batch.set(db.collection('shifts').doc(), {
+                  batch.set(fdb.collection('shifts').doc(), {
                     ...shiftBase,
                     date: dateStr,
                     startTime: b.start,
@@ -346,11 +350,13 @@ export default function Schedule() {
 
   const fetchShifts = async () => {
     try {
+      const fdb = db;
+      if (!fdb || !auth) { setLoading(false); return; }
       const user = auth.currentUser;
       if (!user) { navigate('/login'); return; }
       const startDate = new Date(monthDate.getFullYear(), monthDate.getMonth() - 1, 1);
       const endDate = new Date(monthDate.getFullYear(), monthDate.getMonth() + 2, 0);
-      const snap = await db.collection('shifts')
+      const snap = await fdb.collection('shifts')
         .where('clientId', '==', user.uid)
         .where('date', '>=', localDate(startDate))
         .where('date', '<=', localDate(endDate))
@@ -368,9 +374,11 @@ export default function Schedule() {
 
   const fetchInterviews = async () => {
     try {
+      const fdb = db;
+      if (!fdb || !auth) return;
       const user = auth.currentUser;
       if (!user) return;
-      const snap = await db.collection('video_interviews')
+      const snap = await fdb.collection('video_interviews')
         .where('clientId', '==', user.uid)
         .get();
       const list: InterviewEvent[] = [];
@@ -388,17 +396,19 @@ export default function Schedule() {
 
   const fetchHiredCaregivers = async () => {
     try {
+      const fdb = db;
+      if (!fdb || !auth) return;
       const user = auth.currentUser;
       if (!user) return;
 
       // Only include bookings that have at least one scheduled shift —
       // past bookings (all shifts done) are excluded; use Re-book instead.
       const [bookingsSnap, shiftsSnap] = await Promise.all([
-        db.collection('booking_requests')
+        fdb.collection('booking_requests')
           .where('clientId', '==', user.uid)
           .where('status', '==', 'accepted')
           .get(),
-        db.collection('shifts')
+        fdb.collection('shifts')
           .where('clientId', '==', user.uid)
           .where('status', '==', 'scheduled')
           .get(),
@@ -444,6 +454,8 @@ export default function Schedule() {
 
   const handleAddShift = async () => {
     try {
+      const fdb = db;
+      if (!fdb || !auth) return;
       const user = auth.currentUser;
       if (!user) return;
       const cg = caregivers.find(c => c.id === visitCaregiverId);
@@ -464,7 +476,7 @@ export default function Schedule() {
       const todayStr = `${_td2.getFullYear()}-${String(_td2.getMonth()+1).padStart(2,'0')}-${String(_td2.getDate()).padStart(2,'0')}`;
       const isOngoing = visitEndOption === 'ongoing';
 
-      await db.collection('booking_amendments').add({
+      await fdb.collection('booking_amendments').add({
         bookingRequestId: cg?.bookingId || null,
         clientId: user.uid,
         clientName: user.displayName || '',
@@ -482,7 +494,7 @@ export default function Schedule() {
 
       const dayList = selectedDays.join(', ');
       const isOneDay = !isOngoing && visitStartDate && visitEndDate && visitStartDate === visitEndDate;
-      await db.collection('users').doc(visitCaregiverId).collection('notifications').add({
+      await fdb.collection('users').doc(visitCaregiverId).collection('notifications').add({
         userId: visitCaregiverId,
         type: 'extra_visit_request',
         title: isOneDay ? 'Extra Visit Requested' : 'Schedule Change Requested',
@@ -507,6 +519,7 @@ export default function Schedule() {
 
   const handleCancel = async (id: string) => {
     if (!confirm('Cancel this shift?')) return;
+    if (!db) return;
     await db.collection('shifts').doc(id).update({
       status: 'cancelled', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
@@ -787,7 +800,7 @@ export default function Schedule() {
     const initials = interview.caregiverName.split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase();
 
     useEffect(() => {
-      if (!interview.jobId) return;
+      if (!interview.jobId || !db) return;
       db.collection('job_posts').doc(interview.jobId).get()
         .then(doc => { if (doc.exists) setJob(doc.data()); })
         .catch(() => {});
@@ -795,9 +808,11 @@ export default function Schedule() {
 
     const handleCancel = async () => {
       if (!window.confirm('Cancel this interview?')) return;
+      if (!db) return;
+      const fdb = db;
       setCancelling(true);
       try {
-        await db.collection('video_interviews').doc(interview.id).update({
+        await fdb.collection('video_interviews').doc(interview.id).update({
           status: 'cancelled', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'cancelled' as const } : iv));

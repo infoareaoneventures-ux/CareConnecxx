@@ -83,7 +83,10 @@ export const chatService = {
     validators.string(caregiverName, 'caregiverName', { min: 1, max: 100 });
     validators.id(appointmentId, 'appointmentId');
 
-    const chatRoomRef = await addDoc(collection(db, 'chatRooms'), {
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+
+    const chatRoomRef = await addDoc(collection(fdb, 'chatRooms'), {
       participants: [clientId, caregiverId],
       participantNames: [clientName, caregiverName],
       participantAvatars: ['', ''], // Can be populated later
@@ -96,7 +99,7 @@ export const chatService = {
     });
 
     // Add system message
-    await addDoc(collection(db, 'chatRooms', chatRoomRef.id, 'messages'), {
+    await addDoc(collection(fdb, 'chatRooms', chatRoomRef.id, 'messages'), {
       chatRoomId: chatRoomRef.id,
       senderId: 'system',
       senderName: 'CareConnex',
@@ -126,9 +129,12 @@ export const chatService = {
     validators.id(user2Id, 'user2Id');
     validators.string(user2Name, 'user2Name', { min: 1, max: 100 });
 
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+
     // Check if chat room already exists
     const q = query(
-      collection(db, 'chatRooms'),
+      collection(fdb, 'chatRooms'),
       where('participants', 'array-contains', user1Id)
     );
 
@@ -147,7 +153,7 @@ export const chatService = {
     }
 
     // Create new room
-    const chatRoomRef = await addDoc(collection(db, 'chatRooms'), {
+    const chatRoomRef = await addDoc(collection(fdb, 'chatRooms'), {
       participants: [user1Id, user2Id],
       participantNames: [user1Name, user2Name],
       participantAvatars: ['', ''],
@@ -182,10 +188,13 @@ export const chatService = {
       validators.string(imageUrl, 'imageUrl', { max: 2000 });
     }
 
-    const batch = writeBatch(db);
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+
+    const batch = writeBatch(fdb);
 
     // Add message
-    const messageRef = doc(collection(db, 'chatRooms', chatRoomId, 'messages'));
+    const messageRef = doc(collection(fdb, 'chatRooms', chatRoomId, 'messages'));
     batch.set(messageRef, {
       chatRoomId,
       senderId,
@@ -200,7 +209,7 @@ export const chatService = {
     });
 
     // Update chat room with last message
-    const roomRef = doc(db, 'chatRooms', chatRoomId);
+    const roomRef = doc(fdb, 'chatRooms', chatRoomId);
     const roomSnap = await getDoc(roomRef);
     const roomData = roomSnap.data();
     
@@ -231,13 +240,16 @@ export const chatService = {
     // Validate inputs
     validators.id(chatRoomId, 'chatRoomId');
 
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+
     const q = query(
-      collection(db, 'chatRooms', chatRoomId, 'messages'),
+      collection(fdb, 'chatRooms', chatRoomId, 'messages'),
       orderBy('timestamp', 'asc'),
       limit(100)
     );
 
-    return onSnapshot(q, 
+    return onSnapshot(q,
       (snapshot) => {
         const messages = snapshot.docs.map((doc) => ({
           id: doc.id,
@@ -268,8 +280,11 @@ export const chatService = {
     // Validate inputs
     validators.id(userId, 'userId');
 
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+
     const q = query(
-      collection(db, 'chatRooms'),
+      collection(fdb, 'chatRooms'),
       where('participants', 'array-contains', userId),
       orderBy('lastMessageTimestamp', 'desc')
     );
@@ -302,11 +317,14 @@ export const chatService = {
     validators.id(chatRoomId, 'chatRoomId');
     validators.id(userId, 'userId');
 
-    const batch = writeBatch(db);
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+
+    const batch = writeBatch(fdb);
 
     // Get unread messages
     const q = query(
-      collection(db, 'chatRooms', chatRoomId, 'messages'),
+      collection(fdb, 'chatRooms', chatRoomId, 'messages'),
       where('isRead', '==', false)
     );
 
@@ -315,7 +333,7 @@ export const chatService = {
     snapshot.docs.forEach((messageDoc) => {
       const messageData = messageDoc.data();
       if (!messageData.readBy.includes(userId)) {
-        const messageRef = doc(db, 'chatRooms', chatRoomId, 'messages', messageDoc.id);
+        const messageRef = doc(fdb, 'chatRooms', chatRoomId, 'messages', messageDoc.id);
         batch.update(messageRef, {
           isRead: true,
           readBy: [...messageData.readBy, userId]
@@ -324,7 +342,7 @@ export const chatService = {
     });
 
     // Reset unread count for this user
-    const roomRef = doc(db, 'chatRooms', chatRoomId);
+    const roomRef = doc(fdb, 'chatRooms', chatRoomId);
     const roomSnap = await getDoc(roomRef);
     const roomData = roomSnap.data();
     
@@ -344,8 +362,11 @@ export const chatService = {
     // Validate inputs
     validators.id(userId, 'userId');
 
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+
     const q = query(
-      collection(db, 'chatRooms'),
+      collection(fdb, 'chatRooms'),
       where('participants', 'array-contains', userId)
     );
 
@@ -368,8 +389,11 @@ export const chatService = {
     validators.id(chatRoomId, 'chatRoomId');
     validators.number(messageLimit, 'messageLimit', { min: 1, max: 100, integer: true });
 
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+
     const q = query(
-      collection(db, 'chatRooms', chatRoomId, 'messages'),
+      collection(fdb, 'chatRooms', chatRoomId, 'messages'),
       orderBy('timestamp', 'desc'),
       limit(messageLimit)
     );
@@ -400,8 +424,11 @@ export const chatService = {
       throw new Error('Invalid messageLimit: must be between 1 and 100');
     }
 
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+
     let q = query(
-      collection(db, 'chatRooms', chatRoomId, 'messages'),
+      collection(fdb, 'chatRooms', chatRoomId, 'messages'),
       orderBy('timestamp', 'desc'),
       limit(messageLimit + 1) // Fetch one extra to check if there are more
     );
@@ -449,8 +476,11 @@ export const chatService = {
       throw new Error('Invalid messageLimit: must be between 1 and 100');
     }
 
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+
     const q = query(
-      collection(db, 'chatRooms', chatRoomId, 'messages'),
+      collection(fdb, 'chatRooms', chatRoomId, 'messages'),
       orderBy('timestamp', 'asc'),
       limit(messageLimit)
     );
@@ -491,9 +521,12 @@ export const chatService = {
     validators.id(userId, 'userId');
     validators.string(userName, 'userName', { min: 1, max: 100 });
 
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+
     // Look for an existing support room for this user
     const q = query(
-      collection(db, 'chatRooms'),
+      collection(fdb, 'chatRooms'),
       where('participants', 'array-contains', userId)
     );
     const snapshot = await getDocs(q);
@@ -501,7 +534,7 @@ export const chatService = {
     if (existing) return existing.id;
 
     // Create a new support room
-    const roomRef = await addDoc(collection(db, 'chatRooms'), {
+    const roomRef = await addDoc(collection(fdb, 'chatRooms'), {
       participants: [userId, SUPPORT_AGENT_ID],
       participantNames: [userName, SUPPORT_AGENT_NAME],
       participantAvatars: ['', ''],
@@ -523,8 +556,11 @@ export const chatService = {
     callback: (rooms: ChatRoom[]) => void,
     onError?: (error: Error) => void
   ) {
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+
     const q = query(
-      collection(db, 'chatRooms'),
+      collection(fdb, 'chatRooms'),
       orderBy('lastMessageTimestamp', 'desc'),
       limit(100)
     );

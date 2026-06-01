@@ -49,13 +49,16 @@ export const MyCareTeam: React.FC = () => {
         const uid = authService.getCurrentUser()?.uid;
         if (!uid) { setIsLoading(false); return; }
 
+        const fdb = db;
+        if (!fdb) { setIsLoading(false); return; }
+
         // Query booking_requests + scheduled shifts in parallel
         const [allBookingsSnap, scheduledShiftsSnap] = await Promise.all([
-          db.collection('booking_requests')
+          fdb.collection('booking_requests')
             .where('clientId', '==', uid)
             .limit(100)
             .get(),
-          db.collection('shifts')
+          fdb.collection('shifts')
             .where('clientId', '==', uid)
             .where('status', '==', 'scheduled')
             .get(),
@@ -108,7 +111,7 @@ export const MyCareTeam: React.FC = () => {
             const cgId = bookingData.caregiverId;
             if (!cgId) continue;
             // Fetch full caregiver profile for extra details
-            const cgDoc = await db.collection('caregivers').doc(cgId).get().catch(() => null);
+            const cgDoc = await fdb.collection('caregivers').doc(cgId).get().catch(() => null);
             const cgData = cgDoc?.data() || {};
 
             const fullName =

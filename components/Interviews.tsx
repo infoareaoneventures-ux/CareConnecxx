@@ -24,14 +24,19 @@ export default function Interviews() {
   const [selectedTab, setSelectedTab] = useState<'pending' | 'upcoming' | 'completed'>('pending');
 
   useEffect(() => {
-    const user = auth.currentUser;
+    const fauth = auth;
+    const fdb = db;
+    if (!fauth || !fdb) {
+      return;
+    }
+    const user = fauth.currentUser;
     if (!user) {
       navigate('/login');
       return;
     }
 
     // Real-time subscription against video_interviews (written by videoService.scheduleInterview)
-    const unsubscribe = db.collection('video_interviews')
+    const unsubscribe = fdb.collection('video_interviews')
       .where('clientId', '==', user.uid)
       .orderBy('scheduledTime', 'desc')
       .onSnapshot(
@@ -76,9 +81,12 @@ export default function Interviews() {
   const handleCancel = async (interviewId: string) => {
     if (!confirm('Are you sure you want to cancel this interview?')) return;
 
+    const fdb = db;
+    if (!fdb) return;
+
     try {
       // Update in Firestore
-      await db.collection('video_interviews').doc(interviewId).update({
+      await fdb.collection('video_interviews').doc(interviewId).update({
         status: 'cancelled',
         cancelledAt: firebase.firestore.FieldValue.serverTimestamp()
       });

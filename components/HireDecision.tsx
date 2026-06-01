@@ -24,7 +24,7 @@ export default function HireDecision() {
   const [caregiver, setCaregiver] = useState<CaregiverInfo | null>(null);
 
   useEffect(() => {
-    if (!caregiverId) { setLoading(false); return; }
+    if (!caregiverId || !db) { setLoading(false); return; }
     db.collection('caregivers').doc(caregiverId).get()
       .then((doc) => {
         if (doc.exists) {
@@ -54,6 +54,8 @@ export default function HireDecision() {
 
   const confirmDecision = async () => {
     if (!caregiverId || !decision) return;
+    const fdb = db;
+    if (!auth || !fdb) return;
     const user = auth.currentUser;
     if (!user) { navigate('/login'); return; }
 
@@ -62,7 +64,7 @@ export default function HireDecision() {
 
     try {
       // Persist decision to Firestore
-      await db.collection('hire_decisions').add({
+      await fdb.collection('hire_decisions').add({
         clientId: user.uid,
         clientName: user.displayName || user.email || 'Client',
         caregiverId,
@@ -77,7 +79,7 @@ export default function HireDecision() {
         ? `${user.displayName || 'A client'} has decided to hire you. Check your messages to arrange the start date and details.`
         : `${user.displayName || 'A client'} has decided not to move forward at this time.`;
 
-      await db.collection('users').doc(caregiverId).collection('notifications').add({
+      await fdb.collection('users').doc(caregiverId).collection('notifications').add({
         userId: caregiverId,
         type: 'hire_decision',
         title,

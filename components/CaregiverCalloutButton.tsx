@@ -35,7 +35,8 @@ export const CaregiverCalloutButton: React.FC<CaregiverCalloutButtonProps> = ({
             // Update appointment status to trigger the callout flow
             const { getFirestore, doc, updateDoc } = await import('firebase/firestore');
             const { db } = await import('../lib/firebase');
-            
+            if (!db) throw new Error('Firestore not initialized');
+
             await updateDoc(doc(db, 'appointments', appointmentId), {
                 status: 'caregiver_cancelled',
                 cancelledBy: 'caregiver',

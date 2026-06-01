@@ -37,6 +37,7 @@ export default function ReviewSystem() {
 
   useEffect(() => {
     if (!visitId) { setLoading(false); return; }
+    if (!db) { setLoading(false); return; }
     db.collection('appointments').doc(visitId).get()
       .then(doc => {
         if (!doc.exists) { setLoading(false); return; }
@@ -68,6 +69,11 @@ export default function ReviewSystem() {
     }
 
     try {
+      const fdb = db;
+      if (!fdb || !auth) {
+        addToast('Failed to submit review. Please try again.', 'error');
+        return;
+      }
       const user = auth.currentUser;
       if (!user) {
         navigate('/login');
@@ -77,7 +83,7 @@ export default function ReviewSystem() {
       const caregiverId = visit?.caregiverId || '';
 
       // Save review to Firestore
-      await db.collection('reviews').add({
+      await fdb.collection('reviews').add({
         clientId: user.uid,
         visitId: visitId,
         caregiverId,
@@ -89,7 +95,7 @@ export default function ReviewSystem() {
 
       // Update caregiver's average rating
       if (caregiverId) {
-        await db.collection('caregivers').doc(caregiverId).update({
+        await fdb.collection('caregivers').doc(caregiverId).update({
           totalReviews: firebase.firestore.FieldValue.increment(1),
           ratingSum: firebase.firestore.FieldValue.increment(review.rating)
         });
@@ -97,7 +103,7 @@ export default function ReviewSystem() {
         // Notify caregiver of the new review with rating and feedback text
         try {
           const stars = '★'.repeat(review.rating) + '☆'.repeat(5 - review.rating);
-          await db.collection('users').doc(caregiverId).collection('notifications').add({
+          await fdb.collection('users').doc(caregiverId).collection('notifications').add({
             userId: caregiverId,
             type: 'new_review',
             title: `New Review ${stars}`,

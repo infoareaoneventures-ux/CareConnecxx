@@ -35,7 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports._internal = exports.sendApprovedDraftNow = exports.triggerProactiveDraftSendNow = exports.runProactiveDraftSender = void 0;
 exports.runProactiveDraftSenderPass = runProactiveDraftSenderPass;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const sms_1 = require("../sms");
 // Proactive draft sender — v1

@@ -1,5 +1,5 @@
 import * as admin from "firebase-admin";
-import * as functions from "firebase-functions";
+import * as functions from "firebase-functions/v1";
 
 // Initialize Admin globally if not already done
 if (!admin.apps.length) {
@@ -418,7 +418,6 @@ export const zepSetup = functions.https.onRequest(async (req, res) => {
 // is created, updated, or deleted. Clients read this lightweight doc (no
 // sensitive data) to display availability in the booking modal tooltip.
 
-const ACTIVE_STATUSES = new Set(['pending', 'scheduled', 'in-progress']);
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 async function rebuildBookedSlots(caregiverId: string): Promise<void> {

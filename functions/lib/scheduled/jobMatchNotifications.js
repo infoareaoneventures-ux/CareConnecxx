@@ -34,7 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendJobMatchNotifications = void 0;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const jobMatchRecommender_1 = require("../agents/jobMatchRecommender");
 const client_1 = require("../linq/client");

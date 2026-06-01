@@ -37,7 +37,7 @@ exports._internal = exports.triggerProactiveReflectionNow = exports.runProactive
 exports.buildReflectionPrompt = buildReflectionPrompt;
 exports.parseReflectionOutput = parseReflectionOutput;
 exports.hashContext = hashContext;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const openaiClient_1 = require("../utils/openaiClient");
 // Proactive Reflection — v1 (admin-review-first)

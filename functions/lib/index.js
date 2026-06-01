@@ -39,7 +39,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getMatchPatterns = exports.aiProxy = exports.onRefundRequestWrite = exports.checkDisputeSLAs = exports.onDisputeCreated = exports.onAdminAlertCreated = exports.getAlertStats = exports.resolveAdminAlert = exports.listAdminAlerts = exports.runTriggerEngine = exports.wellbeingCheckinJob = exports.checkBackgroundCheckExpiry = exports.sendPaywallWinback = exports.sendOnboardingReengagement = exports.checkCaregiverInactivity = exports.expirePostVisitFeedback = exports.processDndQueue = exports.sendThirtyMinShiftReminders = exports.sendClientThirtyMinReminders = exports.sendClientDayBeforeReminders = exports.sendDayBeforeShiftReminders = exports.sendPreShiftFamilyCheckin = exports.sendShiftTaskNudges = exports.upcomingVisitReminder = exports.extendRecurringSchedules = exports.consolidateMemoryNightly = exports.familySilenceCheckinJob = exports.sendStaleSessionNudges = exports.sendMorningBriefings = exports.dailyContactCardShare = exports.markTaskComplete = exports.onBookingAccepted = exports.generateRollingShifts = exports.refreshTransportBadge = exports.evaluateTransportBadges = exports.sendApprovedDraftNow = exports.triggerProactiveDraftSendNow = exports.runProactiveDraftSender = exports.triggerProactiveReflectionNow = exports.runProactiveReflection = exports.runNoVisitCheck = exports.triggerHealthTrendsNow = exports.sendMonthlyHealthTrends = exports.triggerWeeklyDigestNow = exports.sendWeeklyDigests = exports.createFamilyGroup = exports.onShiftStatusChanged = exports.triggerFamilyEmergency = exports.onCheckinCreated = exports.sendTestSMS = void 0;
 exports.onReviewWritten = exports.onShiftWritten = exports.zepSetup = exports.chatWithCara = exports.createWebOnboardingSession = exports.initiateCara = exports.send1099Notifications = exports.submitGpsCheckin = exports.sendJobMatchNotifications = void 0;
 const admin = __importStar(require("firebase-admin"));
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 // Initialize Admin globally if not already done
 if (!admin.apps.length) {
     admin.initializeApp();
@@ -433,7 +433,6 @@ exports.zepSetup = functions.https.onRequest(async (req, res) => {
 // Keeps caregiver_booked_slots/{caregiverId} up-to-date whenever a shift
 // is created, updated, or deleted. Clients read this lightweight doc (no
 // sensitive data) to display availability in the booking modal tooltip.
-const ACTIVE_STATUSES = new Set(['pending', 'scheduled', 'in-progress']);
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 async function rebuildBookedSlots(caregiverId) {
     const db = admin.firestore();

@@ -1,4 +1,4 @@
-import * as functions from "firebase-functions";
+import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { getJobRecommendationsForCaregiver } from "../agents/jobMatchRecommender";
 import { sendMessage } from "../linq/client";

@@ -3,7 +3,7 @@
  * All transactional messages route through Linq; Twilio is retained for Video only.
  */
 
-import * as functions from "firebase-functions";
+import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendToPhone, listPhoneNumbers, createOrUpdateContactCard, LinqService } from "./linq/client";
 import { checkRateLimit, RATE_LIMITS, getClientIdentifier } from "./rateLimit";

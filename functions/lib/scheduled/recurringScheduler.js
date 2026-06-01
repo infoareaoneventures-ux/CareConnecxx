@@ -36,7 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.extendRecurringSchedules = void 0;
 exports.generateRecurringDates = generateRecurringDates;
 exports.extendRecurringScheduleById = extendRecurringScheduleById;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const holidays_1 = require("../utils/holidays");
 const db = admin.firestore();

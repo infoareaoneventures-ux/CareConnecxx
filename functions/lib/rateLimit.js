@@ -41,7 +41,7 @@ exports.checkRateLimitHttp = exports.RATE_LIMITS = void 0;
 exports.checkRateLimit = checkRateLimit;
 exports.getClientIdentifier = getClientIdentifier;
 exports.cleanupRateLimits = cleanupRateLimits;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const db = admin.firestore();
 // Default configs for different endpoints

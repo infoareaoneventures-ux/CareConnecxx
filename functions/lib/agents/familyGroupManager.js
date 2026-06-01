@@ -36,7 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createFamilyGroup = void 0;
 exports.buildOrUpdateFamilyGroup = buildOrUpdateFamilyGroup;
 exports.removeMemberFromGroup = removeMemberFromGroup;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
 const db = admin.firestore();

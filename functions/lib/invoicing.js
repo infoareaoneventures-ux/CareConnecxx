@@ -34,7 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.autoApproveInvoice = exports.processClientApproval = exports.sendInvoiceEmail = exports.generateInvoicePDF = exports.createInvoice = void 0;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
@@ -139,7 +139,7 @@ async function generateInvoicePDFLogic(invoiceId) {
     });
     doc.end();
     await new Promise((resolve, reject) => {
-        writeStream.on('finish', resolve);
+        writeStream.on('finish', () => resolve());
         writeStream.on('error', reject);
     });
     const bucket = storage.bucket();

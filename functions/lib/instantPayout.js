@@ -35,7 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.requestInstantPayout = void 0;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const payoutCommon_1 = require("./payoutCommon");
 const Stripe = require('stripe');

@@ -1,4 +1,4 @@
-import * as functions from 'firebase-functions';
+import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -124,8 +124,8 @@ async function generateInvoicePDFLogic(invoiceId: string) {
 
     doc.end();
 
-    await new Promise((resolve, reject) => {
-        writeStream.on('finish', resolve);
+    await new Promise<void>((resolve, reject) => {
+        writeStream.on('finish', () => resolve());
         writeStream.on('error', reject);
     });
     

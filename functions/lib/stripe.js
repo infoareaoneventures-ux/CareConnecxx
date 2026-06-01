@@ -38,7 +38,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createCaregiverBillingPortalSession = exports.reactivateSubscription = exports.createIdentityVerificationSession = exports.cancelSubscription = exports.getSubscriptionDetails = exports.stripeWebhook = exports.createCheckoutSession = void 0;
 exports.getStripeClient = getStripeClient;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const stripe_1 = __importDefault(require("stripe"));
 // Initialize Stripe with secret key

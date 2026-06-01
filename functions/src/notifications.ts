@@ -1,5 +1,5 @@
 
-import * as functions from "firebase-functions";
+import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { Resend } from "resend";
 import { sendSMSToUser, SMS_TEMPLATES } from "./sms";

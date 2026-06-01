@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import * as crypto from "crypto";
-import * as functions from "firebase-functions";
+import * as functions from "firebase-functions/v1";
 
 const EMBEDDING_MODEL = "text-embedding-004";
 const EMBEDDING_DIM = 768;

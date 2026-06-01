@@ -1,4 +1,4 @@
-import * as functions from "firebase-functions";
+import * as functions from "firebase-functions/v1";
 
 // startSignup callable removed — new users are created in the webhook handler
 // when they text "Hey Cara" first (MO consent). See linq/webhooks.ts handleInbound.

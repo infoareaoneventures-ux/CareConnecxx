@@ -35,7 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendWelcomeEmail = exports.sendPasswordResetEmail = exports.sendBulkEmail = exports.sendEmail = void 0;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const resend_1 = require("resend");
 const resendApiKey = process.env.RESEND_API_KEY || ((_a = functions.config().resend) === null || _a === void 0 ? void 0 : _a.api_key);

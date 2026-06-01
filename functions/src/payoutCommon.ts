@@ -1,4 +1,4 @@
-import * as functions from "firebase-functions";
+import * as functions from "firebase-functions/v1";
 
 /**
  * Verify a Stripe Connect account is ready to receive a payout.

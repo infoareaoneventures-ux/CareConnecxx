@@ -36,7 +36,7 @@ var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.confirmCashReceived = exports.onShiftHoursApproved = exports.retryFailedShiftPayments = exports.autoAcceptCorrection = exports.autoApproveShiftHours = exports.retryShiftPayment = exports.adminResolveShiftHours = exports.respondToCorrection = exports.reviewShiftHours = exports.submitShiftHours = void 0;
 exports.approveShiftHoursForClient = approveShiftHoursForClient;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const Stripe = require('stripe');
 const stripe = new Stripe(((_a = functions.config().stripe) === null || _a === void 0 ? void 0 : _a.secret) || process.env.STRIPE_SECRET_KEY);

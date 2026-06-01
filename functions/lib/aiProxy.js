@@ -34,7 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.aiProxy = void 0;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const claudeClient_1 = require("./utils/claudeClient");
 const rateLimit_1 = require("./rateLimit");
 const ALLOWED_MODELS = new Set([

@@ -34,7 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.markTaskComplete = void 0;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 // startSignup callable removed — new users are created in the webhook handler
 // when they text "Hey Cara" first (MO consent). See linq/webhooks.ts handleInbound.
 exports.markTaskComplete = functions.https.onCall(async (data) => {

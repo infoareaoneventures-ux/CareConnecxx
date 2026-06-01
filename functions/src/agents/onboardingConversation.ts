@@ -2421,14 +2421,25 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         onboardingStatus: "profile_complete",
       };
 
+      // Admin verification queue reads verificationStatus === 'submitted' (the value
+      // stripe.ts sets for the web path). Set it here so Cara caregivers also enter the
+      // queue — but never clobber a terminal status the Checkr webhook may have already set.
+      const TERMINAL_VSTATUSES = ["approved", "rejected", "pre_adverse_action", "checkr_clear"];
+
       let caregiverId: string;
       if (session.caregiverId) {
-        // Doc was pre-created during bg check — update it with full profile
-        await db.collection("caregivers").doc(session.caregiverId).update(profileData);
+        // Doc was pre-created during bg check — update it with full profile.
+        const existingSnap = await db.collection("caregivers").doc(session.caregiverId).get();
+        const currentVStatus = existingSnap.data()?.verificationStatus as string | undefined;
+        const vStatusPatch = (!currentVStatus || !TERMINAL_VSTATUSES.includes(currentVStatus))
+          ? { verificationStatus: "submitted" }
+          : {};
+        await db.collection("caregivers").doc(session.caregiverId).update({ ...profileData, ...vStatusPatch });
         caregiverId = session.caregiverId;
       } else {
         const caregiverRef = await db.collection("caregivers").add({
           ...profileData,
+          verificationStatus: "submitted",
           createdAt: new Date().toISOString(),
         });
         caregiverId = caregiverRef.id;

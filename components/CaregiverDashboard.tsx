@@ -34,11 +34,9 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
 
    useEffect(() => {
       if (!profile) return;
-      const fromSignup = sessionStorage.getItem('careconnex_show_caregiver_wizard') === 'true';
-      if (fromSignup) {
-         sessionStorage.removeItem('careconnex_show_caregiver_wizard');
-         setShowWizard(true);
-      } else if (profile?.onboardingStatus === 'incomplete') {
+      // Cara SMS is the canonical onboarding (caregivers finish at onboardingStatus:'profile_complete').
+      // The wizard is now only a recovery tool for legacy/web accounts left at 'incomplete'.
+      if (profile?.onboardingStatus === 'incomplete') {
          setShowWizard(true);
       }
    }, [profile]);

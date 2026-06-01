@@ -1930,7 +1930,7 @@ async function resendStuckStep(phone) {
 // ── Webhook-triggered step advancement ───────────────────────────────────────
 // Called from stripe.ts and checkr.ts when webhooks fire
 async function advanceOnboardingStep(phone, task, taskData) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9;
     const snap = await db.collection("agent_sessions").doc(phone).get();
     if (!snap.exists)
         return;
@@ -1965,7 +1965,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
                     const userRecord = await admin.auth().getUserByPhoneNumber(phone);
                     uid = userRecord.uid;
                 }
-                catch (_9) {
+                catch (_10) {
                     try {
                         const newUser = await admin.auth().createUser({
                             phoneNumber: phone,
@@ -2113,7 +2113,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
                         const userRecord = await admin.auth().getUserByPhoneNumber(phone);
                         uid = userRecord.uid;
                     }
-                    catch (_10) {
+                    catch (_11) {
                         try {
                             const d = (_u = session.onboardingData) !== null && _u !== void 0 ? _u : {};
                             const newUser = await admin.auth().createUser({
@@ -2166,14 +2166,23 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 // where onboardingStatus === 'profile_complete'. Cara is the canonical
                 // onboarding path, so it must set this too (the web wizard already does).
                 onboardingStatus: "profile_complete" });
+            // Admin verification queue reads verificationStatus === 'submitted' (the value
+            // stripe.ts sets for the web path). Set it here so Cara caregivers also enter the
+            // queue — but never clobber a terminal status the Checkr webhook may have already set.
+            const TERMINAL_VSTATUSES = ["approved", "rejected", "pre_adverse_action", "checkr_clear"];
             let caregiverId;
             if (session.caregiverId) {
-                // Doc was pre-created during bg check — update it with full profile
-                await db.collection("caregivers").doc(session.caregiverId).update(profileData);
+                // Doc was pre-created during bg check — update it with full profile.
+                const existingSnap = await db.collection("caregivers").doc(session.caregiverId).get();
+                const currentVStatus = (_3 = existingSnap.data()) === null || _3 === void 0 ? void 0 : _3.verificationStatus;
+                const vStatusPatch = (!currentVStatus || !TERMINAL_VSTATUSES.includes(currentVStatus))
+                    ? { verificationStatus: "submitted" }
+                    : {};
+                await db.collection("caregivers").doc(session.caregiverId).update(Object.assign(Object.assign({}, profileData), vStatusPatch));
                 caregiverId = session.caregiverId;
             }
             else {
-                const caregiverRef = await db.collection("caregivers").add(Object.assign(Object.assign({}, profileData), { createdAt: new Date().toISOString() }));
+                const caregiverRef = await db.collection("caregivers").add(Object.assign(Object.assign({}, profileData), { verificationStatus: "submitted", createdAt: new Date().toISOString() }));
                 caregiverId = caregiverRef.id;
             }
             await updateSession(phone, {
@@ -2183,15 +2192,15 @@ async function advanceOnboardingStep(phone, task, taskData) {
             // Waitlist trigger: a new active caregiver just landed. Notify any families
             // we honestly held (awaitingSupply) in this caregiver's city that care is
             // now available, and clear the flag so they're not pinged twice.
-            notifyWaitlistedFamilies((_3 = d.city) !== null && _3 !== void 0 ? _3 : "").catch((err) => console.error("notifyWaitlistedFamilies error:", err));
+            notifyWaitlistedFamilies((_4 = d.city) !== null && _4 !== void 0 ? _4 : "").catch((err) => console.error("notifyWaitlistedFamilies error:", err));
             // Silently create Firebase Auth account so web dashboard login works later
-            await createFirebaseAuthAccount(phone, ((_4 = d.name) !== null && _4 !== void 0 ? _4 : ""));
+            await createFirebaseAuthAccount(phone, ((_5 = d.name) !== null && _5 !== void 0 ? _5 : ""));
             // Notify admin
             (0, notifications_1.notifyAdminNewCaregiverSignup)({
                 caregiverId,
-                name: ((_5 = d.name) !== null && _5 !== void 0 ? _5 : ""),
+                name: ((_6 = d.name) !== null && _6 !== void 0 ? _6 : ""),
                 phone,
-                city: ((_6 = d.city) !== null && _6 !== void 0 ? _6 : ""),
+                city: ((_7 = d.city) !== null && _7 !== void 0 ? _7 : ""),
             }).catch((err) => console.error("notifyAdminNewCaregiverSignup error:", err));
             await db.collection("admin_alerts").add({
                 type: "new_caregiver_signup",
@@ -2206,7 +2215,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 userId: (0, zepClient_1.getZepUserId)(phone),
                 data: {
                     user_type: "caregiver",
-                    user_name: ((_7 = d.name) !== null && _7 !== void 0 ? _7 : ""),
+                    user_name: ((_8 = d.name) !== null && _8 !== void 0 ? _8 : ""),
                     caregiver_city: d.city,
                     caregiver_years_experience: d.yearsExperience,
                     caregiver_specialties: Array.isArray(d.specialties) ? d.specialties : [],
@@ -2218,7 +2227,7 @@ async function advanceOnboardingStep(phone, task, taskData) {
                 },
             }).catch((err) => console.error("addBusinessDataToZep caregiver error:", err));
             // Warm "you're approved" milestone message before handing off to permissions
-            const firstName = ((_8 = d.name) !== null && _8 !== void 0 ? _8 : "").split(" ")[0] || "you";
+            const firstName = ((_9 = d.name) !== null && _9 !== void 0 ? _9 : "").split(" ")[0] || "you";
             const specialties = Array.isArray(d.specialties) ? d.specialties.join(", ") : "";
             const activationMsg = await (0, caraMessage_1.generateCaraMessage)({
                 audience: "caregiver",

@@ -92,7 +92,9 @@ Two distinct user roles share the same Firebase Auth:
 - **Caregivers**: $24.95/year membership (`VITE_STRIPE_CAREGIVER_ANNUAL`), onboarded conversationally via Cara over SMS
 
 ### Caregiver Onboarding
-The canonical caregiver onboarding is **Cara's SMS conversation** in `functions/src/agents/onboardingConversation.ts` (the `caregiver_*` steps). The web entry point `/start?role=caregiver` (`components/auth/onboarding/OnboardingFlow.tsx`) only verifies the phone, then hands off to Cara via SMS. Cara collects profile → credentials → photo/document upload → membership (Stripe) → background check (Checkr) → Stripe Connect payout setup, and finalizes the `caregivers` doc with `onboardingStatus: 'profile_complete'` (which gates visibility in `FindCaregivers`). `components/caregiver/CaregiverOnboardingWizard.tsx` is a web fallback that re-collects the same profile data only for caregivers left in the `'incomplete'` state.
+Cara's SMS conversation in `functions/src/agents/onboardingConversation.ts` (the `caregiver_*` steps) is the **sole** caregiver onboarding path. Every signup CTA routes to `/start?role=caregiver` (`components/auth/onboarding/OnboardingFlow.tsx`), which verifies the phone then hands off to Cara via SMS. Cara collects profile → credentials → photo/document upload → membership (Stripe) → background check (Checkr) → Stripe Connect payout setup, and finalizes the `caregivers` doc with `status: 'active'`, `onboardingStatus: 'profile_complete'` (gates visibility in `FindCaregivers`), and `verificationStatus: 'submitted'` (puts it in the admin verification queue). The old web signup form was retired — `/caregiver/apply` now redirects into the Cara flow. `components/caregiver/CaregiverOnboardingWizard.tsx` is kept ONLY as a recovery tool for legacy/web accounts left at `onboardingStatus: 'incomplete'` (it is not a signup path).
+
+**Known follow-up:** Cara writes phone-keyed, random-ID `caregivers` docs with no Firebase Auth account, whereas legacy web caregivers used uid-keyed docs + auth. Unifying this identity model (and migrating existing records) is a tracked follow-up — see `context/progress-tracker.md`.
 
 ## Environment Variables
 

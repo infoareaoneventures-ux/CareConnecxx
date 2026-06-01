@@ -3577,7 +3577,17 @@ async function handleInbound(event) {
             // — detect criterion changes and re-run matching with the new filters.
             if (isFresh) {
                 const { detectMatchRefilter } = await Promise.resolve().then(() => __importStar(require("../utils/matchRefilterDetector")));
-                const refilter = await detectMatchRefilter(text).catch(() => null);
+                // Load Cara's last message so the detector can tell a search-criteria
+                // change ("show me cheaper ones") apart from the family simply ANSWERING
+                // a question Cara just asked (e.g. "What date/time works best?" → "Today
+                // at 11am"). Without it, a scheduling-time reply was being misread as an
+                // availability refilter and triggering a fresh caregiver search.
+                const lastAssistantMessage = await db
+                    .collection("agent_conversations").doc(phone).collection("messages")
+                    .where("role", "==", "assistant").orderBy("timestamp", "desc").limit(1).get()
+                    .then(s => (s.empty ? undefined : s.docs[0].data().content))
+                    .catch(() => undefined);
+                const refilter = await detectMatchRefilter(text, lastAssistantMessage).catch(() => null);
                 if (refilter) {
                     const baseIntake = ((_111 = session.onboardingData) !== null && _111 !== void 0 ? _111 : {});
                     const mergedIntake = Object.assign({}, baseIntake);

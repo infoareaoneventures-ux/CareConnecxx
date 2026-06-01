@@ -2,15 +2,27 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.detectMatchRefilter = detectMatchRefilter;
 const openaiClient_1 = require("./openaiClient");
-async function detectMatchRefilter(text) {
+async function detectMatchRefilter(text, lastAssistantMessage) {
     var _a, _b;
     if (text.trim().length < 4)
         return null;
+    // Context guard: if Cara's last message asked the family a question (e.g.
+    // "What date and time works best for you?" while setting up an interview),
+    // a reply like "Today at 11am" is ANSWERING that question, not changing the
+    // search criteria. Give the model that prior turn so it doesn't misread a
+    // scheduling/answer reply as a re-search request.
+    const contextLine = lastAssistantMessage
+        ? `\nFor context, Cara's previous message to them was:\n"""${lastAssistantMessage.slice(0, 500)}"""\n` +
+            "If their reply is simply ANSWERING a question Cara just asked (for example Cara asked for a " +
+            "preferred interview date/time and they replied with a time like \"Today at 11am\" or \"Tuesday afternoon\"), " +
+            "that is NOT a refilter — reply {\"isRefilter\": false}.\n"
+        : "";
     let raw = "";
     try {
         raw = await (0, openaiClient_1.quickComplete)("Cara just showed a family member 3 caregiver options. They replied — is their reply a request " +
             "to change the search criteria (e.g. \"cheaper\", \"any with dementia experience\", \"available Saturday\", " +
-            "\"a woman\", \"Spanish-speaking\")?\n\n" +
+            "\"a woman\", \"Spanish-speaking\")?\n" +
+            contextLine + "\n" +
             "If YES, reply with JSON ONLY in this exact shape:\n" +
             "{\n" +
             "  \"isRefilter\": true,\n" +

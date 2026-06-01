@@ -79,6 +79,19 @@ describe("detectMatchRefilter", () => {
     expect(await detectMatchRefilter("cheaper please")).toBeNull();
   });
 
+  it("passes Cara's last message into the prompt so answers aren't misread as refilters", async () => {
+    quickComplete.mockResolvedValue(JSON.stringify({ isRefilter: false }));
+    const result = await detectMatchRefilter(
+      "Today at 11am",
+      "What date and time works best for you?",
+    );
+    expect(result).toBeNull();
+    // The prior assistant turn must be embedded in the system prompt so the
+    // model can tell a scheduling answer apart from a search-criteria change.
+    const systemPrompt = quickComplete.mock.calls[0][0] as string;
+    expect(systemPrompt).toContain("What date and time works best for you?");
+  });
+
   it("clamps summary to 200 chars", async () => {
     const longSummary = "x".repeat(500);
     quickComplete.mockResolvedValue(JSON.stringify({

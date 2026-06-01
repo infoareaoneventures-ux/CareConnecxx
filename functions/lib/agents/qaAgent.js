@@ -949,6 +949,27 @@ async function runQaAgent(params) {
     // Inject session identifiers — Claude must never ask the user for clientId, userId, or phone.
     // These are always known from the session and are also auto-injected into every tool call.
     systemPrompt += `\n\nSESSION (do not ask the user for these — use them when tools require clientId, userId, or phone):\nclientId = "${userId}" | userId = "${userId}" | phone = "${phone}"`;
+    // Pending caregiver matches overlay (client only). When Cara has just shown
+    // the family a list of caregivers, the family's next message may be a request
+    // to interview/meet one of them — by name ("let's meet Imran"), by pronoun
+    // ("set him up"), by number ("1"), or as an answer to a scheduling question
+    // ("Today at 11am"). Surface that list with caregiver IDs so the agent calls
+    // schedule_interview with the right caregiverId instead of starting a brand
+    // new search. Without this the agent had no idea which caregiver was meant.
+    if (userType !== "caregiver") {
+        const pendingMatches = session === null || session === void 0 ? void 0 : session.pendingMatches;
+        if (pendingMatches && pendingMatches.length) {
+            const list = pendingMatches
+                .map((m, i) => { var _a, _b; return `  ${i + 1}. ${(_a = m.name) !== null && _a !== void 0 ? _a : "Caregiver"}${m.rate ? ` ($${m.rate}/hr)` : ""} — caregiverId="${(_b = m.id) !== null && _b !== void 0 ? _b : ""}"`; })
+                .join("\n");
+            systemPrompt +=
+                `\n\nCAREGIVERS YOU JUST SHOWED THIS FAMILY (most recent match list):\n${list}\n` +
+                    `If the family wants to interview or meet one of them — whether they name the caregiver, say "him"/"her", give a number, or are answering your question about a preferred interview date/time — call schedule_interview with that caregiverId (NOT a new search). ` +
+                    `If you don't yet have their preferred date and time, ask for it first, then call schedule_interview. ` +
+                    `If it's unclear which of these caregivers they mean, ask them to confirm by name or number before scheduling. ` +
+                    `Do NOT run find_replacement_caregivers again just because they replied with a time or a name from this list.`;
+        }
+    }
     // Sprint 7 — composable prompt augmenters. Today this only runs the A/B
     // experiments augmenter; future PRs migrate the inline `systemPrompt += ...`
     // chain below into this registry one directive at a time. The pipeline is

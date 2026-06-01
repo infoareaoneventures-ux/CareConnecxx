@@ -97,10 +97,15 @@ vi.mock("firebase-admin", () => {
   };
 
   const firestoreFn = () => ({ collection: (name: string) => buildCollection(name), batch: () => ({ set: vi.fn(), commit: async () => undefined }) });
+  const firestore = Object.assign(firestoreFn, { FieldValue: { delete: vi.fn(() => "__DELETE__"), arrayUnion: vi.fn((x) => x) } });
   return {
     __esModule: true,
-    default: { firestore: Object.assign(firestoreFn, { FieldValue: { delete: vi.fn(() => "__DELETE__"), arrayUnion: vi.fn((x) => x) } }) },
-    firestore: Object.assign(firestoreFn, { FieldValue: { delete: vi.fn(() => "__DELETE__"), arrayUnion: vi.fn((x) => x) } }),
+    // `apps` / `initializeApp` are read at module-load by notifications.ts, now
+    // pulled into this graph via caraAgent → bookingExecutor.
+    default: { apps: [], initializeApp: () => ({}), firestore },
+    apps: [],
+    initializeApp: () => ({}),
+    firestore,
   };
 });
 

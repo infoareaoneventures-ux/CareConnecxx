@@ -321,7 +321,10 @@ const AppContent: React.FC = () => {
           <Route path="/client/interviews" element={<Navigate to="/client/posts" replace />} />
           <Route path="/client/hire/:caregiverId" element={<Navigate to="/client/posts" replace />} />
           <Route path="/client/caregiver/:caregiverId" element={<ClientRoute element={<ClientCaregiverProfile />} />} />
-          <Route path="/client/identity-callback" element={<ClientRoute element={<IdentityCallback />} />} />
+          {/* Public on purpose: SMS-originated clients return here from Stripe Identity
+              without a web session. The component already handles the no-auth case
+              (waits for the webhook). Gating it behind ClientRoute bounced them to login. */}
+          <Route path="/client/identity-callback" element={<IdentityCallback />} />
           <Route path="/client/book/:caregiverId" element={<ClientRoute element={<BookingFlow />} />} />
           <Route path="/client/review/:visitId" element={<ClientRoute element={<ReviewSystem />} />} />
           <Route path="/client/weekly-summary" element={<ClientRoute element={<WeeklySummary />} />} />

@@ -78,6 +78,7 @@ exports.TOOL_CAPABILITIES = {
     update_senior_profile: ["care_plan"],
     update_user_profile: ["care_plan"],
     submit_gps_checkin: ["care_plan"],
+    get_background_check_status: ["care_plan", "booking"],
     // ── messaging (family group, contact prefs, safety) ─────────────────────
     send_caregiver_message: ["messaging"],
     send_client_message: ["messaging"],
@@ -103,7 +104,7 @@ exports.TOOL_CAPABILITIES = {
     // Core tools:
     //   get_senior_profile, list_household_seniors, get_pending_tasks,
     //   suggest_upcoming_care, get_care_team, create_support_ticket,
-    //   resume_execution_agent
+    //   resume_execution_agent, send_onboarding_link
 };
 // Tools that are ALWAYS bound regardless of intent. These are the universal
 // reads Claude needs to orient itself on virtually every turn.
@@ -118,6 +119,11 @@ const CORE_TOOL_NAMES = new Set([
     "write_todos",
     "cara_knows",
     "task",
+    // Cross-cutting onboarding helper: "send me my payment / identity / photo /
+    // document / background-check / payout link" arrives under many filtered
+    // intents (UPDATE_PAYMENT_METHOD, UPDATE_PHOTO, …). It must never be filtered
+    // out, or Cara falls back to deflecting instead of just sending the link.
+    "send_onboarding_link",
 ]);
 // Intent → required capabilities. An empty array means "no filter — bind
 // everything". This is the safe default for ambiguous intents (QUESTION,

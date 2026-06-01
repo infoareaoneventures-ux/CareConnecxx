@@ -299,7 +299,7 @@ async function handlePhotoUpdate(_caregiverId, phone, _text, _session, chatId) {
     const photoUrl = `${APP_URL}/upload/photo?t=${token}&return=sms`;
     await clearProfileFlow(phone);
     await (0, client_1.sendMessage)(chatId, "Tap to upload a new profile photo — it'll bring you right back here when you're done:");
-    await (0, client_1.sendMessage)(chatId, { parts: [{ type: "link", url: photoUrl, value: "📷 Upload New Photo →" }] });
+    await (0, client_1.sendMessage)(chatId, { parts: [{ type: "link", value: photoUrl }] });
 }
 // ── PAUSE ACCOUNT ──────────────────────────────────────────────────────────
 async function handlePauseAccount(caregiverId, phone, text, session, chatId) {

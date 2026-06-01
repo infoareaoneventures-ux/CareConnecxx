@@ -9,7 +9,7 @@ export default function UploadPage() {
   const { type } = useParams<{ type: 'photo' | 'document' }>();
   const isPhoto   = type === 'photo';
 
-  const [status, setStatus] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'uploading' | 'done' | 'error' | 'expired'>('idle');
   const [preview, setPreview] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -25,9 +25,17 @@ export default function UploadPage() {
       await uploadBytes(sRef, file);
       const url = await getDownloadURL(sRef);
 
-      if (functions) {
-        const markDone = functions.httpsCallable('markTaskComplete');
-        await markDone({ token, taskId: url }).catch(() => {/* non-critical */});
+      if (!functions) { setStatus('error'); return; }
+      const markDone = functions.httpsCallable('markTaskComplete');
+      try {
+        // Must NOT swallow this: if the token is expired/invalid the file is in
+        // Storage but onboarding never advances. Showing "done" would be a silent
+        // false success. Surface an explicit expired state with a resend path.
+        await markDone({ token, taskId: url });
+      } catch (err) {
+        console.error('markTaskComplete failed (likely expired/invalid token):', err);
+        setStatus('expired');
+        return;
       }
 
       setStatus('done');
@@ -47,6 +55,28 @@ export default function UploadPage() {
     if (isPhoto) setPreview(URL.createObjectURL(file));
     handleFile(file);
   };
+
+  if (status === 'expired') {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center px-6 text-center gap-6">
+        <div className="w-16 h-16 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center">
+          <span className="text-3xl">⏳</span>
+        </div>
+        <div>
+          <p className="text-white text-xl font-semibold">This link has expired</p>
+          <p className="text-white/50 text-sm mt-1">
+            For your security these links expire after a couple of hours. Text Cara and I'll send you a fresh one.
+          </p>
+        </div>
+        <a
+          href={LINQ_PHONE ? `sms:${LINQ_PHONE}` : '/'}
+          className="w-full max-w-xs py-4 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl text-base text-center transition-all active:scale-95"
+        >
+          Text Cara for a new link
+        </a>
+      </div>
+    );
+  }
 
   if (status === 'done') {
     return (

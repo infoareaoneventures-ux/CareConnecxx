@@ -131,7 +131,7 @@ async function sendSMS(payload) {
         const message = payload.message.length > 1600
             ? payload.message.substring(0, 1597) + "..."
             : payload.message;
-        await (0, client_1.sendToPhone)(payload.to, message);
+        await (0, client_1.sendToPhone)(payload.to, message, { preferredService: payload.preferredService });
         return { success: true };
     }
     catch (error) {
@@ -161,13 +161,13 @@ async function getUserPhone(userId) {
         return null;
     }
 }
-async function sendSMSToUser(userId, message) {
+async function sendSMSToUser(userId, message, preferredService) {
     validateUserId(userId);
     validateString(message, "message", 1600);
     const phone = await getUserPhone(userId);
     if (!phone)
         return { success: false, error: "No phone number on file" };
-    return sendSMS({ to: phone, message });
+    return sendSMS({ to: phone, message, preferredService });
 }
 // ── Templates (unchanged) ─────────────────────────────────────────────────────
 exports.SMS_TEMPLATES = {

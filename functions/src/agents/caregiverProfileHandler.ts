@@ -343,7 +343,7 @@ async function handlePhotoUpdate(
   await sendMessage(chatId,
     "Tap to upload a new profile photo — it'll bring you right back here when you're done:",
   );
-  await sendMessage(chatId, { parts: [{ type: "link", url: photoUrl, value: "📷 Upload New Photo →" }] });
+  await sendMessage(chatId, { parts: [{ type: "link", value: photoUrl }] });
 }
 
 // ── PAUSE ACCOUNT ──────────────────────────────────────────────────────────

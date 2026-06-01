@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
-import { AgentSession, sendMessage } from "../linq/client";
+import { AgentSession, sendMessage, LinqMessage, LinqService } from "../linq/client";
 import { runMatchingForClient } from "./matchingAgent";
 import { executeBookings } from "./bookingExecutor";
 import { getPreferences, isInDND, isActiveHour, CaraPreferences } from "../memory/preferences";
@@ -30,6 +30,10 @@ export interface AgentOutput {
   urgency:     "immediate" | "standard" | "low";
   sourceAgent: string;
   canDrop:     boolean; // if false, always send regardless of DND/recency
+  // Force a Linq protocol for compliance/deliverability-critical sends (e.g.
+  // "SMS" for billing and emergency alerts so they never depend on iMessage).
+  // Omit for the default iMessage → RCS → SMS auto-selection.
+  preferredService?: LinqService;
 }
 
 // ── ExecutionTask — returned by Interaction Agent, consumed by Execution Agent ──
@@ -88,17 +92,83 @@ async function shouldSend(
   return true;
 }
 
-// Split long messages at sentence boundaries, keeping each chunk under maxLen
+// Matches both explicit URLs (https://example.com/path) and bare hostnames
+// the matching/onboarding agents sometimes produce when the LLM drops the
+// scheme to save SMS characters (careconnex-d4c8b.web.app/caregiver/abc).
+// Without https://, iMessage won't auto-link the URL — see issue where Cara's
+// caregiver-profile links rendered as plain text.
+const URL_RE =
+  /\b(?:https?:\/\/[^\s<>"'`)\]]+|(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|app|net|org|io|co|us|web\.app|dev|ai)(?:\/[^\s<>"'`)\]]*)?)/gi;
+
+// Trailing punctuation that's almost always sentence punctuation, not part
+// of the URL. Stripped after the regex grabs greedily.
+const URL_TRAILING_PUNCT = /[.,;:!?)\]}>'"]+$/;
+
+interface UrlMatch { start: number; end: number; url: string; }
+
+function findUrls(text: string): UrlMatch[] {
+  const matches: UrlMatch[] = [];
+  URL_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = URL_RE.exec(text)) !== null) {
+    let raw = m[0];
+    let end = m.index + raw.length;
+    const trim = raw.match(URL_TRAILING_PUNCT);
+    if (trim) {
+      raw = raw.slice(0, raw.length - trim[0].length);
+      end -= trim[0].length;
+    }
+    if (!raw) continue;
+    matches.push({ start: m.index, end, url: raw });
+  }
+  return matches;
+}
+
+/**
+ * Ensure URLs in the text have an https:// scheme so iMessage/RCS auto-link
+ * them. Pure text rewrite — Linq's /messages endpoint rejects mixed
+ * text+link part bodies, so we normalize the string and let the client
+ * auto-detect URLs the way it normally would.
+ *
+ * Always returns a string. The mixed-return type is kept for the existing
+ * call sites (which pass the result straight to sendMessage).
+ */
+export function buildClickableMessage(text: string): string | LinqMessage {
+  const matches = findUrls(text);
+  if (matches.length === 0) return text;
+  // Walk the matches in reverse so earlier offsets stay valid as we splice.
+  let out = text;
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const { start, end, url } = matches[i];
+    if (/^https?:\/\//i.test(url)) continue;
+    out = `${out.slice(0, start)}https://${url}${out.slice(end)}`;
+  }
+  return out;
+}
+
+// Split long messages at sentence boundaries, keeping each chunk under maxLen.
+// URL-aware: never splits in the middle of a URL — if the natural cut falls
+// inside one, the cut moves to the character before the URL starts.
 function splitMessage(text: string, maxLen = 1000): string[] {
   if (text.length <= maxLen) return [text];
+  const urls = findUrls(text);
+  const insideUrl = (pos: number) =>
+    urls.find(u => pos > u.start && pos < u.end);
+
   const chunks: string[] = [];
   let remaining = text;
+  let offset = 0;
   while (remaining.length > maxLen) {
     let cut = remaining.lastIndexOf(". ", maxLen);
     if (cut < maxLen / 2) cut = remaining.lastIndexOf("\n", maxLen);
     if (cut < 0) cut = maxLen;
+    // If the cut lands inside a URL, back up to just before the URL starts.
+    const u = insideUrl(offset + cut);
+    if (u) cut = Math.max(0, u.start - offset - 1);
+    if (cut <= 0) cut = maxLen; // fallback — shouldn't happen for sane inputs
     chunks.push(remaining.slice(0, cut + 1).trim());
     remaining = remaining.slice(cut + 1).trim();
+    offset += cut + 1;
   }
   if (remaining) chunks.push(remaining);
   return chunks;
@@ -158,11 +228,14 @@ export async function sendViaInteractionAgent(
     return output.content;
   });
 
-  // Send in chunks with 1s delay between
+  // Send in chunks with 1s delay between. Each chunk is run through
+  // buildClickableMessage so any URLs become structured Linq link parts —
+  // otherwise iMessage won't auto-link URLs that lost their https:// scheme.
   const chunks = splitMessage(safe);
+  const sendOpts = output.preferredService ? { preferredService: output.preferredService } : {};
   for (let i = 0; i < chunks.length; i++) {
     if (i > 0) await new Promise<void>(r => setTimeout(r, 1000));
-    await sendMessage(targetChatId, chunks[i]);
+    await sendMessage(targetChatId, buildClickableMessage(chunks[i]), sendOpts);
   }
 
   // Update lastMessageSentAt

@@ -1203,6 +1203,48 @@ exports.MCP_TOOLS = [
         },
     },
     {
+        name: "send_onboarding_link",
+        description: "Generate AND send a tappable onboarding/signup link directly to this chat. Use this whenever a family " +
+            "or caregiver asks you to (re)send a subscription/payment, identity verification, profile photo, document " +
+            "upload, background check, or payout-setup link. The tool sends the link itself — after it succeeds, just " +
+            "briefly confirm (e.g. \"Sent! Tap the link to verify your identity\"). NEVER create a support ticket for a " +
+            "link you can send with this tool. Pick the linkType that matches what they asked for.",
+        input_schema: {
+            type: "object",
+            properties: {
+                linkType: {
+                    type: "string",
+                    enum: [
+                        "client_payment",
+                        "client_identity",
+                        "caregiver_membership",
+                        "caregiver_photo",
+                        "caregiver_documents",
+                        "caregiver_background_check",
+                        "caregiver_payouts",
+                    ],
+                    description: "Which link to send. Families: client_payment (subscription / payment method setup), client_identity " +
+                        "(identity verification). Caregivers: caregiver_membership (annual membership), caregiver_photo, " +
+                        "caregiver_documents (certifications), caregiver_background_check, caregiver_payouts (Stripe payout setup).",
+                },
+            },
+            required: ["linkType"],
+        },
+    },
+    {
+        name: "get_background_check_status",
+        description: "Look up the caregiver's OWN background-check status (Checkr). Use when a caregiver asks \"what's the status " +
+            "of my background check\", \"did my check come back\", or \"am I cleared yet\". Returns the current status so " +
+            "you can answer directly instead of deflecting to support. Do not promise a specific completion time.",
+        input_schema: {
+            type: "object",
+            properties: {
+                caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
+            },
+            required: ["caregiverId"],
+        },
+    },
+    {
         name: "request_shift_swap",
         description: "Initiate a shift swap request for a caregiver — finds available peer caregivers and broadcasts the coverage request. Only call after caregiver has confirmed which shift needs coverage.",
         input_schema: {
@@ -1452,6 +1494,9 @@ const CAREGIVER_TOOL_NAMES = new Set([
     "get_job_recommendations",
     "submit_gps_checkin",
     "get_tax_summary",
+    "send_onboarding_link",
+    "get_caregiver_reviews",
+    "get_background_check_status",
 ]);
 exports.CAREGIVER_TOOLS = exports.MCP_TOOLS.filter(t => CAREGIVER_TOOL_NAMES.has(t.name));
 async function handleToolCallForCaregiver(name, input) {
@@ -1590,7 +1635,7 @@ function toolError(code, message) {
 }
 // ── Tool executor ─────────────────────────────────────────────────────────────
 async function handleToolCall(name, input) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98, _99, _100, _101, _102, _103, _104, _105;
     // Runtime-enforced confirmation gate. High-risk tool calls (cancel_appointment,
     // remove_family_member, cancel_subscription, etc.) are intercepted on the
     // first call and turned into a pending-action stub for Claude to read.
@@ -1808,18 +1853,62 @@ async function handleToolCall(name, input) {
                 return { success: true, triggered: true };
             }
             case "request_booking": {
-                const { clientId, caregiverId, dates, startTime, endTime } = input;
+                const { clientId, caregiverId, dates, startTime, endTime, phone } = input;
                 if (!clientId || !caregiverId || !dates || !startTime || !endTime) {
                     return toolError("INVALID_INPUT", "clientId, caregiverId, dates, startTime, endTime are required");
                 }
-                const ref = await db.collection("booking_tasks").add({
-                    clientId, caregiverId, dates, startTime, endTime,
-                    status: "pending",
-                    source: "qa_agent",
-                    createdAt: nowIso,
+                if (!phone) {
+                    return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
+                }
+                const dateList = (Array.isArray(dates) ? dates : [dates]);
+                if (dateList.length === 0)
+                    return toolError("INVALID_INPUT", "at least one date is required");
+                // Compute duration (hours) from "HH:MM" start/end times.
+                const toMinutes = (t) => {
+                    const m = /^(\d{1,2}):(\d{2})$/.exec(String(t).trim());
+                    if (!m)
+                        return null;
+                    return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+                };
+                const startMin = toMinutes(startTime);
+                const endMin = toMinutes(endTime);
+                if (startMin === null || endMin === null || endMin <= startMin) {
+                    return toolError("INVALID_INPUT", "startTime/endTime must be 'HH:MM' with end after start");
+                }
+                const durationHours = Math.round(((endMin - startMin) / 60) * 100) / 100;
+                // Resolve caregiver name + rate from the caregiver doc.
+                const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
+                if (!cgSnap.exists)
+                    return toolError("NOT_FOUND", "caregiver not found");
+                const cg = cgSnap.data() || {};
+                const caregiverName = ((_0 = (_z = cg.name) !== null && _z !== void 0 ? _z : cg.fullName) !== null && _0 !== void 0 ? _0 : "your caregiver");
+                const hourlyRate = (typeof cg.hourlyRate === "number" ? cg.hourlyRate : 20);
+                const appointments = dateList.map((d) => ({
+                    date: d,
+                    startTime: startTime,
+                    endTime: endTime,
+                    durationHours,
+                }));
+                // Route through the REAL booking path: createBookingTask writes an
+                // `agent_tasks` `booking_confirmation` (which the YES/CONFIRM webhook flow and
+                // executeBookings actually consume) and enforces the pending-bgcheck booking
+                // guard. The old `booking_tasks` collection was read by nothing.
+                const { createBookingTask } = await Promise.resolve().then(() => __importStar(require("../agents/bookingExecutor")));
+                const taskId = await createBookingTask({
+                    clientPhone: phone,
+                    clientId: clientId,
+                    caregiverId: caregiverId,
+                    caregiverName,
+                    appointments,
+                    hourlyRate,
                 });
-                (0, auditLog_1.logBookingCreated)(clientId, caregiverId, dates).catch(() => { });
-                return { success: true, taskId: ref.id };
+                if (!taskId) {
+                    // createBookingTask returns "" when it blocks the booking (e.g. bgcheck pending)
+                    // and has already messaged the family. Surface that to the agent.
+                    return { success: false, blocked: true, reason: "booking_blocked_pending_background_check" };
+                }
+                (0, auditLog_1.logBookingCreated)(clientId, caregiverId, dateList).catch(() => { });
+                return { success: true, taskId, status: "awaiting_approval" };
             }
             case "update_preferences": {
                 const { userId } = input, patch = __rest(input, ["userId"]);
@@ -1836,7 +1925,7 @@ async function handleToolCall(name, input) {
                 await db.collection("health_signals").add({
                     seniorId: input.seniorId,
                     signalType: input.signalType,
-                    description: (_z = input.description) !== null && _z !== void 0 ? _z : "",
+                    description: (_1 = input.description) !== null && _1 !== void 0 ? _1 : "",
                     severity: "flag",
                     source: "family_report",
                     detectedAt: nowIso,
@@ -1870,7 +1959,7 @@ async function handleToolCall(name, input) {
                 if (!input.userId || !input.file || !input.find)
                     return toolError("INVALID_INPUT", "userId, file, and find are required");
                 (0, auditLog_1.logAudit)({ eventType: "health_data_accessed", userId: input.userId, data: { source: "mcp:edit_memory_file", file: input.file } }).catch(() => { });
-                const replaced = await (0, memoryFiles_1.editMemoryFile)(input.userId, input.file, input.find, (_0 = input.replace) !== null && _0 !== void 0 ? _0 : "");
+                const replaced = await (0, memoryFiles_1.editMemoryFile)(input.userId, input.file, input.find, (_2 = input.replace) !== null && _2 !== void 0 ? _2 : "");
                 return { success: true, replaced, matched: replaced > 0 };
             }
             case "search_memory": {
@@ -1965,10 +2054,10 @@ async function handleToolCall(name, input) {
                 let notification = { sent: false, reason: "no_caregiver_phone" };
                 if (appt.caregiverId) {
                     const cgSnap = await db.collection("caregivers").doc(appt.caregiverId).get();
-                    const cgPhone = (_1 = cgSnap.data()) === null || _1 === void 0 ? void 0 : _1.phone;
+                    const cgPhone = (_3 = cgSnap.data()) === null || _3 === void 0 ? void 0 : _3.phone;
                     if (cgPhone) {
                         const { trySend } = await Promise.resolve().then(() => __importStar(require("../utils/toolNotify")));
-                        notification = await trySend(cgPhone, `The family has cancelled the visit on ${(_2 = appt.date) !== null && _2 !== void 0 ? _2 : ""}. Sorry for the inconvenience.`, "mcp:cancel_appointment");
+                        notification = await trySend(cgPhone, `The family has cancelled the visit on ${(_4 = appt.date) !== null && _4 !== void 0 ? _4 : ""}. Sorry for the inconvenience.`, "mcp:cancel_appointment");
                     }
                 }
                 (0, auditLog_1.logAudit)({ eventType: "health_data_accessed", userId: clientId, data: { source: "mcp:cancel_appointment", appointmentId, notificationSent: notification.sent } }).catch(() => { });
@@ -1981,13 +2070,13 @@ async function handleToolCall(name, input) {
                 const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
                 if (!cgSnap.exists)
                     return toolError("NOT_FOUND", "Caregiver not found");
-                const cgPhone = (_3 = cgSnap.data()) === null || _3 === void 0 ? void 0 : _3.phone;
+                const cgPhone = (_5 = cgSnap.data()) === null || _5 === void 0 ? void 0 : _5.phone;
                 if (!cgPhone)
                     return toolError("NOT_FOUND", "Caregiver phone not on file");
                 const { trySend } = await Promise.resolve().then(() => __importStar(require("../utils/toolNotify")));
                 const notification = await trySend(cgPhone, `Message from family: ${message}`, "mcp:send_caregiver_message");
-                (0, auditLog_1.logAudit)({ eventType: "health_data_accessed", userId: (_4 = clientId) !== null && _4 !== void 0 ? _4 : "", data: { source: "mcp:send_caregiver_message", caregiverId, notificationSent: notification.sent } }).catch(() => { });
-                return { success: true, sent: notification.sent, caregiverName: (_6 = (_5 = cgSnap.data()) === null || _5 === void 0 ? void 0 : _5.name) !== null && _6 !== void 0 ? _6 : "", notification };
+                (0, auditLog_1.logAudit)({ eventType: "health_data_accessed", userId: (_6 = clientId) !== null && _6 !== void 0 ? _6 : "", data: { source: "mcp:send_caregiver_message", caregiverId, notificationSent: notification.sent } }).catch(() => { });
+                return { success: true, sent: notification.sent, caregiverName: (_8 = (_7 = cgSnap.data()) === null || _7 === void 0 ? void 0 : _7.name) !== null && _8 !== void 0 ? _8 : "", notification };
             }
             case "get_recurring_schedule": {
                 if (!input.clientId)
@@ -2072,7 +2161,7 @@ async function handleToolCall(name, input) {
             case "get_caregiver_appointments": {
                 if (!input.caregiverId)
                     return toolError("INVALID_INPUT", "caregiverId is required");
-                const daysAhead = Math.min((_7 = input.daysAhead) !== null && _7 !== void 0 ? _7 : 7, 30);
+                const daysAhead = Math.min((_9 = input.daysAhead) !== null && _9 !== void 0 ? _9 : 7, 30);
                 const today = new Date().toISOString().slice(0, 10);
                 const futureLimit = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
                 const snap = await db.collection("appointments")
@@ -2115,7 +2204,7 @@ async function handleToolCall(name, input) {
             }
             case "search_web": {
                 const { searchWeb } = await Promise.resolve().then(() => __importStar(require("../browser/browserbaseClient")));
-                const results = await searchWeb(input.query, (_8 = input.numResults) !== null && _8 !== void 0 ? _8 : 5);
+                const results = await searchWeb(input.query, (_10 = input.numResults) !== null && _10 !== void 0 ? _10 : 5);
                 return { results };
             }
             case "perform_web_action": {
@@ -2126,18 +2215,18 @@ async function handleToolCall(name, input) {
                 const actionType = input.actionType;
                 const loginAction = input.loginAction;
                 const userId2 = input.userId;
-                const phone2 = (_9 = input.phone) !== null && _9 !== void 0 ? _9 : "unknown";
+                const phone2 = (_11 = input.phone) !== null && _11 !== void 0 ? _11 : "unknown";
                 const city = input.city;
                 try {
                     // ── Login-required portal actions ──────────────────────────────────
                     if (loginAction) {
                         switch (loginAction) {
                             case "schedule_appointment": {
-                                const portalSvc = ((_10 = input.portalService) !== null && _10 !== void 0 ? _10 : "mychart");
+                                const portalSvc = ((_12 = input.portalService) !== null && _12 !== void 0 ? _12 : "mychart");
                                 const result = await scheduleDoctorAppointment({
                                     userId: userId2,
                                     phone: phone2,
-                                    doctorName: (_11 = input.doctorName) !== null && _11 !== void 0 ? _11 : task,
+                                    doctorName: (_13 = input.doctorName) !== null && _13 !== void 0 ? _13 : task,
                                     specialty: input.specialty,
                                     preferredDate: input.preferredDate,
                                     appointmentType: input.appointmentType,
@@ -2148,14 +2237,14 @@ async function handleToolCall(name, input) {
                                         phone: phone2,
                                         userId: userId2,
                                         service: portalSvc,
-                                        reason: `schedule an appointment with ${(_12 = input.doctorName) !== null && _12 !== void 0 ? _12 : "your doctor"}`,
+                                        reason: `schedule an appointment with ${(_14 = input.doctorName) !== null && _14 !== void 0 ? _14 : "your doctor"}`,
                                     });
                                     return { status: "collecting_credentials" };
                                 }
                                 return result;
                             }
                             case "pharmacy_refill": {
-                                const pharmSvc = (_13 = input.pharmacyService) !== null && _13 !== void 0 ? _13 : "cvs";
+                                const pharmSvc = (_15 = input.pharmacyService) !== null && _15 !== void 0 ? _15 : "cvs";
                                 const result = await requestPharmacyRefill({
                                     userId: userId2,
                                     phone: phone2,
@@ -2176,13 +2265,13 @@ async function handleToolCall(name, input) {
                                 return result;
                             }
                             case "insurance_check": {
-                                const insurer = (_14 = input.insurer) !== null && _14 !== void 0 ? _14 : task;
+                                const insurer = (_16 = input.insurer) !== null && _16 !== void 0 ? _16 : task;
                                 const { insurerToServiceKey } = await Promise.resolve().then(() => __importStar(require("../browser/credentialVault")));
                                 const result = await checkInsuranceAuthorization({
                                     userId: userId2,
                                     phone: phone2,
                                     insurer,
-                                    checkType: (_15 = input.checkType) !== null && _15 !== void 0 ? _15 : "coverage",
+                                    checkType: (_17 = input.checkType) !== null && _17 !== void 0 ? _17 : "coverage",
                                     serviceDescription: input.task,
                                     referenceNumber: input.referenceNumber,
                                     seniorName: input.seniorName,
@@ -2281,8 +2370,8 @@ async function handleToolCall(name, input) {
             let suggestedDate = startStr;
             if (!recentAppt.empty) {
                 const lastAppt = recentAppt.docs[0].data();
-                caregiverName = (_16 = lastAppt.caregiverName) !== null && _16 !== void 0 ? _16 : "";
-                const cgId = (_17 = lastAppt.caregiverId) !== null && _17 !== void 0 ? _17 : "";
+                caregiverName = (_18 = lastAppt.caregiverName) !== null && _18 !== void 0 ? _18 : "";
+                const cgId = (_19 = lastAppt.caregiverId) !== null && _19 !== void 0 ? _19 : "";
                 if (cgId) {
                     const cgSnap = await db.collection("caregivers").doc(cgId).get();
                     const cgData = cgSnap.data();
@@ -2352,10 +2441,43 @@ async function handleToolCall(name, input) {
             const seniorData = seniorSnap.data();
             if (seniorData.userId && seniorData.userId !== clientId)
                 return toolError("PERMISSION_DENIED", "Not authorized to modify this senior's profile");
-            const existing = (_18 = seniorData.familyMembers) !== null && _18 !== void 0 ? _18 : [];
+            const existing = (_20 = seniorData.familyMembers) !== null && _20 !== void 0 ? _20 : [];
             if (existing.some(m => m.phone === memberPhone))
                 return toolError("INVALID_INPUT", "This phone number is already a family member");
             await seniorSnap.ref.update({ familyMembers: admin.firestore.FieldValue.arrayUnion({ name: memberName, phone: memberPhone, addedAt: nowIso, addedBy: clientId }) });
+            // Also register the member in the SAME records the inbound new-user router reads,
+            // so when this member first texts in they're recognized as a secondary member
+            // instead of creating a DUPLICATE account. The router checks both the primary
+            // session's `groupMembers` array and the `family_group_members` collection.
+            {
+                // Resolve the primary's phone: prefer the auto-injected acting phone, else
+                // look it up by clientId.
+                let primaryPhone = input.phone;
+                if (!primaryPhone) {
+                    const primarySnap = await db.collection("agent_sessions")
+                        .where("userId", "==", clientId).limit(1).get();
+                    if (!primarySnap.empty)
+                        primaryPhone = primarySnap.docs[0].id;
+                }
+                if (primaryPhone) {
+                    await db.collection("agent_sessions").doc(primaryPhone).update({
+                        groupMembers: admin.firestore.FieldValue.arrayUnion(memberPhone),
+                    }).catch(() => { });
+                    // Idempotent: only add the collection record if it doesn't already exist.
+                    const existingMember = await db.collection("family_group_members")
+                        .where("memberPhone", "==", memberPhone).limit(1).get();
+                    if (existingMember.empty) {
+                        await db.collection("family_group_members").add({
+                            primaryPhone,
+                            memberPhone,
+                            memberName: memberName !== null && memberName !== void 0 ? memberName : "Family member",
+                            userId: clientId,
+                            addedAt: nowIso,
+                            source: "mcp:add_family_member",
+                        }).catch(() => { });
+                    }
+                }
+            }
             const { buildOrUpdateFamilyGroup } = await Promise.resolve().then(() => __importStar(require("../agents/familyGroupManager")));
             await buildOrUpdateFamilyGroup(seniorId).catch(() => { });
             const { trySend } = await Promise.resolve().then(() => __importStar(require("../utils/toolNotify")));
@@ -2375,7 +2497,7 @@ async function handleToolCall(name, input) {
                 return toolError("PERMISSION_DENIED", "Not authorized to modify this senior's profile");
             const { removeMemberFromGroup } = await Promise.resolve().then(() => __importStar(require("../agents/familyGroupManager")));
             const result = await removeMemberFromGroup(seniorId, targetPhone);
-            const existingMembers = (_19 = seniorData.familyMembers) !== null && _19 !== void 0 ? _19 : [];
+            const existingMembers = (_21 = seniorData.familyMembers) !== null && _21 !== void 0 ? _21 : [];
             const memberObj = existingMembers.find(m => m.phone === targetPhone);
             if (memberObj)
                 await seniorSnap.ref.update({ familyMembers: admin.firestore.FieldValue.arrayRemove(memberObj) });
@@ -2421,13 +2543,13 @@ async function handleToolCall(name, input) {
             const subDoc = subsSnap.docs[0];
             const subData = subDoc.data();
             if (subData.cancel_at_period_end === true) {
-                const periodEnd = (_24 = (_23 = (_22 = (_21 = (_20 = subData.current_period_end) === null || _20 === void 0 ? void 0 : _20.toDate) === null || _21 === void 0 ? void 0 : _21.call(_20)) === null || _22 === void 0 ? void 0 : _22.toISOString) === null || _23 === void 0 ? void 0 : _23.call(_22)) !== null && _24 !== void 0 ? _24 : null;
+                const periodEnd = (_26 = (_25 = (_24 = (_23 = (_22 = subData.current_period_end) === null || _22 === void 0 ? void 0 : _22.toDate) === null || _23 === void 0 ? void 0 : _23.call(_22)) === null || _24 === void 0 ? void 0 : _24.toISOString) === null || _25 === void 0 ? void 0 : _25.call(_24)) !== null && _26 !== void 0 ? _26 : null;
                 return { success: true, alreadyCancelling: true, periodEnd };
             }
             const { getStripeClient } = await Promise.resolve().then(() => __importStar(require("../stripe")));
             await getStripeClient().subscriptions.update(subDoc.id, { cancel_at_period_end: true });
             await db.collection("users").doc(clientId).set({ subscriptionStatus: "canceling" }, { merge: true });
-            const periodEnd = (_29 = (_28 = (_27 = (_26 = (_25 = subData.current_period_end) === null || _25 === void 0 ? void 0 : _25.toDate) === null || _26 === void 0 ? void 0 : _26.call(_25)) === null || _27 === void 0 ? void 0 : _27.toISOString) === null || _28 === void 0 ? void 0 : _28.call(_27)) !== null && _29 !== void 0 ? _29 : null;
+            const periodEnd = (_31 = (_30 = (_29 = (_28 = (_27 = subData.current_period_end) === null || _27 === void 0 ? void 0 : _27.toDate) === null || _28 === void 0 ? void 0 : _28.call(_27)) === null || _29 === void 0 ? void 0 : _29.toISOString) === null || _30 === void 0 ? void 0 : _30.call(_29)) !== null && _31 !== void 0 ? _31 : null;
             (0, auditLog_1.logAudit)({ eventType: "subscription_cancelled", userId: clientId, data: { source: "mcp:cancel_subscription", subId: subDoc.id, periodEnd } }).catch(() => { });
             return { success: true, cancelled: true, periodEnd, subId: subDoc.id };
         }
@@ -2445,7 +2567,7 @@ async function handleToolCall(name, input) {
             const { getStripeClient } = await Promise.resolve().then(() => __importStar(require("../stripe")));
             await getStripeClient().subscriptions.update(subDoc.id, { cancel_at_period_end: false });
             await db.collection("users").doc(clientId).set({ subscriptionStatus: "active" }, { merge: true });
-            const periodEnd = (_34 = (_33 = (_32 = (_31 = (_30 = subData.current_period_end) === null || _30 === void 0 ? void 0 : _30.toDate) === null || _31 === void 0 ? void 0 : _31.call(_30)) === null || _32 === void 0 ? void 0 : _32.toISOString) === null || _33 === void 0 ? void 0 : _33.call(_32)) !== null && _34 !== void 0 ? _34 : null;
+            const periodEnd = (_36 = (_35 = (_34 = (_33 = (_32 = subData.current_period_end) === null || _32 === void 0 ? void 0 : _32.toDate) === null || _33 === void 0 ? void 0 : _33.call(_32)) === null || _34 === void 0 ? void 0 : _34.toISOString) === null || _35 === void 0 ? void 0 : _35.call(_34)) !== null && _36 !== void 0 ? _36 : null;
             (0, auditLog_1.logAudit)({ eventType: "subscription_reactivated", userId: clientId, data: { source: "mcp:reactivate_subscription", subId: subDoc.id } }).catch(() => { });
             return { success: true, reactivated: true, periodEnd };
         }
@@ -2532,13 +2654,13 @@ async function handleToolCall(name, input) {
             const conflictSnap = await db.collection("appointments").where("caregiverId", "==", appt.caregiverId).where("date", "==", newDate).where("status", "in", ["confirmed", "in-progress", "pending_caregiver_confirmation"]).get();
             if (conflictSnap.docs.some(d => d.id !== appointmentId))
                 return toolError("CONFLICT", "The caregiver is not available at that date and time");
-            const durationHours = (_35 = appt.durationHours) !== null && _35 !== void 0 ? _35 : 2;
+            const durationHours = (_37 = appt.durationHours) !== null && _37 !== void 0 ? _37 : 2;
             const [h, m] = newTime.split(":").map(Number);
             const totalMins = h * 60 + m + durationHours * 60;
             const newEndTime = `${String(Math.floor(totalMins / 60) % 24).padStart(2, "0")}:${String(totalMins % 60).padStart(2, "0")}`;
             await apptSnap.ref.update({ date: newDate, startTime: newTime, endTime: newEndTime, rescheduledAt: nowIso, previousDate: appt.date, previousStartTime: appt.startTime });
             const cgSnap2 = await db.collection("caregivers").doc(appt.caregiverId).get();
-            const cgPhone2 = (_36 = cgSnap2.data()) === null || _36 === void 0 ? void 0 : _36.phone;
+            const cgPhone2 = (_38 = cgSnap2.data()) === null || _38 === void 0 ? void 0 : _38.phone;
             let notification = { sent: false, reason: "no_caregiver_phone" };
             if (cgPhone2) {
                 const { trySend } = await Promise.resolve().then(() => __importStar(require("../utils/toolNotify")));
@@ -2558,7 +2680,7 @@ async function handleToolCall(name, input) {
             if (appt.caregiverId !== caregiverId)
                 return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
             const entryRef = await db.collection("care_journal").add({
-                seniorId: (_37 = appt.seniorId) !== null && _37 !== void 0 ? _37 : appt.clientId, caregiverId, appointmentId,
+                seniorId: (_39 = appt.seniorId) !== null && _39 !== void 0 ? _39 : appt.clientId, caregiverId, appointmentId,
                 clientId: appt.clientId, notes, mood: mood !== null && mood !== void 0 ? mood : null,
                 medsGiven: medsGiven !== null && medsGiven !== void 0 ? medsGiven : null, activities: activities !== null && activities !== void 0 ? activities : [],
                 source: "cara_sms", timestamp: nowIso,
@@ -2658,7 +2780,7 @@ async function handleToolCall(name, input) {
             const { getStripeClient } = await Promise.resolve().then(() => __importStar(require("../stripe")));
             const sc = getStripeClient();
             const balance = await sc.balance.retrieve({ stripeAccount: cg3.stripeAccountId });
-            const availableCents = (_39 = (_38 = balance.available[0]) === null || _38 === void 0 ? void 0 : _38.amount) !== null && _39 !== void 0 ? _39 : 0;
+            const availableCents = (_41 = (_40 = balance.available[0]) === null || _40 === void 0 ? void 0 : _40.amount) !== null && _41 !== void 0 ? _41 : 0;
             if (availableCents <= 0)
                 return toolError("INVALID_INPUT", "No available balance to pay out");
             const payoutCents = amountCents != null ? Number(amountCents) : availableCents;
@@ -2689,14 +2811,14 @@ async function handleToolCall(name, input) {
             if (totalMins3 <= 0)
                 return toolError("INVALID_INPUT", "Clock-out time must be after clock-in time");
             const durationHours3 = Math.round((totalMins3 / 60) * 100) / 100;
-            const hourlyRate3 = (_40 = appt3.hourlyRate) !== null && _40 !== void 0 ? _40 : 22;
+            const hourlyRate3 = (_42 = appt3.hourlyRate) !== null && _42 !== void 0 ? _42 : 22;
             const amountCents3 = Math.round(durationHours3 * hourlyRate3 * 100);
             await db.collection("shiftHours").doc(appointmentId).set({ appointmentId, caregiverId, clientId: appt3.clientId, clockInTime, clockOutTime, breakMinutes: Number(breakMinutes) || 0, durationHours: durationHours3, date: appt3.date, hourlyRate: hourlyRate3, amountCents: amountCents3, status: "pending_client_review", submittedAt: nowIso, paymentAttemptCount: 0 }, { merge: false });
             const clientSessSnap3 = await db.collection("agent_sessions").where("userId", "==", appt3.clientId).limit(1).get();
             if (!clientSessSnap3.empty) {
                 const { sendViaInteractionAgent } = await Promise.resolve().then(() => __importStar(require("../agents/caraAgent")));
                 const cgData3 = (await db.collection("caregivers").doc(caregiverId).get()).data();
-                const cgName3 = (_42 = (_41 = cgData3 === null || cgData3 === void 0 ? void 0 : cgData3.name) !== null && _41 !== void 0 ? _41 : cgData3 === null || cgData3 === void 0 ? void 0 : cgData3.firstName) !== null && _42 !== void 0 ? _42 : "Your caregiver";
+                const cgName3 = (_44 = (_43 = cgData3 === null || cgData3 === void 0 ? void 0 : cgData3.name) !== null && _43 !== void 0 ? _43 : cgData3 === null || cgData3 === void 0 ? void 0 : cgData3.firstName) !== null && _44 !== void 0 ? _44 : "Your caregiver";
                 await sendViaInteractionAgent(clientSessSnap3.docs[0].id, { content: `${cgName3} submitted shift hours: ${clockInTime}–${clockOutTime} = ${durationHours3}h ($${(amountCents3 / 100).toFixed(2)}). Reply APPROVE or let me know if anything needs adjusting.`, urgency: "standard", sourceAgent: "mcp:submit_shift_hours", canDrop: false }).catch(() => { });
             }
             (0, auditLog_1.logAudit)({ eventType: "shift_hours_submitted", userId: caregiverId, data: { source: "mcp:submit_shift_hours", appointmentId, durationHours: durationHours3, amountCents: amountCents3 } }).catch(() => { });
@@ -2766,11 +2888,11 @@ async function handleToolCall(name, input) {
                 await db.collection("job_applications").doc(applicationId).update({ status: "interview_scheduled", interviewId: ivRef.id }).catch(() => { });
             }
             const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
-            const cgPhone = (_43 = cgSnap.data()) === null || _43 === void 0 ? void 0 : _43.phone;
+            const cgPhone = (_45 = cgSnap.data()) === null || _45 === void 0 ? void 0 : _45.phone;
             let notification = { sent: false, reason: "no_caregiver_phone" };
             if (cgPhone) {
                 const clientSnap = await db.collection("users").doc(clientId).get();
-                const clientName = (_45 = (_44 = clientSnap.data()) === null || _44 === void 0 ? void 0 : _44.name) !== null && _45 !== void 0 ? _45 : "A family";
+                const clientName = (_47 = (_46 = clientSnap.data()) === null || _46 === void 0 ? void 0 : _46.name) !== null && _47 !== void 0 ? _47 : "A family";
                 const { trySend } = await Promise.resolve().then(() => __importStar(require("../utils/toolNotify")));
                 notification = await trySend(cgPhone, `Interview scheduled! ${clientName} wants to meet ${preferredDate} at ${preferredTime}. Reply to confirm.`, "mcp:schedule_interview");
             }
@@ -2797,13 +2919,13 @@ async function handleToolCall(name, input) {
             const clientSess = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
             if (!clientSess.empty) {
                 const cgData = (await db.collection("caregivers").doc(caregiverId).get()).data();
-                const cgName = (_46 = cgData === null || cgData === void 0 ? void 0 : cgData.name) !== null && _46 !== void 0 ? _46 : "The caregiver";
+                const cgName = (_48 = cgData === null || cgData === void 0 ? void 0 : cgData.name) !== null && _48 !== void 0 ? _48 : "The caregiver";
                 const { sendToPhone } = await Promise.resolve().then(() => __importStar(require("../linq/client")));
                 const notifyMsg = decision === "accept"
-                    ? `${cgName} confirmed the interview for ${(_48 = (_47 = iv.scheduledTime) === null || _47 === void 0 ? void 0 : _47.slice(0, 10)) !== null && _48 !== void 0 ? _48 : "the scheduled time"}.`
+                    ? `${cgName} confirmed the interview for ${(_50 = (_49 = iv.scheduledTime) === null || _49 === void 0 ? void 0 : _49.slice(0, 10)) !== null && _50 !== void 0 ? _50 : "the scheduled time"}.`
                     : proposedDate
                         ? `${cgName} can't make the original time but is free ${proposedDate} at ${proposedTime !== null && proposedTime !== void 0 ? proposedTime : ""}.`
-                        : `${cgName} isn't available for the interview. ${(_49 = ivMsg) !== null && _49 !== void 0 ? _49 : ""}`.trim();
+                        : `${cgName} isn't available for the interview. ${(_51 = ivMsg) !== null && _51 !== void 0 ? _51 : ""}`.trim();
                 await sendToPhone(clientSess.docs[0].id, notifyMsg).catch(() => { });
             }
             (0, auditLog_1.logAudit)({ eventType: "interview_responded", userId: caregiverId, data: { source: "mcp:respond_to_interview_request", interviewId, decision } }).catch(() => { });
@@ -2852,7 +2974,7 @@ async function handleToolCall(name, input) {
             const { clientId } = input;
             if (!clientId)
                 return toolError("INVALID_INPUT", "clientId is required");
-            const limit10 = Math.min((_50 = input.limit) !== null && _50 !== void 0 ? _50 : 5, 20);
+            const limit10 = Math.min((_52 = input.limit) !== null && _52 !== void 0 ? _52 : 5, 20);
             const invSnap = await db.collection("shiftHours")
                 .where("clientId", "==", clientId)
                 .where("status", "in", ["approved", "paid"])
@@ -2956,11 +3078,11 @@ async function handleToolCall(name, input) {
                 return toolError("FORBIDDEN", "No active engagement with any client — cannot send message. Ask the family to book a visit first.");
             }
             const clientSnap = await db.collection("users").doc(resolvedClientId).get();
-            const clientPhone = (_51 = clientSnap.data()) === null || _51 === void 0 ? void 0 : _51.phone;
+            const clientPhone = (_53 = clientSnap.data()) === null || _53 === void 0 ? void 0 : _53.phone;
             if (!clientPhone)
                 return toolError("NOT_FOUND", "Client phone number not found");
             const cgData = (await db.collection("caregivers").doc(caregiverId).get()).data();
-            const cgName = (_52 = cgData === null || cgData === void 0 ? void 0 : cgData.name) !== null && _52 !== void 0 ? _52 : "Your caregiver";
+            const cgName = (_54 = cgData === null || cgData === void 0 ? void 0 : cgData.name) !== null && _54 !== void 0 ? _54 : "Your caregiver";
             const { trySend } = await Promise.resolve().then(() => __importStar(require("../utils/toolNotify")));
             const notification = await trySend(clientPhone, `${cgName}: ${message}`, "mcp:send_client_message");
             (0, auditLog_1.logAudit)({ eventType: "caregiver_sent_message", userId: caregiverId, data: { source: "mcp:send_client_message", resolvedClientId, messageLength: message.length, notificationSent: notification.sent } }).catch(() => { });
@@ -2971,7 +3093,7 @@ async function handleToolCall(name, input) {
             const { caregiverId } = input;
             if (!caregiverId)
                 return toolError("INVALID_INPUT", "caregiverId is required");
-            const limit11 = Math.min((_53 = input.limit) !== null && _53 !== void 0 ? _53 : 5, 20);
+            const limit11 = Math.min((_55 = input.limit) !== null && _55 !== void 0 ? _55 : 5, 20);
             const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
             if (!cgSnap.exists)
                 return toolError("NOT_FOUND", "Caregiver not found");
@@ -3002,7 +3124,7 @@ async function handleToolCall(name, input) {
             const { userId, counterpartId } = input;
             if (!userId)
                 return toolError("INVALID_INPUT", "userId is required");
-            const msgLimit = Math.min((_54 = input.limit) !== null && _54 !== void 0 ? _54 : 5, 20);
+            const msgLimit = Math.min((_56 = input.limit) !== null && _56 !== void 0 ? _56 : 5, 20);
             let threadsQuery = db.collection("threads").where("participants", "array-contains", userId);
             if (counterpartId)
                 threadsQuery = threadsQuery.where("participants", "array-contains", counterpartId);
@@ -3124,11 +3246,48 @@ async function handleToolCall(name, input) {
             return {
                 success: true,
                 totalEarned: Math.round(totalEarned * 100) / 100,
-                pendingBalance: (_55 = cg5.pendingBalance) !== null && _55 !== void 0 ? _55 : 0,
+                pendingBalance: (_57 = cg5.pendingBalance) !== null && _57 !== void 0 ? _57 : 0,
                 stripeSetup: !!cg5.stripeAccountId,
                 payoutsEnabled: !!cg5.payoutsEnabled,
                 recentVisitCount: earnSnap.size,
                 periodDays: daysBack,
+            };
+        }
+        // ── get_background_check_status ─────────────────────────────────────────
+        if (name === "get_background_check_status") {
+            const { caregiverId } = input;
+            if (!caregiverId)
+                return toolError("INVALID_INPUT", "caregiverId is required");
+            const cgBgSnap = await db.collection("caregivers").doc(caregiverId).get();
+            if (!cgBgSnap.exists)
+                return toolError("NOT_FOUND", "Caregiver not found");
+            const bg = ((_59 = (_58 = cgBgSnap.data()) === null || _58 === void 0 ? void 0 : _58.backgroundCheckData) !== null && _59 !== void 0 ? _59 : {});
+            const status = (_60 = bg.status) !== null && _60 !== void 0 ? _60 : null;
+            const invitationStatus = (_61 = bg.invitationStatus) !== null && _61 !== void 0 ? _61 : null;
+            const submitted = !!bg.submittedAt || !!bg.checkrCandidateId;
+            // Map raw Checkr state to a single friendly summary the agent can phrase.
+            let summary;
+            if (!submitted && !status)
+                summary = "not_started";
+            else if (status === "clear")
+                summary = "passed";
+            else if (status === "consider")
+                summary = "needs_review";
+            else if (status === "suspended")
+                summary = "suspended";
+            else if (invitationStatus === "expired" || invitationStatus === "canceled")
+                summary = `invitation_${invitationStatus}`;
+            else
+                summary = "in_progress";
+            (0, auditLog_1.logAudit)({ eventType: "health_data_accessed", userId: caregiverId, data: { source: "mcp:get_background_check_status" } }).catch(() => { });
+            return {
+                success: true,
+                summary,
+                status,
+                invitationStatus,
+                submittedAt: (_62 = bg.submittedAt) !== null && _62 !== void 0 ? _62 : null,
+                completedAt: (_63 = bg.completedAt) !== null && _63 !== void 0 ? _63 : null,
+                mvrIncluded: !!bg.mvrIncluded,
             };
         }
         // ── update_caregiver_availability ───────────────────────────────────────
@@ -3161,7 +3320,7 @@ async function handleToolCall(name, input) {
                 for (const doc of pendingInterviews.docs) {
                     const req = doc.data();
                     // Check if scheduled date falls on a removed day
-                    const scheduledDate = (_56 = req.scheduledAt) !== null && _56 !== void 0 ? _56 : req.proposedTime;
+                    const scheduledDate = (_64 = req.scheduledAt) !== null && _64 !== void 0 ? _64 : req.proposedTime;
                     if (scheduledDate) {
                         const dayOfWeek = DAY_NAMES[new Date(scheduledDate).getDay()];
                         if (removedDays.includes(dayOfWeek)) {
@@ -3181,7 +3340,7 @@ async function handleToolCall(name, input) {
                         if (clientSess === null || clientSess === void 0 ? void 0 : clientSess.exists) {
                             const { sendToPhone } = await Promise.resolve().then(() => __importStar(require("../linq/client")));
                             const cgData = cgSnap6.data();
-                            const cgName = (_58 = (_57 = cgData === null || cgData === void 0 ? void 0 : cgData.name) !== null && _57 !== void 0 ? _57 : cgData === null || cgData === void 0 ? void 0 : cgData.firstName) !== null && _58 !== void 0 ? _58 : "The caregiver";
+                            const cgName = (_66 = (_65 = cgData === null || cgData === void 0 ? void 0 : cgData.name) !== null && _65 !== void 0 ? _65 : cgData === null || cgData === void 0 ? void 0 : cgData.firstName) !== null && _66 !== void 0 ? _66 : "The caregiver";
                             await sendToPhone(conflict.clientPhone, `${cgName} is no longer available on that day and your scheduled interview has been cancelled. ` +
                                 `Would you like me to find another time or a different caregiver?`).catch(() => { });
                             // Set state so client's next YES triggers rematching
@@ -3204,26 +3363,49 @@ async function handleToolCall(name, input) {
             const cgSnap7 = await db.collection("caregivers").doc(caregiverId).get();
             if (!cgSnap7.exists)
                 return toolError("NOT_FOUND", "Caregiver not found");
-            const limit7 = Math.min((_59 = input.limit) !== null && _59 !== void 0 ? _59 : 5, 10);
+            const cg7 = cgSnap7.data() || {};
+            const limit7 = Math.min((_67 = input.limit) !== null && _67 !== void 0 ? _67 : 5, 10);
+            const RADIUS_MILES = 25; // match the push-notification radius (jobNotifications.ts)
+            const cgLat = ((_70 = (_68 = cg7.latitude) !== null && _68 !== void 0 ? _68 : (_69 = cg7.location) === null || _69 === void 0 ? void 0 : _69.latitude) !== null && _70 !== void 0 ? _70 : (_71 = cg7.location) === null || _71 === void 0 ? void 0 : _71.lat);
+            const cgLng = ((_74 = (_72 = cg7.longitude) !== null && _72 !== void 0 ? _72 : (_73 = cg7.location) === null || _73 === void 0 ? void 0 : _73.longitude) !== null && _74 !== void 0 ? _74 : (_75 = cg7.location) === null || _75 === void 0 ? void 0 : _75.lng);
+            const hasCoords = typeof cgLat === "number" && typeof cgLng === "number";
             const alreadyApplied = await db.collection("job_applications").where("caregiverId", "==", caregiverId).get();
             const appliedJobIds = new Set(alreadyApplied.docs.map((d) => d.data().jobId));
-            const jobsSnap = await db.collection("job_posts").where("status", "==", "open").orderBy("createdAt", "desc").limit(20).get();
-            const jobs7 = jobsSnap.docs
+            // Pull a wider window since we filter by distance below.
+            const jobsSnap = await db.collection("job_posts").where("status", "==", "open").orderBy("createdAt", "desc").limit(50).get();
+            const { haversineMiles } = await Promise.resolve().then(() => __importStar(require("../ai/scoring")));
+            const scoped = jobsSnap.docs
                 .filter((d) => !appliedJobIds.has(d.id))
-                .slice(0, limit7)
                 .map((d) => {
-                var _a, _b, _c, _d, _e, _f;
+                var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
                 const data = d.data();
+                const jLat = (_b = (_a = data.location) === null || _a === void 0 ? void 0 : _a.lat) !== null && _b !== void 0 ? _b : (_c = data.location) === null || _c === void 0 ? void 0 : _c.latitude;
+                const jLng = (_e = (_d = data.location) === null || _d === void 0 ? void 0 : _d.lng) !== null && _e !== void 0 ? _e : (_f = data.location) === null || _f === void 0 ? void 0 : _f.longitude;
+                const dist = (hasCoords && typeof jLat === "number" && typeof jLng === "number")
+                    ? haversineMiles(cgLat, cgLng, jLat, jLng)
+                    : undefined;
                 return {
                     jobId: d.id,
-                    summary: (_a = data.summary) !== null && _a !== void 0 ? _a : "Care job",
-                    careNeeds: (_b = data.careTypes) !== null && _b !== void 0 ? _b : [],
-                    schedule: (_c = data.schedule) !== null && _c !== void 0 ? _c : {},
-                    hourlyRate: (_d = data.hourlyRate) !== null && _d !== void 0 ? _d : null,
-                    location: (_f = (_e = data.location) === null || _e === void 0 ? void 0 : _e.city) !== null && _f !== void 0 ? _f : "Nearby",
+                    summary: (_g = data.summary) !== null && _g !== void 0 ? _g : "Care job",
+                    careNeeds: (_h = data.careTypes) !== null && _h !== void 0 ? _h : [],
+                    schedule: (_j = data.schedule) !== null && _j !== void 0 ? _j : {},
+                    hourlyRate: (_k = data.hourlyRate) !== null && _k !== void 0 ? _k : null,
+                    location: (_m = (_l = data.location) === null || _l === void 0 ? void 0 : _l.city) !== null && _m !== void 0 ? _m : "Nearby",
+                    distanceMiles: dist !== undefined ? Math.round(dist) : null,
                 };
-            });
-            return { success: true, jobs: jobs7, total: jobs7.length };
+            })
+                // Geo-scope only when we can compute distance for the job. Jobs without
+                // coordinates are kept (can't determine), but out-of-radius jobs are dropped.
+                .filter((j) => j.distanceMiles === null || j.distanceMiles <= RADIUS_MILES)
+                .sort((a, b) => { var _a, _b; return ((_a = a.distanceMiles) !== null && _a !== void 0 ? _a : 9999) - ((_b = b.distanceMiles) !== null && _b !== void 0 ? _b : 9999); })
+                .slice(0, limit7);
+            return {
+                success: true,
+                jobs: scoped,
+                total: scoped.length,
+                geoScoped: hasCoords,
+                radiusMiles: RADIUS_MILES,
+            };
         }
         // ── get_my_applications ─────────────────────────────────────────────────
         if (name === "get_my_applications") {
@@ -3277,9 +3459,9 @@ async function handleToolCall(name, input) {
             const { clientId } = input;
             if (!clientId)
                 return toolError("INVALID_INPUT", "clientId is required");
-            const limit9 = Math.min((_60 = input.limit) !== null && _60 !== void 0 ? _60 : 5, 20);
+            const limit9 = Math.min((_76 = input.limit) !== null && _76 !== void 0 ? _76 : 5, 20);
             const userSnap = await db.collection("users").doc(clientId).get();
-            const seniorId9 = (_61 = userSnap.data()) === null || _61 === void 0 ? void 0 : _61.seniorId;
+            const seniorId9 = (_77 = userSnap.data()) === null || _77 === void 0 ? void 0 : _77.seniorId;
             if (!seniorId9)
                 return toolError("NOT_FOUND", "No senior profile linked to this client");
             (0, auditLog_1.logHealthDataAccessed)(clientId, seniorId9, "mcp:get_care_journal_client").catch(() => { });
@@ -3315,9 +3497,9 @@ async function handleToolCall(name, input) {
                 return toolError("PERMISSION_DENIED", "Schedule does not belong to this client");
             if (sched.status === "cancelled")
                 return toolError("INVALID_INPUT", "Cannot modify a cancelled schedule");
-            const resolvedDays = (_62 = newDays) !== null && _62 !== void 0 ? _62 : sched.days;
-            const resolvedStart = (_63 = newStartTime) !== null && _63 !== void 0 ? _63 : sched.startTime;
-            const resolvedEnd = (_64 = newEndTime) !== null && _64 !== void 0 ? _64 : sched.endTime;
+            const resolvedDays = (_78 = newDays) !== null && _78 !== void 0 ? _78 : sched.days;
+            const resolvedStart = (_79 = newStartTime) !== null && _79 !== void 0 ? _79 : sched.startTime;
+            const resolvedEnd = (_80 = newEndTime) !== null && _80 !== void 0 ? _80 : sched.endTime;
             // Validate times
             const timePattern = /^\d{2}:\d{2}$/;
             if (!timePattern.test(resolvedStart) || !timePattern.test(resolvedEnd)) {
@@ -3361,7 +3543,7 @@ async function handleToolCall(name, input) {
             await batchMs.commit();
             // Notify caregiver
             const cgSnap = await db.collection("caregivers").doc(sched.caregiverId).get().catch(() => null);
-            const cgPhone = (_65 = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _65 === void 0 ? void 0 : _65.phone;
+            const cgPhone = (_81 = cgSnap === null || cgSnap === void 0 ? void 0 : cgSnap.data()) === null || _81 === void 0 ? void 0 : _81.phone;
             let notification = { sent: false, reason: "no_caregiver_phone" };
             if (cgPhone) {
                 const { trySend } = await Promise.resolve().then(() => __importStar(require("../utils/toolNotify")));
@@ -3379,18 +3561,40 @@ async function handleToolCall(name, input) {
             const userSnap = await db.collection("users").doc(clientId).get();
             if (!userSnap.exists)
                 return toolError("NOT_FOUND", "Client not found");
-            const stripeCustomerId = (_66 = userSnap.data()) === null || _66 === void 0 ? void 0 : _66.stripeCustomerId;
+            const stripeCustomerId = (_82 = userSnap.data()) === null || _82 === void 0 ? void 0 : _82.stripeCustomerId;
             if (!stripeCustomerId)
                 return toolError("INVALID_INPUT", "No Stripe billing account found for this client. They may need to re-subscribe.");
             const { getStripeClient } = await Promise.resolve().then(() => __importStar(require("../stripe")));
             const sc = getStripeClient();
-            const appUrl = (_67 = process.env.APP_URL) !== null && _67 !== void 0 ? _67 : "https://cara.app";
+            const appUrl = (_83 = process.env.APP_URL) !== null && _83 !== void 0 ? _83 : "https://cara.app";
             const session = await sc.billingPortal.sessions.create({
                 customer: stripeCustomerId,
                 return_url: `${appUrl}/settings/billing`,
             });
             (0, auditLog_1.logAudit)({ eventType: "billing_portal_opened", userId: clientId, data: { source: "mcp:get_payment_update_link" } }).catch(() => { });
             return { success: true, url: session.url, expiresIn: "5 minutes" };
+        }
+        // ── send_onboarding_link ────────────────────────────────────────────────
+        if (name === "send_onboarding_link") {
+            const { linkType, phone } = input;
+            if (!phone)
+                return toolError("INVALID_INPUT", "phone is required");
+            const validTypes = [
+                "client_payment", "client_identity", "caregiver_membership",
+                "caregiver_photo", "caregiver_documents", "caregiver_background_check", "caregiver_payouts",
+            ];
+            if (!linkType || !validTypes.includes(linkType)) {
+                return toolError("INVALID_INPUT", `linkType must be one of: ${validTypes.join(", ")}`);
+            }
+            try {
+                const { sendOnboardingLink } = await Promise.resolve().then(() => __importStar(require("../agents/onboardingConversation")));
+                const res = await sendOnboardingLink(phone, linkType);
+                return { success: true, linkType: res.linkType, sent: true };
+            }
+            catch (err) {
+                console.error("send_onboarding_link error:", err);
+                return toolError("UNAVAILABLE", "Couldn't generate that link right now — try again in a moment.");
+            }
         }
         // ── get_invoice_details ─────────────────────────────────────────────────
         if (name === "get_invoice_details") {
@@ -3417,8 +3621,8 @@ async function handleToolCall(name, input) {
                 invoiceId: invDocs[0].id,
                 invoiceNumber: invoice.invoiceNumber,
                 status: invoice.status,
-                total: (_68 = invoice.total) !== null && _68 !== void 0 ? _68 : invoice.amount,
-                lineItems: (_69 = invoice.lineItems) !== null && _69 !== void 0 ? _69 : [],
+                total: (_84 = invoice.total) !== null && _84 !== void 0 ? _84 : invoice.amount,
+                lineItems: (_85 = invoice.lineItems) !== null && _85 !== void 0 ? _85 : [],
                 carePeriod: invoice.carePeriod,
                 createdAt: invoice.createdAt,
             };
@@ -3443,7 +3647,7 @@ async function handleToolCall(name, input) {
             const { seniorId: cpSeniorId } = input;
             if (!cpSeniorId)
                 return toolError("INVALID_INPUT", "seniorId is required");
-            const cpLimit = Math.min((_70 = input.limit) !== null && _70 !== void 0 ? _70 : 5, 10);
+            const cpLimit = Math.min((_86 = input.limit) !== null && _86 !== void 0 ? _86 : 5, 10);
             const cpSnap = await db.collection("senior_profiles").doc(cpSeniorId)
                 .collection("carePlanVersions")
                 .orderBy("savedAt", "desc")
@@ -3482,7 +3686,7 @@ async function handleToolCall(name, input) {
             }
             // Restore the selected version
             await db.collection("senior_profiles").doc(rSeniorId)
-                .collection("care_plans").doc("active").set((_71 = rVersionData.carePlan) !== null && _71 !== void 0 ? _71 : rVersionData);
+                .collection("care_plans").doc("active").set((_87 = rVersionData.carePlan) !== null && _87 !== void 0 ? _87 : rVersionData);
             (0, auditLog_1.logAudit)({ eventType: "care_plan_restored", userId: rClientId, data: { source: "mcp:restore_care_plan_version", seniorId: rSeniorId, versionId: rVersionId } }).catch(() => { });
             return { success: true, message: "Care plan restored to the selected version." };
         }
@@ -3496,7 +3700,7 @@ async function handleToolCall(name, input) {
             const ref = await db.collection("shift_swap_requests").add({
                 appointmentId,
                 fromCaregiverId: caregiverId,
-                fromCaregiverName: (_72 = data.caregiverName) !== null && _72 !== void 0 ? _72 : caregiverId,
+                fromCaregiverName: (_88 = data.caregiverName) !== null && _88 !== void 0 ? _88 : caregiverId,
                 clientId: data.clientId,
                 date: data.date,
                 time: data.time,
@@ -3547,20 +3751,20 @@ async function handleToolCall(name, input) {
                 return toolError("NOT_FOUND", "Appointment not found");
             const data = appt.data();
             const dayOfWeek = new Date(data.date).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
-            const shiftHour = parseInt(((_73 = data.time) !== null && _73 !== void 0 ? _73 : "09:00").split(":")[0], 10);
+            const shiftHour = parseInt(((_89 = data.time) !== null && _89 !== void 0 ? _89 : "09:00").split(":")[0], 10);
             const snap = await db.collection("caregivers").where("verified", "==", true).limit(30).get();
             const options = [];
             for (const doc of snap.docs) {
                 if (doc.id === data.caregiverId)
                     continue;
                 const cg = doc.data();
-                const avail = (_74 = cg.weeklyAvailability) === null || _74 === void 0 ? void 0 : _74[dayOfWeek];
+                const avail = (_90 = cg.weeklyAvailability) === null || _90 === void 0 ? void 0 : _90[dayOfWeek];
                 if (!(avail === null || avail === void 0 ? void 0 : avail.some(s => parseInt(s.start.split(":")[0], 10) <= shiftHour && shiftHour < parseInt(s.end.split(":")[0], 10))))
                     continue;
                 const conflict = await db.collection("appointments").where("caregiverId", "==", doc.id).where("date", "==", data.date).where("status", "in", ["confirmed"]).limit(1).get();
                 if (!conflict.empty)
                     continue;
-                options.push({ caregiverId: doc.id, name: (_76 = (_75 = cg.name) !== null && _75 !== void 0 ? _75 : cg.firstName) !== null && _76 !== void 0 ? _76 : "Caregiver", rate: cg.hourlyRate });
+                options.push({ caregiverId: doc.id, name: (_92 = (_91 = cg.name) !== null && _91 !== void 0 ? _91 : cg.firstName) !== null && _92 !== void 0 ? _92 : "Caregiver", rate: cg.hourlyRate });
                 if (options.length >= 3)
                     break;
             }
@@ -3574,7 +3778,7 @@ async function handleToolCall(name, input) {
             const caregiverId = input.caregiverId;
             if (!caregiverId)
                 return toolError("INVALID_INPUT", "caregiverId is required");
-            const limit = Math.min((_77 = input.limit) !== null && _77 !== void 0 ? _77 : 5, 10);
+            const limit = Math.min((_93 = input.limit) !== null && _93 !== void 0 ? _93 : 5, 10);
             const recs = await getJobRecommendationsForCaregiver(caregiverId, limit);
             if (!recs.length)
                 return { recommendations: [], message: "No open jobs matching your profile right now." };
@@ -3603,8 +3807,8 @@ async function handleToolCall(name, input) {
                 gpsProvided: true,
                 caregiverLat: latitude,
                 caregiverLon: longitude,
-                clientLat: (_78 = senior === null || senior === void 0 ? void 0 : senior.latitude) !== null && _78 !== void 0 ? _78 : null,
-                clientLon: (_79 = senior === null || senior === void 0 ? void 0 : senior.longitude) !== null && _79 !== void 0 ? _79 : null,
+                clientLat: (_94 = senior === null || senior === void 0 ? void 0 : senior.latitude) !== null && _94 !== void 0 ? _94 : null,
+                clientLon: (_95 = senior === null || senior === void 0 ? void 0 : senior.longitude) !== null && _95 !== void 0 ? _95 : null,
             });
             return { success: true, message: "Checked in. The family has been notified." };
         }
@@ -3614,7 +3818,7 @@ async function handleToolCall(name, input) {
             const caregiverId = input.caregiverId;
             if (!caregiverId)
                 return toolError("INVALID_INPUT", "caregiverId is required");
-            const year = (_80 = input.year) !== null && _80 !== void 0 ? _80 : new Date().getFullYear();
+            const year = (_96 = input.year) !== null && _96 !== void 0 ? _96 : new Date().getFullYear();
             const summary = await getCaregiverTaxSummary(caregiverId, year);
             return summary;
         }
@@ -3743,7 +3947,7 @@ async function handleToolCall(name, input) {
                 updatedAt: nowIso,
             }, { merge: true });
             (0, auditLog_1.logAudit)({ eventType: "favorite_saved", userId: clientId, data: { source: "mcp:save_caregiver_favorite", caregiverId } }).catch(() => { });
-            return { success: true, saved: true, caregiverName: (_82 = (_81 = cgSnap.data()) === null || _81 === void 0 ? void 0 : _81.name) !== null && _82 !== void 0 ? _82 : "the caregiver" };
+            return { success: true, saved: true, caregiverName: (_98 = (_97 = cgSnap.data()) === null || _97 === void 0 ? void 0 : _97.name) !== null && _98 !== void 0 ? _98 : "the caregiver" };
         }
         // ── unsave_caregiver_favorite ───────────────────────────────────────────
         if (name === "unsave_caregiver_favorite") {
@@ -3763,7 +3967,7 @@ async function handleToolCall(name, input) {
             if (!clientId)
                 return toolError("INVALID_INPUT", "clientId is required");
             const userSnap = await db.collection("users").doc(clientId).get();
-            const ids = (_84 = (_83 = userSnap.data()) === null || _83 === void 0 ? void 0 : _83.savedCaregiverIds) !== null && _84 !== void 0 ? _84 : [];
+            const ids = (_100 = (_99 = userSnap.data()) === null || _99 === void 0 ? void 0 : _99.savedCaregiverIds) !== null && _100 !== void 0 ? _100 : [];
             if (ids.length === 0)
                 return { success: true, caregivers: [], count: 0 };
             const caregivers = [];
@@ -3773,10 +3977,10 @@ async function handleToolCall(name, input) {
                     continue;
                 const cg = cgSnap.data();
                 caregivers.push({
-                    id, name: (_85 = cg.name) !== null && _85 !== void 0 ? _85 : "",
-                    rate: (_86 = cg.hourlyRate) !== null && _86 !== void 0 ? _86 : null,
-                    rating: (_87 = cg.averageRating) !== null && _87 !== void 0 ? _87 : null,
-                    specialties: (_88 = cg.specialties) !== null && _88 !== void 0 ? _88 : [],
+                    id, name: (_101 = cg.name) !== null && _101 !== void 0 ? _101 : "",
+                    rate: (_102 = cg.hourlyRate) !== null && _102 !== void 0 ? _102 : null,
+                    rating: (_103 = cg.averageRating) !== null && _103 !== void 0 ? _103 : null,
+                    specialties: (_104 = cg.specialties) !== null && _104 !== void 0 ? _104 : [],
                 });
             }
             return { success: true, caregivers, count: caregivers.length };
@@ -3897,7 +4101,7 @@ async function handleToolCall(name, input) {
             const entry = entrySnap.data();
             if (entry.caregiverId) {
                 const cgSnap = await db.collection("caregivers").doc(entry.caregiverId).get();
-                const cgPhone = (_89 = cgSnap.data()) === null || _89 === void 0 ? void 0 : _89.phone;
+                const cgPhone = (_105 = cgSnap.data()) === null || _105 === void 0 ? void 0 : _105.phone;
                 if (cgPhone) {
                     const { trySend } = await Promise.resolve().then(() => __importStar(require("../utils/toolNotify")));
                     notification = await trySend(cgPhone, `New comment on your care journal entry: "${comment.slice(0, 120)}"`, "mcp:comment_on_journal_entry");

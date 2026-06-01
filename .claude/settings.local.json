@@ -1,7 +1,21 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx firebase *)"
+      "Bash(npx firebase *)",
+      "Bash(npx vitest *)",
+      "Bash(npx --no-install firebase deploy --only functions:v1-linqWebhook --project careconnex-d4c8b --non-interactive)",
+      "Bash(xargs grep -l \"create_support_ticket\\\\|escalat\\\\|support.*ticket\")",
+      "Bash(grep -E \"^\\\\s+\\\\`\\\\s+·\")",
+      "Bash(npm run *)",
+      "Bash(npx tsc *)",
+      "Bash(FUNCTIONS_DISCOVERY_TIMEOUT=120 npx --no-install firebase deploy --only functions:v1-linqWebhook --project careconnex-d4c8b --non-interactive)",
+      "Bash(gcloud logging *)",
+      "WebFetch(domain:docs.linqapp.com)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(ls App.tsx)",
+      "Bash(ls components/client/IdentityCallback.tsx components/StripeCallback.tsx components/pages/UploadPage.tsx components/pages/GenericSuccessPage.tsx)",
+      "Bash(ls src/App.tsx)",
+      "Bash(cd /d/CareConnecxx && grep -rn \"ConnectStatus\\\\|connect.*status\\\\|payoutsEnabled\\\\|getConnectAccount\\\\|account_onboarding\\\\|chargesEnabled\\\\|detailsSubmitted\" services/ functions/src/stripeConnect.ts 2>/dev/null | head -25)"
     ]
   },
   "hooks": {
@@ -11,8 +25,8 @@
         "hooks": [
           {
             "type": "command",
-            "if": "Bash(* firebase deploy *)|Bash(* npm run deploy *)|Bash(firebase deploy*)|Bash(npm run deploy*)|PowerShell(* firebase deploy *)|PowerShell(* npm run deploy *)",
             "command": "echo '{\"systemMessage\": \"⚠️  HEALTHCARE FLOW REMINDER: Before deploying, decide whether to include the healthcare flow (prescription refills, doctor appointment booking, provider search). This feature has HIPAA implications and is currently LIVE in linqWebhook. If you want to remove it, talk to your partner first or ask Claude to revert commit 6357599.\"}'",
+            "if": "Bash(* firebase deploy *)|Bash(* npm run deploy *)|Bash(firebase deploy*)|Bash(npm run deploy*)|PowerShell(* firebase deploy *)|PowerShell(* npm run deploy *)",
             "shell": "powershell"
           }
         ]

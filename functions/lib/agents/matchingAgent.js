@@ -43,7 +43,7 @@ const outcomeAnalytics_1 = require("../ai/outcomeAnalytics");
 const db = admin.firestore();
 /** Compute rule-based signals as a pre-filter before calling Claude. */
 function computeRuleSignals(caregiver, intake) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
     const needs = ((_a = intake.careNeeds) !== null && _a !== void 0 ? _a : []);
     const intakeCity = ((_b = intake.city) !== null && _b !== void 0 ? _b : "").toLowerCase();
     const intakeZip = ((_c = intake.zipCode) !== null && _c !== void 0 ? _c : "");
@@ -71,12 +71,24 @@ function computeRuleSignals(caregiver, intake) {
     if (intakeDays > 5 && !cgHours.includes("weekend"))
         scheduleOverlap = Math.min(scheduleOverlap, 70);
     // Quick rule-based score for pre-filtering only (not the final score)
-    const ruleScore = Math.round(skillsCoverage * 0.35 +
+    let ruleScore = Math.round(skillsCoverage * 0.35 +
         (distanceMiles <= 5 ? 100 : distanceMiles <= 15 ? 70 : 30) * 0.20 +
         Math.min(Math.round(((_m = caregiver.rating) !== null && _m !== void 0 ? _m : 3.5) / 5 * 100), 100) * 0.20 +
         scheduleOverlap * 0.15 +
         75 * 0.10 // personality placeholder
     );
+    // Soft preference penalties — keep mismatches IN the pool (so we never dead-end
+    // a family with no matches) but push them down so better-fitting caregivers
+    // surface first. Claude does the nuanced scoring; this just orders the top 15.
+    const budgetMax = Number((_o = intake.budgetMax) !== null && _o !== void 0 ? _o : 0);
+    const genderPref = ((_p = intake.genderPreference) !== null && _p !== void 0 ? _p : "").toLowerCase();
+    if (budgetMax > 0 && caregiver.hourlyRate > budgetMax)
+        ruleScore -= 20;
+    if (genderPref && caregiver.gender && caregiver.gender.toLowerCase() !== genderPref)
+        ruleScore -= 15;
+    if (intake.needsDriving === true && caregiver.canDrive === false)
+        ruleScore -= 10;
+    ruleScore = Math.max(0, ruleScore);
     const signals = {
         caregiverId: caregiver.id,
         name: caregiver.name,
@@ -87,6 +99,9 @@ function computeRuleSignals(caregiver, intake) {
         yearsExperience: caregiver.yearsExperience,
         isVerified: !caregiver.pendingBackgroundCheck,
         certifications: caregiver.certifications,
+        languages: caregiver.languages,
+        gender: caregiver.gender,
+        canDrive: caregiver.canDrive,
         personalityTags: [],
         hourlyRate: caregiver.hourlyRate,
         hasDementiaCert: (0, claudeMatching_1.detectDementiaCert)(allSkills),
@@ -97,7 +112,7 @@ function computeRuleSignals(caregiver, intake) {
     return { ruleScore, signals };
 }
 async function runMatchingForClient(phone, chatId, intake, session) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
     try {
         const zip = ((_a = intake.zipCode) !== null && _a !== void 0 ? _a : "");
         const city = ((_b = intake.city) !== null && _b !== void 0 ? _b : "");
@@ -144,8 +159,10 @@ async function runMatchingForClient(phone, chatId, intake, session) {
             needs,
             genderPreference: ((_g = intake.genderPreference) !== null && _g !== void 0 ? _g : ""),
             languagePreference: ((_h = intake.languagePreference) !== null && _h !== void 0 ? _h : ""),
-            personality: ((_j = intake.seniorPersonality) !== null && _j !== void 0 ? _j : ""),
-            name: ((_k = intake.seniorName) !== null && _k !== void 0 ? _k : ""),
+            budgetMax: Number((_j = intake.budgetMax) !== null && _j !== void 0 ? _j : 0) || undefined,
+            needsDriving: intake.needsDriving === true,
+            personality: ((_k = intake.seniorPersonality) !== null && _k !== void 0 ? _k : ""),
+            name: ((_l = intake.seniorName) !== null && _l !== void 0 ? _l : ""),
         };
         let claudeScores;
         try {
@@ -205,16 +222,16 @@ async function runMatchingForClient(phone, chatId, intake, session) {
         if (top3.length === 0) {
             // Read and increment the failure counter on the client's session
             const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
-            const prevFailures = ((_m = (_l = sessionSnap.data()) === null || _l === void 0 ? void 0 : _l.consecutiveMatchFailures) !== null && _m !== void 0 ? _m : 0);
+            const prevFailures = ((_o = (_m = sessionSnap.data()) === null || _m === void 0 ? void 0 : _m.consecutiveMatchFailures) !== null && _o !== void 0 ? _o : 0);
             const failureCount = prevFailures + 1;
             await db.collection("agent_sessions").doc(phone).update({ consecutiveMatchFailures: failureCount });
-            const intakeCareNeeds = ((_o = intake.careNeeds) !== null && _o !== void 0 ? _o : []);
+            const intakeCareNeeds = ((_p = intake.careNeeds) !== null && _p !== void 0 ? _p : []);
             const severity = failureCount >= 2 ? "urgent" : "high";
             await db.collection("admin_alerts").add({
                 type: "no_match_found",
                 clientPhone: phone,
-                city: ((_p = intake.city) !== null && _p !== void 0 ? _p : ""),
-                zipCode: ((_q = intake.zipCode) !== null && _q !== void 0 ? _q : ""),
+                city: ((_q = intake.city) !== null && _q !== void 0 ? _q : ""),
+                zipCode: ((_r = intake.zipCode) !== null && _r !== void 0 ? _r : ""),
                 careNeeds: intakeCareNeeds,
                 failureCount,
                 createdAt: new Date().toISOString(),
@@ -266,15 +283,15 @@ async function runMatchingForClient(phone, chatId, intake, session) {
                     caregiverId: c.id,
                     caregiverName: c.name,
                     clientPhone: phone,
-                    clientId: (_r = session === null || session === void 0 ? void 0 : session.userId) !== null && _r !== void 0 ? _r : phone,
+                    clientId: (_s = session === null || session === void 0 ? void 0 : session.userId) !== null && _s !== void 0 ? _s : phone,
                     status: "pending_bg_clear",
                     createdAt: new Date().toISOString(),
                 });
             }
         }
-        const seniorName = ((_s = intake.seniorName) !== null && _s !== void 0 ? _s : "your loved one");
-        const appUrl = (_t = process.env.APP_URL) !== null && _t !== void 0 ? _t : "https://cara.app";
-        const userId = (_u = session === null || session === void 0 ? void 0 : session.userId) !== null && _u !== void 0 ? _u : phone;
+        const seniorName = ((_t = intake.seniorName) !== null && _t !== void 0 ? _t : "your loved one");
+        const appUrl = (_u = process.env.APP_URL) !== null && _u !== void 0 ? _u : "https://cara.app";
+        const userId = (_v = session === null || session === void 0 ? void 0 : session.userId) !== null && _v !== void 0 ? _v : phone;
         // Surface remembered client preferences so Cara can reference them naturally
         const learnedFacts = await (0, learnedFacts_1.getRelevantFacts)(userId).catch(() => []);
         const factsContext = learnedFacts.length > 0
@@ -348,7 +365,9 @@ async function runMatchingForClient(phone, chatId, intake, session) {
             `- Follow-up turns: answer questions about the specific caregivers from the details above\n` +
             `- If asked about a caregiver not in this list, say you only have details for the ones you presented\n\n` +
             `Rules: plain text only, no bullet points, no headers. Warm, direct, specific. ` +
-            `Under 300 characters per message when possible. End the intro with "Which ones would you like to meet?"`;
+            `Under 300 characters per message when possible. ` +
+            `When you reference a Profile link, copy the URL EXACTLY as shown above including the https:// prefix — never shorten, paraphrase, or drop the scheme (clients need to be able to tap it). ` +
+            `End the intro with "Which ones would you like to meet?"`;
         // Roster check — reuse existing agent if one is active for this user
         const existingAgent = await (0, executionAgent_1.getActiveAgentForUser)(phone, "matching");
         let agentId;
@@ -370,9 +389,22 @@ async function runMatchingForClient(phone, chatId, intake, session) {
         // First agent turn generates the intro message — route through interaction agent
         // so it gets supervisor lint, DND respect, and proper chunking.
         const introMessage = await (0, executionAgent_1.runExecutionAgentTurn)(agentId, "Introduce these caregivers to the family now.");
+        // Deterministic fallback: the structured summary already contains every name,
+        // rate, profile URL, and specialty. This is what we send if the LLM intro is
+        // empty OR drops any caregiver's name or tappable profile link — a family making
+        // a high-stakes decision must never receive a name-less, link-less message.
+        const deterministicIntro = `I found ${matchData.length} caregiver${matchData.length > 1 ? "s" : ""} for ${seniorName}:\n\n` +
+            `${matchSummary}\n\n` +
+            `Which ones would you like to meet?`;
+        const introComplete = !!introMessage &&
+            matchData.every(m => introMessage.includes(m.name) && introMessage.includes(m.profileUrl));
+        if (!introComplete && introMessage) {
+            console.warn("[matchingAgent] LLM intro dropped a name/profile URL — sending deterministic summary instead", { phone });
+        }
+        const finalIntro = introComplete ? introMessage : deterministicIntro;
         const { sendViaInteractionAgent } = await Promise.resolve().then(() => __importStar(require("./caraAgent")));
         await sendViaInteractionAgent(phone, {
-            content: introMessage || `Here are ${top3.length} caregivers I found for ${seniorName}. Which would you like to meet?`,
+            content: finalIntro,
             urgency: "immediate",
             sourceAgent: "matching",
             canDrop: false,
@@ -380,7 +412,7 @@ async function runMatchingForClient(phone, chatId, intake, session) {
         // Store match list in session for follow-up; embed active goal context so
         // interview selection can pre-populate booking dates without re-prompting the family
         const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();
-        const goalContext = ((_w = (_v = sessionSnap2.data()) === null || _v === void 0 ? void 0 : _v.activeGoal) === null || _w === void 0 ? void 0 : _w.type) === "booking"
+        const goalContext = ((_x = (_w = sessionSnap2.data()) === null || _w === void 0 ? void 0 : _w.activeGoal) === null || _x === void 0 ? void 0 : _x.type) === "booking"
             ? sessionSnap2.data().activeGoal.context
             : null;
         await db.collection("agent_sessions").doc(phone).update({

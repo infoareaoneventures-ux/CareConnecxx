@@ -238,6 +238,27 @@ firebase functions:log --only sendClientThirtyMinReminders
 
 Should see a hit if any appointments are 25–40 minutes out.
 
+### 3.7 Firestore TTL policies (one-time / idempotent)
+
+The forced-iMessage→SMS retry feature writes short-lived tracking docs to
+`agent_imessage_retry` that self-expire via a Firestore TTL on the `ttl` field.
+TTL policies aren't expressed in `firestore.rules`/indexes, so apply them once
+after deploy (safe to re-run — `gcloud firestore fields ttls update` is idempotent):
+
+```bash
+PROJECT=careconnex-d4c8b ./functions/scripts/setup-ttl-policies.sh
+```
+
+Verify:
+
+```bash
+gcloud firestore fields ttls list --collection-group=agent_imessage_retry --project=careconnex-d4c8b
+```
+
+Without the policy the feature still works (records are also deleted on the
+`message.delivered` success webhook); the TTL just garbage-collects the few
+stragglers that never get a delivered/failed event.
+
 ---
 
 ## 4. Rollback plan

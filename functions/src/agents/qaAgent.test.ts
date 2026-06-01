@@ -6,8 +6,14 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("firebase-admin", () => ({
   __esModule: true,
   default: {
+    // `apps` is read at module-load by notifications.ts (`if (!admin.apps.length)`),
+    // which is now in qaAgent's import graph via caraAgent → bookingExecutor.
+    apps: [],
+    initializeApp: () => ({}),
     firestore: () => ({ collection: () => ({}) }),
   },
+  apps: [],
+  initializeApp: () => ({}),
   firestore: () => ({ collection: () => ({}) }),
 }));
 vi.mock("../utils/claudeClient",   () => ({ getSharedClient: () => ({}) }));

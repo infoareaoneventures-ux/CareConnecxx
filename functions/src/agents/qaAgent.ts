@@ -3,6 +3,7 @@ import { getSharedClient } from "../utils/claudeClient";
 import { quickComplete, getOpenAIClient } from "../utils/openaiClient";
 import * as admin from "firebase-admin";
 import { startTyping, sendMessage } from "../linq/client";
+import { buildClickableMessage } from "./caraAgent";
 import { supervise } from "../safety/supervisor";
 import { getPreferences, isInDND } from "../memory/preferences";
 import { getRelevantFacts } from "../memory/learnedFacts";
@@ -328,6 +329,8 @@ function buildClientSystemPrompt(
     `  · submit_interview_feedback — record fit level (strong/maybe/no) after a caregiver interview. If strong, a hire request is automatically created.`,
     `  · schedule_interview — schedule a video/phone interview with a caregiver. Ask the family for their preferred date and time, then call. Notifies the caregiver automatically.`,
     `  · get_care_team — list the family's confirmed/active caregivers with contact info and next shift. Call when they ask "who's on my team", "my caregivers", or "who do I have".`,
+    `  · get_upcoming_appointments — list ${seniorName}'s upcoming scheduled visits (dates, times, caregiver). Call when they ask "what's coming up", "who's visiting this week", or "what's on the calendar".`,
+    `  · list_household_seniors — list everyone being cared for in this household. Use when a family manages care for more than one person and you need to know who's on file.`,
     `  · get_invoice_history — get past shift invoices with dates, hours, and amounts. Use when they ask about billing history, past payments, or what they've paid.`,
     `  · list_client_jobs — list the family's posted job listings. Use when they ask "what jobs do I have posted", "my listings", "which jobs are open".`,
     `  · cancel_job_post — close an open job post. Confirm before calling.`,
@@ -336,13 +339,14 @@ function buildClientSystemPrompt(
     `  · get_pending_timesheets — check for shift hours waiting for the family's approval. Call when they ask "do I have anything to approve" or "any pending timesheets".`,
     `  · get_care_journal_client — get recent care journal notes from the caregiver. Prefer this over get_care_journal when the family asks about visit updates.`,
     `  · get_recent_messages — show recent inbox messages with a caregiver. Use when they ask "what did they say", "catch me up on messages", or reference a prior conversation.`,
-    `  · create_support_ticket — create a ticket for any issue that needs human follow-up. The support team will respond within 24 hours.`,
+    `  · create_support_ticket — LAST RESORT, only for issues no other tool can resolve. Do NOT use it for link/onboarding/signup/subscription/payment/identity requests — those you can fulfill yourself with send_onboarding_link or get_payment_update_link. Never tell someone "the team will follow up" for something you can do right now.`,
     `  · create_reminder — use this when families ask to set up medication reminders, appointment reminders, or any recurring nudge. Say "I've set that up — I'll text you a reminder." Don't ask them to use an app.`,
     `  · schedule_followup — use this when a family member mentions a future event that deserves a natural check-in. Examples: they mention ${seniorName} has a doctor appointment Thursday → schedule a follow-up Friday morning ("How did Thursday's appointment go?"). They mention trying a new medication → schedule 3 days out. They mention a family member is visiting → schedule a check-in the day after. Do this naturally, without asking for permission — just confirm what you're doing ("I'll check in with you Friday to hear how it went."). Only schedule one follow-up per event.`,
     `  · initiate_client_swap — find replacement caregivers for a specific visit. Use when the family wants to swap who's coming for a single date (vs. cancelling outright).`,
     `  · get_health_signals — pull recent health concerns flagged from journal entries (last 30 days). Use when the family asks about ${seniorName}'s recent wellness trends or mood.`,
     `  · get_recurring_schedule — read the active recurring care schedule. Use before manage_recurring_schedule / modify_recurring_schedule so you know what the current setup looks like.`,
     `  · get_payment_update_link — generate a Stripe billing portal link for the family to update their payment method. Send them the link; never ask them to type card details.`,
+    `  · send_onboarding_link — generate AND send a tappable onboarding/signup link directly to the chat. Use for ANY request to (re)send a subscription/payment, identity verification, profile photo, document, background-check, or payout link. Pick linkType: client_payment, client_identity, caregiver_membership, caregiver_photo, caregiver_documents, caregiver_background_check, caregiver_payouts. The tool sends the link itself — after it succeeds, just briefly confirm (e.g. "Sent! Tap the link to verify your identity — takes about 30 seconds."). Do NOT open a support ticket for these.`,
     `  · get_invoice_details — pull the itemized breakdown for a specific invoice. Use when they ask "what was I charged for on June 3?".`,
     `  · get_care_plan_history — list the recent versions of the care plan with a one-line summary each.`,
     `  · restore_care_plan_version — roll the care plan back to a prior version. MANDATORY: confirm with the family which version they want and read back what it contains before calling.`,
@@ -504,9 +508,17 @@ function buildCaregiverSystemPrompt(
     `- get_payout_history: see your recent payout records from Stripe`,
     `- get_caregiver_earnings: see how much you've earned in the last 30 days`,
     `- update_caregiver_availability: add or remove days from your weekly availability`,
+    `- get_caregiver_info: look up your own profile details (rate, bio, city, availability)`,
+    `- get_caregiver_reviews: see your own ratings and recent reviews from families`,
+    `- get_background_check_status: check the status of your background check`,
+    `- get_job_recommendations: get jobs matched to your skills, rate, and location`,
+    `- request_shift_swap / accept_shift_swap / cancel_shift_swap: request coverage for a shift you can't make, accept a peer's open swap, or cancel a swap you requested`,
+    `- submit_gps_checkin: record a GPS check-in at the start of a visit`,
+    `- get_tax_summary: see your 1099 / earnings tax summary`,
+    `- send_onboarding_link: (re)send yourself a setup link — membership payment, profile photo, documents, background check, or payout setup. Picks linkType caregiver_membership / caregiver_photo / caregiver_documents / caregiver_background_check / caregiver_payouts. The tool sends the link itself; just briefly confirm after.`,
     `- send_client_message: send a message to a client on your behalf`,
     `- get_recent_messages: see recent messages with a client`,
-    `- create_support_ticket: escalate an issue to the support team`,
+    `- create_support_ticket: LAST RESORT only — for issues no other tool can resolve. Never tell a caregiver "the team will follow up" for something you can do right now with the tools above (status checks, links, swaps, payouts, earnings).`,
     ``,
     `Only state facts from the appointment details above or tool results in this conversation. If you don't have an answer, call a tool or say you'll check.`,
     ``,
@@ -579,7 +591,7 @@ async function sendSplit(chatId: string, text: string): Promise<void> {
 
   for (let i = 0; i < chunks.length; i++) {
     if (i > 0) await new Promise<void>((r) => setTimeout(r, 1000));
-    await sendMessage(chatId, chunks[i]);
+    await sendMessage(chatId, buildClickableMessage(chunks[i]));
   }
 }
 
@@ -1160,6 +1172,15 @@ export async function runQaAgent(params: {
   // (network-bound) typing call in this measurement.
   metrics.contextLoadMs = Date.now() - metrics.startedAt;
 
+  // Did a tool already deliver a user-facing artifact (e.g. send_onboarding_link
+  // sent a tappable link straight to this chat) this turn? Declared out here so
+  // the outer catch can read it. If set, the user already got what they asked
+  // for — so a downstream throw or an exhausted loop must NOT (a) contradict it
+  // with a "give me a few minutes" deflection, nor (b) schedule a retry that
+  // re-runs the turn and double-sends the link (client_payment even mints a
+  // fresh Stripe Checkout session each time).
+  let deliveredToUser = false;
+
   try {
     if (!skipSend) await startTyping(chatId).catch(() => {});
 
@@ -1316,6 +1337,15 @@ export async function runQaAgent(params: {
               phone,
               chatId,
               ...(userId ? { clientId: userId, userId } : {}),
+              // For caregiver conversations, inject the acting caregiver's own ID
+              // authoritatively (last, so it overrides any model-guessed value).
+              // Caregiver action tools (earnings, availability, shift hours,
+              // payouts, reviews, bg-status…) all require caregiverId, which the
+              // model otherwise has no reliable way to know. Only inject when the
+              // SPEAKER is the caregiver, so client tools that legitimately target
+              // a specific caregiver (send_caregiver_message, submit_review,
+              // get_caregiver_reviews) keep the client-supplied id.
+              ...(userType === "caregiver" && caregiverId ? { caregiverId } : {}),
             };
             const toolStart = Date.now();
             const result = await toolHandler(block.name, enrichedInput)
@@ -1340,6 +1370,12 @@ export async function runQaAgent(params: {
                   preview: JSON.stringify(result).slice(0, 200),
                 });
               }
+            } else if ((result as { sent?: boolean })?.sent === true) {
+              // A self-delivering tool (send_onboarding_link) already pushed a
+              // tappable artifact to this chat. Remember it so the exhausted-loop
+              // and outer-catch paths confirm rather than contradict — and never
+              // schedule a retry that would re-send / re-mint the link.
+              deliveredToUser = true;
             }
 
             // Instrumentation for D4 — track success rate on the cancel path so
@@ -1429,9 +1465,15 @@ export async function runQaAgent(params: {
     const loopProducedReply = !!reply;
 
     if (!reply) {
-      console.warn("qaAgent: tool-use loop exhausted without text reply", { userId, isRetry, preview: text.slice(0, 80) });
+      console.warn("qaAgent: tool-use loop exhausted without text reply", { userId, isRetry, preview: text.slice(0, 80), deliveredToUser });
 
-      if (!isRetry) {
+      if (deliveredToUser) {
+        // The link/artifact already went out this turn; the only thing missing
+        // is Cara's confirming sentence. Supply it directly and DO NOT schedule
+        // a retry — re-running would call send_onboarding_link again (duplicate
+        // link, and a fresh Stripe Checkout session for client_payment).
+        reply = "There you go — tap the link I just sent to finish up. Anything else I can help with? 💙";
+      } else if (!isRetry) {
         // Schedule a retry in 30 seconds via the trigger engine — the retry
         // will reply with the real answer when it succeeds.
         db.collection("proactive_triggers").add({
@@ -1640,7 +1682,15 @@ export async function runQaAgent(params: {
     // Don't broadcast brokenness. Send a natural-sounding deflection that
     // doesn't tell the user Cara is failing, and create an admin alert so
     // the team can follow up if needed.
-    const errMsg = "Give me a few minutes on that — I'll come back to you shortly.";
+    //
+    // BUT: if a tool already delivered the artifact the user asked for (e.g.
+    // send_onboarding_link pushed a tappable link to this chat) and the throw
+    // happened afterward — while generating the confirming sentence — a
+    // "give me a few minutes" deflection contradicts the link that's sitting
+    // right above it. Confirm the delivery instead.
+    const errMsg = deliveredToUser
+      ? "There you go — tap the link I just sent to finish up. Anything else I can help with? 💙"
+      : "Give me a few minutes on that — I'll come back to you shortly.";
     await sendMessage(chatId, errMsg).catch(() => {});
     db.collection("admin_alerts").add({
       type:      "qa_agent_failure",
@@ -1785,7 +1835,7 @@ export async function runQuickReply(params: {
   if (!reply) reply = "Hey! How's everything going?";
 
   await saveConversationTurn(phone, text, reply);
-  await sendMessage(chatId, reply).catch(() => {});
+  await sendMessage(chatId, buildClickableMessage(reply)).catch(() => {});
   await maybeRollUpHistory(phone);
   emitTurnMetrics(metrics, { reply });
   return reply;

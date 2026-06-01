@@ -228,16 +228,24 @@ exports.checkrWebhook = functions.runWith({}).https.onRequest(async (req, res) =
     }
     const signature = req.headers["x-checkr-signature"];
     const webhookSecret = (process.env.CHECKR_WEBHOOK_SECRET || "").trim();
-    if (webhookSecret) {
-        // Production: enforce HMAC-SHA256 signature verification using partner client_secret
-        if (!signature || !verifyCheckrSignature(req.rawBody, signature, webhookSecret)) {
-            res.status(401).send("Invalid signature");
+    // Fail closed: a missing secret is a server misconfiguration, NOT a reason to skip
+    // verification. Without this, a forged `report.completed{result:"clear"}` could mark
+    // an unvetted person as a verified/bookable caregiver. The only escape is the local
+    // Functions emulator, where no real webhooks arrive.
+    const isEmulator = !!process.env.FUNCTIONS_EMULATOR;
+    if (!webhookSecret) {
+        if (isEmulator) {
+            console.warn("Checkr webhook: CHECKR_WEBHOOK_SECRET unset — skipping verification (emulator only).");
+        }
+        else {
+            console.error("Checkr webhook rejected: CHECKR_WEBHOOK_SECRET is not set. Refusing to process unverified webhooks.");
+            res.status(500).send("Webhook secret not configured");
             return;
         }
     }
-    else {
-        // Staging / account-level webhooks: no client_secret available, accept by URL obscurity
-        console.log(`Checkr webhook received (no CHECKR_WEBHOOK_SECRET set — skipping verification) type=${(req.body || {}).type}`);
+    else if (!signature || !verifyCheckrSignature(req.rawBody, signature, webhookSecret)) {
+        res.status(401).send("Invalid signature");
+        return;
     }
     const event = req.body || {};
     const type = typeof event.type === "string" ? event.type : "";

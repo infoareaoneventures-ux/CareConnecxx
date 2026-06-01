@@ -19,6 +19,9 @@ DOMAIN KNOWLEDGE (distilled from 15,000 validated matching scenarios):
 - Experience ≥ 3 years for complex care (dementia, medical, mobility): important positive signal.
 - Personality match: calm/patient caregiver + anxious or dementia senior; energetic/chatty caregiver + companionship-focused or extrovert senior.
 - Language match when family specified preference: strong positive signal (+8–12 pts).
+- Gender preference when family specified one: matching the caregiver's gender is a positive signal; a mismatch is a meaningful negative — factor down 15–25 pts unless the caregiver's skills fit is uniquely strong.
+- Budget: when the family gave a max hourly budget, a caregiver whose hourlyRate exceeds it is a practical mismatch — factor down; a rate at or under budget is a positive.
+- Driving: when the family needs a caregiver who can drive, prefer caregivers who can drive; treat inability to drive as a negative for that family.
 - Verified caregiver status: meaningful trust signal.
 - Retention rate ≥ 75%: families rebook — reliable long-term fit.
 - Prior positive feedback (hired before): strong positive signal. Prior rejection: strong negative signal.
@@ -59,6 +62,8 @@ export interface CandidateSignals {
   isVerified?: boolean;
   certifications?: string[];
   languages?: string[];
+  gender?: string;
+  canDrive?: boolean;
   personalityTags?: string[];
   hourlyRate?: number;
   reliabilityScore?: number;
@@ -76,6 +81,8 @@ export interface SeniorContext {
   personality?: string;
   genderPreference?: string;
   languagePreference?: string;
+  budgetMax?: number;
+  needsDriving?: boolean;
   hasPets?: boolean;
   scheduleNeeded?: string[];
   name?: string;

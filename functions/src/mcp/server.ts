@@ -1235,6 +1235,51 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "send_onboarding_link",
+    description:
+      "Generate AND send a tappable onboarding/signup link directly to this chat. Use this whenever a family " +
+      "or caregiver asks you to (re)send a subscription/payment, identity verification, profile photo, document " +
+      "upload, background check, or payout-setup link. The tool sends the link itself — after it succeeds, just " +
+      "briefly confirm (e.g. \"Sent! Tap the link to verify your identity\"). NEVER create a support ticket for a " +
+      "link you can send with this tool. Pick the linkType that matches what they asked for.",
+    input_schema: {
+      type: "object",
+      properties: {
+        linkType: {
+          type: "string",
+          enum: [
+            "client_payment",
+            "client_identity",
+            "caregiver_membership",
+            "caregiver_photo",
+            "caregiver_documents",
+            "caregiver_background_check",
+            "caregiver_payouts",
+          ],
+          description:
+            "Which link to send. Families: client_payment (subscription / payment method setup), client_identity " +
+            "(identity verification). Caregivers: caregiver_membership (annual membership), caregiver_photo, " +
+            "caregiver_documents (certifications), caregiver_background_check, caregiver_payouts (Stripe payout setup).",
+        },
+      },
+      required: ["linkType"],
+    },
+  },
+  {
+    name: "get_background_check_status",
+    description:
+      "Look up the caregiver's OWN background-check status (Checkr). Use when a caregiver asks \"what's the status " +
+      "of my background check\", \"did my check come back\", or \"am I cleared yet\". Returns the current status so " +
+      "you can answer directly instead of deflecting to support. Do not promise a specific completion time.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
     name: "request_shift_swap",
     description: "Initiate a shift swap request for a caregiver — finds available peer caregivers and broadcasts the coverage request. Only call after caregiver has confirmed which shift needs coverage.",
     input_schema: {
@@ -1485,6 +1530,9 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_job_recommendations",
   "submit_gps_checkin",
   "get_tax_summary",
+  "send_onboarding_link",
+  "get_caregiver_reviews",
+  "get_background_check_status",
 ]);
 export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_NAMES.has(t.name));
 
@@ -1871,18 +1919,63 @@ export async function handleToolCall(
       }
 
       case "request_booking": {
-        const { clientId, caregiverId, dates, startTime, endTime } = input;
+        const { clientId, caregiverId, dates, startTime, endTime, phone } = input;
         if (!clientId || !caregiverId || !dates || !startTime || !endTime) {
           return toolError("INVALID_INPUT", "clientId, caregiverId, dates, startTime, endTime are required");
         }
-        const ref = await db.collection("booking_tasks").add({
-          clientId, caregiverId, dates, startTime, endTime,
-          status:    "pending",
-          source:    "qa_agent",
-          createdAt: nowIso,
+        if (!phone) {
+          return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
+        }
+        const dateList = (Array.isArray(dates) ? dates : [dates]) as string[];
+        if (dateList.length === 0) return toolError("INVALID_INPUT", "at least one date is required");
+
+        // Compute duration (hours) from "HH:MM" start/end times.
+        const toMinutes = (t: string): number | null => {
+          const m = /^(\d{1,2}):(\d{2})$/.exec(String(t).trim());
+          if (!m) return null;
+          return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+        };
+        const startMin = toMinutes(startTime as string);
+        const endMin   = toMinutes(endTime as string);
+        if (startMin === null || endMin === null || endMin <= startMin) {
+          return toolError("INVALID_INPUT", "startTime/endTime must be 'HH:MM' with end after start");
+        }
+        const durationHours = Math.round(((endMin - startMin) / 60) * 100) / 100;
+
+        // Resolve caregiver name + rate from the caregiver doc.
+        const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
+        if (!cgSnap.exists) return toolError("NOT_FOUND", "caregiver not found");
+        const cg = cgSnap.data() || {};
+        const caregiverName = (cg.name ?? cg.fullName ?? "your caregiver") as string;
+        const hourlyRate    = (typeof cg.hourlyRate === "number" ? cg.hourlyRate : 20) as number;
+
+        const appointments = dateList.map((d) => ({
+          date:          d,
+          startTime:     startTime as string,
+          endTime:       endTime as string,
+          durationHours,
+        }));
+
+        // Route through the REAL booking path: createBookingTask writes an
+        // `agent_tasks` `booking_confirmation` (which the YES/CONFIRM webhook flow and
+        // executeBookings actually consume) and enforces the pending-bgcheck booking
+        // guard. The old `booking_tasks` collection was read by nothing.
+        const { createBookingTask } = await import("../agents/bookingExecutor");
+        const taskId = await createBookingTask({
+          clientPhone:   phone as string,
+          clientId:      clientId as string,
+          caregiverId:   caregiverId as string,
+          caregiverName,
+          appointments,
+          hourlyRate,
         });
-        logBookingCreated(clientId as string, caregiverId as string, dates as string[]).catch(() => {});
-        return { success: true, taskId: ref.id };
+        if (!taskId) {
+          // createBookingTask returns "" when it blocks the booking (e.g. bgcheck pending)
+          // and has already messaged the family. Surface that to the agent.
+          return { success: false, blocked: true, reason: "booking_blocked_pending_background_check" };
+        }
+        logBookingCreated(clientId as string, caregiverId as string, dateList).catch(() => {});
+        return { success: true, taskId, status: "awaiting_approval" };
       }
 
       case "update_preferences": {
@@ -2449,6 +2542,40 @@ export async function handleToolCall(
       const existing: Array<{ phone: string }> = seniorData.familyMembers ?? [];
       if (existing.some(m => m.phone === memberPhone)) return toolError("INVALID_INPUT", "This phone number is already a family member");
       await seniorSnap.ref.update({ familyMembers: admin.firestore.FieldValue.arrayUnion({ name: memberName, phone: memberPhone, addedAt: nowIso, addedBy: clientId }) });
+
+      // Also register the member in the SAME records the inbound new-user router reads,
+      // so when this member first texts in they're recognized as a secondary member
+      // instead of creating a DUPLICATE account. The router checks both the primary
+      // session's `groupMembers` array and the `family_group_members` collection.
+      {
+        // Resolve the primary's phone: prefer the auto-injected acting phone, else
+        // look it up by clientId.
+        let primaryPhone = (input as Record<string, unknown>).phone as string | undefined;
+        if (!primaryPhone) {
+          const primarySnap = await db.collection("agent_sessions")
+            .where("userId", "==", clientId as string).limit(1).get();
+          if (!primarySnap.empty) primaryPhone = primarySnap.docs[0].id;
+        }
+        if (primaryPhone) {
+          await db.collection("agent_sessions").doc(primaryPhone).update({
+            groupMembers: admin.firestore.FieldValue.arrayUnion(memberPhone),
+          }).catch(() => {});
+          // Idempotent: only add the collection record if it doesn't already exist.
+          const existingMember = await db.collection("family_group_members")
+            .where("memberPhone", "==", memberPhone as string).limit(1).get();
+          if (existingMember.empty) {
+            await db.collection("family_group_members").add({
+              primaryPhone,
+              memberPhone,
+              memberName:  memberName ?? "Family member",
+              userId:      clientId,
+              addedAt:     nowIso,
+              source:      "mcp:add_family_member",
+            }).catch(() => {});
+          }
+        }
+      }
+
       const { buildOrUpdateFamilyGroup } = await import("../agents/familyGroupManager");
       await buildOrUpdateFamilyGroup(seniorId as string).catch(() => {});
       const { trySend } = await import("../utils/toolNotify");
@@ -3154,6 +3281,38 @@ export async function handleToolCall(
       };
     }
 
+    // ── get_background_check_status ─────────────────────────────────────────
+    if (name === "get_background_check_status") {
+      const { caregiverId } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const cgBgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
+      if (!cgBgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      const bg = (cgBgSnap.data()?.backgroundCheckData ?? {}) as Record<string, unknown>;
+      const status           = (bg.status as string | undefined) ?? null;
+      const invitationStatus = (bg.invitationStatus as string | undefined) ?? null;
+      const submitted        = !!bg.submittedAt || !!bg.checkrCandidateId;
+
+      // Map raw Checkr state to a single friendly summary the agent can phrase.
+      let summary: string;
+      if (!submitted && !status)                                       summary = "not_started";
+      else if (status === "clear")                                     summary = "passed";
+      else if (status === "consider")                                  summary = "needs_review";
+      else if (status === "suspended")                                 summary = "suspended";
+      else if (invitationStatus === "expired" || invitationStatus === "canceled") summary = `invitation_${invitationStatus}`;
+      else                                                             summary = "in_progress";
+
+      logAudit({ eventType: "health_data_accessed", userId: caregiverId as string, data: { source: "mcp:get_background_check_status" } }).catch(() => {});
+      return {
+        success:          true,
+        summary,
+        status,
+        invitationStatus,
+        submittedAt:      bg.submittedAt ?? null,
+        completedAt:      bg.completedAt ?? null,
+        mvrIncluded:      !!bg.mvrIncluded,
+      };
+    }
+
     // ── update_caregiver_availability ───────────────────────────────────────
     if (name === "update_caregiver_availability") {
       const { caregiverId, availableDays, unavailableDays, preferredTimeOfDay } = input as Record<string, unknown>;
@@ -3232,15 +3391,29 @@ export async function handleToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const cgSnap7 = await db.collection("caregivers").doc(caregiverId as string).get();
       if (!cgSnap7.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      const cg7 = cgSnap7.data() || {};
       const limit7 = Math.min((input.limit as number) ?? 5, 10);
+      const RADIUS_MILES = 25; // match the push-notification radius (jobNotifications.ts)
+
+      const cgLat = (cg7.latitude ?? cg7.location?.latitude ?? cg7.location?.lat) as number | undefined;
+      const cgLng = (cg7.longitude ?? cg7.location?.longitude ?? cg7.location?.lng) as number | undefined;
+      const hasCoords = typeof cgLat === "number" && typeof cgLng === "number";
+
       const alreadyApplied = await db.collection("job_applications").where("caregiverId", "==", caregiverId).get();
       const appliedJobIds = new Set(alreadyApplied.docs.map((d) => d.data().jobId as string));
-      const jobsSnap = await db.collection("job_posts").where("status", "==", "open").orderBy("createdAt", "desc").limit(20).get();
-      const jobs7 = jobsSnap.docs
+      // Pull a wider window since we filter by distance below.
+      const jobsSnap = await db.collection("job_posts").where("status", "==", "open").orderBy("createdAt", "desc").limit(50).get();
+
+      const { haversineMiles } = await import("../ai/scoring");
+      const scoped = jobsSnap.docs
         .filter((d) => !appliedJobIds.has(d.id))
-        .slice(0, limit7)
         .map((d) => {
           const data = d.data();
+          const jLat = data.location?.lat ?? data.location?.latitude;
+          const jLng = data.location?.lng ?? data.location?.longitude;
+          const dist = (hasCoords && typeof jLat === "number" && typeof jLng === "number")
+            ? haversineMiles(cgLat as number, cgLng as number, jLat, jLng)
+            : undefined;
           return {
             jobId:      d.id,
             summary:    data.summary ?? "Care job",
@@ -3248,9 +3421,22 @@ export async function handleToolCall(
             schedule:   data.schedule  ?? {},
             hourlyRate: data.hourlyRate ?? null,
             location:   data.location?.city ?? "Nearby",
+            distanceMiles: dist !== undefined ? Math.round(dist) : null,
           };
-        });
-      return { success: true, jobs: jobs7, total: jobs7.length };
+        })
+        // Geo-scope only when we can compute distance for the job. Jobs without
+        // coordinates are kept (can't determine), but out-of-radius jobs are dropped.
+        .filter((j) => j.distanceMiles === null || j.distanceMiles <= RADIUS_MILES)
+        .sort((a, b) => (a.distanceMiles ?? 9999) - (b.distanceMiles ?? 9999))
+        .slice(0, limit7);
+
+      return {
+        success:   true,
+        jobs:      scoped,
+        total:     scoped.length,
+        geoScoped: hasCoords,
+        radiusMiles: RADIUS_MILES,
+      };
     }
 
     // ── get_my_applications ─────────────────────────────────────────────────
@@ -3429,6 +3615,27 @@ export async function handleToolCall(
 
       logAudit({ eventType: "billing_portal_opened", userId: clientId as string, data: { source: "mcp:get_payment_update_link" } }).catch(() => {});
       return { success: true, url: session.url, expiresIn: "5 minutes" };
+    }
+
+    // ── send_onboarding_link ────────────────────────────────────────────────
+    if (name === "send_onboarding_link") {
+      const { linkType, phone } = input as Record<string, unknown>;
+      if (!phone) return toolError("INVALID_INPUT", "phone is required");
+      const validTypes = [
+        "client_payment", "client_identity", "caregiver_membership",
+        "caregiver_photo", "caregiver_documents", "caregiver_background_check", "caregiver_payouts",
+      ];
+      if (!linkType || !validTypes.includes(linkType as string)) {
+        return toolError("INVALID_INPUT", `linkType must be one of: ${validTypes.join(", ")}`);
+      }
+      try {
+        const { sendOnboardingLink } = await import("../agents/onboardingConversation");
+        const res = await sendOnboardingLink(phone as string, linkType as never);
+        return { success: true, linkType: res.linkType, sent: true };
+      } catch (err) {
+        console.error("send_onboarding_link error:", err);
+        return toolError("UNAVAILABLE", "Couldn't generate that link right now — try again in a moment.");
+      }
     }
 
     // ── get_invoice_details ─────────────────────────────────────────────────

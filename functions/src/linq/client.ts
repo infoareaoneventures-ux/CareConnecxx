@@ -168,20 +168,45 @@ export async function checkCapability(
 
 // ── Core send ─────────────────────────────────────────────────────────────────
 
+// Canonicalize message parts to the shapes Linq's API actually accepts.
+// A `link` part accepts ONLY `{ type, value }` where `value` IS the URL
+// (URI format) — there is no `url` field and no label field. A long-standing
+// bug shipped `{ type:"link", url:<URL>, value:"📷 Label →" }`, which Linq
+// rejects/drops (value isn't a URI). This repairs that shape — pulling the real
+// http(s) URL out of `url`/`value` and discarding the label — so every send site
+// is safe even if a caller copies the old pattern.
+const HTTP_URL_RE = /^https?:\/\//i;
+
+function normalizeParts(parts: LinqMessagePart[]): LinqMessagePart[] {
+  if (!Array.isArray(parts)) return parts;
+  return parts.map((p) => {
+    if (p.type !== "link") return p;
+    const url =
+      p.url && HTTP_URL_RE.test(p.url)     ? p.url   :
+      p.value && HTTP_URL_RE.test(p.value) ? p.value :
+      p.url ?? p.value;
+    return { type: "link", value: url };
+  });
+}
+
 export async function createChat(
   phone: string,
   message: LinqMessage
 ): Promise<{ chat_id: string; service: LinqService }> {
+  // Build the body ONCE (outside withRetry) so the idempotency_key is stable
+  // across retry attempts — a regenerated key on retry would defeat dedup and
+  // could create a duplicate chat if the first attempt reached Linq.
+  const body = {
+    from:    cfg().phoneNumber,
+    to:      [phone],
+    message: {
+      ...message,
+      parts:           normalizeParts(message.parts),
+      idempotency_key: message.idempotency_key ?? uuidv4(),
+    },
+  };
   const res = await withRetry(() =>
-    axios.post(
-      `${cfg().baseUrl}/chats`,
-      {
-        from:    cfg().phoneNumber,
-        to:      [phone],
-        message: { ...message, idempotency_key: message.idempotency_key ?? uuidv4() },
-      },
-      { headers: headers(), timeout: 15000 }
-    )
+    axios.post(`${cfg().baseUrl}/chats`, body, { headers: headers(), timeout: 15000 })
   );
   const traceId = res.headers["x-trace-id"] as string | undefined;
   if (traceId) console.info("Linq createChat trace_id:", traceId);
@@ -191,18 +216,75 @@ export async function createChat(
   };
 }
 
-export async function sendMessage(
-  chatId: string,
-  textOrMessage: string | LinqMessage
-): Promise<{ message_id: string }> {
-  const message: LinqMessage =
-    typeof textOrMessage === "string"
-      ? { parts: [{ type: "text", value: textOrMessage }] }
-      : textOrMessage;
+// URLs in plain-text messages — both explicit https:// and bare hostnames
+// the LLM sometimes drops the scheme on. iMessage/RCS only auto-link when
+// the scheme is present. Per Linq docs, `link` parts cannot be mixed with
+// `text` parts in one message (returns error 1004), so URL-bearing strings
+// are split into a text-only message followed by one dedicated link-part
+// message per URL — iMessage/RCS then render each as a rich preview card.
+const FULL_URL_RE =
+  /\b(?:https?:\/\/[^\s<>"'`)\]]+|(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|app|net|org|io|co|us|web\.app|dev|ai)(?:\/[^\s<>"'`)\]]*)?)/gi;
 
+const URL_TRAILING_PUNCT = /[.,;:!?)\]}>'"]+$/;
+
+interface UrlSplit {
+  textOnly: string;
+  urls:     string[];
+}
+
+/**
+ * Strip URLs out of plain text and return them separately so callers can
+ * send them as dedicated `link`-part messages (which render as rich preview
+ * cards on iMessage/RCS). Adjacent separator characters left behind by the
+ * strip ("Name → URL" → "Name → ") are trimmed back to "Name".
+ */
+function splitTextAndUrls(text: string): UrlSplit {
+  const urls: string[] = [];
+  // Replace URL plus any preceding separator (→ - : space) so the leftover
+  // text stays readable. Trailing punctuation on the URL itself moves OUT of
+  // the URL (it almost always belongs to the surrounding sentence).
+  const stripped = text.replace(
+    new RegExp(`(?:[ \\t]*[\\-→:,][ \\t]*)?${FULL_URL_RE.source}`, "gi"),
+    (raw) => {
+      const m = raw.match(FULL_URL_RE);
+      if (!m) return "";
+      let url = m[0];
+      const trim = url.match(URL_TRAILING_PUNCT);
+      if (trim) url = url.slice(0, url.length - trim[0].length);
+      if (!url) return "";
+      const normalized = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+      urls.push(normalized);
+      // Preserve trailing sentence punctuation that was attached to the URL.
+      return trim ? trim[0] : "";
+    }
+  );
+
+  // Cleanup: collapse 2+ spaces, drop empty lines, trim leading/trailing punct
+  const textOnly = stripped
+    .split("\n")
+    .map((l) => l.replace(/[ \t]+/g, " ").replace(/^[\s\-→:,]+|[\s\-→:,]+$/g, "").trim())
+    .filter((l) => l.length > 0)
+    .join("\n")
+    .trim();
+
+  return { textOnly, urls };
+}
+
+// Lowest-level send — one shot, no URL-splitting. Used by sendMessage's
+// internal multi-message orchestration below and not exported.
+async function sendOneMessage(
+  chatId: string,
+  message: LinqMessage
+): Promise<{ message_id: string }> {
   // Linq v3 POST /chats/{id}/messages requires the message nested under a "message" key.
   // Top-level parts (without the wrapper) returns error 1005 "at least one part required".
-  const body = { message: { ...message, idempotency_key: message.idempotency_key ?? uuidv4() } };
+  const body = {
+    message: {
+      ...message,
+      parts:           normalizeParts(message.parts),
+      idempotency_key: message.idempotency_key ?? uuidv4(),
+    },
+  };
 
   let res: AxiosResponse<{ id?: string; message_id?: string }>;
   try {
@@ -220,13 +302,10 @@ export async function sendMessage(
       status: axErr?.response?.status,
       data:   JSON.stringify(axErr?.response?.data ?? {}),
     });
-    // Surface to operators — silent send failures were leaving users with no
-    // reply and no signal in admin tooling. Dedupe key collapses bursts to one
-    // alert per minute so a sustained outage doesn't fan out.
     try {
-      const admin = await import("firebase-admin");
-      const minuteBucket = new Date().toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
-      await admin.firestore().collection("admin_alerts").add({
+      const adminMod = await import("firebase-admin");
+      const minuteBucket = new Date().toISOString().slice(0, 16);
+      await adminMod.firestore().collection("admin_alerts").add({
         type:        "linq_send_failure",
         chatId,
         status:      axErr?.response?.status ?? null,
@@ -242,6 +321,105 @@ export async function sendMessage(
   const traceId = res.headers["x-trace-id"] as string | undefined;
   if (traceId) console.info("Linq sendMessage trace_id:", traceId, "chatId:", chatId);
   return { message_id: res.data.id ?? res.data.message_id ?? "" };
+}
+
+export interface SendOptions {
+  /**
+   * Linq protocol selection. Omitted = automatic iMessage → RCS → SMS fallback.
+   * "iMessage" = iMessage only, NO fallback (fails if recipient is not on iMessage).
+   * "RCS"/"SMS" = RCS if supported else SMS, never iMessage.
+   * Docs: /guides/messaging/protocol-selection/
+   */
+  preferredService?: LinqService;
+}
+
+export async function sendMessage(
+  chatId: string,
+  textOrMessage: string | LinqMessage,
+  opts: SendOptions = {}
+): Promise<{ message_id: string }> {
+  const { preferredService } = opts;
+  // Apply the requested protocol to every outgoing part-message below. For
+  // structured callers that already set their own preferred_service, theirs wins.
+  const svc = preferredService ? { preferred_service: preferredService } : {};
+
+  // Structured callers (already LinqMessage) send as-is. Plain strings may
+  // contain URLs — split them into text + per-URL link messages so iMessage/
+  // RCS clients render rich preview cards instead of bare URLs.
+  if (typeof textOrMessage !== "string") {
+    const merged: LinqMessage =
+      preferredService && !textOrMessage.preferred_service
+        ? { ...textOrMessage, preferred_service: preferredService }
+        : textOrMessage;
+    const r = await sendOneMessage(chatId, merged);
+    await trackForcedIMessage(r.message_id, chatId, merged);
+    return r;
+  }
+
+  const { textOnly, urls } = splitTextAndUrls(textOrMessage);
+
+  if (urls.length === 0) {
+    const msg: LinqMessage = { parts: [{ type: "text", value: textOrMessage }], ...svc };
+    const r = await sendOneMessage(chatId, msg);
+    await trackForcedIMessage(r.message_id, chatId, msg);
+    return r;
+  }
+
+  let firstId = "";
+
+  // 1. Send the narrative text first (if anything remains after URL strip)
+  if (textOnly) {
+    const msg: LinqMessage = { parts: [{ type: "text", value: textOnly }], ...svc };
+    const r = await sendOneMessage(chatId, msg);
+    firstId = r.message_id;
+    await trackForcedIMessage(r.message_id, chatId, msg);
+    // Small delay so the link cards arrive AFTER the text bubble, not raced
+    // ahead of it by Linq's pipeline.
+    await new Promise<void>((res) => setTimeout(res, 600));
+  }
+
+  // 2. One dedicated link-part message per URL — Linq fetches OG metadata
+  // and renders each as a rich preview card on iMessage/RCS, plain URL on SMS.
+  // preferred_service is propagated to every follow-up so a forced protocol is
+  // not silently dropped after the first bubble.
+  for (let i = 0; i < urls.length; i++) {
+    if (i > 0) await new Promise<void>((res) => setTimeout(res, 600));
+    const msg: LinqMessage = { parts: [{ type: "link", value: urls[i] }], ...svc };
+    const r = await sendOneMessage(chatId, msg);
+    await trackForcedIMessage(r.message_id, chatId, msg);
+    if (!firstId) firstId = r.message_id;
+  }
+
+  return { message_id: firstId };
+}
+
+// ── Forced-iMessage retry tracking ───────────────────────────────────────────
+// Forced iMessage has NO fallback, so a delivery failure is otherwise silent.
+// We record each forced-iMessage send keyed by its message_id; the
+// message.failed webhook resolves the record and re-sends over SMS. Records
+// auto-expire via a Firestore TTL policy on `ttl` (see auditLog.ts pattern) and
+// are deleted on the message.delivered / message.sent success webhooks.
+const IMESSAGE_RETRY_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+
+async function trackForcedIMessage(
+  messageId: string,
+  chatId: string,
+  message: LinqMessage
+): Promise<void> {
+  if (!messageId || message.preferred_service !== "iMessage") return;
+  try {
+    await db.collection("agent_imessage_retry").doc(messageId).set({
+      chatId,
+      // Store the parts so the retry can re-send identical content over SMS.
+      parts:     message.parts,
+      effect:    message.effect ?? null,
+      retried:   false,
+      createdAt: new Date().toISOString(),
+      ttl:       admin.firestore.Timestamp.fromMillis(Date.now() + IMESSAGE_RETRY_TTL_MS),
+    });
+  } catch {
+    // Non-critical — retry resilience is best-effort.
+  }
 }
 
 // ── Message retrieval + editing + deletion ───────────────────────────────────
@@ -349,6 +527,18 @@ export async function stopTyping(chatId: string): Promise<void> {
   await axios
     .delete(`${cfg().baseUrl}/chats/${chatId}/typing`, { headers: headers() })
     .catch(() => {/* non-critical */});
+}
+
+// Signal that Cara is working on something, before a slow operation (Stripe
+// checkout/identity/Connect creation, Checkr invitation). iMessage gets the
+// native typing bubble; SMS/RCS have no typing indicator, so they get a short
+// interim line instead of dead silence during the multi-second wait.
+export async function signalThinking(chatId: string, service: LinqService): Promise<void> {
+  if (service === "iMessage") {
+    await startTyping(chatId);
+    return;
+  }
+  await sendMessage(chatId, "On it — one sec…").catch(() => {/* best-effort */});
 }
 
 // ── Voice memos ───────────────────────────────────────────────────────────────
@@ -604,7 +794,8 @@ async function checkPairRateLimit(chatId: string): Promise<boolean> {
 export async function safeSend(
   chatId: string,
   message: string | LinqMessage,
-  context: SuperviseContext
+  context: SuperviseContext,
+  opts: SendOptions = {}
 ): Promise<void> {
   if (await isCircuitOpen()) {
     console.warn("safeSend: circuit breaker open (line FLAGGED/CRITICAL), dropping message", { chatId });
@@ -620,7 +811,7 @@ export async function safeSend(
   if (typeof message === "string") {
     const safe = await supervise(message, context).catch(() => message);
     finalText  = safe;
-    await sendMessage(chatId, safe);
+    await sendMessage(chatId, safe, opts);
   } else {
     // For structured messages (media, links), only lint text parts
     const parts = message.parts ?? [];
@@ -634,7 +825,7 @@ export async function safeSend(
         return p;
       })
     );
-    await sendMessage(chatId, { ...message, parts: safeParts });
+    await sendMessage(chatId, { ...message, parts: safeParts }, opts);
   }
 
   // Append-only audit log entry for every outbound message (non-blocking)
@@ -647,7 +838,8 @@ export async function safeSend(
 
 export async function sendToPhone(
   phone: string,
-  textOrMessage: string | LinqMessage
+  textOrMessage: string | LinqMessage,
+  opts: SendOptions = {}
 ): Promise<void> {
   if (await isCircuitOpen()) {
     console.warn("sendToPhone: circuit breaker open, dropping message", { phone });
@@ -660,24 +852,32 @@ export async function sendToPhone(
   if (snap.exists) {
     const session = snap.data() as AgentSession;
     if (session.optedOut || session.optedIn === false) return;
-    await sendMessage(session.chatId, textOrMessage);
+    await sendMessage(session.chatId, textOrMessage, opts);
     return;
   }
 
   // No session yet — create chat with this message as the opener
-  const message: LinqMessage =
+  const baseMessage: LinqMessage =
     typeof textOrMessage === "string"
       ? { parts: [{ type: "text", value: textOrMessage }] }
       : textOrMessage;
+  // Forced protocol applies at chat creation (the documented place for it).
+  const message: LinqMessage =
+    opts.preferredService && !baseMessage.preferred_service
+      ? { ...baseMessage, preferred_service: opts.preferredService }
+      : baseMessage;
 
   const capability = await checkCapability(phone);
   const service: LinqService = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
 
   try {
-    const { chat_id } = await createChat(phone, message);
+    const created = await createChat(phone, message);
+    const { chat_id } = created;
     const newSession: AgentSession = {
       chatId:    chat_id,
-      service,
+      // When a protocol was explicitly requested, trust Linq's response `service`
+      // (what was actually used) over the capability-derived guess.
+      service:   opts.preferredService ? created.service : service,
       optedOut:  false,
       createdAt: new Date().toISOString(),
       phone,
@@ -685,7 +885,7 @@ export async function sendToPhone(
     await ref.set(newSession);
 
     // Best-practice: share contact card after first outbound on iMessage (non-blocking)
-    if (service === "iMessage") {
+    if (newSession.service === "iMessage") {
       shareContactCard(chat_id).catch(() => {});
     }
   } catch (err) {

@@ -246,6 +246,17 @@ describe("MCP tool smoke coverage", () => {
     expect(r.success).toBe(true);
   });
 
+  it("get_background_check_status happy path maps a clear result to passed", async () => {
+    hoisted.docState.set("caregivers/cg1", { backgroundCheckData: { status: "clear", submittedAt: "2026-01-01" } });
+    const r = await handleToolCall("get_background_check_status", { caregiverId: "cg1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.summary).toBe("passed");
+  });
+
+  it("get_background_check_status rejects missing input", async () => {
+    expect(((await handleToolCall("get_background_check_status", {})) as any)._toolError).toBe(true);
+  });
+
   it("get_health_signals happy path", async () => {
     hoisted.collState.set("health_signals", []);
     const r = await handleToolCall("get_health_signals", { seniorId: "s1" }) as any;

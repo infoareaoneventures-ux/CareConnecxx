@@ -127,92 +127,113 @@ async function handleNoReplacementsFound(appointmentId, clientId, phone, appt) {
 }
 // ── Full emergency replacement flow ──────────────────────────────────────────
 async function runEmergencyReplacement(params) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     const { appointmentId, clientId, clientPhone, appt } = params;
     const now = new Date().toISOString();
-    // Mark replacement as in-progress so Cara can tell the family what's happening
-    await db.collection("agent_tasks_active").doc(clientPhone).set({
-        type: "emergency_replacement",
-        status: "searching",
-        startedAt: now,
-        description: `Searching for a replacement for ${(_a = appt.caregiverName) !== null && _a !== void 0 ? _a : "your caregiver"}'s cancelled ${(_b = appt.time) !== null && _b !== void 0 ? _b : ""} visit`,
-    }).catch(() => { });
-    const options = await (0, replacementScorer_1.scoreReplacements)({
-        clientId,
-        appointmentId,
-        date: appt.date,
-        time: appt.time,
-        excludeId: (_c = appt.caregiverId) !== null && _c !== void 0 ? _c : "",
-    });
-    if (options.length === 0) {
-        await db.collection("agent_tasks_active").doc(clientPhone).delete().catch(() => { });
-        await handleNoReplacementsFound(appointmentId, clientId, clientPhone, appt);
-        return;
+    // This is a safety-critical path: the family has been told coverage is being found.
+    // A thrown error must NOT be silently swallowed by a fire-and-forget caller, so we
+    // catch at the top level and raise an admin alert.
+    try {
+        // Mark replacement as in-progress so Cara can tell the family what's happening
+        await db.collection("agent_tasks_active").doc(clientPhone).set({
+            type: "emergency_replacement",
+            status: "searching",
+            startedAt: now,
+            description: `Searching for a replacement for ${(_a = appt.caregiverName) !== null && _a !== void 0 ? _a : "your caregiver"}'s cancelled ${(_b = appt.time) !== null && _b !== void 0 ? _b : ""} visit`,
+        }).catch(() => { });
+        const options = await (0, replacementScorer_1.scoreReplacements)({
+            clientId,
+            appointmentId,
+            date: appt.date,
+            time: appt.time,
+            excludeId: (_c = appt.caregiverId) !== null && _c !== void 0 ? _c : "",
+        });
+        if (options.length === 0) {
+            await db.collection("agent_tasks_active").doc(clientPhone).delete().catch(() => { });
+            await handleNoReplacementsFound(appointmentId, clientId, clientPhone, appt);
+            return;
+        }
+        const confirmToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        const taskRef = await db.collection("agent_tasks").add({
+            type: "replacement_confirmation",
+            appointmentId,
+            clientId,
+            clientPhone,
+            options,
+            confirmToken,
+            status: "awaiting_approval",
+            expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+            createdAt: now,
+        });
+        const numberEmojis = ["1️⃣", "2️⃣", "3️⃣"];
+        const optionLines = options
+            .slice(0, 3)
+            .map((o, i) => {
+            const rebookedNote = o.previouslyBooked ? " · booked before" : "";
+            return `${numberEmojis[i]} ${o.name} · ${o.rating}⭐ · $${o.hourlyRate}/hr${rebookedNote}`;
+        })
+            .join("\n");
+        const cancelMsg = `${(_d = appt.caregiverName) !== null && _d !== void 0 ? _d : "Your caregiver"} had to cancel the ${appt.time} visit.\n\n` +
+            `I found ${options.length} available caregiver${options.length > 1 ? "s" : ""}:\n\n` +
+            `${optionLines}\n\n` +
+            `Reply 1, 2, or 3. Nothing is booked until you confirm.`;
+        await (0, caraAgent_1.sendViaInteractionAgent)(clientPhone, {
+            content: cancelMsg,
+            urgency: "immediate",
+            sourceAgent: "emergency_replacement",
+            canDrop: false,
+        }).catch(() => (0, client_1.sendToPhone)(clientPhone, cancelMsg));
+        // Update active task status — waiting for family to pick
+        await db.collection("agent_tasks_active").doc(clientPhone).set({
+            type: "emergency_replacement",
+            status: "awaiting_family_choice",
+            taskId: taskRef.id,
+            startedAt: now,
+            description: `${options.length} replacement option${options.length > 1 ? "s" : ""} found — waiting for your reply`,
+        }).catch(() => { });
+        // Contact all candidates in parallel
+        const caregiverSnaps = await Promise.all(options.slice(0, 3).map((o) => db.collection("caregivers").doc(o.caregiverId).get()));
+        await Promise.all(options.slice(0, 3).map((o, i) => {
+            var _a, _b;
+            const phone = (_a = caregiverSnaps[i].data()) === null || _a === void 0 ? void 0 : _a.phone;
+            return contactReplacementCandidate(Object.assign(Object.assign({}, o), { phone }), {
+                date: appt.date, time: appt.time, address: appt.address,
+                durationHours: appt.durationHours, hourlyRate: appt.hourlyRate,
+                clientId, seniorName: (_b = appt.clientName) !== null && _b !== void 0 ? _b : appt.seniorName,
+            }, taskRef.id);
+        }));
+        // Schedule 30-min escalation in case no one responds
+        await (0, triggerEngine_1.scheduleTrigger)({
+            userId: clientId,
+            phone: clientPhone,
+            type: "custom",
+            message: `replacement_task:${taskRef.id}`,
+            scheduledAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        }).catch((err) => console.error("scheduleTrigger (replacement escalation) error:", err));
+        await db.collection("agent_alerts_log").add({
+            type: "emergency_replacement_started",
+            clientId,
+            phone: clientPhone,
+            appointmentId,
+            taskId: taskRef.id,
+            sentAt: now,
+        });
     }
-    const confirmToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
-    const taskRef = await db.collection("agent_tasks").add({
-        type: "replacement_confirmation",
-        appointmentId,
-        clientId,
-        clientPhone,
-        options,
-        confirmToken,
-        status: "awaiting_approval",
-        expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        createdAt: now,
-    });
-    const numberEmojis = ["1️⃣", "2️⃣", "3️⃣"];
-    const optionLines = options
-        .slice(0, 3)
-        .map((o, i) => {
-        const rebookedNote = o.previouslyBooked ? " · booked before" : "";
-        return `${numberEmojis[i]} ${o.name} · ${o.rating}⭐ · $${o.hourlyRate}/hr${rebookedNote}`;
-    })
-        .join("\n");
-    const cancelMsg = `${(_d = appt.caregiverName) !== null && _d !== void 0 ? _d : "Your caregiver"} had to cancel the ${appt.time} visit.\n\n` +
-        `I found ${options.length} available caregiver${options.length > 1 ? "s" : ""}:\n\n` +
-        `${optionLines}\n\n` +
-        `Reply 1, 2, or 3. Nothing is booked until you confirm.`;
-    await (0, caraAgent_1.sendViaInteractionAgent)(clientPhone, {
-        content: cancelMsg,
-        urgency: "immediate",
-        sourceAgent: "emergency_replacement",
-        canDrop: false,
-    }).catch(() => (0, client_1.sendToPhone)(clientPhone, cancelMsg));
-    // Update active task status — waiting for family to pick
-    await db.collection("agent_tasks_active").doc(clientPhone).set({
-        type: "emergency_replacement",
-        status: "awaiting_family_choice",
-        taskId: taskRef.id,
-        startedAt: now,
-        description: `${options.length} replacement option${options.length > 1 ? "s" : ""} found — waiting for your reply`,
-    }).catch(() => { });
-    // Contact all candidates in parallel
-    const caregiverSnaps = await Promise.all(options.slice(0, 3).map((o) => db.collection("caregivers").doc(o.caregiverId).get()));
-    await Promise.all(options.slice(0, 3).map((o, i) => {
-        var _a, _b;
-        const phone = (_a = caregiverSnaps[i].data()) === null || _a === void 0 ? void 0 : _a.phone;
-        return contactReplacementCandidate(Object.assign(Object.assign({}, o), { phone }), {
-            date: appt.date, time: appt.time, address: appt.address,
-            durationHours: appt.durationHours, hourlyRate: appt.hourlyRate,
-            clientId, seniorName: (_b = appt.clientName) !== null && _b !== void 0 ? _b : appt.seniorName,
-        }, taskRef.id);
-    }));
-    // Schedule 30-min escalation in case no one responds
-    await (0, triggerEngine_1.scheduleTrigger)({
-        userId: clientId,
-        phone: clientPhone,
-        type: "custom",
-        message: `replacement_task:${taskRef.id}`,
-        scheduledAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    }).catch((err) => console.error("scheduleTrigger (replacement escalation) error:", err));
-    await db.collection("agent_alerts_log").add({
-        type: "emergency_replacement_started",
-        clientId,
-        phone: clientPhone,
-        appointmentId,
-        taskId: taskRef.id,
-        sentAt: now,
-    });
+    catch (err) {
+        console.error("[runEmergencyReplacement] failed:", err);
+        await db.collection("admin_alerts").add({
+            type: "emergency_replacement_failed",
+            severity: "critical",
+            appointmentId,
+            clientId,
+            clientPhone,
+            error: String((_e = err === null || err === void 0 ? void 0 : err.message) !== null && _e !== void 0 ? _e : err),
+            createdAt: new Date().toISOString(),
+        }).catch(() => { });
+        // Best-effort: clear the in-progress marker so Cara doesn't claim it's still searching.
+        await db.collection("agent_tasks_active").doc(clientPhone).delete().catch(() => { });
+        // Do not re-throw: the alert + cleanup above is the full handling. Re-throwing would
+        // double-alert (the webhooks caller also catches) and serves no recovery purpose.
+    }
 }
 //# sourceMappingURL=replacementAgent.js.map

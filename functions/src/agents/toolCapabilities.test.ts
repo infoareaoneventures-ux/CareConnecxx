@@ -167,6 +167,7 @@ describe("TOOL_CAPABILITIES coverage", () => {
       "write_todos",
       "cara_knows",
       "task",
+      "send_onboarding_link",
     ]);
 
     const trulyUntagged = untagged.filter(n => !knownCore.has(n));

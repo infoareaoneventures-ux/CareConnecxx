@@ -231,7 +231,7 @@ export const MatchingDashboard: React.FC<MatchingDashboardProps> = ({
                       setRunningMatching(true);
                       try {
                         const functions = getFunctions();
-                        const runAiMatching = httpsCallable(functions, 'runAiMatching');
+                        const runAiMatching = httpsCallable(functions, 'v1-runAiMatching');
                         const result = await runAiMatching({ 
                           matchAssignmentId: selectedAssignment.id 
                         });

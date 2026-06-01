@@ -80,7 +80,7 @@ export async function sendEmail(options: EmailOptions): Promise<{ success: boole
     // In production, call Firebase Cloud Function with Resend
     const { getFunctions, httpsCallable } = await import('firebase/functions');
     const functions = getFunctions();
-    const sendEmailFunction = httpsCallable(functions, 'sendEmail');
+    const sendEmailFunction = httpsCallable(functions, 'v1-sendEmail');
     
     const result = await sendEmailFunction({
       to,

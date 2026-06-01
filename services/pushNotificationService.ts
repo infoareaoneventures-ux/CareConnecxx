@@ -273,7 +273,7 @@ class PushNotificationService {
     }
 
     try {
-      const subscribeToTopicFn = httpsCallable(this.functions, 'subscribeToTopic');
+      const subscribeToTopicFn = httpsCallable(this.functions, 'v1-subscribeToTopic');
       await subscribeToTopicFn({ token: this.currentToken, topic });
       console.log(`Subscribed to topic: ${topic}`);
       return true;
@@ -288,7 +288,7 @@ class PushNotificationService {
    */
   async sendTestNotification(): Promise<boolean> {
     try {
-      const sendTestFn = httpsCallable(this.functions, 'sendAppointmentReminder');
+      const sendTestFn = httpsCallable(this.functions, 'v1-sendAppointmentReminder');
       await sendTestFn({
         title: 'Test Notification',
         body: 'This is a test push notification from CareConnex!',

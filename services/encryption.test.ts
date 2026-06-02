@@ -1,24 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-// Mock Firebase before importing anything that depends on it.
-// vi.mock is hoisted to the top of the file by Vitest so this runs first.
-vi.mock('../lib/firebase', () => {
-  const callable = vi.fn(async ({ ssn }: { ssn: string }) => {
-    if (!ssn) return { data: { hash: '' } };
-    const normalized = ssn.replace(/[\s-]/g, '');
-    let h = 0;
-    for (const c of normalized) { h = (h * 31 + c.charCodeAt(0)) >>> 0; }
-    return { data: { hash: `hash_${h.toString(16)}` } };
-  });
-  return {
-    functions: { httpsCallable: () => callable },
-    isConfigured: true,
-    default: {},
-  };
-});
-
 import {
-  hashSSN,
   maskSSN,
   maskPhone,
   sanitizeCaregiverPublic,
@@ -27,35 +9,6 @@ import {
 } from '../utils/encryption';
 
 describe('Encryption Utilities', () => {
-  describe('hashSSN', () => {
-    it('should produce consistent hashes for same SSN', async () => {
-      const ssn = '123456789';
-      const hash1 = await hashSSN(ssn);
-      const hash2 = await hashSSN(ssn);
-
-      expect(hash1).toBe(hash2);
-      expect(hash1.length).toBeGreaterThan(0);
-    });
-
-    it('should produce different hashes for different SSNs', async () => {
-      const hash1 = await hashSSN('123456789');
-      const hash2 = await hashSSN('987654321');
-
-      expect(hash1).not.toBe(hash2);
-    });
-
-    it('should normalize SSNs (remove dashes)', async () => {
-      const hash1 = await hashSSN('123-45-6789');
-      const hash2 = await hashSSN('123456789');
-
-      expect(hash1).toBe(hash2);
-    });
-
-    it('should return empty string for empty input', async () => {
-      expect(await hashSSN('')).toBe('');
-    });
-  });
-
   describe('maskSSN', () => {
     it('should mask SSN correctly', () => {
       expect(maskSSN('123456789')).toBe('***-**-6789');

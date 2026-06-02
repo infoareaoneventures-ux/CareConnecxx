@@ -110,6 +110,16 @@ export { generateRollingShifts, onBookingAccepted } from './scheduled/shiftGener
 // Cara iMessage pivot — onboarding callables
 export { markTaskComplete } from './agents/onboardingAgent';
 
+// Admin invoicing (createInvoice/sendInvoiceEmail were called by the admin
+// InvoicingTab but never deployed — this wires the backend up)
+export {
+  createInvoice,
+  generateInvoicePDF,
+  sendInvoiceEmail,
+  processClientApproval,
+  autoApproveInvoice,
+} from './invoicing';
+
 // Cara scheduled jobs
 export { dailyContactCardShare } from './scheduled/dailyContactCardShare';
 export { sendMorningBriefings } from './scheduled/morningBriefing';

@@ -236,15 +236,10 @@ export const autoApproveInvoice = functions.pubsub.schedule('every 1 hours').onR
 
         const batch = db.batch();
         snapshot.docs.forEach(doc => {
+            const currentNotes = doc.data().notes || '';
             batch.update(doc.ref, {
                 status: 'approved',
                 approvedAt: new Date().toISOString(),
-                notes: admin.firestore.FieldValue.increment(' (Auto-approved after 48h)' as any) 
-                // hacky way, actually just append string or leave a system note
-            });
-            // Fix note appending
-            const currentNotes = doc.data().notes || '';
-            batch.update(doc.ref, {
                 notes: currentNotes + '\n[System]: Auto-approved after 48h window.'
             });
         });

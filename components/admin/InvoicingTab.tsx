@@ -70,7 +70,7 @@ export const InvoicingTab = () => {
         }
         setLoading(true);
         try {
-            const createInvoiceFn = functions.httpsCallable('createInvoice');
+            const createInvoiceFn = functions.httpsCallable('v1-createInvoice');
             
             const payload = {
                 clientId: formData.clientId,
@@ -116,7 +116,7 @@ export const InvoicingTab = () => {
             return;
         }
         try {
-            const sendEmailFn = functions.httpsCallable('sendInvoiceEmail');
+            const sendEmailFn = functions.httpsCallable('v1-sendInvoiceEmail');
             await sendEmailFn({ invoiceId: id });
             addToast('Invoice email sent!', 'success');
         } catch (error) {

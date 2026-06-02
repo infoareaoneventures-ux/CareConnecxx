@@ -1,49 +1,15 @@
-import firebase from '../lib/firebase';
-import { functions, isConfigured } from '../lib/firebase';
-
 /**
- * Client-side encryption utility - DEPRECATED
- * 
- * IMPORTANT: All encryption now happens server-side via Firebase Functions.
- * This prevents encryption keys from being exposed in client-side code.
- * 
- * The functions below are thin wrappers that call the secure cloud functions.
+ * Client-side PII helpers.
+ *
+ * NOTE: The previous server-call wrappers (encryptPII / decryptPII / hashSSN /
+ * prepareCaregiverForWrite) were removed — they invoked Cloud Functions that
+ * were never deployed, so any caller would have hit NOT_FOUND. Encryption, if
+ * needed, must be reintroduced as real deployed functions before re-adding
+ * client wrappers. The helpers below are pure and safe to run client-side.
  */
-
-// Legacy exports for backward compatibility - these now call server functions
-export async function encryptPII(plaintext: string): Promise<string> {
-  if (!isConfigured || !functions) {
-    throw new Error('Firebase not configured');
-  }
-  
-  const encryptFn = functions.httpsCallable('encryptPII');
-  const result = await encryptFn({ plaintext });
-  return result.data.encrypted;
-}
-
-export async function decryptPII(ciphertext: string): Promise<string> {
-  if (!isConfigured || !functions) {
-    throw new Error('Firebase not configured');
-  }
-  
-  const decryptFn = functions.httpsCallable('decryptPII');
-  const result = await decryptFn({ ciphertext });
-  return result.data.plaintext;
-}
-
-export async function hashSSN(ssn: string): Promise<string> {
-  if (!isConfigured || !functions) {
-    throw new Error('Firebase not configured');
-  }
-  
-  const hashFn = functions.httpsCallable('hashSSN');
-  const result = await hashFn({ ssn });
-  return result.data.hash;
-}
 
 /**
  * Masks SSN for display (e.g., "***-**-1234")
- * Safe to run client-side - no encryption involved
  */
 export function maskSSN(ssn: string): string {
   if (!ssn) return '';
@@ -54,7 +20,6 @@ export function maskSSN(ssn: string): string {
 
 /**
  * Masks phone number (e.g., "(***) ***-1234")
- * Safe to run client-side - no encryption involved
  */
 export function maskPhone(phone: string): string {
   if (!phone) return '';
@@ -65,7 +30,6 @@ export function maskPhone(phone: string): string {
 
 /**
  * Validates SSN format
- * Safe to run client-side
  */
 export function isValidSSN(ssn: string): boolean {
   if (!ssn) return false;
@@ -83,7 +47,7 @@ export function isValidSSN(ssn: string): boolean {
  */
 export function sanitizeCaregiverPublic(caregiver: any): any {
   if (!caregiver) return null;
-  
+
   const {
     backgroundCheckData,
     email,
@@ -92,7 +56,7 @@ export function sanitizeCaregiverPublic(caregiver: any): any {
     totalEarnings,
     ...publicData
   } = caregiver;
-  
+
   return {
     ...publicData,
     // Only show these fields publicly
@@ -111,33 +75,7 @@ export function sanitizeCaregiverPublic(caregiver: any): any {
 }
 
 /**
- * Prepares caregiver data for Firestore write
- * NOW: Sends PII to server function for encryption
- * 
- * @deprecated Use encryptAndStoreCaregiverPII cloud function instead
- */
-export async function prepareCaregiverForWrite(caregiver: any): Promise<any> {
-  console.warn('prepareCaregiverForWrite is deprecated. Use encryptAndStoreCaregiverPII cloud function.');
-  
-  if (!isConfigured || !functions) {
-    throw new Error('Firebase not configured');
-  }
-
-  // Call server-side encryption
-  const encryptFn = functions.httpsCallable('encryptAndStoreCaregiverPII');
-  await encryptFn({
-    caregiverId: caregiver.uid,
-    backgroundCheckData: caregiver.backgroundCheckData
-  });
-
-  // Return caregiver data without PII (server stored it securely)
-  const { backgroundCheckData, ...safeData } = caregiver;
-  return safeData;
-}
-
-/**
  * Audit log helper - track all PII access
- * Now sends to server for secure logging
  */
 export async function logPIIAccess(
   userId: string,

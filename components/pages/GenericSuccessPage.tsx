@@ -25,7 +25,7 @@ export default function GenericSuccessPage() {
 
   useEffect(() => {
     if (!token || !functions) return;
-    const markDone = functions.httpsCallable('markTaskComplete');
+    const markDone = functions.httpsCallable('v1-markTaskComplete');
     // Best-effort only: for the tasks that land here (payment, identity, membership,
     // stripe_connect) the AUTHORITATIVE advancement is the Stripe/Checkr webhook, so a
     // failure here (e.g. an expired token) does NOT mean the action failed — we must

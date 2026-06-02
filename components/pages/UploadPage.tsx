@@ -26,7 +26,7 @@ export default function UploadPage() {
       const url = await getDownloadURL(sRef);
 
       if (!functions) { setStatus('error'); return; }
-      const markDone = functions.httpsCallable('markTaskComplete');
+      const markDone = functions.httpsCallable('v1-markTaskComplete');
       try {
         // Must NOT swallow this: if the token is expired/invalid the file is in
         // Storage but onboarding never advances. Showing "done" would be a silent

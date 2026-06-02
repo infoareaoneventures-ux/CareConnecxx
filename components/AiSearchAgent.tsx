@@ -281,7 +281,7 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
       // ── Cara path ──────────────────────────────────────────────────────────
       if (caraAvailable !== false && functions && auth?.currentUser) {
         try {
-          const caraFn = functions.httpsCallable('chatWithCara');
+          const caraFn = functions.httpsCallable('v1-chatWithCara');
           const result = await caraFn({ message: userText });
           const data = result.data as {
             available: boolean;

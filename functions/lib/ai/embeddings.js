@@ -43,7 +43,12 @@ exports.cosineSimilarity = cosineSimilarity;
 const genai_1 = require("@google/genai");
 const crypto = __importStar(require("crypto"));
 const functions = __importStar(require("firebase-functions/v1"));
-const EMBEDDING_MODEL = "text-embedding-004";
+// text-embedding-004 was shut down 2026-01-14; gemini-embedding-001 is its
+// replacement. It defaults to 3072 dims but supports 768 via Matryoshka
+// (outputDimensionality below), keeping EMBEDDING_DIM stable. Vectors at <3072
+// dims are NOT unit-normalized, but cosineSimilarity() divides by both
+// magnitudes so similarity is unaffected.
+const EMBEDDING_MODEL = "gemini-embedding-001";
 exports.EMBEDDING_MODEL = EMBEDDING_MODEL;
 const EMBEDDING_DIM = 768;
 exports.EMBEDDING_DIM = EMBEDDING_DIM;
@@ -232,6 +237,7 @@ async function generateEmbedding(text) {
         const resp = await ai.models.embedContent({
             model: EMBEDDING_MODEL,
             contents: text,
+            config: { outputDimensionality: EMBEDDING_DIM },
         });
         const values = (_b = (_a = resp.embeddings) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.values;
         if (!values || values.length !== EMBEDDING_DIM) {

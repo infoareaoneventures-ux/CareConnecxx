@@ -47,7 +47,7 @@ export const CaregiverCalloutModal: React.FC<CaregiverCalloutModalProps> = ({
     const loadBackupOptions = async () => {
         try {
             setLoading(true);
-            const getBackupOptions = httpsCallable(functions, 'getBackupCaregiverOptions');
+            const getBackupOptions = httpsCallable(functions, 'v1-getBackupCaregiverOptions');
             const result = await getBackupOptions({ appointmentId });
             const data = result.data as { success: boolean; caregivers: BackupCaregiver[] };
             
@@ -65,7 +65,7 @@ export const CaregiverCalloutModal: React.FC<CaregiverCalloutModalProps> = ({
     const handleSelectCaregiver = async (caregiver: BackupCaregiver) => {
         try {
             setSelecting(caregiver.id);
-            const selectBackup = httpsCallable(functions, 'selectBackupCaregiver');
+            const selectBackup = httpsCallable(functions, 'v1-selectBackupCaregiver');
             const result = await selectBackup({ 
                 appointmentId, 
                 backupCaregiverId: caregiver.id 
@@ -86,7 +86,7 @@ export const CaregiverCalloutModal: React.FC<CaregiverCalloutModalProps> = ({
     const handleRequestRefund = async () => {
         try {
             setSelecting('refund');
-            const requestRefund = httpsCallable(functions, 'requestCalloutRefund');
+            const requestRefund = httpsCallable(functions, 'v1-requestCalloutRefund');
             await requestRefund({ 
                 appointmentId, 
                 reason: 'No suitable backup caregiver available' 

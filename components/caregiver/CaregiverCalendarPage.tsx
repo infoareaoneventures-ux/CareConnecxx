@@ -300,7 +300,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
   const isToday = (d: Date) => d.toDateString() === today.toDateString();
 
   const shiftsByDay: Record<number, Shift[]> = {};
-  shifts.forEach(s => {
+  shifts.filter(s => s.status !== 'cancelled').forEach(s => {
     weekDates.forEach((wd, idx) => {
       if (localDate(wd) === s.date) {
         if (!shiftsByDay[idx]) shiftsByDay[idx] = [];
@@ -325,7 +325,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     : `${MONTH_NAMES[wFirst.getMonth()].slice(0, 3)} ${wFirst.getDate()} – ${MONTH_NAMES[wLast.getMonth()].slice(0, 3)} ${wLast.getDate()}`;
 
   const dayDateStr    = localDate(dayDate);
-  const dayShifts     = shifts.filter(s => s.date === dayDateStr);
+  const dayShifts     = shifts.filter(s => s.date === dayDateStr && s.status !== 'cancelled');
   const dayInterviews = interviews.filter(iv => iv.date === dayDateStr);
 
   const daysInMonth    = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0).getDate();
@@ -425,17 +425,19 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     };
     const fmtTs = (ts: any) => {
       const d = tsToDate(ts);
-      return d ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : null;
+      return d ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }) : null;
     };
     const actualStart = fmtTs(shift.startedAt);
     const actualEnd   = fmtTs(shift.completedAt);
     const duration = (() => {
       const s = tsToDate(shift.startedAt); const e = tsToDate(shift.completedAt);
       if (!s || !e) return null;
-      const mins = Math.round((e.getTime() - s.getTime()) / 60000);
-      if (mins <= 0) return null;
-      const h = Math.floor(mins / 60); const m = mins % 60;
-      return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+      const totalSecs = Math.round((e.getTime() - s.getTime()) / 1000);
+      if (totalSecs <= 0) return null;
+      const h = Math.floor(totalSecs / 3600);
+      const m = Math.floor((totalSecs % 3600) / 60);
+      const sec = totalSecs % 60;
+      return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
     })();
 
     // Care tasks — from shift directly, or fetch from booking as fallback
@@ -1174,10 +1176,11 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                                   return (
                                     <button key={`s-${si}`}
                                       onClick={() => { setSelectedShift(shift); setSelectedInterview(null); }}
-                                      className={`absolute rounded-md border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)}`}
+                                      className={`absolute rounded-md border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)} ${shift.status === 'in-progress' ? 'ring-2 ring-white ring-opacity-60' : ''}`}
                                       style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '2px', right: hasBoth ? '50%' : '2px' }}>
                                       <p className="px-1.5 pt-1 text-xs font-bold text-white leading-tight truncate">{(shift.clientName || 'Client').split(' ')[0]}</p>
                                       <p className="px-1.5 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
+                                      {shift.status === 'in-progress' && <p className="px-1.5 text-[10px] text-white font-semibold">In Progress</p>}
                                     </button>
                                   );
                                 })}

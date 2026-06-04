@@ -101,11 +101,11 @@ const fmtDate = (d: Date) =>
 
 /** 0.1 → "6 min" · 1.5 → "1h 30m" · 2.0 → "2h" */
 const fmtDuration = (hours: number): string => {
-  const totalMins = Math.round(hours * 60);
-  if (totalMins < 60) return `${totalMins} min`;
-  const h = Math.floor(totalMins / 60);
-  const m = totalMins % 60;
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+  const totalSecs = Math.round(hours * 3600);
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const s = totalSecs % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
 function toDateTimeLocal(iso: string): string {
@@ -1282,7 +1282,8 @@ const SubmittableShiftCard: React.FC<{
   shift: CompletedShift;
   onSubmitted: () => void;
   onError: (msg: string) => void;
-}> = ({ shift, onSubmitted, onError }) => {
+  hideClient?: boolean;
+}> = ({ shift, onSubmitted, onError, hideClient }) => {
   const [open, setOpen] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -1342,19 +1343,21 @@ const SubmittableShiftCard: React.FC<{
       {/* ── expanded details ── */}
       {open && (
         <div className="border-t-2 border-slate-200 bg-slate-50 px-4 py-3 space-y-3">
-          {/* Client identity */}
-          <div className="flex items-center gap-3">
-            {shift.clientPhotoURL ? (
-              <img src={shift.clientPhotoURL} alt="" className="w-9 h-9 rounded-full object-cover shrink-0" />
-            ) : (
-              <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
-                <span className="text-sm font-bold text-primary-700">
-                  {(shift.clientName ?? '?')[0].toUpperCase()}
-                </span>
-              </div>
-            )}
-            <p className="text-sm font-semibold text-slate-900">{shift.clientName ?? 'Client'}</p>
-          </div>
+          {/* Client identity — hidden when grouped */}
+          {!hideClient && (
+            <div className="flex items-center gap-3">
+              {shift.clientPhotoURL ? (
+                <img src={shift.clientPhotoURL} alt="" className="w-9 h-9 rounded-full object-cover shrink-0" />
+              ) : (
+                <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
+                  <span className="text-sm font-bold text-primary-700">
+                    {(shift.clientName ?? '?')[0].toUpperCase()}
+                  </span>
+                </div>
+              )}
+              <p className="text-sm font-semibold text-slate-900">{shift.clientName ?? 'Client'}</p>
+            </div>
+          )}
 
           <div className="divide-y divide-slate-200 text-xs border border-slate-200 rounded-xl overflow-hidden">
             {shift.rate != null && (
@@ -1423,6 +1426,8 @@ export const CaregiverPaymentsPage: React.FC = () => {
 
   const [tab, setTab] = useState<Tab>('timesheets');
   const [tsFilter, setTsFilter] = useState<'all' | 'unsubmitted' | 'pending' | 'history'>('all');
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const toggleGroup = (key: string) => setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
   const [showReport, setShowReport] = useState(false);
   const [reportFrom, setReportFrom] = useState('');
   const [reportTo,   setReportTo]   = useState('');
@@ -1819,38 +1824,120 @@ export const CaregiverPaymentsPage: React.FC = () => {
               </div>
             )}
 
-            {/* Unified filtered list */}
-            <div className="space-y-2">
+            {/* Unified filtered list — grouped by client */}
+            <div className="space-y-4">
               {/* Unsubmitted */}
-              {(tsFilter === 'all' || tsFilter === 'unsubmitted') &&
-                submittableShifts.map(shift => (
-                  <SubmittableShiftCard
-                    key={shift.id}
-                    shift={shift}
-                    onSubmitted={() => addToast('Hours submitted — awaiting client approval', 'success')}
-                    onError={(msg) => addToast(msg || 'Failed to submit hours', 'error')}
-                  />
-                ))
-              }
+              {(tsFilter === 'all' || tsFilter === 'unsubmitted') && (() => {
+                const grouped = submittableShifts.reduce((acc, shift) => {
+                  const key = shift.clientId || shift.clientName || 'unknown';
+                  if (!acc[key]) acc[key] = { name: shift.clientName ?? 'Client', photo: (shift as any).clientPhotoURL, shifts: [] };
+                  acc[key].shifts.push(shift);
+                  return acc;
+                }, {} as Record<string, { name: string; photo?: string; shifts: typeof submittableShifts }>);
+                return Object.entries(grouped).map(([key, group]) => {
+                  const isExpanded = !!expandedGroups[key];
+                  const visible = isExpanded ? group.shifts : group.shifts.slice(0, 2);
+                  const hidden = group.shifts.length - 2;
+                  return (
+                    <div key={key}>
+                      <div className="flex items-center gap-2 mb-2 px-1">
+                        <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-xs shrink-0">
+                          {group.photo ? <img src={group.photo} className="w-full h-full object-cover" alt="" /> : group.name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="text-sm font-semibold text-slate-700">{group.name}</span>
+                        <span className="text-xs text-slate-400">{group.shifts.length} shift{group.shifts.length !== 1 ? 's' : ''}</span>
+                      </div>
+                      <div className="space-y-2">
+                        {visible.map(shift => (
+                          <SubmittableShiftCard key={shift.id} shift={shift} hideClient
+                            onSubmitted={() => addToast('Hours submitted — awaiting client approval', 'success')}
+                            onError={(msg) => addToast(msg || 'Failed to submit hours', 'error')}
+                          />
+                        ))}
+                        {hidden > 0 && !isExpanded && (
+                          <button onClick={() => toggleGroup(key)} className="w-full text-xs text-primary-600 hover:text-primary-800 font-medium py-1.5 text-center">
+                            Show more
+                          </button>
+                        )}
+                        {isExpanded && group.shifts.length > 2 && (
+                          <button onClick={() => toggleGroup(key)} className="w-full text-xs text-slate-400 hover:text-slate-600 font-medium py-1.5 text-center">
+                            Show less
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
 
               {/* Pending */}
-              {(tsFilter === 'all' || tsFilter === 'pending') &&
-                pendingRows.map(row => (
-                  <PendingShiftRow
-                    key={row.id}
-                    row={row}
-                    onRespond={(action, counter) => handleRespondToCorrection(row, action, counter)}
-                    onConfirmCash={() => handleConfirmCash(row)}
-                  />
-                ))
-              }
+              {(tsFilter === 'all' || tsFilter === 'pending') && (() => {
+                const grouped = pendingRows.reduce((acc, row) => {
+                  const key = (row as any).clientId || row.clientName || 'unknown';
+                  if (!acc[key]) acc[key] = { name: row.clientName ?? 'Client', photo: (row as any).clientPhotoURL, rows: [] };
+                  acc[key].rows.push(row);
+                  return acc;
+                }, {} as Record<string, { name: string; photo?: string; rows: typeof pendingRows }>);
+                return Object.entries(grouped).map(([key, group]) => {
+                  const gkey = `p_${key}`;
+                  const isExpanded = !!expandedGroups[gkey];
+                  const visible = isExpanded ? group.rows : group.rows.slice(0, 2);
+                  const hidden = group.rows.length - 2;
+                  return (
+                    <div key={key}>
+                      <div className="flex items-center gap-2 mb-2 px-1">
+                        <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-xs shrink-0">
+                          {group.photo ? <img src={group.photo} className="w-full h-full object-cover" alt="" /> : group.name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="text-sm font-semibold text-slate-700">{group.name}</span>
+                        <span className="text-xs text-slate-400">{group.rows.length} shift{group.rows.length !== 1 ? 's' : ''}</span>
+                      </div>
+                      <div className="space-y-2">
+                        {visible.map(row => (
+                          <PendingShiftRow key={row.id} row={row}
+                            onRespond={(action, counter) => handleRespondToCorrection(row, action, counter)}
+                            onConfirmCash={() => handleConfirmCash(row)}
+                          />
+                        ))}
+                        {hidden > 0 && !isExpanded && <button onClick={() => toggleGroup(gkey)} className="w-full text-xs text-primary-600 hover:text-primary-800 font-medium py-1.5 text-center">Show more</button>}
+                        {isExpanded && group.rows.length > 2 && <button onClick={() => toggleGroup(gkey)} className="w-full text-xs text-slate-400 hover:text-slate-600 font-medium py-1.5 text-center">Show less</button>}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
 
-              {/* History — uses reportedRows when report panel is open */}
-              {(tsFilter === 'all' || tsFilter === 'history') && reportedRows.length > 0 && (
-                <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100">
-                  {reportedRows.map(row => <HistoryShiftRow key={row.id} row={row} />)}
-                </div>
-              )}
+              {/* History — grouped by client */}
+              {(tsFilter === 'all' || tsFilter === 'history') && reportedRows.length > 0 && (() => {
+                const grouped = reportedRows.reduce((acc, row) => {
+                  const key = (row as any).clientId || row.clientName || 'unknown';
+                  if (!acc[key]) acc[key] = { name: row.clientName ?? 'Client', photo: (row as any).clientPhotoURL, rows: [] };
+                  acc[key].rows.push(row);
+                  return acc;
+                }, {} as Record<string, { name: string; photo?: string; rows: typeof reportedRows }>);
+                return Object.entries(grouped).map(([key, group]) => {
+                  const gkey = `h_${key}`;
+                  const isExpanded = !!expandedGroups[gkey];
+                  const visible = isExpanded ? group.rows : group.rows.slice(0, 2);
+                  const hidden = group.rows.length - 2;
+                  return (
+                    <div key={key}>
+                      <div className="flex items-center gap-2 mb-2 px-1">
+                        <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-xs shrink-0">
+                          {group.photo ? <img src={group.photo} className="w-full h-full object-cover" alt="" /> : group.name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="text-sm font-semibold text-slate-700">{group.name}</span>
+                        <span className="text-xs text-slate-400">{group.rows.length} shift{group.rows.length !== 1 ? 's' : ''}</span>
+                      </div>
+                      <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100">
+                        {visible.map(row => <HistoryShiftRow key={row.id} row={row} />)}
+                      </div>
+                      {hidden > 0 && !isExpanded && <button onClick={() => toggleGroup(gkey)} className="w-full text-xs text-primary-600 hover:text-primary-800 font-medium py-1.5 text-center">Show more</button>}
+                      {isExpanded && group.rows.length > 2 && <button onClick={() => toggleGroup(gkey)} className="w-full text-xs text-slate-400 hover:text-slate-600 font-medium py-1.5 text-center">Show less</button>}
+                    </div>
+                  );
+                });
+              })()}
 
               {/* Empty state */}
               {((tsFilter === 'all'         && submittableShifts.length === 0 && shiftRows.length === 0) ||

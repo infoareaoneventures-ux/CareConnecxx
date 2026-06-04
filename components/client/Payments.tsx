@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Clock, CreditCard, CheckCircle, AlertTriangle, Loader2,
-  ChevronDown, ChevronUp, Banknote, CalendarDays, ExternalLink,
+  ChevronDown, ChevronUp, Banknote, ExternalLink,
   AlertCircle,
 } from 'lucide-react';
 import { ClientNavigation } from './ClientNavigation';
@@ -24,7 +24,7 @@ type ShiftHoursStatus =
   | 'paid'
   | 'payment_failed';
 
-type DateFilter = 'all' | 'this-month' | 'last-3-months';
+type StatusFilter = 'all' | 'needs-review' | 'history';
 
 interface LineItem {
   type: string;
@@ -89,13 +89,13 @@ function fmtTime(iso: string) {
 function fmtAmount(hours: number, rate: number) {
   return `$${(hours * rate).toFixed(2)}`;
 }
-/** 0.1 → "6 min" · 1.5 → "1h 30m" · 2.0 → "2h" */
+/** 0:00:11 · 1:30:05 · 2:00:00 (HH:MM:SS) */
 function fmtDuration(hours: number): string {
-  const totalMins = Math.round(hours * 60);
-  if (totalMins < 60) return `${totalMins} min`;
-  const h = Math.floor(totalMins / 60);
-  const m = totalMins % 60;
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+  const totalSecs = Math.round(hours * 3600);
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const s = totalSecs % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 const STATUS_CONFIG: Record<ShiftHoursStatus, { label: string; color: string; bg: string; border: string }> = {
@@ -230,7 +230,8 @@ const CaregiverAvatar: React.FC<{ name?: string; photoURL?: string | null; size?
 const ShiftRow: React.FC<{
   row: ShiftHoursRow;
   onReview: (row: ShiftHoursRow) => void;
-}> = ({ row, onReview }) => {
+  hideCaregiver?: boolean;
+}> = ({ row, onReview, hideCaregiver }) => {
   const [expanded, setExpanded] = useState(false);
   const [shiftDetails, setShiftDetails] = useState<any>(null);
 
@@ -262,45 +263,29 @@ const ShiftRow: React.FC<{
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-      {/* Main row */}
+      {/* Main row — caregiver-style column layout */}
       <div
-        className="px-5 py-4 flex items-center gap-4 cursor-pointer hover:bg-slate-50 transition-colors"
+        className="px-4 py-3 grid items-center gap-2 cursor-pointer hover:bg-slate-50 transition-colors"
+        style={{ gridTemplateColumns: 'minmax(60px,1fr) minmax(70px,1fr) minmax(70px,1fr) minmax(60px,1fr) minmax(60px,1fr) minmax(50px,1fr) auto auto' }}
         onClick={() => setExpanded(e => !e)}
       >
-        <CaregiverAvatar name={row.caregiverName} photoURL={row.caregiverPhotoURL} />
-
-        <div className="flex-1 min-w-0">
-          <p className="font-semibold text-slate-900 text-sm">{row.caregiverName}</p>
-          <p className="text-xs text-slate-500 mt-0.5">{fmtDate(row.submittedStartTime)}</p>
-        </div>
-
-        <div className="hidden sm:flex flex-col items-end text-right shrink-0">
-          <p className="text-sm font-semibold text-slate-800">{fmtDuration(dispHours)}</p>
-          <div className="flex items-center gap-1 text-xs text-slate-500 mt-0.5">
-            {row.paymentMethod === 'credit'
-              ? <CreditCard className="w-3 h-3" />
-              : <Banknote className="w-3 h-3" />}
+        <div><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Date</p><p className="text-sm font-semibold text-primary-600 mt-0.5">{new Date(row.submittedStartTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p></div>
+        <div><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">In</p><p className="text-sm text-slate-700 mt-0.5">{fmtTime(startTs)}</p></div>
+        <div><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Out</p><p className="text-sm text-slate-700 mt-0.5">{fmtTime(endTs)}</p></div>
+        <div><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Duration</p><p className="text-sm text-slate-700 mt-0.5">{dispHours > 0 ? fmtDuration(dispHours) : '—'}</p></div>
+        <div><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Pay</p><p className="text-sm font-bold text-slate-900 mt-0.5">${totalPay.toFixed(2)}</p></div>
+        <div>
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Method</p>
+          <div className="flex items-center gap-1 text-xs text-slate-600 mt-0.5">
+            {row.paymentMethod === 'credit' ? <CreditCard className="w-3 h-3" /> : <Banknote className="w-3 h-3" />}
             <span>{row.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span>
           </div>
         </div>
-
-        <div className="flex flex-col items-end shrink-0 gap-1.5">
-          <p className="text-sm font-bold text-slate-900">${totalPay.toFixed(2)}</p>
-          <div className="flex items-center gap-1.5 flex-wrap justify-end">
-            {isCorrected && (
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-teal-50 text-teal-700 border-teal-200 whitespace-nowrap">
-                Corrected
-              </span>
-            )}
-            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
-              {cfg.label}
-            </span>
-          </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {isCorrected && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-teal-50 text-teal-700 border-teal-200">Corrected</span>}
+          <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>{cfg.label}</span>
         </div>
-
-        <div className="shrink-0 text-slate-400">
-          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-        </div>
+        <div className="shrink-0 text-slate-400">{expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}</div>
       </div>
 
       {/* Expanded details */}
@@ -516,9 +501,11 @@ export const Payments: React.FC = () => {
   const { addToast } = useCareConnex();
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('timesheets');
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const toggleGroup = (key: string) => setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
   const [rows, setRows] = useState<ShiftHoursRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [reviewRow, setReviewRow] = useState<ShiftHoursRow | null>(null);
 
   // Payment method state
@@ -551,17 +538,10 @@ export const Payments: React.FC = () => {
 
   // Filter rows by date
   const filteredRows = useMemo(() => {
-    if (dateFilter === 'all') return rows;
-    const now = new Date();
-    const cutoff = new Date();
-    if (dateFilter === 'this-month') {
-      cutoff.setDate(1);
-      cutoff.setHours(0, 0, 0, 0);
-    } else {
-      cutoff.setMonth(now.getMonth() - 3);
-    }
-    return rows.filter(r => new Date(r.submittedAt) >= cutoff);
-  }, [rows, dateFilter]);
+    if (statusFilter === 'needs-review') return rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed');
+    if (statusFilter === 'history') return rows.filter(r => r.status === 'approved' || r.status === 'auto_approved');
+    return rows;
+  }, [rows, statusFilter]);
 
   const pendingCount = rows.filter(r =>
     r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed'
@@ -640,28 +620,26 @@ export const Payments: React.FC = () => {
               </div>
             )}
 
-            {/* Date filter */}
-            <div className="flex items-center gap-2">
-              <CalendarDays className="w-4 h-4 text-slate-400 shrink-0" />
-              <div className="flex gap-1.5">
-                {([
-                  { id: 'all', label: 'All time' },
-                  { id: 'this-month', label: 'This month' },
-                  { id: 'last-3-months', label: 'Last 3 months' },
-                ] as { id: DateFilter; label: string }[]).map(f => (
-                  <button
-                    key={f.id}
-                    onClick={() => setDateFilter(f.id)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                      dateFilter === f.id
-                        ? 'bg-primary-600 text-white'
-                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
+            {/* Status filter */}
+            <div className="flex gap-1.5">
+              {([
+                { id: 'all',          label: 'All',          count: rows.length },
+                { id: 'needs-review', label: 'Needs Review', count: rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed').length },
+                { id: 'history',      label: 'History',      count: rows.filter(r => r.status === 'approved' || r.status === 'auto_approved').length },
+              ] as { id: StatusFilter; label: string; count: number }[]).map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setStatusFilter(f.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                    statusFilter === f.id
+                      ? 'bg-primary-600 text-white'
+                      : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {f.label}
+                  {f.count > 0 && <span className={`text-[10px] font-bold ${statusFilter === f.id ? 'text-white/80' : 'text-slate-400'}`}>{f.count}</span>}
+                </button>
+              ))}
             </div>
 
             {/* List */}
@@ -681,25 +659,52 @@ export const Payments: React.FC = () => {
               </div>
             ) : (
               <>
-                {/* Pending first */}
-                {filteredRows
-                  .slice()
-                  .sort((a, b) => {
-                    // items needing client action first, then by date desc
+                {/* Group by caregiver */}
+                {(() => {
+                  const sorted = filteredRows.slice().sort((a, b) => {
                     const needsAction = (s: ShiftHoursStatus) =>
                       s === 'pending_client_review' || s === 'caregiver_counter_proposed' ? 0 : 1;
                     const aP = needsAction(a.status);
                     const bP = needsAction(b.status);
                     if (aP !== bP) return aP - bP;
                     return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
-                  })
-                  .map(row => (
-                    <ShiftRow
-                      key={row.id}
-                      row={row}
-                      onReview={setReviewRow}
-                    />
-                  ))}
+                  });
+                  const grouped = sorted.reduce((acc, row) => {
+                    const key = row.caregiverId || row.caregiverName || 'unknown';
+                    if (!acc[key]) acc[key] = { name: row.caregiverName ?? 'Caregiver', photo: (row as any).caregiverPhotoURL, rows: [] };
+                    acc[key].rows.push(row);
+                    return acc;
+                  }, {} as Record<string, { name: string; photo?: string; rows: typeof filteredRows }>);
+                  return Object.entries(grouped).map(([key, group]) => {
+                    const isExpanded = !!expandedGroups[key];
+                    const visible = isExpanded ? group.rows : group.rows.slice(0, 2);
+                    const hidden = group.rows.length - 2;
+                    return (
+                      <div key={key} className="space-y-2">
+                        <div className="flex items-center gap-2 px-1">
+                          <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-xs shrink-0">
+                            {group.photo ? <img src={group.photo} className="w-full h-full object-cover" alt="" /> : group.name.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="text-sm font-semibold text-slate-700">{group.name}</span>
+                          <span className="text-xs text-slate-400">{group.rows.length} shift{group.rows.length !== 1 ? 's' : ''}</span>
+                        </div>
+                        {visible.map(row => (
+                          <ShiftRow key={row.id} row={row} onReview={setReviewRow} hideCaregiver />
+                        ))}
+                        {hidden > 0 && !isExpanded && (
+                          <button onClick={() => toggleGroup(key)} className="w-full text-xs text-primary-600 hover:text-primary-800 font-medium py-1.5 text-center">
+                            Show more
+                          </button>
+                        )}
+                        {isExpanded && group.rows.length > 2 && (
+                          <button onClick={() => toggleGroup(key)} className="w-full text-xs text-slate-400 hover:text-slate-600 font-medium py-1.5 text-center">
+                            Show less
+                          </button>
+                        )}
+                      </div>
+                    );
+                  });
+                })()}
               </>
             )}
           </div>

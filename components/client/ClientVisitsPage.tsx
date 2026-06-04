@@ -63,15 +63,17 @@ function tsToDate(ts: any): Date | null {
 }
 function fmtTs(ts: any): string | null {
   const d = tsToDate(ts);
-  return d ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : null;
+  return d ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }) : null;
 }
 function fmtDuration(startTs: any, endTs: any): string | null {
   const s = tsToDate(startTs); const e = tsToDate(endTs);
   if (!s || !e) return null;
-  const mins = Math.round((e.getTime() - s.getTime()) / 60000);
-  if (mins <= 0) return null;
-  const h = Math.floor(mins / 60); const m = mins % 60;
-  return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+  const totalSecs = Math.round((e.getTime() - s.getTime()) / 1000);
+  if (totalSecs <= 0) return null;
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const sec = totalSecs % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
 function fmtDate(dateStr: string): string {

@@ -4,7 +4,7 @@ import { shiftHoursService } from '../../services/api';
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
-export type LineItemType = 'overtime' | 'mileage' | 'custom';
+export type LineItemType = 'custom';
 
 export interface LineItem {
   type: LineItemType;
@@ -41,15 +41,11 @@ interface Props {
 // ── constants ─────────────────────────────────────────────────────────────────
 
 const LINE_ITEM_TYPES: { value: LineItemType; label: string }[] = [
-  { value: 'overtime',  label: 'Overtime' },
-  { value: 'mileage',   label: 'Mileage' },
-  { value: 'custom',    label: 'Custom' },
+  { value: 'custom', label: 'Custom' },
 ];
 
 const DEFAULT_LABEL: Record<LineItemType, string> = {
-  overtime: 'Overtime',
-  mileage:  'Mileage',
-  custom:   '',
+  custom: '',
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -189,7 +185,9 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
               </div>
               <div className="border-t border-slate-200 pt-2 flex items-center justify-between">
                 <span className="text-sm text-slate-500">Duration</span>
-                <span className="text-lg font-bold text-slate-900">{fmtDuration(totalHours)}</span>
+                <div className="text-right">
+                  <span className="text-lg font-bold text-slate-900">{fmtDuration(totalHours)}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -254,7 +252,7 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
                 {li.type === 'custom' && (
                   <input
                     type="text"
-                    placeholder="Label (e.g. Holiday premium) *"
+                    placeholder="Label (e.g. Overtime or Mileage) *"
                     value={li.label}
                     onChange={e => updateLineItem(i, { label: e.target.value })}
                     className={`w-full px-3 py-1.5 border rounded-lg text-sm ${

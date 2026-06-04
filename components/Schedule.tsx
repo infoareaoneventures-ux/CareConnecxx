@@ -56,16 +56,18 @@ function fmtTs(ts: any): string {
   if (!ts) return '';
   const d = ts?.toDate ? ts.toDate() : new Date(ts);
   if (isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
 }
 function fmtDuration(start: any, end: any): string {
   if (!start || !end) return '';
   const s = start?.toDate ? start.toDate() : new Date(start);
   const e = end?.toDate   ? end.toDate()   : new Date(end);
-  const mins = Math.round((e.getTime() - s.getTime()) / 60000);
-  if (mins < 60) return `${mins}m`;
-  const h = Math.floor(mins / 60), m = mins % 60;
-  return m ? `${h}h ${m}m` : `${h}h`;
+  const totalSecs = Math.round((e.getTime() - s.getTime()) / 1000);
+  if (totalSecs <= 0) return '';
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const sec = totalSecs % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
 function parseInterview(id: string, data: any): InterviewEvent {
@@ -540,7 +542,7 @@ export default function Schedule() {
   const isToday = (d: Date) => d.toDateString() === today.toDateString();
 
   const shiftsByDay: Record<number, Shift[]> = {};
-  shifts.forEach(s => {
+  shifts.filter(s => s.status !== 'cancelled').forEach(s => {
     weekDates.forEach((wd, idx) => {
       if (localDate(wd) === s.date) {
         if (!shiftsByDay[idx]) shiftsByDay[idx] = [];
@@ -566,7 +568,7 @@ export default function Schedule() {
 
   // ── Day helpers ──────────────────────────────────────────────────────────
   const dayDateStr    = localDate(dayDate);
-  const dayShifts     = shifts.filter(s => s.date === dayDateStr);
+  const dayShifts     = shifts.filter(s => s.date === dayDateStr && s.status !== 'cancelled');
   const dayInterviews = interviews.filter(iv => iv.date === dayDateStr);
 
   // ── Month helpers ────────────────────────────────────────────────────────
@@ -1168,11 +1170,11 @@ export default function Schedule() {
                               return (
                                 <button key={si}
                                   onClick={() => { setSelectedShift(shift); setSelectedInterview(null); }}
-                                  className={`absolute rounded-lg border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)}`}
+                                  className={`absolute rounded-lg border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)} ${shift.status === 'in-progress' ? 'ring-2 ring-white ring-opacity-60' : ''}`}
                                   style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '4px', right: dayInterviews.length > 0 ? '50%' : '4px' }}>
                                   <p className="px-2 pt-1.5 text-sm font-bold text-white leading-tight truncate">{shift.caregiverName}</p>
                                   <p className="px-2 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
-                                  {shift.notes && <p className="px-2 text-xs text-white/70 truncate mt-0.5">{shift.notes}</p>}
+                                  {shift.status === 'in-progress' && <p className="px-2 text-xs text-white font-semibold mt-0.5">In Progress</p>}
                                 </button>
                               );
                             })}

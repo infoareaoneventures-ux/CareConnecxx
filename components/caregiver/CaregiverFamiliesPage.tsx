@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Heart, Search as SearchIcon, MessageSquare, Clock, User } from 'lucide-react';
+import { Heart, Search as SearchIcon, MessageSquare, Clock, User, X, MapPin, Phone, FileText, Smile } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -27,6 +27,22 @@ export const CaregiverFamiliesPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser } = useCareConnex();
   const uid = currentUser?.uid || authService.getCurrentUser()?.uid;
+  const [detailsEntry, setDetailsEntry] = useState<FamilyEntry | null>(null);
+  const [detailsData, setDetailsData] = useState<any>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+
+  const openDetails = async (f: FamilyEntry) => {
+    setDetailsEntry(f);
+    setDetailsData(null);
+    setDetailsLoading(true);
+    try {
+      if (f.bookingId) {
+        const snap = await db!.collection('booking_requests').doc(f.bookingId).get();
+        if (snap.exists) setDetailsData(snap.data());
+      }
+    } catch { /* non-fatal */ }
+    finally { setDetailsLoading(false); }
+  };
 
   const [filter, setFilter] = useState<FamilyFilter>('active');
   const [query, setQuery] = useState('');
@@ -194,6 +210,7 @@ export const CaregiverFamiliesPage: React.FC = () => {
   ];
 
   return (
+    <>
     <div className="min-h-screen bg-slate-50 pb-24">
       <CaregiverTopNav />
       <div className="max-w-4xl mx-auto px-4 md:px-6 py-6">
@@ -342,11 +359,18 @@ export const CaregiverFamiliesPage: React.FC = () => {
                     )
                   )}
 
-                  {/* Message button */}
-                  <div className="mt-6">
+                  {/* Buttons */}
+                  <div className="mt-6 flex gap-2">
+                    <button
+                      onClick={() => openDetails(f)}
+                      className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold rounded-xl border border-primary-600 text-primary-600 hover:bg-primary-50 transition-colors"
+                    >
+                      <FileText className="w-4 h-4" />
+                      View Details
+                    </button>
                     <button
                       onClick={() => handleMessage(f.clientId, f.name)}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-semibold rounded-xl bg-primary-600 hover:bg-primary-700 text-white transition-colors"
+                      className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold rounded-xl bg-primary-600 hover:bg-primary-700 text-white transition-colors"
                     >
                       <MessageSquare className="w-4 h-4" />
                       Message
@@ -360,5 +384,104 @@ export const CaregiverFamiliesPage: React.FC = () => {
         )}
       </div>
     </div>
+
+    {/* Details Modal */}
+
+    {detailsEntry && (
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+          {/* Header */}
+          <div className="px-6 pt-6 pb-4 border-b border-slate-100 flex items-start justify-between shrink-0">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">{detailsEntry.name}</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Care details</p>
+            </div>
+            <button onClick={() => { setDetailsEntry(null); setDetailsData(null); }} className="text-slate-400 hover:text-slate-600 p-1 -mr-1 -mt-1">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
+            {detailsLoading ? (
+              <p className="text-sm text-slate-400 text-center py-8">Loading...</p>
+            ) : (
+              <>
+                {/* Care Recipients & Care Plan */}
+                {detailsData?.careRecipients?.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <FileText className="w-4 h-4 text-primary-500" />
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Plan</p>
+                    </div>
+                    {detailsData.careRecipients.map((r: any, i: number) => (
+                      <div key={i} className="mb-3">
+                        <p className="text-sm font-semibold text-slate-700 mb-1">{r.firstName || r.name || `Recipient ${i + 1}`}{r.age ? ` · Age ${r.age}` : ''}</p>
+                        {r.careNeeds?.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {r.careNeeds.map((need: string) => (
+                              <span key={need} className="text-xs bg-primary-50 text-primary-700 border border-primary-100 px-2.5 py-1 rounded-full">{need}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Lifestyle */}
+                {detailsData?.lifestyleNotes?.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <Smile className="w-4 h-4 text-amber-500" />
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Lifestyle</p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {detailsData.lifestyleNotes.map((note: string) => (
+                        <span key={note} className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2.5 py-1 rounded-full">{note}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Care Location */}
+                {detailsData?.selectedAddress && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <MapPin className="w-4 h-4 text-slate-400" />
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Location</p>
+                    </div>
+                    <p className="text-sm text-slate-700">{detailsData.selectedAddress}</p>
+                  </div>
+                )}
+
+                {/* Emergency Contact */}
+                {(detailsData?.emergencyContactFirstName || detailsData?.emergencyFirstName) && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Phone className="w-4 h-4 text-red-400" />
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Emergency Contact</p>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-700">
+                      {detailsData.emergencyContactFirstName || detailsData.emergencyFirstName} {detailsData.emergencyContactLastName || detailsData.emergencyLastName}
+                      {(detailsData.emergencyContactRelation || detailsData.emergencyRelation) && (
+                        <span className="text-slate-400 font-normal"> · {detailsData.emergencyContactRelation || detailsData.emergencyRelation}</span>
+                      )}
+                    </p>
+                    {(detailsData.emergencyContactPhone || detailsData.emergencyPhone) && (
+                      <p className="text-sm text-primary-600 mt-0.5">{detailsData.emergencyContactPhone || detailsData.emergencyPhone}</p>
+                    )}
+                  </div>
+                )}
+
+                {!detailsData && (
+                  <p className="text-sm text-slate-400 text-center py-4">No details available.</p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 };

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Users, Settings, Wallet, BookOpen, MessageCircle, LogOut } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { User, Settings, Wallet, BookOpen, MessageCircle, LogOut, ChevronDown } from 'lucide-react';
 import { authService } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
 import type { Caregiver } from '../../types';
@@ -11,6 +11,9 @@ interface CaregiverUserMenuProps {
 
 export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile }) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const ACCOUNT_PATHS = ['/caregiver/profile', '/caregiver/settings', '/caregiver/payments'];
+  const isAccountActive = ACCOUNT_PATHS.some(p => location.pathname.startsWith(p));
   const { currentUser, addToast } = useCareConnex();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -66,9 +69,9 @@ export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile })
   const avatar = profile?.photo || profile?.imageUrl || (currentUser as any)?.photoURL;
 
   const items: Array<{ label: string; onClick: () => void; icon: React.ReactNode; divider?: boolean }> = [
-    { label: 'My Families', onClick: () => go('/caregiver/families'), icon: <Users className="w-4 h-4" /> },
-    { label: 'Settings', onClick: () => go('/caregiver/settings'), icon: <Settings className="w-4 h-4" />, divider: true },
+    { label: 'Profile', onClick: () => go('/caregiver/profile'), icon: <User className="w-4 h-4" /> },
     { label: 'Payments', onClick: () => go('/caregiver/payments'), icon: <Wallet className="w-4 h-4" /> },
+    { label: 'Settings', onClick: () => go('/caregiver/settings'), icon: <Settings className="w-4 h-4" />, divider: true },
     { label: 'Success guide', onClick: scrollToSuccessGuide, icon: <BookOpen className="w-4 h-4" /> },
     { label: 'Give feedback', onClick: () => { window.location.href = 'mailto:support@careconnex.app?subject=Caregiver%20feedback'; setOpen(false); }, icon: <MessageCircle className="w-4 h-4" />, divider: true },
   ];
@@ -79,13 +82,16 @@ export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile })
         onClick={() => setOpen(o => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-transparent hover:ring-primary-200 transition-all flex items-center justify-center bg-primary-100 text-primary-700 font-semibold"
+        className={`flex items-center gap-1 px-1.5 py-1 rounded-lg transition-colors ${isAccountActive || open ? 'bg-primary-50' : 'hover:bg-slate-100'}`}
       >
-        {avatar ? (
-          <img src={avatar} alt="Profile" className="w-full h-full object-cover" />
-        ) : (
-          <span className="text-sm">{initials}</span>
-        )}
+        <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-transparent hover:ring-primary-200 flex items-center justify-center bg-primary-100 text-primary-700 font-semibold">
+          {avatar ? (
+            <img src={avatar} alt="Profile" className="w-full h-full object-cover" />
+          ) : (
+            <span className="text-sm">{initials}</span>
+          )}
+        </div>
+        <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (

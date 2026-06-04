@@ -492,9 +492,21 @@ export default function ClientCaregiverProfile({
                   const vals = reviews.map(r => (r as any).categories?.[k]).filter((v: any) => v > 0);
                   return { key: k, label: catLabels[k], avg: vals.length > 0 ? vals.reduce((a: number, b: number) => a + b, 0) / vals.length : null };
                 }).filter(c => c.avg !== null);
-                if (!pct && catAvgs.length === 0) return null;
+                const overallAvg = reviews.length > 0 ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length : null;
+                if (!pct && catAvgs.length === 0 && overallAvg === null) return null;
                 return (
                   <div className="mb-4 pb-4 border-b border-slate-100 space-y-2">
+                    {overallAvg !== null && (
+                      <div className="flex items-center gap-2">
+                        <div className="flex gap-0.5">
+                          {[1,2,3,4,5].map(s => (
+                            <Star key={s} className={`w-4 h-4 ${s <= Math.round(overallAvg) ? 'fill-yellow-400 text-yellow-400' : 'text-slate-200 fill-current'}`} />
+                          ))}
+                        </div>
+                        <span className="text-sm font-semibold text-slate-700">{overallAvg.toFixed(1)}</span>
+                        <span className="text-xs text-slate-400">overall ({reviews.length} {reviews.length === 1 ? 'review' : 'reviews'})</span>
+                      </div>
+                    )}
                     {pct !== null && (
                       <p className="text-xs text-slate-500">
                         <span className="font-semibold text-green-600">{pct}%</span> of clients would recommend

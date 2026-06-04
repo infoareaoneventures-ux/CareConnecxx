@@ -31,18 +31,12 @@ export const LeaveReviewModal: React.FC<LeaveReviewModalProps> = ({
 
   const user = auth?.currentUser;
 
-  const setCat = (key: keyof typeof categories, val: number) => {
-    const updated = { ...categories, [key]: val };
-    setCategories(updated);
-    // Auto-calculate overall from all rated categories so far
-    const vals = Object.values(updated).filter(v => v > 0);
-    if (vals.length > 0) setRating(Math.round(vals.reduce((a, b) => a + b, 0) / vals.length));
-  };
+  const setCat = (key: keyof typeof categories, val: number) =>
+    setCategories(prev => ({ ...prev, [key]: val }));
 
   const handleSubmit = async () => {
     if (rating === 0)               { setError('Please select a star rating'); return; }
     if (comment.trim().length < 10) { setError('Please write at least 10 characters'); return; }
-    if (Object.values(categories).some(v => v === 0)) { setError('Please rate all categories'); return; }
     if (recommend === null)         { setError('Please answer the recommendation question'); return; }
 
     setError('');

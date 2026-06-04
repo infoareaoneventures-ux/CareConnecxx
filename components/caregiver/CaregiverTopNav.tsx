@@ -1,22 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell, MessageSquare, Home, Calendar, Briefcase,
   BookOpen, Settings, X, MoreHorizontal, LogOut, User,
-  Users, Wallet,
+  Users, Wallet, ChevronDown,
 } from 'lucide-react';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { authService } from '../../services/api';
 import { CaregiverUserMenu } from './CaregiverUserMenu';
 import type { Caregiver } from '../../types';
 
-const NAV_LINKS = [
-  { label: 'Dashboard', path: '/caregiver/dashboard' },
-  { label: 'Calendar', path: '/caregiver/calendar' },
-  { label: 'Profile', path: '/caregiver/profile' },
-  { label: 'Job Board', path: '/caregiver/jobs' },
-  { label: 'Bookings', path: '/caregiver/bookings' },
-];
+const BOOKINGS_ROUTES = ['/caregiver/bookings', '/caregiver/families'];
 
 const AUTH_PATHS = [
   '/caregiver/login',
@@ -156,53 +150,75 @@ const DesktopNav: React.FC<{
   profile: Caregiver | null;
   isActive: (p: string) => boolean;
   navigate: (path: string) => void;
-}> = ({ profile, isActive, navigate }) => (
-  <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-    <Link to="/caregiver/dashboard" className="flex items-center gap-2">
-      <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-white font-bold text-lg shadow-sm">
-        C
+}> = ({ profile, isActive, navigate }) => {
+  const [bookingsOpen, setBookingsOpen] = useState(false);
+  const bookingsRef = useRef<HTMLDivElement>(null);
+  const isBookingsActive = BOOKINGS_ROUTES.some(r => isActive(r));
+
+  useEffect(() => {
+    const handler = (e: MouseEvent | TouchEvent) => {
+      if (bookingsRef.current && !bookingsRef.current.contains(e.target as Node)) setBookingsOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    document.addEventListener('touchstart', handler);
+    return () => { document.removeEventListener('mousedown', handler); document.removeEventListener('touchstart', handler); };
+  }, []);
+
+  const navBtn = (active: boolean) =>
+    `flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+      active ? 'text-primary-600 bg-primary-50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+    }`;
+
+  return (
+    <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <Link to="/caregiver/dashboard" className="flex items-center gap-2">
+        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-white font-bold text-lg shadow-sm">C</div>
+        <span className="font-bold text-slate-900 tracking-tight">CareConnex</span>
+      </Link>
+
+      <nav className="hidden md:flex items-center gap-1">
+        {/* Job Board */}
+        <Link to="/caregiver/jobs" className={navBtn(isActive('/caregiver/jobs'))}>Job Board</Link>
+
+        {/* Bookings dropdown */}
+        <div className="relative" ref={bookingsRef}>
+          <button onClick={() => setBookingsOpen(o => !o)} className={navBtn(isBookingsActive || bookingsOpen)}>
+            <span>Bookings</span>
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${bookingsOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {bookingsOpen && (
+            <div className="absolute left-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50">
+              {[
+                { icon: <BookOpen className="w-4 h-4" />, label: 'My Bookings', path: '/caregiver/bookings' },
+                { icon: <Users className="w-4 h-4" />, label: 'My Families', path: '/caregiver/families' },
+              ].map(item => (
+                <button key={item.path} onClick={() => { navigate(item.path); setBookingsOpen(false); }}
+                  className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm transition-colors ${
+                    isActive(item.path) ? 'text-primary-600 bg-primary-50' : 'text-slate-700 hover:bg-slate-50'
+                  }`}>
+                  {item.icon}<span>{item.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Calendar */}
+        <Link to="/caregiver/calendar" className={navBtn(isActive('/caregiver/calendar'))}>Calendar</Link>
+      </nav>
+
+      {/* Right side: Messages + Bell + Avatar */}
+      <div className="hidden md:flex items-center gap-1">
+        <button onClick={() => navigate('/caregiver/inbox')} aria-label="Messages"
+          className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${isActive('/caregiver/inbox') ? 'text-primary-600 bg-primary-50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}>
+          <MessageSquare className="w-4 h-4" />
+        </button>
+        <button aria-label="Notifications"
+          className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors">
+          <Bell className="w-4 h-4" />
+        </button>
+        <CaregiverUserMenu profile={profile} />
       </div>
-      <span className="font-bold text-slate-900 tracking-tight">CareConnex</span>
-    </Link>
-
-    <nav className="hidden md:flex items-center gap-1">
-      {[
-        { label: 'Dashboard', path: '/caregiver/dashboard' },
-        { label: 'Calendar', path: '/caregiver/calendar' },
-        { label: 'Profile', path: '/caregiver/profile' },
-        { label: 'Job Board', path: '/caregiver/jobs' },
-        { label: 'Bookings', path: '/caregiver/bookings' },
-      ].map(link => (
-        <Link
-          key={link.path}
-          to={link.path}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            isActive(link.path)
-              ? 'text-primary-600 bg-primary-50'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-          }`}
-        >
-          {link.label}
-        </Link>
-      ))}
-    </nav>
-
-    <div className="hidden md:flex items-center gap-2">
-      <button
-        onClick={() => navigate('/caregiver/inbox')}
-        aria-label="Messages"
-        className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
-      >
-        <MessageSquare className="w-4 h-4" />
-      </button>
-      <button
-        onClick={() => navigate('/caregiver/inbox')}
-        aria-label="Notifications"
-        className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
-      >
-        <Bell className="w-4 h-4" />
-      </button>
-      <CaregiverUserMenu profile={profile} />
     </div>
-  </div>
-);
+  );
+};

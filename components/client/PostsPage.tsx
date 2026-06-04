@@ -27,8 +27,8 @@ const CARE_NEED_SUBS: Record<string, string[]> = {
   'Meal Preparation': ['Breakfast', 'Lunch', 'Snack', 'Dinner'],
   'Light Housekeeping': ['Light housekeeping (dusting, vacuuming, mopping)', 'Change bed linens', 'Change bath towels', 'Take out trash'],
 };
-const LIFESTYLE_FAVORITES = ['Walk', 'Reading', 'Cooking', 'Gardening', 'Watching TV', 'Socializing', 'Other'];
-const LIFESTYLE_HELP = ['Going outside', 'Exercise', 'Hobbies', 'Transportation', 'Other'];
+const LIFESTYLE_FAVORITES = ['Walk', 'Reading', 'Cooking', 'Gardening', 'Watching TV', 'Socializing', 'Going outside', 'Exercise', 'Hobbies', 'Other'];
+const LIFESTYLE_HELP: string[] = [];
 const LIFESTYLE_ENTERTAINMENT = ['Music', 'Movies', 'TV Shows', 'Theater', 'Other'];
 const VISIT_FREQS = ['Daily', 'Weekly', 'Monthly', 'Occasionally'];
 const emptyLifestyleDraft = () => ({ favoriteActivities: [] as string[], favoriteActivitiesOther: '', helpActivities: [] as string[], helpActivitiesOther: '', entertainment: [] as string[], entertainmentOther: '', enjoysConversation: null as boolean | null, prefersQuiet: null as boolean | null, familyInArea: null as boolean | null, familyVisitFreq: '', friendsVisitors: null as boolean | null, friendsVisitFreq: '', hasAppointments: null as boolean | null, appointmentsDetails: '' });
@@ -1925,7 +1925,6 @@ export const PostsPage: React.FC = () => {
                                         <div className="space-y-3">
                                           {([
                                             { label: 'FAVORITE ACTIVITIES', key: 'favoriteActivities' as const, otherKey: 'favoriteActivitiesOther' as const, opts: LIFESTYLE_FAVORITES },
-                                            { label: 'NEEDS HELP WITH', key: 'helpActivities' as const, otherKey: 'helpActivitiesOther' as const, opts: LIFESTYLE_HELP },
                                             { label: 'ENTERTAINMENT', key: 'entertainment' as const, otherKey: 'entertainmentOther' as const, opts: LIFESTYLE_ENTERTAINMENT },
                                           ] as const).map(({ label, key, otherKey, opts }) => (
                                             <div key={key}>
@@ -1995,10 +1994,24 @@ export const PostsPage: React.FC = () => {
                                             { label: 'Friends or visitors', key: 'friendsVisitors' as const },
                                             { label: 'Has appointments', key: 'hasAppointments' as const },
                                           ]).filter(({ key }) => ls[key] !== null).map(({ label, key }) => (
-                                            <div key={key} className="flex items-center justify-between text-xs">
-                                              <span className="text-slate-500 font-medium">{label}</span>
-                                              <span className={`px-2.5 py-0.5 rounded-full font-semibold ${ls[key] === true ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>{ls[key] === true ? 'Yes' : 'No'}</span>
-                                            </div>
+                                            <React.Fragment key={key}>
+                                              <div className="flex items-center justify-between text-xs">
+                                                <span className="text-slate-500 font-medium">{label}</span>
+                                                <span className={`px-2.5 py-0.5 rounded-full font-semibold ${ls[key] === true ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>{ls[key] === true ? 'Yes' : 'No'}</span>
+                                              </div>
+                                              {key === 'familyInArea' && ls.familyInArea === true && ls.familyVisitFreq && (
+                                                <div className="flex items-center justify-between text-xs">
+                                                  <span className="text-slate-400">Family visit frequency</span>
+                                                  <span className="text-slate-600 font-medium">{ls.familyVisitFreq}</span>
+                                                </div>
+                                              )}
+                                              {key === 'friendsVisitors' && ls.friendsVisitors === true && ls.friendsVisitFreq && (
+                                                <div className="flex items-center justify-between text-xs">
+                                                  <span className="text-slate-400">Friends visit frequency</span>
+                                                  <span className="text-slate-600 font-medium">{ls.friendsVisitFreq}</span>
+                                                </div>
+                                              )}
+                                            </React.Fragment>
                                           ))}
                                           {ls.hasAppointments === true && ls.appointmentsDetails && <p className="text-xs text-slate-500"><span className="font-medium text-slate-400">Appointments:</span> {ls.appointmentsDetails}</p>}
                                         </div>

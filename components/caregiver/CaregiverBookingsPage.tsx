@@ -478,11 +478,34 @@ const RequestCard: React.FC<{
                                 {lifestyle!.entertainmentOther && <p className="text-[10px] text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {lifestyle!.entertainmentOther}</p>}
                               </div>
                             )}
-                            {boolPrefs.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {boolPrefs.map(p => <span key={p} className="text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full">{p}</span>)}
-                              </div>
-                            )}
+                            <div className="space-y-1">
+                              {([
+                                { label: 'Enjoys conversation', key: 'enjoysConversation' },
+                                { label: 'Prefers quiet', key: 'prefersQuiet' },
+                                { label: 'Family in area', key: 'familyInArea' },
+                                { label: 'Friends or visitors', key: 'friendsVisitors' },
+                                { label: 'Has appointments', key: 'hasAppointments' },
+                              ] as const).filter(({ key }) => lifestyle && (lifestyle as any)[key] !== null && (lifestyle as any)[key] !== undefined).map(({ label, key }) => (
+                                <React.Fragment key={key}>
+                                  <div className="flex items-center justify-between text-[10px]">
+                                    <span className="text-slate-500">{label}</span>
+                                    <span className={`px-1.5 py-0.5 rounded-full font-semibold ${(lifestyle as any)[key] === true ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>{(lifestyle as any)[key] === true ? 'Yes' : 'No'}</span>
+                                  </div>
+                                  {key === 'familyInArea' && lifestyle?.familyInArea === true && lifestyle?.familyVisitFreq && (
+                                    <div className="flex items-center justify-between text-[10px]">
+                                      <span className="text-slate-400">Family visit frequency</span>
+                                      <span className="text-slate-600 font-medium">{lifestyle.familyVisitFreq}</span>
+                                    </div>
+                                  )}
+                                  {key === 'friendsVisitors' && lifestyle?.friendsVisitors === true && lifestyle?.friendsVisitFreq && (
+                                    <div className="flex items-center justify-between text-[10px]">
+                                      <span className="text-slate-400">Friends visit frequency</span>
+                                      <span className="text-slate-600 font-medium">{lifestyle.friendsVisitFreq}</span>
+                                    </div>
+                                  )}
+                                </React.Fragment>
+                              ))}
+                            </div>
                             {lifestyle?.hasAppointments === true && lifestyle?.appointmentsDetails && (
                               <p className="text-[10px] text-slate-500"><span className="font-medium text-slate-400">Appointments:</span> {lifestyle.appointmentsDetails}</p>
                             )}
@@ -781,16 +804,34 @@ const BookingGroupCard: React.FC<{
                     {ls.entertainment && ls.entertainment.length > 0 && (
                       <div><p className="text-xs text-slate-400 mb-1">Entertainment</p><div className="flex flex-wrap gap-1">{ls.entertainment.map(a => <span key={a} className="text-xs bg-purple-50 text-purple-700 border border-purple-100 px-2 py-0.5 rounded-full">{a}</span>)}</div>{ls.entertainmentOther && <p className="text-xs text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {ls.entertainmentOther}</p>}</div>
                     )}
-                    {(() => {
-                      const bools = [
-                        ls.enjoysConversation === true && 'Enjoys conversation',
-                        ls.prefersQuiet === true && 'Prefers quiet',
-                        ls.familyInArea === true && (ls.familyVisitFreq ? `Family in area · ${ls.familyVisitFreq}` : 'Family in area'),
-                        ls.friendsVisitors === true && (ls.friendsVisitFreq ? `Friends or visitors · ${ls.friendsVisitFreq}` : 'Friends or visitors'),
-                        ls.hasAppointments === true && 'Has appointments',
-                      ].filter(Boolean) as string[];
-                      return bools.length > 0 ? <div className="flex flex-wrap gap-1">{bools.map(p => <span key={p} className="text-xs bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full">{p}</span>)}</div> : null;
-                    })()}
+                    <div className="space-y-1">
+                      {([
+                        { label: 'Enjoys conversation', key: 'enjoysConversation' },
+                        { label: 'Prefers quiet', key: 'prefersQuiet' },
+                        { label: 'Family in area', key: 'familyInArea' },
+                        { label: 'Friends or visitors', key: 'friendsVisitors' },
+                        { label: 'Has appointments', key: 'hasAppointments' },
+                      ] as const).filter(({ key }) => (ls as any)[key] !== null && (ls as any)[key] !== undefined).map(({ label, key }) => (
+                        <React.Fragment key={key}>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-slate-500">{label}</span>
+                            <span className={`px-2 py-0.5 rounded-full font-semibold text-xs ${(ls as any)[key] === true ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>{(ls as any)[key] === true ? 'Yes' : 'No'}</span>
+                          </div>
+                          {key === 'familyInArea' && (ls as any).familyInArea === true && (ls as any).familyVisitFreq && (
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-slate-400">Family visit frequency</span>
+                              <span className="text-slate-600 font-medium">{(ls as any).familyVisitFreq}</span>
+                            </div>
+                          )}
+                          {key === 'friendsVisitors' && (ls as any).friendsVisitors === true && (ls as any).friendsVisitFreq && (
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-slate-400">Friends visit frequency</span>
+                              <span className="text-slate-600 font-medium">{(ls as any).friendsVisitFreq}</span>
+                            </div>
+                          )}
+                        </React.Fragment>
+                      ))}
+                    </div>
                     {ls.hasAppointments === true && ls.appointmentsDetails && <p className="text-xs text-slate-500"><span className="font-medium text-slate-400">Appointments:</span> {ls.appointmentsDetails}</p>}
                   </div>
                 )}

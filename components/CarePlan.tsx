@@ -40,8 +40,8 @@ const CARE_NEED_SUBS: Record<string, string[]> = {
   'Light Housekeeping': ['Light housekeeping (dusting, vacuuming, mopping)', 'Change bed linens', 'Change bath towels', 'Take out trash'],
 };
 
-const FAV_ACTIVITIES = ['Walk', 'Reading', 'Cooking', 'Gardening', 'Watching TV', 'Socializing', 'Other'];
-const HELP_ACTIVITIES = ['Going outside', 'Exercise', 'Hobbies', 'Transportation', 'Other'];
+const FAV_ACTIVITIES = ['Walk', 'Reading', 'Cooking', 'Gardening', 'Watching TV', 'Socializing', 'Going outside', 'Exercise', 'Hobbies', 'Other'];
+const HELP_ACTIVITIES: string[] = [];
 const ENTERTAINMENT = ['Music', 'Movies', 'TV Shows', 'Theater', 'Other'];
 const FREQ_OPTIONS = ['Daily', 'Weekly', 'Monthly', 'Occasionally'];
 const PET_TYPES = ['Dog', 'Cat', 'Fish', 'Other'];
@@ -1486,7 +1486,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                         </div>
                         <div className="space-y-6">
 
-                          <SubSec title="Favorite Activities (Currently Able to Do)">
+                          <SubSec title="Favorite Activities">
                             <div className="flex flex-wrap gap-2">
                               {FAV_ACTIVITIES.map(a => (
                                 <CheckPill key={a} label={a} selected={draft.lifestyle.favoriteActivities.includes(a)}
@@ -1500,21 +1500,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             )}
                           </SubSec>
 
-                          <SubSec title="Activities They Enjoy but Need Help With">
-                            <div className="flex flex-wrap gap-2">
-                              {HELP_ACTIVITIES.map(a => (
-                                <CheckPill key={a} label={a} selected={draft.lifestyle.helpActivities.includes(a)}
-                                  onClick={() => setLS({ helpActivities: toggleArr(draft.lifestyle.helpActivities, a) })} />
-                              ))}
-                            </div>
-                            {draft.lifestyle.helpActivities.includes('Other') && (
-                              <input className={`mt-2 ${inputCls}`} placeholder="Describe other activity"
-                                value={draft.lifestyle.helpActivitiesOther}
-                                onChange={e => setLS({ helpActivitiesOther: e.target.value })} />
-                            )}
-                          </SubSec>
-
-                          <SubSec title="Entertainment Preferences">
+                          <SubSec title="Entertainment">
                             <div className="flex flex-wrap gap-2">
                               {ENTERTAINMENT.map(a => (
                                 <CheckPill key={a} label={a} selected={draft.lifestyle.entertainment.includes(a)}
@@ -1528,19 +1514,17 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             )}
                           </SubSec>
 
-                          <SubSec title="Social Preferences">
-                            <div className="space-y-2.5">
-                              <YesNo label="Enjoys conversation" value={draft.lifestyle.enjoysConversation} onChange={v => setLS({ enjoysConversation: v })} />
-                              <YesNo label="Prefers quiet environment" value={draft.lifestyle.prefersQuiet} onChange={v => setLS({ prefersQuiet: v })} />
-                            </div>
-                          </SubSec>
+                          <div className="space-y-2.5">
+                            <YesNo label="Enjoys Conversation" value={draft.lifestyle.enjoysConversation} onChange={v => setLS({ enjoysConversation: v })} />
+                            <YesNo label="Prefers Quiet" value={draft.lifestyle.prefersQuiet} onChange={v => setLS({ prefersQuiet: v })} />
+                          </div>
 
-                          <SubSec title="Family in the Area">
+                          <SubSec title="Family in Area">
                             <YesNo value={draft.lifestyle.familyInArea}
                               onChange={v => setLS({ familyInArea: v, familyVisitFreq: v ? draft.lifestyle.familyVisitFreq : '' })} />
                             {draft.lifestyle.familyInArea && (
                               <div className="mt-3">
-                                <p className="text-xs text-slate-500 mb-2">Visit frequency</p>
+                                <p className="text-xs text-slate-500 mb-2">Family Visit Frequency</p>
                                 <div className="flex flex-wrap gap-2">
                                   {FREQ_OPTIONS.map(f => (
                                     <CheckPill key={f} label={f} selected={draft.lifestyle.familyVisitFreq === f}
@@ -1556,7 +1540,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                               onChange={v => setLS({ friendsVisitors: v, friendsVisitFreq: v ? draft.lifestyle.friendsVisitFreq : '' })} />
                             {draft.lifestyle.friendsVisitors && (
                               <div className="mt-3">
-                                <p className="text-xs text-slate-500 mb-2">Visit frequency</p>
+                                <p className="text-xs text-slate-500 mb-2">Friends Visit Frequency</p>
                                 <div className="flex flex-wrap gap-2">
                                   {FREQ_OPTIONS.map(f => (
                                     <CheckPill key={f} label={f} selected={draft.lifestyle.friendsVisitFreq === f}
@@ -1603,26 +1587,31 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                   <ReadChips label="Entertainment" items={rPlan.lifestyle.entertainment} color="bg-purple-50 border-purple-100 text-purple-700" />
                                   {rPlan.lifestyle.entertainment.includes('Other') && rPlan.lifestyle.entertainmentOther && <p className="text-xs text-slate-500 mt-1 ml-0.5"><span className="font-medium text-slate-400">Other:</span> {rPlan.lifestyle.entertainmentOther}</p>}
                                 </div>
-                                <ReadChips label="Social"
-                                  items={[
-                                    rPlan.lifestyle.enjoysConversation === true ? 'Enjoys conversation' : '',
-                                    rPlan.lifestyle.prefersQuiet === true ? 'Prefers quiet' : '',
-                                  ].filter(Boolean)}
-                                  color="bg-blue-50 border-blue-100 text-blue-700" />
-                                {(rPlan.lifestyle.familyInArea === true || rPlan.lifestyle.friendsVisitors === true) && (
-                                  <ReadChips label="Visitors"
-                                    items={[
-                                      rPlan.lifestyle.familyInArea === true ? `Family nearby${rPlan.lifestyle.familyVisitFreq ? ` · ${rPlan.lifestyle.familyVisitFreq}` : ''}` : '',
-                                      rPlan.lifestyle.friendsVisitors === true ? `Friends visit${rPlan.lifestyle.friendsVisitFreq ? ` · ${rPlan.lifestyle.friendsVisitFreq}` : ''}` : '',
-                                    ].filter(Boolean)}
-                                    color="bg-green-50 border-green-100 text-green-700" />
-                                )}
-                                {rPlan.lifestyle.hasAppointments === true && (
-                                  <div>
-                                    <p className="text-xs text-slate-400 mb-1.5">Appointments</p>
-                                    <p className="text-sm text-slate-700">{rPlan.lifestyle.appointmentsDetails || 'Has regular appointments'}</p>
-                                  </div>
-                                )}
+                                <div className="space-y-1">
+                                  {([
+                                    { label: 'Enjoys conversation', key: 'enjoysConversation' as const },
+                                    { label: 'Prefers quiet', key: 'prefersQuiet' as const },
+                                    { label: 'Family in area', key: 'familyInArea' as const },
+                                    { label: 'Friends or visitors', key: 'friendsVisitors' as const },
+                                    { label: 'Has appointments', key: 'hasAppointments' as const },
+                                  ]).filter(({ key }) => rPlan.lifestyle[key] !== null && rPlan.lifestyle[key] !== undefined).map(({ label, key }) => (
+                                    <React.Fragment key={key}>
+                                      <div className="flex items-center justify-between text-xs">
+                                        <span className="text-slate-500 font-medium">{label}</span>
+                                        <span className={`px-2.5 py-0.5 rounded-full font-semibold ${rPlan.lifestyle[key] === true ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>{rPlan.lifestyle[key] === true ? 'Yes' : 'No'}</span>
+                                      </div>
+                                      {key === 'familyInArea' && rPlan.lifestyle.familyInArea === true && rPlan.lifestyle.familyVisitFreq && (
+                                        <div className="flex items-center justify-between text-xs"><span className="text-slate-400">Family visit frequency</span><span className="text-slate-600 font-medium">{rPlan.lifestyle.familyVisitFreq}</span></div>
+                                      )}
+                                      {key === 'friendsVisitors' && rPlan.lifestyle.friendsVisitors === true && rPlan.lifestyle.friendsVisitFreq && (
+                                        <div className="flex items-center justify-between text-xs"><span className="text-slate-400">Friends visit frequency</span><span className="text-slate-600 font-medium">{rPlan.lifestyle.friendsVisitFreq}</span></div>
+                                      )}
+                                      {key === 'hasAppointments' && rPlan.lifestyle.hasAppointments === true && rPlan.lifestyle.appointmentsDetails && (
+                                        <p className="text-xs text-slate-500"><span className="font-medium text-slate-400">Details:</span> {rPlan.lifestyle.appointmentsDetails}</p>
+                                      )}
+                                    </React.Fragment>
+                                  ))}
+                                </div>
                               </div>
                             ) : <p className="text-sm text-slate-400 italic">Not specified</p>}
                           </div>

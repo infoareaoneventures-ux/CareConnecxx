@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Heart, Search as SearchIcon, MessageSquare, Clock, User, X, MapPin, Phone, FileText, Smile } from 'lucide-react';
+import { Heart, Search as SearchIcon, MessageSquare, Clock, User, X, Phone, FileText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -167,6 +167,19 @@ export const CaregiverFamiliesPage: React.FC = () => {
           if (!activeClientIds.has(data.clientId))
             pastList.push(buildEntry(bookingId, data, 'past'));
         });
+
+        // Fetch missing photos from users collection
+        const allEntries = [...activeList, ...pastList];
+        const missingPhoto = allEntries.filter(e => !e.photoURL);
+        if (missingPhoto.length > 0) {
+          await Promise.all(missingPhoto.map(async e => {
+            try {
+              const uSnap = await db!.collection('users').doc(e.clientId).get();
+              const url = uSnap.data()?.photoURL || uSnap.data()?.photo || null;
+              if (url) e.photoURL = url;
+            } catch { /* non-fatal */ }
+          }));
+        }
 
         if (!active) return;
         setActiveFamilies(activeList);
@@ -392,9 +405,16 @@ export const CaregiverFamiliesPage: React.FC = () => {
         <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
           {/* Header */}
           <div className="px-6 pt-6 pb-4 border-b border-slate-100 flex items-start justify-between shrink-0">
-            <div>
-              <h3 className="text-lg font-bold text-slate-900">{detailsEntry.name}</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Care details</p>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center text-primary-700 font-bold shrink-0">
+                {detailsEntry.photoURL
+                  ? <img src={detailsEntry.photoURL} alt={detailsEntry.name} className="w-full h-full object-cover" />
+                  : detailsEntry.name.charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">{detailsEntry.name}</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Care details</p>
+              </div>
             </div>
             <button onClick={() => { setDetailsEntry(null); setDetailsData(null); }} className="text-slate-400 hover:text-slate-600 p-1 -mr-1 -mt-1">
               <X className="w-5 h-5" />
@@ -406,76 +426,89 @@ export const CaregiverFamiliesPage: React.FC = () => {
               <p className="text-sm text-slate-400 text-center py-8">Loading...</p>
             ) : (
               <>
-                {/* Care Recipients & Care Plan */}
-                {detailsData?.careRecipients?.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <FileText className="w-4 h-4 text-primary-500" />
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Plan</p>
-                    </div>
-                    {detailsData.careRecipients.map((r: any, i: number) => (
-                      <div key={i} className="mb-3">
-                        <p className="text-sm font-semibold text-slate-700 mb-1">{r.firstName || r.name || `Recipient ${i + 1}`}{r.age ? ` · Age ${r.age}` : ''}</p>
-                        {r.careNeeds?.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5">
+                {detailsData?.careRecipients?.map((r: any, i: number) => {
+                  const ls = r.lifestyle || null;
+                  return (
+                    <div key={i} className="space-y-4">
+                      {/* Recipient header */}
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-primary-100 overflow-hidden flex items-center justify-center text-primary-700 font-bold text-sm">
+                          {r.photoURL
+                            ? <img src={r.photoURL} alt={r.firstName || r.name} className="w-full h-full object-cover" />
+                            : (r.firstName || r.name || 'R').charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">{r.firstName || r.name}</p>
+                          {(r.relationship || r.age) && <p className="text-xs text-slate-400">{[r.relationship, r.age ? `Age ${r.age}` : null].filter(Boolean).join(' · ')}</p>}
+                        </div>
+                      </div>
+
+                      {/* Care Plan */}
+                      {r.careNeeds?.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care Plan</p>
+                          <div className="space-y-1.5">
                             {r.careNeeds.map((need: string) => (
-                              <span key={need} className="text-xs bg-primary-50 text-primary-700 border border-primary-100 px-2.5 py-1 rounded-full">{need}</span>
+                              <div key={need} className="bg-primary-50 border border-primary-100 rounded-xl px-3 py-2">
+                                <p className="text-sm font-medium text-primary-700">{need}</p>
+                              </div>
                             ))}
                           </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                        </div>
+                      )}
 
-                {/* Lifestyle */}
-                {detailsData?.lifestyleNotes?.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <Smile className="w-4 h-4 text-amber-500" />
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Lifestyle</p>
+                      {/* Lifestyle */}
+                      {ls && ((ls.favoriteActivities?.length || 0) > 0 || (ls.helpActivities?.length || 0) > 0 || (ls.entertainment?.length || 0) > 0 || ls.enjoysConversation !== null || ls.prefersQuiet !== null || ls.familyInArea !== null || ls.friendsVisitors !== null || ls.hasAppointments !== null) && (
+                        <div>
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Lifestyle</p>
+                          <div className="space-y-2">
+                            {ls.favoriteActivities?.length > 0 && <div><p className="text-xs text-slate-400 mb-1">Enjoys</p><div className="flex flex-wrap gap-1">{ls.favoriteActivities.map((a: string) => <span key={a} className="text-xs bg-green-50 text-green-700 border border-green-100 px-2 py-0.5 rounded-full">{a}</span>)}</div>{ls.favoriteActivitiesOther && <p className="text-xs text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {ls.favoriteActivitiesOther}</p>}</div>}
+                            {ls.helpActivities?.length > 0 && <div><p className="text-xs text-slate-400 mb-1">Needs help with</p><div className="flex flex-wrap gap-1">{ls.helpActivities.map((a: string) => <span key={a} className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full">{a}</span>)}</div>{ls.helpActivitiesOther && <p className="text-xs text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {ls.helpActivitiesOther}</p>}</div>}
+                            {ls.entertainment?.length > 0 && <div><p className="text-xs text-slate-400 mb-1">Entertainment</p><div className="flex flex-wrap gap-1">{ls.entertainment.map((e: string) => <span key={e} className="text-xs bg-purple-50 text-purple-700 border border-purple-100 px-2 py-0.5 rounded-full">{e}</span>)}</div>{ls.entertainmentOther && <p className="text-xs text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {ls.entertainmentOther}</p>}</div>}
+                            <div className="space-y-1">
+                              {([
+                                { label: 'Enjoys conversation', key: 'enjoysConversation' },
+                                { label: 'Prefers quiet', key: 'prefersQuiet' },
+                                { label: 'Family in area', key: 'familyInArea' },
+                                { label: 'Friends or visitors', key: 'friendsVisitors' },
+                                { label: 'Has appointments', key: 'hasAppointments' },
+                              ] as const).filter(({ key }) => ls[key] !== null && ls[key] !== undefined).map(({ label, key }) => (
+                                <React.Fragment key={key}>
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="text-slate-500">{label}</span>
+                                    <span className={`px-2 py-0.5 rounded-full font-semibold ${ls[key] === true ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>{ls[key] === true ? 'Yes' : 'No'}</span>
+                                  </div>
+                                  {key === 'familyInArea' && ls.familyInArea === true && ls.familyVisitFreq && <div className="flex items-center justify-between text-xs"><span className="text-slate-400">Family visit frequency</span><span className="text-slate-600 font-medium">{ls.familyVisitFreq}</span></div>}
+                                  {key === 'friendsVisitors' && ls.friendsVisitors === true && ls.friendsVisitFreq && <div className="flex items-center justify-between text-xs"><span className="text-slate-400">Friends visit frequency</span><span className="text-slate-600 font-medium">{ls.friendsVisitFreq}</span></div>}
+                                </React.Fragment>
+                              ))}
+                            </div>
+                            {ls.hasAppointments === true && ls.appointmentsDetails && <p className="text-xs text-slate-500"><span className="font-medium text-slate-400">Appointments:</span> {ls.appointmentsDetails}</p>}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {detailsData.lifestyleNotes.map((note: string) => (
-                        <span key={note} className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2.5 py-1 rounded-full">{note}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Care Location */}
-                {detailsData?.selectedAddress && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <MapPin className="w-4 h-4 text-slate-400" />
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Location</p>
-                    </div>
-                    <p className="text-sm text-slate-700">{detailsData.selectedAddress}</p>
-                  </div>
-                )}
+                  );
+                })}
 
                 {/* Emergency Contact */}
-                {(detailsData?.emergencyContactFirstName || detailsData?.emergencyFirstName) && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <Phone className="w-4 h-4 text-red-400" />
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Emergency Contact</p>
+                {detailsData?.emergencyContact?.name && (
+                  <div className="flex items-center gap-4 bg-red-50 border border-red-100 rounded-2xl px-5 py-4">
+                    <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                      <Phone className="w-4 h-4 text-red-500" />
                     </div>
-                    <p className="text-sm font-semibold text-slate-700">
-                      {detailsData.emergencyContactFirstName || detailsData.emergencyFirstName} {detailsData.emergencyContactLastName || detailsData.emergencyLastName}
-                      {(detailsData.emergencyContactRelation || detailsData.emergencyRelation) && (
-                        <span className="text-slate-400 font-normal"> · {detailsData.emergencyContactRelation || detailsData.emergencyRelation}</span>
-                      )}
-                    </p>
-                    {(detailsData.emergencyContactPhone || detailsData.emergencyPhone) && (
-                      <p className="text-sm text-primary-600 mt-0.5">{detailsData.emergencyContactPhone || detailsData.emergencyPhone}</p>
-                    )}
+                    <div>
+                      <p className="text-[10px] font-semibold text-red-400 uppercase tracking-wide mb-0.5">Emergency Contact</p>
+                      <p className="text-sm font-bold text-slate-800">
+                        {detailsData.emergencyContact.name}
+                        {detailsData.emergencyContact.relationship && <span className="text-slate-400 font-normal text-xs"> · {detailsData.emergencyContact.relationship}</span>}
+                      </p>
+                      {detailsData.emergencyContact.phone && <p className="text-sm font-semibold text-red-500 mt-0.5">{detailsData.emergencyContact.phone}</p>}
+                    </div>
                   </div>
                 )}
 
-                {!detailsData && (
-                  <p className="text-sm text-slate-400 text-center py-4">No details available.</p>
-                )}
+                {!detailsData && <p className="text-sm text-slate-400 text-center py-4">No details available.</p>}
               </>
             )}
           </div>

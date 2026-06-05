@@ -1349,6 +1349,18 @@ const SubmittableShiftCard: React.FC<{
                 {shift.date} · {shift.startTime}{shift.endTime ? `–${shift.endTime}` : ''}
               </span>
             </div>
+            {hasActual && (
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Clock in</span>
+                <span className="font-medium text-slate-700">{fmtDateTime(actualStart!)}</span>
+              </div>
+            )}
+            {hasActual && (
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Clock out</span>
+                <span className="font-medium text-slate-700">{fmtDateTime(actualEnd!)}</span>
+              </div>
+            )}
             {shift.careRecipients && shift.careRecipients.length > 0 && (
               <div className="flex items-center justify-between px-3 py-2">
                 <span className="text-slate-400">

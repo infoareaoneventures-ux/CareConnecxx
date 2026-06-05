@@ -40,6 +40,14 @@ function computeTotalHours(startIso: string, endIso: string): number {
   return (end - start) / 3_600_000;
 }
 
+function fmtHours(hours: number): string {
+  const totalSecs = Math.round(hours * 3600);
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const s = totalSecs % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -130,8 +138,12 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     throw new functions.https.HttpsError('already-exists', 'Hours already submitted for this shift');
   }
 
-  const caregiverDoc = await db.collection('users').doc(context.auth.uid).get();
+  const [caregiverDoc, clientDoc] = await Promise.all([
+    db.collection('users').doc(context.auth.uid).get(),
+    shiftDoc.clientId ? db.collection('users').doc(shiftDoc.clientId).get() : Promise.resolve(null),
+  ]);
   const caregiverData = caregiverDoc.data() || {};
+  const clientData = clientDoc?.data() || {};
   const totalHours = computeTotalHours(startTime, endTime);
   const payRate = shiftDoc.rate || caregiverData.hourlyRate || 25;
   const paymentMethod: PaymentMethod = (shiftDoc.paymentMethod || '').toLowerCase() === 'cash' ? 'cash' : 'credit';
@@ -149,6 +161,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     caregiverPhotoURL: caregiverData.profilePhoto || caregiverData.photoURL || shiftDoc.caregiverPhotoURL || null,
     clientId: shiftDoc.clientId,
     clientName: shiftDoc.clientName || 'Client',
+    clientPhotoURL: clientData.profilePhoto || clientData.photoURL || shiftDoc.clientPhotoURL || null,
     payRate,
     currency: 'usd',
     paymentMethod,
@@ -183,7 +196,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     shiftDoc.clientId,
     'shift_hours_submitted',
     'Hours submitted for your review',
-    `${caregiverData.name || 'Your caregiver'} submitted ${totalHours}h for review. Auto-approves in 24h.`,
+    `${caregiverData.name || 'Your caregiver'} submitted ${fmtHours(totalHours)} for review. Auto-approves in 24h.`,
     { appointmentId: shiftId, totalHours }
   );
 
@@ -196,7 +209,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
       const { sendToPhone } = await import("./linq/client");
       await sendToPhone(
         clientPhone,
-        `${caregiverData.name ?? "Your caregiver"} submitted ${totalHours}h for ` +
+        `${caregiverData.name ?? "Your caregiver"} submitted ${fmtHours(totalHours)} for ` +
         `${shiftDoc.date ?? "today"}'s visit ($${amount}).\n\n` +
         `Reply APPROVE to confirm, or DISPUTE if something looks wrong.`
       );
@@ -284,7 +297,7 @@ export const reviewShiftHours = functions.https.onCall(async (data, context) => 
       shift.caregiverId,
       'shift_hours_approved',
       'Your hours were approved',
-      `Client approved ${shift.submittedTotalHours}h.`,
+      `Client approved ${fmtHours(shift.submittedTotalHours)}.`,
       { appointmentId }
     );
     return { success: true };
@@ -334,7 +347,7 @@ export const reviewShiftHours = functions.https.onCall(async (data, context) => 
       shift.caregiverId,
       'shift_hours_correction_proposed',
       'Client proposed a correction',
-      `Client proposed ${proposedTotalHours}h (you submitted ${shift.submittedTotalHours}h). Respond within 24h or it auto-accepts.`,
+      `Client proposed ${fmtHours(proposedTotalHours)} (you submitted ${fmtHours(shift.submittedTotalHours)}). Respond within 24h or it auto-accepts.`,
       { appointmentId, proposedTotalHours }
     );
     return { success: true };
@@ -664,8 +677,8 @@ export const autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').
       updatedAt: now,
     });
 
-    await pushNotification(shift.caregiverId, 'shift_hours_auto_approved', 'Hours auto-approved', `Client did not respond in 24h; ${shift.submittedTotalHours}h auto-approved.`, { appointmentId: doc.id });
-    await pushNotification(shift.clientId, 'shift_hours_auto_approved', 'Hours auto-approved', `The 24h review window closed; ${shift.submittedTotalHours}h auto-approved.`, { appointmentId: doc.id });
+    await pushNotification(shift.caregiverId, 'shift_hours_auto_approved', 'Hours auto-approved', `Client did not respond in 24h; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
+    await pushNotification(shift.clientId, 'shift_hours_auto_approved', 'Hours auto-approved', `The 24h review window closed; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
   }
 
   return null;

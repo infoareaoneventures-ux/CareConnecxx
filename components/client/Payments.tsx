@@ -686,7 +686,7 @@ export const Payments: React.FC = () => {
                   });
                   const grouped = sorted.reduce((acc, row) => {
                     const key = row.caregiverId || row.caregiverName || 'unknown';
-                    if (!acc[key]) acc[key] = { name: row.caregiverName ?? 'Caregiver', photo: (row as any).caregiverPhotoURL, rows: [] };
+                    if (!acc[key]) acc[key] = { name: row.caregiverName ?? 'Caregiver', photo: row.caregiverPhotoURL ?? undefined, rows: [] };
                     acc[key].rows.push(row);
                     return acc;
                   }, {} as Record<string, { name: string; photo?: string; rows: typeof filteredRows }>);

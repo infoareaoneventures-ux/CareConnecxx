@@ -51,6 +51,7 @@ interface ShiftRow {
   id: string;
   appointmentId: string;
   clientName?: string;
+  clientPhotoURL?: string | null;
   caregiverId: string;
   payRate?: number;
   paymentMethod?: 'cash' | 'credit';
@@ -471,15 +472,6 @@ const PendingShiftRow: React.FC<{
         {/* Expanded section */}
         {pendingOpen && (
           <div className="border-t-2 border-slate-200 bg-slate-50 px-4 py-3 space-y-3">
-            {/* Client identity */}
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
-                <span className="text-sm font-bold text-primary-700">
-                  {(row.clientName ?? '?')[0].toUpperCase()}
-                </span>
-              </div>
-              <p className="text-sm font-semibold text-slate-900">{row.clientName ?? 'Client'}</p>
-            </div>
 
             <div className="divide-y divide-slate-200 text-xs border border-slate-200 rounded-xl overflow-hidden">
               {row.payRate != null && (
@@ -607,8 +599,6 @@ const PendingShiftRow: React.FC<{
         {/* Expanded detail */}
         {pendingOpen && (
           <div className="border-t border-slate-100 px-4 pt-3 pb-4 space-y-3">
-            {/* Client name */}
-            <p className="text-sm font-semibold text-slate-700">{row.clientName}</p>
 
             {/* Original HOURS receipt */}
             <div className="rounded-xl border border-slate-200 overflow-hidden">
@@ -851,15 +841,6 @@ const PendingShiftRow: React.FC<{
 
       {pendingOpen && (
         <div className="border-t-2 border-slate-200 bg-slate-50 px-4 py-3 space-y-3">
-          {/* Client identity */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
-              <span className="text-sm font-bold text-primary-700">
-                {(row.clientName ?? '?')[0].toUpperCase()}
-              </span>
-            </div>
-            <p className="text-sm font-semibold text-slate-900">{row.clientName ?? 'Client'}</p>
-          </div>
 
           <div className="divide-y divide-slate-200 text-xs border border-slate-200 rounded-xl overflow-hidden">
             {row.payRate != null && (
@@ -993,15 +974,6 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
       {/* expanded details */}
       {open && (
         <div className="border-t-2 border-slate-200 bg-slate-50 px-4 py-3 space-y-3">
-          {/* Client identity */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
-              <span className="text-sm font-bold text-primary-700">
-                {(row.clientName ?? '?')[0].toUpperCase()}
-              </span>
-            </div>
-            <p className="text-sm font-semibold text-slate-900">{row.clientName ?? 'Client'}</p>
-          </div>
 
           <div className="divide-y divide-slate-200 text-xs border border-slate-200 rounded-xl overflow-hidden">
             {row.payRate != null && (
@@ -1550,8 +1522,9 @@ export const CaregiverPaymentsPage: React.FC = () => {
   const reportedRows = useMemo(() => {
     if (!showReport || (!reportFrom && !reportTo)) return historyRows;
     return historyRows.filter(r => {
-      if (!r.submittedAt) return false;
-      const d = r.submittedAt.slice(0, 10);
+      const raw = r.submittedStartTime ?? r.submittedAt;
+      if (!raw) return false;
+      const d = new Date(raw).toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
       if (reportFrom && d < reportFrom) return false;
       if (reportTo   && d > reportTo)   return false;
       return true;
@@ -1565,7 +1538,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
       const h = r.finalTotalHours ?? r.submittedTotalHours ?? 0;
       return s + (r.grossPay ?? h * (r.payRate ?? 0));
     }, 0);
-    return { shifts: rows.length, hours: Math.round(totalHours * 100) / 100, pay: totalPay };
+    return { shifts: rows.length, hours: totalHours, pay: totalPay };
   }, [reportedRows]);
 
   // ── handlers ──────────────────────────────────────────────────────────────
@@ -1812,7 +1785,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
                   <div className="flex gap-6 pt-2 border-t border-slate-100">
                     {[
                       { label: 'Shifts',          value: String(reportSummary.shifts) },
-                      { label: 'Total hours',      value: `${reportSummary.hours}h` },
+                      { label: 'Total hours',      value: fmtDuration(reportSummary.hours) },
                       { label: 'Total earnings',   value: `$${reportSummary.pay.toFixed(2)}` },
                     ].map(s => (
                       <div key={s.label}>
@@ -1835,7 +1808,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
               {(tsFilter === 'all' || tsFilter === 'unsubmitted') && (() => {
                 const grouped = submittableShifts.reduce((acc, shift) => {
                   const key = shift.clientId || shift.clientName || 'unknown';
-                  if (!acc[key]) acc[key] = { name: shift.clientName ?? 'Client', photo: (shift as any).clientPhotoURL, shifts: [] };
+                  if (!acc[key]) acc[key] = { name: shift.clientName ?? 'Client', photo: shift.clientPhotoURL ?? undefined, shifts: [] };
                   acc[key].shifts.push(shift);
                   return acc;
                 }, {} as Record<string, { name: string; photo?: string; shifts: typeof submittableShifts }>);
@@ -1879,7 +1852,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
               {(tsFilter === 'all' || tsFilter === 'pending') && (() => {
                 const grouped = pendingRows.reduce((acc, row) => {
                   const key = (row as any).clientId || row.clientName || 'unknown';
-                  if (!acc[key]) acc[key] = { name: row.clientName ?? 'Client', photo: (row as any).clientPhotoURL, rows: [] };
+                  if (!acc[key]) acc[key] = { name: row.clientName ?? 'Client', photo: row.clientPhotoURL ?? undefined, rows: [] };
                   acc[key].rows.push(row);
                   return acc;
                 }, {} as Record<string, { name: string; photo?: string; rows: typeof pendingRows }>);
@@ -1916,7 +1889,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
               {(tsFilter === 'all' || tsFilter === 'history') && reportedRows.length > 0 && (() => {
                 const grouped = reportedRows.reduce((acc, row) => {
                   const key = (row as any).clientId || row.clientName || 'unknown';
-                  if (!acc[key]) acc[key] = { name: row.clientName ?? 'Client', photo: (row as any).clientPhotoURL, rows: [] };
+                  if (!acc[key]) acc[key] = { name: row.clientName ?? 'Client', photo: row.clientPhotoURL ?? undefined, rows: [] };
                   acc[key].rows.push(row);
                   return acc;
                 }, {} as Record<string, { name: string; photo?: string; rows: typeof reportedRows }>);

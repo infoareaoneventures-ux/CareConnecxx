@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Clock, CreditCard, CheckCircle, AlertTriangle, Loader2,
   ChevronDown, ChevronUp, Banknote, ExternalLink,
-  AlertCircle,
+  AlertCircle, FileDown,
 } from 'lucide-react';
 import { ClientNavigation } from './ClientNavigation';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -522,6 +522,9 @@ export const Payments: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [reviewRow, setReviewRow] = useState<ShiftHoursRow | null>(null);
+  const [showReport, setShowReport] = useState(false);
+  const [reportFrom, setReportFrom] = useState('');
+  const [reportTo, setReportTo] = useState('');
 
   // Payment method state
   const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
@@ -552,15 +555,75 @@ export const Payments: React.FC = () => {
   }, [user?.uid]);
 
   // Filter rows by date
-  const filteredRows = useMemo(() => {
-    if (statusFilter === 'needs-review') return rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed');
-    if (statusFilter === 'history') return rows.filter(r => r.status === 'approved' || r.status === 'auto_approved' || r.status === 'paid');
-    return rows;
-  }, [rows, statusFilter]);
-
   const pendingCount = rows.filter(r =>
     r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed'
   ).length;
+
+  const historyRows = useMemo(() =>
+    rows.filter(r => r.status === 'approved' || r.status === 'auto_approved' || r.status === 'paid'),
+  [rows]);
+
+  const reportedRows = useMemo(() => {
+    if (!showReport || (!reportFrom && !reportTo)) return historyRows;
+    return historyRows.filter(r => {
+      const raw = r.submittedStartTime ?? r.submittedAt;
+      if (!raw) return false;
+      const d = new Date(raw).toLocaleDateString('en-CA');
+      if (reportFrom && d < reportFrom) return false;
+      if (reportTo   && d > reportTo)   return false;
+      return true;
+    });
+  }, [historyRows, showReport, reportFrom, reportTo]);
+
+  const reportSummary = useMemo(() => {
+    const totalHours = reportedRows.reduce((s, r) => {
+      const startTs = r.finalStartTime ?? r.submittedStartTime;
+      const endTs   = r.finalEndTime   ?? r.submittedEndTime;
+      const h = (startTs && endTs)
+        ? (new Date(endTs).getTime() - new Date(startTs).getTime()) / 3_600_000
+        : (r.finalTotalHours ?? r.submittedTotalHours ?? 0);
+      return s + h;
+    }, 0);
+    const totalPay = reportedRows.reduce((s, r) => s + (r.grossPay ?? 0), 0);
+    return { shifts: reportedRows.length, hours: totalHours, pay: totalPay };
+  }, [reportedRows]);
+
+  const filteredRows = useMemo(() => {
+    if (statusFilter === 'needs-review') return rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed');
+    if (statusFilter === 'history') return showReport && (reportFrom || reportTo) ? reportedRows : historyRows;
+    return rows;
+  }, [rows, statusFilter, showReport, reportFrom, reportTo, reportedRows, historyRows]);
+
+  const handleExportCSV = () => {
+    const header = ['Caregiver', 'Date', 'Clock In', 'Clock Out', 'Duration', 'Pay ($)', 'Method', 'Status'];
+    const lines = reportedRows.map(r => {
+      const startTs = r.finalStartTime ?? r.submittedStartTime;
+      const endTs   = r.finalEndTime   ?? r.submittedEndTime;
+      const date    = startTs ? new Date(startTs).toLocaleDateString('en-CA') : '';
+      const clockIn = startTs ? fmtTime(startTs) : '';
+      const clockOut= endTs   ? fmtTime(endTs)   : '';
+      const h = (startTs && endTs)
+        ? (new Date(endTs).getTime() - new Date(startTs).getTime()) / 3_600_000
+        : (r.finalTotalHours ?? r.submittedTotalHours ?? 0);
+      const duration = `"${fmtDuration(h)}"`;  // quote to prevent Excel treating H:MM:SS as time
+      const pay = (r.grossPay ?? h * (r.payRate ?? 0)).toFixed(2);
+      return [
+        `"${(r.caregiverName ?? '').replace(/"/g, '""')}"`,
+        date,
+        clockIn,
+        clockOut,
+        duration,
+        pay,
+        r.paymentMethod ?? '',
+        r.status,
+      ].join(',');
+    });
+    const csv = [header.join(','), ...lines].join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = `timesheets-${reportFrom || 'all'}-to-${reportTo || 'all'}.csv`;
+    a.click();
+  };
 
   const pillTab = (active: boolean) =>
     `inline-flex items-center gap-2 px-5 py-2 rounded-full text-sm font-medium transition-colors ${
@@ -636,15 +699,15 @@ export const Payments: React.FC = () => {
             )}
 
             {/* Status filter */}
-            <div className="flex gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               {([
                 { id: 'all',          label: 'All',          count: rows.length },
                 { id: 'needs-review', label: 'Needs Review', count: rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed').length },
-                { id: 'history',      label: 'History',      count: rows.filter(r => r.status === 'approved' || r.status === 'auto_approved' || r.status === 'paid').length },
+                { id: 'history',      label: 'History',      count: historyRows.length },
               ] as { id: StatusFilter; label: string; count: number }[]).map(f => (
                 <button
                   key={f.id}
-                  onClick={() => setStatusFilter(f.id)}
+                  onClick={() => { setStatusFilter(f.id); if (f.id !== 'history') setShowReport(false); }}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
                     statusFilter === f.id
                       ? 'bg-primary-600 text-white'
@@ -655,7 +718,65 @@ export const Payments: React.FC = () => {
                   {f.count > 0 && <span className={`text-[10px] font-bold ${statusFilter === f.id ? 'text-white/80' : 'text-slate-400'}`}>{f.count}</span>}
                 </button>
               ))}
+              {statusFilter === 'history' && (
+                <button
+                  onClick={() => setShowReport(s => !s)}
+                  className={`ml-auto flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium border transition-all ${
+                    showReport
+                      ? 'bg-primary-600 text-white border-primary-600'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <FileDown className="w-3.5 h-3.5" />
+                  Report
+                </button>
+              )}
             </div>
+
+            {/* Report panel */}
+            {showReport && statusFilter === 'history' && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                <div className="flex items-end gap-3 flex-wrap">
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">From</label>
+                    <input type="date" value={reportFrom} onChange={e => setReportFrom(e.target.value)}
+                      className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-300" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">To</label>
+                    <input type="date" value={reportTo} onChange={e => setReportTo(e.target.value)}
+                      className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-300" />
+                  </div>
+                  {(reportFrom || reportTo) && (
+                    <button onClick={() => { setReportFrom(''); setReportTo(''); }}
+                      className="text-xs text-slate-400 hover:text-slate-600 pb-1.5">Clear</button>
+                  )}
+                  <button onClick={handleExportCSV} disabled={reportedRows.length === 0}
+                    className="ml-auto flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-40 transition-colors">
+                    <FileDown className="w-3.5 h-3.5" />
+                    Export CSV
+                  </button>
+                </div>
+                {reportedRows.length > 0 ? (
+                  <div className="flex gap-6 pt-2 border-t border-slate-100">
+                    {[
+                      { label: 'Shifts',         value: String(reportSummary.shifts) },
+                      { label: 'Total hours',    value: fmtDuration(reportSummary.hours) },
+                      { label: 'Total paid',     value: `$${reportSummary.pay.toFixed(2)}` },
+                    ].map(s => (
+                      <div key={s.label}>
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{s.label}</p>
+                        <p className="text-base font-bold text-slate-900 mt-0.5">{s.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400 pt-2 border-t border-slate-100">
+                    No history records match the selected date range.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* List */}
             {loading ? (

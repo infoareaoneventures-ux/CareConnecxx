@@ -1533,10 +1533,16 @@ export const CaregiverPaymentsPage: React.FC = () => {
 
   const reportSummary = useMemo(() => {
     const rows = reportedRows;
-    const totalHours = rows.reduce((s, r) => s + (r.finalTotalHours ?? r.submittedTotalHours ?? 0), 0);
+    const totalHours = rows.reduce((s, r) => {
+      const startTs = r.finalStartTime ?? r.submittedStartTime;
+      const endTs   = r.finalEndTime   ?? r.submittedEndTime;
+      const h = (startTs && endTs)
+        ? (new Date(endTs).getTime() - new Date(startTs).getTime()) / 3_600_000
+        : (r.finalTotalHours ?? r.submittedTotalHours ?? 0);
+      return s + h;
+    }, 0);
     const totalPay   = rows.reduce((s, r) => {
-      const h = r.finalTotalHours ?? r.submittedTotalHours ?? 0;
-      return s + (r.grossPay ?? h * (r.payRate ?? 0));
+      return s + (r.grossPay ?? 0);
     }, 0);
     return { shifts: rows.length, hours: totalHours, pay: totalPay };
   }, [reportedRows]);
@@ -1544,15 +1550,24 @@ export const CaregiverPaymentsPage: React.FC = () => {
   // ── handlers ──────────────────────────────────────────────────────────────
 
   const handleExportCSV = () => {
-    const header = ['Client', 'Date', 'Hours', 'Pay ($)', 'Method', 'Status'];
+    const header = ['Client', 'Date', 'Clock In', 'Clock Out', 'Duration', 'Pay ($)', 'Method', 'Status'];
     const lines = reportedRows.map(r => {
-      const date  = r.submittedAt ? new Date(r.submittedAt).toLocaleDateString('en-US') : '';
-      const hours = r.finalTotalHours ?? r.submittedTotalHours ?? 0;
-      const pay   = r.grossPay ?? hours * (r.payRate ?? 0);
+      const startTs = r.finalStartTime ?? r.submittedStartTime;
+      const endTs   = r.finalEndTime   ?? r.submittedEndTime;
+      const date    = startTs ? new Date(startTs).toLocaleDateString('en-CA') : '';
+      const clockIn = startTs ? fmtTime(new Date(startTs)) : '';
+      const clockOut= endTs   ? fmtTime(new Date(endTs))   : '';
+      const h = (startTs && endTs)
+        ? (new Date(endTs).getTime() - new Date(startTs).getTime()) / 3_600_000
+        : (r.finalTotalHours ?? r.submittedTotalHours ?? 0);
+      const duration = `"${fmtDuration(h)}"`;  // quoted so Excel treats as text, not time
+      const pay = r.grossPay ?? h * (r.payRate ?? 0);
       return [
         `"${(r.clientName ?? '').replace(/"/g, '""')}"`,
         date,
-        hours.toFixed(2),
+        clockIn,
+        clockOut,
+        duration,
         pay.toFixed(2),
         r.paymentMethod ?? '',
         STATUS_LABEL[r.status] ?? r.status,

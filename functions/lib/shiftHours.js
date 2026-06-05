@@ -61,6 +61,13 @@ function computeTotalHours(startIso, endIso) {
     }
     return (end - start) / 3600000;
 }
+function fmtHours(hours) {
+    const totalSecs = Math.round(hours * 3600);
+    const h = Math.floor(totalSecs / 3600);
+    const m = Math.floor((totalSecs % 3600) / 60);
+    const s = totalSecs % 60;
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
 function nowIso() {
     return new Date().toISOString();
 }
@@ -135,8 +142,12 @@ exports.submitShiftHours = functions.https.onCall(async (data, context) => {
     if (existing.exists) {
         throw new functions.https.HttpsError('already-exists', 'Hours already submitted for this shift');
     }
-    const caregiverDoc = await db.collection('users').doc(context.auth.uid).get();
+    const [caregiverDoc, clientDoc] = await Promise.all([
+        db.collection('users').doc(context.auth.uid).get(),
+        shiftDoc.clientId ? db.collection('users').doc(shiftDoc.clientId).get() : Promise.resolve(null),
+    ]);
     const caregiverData = caregiverDoc.data() || {};
+    const clientData = (clientDoc === null || clientDoc === void 0 ? void 0 : clientDoc.data()) || {};
     const totalHours = computeTotalHours(startTime, endTime);
     const payRate = shiftDoc.rate || caregiverData.hourlyRate || 25;
     const paymentMethod = (shiftDoc.paymentMethod || '').toLowerCase() === 'cash' ? 'cash' : 'credit';
@@ -153,6 +164,7 @@ exports.submitShiftHours = functions.https.onCall(async (data, context) => {
         caregiverPhotoURL: caregiverData.profilePhoto || caregiverData.photoURL || shiftDoc.caregiverPhotoURL || null,
         clientId: shiftDoc.clientId,
         clientName: shiftDoc.clientName || 'Client',
+        clientPhotoURL: clientData.profilePhoto || clientData.photoURL || shiftDoc.clientPhotoURL || null,
         payRate,
         currency: 'usd',
         paymentMethod,
@@ -182,7 +194,7 @@ exports.submitShiftHours = functions.https.onCall(async (data, context) => {
         createdAt: submittedAt,
         updatedAt: submittedAt,
     });
-    await pushNotification(shiftDoc.clientId, 'shift_hours_submitted', 'Hours submitted for your review', `${caregiverData.name || 'Your caregiver'} submitted ${totalHours}h for review. Auto-approves in 24h.`, { appointmentId: shiftId, totalHours });
+    await pushNotification(shiftDoc.clientId, 'shift_hours_submitted', 'Hours submitted for your review', `${caregiverData.name || 'Your caregiver'} submitted ${fmtHours(totalHours)} for review. Auto-approves in 24h.`, { appointmentId: shiftId, totalHours });
     // iMessage: notify client so they can approve or dispute without opening the app
     try {
         const clientUserSnap = await db.collection("users").doc(shiftDoc.clientId).get();
@@ -190,7 +202,7 @@ exports.submitShiftHours = functions.https.onCall(async (data, context) => {
         if (clientPhone) {
             const amount = grossPay.toFixed(2);
             const { sendToPhone } = await Promise.resolve().then(() => __importStar(require("./linq/client")));
-            await sendToPhone(clientPhone, `${(_b = caregiverData.name) !== null && _b !== void 0 ? _b : "Your caregiver"} submitted ${totalHours}h for ` +
+            await sendToPhone(clientPhone, `${(_b = caregiverData.name) !== null && _b !== void 0 ? _b : "Your caregiver"} submitted ${fmtHours(totalHours)} for ` +
                 `${(_c = shiftDoc.date) !== null && _c !== void 0 ? _c : "today"}'s visit ($${amount}).\n\n` +
                 `Reply APPROVE to confirm, or DISPUTE if something looks wrong.`);
             await db.collection("agent_sessions").doc(clientPhone).set({
@@ -267,7 +279,7 @@ exports.reviewShiftHours = functions.https.onCall(async (data, context) => {
                 grossPay: approvedGrossPay,
             }),
         });
-        await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Your hours were approved', `Client approved ${shift.submittedTotalHours}h.`, { appointmentId });
+        await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Your hours were approved', `Client approved ${fmtHours(shift.submittedTotalHours)}.`, { appointmentId });
         return { success: true };
     }
     if (action === 'propose_correction') {
@@ -306,7 +318,7 @@ exports.reviewShiftHours = functions.https.onCall(async (data, context) => {
                 note: proposalReason || null,
             }),
         });
-        await pushNotification(shift.caregiverId, 'shift_hours_correction_proposed', 'Client proposed a correction', `Client proposed ${proposedTotalHours}h (you submitted ${shift.submittedTotalHours}h). Respond within 24h or it auto-accepts.`, { appointmentId, proposedTotalHours });
+        await pushNotification(shift.caregiverId, 'shift_hours_correction_proposed', 'Client proposed a correction', `Client proposed ${fmtHours(proposedTotalHours)} (you submitted ${fmtHours(shift.submittedTotalHours)}). Respond within 24h or it auto-accepts.`, { appointmentId, proposedTotalHours });
         return { success: true };
     }
     if (action === 'accept_counter') {
@@ -570,8 +582,8 @@ exports.autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').onRun
             resolvedBy: 'system_auto_approve',
             updatedAt: now,
         });
-        await pushNotification(shift.caregiverId, 'shift_hours_auto_approved', 'Hours auto-approved', `Client did not respond in 24h; ${shift.submittedTotalHours}h auto-approved.`, { appointmentId: doc.id });
-        await pushNotification(shift.clientId, 'shift_hours_auto_approved', 'Hours auto-approved', `The 24h review window closed; ${shift.submittedTotalHours}h auto-approved.`, { appointmentId: doc.id });
+        await pushNotification(shift.caregiverId, 'shift_hours_auto_approved', 'Hours auto-approved', `Client did not respond in 24h; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
+        await pushNotification(shift.clientId, 'shift_hours_auto_approved', 'Hours auto-approved', `The 24h review window closed; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
     }
     return null;
 });

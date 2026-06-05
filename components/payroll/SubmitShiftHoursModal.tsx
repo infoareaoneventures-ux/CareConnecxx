@@ -68,11 +68,11 @@ function defaultStartEnd(shift: CompletedShift): { startIso: string; endIso: str
 }
 
 function fmtDuration(hours: number): string {
-  const totalMins = Math.round(hours * 60);
-  if (totalMins < 60) return `${totalMins} min`;
-  const h = Math.floor(totalMins / 60);
-  const m = totalMins % 60;
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+  const totalSecs = Math.round(hours * 3600);
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const s = totalSecs % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 // ── component ─────────────────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
                 <div>
                   <p className="text-xs text-slate-400 mb-0.5">Clock in</p>
                   <p className="text-sm font-semibold text-slate-800">
-                    {new Date(startIso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                    {new Date(startIso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}
                   </p>
                   <p className="text-xs text-slate-400">
                     {new Date(startIso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
@@ -176,7 +176,7 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
                 <div>
                   <p className="text-xs text-slate-400 mb-0.5">Clock out</p>
                   <p className="text-sm font-semibold text-slate-800">
-                    {new Date(endIso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                    {new Date(endIso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}
                   </p>
                   <p className="text-xs text-slate-400">
                     {new Date(endIso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}

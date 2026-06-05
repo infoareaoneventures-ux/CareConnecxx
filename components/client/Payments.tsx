@@ -539,7 +539,7 @@ export const Payments: React.FC = () => {
   // Filter rows by date
   const filteredRows = useMemo(() => {
     if (statusFilter === 'needs-review') return rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed');
-    if (statusFilter === 'history') return rows.filter(r => r.status === 'approved' || r.status === 'auto_approved');
+    if (statusFilter === 'history') return rows.filter(r => r.status === 'approved' || r.status === 'auto_approved' || r.status === 'paid');
     return rows;
   }, [rows, statusFilter]);
 
@@ -625,7 +625,7 @@ export const Payments: React.FC = () => {
               {([
                 { id: 'all',          label: 'All',          count: rows.length },
                 { id: 'needs-review', label: 'Needs Review', count: rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed').length },
-                { id: 'history',      label: 'History',      count: rows.filter(r => r.status === 'approved' || r.status === 'auto_approved').length },
+                { id: 'history',      label: 'History',      count: rows.filter(r => r.status === 'approved' || r.status === 'auto_approved' || r.status === 'paid').length },
               ] as { id: StatusFilter; label: string; count: number }[]).map(f => (
                 <button
                   key={f.id}

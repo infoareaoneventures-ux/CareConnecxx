@@ -94,7 +94,7 @@ function toDate(ts: any): Date | null {
 }
 
 const fmtTime = (d: Date) =>
-  d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
 
 const fmtDate = (d: Date) =>
   d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -448,9 +448,9 @@ const PendingShiftRow: React.FC<{
         >
           <Col label="Date"     value={dispStart ? fmtDate(dispStart) : '—'} className="shrink-0 w-[58px]" />
           <Divider />
-          <Col label="In"       value={dispStart ? fmtTime(dispStart) : '—'} className="shrink-0 w-[66px]" />
+          <Col label="In"       value={dispStart ? fmtTime(dispStart) : '—'} className="shrink-0 w-[88px]" />
           <Divider />
-          <Col label="Out"      value={dispEnd   ? fmtTime(dispEnd)   : '—'} className="shrink-0 w-[66px]" />
+          <Col label="Out"      value={dispEnd   ? fmtTime(dispEnd)   : '—'} className="shrink-0 w-[88px]" />
           <Divider />
           <Col label="Duration" value={fmtDuration(hours)}                   className="shrink-0 w-[62px]" />
           <Divider />
@@ -583,9 +583,9 @@ const PendingShiftRow: React.FC<{
         >
           <Col label="Date"     value={ctrStart ? fmtDate(ctrStart) : '—'}  className="shrink-0 w-[58px]" />
           <Divider />
-          <Col label="In"       value={ctrStart ? fmtTime(ctrStart) : '—'}  className="shrink-0 w-[66px]" />
+          <Col label="In"       value={ctrStart ? fmtTime(ctrStart) : '—'}  className="shrink-0 w-[88px]" />
           <Divider />
-          <Col label="Out"      value={ctrEnd   ? fmtTime(ctrEnd)   : '—'}  className="shrink-0 w-[66px]" />
+          <Col label="Out"      value={ctrEnd   ? fmtTime(ctrEnd)   : '—'}  className="shrink-0 w-[88px]" />
           <Divider />
           <Col label="Duration" value={fmtDuration(ctrHours)}               className="shrink-0 w-[62px]" />
           <Divider />
@@ -701,9 +701,9 @@ const PendingShiftRow: React.FC<{
           >
             <Col label="Date"     value={stripStart ? fmtDate(stripStart) : '—'} className="shrink-0 w-[58px]" />
             <Divider />
-            <Col label="In"       value={stripStart ? fmtTime(stripStart) : '—'} className="shrink-0 w-[66px]" />
+            <Col label="In"       value={stripStart ? fmtTime(stripStart) : '—'} className="shrink-0 w-[88px]" />
             <Divider />
-            <Col label="Out"      value={stripEnd   ? fmtTime(stripEnd)   : '—'} className="shrink-0 w-[66px]" />
+            <Col label="Out"      value={stripEnd   ? fmtTime(stripEnd)   : '—'} className="shrink-0 w-[88px]" />
             <Divider />
             <Col label="Duration" value={fmtDuration(stripHours)}                className="shrink-0 w-[62px]" />
             <Divider />
@@ -828,9 +828,9 @@ const PendingShiftRow: React.FC<{
       >
         <Col label="Date"     value={dispStart ? fmtDate(dispStart) : '—'}  className="shrink-0 w-[58px]" />
         <Divider />
-        <Col label="In"       value={dispStart ? fmtTime(dispStart) : '—'}  className="shrink-0 w-[66px]" />
+        <Col label="In"       value={dispStart ? fmtTime(dispStart) : '—'}  className="shrink-0 w-[88px]" />
         <Divider />
-        <Col label="Out"      value={dispEnd   ? fmtTime(dispEnd)   : '—'}  className="shrink-0 w-[66px]" />
+        <Col label="Out"      value={dispEnd   ? fmtTime(dispEnd)   : '—'}  className="shrink-0 w-[88px]" />
         <Divider />
         <Col label="Duration" value={fmtDuration(hours)}                    className="shrink-0 w-[62px]" />
         <Divider />
@@ -963,9 +963,9 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
       >
         <Col label="Date"     value={dispStart ? fmtDate(dispStart) : '—'}  className="shrink-0 w-[58px]" />
         <Divider />
-        <Col label="In"       value={dispStart ? fmtTime(dispStart) : '—'}  className="shrink-0 w-[66px]" />
+        <Col label="In"       value={dispStart ? fmtTime(dispStart) : '—'}  className="shrink-0 w-[88px]" />
         <Divider />
-        <Col label="Out"      value={dispEnd   ? fmtTime(dispEnd)   : '—'}  className="shrink-0 w-[66px]" />
+        <Col label="Out"      value={dispEnd   ? fmtTime(dispEnd)   : '—'}  className="shrink-0 w-[88px]" />
         <Divider />
         <Col label="Duration" value={fmtDuration(hours)}                    className="shrink-0 w-[62px]" />
         <Divider />
@@ -1301,7 +1301,7 @@ const SubmittableShiftCard: React.FC<{
   const hasActual = !!(actualStart && actualEnd);
 
   const durationH = dispEnd.getTime() > dispStart.getTime()
-    ? Math.round(((dispEnd.getTime() - dispStart.getTime()) / 3_600_000) * 100) / 100
+    ? (dispEnd.getTime() - dispStart.getTime()) / 3_600_000
     : 0;
 
   const estPay = shift.rate && durationH > 0 ? shift.rate * durationH : null;
@@ -1315,9 +1315,9 @@ const SubmittableShiftCard: React.FC<{
       >
         <Col label="Date"     value={fmtDate(dispStart)}                              className="shrink-0 w-[58px]" />
         <div className="w-px h-8 bg-slate-100 shrink-0" />
-        <Col label={hasActual ? 'In'  : 'Sched in'}  value={fmtTime(dispStart)}      className="shrink-0 w-[66px]" />
+        <Col label={hasActual ? 'In'  : 'Sched in'}  value={fmtTime(dispStart)}      className="shrink-0 w-[88px]" />
         <div className="w-px h-8 bg-slate-100 shrink-0" />
-        <Col label={hasActual ? 'Out' : 'Sched out'} value={fmtTime(dispEnd)}        className="shrink-0 w-[66px]" />
+        <Col label={hasActual ? 'Out' : 'Sched out'} value={fmtTime(dispEnd)}        className="shrink-0 w-[88px]" />
         <div className="w-px h-8 bg-slate-100 shrink-0" />
         <Col label="Duration" value={durationH > 0 ? fmtDuration(durationH) : '—'}    className="shrink-0 w-[58px]" />
         <div className="w-px h-8 bg-slate-100 shrink-0" />

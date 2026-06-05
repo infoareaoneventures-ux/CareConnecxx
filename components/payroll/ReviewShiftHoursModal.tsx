@@ -33,21 +33,21 @@ function fmtTimestamp(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
     ', ' +
-    d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
 }
 
 function fmtTimeRange(startIso: string, endIso: string): string {
   const fmt = (iso: string) =>
-    new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
   return `${fmt(startIso)} – ${fmt(endIso)}`;
 }
 
 function fmtDuration(hours: number): string {
-  const totalMins = Math.round(hours * 60);
-  if (totalMins < 60) return `${totalMins} min`;
-  const h = Math.floor(totalMins / 60);
-  const m = totalMins % 60;
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+  const totalSecs = Math.round(hours * 3600);
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const s = totalSecs % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 const HISTORY_ACTION_LABEL: Record<string, string> = {
@@ -258,25 +258,31 @@ export const ReviewShiftHoursModal: React.FC<Props> = ({ shift, onClose, onDone,
             Rate: ${shift.payRate}/hr · Payment: {shift.paymentMethod === 'cash' ? 'Cash' : 'Credit card'}
           </p>
 
-          {/* Line items breakdown */}
-          {Array.isArray(shift.lineItems) && shift.lineItems.length > 0 && (
-            <div className="pt-2 border-t border-slate-200 space-y-1">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Additional charges</p>
-              {shift.lineItems.map((li: any, i: number) => (
-                <div key={i} className="flex items-center justify-between text-xs">
-                  <span className="text-slate-600">
-                    {li.type === 'custom' ? (li.label || 'Custom') : li.label}
-                    {li.note ? <span className="text-slate-400"> · {li.note}</span> : null}
-                  </span>
-                  <span className="font-semibold text-slate-700">+${Number(li.amount).toFixed(2)}</span>
-                </div>
-              ))}
-              <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200">
-                <span className="font-semibold text-slate-700">Total</span>
-                <span className="font-bold text-slate-900">${Number(shift.grossPay ?? shift.submittedTotalHours * shift.payRate).toFixed(2)}</span>
-              </div>
+          {/* Pay breakdown — always shown */}
+          <div className="pt-2 border-t border-slate-200 space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-600">Base pay</span>
+              <span className="font-semibold text-slate-700">${Number(shift.basePay ?? shift.submittedTotalHours * shift.payRate).toFixed(2)}</span>
             </div>
-          )}
+            {Array.isArray(shift.lineItems) && shift.lineItems.length > 0 && (
+              <>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide pt-1">Additional charges</p>
+                {shift.lineItems.map((li: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between text-xs">
+                    <span className="text-slate-600">
+                      {li.type === 'custom' ? (li.label || 'Custom') : li.label}
+                      {li.note ? <span className="text-slate-400"> · {li.note}</span> : null}
+                    </span>
+                    <span className="font-semibold text-slate-700">+${Number(li.amount).toFixed(2)}</span>
+                  </div>
+                ))}
+              </>
+            )}
+            <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200">
+              <span className="font-semibold text-slate-700">Total</span>
+              <span className="font-bold text-slate-900">${Number(shift.grossPay ?? shift.submittedTotalHours * shift.payRate).toFixed(2)}</span>
+            </div>
+          </div>
 
           {shift.status === 'pending_client_review' && shift.autoApproveAt && (
             <p className="text-xs text-slate-400">

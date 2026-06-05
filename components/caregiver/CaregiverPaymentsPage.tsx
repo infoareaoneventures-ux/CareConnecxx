@@ -99,6 +99,9 @@ const fmtTime = (d: Date) =>
 const fmtDate = (d: Date) =>
   d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
+const fmtDateTime = (d: Date) =>
+  `${fmtDate(d)}, ${fmtTime(d)}`;
+
 /** 0.1 → "6 min" · 1.5 → "1h 30m" · 2.0 → "2h" */
 const fmtDuration = (hours: number): string => {
   const totalSecs = Math.round(hours * 3600);
@@ -489,7 +492,7 @@ const PendingShiftRow: React.FC<{
                 <div className="flex items-center justify-between px-3 py-2">
                   <span className="text-slate-400">Clock in / out</span>
                   <span className="font-medium text-slate-700">
-                    {fmtTime(dispStart)} – {fmtTime(dispEnd)}
+                    {fmtDateTime(dispStart)} – {fmtDateTime(dispEnd)}
                   </span>
                 </div>
               )}
@@ -621,7 +624,7 @@ const PendingShiftRow: React.FC<{
                   <div className="flex items-center justify-between px-3 py-1.5 text-xs">
                     <span className="text-slate-400">Clock in / out</span>
                     <span className="text-slate-700">
-                      {fmtTime(new Date(row.submittedStartTime))} – {fmtTime(new Date(row.submittedEndTime))}
+                      {fmtDateTime(new Date(row.submittedStartTime))} – {fmtDateTime(new Date(row.submittedEndTime))}
                     </span>
                   </div>
                 )}
@@ -739,7 +742,7 @@ const PendingShiftRow: React.FC<{
                   {row.submittedStartTime && row.submittedEndTime && (
                     <div className="flex items-center justify-between px-3 py-1.5 text-xs">
                       <span className="text-slate-400">Clock in / out</span>
-                      <span className="text-slate-700">{fmtTime(new Date(row.submittedStartTime))} – {fmtTime(new Date(row.submittedEndTime))}</span>
+                      <span className="text-slate-700">{fmtDateTime(new Date(row.submittedStartTime))} – {fmtDateTime(new Date(row.submittedEndTime))}</span>
                     </div>
                   )}
                   {row.submittedTotalHours != null && (
@@ -869,7 +872,7 @@ const PendingShiftRow: React.FC<{
               <div className="flex items-center justify-between px-3 py-2">
                 <span className="text-slate-400">Clock in / out</span>
                 <span className="font-medium text-slate-700">
-                  {fmtTime(dispStart)} – {fmtTime(dispEnd)}
+                  {fmtDateTime(dispStart)} – {fmtDateTime(dispEnd)}
                 </span>
               </div>
             )}
@@ -1011,7 +1014,7 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
               <div className="flex items-center justify-between px-3 py-2">
                 <span className="text-slate-400">Clock in / out</span>
                 <span className="font-medium text-slate-700">
-                  {fmtTime(dispStart)} – {fmtTime(dispEnd)}
+                  {fmtDateTime(dispStart)} – {fmtDateTime(dispEnd)}
                 </span>
               </div>
             )}
@@ -1095,7 +1098,7 @@ const ShiftDetailModal: React.FC<{ shiftId: string; onClose: () => void }> = ({ 
   const fmtTs = (ts: any) => {
     if (!ts) return null;
     const d = ts?.toDate ? ts.toDate() : new Date(ts);
-    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
   };
   const fmtDate = (val: any) => {
     if (!val) return null;
@@ -1115,10 +1118,12 @@ const ShiftDetailModal: React.FC<{ shiftId: string; onClose: () => void }> = ({ 
     if (!a || !b) return null;
     const s = a?.toDate ? a.toDate() : new Date(a);
     const e = b?.toDate ? b.toDate() : new Date(b);
-    const mins = Math.round((e.getTime() - s.getTime()) / 60000);
-    if (mins <= 0) return null;
-    const h = Math.floor(mins / 60); const m = mins % 60;
-    return h > 0 ? `${h}h ${m > 0 ? `${m}m` : ''}`.trim() : `${m}m`;
+    const totalSecs = Math.round((e.getTime() - s.getTime()) / 1000);
+    if (totalSecs <= 0) return null;
+    const h = Math.floor(totalSecs / 3600);
+    const m = Math.floor((totalSecs % 3600) / 60);
+    const sec = totalSecs % 60;
+    return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
   };
 
   return (
@@ -1151,7 +1156,7 @@ const ShiftDetailModal: React.FC<{ shiftId: string; onClose: () => void }> = ({ 
                     {fmtDate(data.date) && (
                       <span className="block text-slate-500 font-normal">{fmtDate(data.date)}</span>
                     )}
-                    <span>{data.startTime}{data.endTime ? ` – ${data.endTime}` : ''}</span>
+                    <span>{data.startTime ? new Date(`2000-01-01T${data.startTime}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : ''}{data.endTime ? ` – ${new Date(`2000-01-01T${data.endTime}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}` : ''}</span>
                   </div>
                 </div>
                 {(data.startedAt || data.completedAt) && (

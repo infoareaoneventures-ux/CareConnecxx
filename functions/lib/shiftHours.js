@@ -59,7 +59,7 @@ function computeTotalHours(startIso, endIso) {
     if (!isFinite(start) || !isFinite(end) || end <= start) {
         throw new functions.https.HttpsError('invalid-argument', 'End time must be after start time');
     }
-    return Math.round(((end - start) / 1000 / 60 / 60) * 100) / 100;
+    return (end - start) / 3600000;
 }
 function nowIso() {
     return new Date().toISOString();

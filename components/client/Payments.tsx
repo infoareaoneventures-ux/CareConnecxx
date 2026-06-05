@@ -84,7 +84,11 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 }
 function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+}
+function fmtDateTime(iso: string) {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${fmtTime(iso)}`;
 }
 function fmtAmount(hours: number, rate: number) {
   return `$${(hours * rate).toFixed(2)}`;
@@ -263,25 +267,29 @@ const ShiftRow: React.FC<{
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-      {/* Main row — caregiver-style column layout */}
+      {/* Main row — flex with dividers matching caregiver side */}
       <div
-        className="px-4 py-3 grid items-center gap-2 cursor-pointer hover:bg-slate-50 transition-colors"
-        style={{ gridTemplateColumns: 'minmax(60px,1fr) minmax(70px,1fr) minmax(70px,1fr) minmax(60px,1fr) minmax(60px,1fr) minmax(50px,1fr) auto auto' }}
+        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
         onClick={() => setExpanded(e => !e)}
       >
-        <div><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Date</p><p className="text-sm font-semibold text-primary-600 mt-0.5">{new Date(row.submittedStartTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p></div>
-        <div><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">In</p><p className="text-sm text-slate-700 mt-0.5">{fmtTime(startTs)}</p></div>
-        <div><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Out</p><p className="text-sm text-slate-700 mt-0.5">{fmtTime(endTs)}</p></div>
-        <div><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Duration</p><p className="text-sm text-slate-700 mt-0.5">{dispHours > 0 ? fmtDuration(dispHours) : '—'}</p></div>
-        <div><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Pay</p><p className="text-sm font-bold text-slate-900 mt-0.5">${totalPay.toFixed(2)}</p></div>
-        <div>
+        <div className="shrink-0 w-[58px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Date</p><p className="text-sm font-semibold text-primary-600 mt-0.5">{new Date(row.submittedStartTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p></div>
+        <div className="w-px h-8 bg-slate-100 shrink-0" />
+        <div className="shrink-0 w-[88px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">In</p><p className="text-sm text-slate-700 mt-0.5">{fmtTime(startTs)}</p></div>
+        <div className="w-px h-8 bg-slate-100 shrink-0" />
+        <div className="shrink-0 w-[88px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Out</p><p className="text-sm text-slate-700 mt-0.5">{fmtTime(endTs)}</p></div>
+        <div className="w-px h-8 bg-slate-100 shrink-0" />
+        <div className="shrink-0 w-[62px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Duration</p><p className="text-sm text-slate-700 mt-0.5">{dispHours > 0 ? fmtDuration(dispHours) : '—'}</p></div>
+        <div className="w-px h-8 bg-slate-100 shrink-0" />
+        <div className="shrink-0 w-[60px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Pay</p><p className="text-sm font-bold text-slate-900 mt-0.5">${totalPay.toFixed(2)}</p></div>
+        <div className="w-px h-8 bg-slate-100 shrink-0" />
+        <div className="shrink-0 w-[46px]">
           <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Method</p>
           <div className="flex items-center gap-1 text-xs text-slate-600 mt-0.5">
             {row.paymentMethod === 'credit' ? <CreditCard className="w-3 h-3" /> : <Banknote className="w-3 h-3" />}
             <span>{row.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap ml-auto shrink-0">
           {isCorrected && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-teal-50 text-teal-700 border-teal-200">Corrected</span>}
           <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>{cfg.label}</span>
         </div>
@@ -296,15 +304,22 @@ const ShiftRow: React.FC<{
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Hours</p>
             <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden text-xs">
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-slate-500">{isCorrected ? 'Original' : 'Submitted'}</span>
+                <span className="text-slate-500">Rate</span>
+                <span className="font-semibold text-slate-700">${row.payRate}/hr</span>
+              </div>
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-500">Clock in / out</span>
                 <span className="font-semibold text-slate-700">
-                  {fmtTime(row.submittedStartTime)} – {fmtTime(row.submittedEndTime)}
-                  <span className="text-primary-600 font-bold ml-2">{fmtDuration((new Date(row.submittedEndTime).getTime() - new Date(row.submittedStartTime).getTime()) / 3_600_000)}</span>
+                  {fmtDateTime(row.submittedStartTime)} – {fmtDateTime(row.submittedEndTime)}
                 </span>
               </div>
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-slate-500">Rate</span>
-                <span className="font-semibold text-slate-700">${row.payRate}/hr · Base {fmtAmount(dispHours, row.payRate)}</span>
+                <span className="text-slate-500">Total hours</span>
+                <span className="font-semibold text-slate-700">{fmtDuration((new Date(row.submittedEndTime).getTime() - new Date(row.submittedStartTime).getTime()) / 3_600_000)}</span>
+              </div>
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-500">Base pay</span>
+                <span className="font-semibold text-slate-700">{fmtAmount(dispHours, row.payRate)}</span>
               </div>
               {row.status === 'pending_client_review' && (
                 <div className="flex items-center justify-between px-3 py-2">

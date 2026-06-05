@@ -56,7 +56,9 @@ function fmtTs(ts: any): string {
   if (!ts) return '';
   const d = ts?.toDate ? ts.toDate() : new Date(ts);
   if (isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+  return `${date}, ${time}`;
 }
 function fmtDuration(start: any, end: any): string {
   if (!start || !end) return '';

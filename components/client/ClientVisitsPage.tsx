@@ -63,7 +63,10 @@ function tsToDate(ts: any): Date | null {
 }
 function fmtTs(ts: any): string | null {
   const d = tsToDate(ts);
-  return d ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }) : null;
+  if (!d) return null;
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+  return `${date}, ${time}`;
 }
 function fmtDuration(startTs: any, endTs: any): string | null {
   const s = tsToDate(startTs); const e = tsToDate(endTs);

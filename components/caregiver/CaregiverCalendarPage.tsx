@@ -425,7 +425,10 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     };
     const fmtTs = (ts: any) => {
       const d = tsToDate(ts);
-      return d ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }) : null;
+      if (!d) return null;
+      const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+      return `${date}, ${time}`;
     };
     const actualStart = fmtTs(shift.startedAt);
     const actualEnd   = fmtTs(shift.completedAt);

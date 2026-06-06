@@ -153,7 +153,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   // Nearby caregivers — uses same logic as Browse Caregivers (distance-filtered, AI-scored)
   const { caregivers: matchedCaregivers, loading: caregiversLoading, clientLocations } = useNearbyCaregiversWithScores(
     currentUser?.uid ?? null,
-    { maxDistance: 25, limit: 6 }
+    { maxDistance: 25, limit: 4 }
   );
 
   useEffect(() => {
@@ -420,8 +420,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
         {/* Page header */}
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-slate-900">Nearby Caregivers</h1>
-          <p className="text-slate-500 text-sm mt-0.5">Verified caregivers within 25 miles
-          </p>
         </div>
 
         {/* Two Column Layout */}
@@ -430,18 +428,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           {/* LEFT — Caregiver cards (always shown) */}
           <div className="lg:col-span-2 space-y-6">
 
-            {/* Honest low-supply note — when personalized matching returns a thin
-                list, say so plainly rather than padding with distant caregivers. */}
-            {matchedCaregivers.length > 0 && matchedCaregivers.length < 3 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-                Only {matchedCaregivers.length} caregiver{matchedCaregivers.length !== 1 ? 's' : ''} closely match your needs nearby right now.
-                We're adding caregivers in your area daily —{' '}
-                <button onClick={() => navigate('/client/find-caregivers')} className="font-semibold underline hover:text-amber-900">
-                  browse all caregivers
-                </button>{' '}
-                in the meantime.
-              </div>
-            )}
 
             {matchedCaregivers.length > 0 ? (
               <div id="caregiver-matches" className="grid sm:grid-cols-2 gap-4">

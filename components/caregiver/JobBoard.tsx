@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Search, Loader2, Briefcase, MapPin, Calendar, Clock, Lock, X, FileText, CheckCircle, XCircle, Clock4, Sun, Moon, Users, CreditCard, Banknote, EyeOff, Eye, Car, SlidersHorizontal, Video, Phone, Home } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { JobPost, Caregiver, AddToastFunction } from '../../types';
+import { hasValidTransportDocs } from '../../utils/transportDocs';
 import { dbService } from '../../services/api';
 import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
@@ -18,16 +19,6 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function hasValidTransportDocs(profile: Caregiver | null): boolean {
-    if (!profile) return false;
-    if (profile.transportationBadge === true) return true;
-    const docs = (profile as any).documents;
-    if (!docs) return false;
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const parseLocalDate = (s: string) => { const [y,m,d] = s.split('-'); return new Date(+y,+m-1,+d); };
-    const isValid = (doc: any) => doc?.status === 'approved' && (!doc.expirationDate || parseLocalDate(doc.expirationDate) >= today);
-    return isValid(docs.driversLicense) && isValid(docs.insurance) && isValid(docs.registration);
-}
 
 interface JobBoardProps {
     onShowToast: AddToastFunction;

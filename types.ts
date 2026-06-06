@@ -145,7 +145,6 @@ export interface Caregiver {
   onboardingStep?: number;
   verificationStatus?: 'pending' | 'submitted' | 'profile_complete' | 'checkr_clear' | 'approved' | 'rejected' | 'info_requested' | 'pre_adverse_action';
   membershipPaid?: boolean;
-  transportationBadge?: boolean;
   approvedAt?: string;
   approvedBy?: string;
   rejectedAt?: string;

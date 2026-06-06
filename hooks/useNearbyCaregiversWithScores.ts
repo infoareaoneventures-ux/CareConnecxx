@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { Caregiver } from '../types';
+import { hasValidTransportDocs } from '../utils/transportDocs';
 
 function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 3959;
@@ -139,7 +140,7 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
           ...carePlanCareTypes,
         ].filter(Boolean);
 
-        const needsTransportation = allCareTypes.some((t: string) => /transport/i.test(t));
+        const needsTransportation = carePlanCareTypes.some((t: string) => /transport/i.test(t));
 
         // Client's needed schedule — try multiple fields
         const clientSchedule = intake?.weeklySchedule || intake?.schedule || null;
@@ -190,8 +191,7 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
             latitude: cgLat,
             longitude: cgLng,
             imageUrl: data.photoURL || data.photo || data.imageUrl || data.profilePhoto,
-            hasTransportation: data.hasTransportation || data.hasReliableTransportation || false,
-            transportationBadge: data.transportationBadge || false,
+            documents: data.documents || {},
             skills: cgSkills,
             certifications: data.certifications || [],
             experience: data.experience || data.yearsExperience || 0,
@@ -205,7 +205,7 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
           } as any);
         };
 
-        // Process caregivers collection first — it has the richer data (transportationBadge, verificationStatus etc.)
+        // Process caregivers collection first — it has the richer data (documents, verificationStatus etc.)
         // usersSnap fills in any caregivers not already seen
         caregiversSnap?.forEach(pushDoc);
         usersSnap.forEach(pushDoc);
@@ -225,7 +225,7 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
 
         // ── 7. Hard filter: transportation if needed ──
         const filtered = needsTransportation
-          ? withinRange.filter(c => (c as any).hasTransportation === true)
+          ? withinRange.filter(c => hasValidTransportDocs(c as any))
           : withinRange;
 
         // ── 8. Sort: skills overlap → availability overlap → rating → distance ──

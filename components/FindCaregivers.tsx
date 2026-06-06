@@ -7,6 +7,7 @@ import {
   Pill, Car, Brain, Activity, Users, Video,
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
+import { hasValidTransportDocs } from '../utils/transportDocs';
 import firebase from 'firebase/compat/app';
 import { AIMatchScore } from '../services/aiMatchingService';
 import { dbService } from '../services/api';
@@ -257,7 +258,7 @@ export default function FindCaregivers() {
           lat: cgLat,
           lng: cgLng,
           photoURL: data.photoURL || data.photo || data.imageUrl || data.profilePhoto,
-          hasReliableTransportation: data.hasTransportation || data.hasReliableTransportation || false,
+          hasReliableTransportation: hasValidTransportDocs(data),
           skills: data.skills || data.specializations || data.specialties || [],
           certifications: data.certifications || [],
           languages: data.languages || ['English'],

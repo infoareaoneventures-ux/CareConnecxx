@@ -11,6 +11,7 @@ import { chatService } from '../services/chatService';
 import { useAccessGates } from '../hooks/useAccessGates';
 import { useCareConnex } from '../context/CareConnexContext';
 import { dbService } from '../services/api';
+import { hasValidTransportDocs } from '../utils/transportDocs';
 import { ClientNavigation } from './client/ClientNavigation';
 import { LeaveReviewModal } from './client/LeaveReviewModal';
 import { TIME_BLOCKS, DAYS } from './caregiver/signup/constants';
@@ -77,7 +78,7 @@ function mapRawToProfile(id: string, data: any): CaregiverProfile {
     verified: data.verified || false,
     backgroundCheckStatus: data.backgroundCheckStatus,
     acceptsCreditCards: data.acceptsCreditCards ?? true,
-    hasTransportation: data.hasTransportation === true,
+    hasTransportation: hasValidTransportDocs(data),
     serviceRadius: data.serviceRadius ?? 25,
     weeklyAvailability: weeklySlotsToBl(data.weeklyAvailability || {}),
     jobTypes: data.jobTypes || [],

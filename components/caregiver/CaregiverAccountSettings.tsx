@@ -253,7 +253,7 @@ export const CaregiverAccountSettings: React.FC = () => {
 
   const memberSince = (profile as any)?.createdAt
     ? new Date((profile as any).createdAt).toLocaleDateString() : '—';
-  const hasTransportation = !!(profile as any)?.hasTransportation;
+  const hasTransportation = ((profile as any)?.skills || (profile as any)?.services || []).includes('Transportation');
 
   return (
     <div className="min-h-screen bg-slate-50 pb-24">

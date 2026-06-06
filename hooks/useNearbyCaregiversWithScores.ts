@@ -179,7 +179,7 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
             uid: doc.id,
             name,
             hourlyRate: data.hourlyRate || 25,
-            rating: data.rating || 0,
+            rating: data.rating || 5.0,
             reviewCount: data.reviewCount ?? 0,
             city: data.city || data.location?.city || '',
             state: data.state || data.location?.state || '',

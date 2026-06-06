@@ -112,6 +112,7 @@ export default function ClientCaregiverProfile({
   const [showInterviewModal, setShowInterviewModal] = useState(false);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
   const [isBooked, setIsBooked] = useState(false);
+  const [isRequested, setIsRequested] = useState(false);
   const [hasCompletedShift, setHasCompletedShift] = useState(false);
   const [hasReviewed, setHasReviewed] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
@@ -137,6 +138,18 @@ export default function ClientCaregiverProfile({
         .limit(1)
         .get()
         .then(snap => setIsBooked(!snap.empty))
+        .catch(() => {});
+
+      // Check for an active interview request with this caregiver
+      const activeStatuses = ['requested', 'pending', 'scheduled'];
+      db!.collection('video_interviews')
+        .where('clientId', '==', uid)
+        .where('caregiverId', '==', caregiverId)
+        .get()
+        .then(snap => {
+          const hasActive = snap.docs.some(d => activeStatuses.includes(d.data().status));
+          setIsRequested(hasActive);
+        })
         .catch(() => {});
 
       // Check for a completed shift with this caregiver
@@ -332,6 +345,10 @@ export default function ClientCaregiverProfile({
                   <div className="w-full py-2.5 bg-green-50 border border-green-200 text-green-700 font-semibold rounded-full flex items-center justify-center gap-2 text-sm">
                     <CheckCircle className="w-4 h-4" /> Active Booking
                   </div>
+                ) : isRequested ? (
+                  <div className="w-full py-2.5 bg-slate-100 border border-slate-200 text-slate-500 font-semibold rounded-full flex items-center justify-center gap-2 text-sm">
+                    <CheckCircle className="w-4 h-4" /> Interview Requested
+                  </div>
                 ) : (
                   <button
                     onClick={handleInterview}
@@ -370,11 +387,11 @@ export default function ClientCaregiverProfile({
               )}
             </Section>
 
-            {/* Care Services */}
+            {/* Care Services — Transportation only shown when badge is earned */}
             {caregiver.skills.length > 0 && (
               <Section title="Care Services">
                 <div className="flex flex-wrap gap-2">
-                  {caregiver.skills.map(s => (
+                  {caregiver.skills.filter(s => s !== 'Transportation' || caregiver.hasTransportation).map(s => (
                     <span key={s} className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary-50 text-primary-700 text-xs font-medium">
                       <CheckCircle className="w-3 h-3" /> {s}
                     </span>
@@ -606,6 +623,7 @@ export default function ClientCaregiverProfile({
           onClose={() => setShowInterviewModal(false)}
           onSuccess={(msg) => {
             addToast(msg, 'success');
+            setIsRequested(true);
             setShowInterviewModal(false);
           }}
           onShowToast={(msg, type) => addToast(msg, type)}

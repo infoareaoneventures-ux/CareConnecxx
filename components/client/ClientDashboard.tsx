@@ -2,9 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { User, Loader2, Calendar, Phone, Heart, FileText, Edit, Clock, Home, Search, CheckCircle, DollarSign, Hourglass } from 'lucide-react';
 import { Button } from '../ui/Button';
-import { BookingModal } from '../BookingModal';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
-import { ViewType, Appointment, Caregiver, ClientIntakeData, Senior } from '../../types';
+import { ViewType, Caregiver, ClientIntakeData, Senior } from '../../types';
 import { dbService, authService } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { useAccessGates } from '../../hooks/useAccessGates';
@@ -116,10 +115,9 @@ async function buildSeniorProfile(
 export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { appointments, caregivers, bookAppointment: onBook, addToast: onShowToast } = useCareConnex();
+  const { appointments, addToast: onShowToast } = useCareConnex();
   
   // Modal states
-  const [selectedCaregiver, setSelectedCaregiver] = useState<Caregiver | null>(null);
   const [scheduleInterviewCaregiver, setScheduleInterviewCaregiver] = useState<Caregiver | null>(null);
   
   // Loading states
@@ -146,6 +144,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
+  const [bookedCaregiverIds, setBookedCaregiverIds] = useState<Set<string>>(new Set());
+  const [requestedCaregiverIds, setRequestedCaregiverIds] = useState<Set<string>>(new Set());
+  const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
 
   const currentUser = authService.getCurrentUser();
   const { gate, Modals: GateModals } = useAccessGates();
@@ -155,6 +156,42 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     currentUser?.uid ?? null,
     { maxDistance: 25, limit: 4 }
   );
+
+  // Fetch accepted booking_requests + open job posts together
+  useEffect(() => {
+    if (!currentUser?.uid || !db) return;
+    db.collection('booking_requests')
+      .where('clientId', '==', currentUser.uid)
+      .where('status', '==', 'accepted')
+      .get()
+      .then(snap => {
+        const ids = new Set<string>(snap.docs.map(d => d.data().caregiverId).filter(Boolean));
+        setBookedCaregiverIds(ids);
+      })
+      .catch(() => {});
+    db.collection('job_posts')
+      .where('clientId', '==', currentUser.uid)
+      .where('status', '==', 'open')
+      .get()
+      .then(snap => {
+        setClientOpenPosts(snap.docs.map(d => ({ id: d.id, title: (d.data() as any).title || 'Untitled post' })));
+      })
+      .catch(() => {});
+    db.collection('video_interviews')
+      .where('clientId', '==', currentUser.uid)
+      .get()
+      .then(snap => {
+        const activeStatuses = new Set(['requested', 'pending', 'scheduled']);
+        const ids = new Set<string>(
+          snap.docs
+            .filter(d => activeStatuses.has(d.data().status))
+            .map(d => d.data().caregiverId)
+            .filter(Boolean)
+        );
+        setRequestedCaregiverIds(ids);
+      })
+      .catch(() => {});
+  }, [currentUser?.uid]);
 
   useEffect(() => {
     if (!currentUser?.uid) return;
@@ -275,17 +312,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     }).catch(() => setPaidIds(prev => { const s = new Set(prev); s.delete(id); return s; }));
   };
 
-  // Handle booking confirmation
-  const handleBookingConfirm = async (appt: Appointment) => {
-    try {
-      await onBook(appt);
-      onShowToast?.('Appointment booked successfully!', 'success');
-      setSelectedCaregiver(null);
-    } catch (error) {
-      onShowToast?.('Failed to book appointment', 'error');
-    }
-  };
-
   const scrollToMatches = () => {
     document
       .getElementById('caregiver-matches')
@@ -328,9 +354,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       onShowToast?.('Could not start chat', 'error');
     }
   };
-
-  const handleGatedBook = (caregiver: Caregiver) =>
-    gate('booking', caregiver.name, () => setSelectedCaregiver(caregiver));
 
   const handleGatedMessage = (caregiver: Caregiver) =>
     gate('message', caregiver.name, () => handleChatClick(caregiver));
@@ -429,23 +452,26 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           <div className="lg:col-span-2 space-y-6">
 
 
-            {matchedCaregivers.length > 0 ? (
+            {(() => {
+              const discoveryCaregivers = matchedCaregivers.filter(c => !bookedCaregiverIds.has(c.id));
+              return discoveryCaregivers.length > 0 ? (
               <div id="caregiver-matches" className="grid sm:grid-cols-2 gap-4">
-                {matchedCaregivers.map((caregiver) => (
+                {discoveryCaregivers.map((caregiver) => (
                   <CaregiverMatchCard
                     key={caregiver.id}
                     caregiver={caregiver}
                     matchScore={0}
                     matchReasons={[]}
-                    onBook={handleGatedBook}
+                    onBook={(cg) => setScheduleInterviewCaregiver(cg)}
                     onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}
                     onMessage={handleGatedMessage}
                     isSaved={savedIds.includes(caregiver.id)}
                     onToggleSave={handleToggleSave}
+                    isRequested={requestedCaregiverIds.has(caregiver.id)}
                   />
                 ))}
               </div>
-            ) : (
+              ) : (
               /* Loading placeholders — never show "No matches yet" as a dead end */
               <div className="grid sm:grid-cols-2 gap-4">
                 {[1, 2, 3, 4].map(i => (
@@ -463,7 +489,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                   <button onClick={() => navigate('/client/find-caregivers')} className="mt-2 text-primary-600 text-sm font-medium hover:underline">Browse all caregivers →</button>
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {/* See more results link */}
             {matchedCaregivers.length > 0 && (
@@ -494,10 +521,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                         caregiver={caregiver}
                         matchScore={0}
                         matchReasons={[]}
-                        onBook={setSelectedCaregiver}
+                        onBook={(cg) => setScheduleInterviewCaregiver(cg)}
                         onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}
                         isSaved={savedIds.includes(caregiver.id)}
                         onToggleSave={handleToggleSave}
+                        isRequested={requestedCaregiverIds.has(caregiver.id)}
                       />
                     ))}
                   </div>
@@ -621,7 +649,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             savedCaregivers={savedCaregivers}
             currentUserUid={currentUser?.uid}
             onChatCoordinator={handleChatCoordinator}
-            onNavigate={onNavigate}
             onViewCaregiver={(cg) => navigate(`/client/caregiver/${cg.id}`)}
           />
         </div>
@@ -667,19 +694,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
         />
       )}
 
-      {selectedCaregiver && (
-        <BookingModal
-          caregiver={selectedCaregiver}
-          onClose={() => setSelectedCaregiver(null)}
-          onConfirm={handleBookingConfirm}
-        />
-      )}
 
       {scheduleInterviewCaregiver && (
         <ScheduleInterviewModal
           caregiver={scheduleInterviewCaregiver}
+          jobPosts={clientOpenPosts}
           onClose={() => setScheduleInterviewCaregiver(null)}
           onSuccess={(message) => {
+            if (scheduleInterviewCaregiver) {
+              setRequestedCaregiverIds(prev => new Set([...prev, scheduleInterviewCaregiver.id]));
+            }
             onShowToast?.(message, 'success');
             setScheduleInterviewCaregiver(null);
           }}

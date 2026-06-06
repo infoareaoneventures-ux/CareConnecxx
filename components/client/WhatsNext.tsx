@@ -1,20 +1,19 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Check,
   Heart,
-  Users,
-  CalendarCheck,
   ChevronRight,
   Sparkles,
   ShieldCheck,
   Crown,
-  Briefcase,
 } from 'lucide-react';
 import {
   useOnboardingProgress,
   OnboardingStepId,
 } from '../../hooks/useOnboardingProgress';
 import { startIdentityVerification } from '../../services/stripeService';
+import { db } from '../../lib/firebase';
+import { dbService } from '../../services/api';
 
 export type OnboardingStep = OnboardingStepId;
 
@@ -63,37 +62,6 @@ const STEP_DEFS: StepDef[] = [
     action: 'navigate',
     path: '/client/membership',
   },
-  {
-    id: 'post-job',
-    label: 'Care Request',
-    shortLabel: 'Care Request',
-    title: 'Submit a care request',
-    description: 'Let caregivers apply to your specific needs and schedule.',
-    cta: 'New Request',
-    icon: Briefcase,
-    action: 'navigate',
-    path: '/client/post-job',
-  },
-  {
-    id: 'meet-matches',
-    label: 'Meet Matches',
-    shortLabel: 'Meet Matches',
-    title: 'Message a caregiver',
-    description: "Say hi to a match below — it's the fastest way to find the right fit.",
-    cta: 'Browse Matches',
-    icon: Users,
-    action: 'scroll-matches',
-  },
-  {
-    id: 'book-care',
-    label: 'Book Care',
-    shortLabel: 'Book Care',
-    title: 'Book your first visit',
-    description: 'Lock in care with a caregiver you trust.',
-    cta: 'Book a Visit',
-    icon: CalendarCheck,
-    action: 'scroll-matches',
-  },
 ];
 
 interface WhatsNextProps {
@@ -120,28 +88,25 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
     loading,
   } = useOnboardingProgress(uid);
 
-  const autoPosted = useRef(false);
+  const hasAutoPosted = useRef(false);
+  const storageKey = `onboarding_done_${uid}`;
+  const [dismissed] = useState(() => localStorage.getItem(storageKey) === 'true');
+
   useEffect(() => {
-    if (!identityVerified || !membershipActive || autoPosted.current || !uid) return;
-    autoPosted.current = true;
-    (async () => {
-      try {
-        const { db } = await import('../../lib/firebase');
-        if (!db) return;
-        // Check if client already has a job post
-        const existing = await db.collection('job_posts').where('clientId', '==', uid).limit(1).get();
-        if (!existing.empty) return;
-        // Read wizard data
-        const snap = await db.collection('job_postings').doc(uid).get();
-        if (!snap.exists) return;
-        const w = snap.data() as any;
-        if (!w?.careRecipientFirstName) return;
-        const { dbService, authService } = await import('../../services/api');
-        const clientName = authService.getCurrentUser()?.displayName || 'Client';
+    if (loading || !identityVerified || !membershipActive) return;
+    if (hasAutoPosted.current) return;
+    if (!db) return;
+
+    // Check if a job post already exists before creating one
+    db.collection('job_posts').where('clientId', '==', uid).limit(1).get().then(snap => {
+      if (!snap.empty) return;
+      hasAutoPosted.current = true;
+      db!.collection('job_postings').doc(uid).get().then(postingSnap => {
+        if (!postingSnap.exists) return;
+        const w = postingSnap.data() as any;
         const city = w.city || '';
         const state = w.state || '';
-        const location = [city, state].filter(Boolean).join(', ');
-        await dbService.createJobPost({
+        dbService.createJobPost({
           title: `Senior care${city ? ` in ${city}` : ''}`,
           description: w.jobDescription || 'Looking for a caring and reliable caregiver.',
           careTypes: w.careNeeds || [],
@@ -150,7 +115,7 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
           city,
           state,
           zipCode: w.zipCode || '',
-          location,
+          location: [city, state].filter(Boolean).join(', '),
           streetAddress: w.street || '',
           timeOfDay: w.timeOfDay || [],
           daysOfWeek: w.selectedDays || [],
@@ -158,12 +123,10 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
           rateFlexible: !w.rate,
           paymentMethod: w.paymentMethod || 'cash',
           careLevel: w.careLevel || 'moderate',
-        }, uid);
-      } catch (e) {
-        console.error('Auto job post failed:', e);
-      }
-    })();
-  }, [identityVerified, membershipActive, uid]);
+        }, uid).catch(() => {});
+      }).catch(() => {});
+    }).catch(() => {});
+  }, [uid, loading, identityVerified, membershipActive]);
 
   if (loading) {
     return (
@@ -176,6 +139,19 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
   const tod = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
 
   const allDone = currentStep === 'all-done';
+
+  if (allDone && dismissed) {
+    return (
+      <div className="relative mb-6 overflow-hidden rounded-3xl bg-gradient-to-br from-primary-600 via-primary-500 to-primary-400 px-6 py-5 shadow-xl shadow-primary-600/20">
+        <div aria-hidden="true" className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-white opacity-10 blur-2xl" />
+        <h2 className="text-2xl md:text-3xl font-bold text-white tracking-tight">
+          Good {tod}, {firstName}
+        </h2>
+      </div>
+    );
+  }
+
+  if (allDone && !dismissed) localStorage.setItem(storageKey, 'true');
   const activeDef = !allDone ? STEP_DEFS.find((s) => s.id === currentStep) : null;
 
   const triggerStep = (def: StepDef) => {
@@ -239,7 +215,7 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
           <div>
             <h2 className="text-2xl md:text-3xl font-bold text-white tracking-tight">
               {allDone
-                ? `You're all set, ${firstName} 🎉`
+                ? `You're all set, ${firstName}`
                 : `Good ${tod}, ${firstName}`}
             </h2>
             <p className="mt-1 text-sm text-primary-50/90">
@@ -263,7 +239,7 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
             style={{ width: `calc((100% - 3.5rem) * ${fillPct / 100})` }}
           />
 
-          <ol className="relative grid grid-cols-6 gap-1 sm:gap-2">
+          <ol className="relative grid grid-cols-3 gap-1 sm:gap-2">
             {STEP_DEFS.map((def, idx) => {
               const state = steps.find((s) => s.id === def.id);
               const done = state?.done ?? false;
@@ -279,7 +255,6 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
                 : `${circleBase} bg-white/20 text-white/70 border-2 border-white/30`;
 
               const labelClass = done || active ? 'text-white' : 'text-white/60';
-
               const clickable = done || active;
 
               return (
@@ -351,19 +326,9 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
 
         {allDone && (
           <div className="rounded-2xl bg-white/12 p-4 md:p-5 backdrop-blur">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-primary-50/95">
-                Identity verified, membership active, job posted, care plan filled, caregiver met, first visit booked. Nice work.
-              </p>
-              <button
-                type="button"
-                onClick={() => onNavigate('/client/care-plan')}
-                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-primary-700 shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-primary-50 hover:shadow-lg"
-              >
-                <span>Open Care Binder</span>
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
+            <p className="text-sm text-primary-50/95">
+              Care plan complete, identity verified, membership active. You're ready to find care.
+            </p>
           </div>
         )}
       </div>

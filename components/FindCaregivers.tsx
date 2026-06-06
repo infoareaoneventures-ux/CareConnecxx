@@ -49,7 +49,7 @@ interface Caregiver {
   serviceRadius?: number;
 }
 
-type SortOption = 'rating' | 'price-low' | 'price-high' | 'distance' | 'experience';
+type SortOption = 'rating' | 'price-low' | 'price-high';
 
 const SENIOR_SPECIALTIES = [
   { key: 'Mobility Assistance', icon: Activity },
@@ -108,6 +108,7 @@ export default function FindCaregivers() {
   const [interviewCaregiver, setInterviewCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
   const [bookedCaregiverIds, setBookedCaregiverIds] = useState<Set<string>>(new Set());
+  const [requestedCaregiverIds, setRequestedCaregiverIds] = useState<Set<string>>(new Set());
 
   // Client care locations — all lat/lngs from job_posts, job_postings, carePlans, users
   const [clientLocations, setClientLocations] = useState<{ lat: number; lng: number }[]>([]);
@@ -153,6 +154,22 @@ export default function FindCaregivers() {
         .then(snap => {
           const ids = new Set<string>(snap.docs.map(d => d.data().caregiverId).filter(Boolean));
           setBookedCaregiverIds(ids);
+        })
+        .catch(() => {});
+
+      // Load caregivers with active (non-terminal) interview requests
+      fdb.collection('video_interviews')
+        .where('clientId', '==', user.uid)
+        .get()
+        .then(snap => {
+          const activeStatuses = new Set(['requested', 'pending', 'scheduled']);
+          const ids = new Set<string>(
+            snap.docs
+              .filter(d => activeStatuses.has(d.data().status))
+              .map(d => d.data().caregiverId)
+              .filter(Boolean)
+          );
+          setRequestedCaregiverIds(ids);
         })
         .catch(() => {});
 
@@ -443,12 +460,6 @@ export default function FindCaregivers() {
       case 'price-high':
         sorted.sort((a, b) => b.hourlyRate - a.hourlyRate);
         break;
-      case 'distance':
-        sorted.sort((a, b) => a.distance - b.distance);
-        break;
-      case 'experience':
-        sorted.sort((a, b) => (b.experience || 0) - (a.experience || 0));
-        break;
       default:
         sorted.sort((a, b) => b.rating - a.rating);
         break;
@@ -641,11 +652,6 @@ export default function FindCaregivers() {
               <Sparkles className="w-6 h-6 text-primary-600" />
               <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Find Senior Caregivers</h1>
             </div>
-            <p className="text-slate-500 mt-1 text-sm">
-              {clientIntakeData
-                ? 'Personalized matches based on your care plan'
-                : 'Trusted caregivers, background-checked and ready to help'}
-            </p>
           </div>
         </div>
 
@@ -692,8 +698,6 @@ export default function FindCaregivers() {
                 <option value="rating">Highest rated</option>
                 <option value="price-low">Price: Low to High</option>
                 <option value="price-high">Price: High to Low</option>
-                <option value="distance">Nearest</option>
-                <option value="experience">Most experienced</option>
               </select>
               <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
             </div>
@@ -726,8 +730,6 @@ export default function FindCaregivers() {
                 <option value="rating">Highest rated</option>
                 <option value="price-low">Price: Low to High</option>
                 <option value="price-high">Price: High to Low</option>
-                <option value="distance">Nearest</option>
-                <option value="experience">Most experienced</option>
               </select>
             </div>
 
@@ -749,6 +751,7 @@ export default function FindCaregivers() {
                     caregiver={cg}
                     isFavorite={favorites.includes(cg.id)}
                     isBooked={bookedCaregiverIds.has(cg.id)}
+                    isRequested={requestedCaregiverIds.has(cg.id)}
                     onToggleFavorite={() => toggleFavorite(cg.id)}
                     onViewProfile={() => setViewingCaregiver(cg)}
                     onMessage={() => handleMessage(cg.id, `${cg.firstName} ${cg.lastName}`.trim())}
@@ -806,7 +809,12 @@ export default function FindCaregivers() {
           } as any}
           jobPosts={clientOpenPosts}
           onClose={() => setInterviewCaregiver(null)}
-          onSuccess={() => setInterviewCaregiver(null)}
+          onSuccess={() => {
+            if (interviewCaregiver) {
+              setRequestedCaregiverIds(prev => new Set([...prev, interviewCaregiver.id]));
+            }
+            setInterviewCaregiver(null);
+          }}
           onShowToast={() => {}}
         />
       )}
@@ -850,6 +858,7 @@ interface CaregiverCardProps {
   isFavorite: boolean;
   isBestMatch?: boolean;
   isBooked?: boolean;
+  isRequested?: boolean;
   onToggleFavorite: () => void;
   onViewProfile: () => void;
   onMessage: () => void;
@@ -857,7 +866,7 @@ interface CaregiverCardProps {
 }
 
 const CaregiverCard: React.FC<CaregiverCardProps> = ({
-  caregiver, isFavorite, isBestMatch, isBooked, onToggleFavorite, onViewProfile, onMessage, onRequestInterview,
+  caregiver, isFavorite, isBestMatch, isBooked, isRequested, onToggleFavorite, onViewProfile, onMessage, onRequestInterview,
 }) => {
   const fullName = `${caregiver.firstName} ${caregiver.lastName}`.trim() || 'Caregiver';
 
@@ -966,6 +975,10 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
          {isBooked ? (
             <div className="w-full py-2 text-sm font-bold bg-green-50 border-2 border-green-200 text-green-700 rounded-xl inline-flex items-center justify-center gap-1.5">
               <CheckCircle className="w-4 h-4" /> Active Booking
+            </div>
+         ) : isRequested ? (
+            <div className="w-full py-2 text-sm font-bold bg-slate-100 border-2 border-slate-200 text-slate-500 rounded-xl inline-flex items-center justify-center gap-1.5">
+              <CheckCircle className="w-4 h-4" /> Interview Requested
             </div>
          ) : (
             <button

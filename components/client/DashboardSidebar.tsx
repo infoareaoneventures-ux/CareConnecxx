@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Heart, MessageSquare, Mail, FileText,
-  Shield, Award, CheckCircle, Briefcase, Plus, Users, Bookmark, Search,
+  Heart, MessageSquare, Mail,
+  Briefcase, Plus, Users, Bookmark, Search,
 } from 'lucide-react';
-import { Caregiver, ViewType } from '../../types';
+import { Caregiver } from '../../types';
 import { db } from '../../lib/firebase';
 
 
@@ -25,7 +25,6 @@ interface DashboardSidebarProps {
   savedCaregivers: Caregiver[];
   currentUserUid?: string;
   onChatCoordinator: () => void;
-  onNavigate: (view: ViewType) => void;
   onViewCaregiver: (caregiver: Caregiver) => void;
 }
 
@@ -33,7 +32,6 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
   savedCaregivers,
   currentUserUid,
   onChatCoordinator,
-  onNavigate,
   onViewCaregiver,
 }) => {
   const navigate = useNavigate();
@@ -45,6 +43,7 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
     let isMounted = true;
     db.collection('job_posts')
       .where('clientId', '==', currentUserUid)
+      .where('status', '==', 'open')
       .get()
       .then(snap => {
         if (!isMounted) return;
@@ -242,54 +241,7 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
         </div>
       </div>
 
-      {/* Digital Care Binder */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
-          <FileText className="w-4 h-4 text-primary-600" />
-          <h3 className="font-semibold text-slate-900 text-sm">Digital Care Binder</h3>
-        </div>
-        <div className="p-4">
-          <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-            Keep medications, emergency contacts, and daily routines in one place — shared with your caregiver before every visit.
-          </p>
-          <button
-            onClick={() => onNavigate('care-plan')}
-            className="w-full flex items-center justify-center gap-1.5 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg transition-colors"
-          >
-            <FileText className="w-3.5 h-3.5" />
-            Open Care Binder
-          </button>
-        </div>
-      </div>
 
-      {/* Trust */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4">
-        <h3 className="font-semibold text-slate-900 text-sm mb-3">Why Families Trust Us</h3>
-        <div className="space-y-2.5">
-          {[
-            { icon: <Shield className="w-4 h-4 text-primary-600" />, title: 'Background Checked', sub: 'Every caregiver verified', bg: 'bg-primary-50' },
-            { icon: <Award className="w-4 h-4 text-accent-500" />, title: 'Senior Care Specialists', sub: "Dementia, Parkinson's & more", bg: 'bg-accent-50' },
-          ].map((item, i) => (
-            <div key={i} className="flex items-start gap-3">
-              <div className={`w-8 h-8 ${item.bg} rounded-lg flex items-center justify-center flex-shrink-0`}>{item.icon}</div>
-              <div>
-                <p className="text-xs font-semibold text-slate-800">{item.title}</p>
-                <p className="text-xs text-slate-500">{item.sub}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Service guarantee */}
-      <div className="bg-gradient-to-br from-primary-600 to-primary-700 rounded-xl p-4 text-white">
-        <p className="font-bold text-sm mb-1">Our Guarantee</p>
-        <p className="text-xs text-primary-100 leading-relaxed">Love your caregiver within 7 days or we'll rematch you — free.</p>
-        <div className="mt-3 text-xs text-primary-200 flex items-center gap-1.5">
-          <CheckCircle className="w-3.5 h-3.5" />
-          Only $29.95/mo · Cancel anytime
-        </div>
-      </div>
     </div>
   );
 };

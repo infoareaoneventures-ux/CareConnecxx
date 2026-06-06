@@ -32,25 +32,10 @@ const CLIENT_STEP_META: Record<string, { label: string; description: string; pat
     description: 'Subscribe to start connecting with caregivers',
     path: '/client/membership',
   },
-  'post-job': {
-    label: 'Care Request',
-    description: 'Tell caregivers what kind of help you need',
-    path: '/client/post-job',
-  },
   'care-plan': {
     label: 'Complete care plan',
     description: 'Add medications, schedule, and emergency contacts',
     path: '/client/care-plan',
-  },
-  'meet-matches': {
-    label: 'Message your matches',
-    description: 'Say hello to your matched caregivers',
-    path: '/client/inbox',
-  },
-  'book-care': {
-    label: 'Book your first visit',
-    description: "Schedule a visit and you're all set",
-    path: '/client/browse-caregivers',
   },
 };
 

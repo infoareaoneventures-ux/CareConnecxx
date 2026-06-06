@@ -1,16 +1,10 @@
 import { useEffect, useState } from 'react';
 import { db } from '../lib/firebase';
-import { dbService } from '../services/api';
-import { chatService } from '../services/chatService';
-import type { Appointment } from '../types';
 
 export type OnboardingStepId =
   | 'identity-check'
   | 'pay-membership'
-  | 'post-job'
-  | 'care-plan'
-  | 'meet-matches'
-  | 'book-care';
+  | 'care-plan';
 export type OnboardingState = OnboardingStepId | 'all-done';
 
 export interface OnboardingProgress {
@@ -28,9 +22,6 @@ const STEP_ORDER: OnboardingStepId[] = [
   'care-plan',
   'identity-check',
   'pay-membership',
-  'post-job',
-  'meet-matches',
-  'book-care',
 ];
 
 function computeCarePlanProgress(
@@ -78,9 +69,6 @@ function computeCarePlanProgress(
 export function useOnboardingProgress(uid: string | undefined): OnboardingProgress {
   const [jobPostingsData, setJobPostingsData] = useState<any | null>(null);
   const [carePlanData, setCarePlanData] = useState<any | null>(null);
-  const [hasPostedJob, setHasPostedJob] = useState(false);
-  const [hasRealMessage, setHasRealMessage] = useState(false);
-  const [hasAppointment, setHasAppointment] = useState(false);
   const [identityVerified, setIdentityVerified] = useState(false);
   const [membershipActive, setMembershipActive] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -134,41 +122,6 @@ export function useOnboardingProgress(uid: string | undefined): OnboardingProgre
       unsubs.push(userUnsub);
     }
 
-    if (db) {
-      const jobUnsub = db
-        .collection('job_posts')
-        .where('clientId', '==', uid)
-        .onSnapshot(
-          (snap) => setHasPostedJob(!snap.empty),
-          () => setHasPostedJob(false)
-        );
-      unsubs.push(jobUnsub);
-    }
-
-    const chatUnsub = chatService.subscribeToChatRooms(
-      uid,
-      (rooms) => {
-        const engaged = rooms.some(
-          (r) =>
-            Array.isArray(r.participants) &&
-            r.participants.includes(uid) &&
-            !!r.lastMessage &&
-            r.lastMessage.trim().length > 0 &&
-            !!r.lastMessageTimestamp
-        );
-        setHasRealMessage(engaged);
-      },
-      () => setHasRealMessage(false)
-    );
-    if (chatUnsub) unsubs.push(chatUnsub as () => void);
-
-    const apptUnsub = dbService.subscribeToAppointments(
-      uid,
-      'client',
-      (appts: Appointment[]) => setHasAppointment(appts.length > 0)
-    );
-    if (apptUnsub) unsubs.push(apptUnsub);
-
     setLoading(false);
 
     return () => {
@@ -192,10 +145,7 @@ export function useOnboardingProgress(uid: string | undefined): OnboardingProgre
   const stepDone: Record<OnboardingStepId, boolean> = {
     'identity-check': bypass || identityVerified,
     'pay-membership': bypass || membershipActive,
-    'post-job': hasPostedJob,
     'care-plan': carePlanPercent === 100,
-    'meet-matches': hasRealMessage,
-    'book-care': hasAppointment,
   };
 
   const steps = STEP_ORDER.map((id) => ({ id, done: stepDone[id] }));

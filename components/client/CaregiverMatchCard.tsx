@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Star, Heart, MapPin, MessageSquare, DollarSign } from 'lucide-react';
+import { Star, Heart, MapPin, MessageSquare, DollarSign, CheckCircle } from 'lucide-react';
 import { Caregiver } from '../../types';
 import { CreditCardBadge } from '../shared/CreditCardBadge';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
@@ -14,6 +14,7 @@ interface CaregiverMatchCardProps {
   onMessage?: (caregiver: Caregiver) => void;
   isSaved?: boolean;
   onToggleSave?: (caregiver: Caregiver) => void;
+  isRequested?: boolean;
 }
 
 export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
@@ -25,6 +26,7 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
   onMessage,
   isSaved = false,
   onToggleSave,
+  isRequested = false,
 }) => {
   const [imgErrored, setImgErrored] = useState(false);
   const photo = caregiver.imageUrl || (caregiver as any).photo || (caregiver as any).photoURL;
@@ -146,12 +148,18 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
         >
           <MessageSquare className="w-4 h-4" /> Message
         </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); onBook(caregiver); }}
-          className="w-full py-2 text-sm font-bold bg-primary-600 border-2 border-primary-600 text-white rounded-xl hover:bg-primary-700 hover:border-primary-700 transition-colors"
-        >
-          Book
-        </button>
+        {isRequested ? (
+          <div className="w-full py-2 text-sm font-bold bg-slate-100 border-2 border-slate-200 text-slate-500 rounded-xl inline-flex items-center justify-center gap-1.5">
+            <CheckCircle className="w-4 h-4" /> Interview Requested
+          </div>
+        ) : (
+          <button
+            onClick={(e) => { e.stopPropagation(); onBook(caregiver); }}
+            className="w-full py-2 text-sm font-bold bg-primary-600 border-2 border-primary-600 text-white rounded-xl hover:bg-primary-700 hover:border-primary-700 transition-colors"
+          >
+            Request Interview
+          </button>
+        )}
       </div>
     </div>
   );

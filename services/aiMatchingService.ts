@@ -47,8 +47,6 @@ export interface MatchOutcome {
 const CARE_DOMAIN_KNOWLEDGE = `You are an expert home care coordinator matching caregivers to seniors. Score each candidate on how well they fit the senior's specific needs.
 
 DOMAIN KNOWLEDGE (distilled from 15,000 validated matching scenarios):
-- CRITICAL: Dementia / Alzheimer's / memory care needs → caregiver MUST have dementia care certification. Without it: major red flag, cap overall score at 45.
-- CRITICAL: Medical needs (medication management, wound care, catheter care, feeding tube) → requires CNA, LVN, or RN credential. Without it: cap score at 50.
 - Skills coverage below 50%: overall score must not exceed 55 regardless of other signals.
 - Schedule overlap below 30%: disqualifying — score below 40.
 - Distance ≤ 5 miles: strong reliability signal (caregivers show up consistently).
@@ -69,7 +67,7 @@ Each element must have: { "caregiverId": "...", "overallScore": 0-100, "confiden
 // Compact system prompt for single-caregiver browse scoring (uses Haiku for speed)
 const SINGLE_MATCH_SYSTEM = `You are a home care coordinator. Score this caregiver for the senior's needs (0-100).
 Return ONLY JSON (no markdown): {"overallScore":0-100,"confidence":"high|medium|low","reasoning":["...","..."],"redFlags":["..."],"factors":{"skillsMatch":0-100,"availability":0-100,"distance":0-100,"experience":0-100,"personalityFit":0-100,"languageMatch":0-100}}
-Rules: dementia need without cert → max 45. Medical need without CNA/LVN/RN → max 50. Skills <50% → max 55. Schedule overlap <30% → max 40.`;
+Rules: Skills <50% → max 55. Schedule overlap <30% → max 40.`;
 
 function stripJsonFences(text: string): string {
   return text.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '');
@@ -298,8 +296,6 @@ class AIMatchingService {
         hourlyRate: signals.hourlyRate,
         reliabilityScore: signals.reliabilityScore,
         retentionRate: signals.retentionRate,
-        hasDementiaCert: signals.hasDementiaCert,
-        hasMedicalCred: signals.hasMedicalCred,
         feedbackSummary: signals.feedbackSummary,
       },
     }));
@@ -406,8 +402,6 @@ export async function getAIMatches(
         languages: signals.languages,
         personalityTags: signals.personalityTags,
         retentionRate: signals.retentionRate,
-        hasDementiaCert: signals.hasDementiaCert,
-        hasMedicalCred: signals.hasMedicalCred,
         feedbackSummary: signals.feedbackSummary,
       },
     });

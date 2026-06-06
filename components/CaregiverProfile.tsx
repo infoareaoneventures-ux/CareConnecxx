@@ -154,7 +154,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   const displayRateTwo: string = String(profile.rateFor2Seniors || profile.rateForTwo || editRateTwo || '');
   const displayRateThree: string = String(profile.rateFor3PlusSeniors || profile.rateForThree || editRateThree || '');
   const displayMaxClients: string = String(profile.maxClients || editMaxClients);
-  const hasTransportation: boolean = !!(profile.hasTransportation || displayServices.includes('Transportation'));
+  const hasTransportation: boolean = !!(profile as any).hasTransportation;
 
   const completenessChecks = [
     !!(profile.photo || profile.imageUrl),
@@ -324,7 +324,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                   onSave={() => saveSection({
                     services: editServices,
                     skills: editServices,
-                    hasTransportation: editServices.includes('Transportation'),
                   })}
                 />
               </div>

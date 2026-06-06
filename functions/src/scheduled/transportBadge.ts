@@ -62,7 +62,7 @@ export const evaluateTransportBadges = functions.pubsub
       const shouldHaveBadge = allApproved && !anyExpired;
 
       if (shouldHaveBadge !== (data.transportationBadge === true)) {
-        batch.update(doc.ref, { transportationBadge: shouldHaveBadge });
+        batch.update(doc.ref, { transportationBadge: shouldHaveBadge, hasTransportation: shouldHaveBadge });
 
         if (!shouldHaveBadge && data.transportationBadge === true) {
           // Badge just revoked — notify caregiver
@@ -139,6 +139,6 @@ export const refreshTransportBadge = functions.https.onCall(async (data, context
     isExpired(docs.registration?.expirationDate);
 
   const badge = allApproved && !anyExpired;
-  await snap.ref.update({ transportationBadge: badge });
+  await snap.ref.update({ transportationBadge: badge, hasTransportation: badge });
   return { badge };
 });

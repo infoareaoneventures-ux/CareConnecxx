@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
-import { getAIMatches, AIMatchScore } from '../services/aiMatchingService';
+import { AIMatchScore } from '../services/aiMatchingService';
 import { dbService } from '../services/api';
 import { logMatchSignal } from '../services/matchFeedback';
 import { ClientNavigation } from './client/ClientNavigation';
@@ -48,7 +48,7 @@ interface Caregiver {
   serviceRadius?: number;
 }
 
-type SortOption = 'best-match' | 'rating' | 'price-low' | 'price-high' | 'distance' | 'experience';
+type SortOption = 'rating' | 'price-low' | 'price-high' | 'distance' | 'experience';
 
 const SENIOR_SPECIALTIES = [
   { key: 'Mobility Assistance', icon: Activity },
@@ -85,7 +85,7 @@ function formatLastActive(iso?: string): string {
   if (!iso) return 'active recently';
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `active ${mins < 2 ? 'just now' : `${mins} min ago`}`;
+  if (mins < 60) return `${mins < 2 ? 'just now' : `${mins} min ago`}`;
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `active ${hrs} hour${hrs !== 1 ? 's' : ''} ago`;
   const days = Math.floor(hrs / 24);
@@ -100,7 +100,7 @@ export default function FindCaregivers() {
   const [loading, setLoading] = useState(true);
   const [clientIntakeData, setClientIntakeData] = useState<any>(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
-  const [sortBy, setSortBy] = useState<SortOption>('best-match');
+  const [sortBy, setSortBy] = useState<SortOption>('rating');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const { gate, Modals: GateModals } = useAccessGates();
   const [viewingCaregiver, setViewingCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
@@ -291,41 +291,6 @@ export default function FindCaregivers() {
           } as AIMatchScore;
           return { ...cg, matchScore };
         });
-      } else if (intakeData && caregiverList.length > 0) {
-        const batchSize = 10;
-        const processed: (Caregiver & { matchScore?: AIMatchScore })[] = [];
-        for (let i = 0; i < caregiverList.length; i += batchSize) {
-          const batch = caregiverList.slice(i, i + batchSize);
-          const results = await Promise.all(
-            batch.map(async (caregiver) => {
-              try {
-                const matchScorePromise = getAIMatches(
-                  {
-                    id: 0,
-                    firstName: intakeData.careRecipient?.firstName || '',
-                    lastName: intakeData.careRecipient?.lastName || '',
-                    needs: intakeData.tasks ? Object.keys(intakeData.tasks).filter(k =>
-                      Array.isArray(intakeData.tasks[k]) && intakeData.tasks[k].length > 0
-                    ) : [],
-                    schedule: intakeData.schedule || {},
-                    location: intakeData.location || {},
-                  },
-                  caregiver,
-                  intakeData
-                );
-                const timeoutPromise = new Promise<null>((_, reject) =>
-                  setTimeout(() => reject(new Error('Timeout')), 2000)
-                );
-                const matchScore = await Promise.race([matchScorePromise, timeoutPromise]);
-                return { ...caregiver, matchScore: matchScore ?? undefined };
-              } catch {
-                return caregiver;
-              }
-            })
-          );
-          processed.push(...results);
-        }
-        caregiversWithScores = processed;
       }
 
       setCaregivers(caregiversWithScores);
@@ -483,9 +448,8 @@ export default function FindCaregivers() {
       case 'experience':
         sorted.sort((a, b) => (b.experience || 0) - (a.experience || 0));
         break;
-      case 'best-match':
       default:
-        sorted.sort((a, b) => (b.matchScore?.overallScore || 0) - (a.matchScore?.overallScore || 0));
+        sorted.sort((a, b) => b.rating - a.rating);
         break;
     }
     return sorted;
@@ -724,7 +688,6 @@ export default function FindCaregivers() {
                 onChange={(e) => setSortBy(e.target.value as SortOption)}
                 className="appearance-none bg-white border border-slate-200 rounded-lg pl-3 pr-8 py-1.5 text-sm font-medium text-slate-700 cursor-pointer hover:border-slate-300 focus:ring-2 focus:ring-primary-500 focus:outline-none"
               >
-                <option value="best-match">Best match</option>
                 <option value="rating">Highest rated</option>
                 <option value="price-low">Price: Low to High</option>
                 <option value="price-high">Price: High to Low</option>
@@ -759,7 +722,6 @@ export default function FindCaregivers() {
                 onChange={(e) => setSortBy(e.target.value as SortOption)}
                 className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-700"
               >
-                <option value="best-match">Best match</option>
                 <option value="rating">Highest rated</option>
                 <option value="price-low">Price: Low to High</option>
                 <option value="price-high">Price: High to Low</option>
@@ -790,7 +752,7 @@ export default function FindCaregivers() {
                     onViewProfile={() => setViewingCaregiver(cg)}
                     onMessage={() => handleMessage(cg.id, `${cg.firstName} ${cg.lastName}`.trim())}
                     onRequestInterview={() => handleRequestInterview(cg)}
-                    isBestMatch={sortBy === 'best-match' && index === 0 && !!cg.matchScore}
+                    isBestMatch={false}
                   />
                 ))}
               </div>

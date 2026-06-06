@@ -77,7 +77,7 @@ function mapRawToProfile(id: string, data: any): CaregiverProfile {
     verified: data.verified || false,
     backgroundCheckStatus: data.backgroundCheckStatus,
     acceptsCreditCards: data.acceptsCreditCards ?? true,
-    hasTransportation: data.hasTransportation || (data.skills || data.services || []).includes('Transportation') || false,
+    hasTransportation: data.hasTransportation === true,
     serviceRadius: data.serviceRadius ?? 25,
     weeklyAvailability: weeklySlotsToBl(data.weeklyAvailability || {}),
     jobTypes: data.jobTypes || [],

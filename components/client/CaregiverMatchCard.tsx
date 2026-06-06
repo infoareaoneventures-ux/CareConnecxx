@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Star, Heart, MapPin, MessageSquare, Clock } from 'lucide-react';
+import { Star, Heart, MapPin, MessageSquare, DollarSign } from 'lucide-react';
 import { Caregiver } from '../../types';
 import { CreditCardBadge } from '../shared/CreditCardBadge';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
@@ -91,16 +91,36 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
           </div>
         </div>
 
-        {/* Experience + distance */}
+        {/* Experience + location + rate */}
         <div className="space-y-3.5 mb-5 mt-1">
           <div className="flex items-center gap-3.5 text-slate-700">
             <Heart className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
-            <span className="text-[17px]">{caregiver.experience || 0} years experience</span>
+            <span className="text-[17px]">
+              {(() => {
+                const exp = caregiver.experience;
+                if (!exp) return '0 years experience';
+                const s = String(exp);
+                return /year/i.test(s) ? s : `${s} years experience`;
+              })()}
+            </span>
           </div>
           <div className="flex items-center gap-3.5 text-slate-700">
             <MapPin className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
-            <span className="text-[17px]">{caregiver.distance} miles</span>
+            <span className="text-[17px]">
+              {(() => {
+                const cg = caregiver as any;
+                if (cg.city) return `${cg.city}${cg.state ? `, ${cg.state}` : ''}${cg.zipCode ? ` ${cg.zipCode}` : ''}`;
+                if (caregiver.distance > 0) return `${caregiver.distance} miles away`;
+                return 'Location not set';
+              })()}
+            </span>
           </div>
+          {caregiver.hourlyRate > 0 && (
+            <div className="flex items-center gap-3.5 text-slate-700">
+              <DollarSign className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
+              <span className="text-[17px] font-semibold">${caregiver.hourlyRate}/hr</span>
+            </div>
+          )}
         </div>
 
         {/* Skills pills */}
@@ -116,23 +136,6 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
           <div className="mb-6 mt-1" />
         )}
 
-        {/* Stats footer */}
-        <div className="border-t border-slate-200 pt-4 pb-2 flex items-center justify-between mt-auto">
-          <div className="flex-1 text-center border-r border-slate-200 pr-2 pb-1">
-            <div className="flex items-center justify-center gap-1.5 text-slate-500 mb-1">
-              <MessageSquare className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-bold uppercase tracking-[0.08em]">Responds in</span>
-            </div>
-            <p className="text-[16px] text-slate-900 tracking-tight">30 minutes</p>
-          </div>
-          <div className="flex-1 text-center pl-2 pb-1">
-            <div className="flex items-center justify-center gap-1.5 text-slate-500 mb-1">
-              <Clock className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-bold uppercase tracking-[0.08em]">Last Login</span>
-            </div>
-            <p className="text-[16px] text-slate-900 tracking-tight">Online now</p>
-          </div>
-        </div>
       </div>
 
       {/* Action buttons */}

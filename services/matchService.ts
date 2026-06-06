@@ -14,8 +14,6 @@ export interface ObjectiveSignals {
   languages: string[];
   personalityTags: string[];
   hourlyRate: number;
-  hasDementiaCert: boolean;
-  hasMedicalCred: boolean;
   feedbackSummary: string;
 }
 import { availabilityService } from './availabilityService';
@@ -603,13 +601,6 @@ export function computeObjectiveSignals(
         ...(caregiver.medicalSkills || []),
         ...(caregiver.skills || [])
     ].map(c => c.toLowerCase());
-    const hasDementiaCert = allCerts.some(c =>
-        c.includes('dementia') || c.includes('alzheimer') || c.includes('memory care')
-    );
-    const hasMedicalCred = allCerts.some(c =>
-        c.includes('cna') || c.includes('lvn') || c.includes('rn') || c.includes('nurse')
-    );
-
     // Feedback summary
     const hiredCount = feedbackHistory.filter(f => f.caregiverId === caregiver.id && f.action === 'hired').length;
     const rejectedCount = feedbackHistory.filter(f => f.caregiverId === caregiver.id && f.action === 'rejected').length;
@@ -631,8 +622,6 @@ export function computeObjectiveSignals(
         languages: caregiver.languages || [],
         personalityTags: caregiver.personalityTags || [],
         hourlyRate: caregiver.hourlyRate || 0,
-        hasDementiaCert,
-        hasMedicalCred,
         feedbackSummary
     };
 }

@@ -7,8 +7,6 @@ import {
   buildMatchingSystemPrompt,
   scoreWithClaude,
   computeSkillsCoverage,
-  detectDementiaCert,
-  detectMedicalCred,
   CandidateSignals,
 } from "./ai/claudeMatching";
 import { getOutcomePatternSummary } from "./ai/outcomeAnalytics";
@@ -140,8 +138,6 @@ export const runAiMatching = functions.https.onCall(async (data, context) => {
           hourlyRate:           cg.hourlyRate,
           reliabilityScore:     cg.reliabilityScore,
           retentionRate:        cg.retentionRate,
-          hasDementiaCert:      detectDementiaCert(cgSkills),
-          hasMedicalCred:       detectMedicalCred(cgSkills),
           feedbackSummary:      personalBoost > 2
             ? "previously hired by this family"
             : personalBoost < -1

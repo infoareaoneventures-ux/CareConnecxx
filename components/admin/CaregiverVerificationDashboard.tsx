@@ -4,6 +4,7 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { dbService } from '../../services/api';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
+import { functions } from '../../lib/firebase';
 import { Caregiver, CaregiverDocuments } from '../../types';
 
 interface VerificationQueueItem extends Omit<Caregiver, 'backgroundCheckData'> {
@@ -182,6 +183,13 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
         transportDocExpiry[`${docType}`] || undefined,
       );
       onShowToast(`${docType} ${action}`, action === 'approved' ? 'success' : 'info');
+      // Immediately recalculate transportation badge after any doc approval/rejection
+      try {
+        const refreshBadge = functions?.httpsCallable('v1-refreshTransportBadge');
+        if (refreshBadge) await refreshBadge({ uid: caregiverId });
+      } catch {
+        // non-critical — badge will update on next scheduled run
+      }
       loadVerificationQueue();
     } catch {
       onShowToast('Failed to update document status', 'error');

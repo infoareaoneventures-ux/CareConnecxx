@@ -20,6 +20,7 @@ import firebase, { db } from '../../lib/firebase';
 import { ClientJobPostingWizard } from './ClientJobPostingWizard';
 import { LiveCareFeed } from './LiveCareFeed';
 import { FamilyEmergency } from './FamilyEmergency';
+import { useNearbyCaregiversWithScores } from '../../hooks/useNearbyCaregiversWithScores';
 
 
 interface ClientDashboardProps {
@@ -123,12 +124,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   
   // Loading states
   const [isLoading, setIsLoading] = useState(true);
-  const [matchedCaregivers, setMatchedCaregivers] = useState<Caregiver[]>([]);
-  // 'matched' = personalized, proximity-filtered results from the matching engine;
-  // 'fallback' = generic top caregivers shown when we can't personalize yet.
-  const [matchSource, setMatchSource] = useState<'matched' | 'fallback'>('fallback');
-  // Human-readable area for honest copy (e.g. "San Jose, CA"); '' = unknown.
-  const [locationLabel, setLocationLabel] = useState<string>('');
 
   // Intake data state
   const [intakeData, setIntakeData] = useState<ClientIntakeData | null>(null);
@@ -154,6 +149,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
   const currentUser = authService.getCurrentUser();
   const { gate, Modals: GateModals } = useAccessGates();
+
+  // Nearby caregivers — uses same logic as Browse Caregivers (distance-filtered, AI-scored)
+  const { caregivers: matchedCaregivers, loading: caregiversLoading, clientLocations } = useNearbyCaregiversWithScores(
+    currentUser?.uid ?? null,
+    { maxDistance: 25, limit: 6 }
+  );
 
   useEffect(() => {
     if (!currentUser?.uid) return;
@@ -198,35 +199,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           }
         }
 
-        // Load caregivers — run REAL matching against this family's actual needs +
-        // location so the scores, ordering, and distances reflect fit (not a flat
-        // rating heuristic), and caregivers beyond the service radius drop out.
-        // Falls back to top caregivers if we can't personalize yet — never a dead end.
-        try {
-          const profile = await buildSeniorProfile(currentUser!.uid, intakeLocal);
-          let realMatches: Caregiver[] = [];
-          // Only attempt personalized matching when we have something to match on.
-          if (profile && ((profile.needs?.length ?? 0) > 0 || profile.latitude != null)) {
-            try {
-              realMatches = await dbService.getMatches(profile);
-            } catch (matchErr) {
-              console.warn('Personalized matching failed, falling back:', matchErr);
-            }
-          }
-
-          if (realMatches.length > 0) {
-            setMatchedCaregivers(realMatches.slice(0, 6));
-            setMatchSource('matched');
-          } else {
-            const { caregivers: matches } = await dbService.getCaregivers(6, null);
-            setMatchedCaregivers(matches);
-            setMatchSource('fallback');
-          }
-          setLocationLabel(profile?.location || '');
-        } catch (caregiverError) {
-          console.warn('Could not load caregivers:', caregiverError);
-          setMatchedCaregivers([]);
-        }
 
         // Load saved caregivers from user profile
         try {
@@ -366,63 +338,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   // Match score per caregiver. When the matching engine produced a personalized,
   // proximity-aware score, use it verbatim. Otherwise (generic fallback list) fall
   // back to an honest rating/experience heuristic — never an inflated default.
-  const matchScores = useMemo(() => {
-    const scores: Record<string, number> = {};
-    matchedCaregivers.forEach(caregiver => {
-      if (typeof caregiver.matchScore === 'number' && caregiver.matchScore > 0) {
-        scores[caregiver.id] = caregiver.matchScore;
-        return;
-      }
-      const ratingScore = Math.round(((caregiver.rating ?? 4.0) / 5) * 25); // 0–25 pts
-      const expScore = Math.min((caregiver.experience ?? 0) * 2, 15);   // 0–15 pts
-      scores[caregiver.id] = Math.min(60 + ratingScore + expScore, 100);      // 60–100%
-    });
-    return scores;
-  }, [matchedCaregivers]);
 
-  // Generate plain-English "Why this match" reasons from caregiver data
-  const getMatchReasons = (caregiver: Caregiver): string[] => {
-    const reasons: string[] = [];
-
-    // Top certification
-    const certFirst = caregiver.certifications?.[0];
-    if (certFirst) reasons.push(`${certFirst} certified`);
-
-    // Specific condition expertise
-    const skills = caregiver.skills || [];
-    if (skills.some(s => /dementia|alzheimer/i.test(s))) reasons.push("Dementia & Alzheimer's");
-    else if (skills.some(s => /parkinson/i.test(s))) reasons.push("Parkinson's care");
-    else if (skills.some(s => /hospice/i.test(s))) reasons.push("Hospice care");
-    else if (skills.some(s => /stroke/i.test(s))) reasons.push("Stroke recovery");
-    else if (skills.some(s => /medication/i.test(s))) reasons.push("Medication mgmt");
-    else if (skills.some(s => /mobility|wheelchair/i.test(s))) reasons.push("Mobility support");
-
-    // Distance
-    if (caregiver.distance > 0 && caregiver.distance <= 3) reasons.push(`${caregiver.distance} mi away`);
-    else if (caregiver.distance > 0 && caregiver.distance <= 15) reasons.push(`${caregiver.distance} mi away`);
-
-    // Availability — specific days
-    const avail = caregiver.availability || [];
-    const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-    const weekend = ['Saturday', 'Sunday'];
-    const hasWeekdays = weekdays.some(d => avail.includes(d));
-    const hasWeekend = weekend.some(d => avail.includes(d));
-    if (hasWeekdays && hasWeekend) reasons.push('Available 7 days');
-    else if (hasWeekdays) reasons.push('Available Mon–Fri');
-    else if (hasWeekend) reasons.push('Weekends available');
-    else if (avail.length >= 3) reasons.push(`${avail.length} days/wk`);
-
-    // Rating
-    if (caregiver.rating && caregiver.rating >= 4.9) reasons.push(`${caregiver.rating}★ top rated`);
-    else if (caregiver.rating && caregiver.rating >= 4.5) reasons.push(`${caregiver.rating}★ rated`);
-
-    // Experience
-    if (caregiver.experience && caregiver.experience >= 5) reasons.push(`${caregiver.experience} yrs exp`);
-
-    return reasons.slice(0, 4);
-  };
-
-  if (isLoading) {
+  if (isLoading || caregiversLoading) {
     return (
       <>
         <ClientNavigation />
@@ -502,11 +419,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
         {/* Page header */}
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-slate-900">Caregivers Near You</h1>
-          <p className="text-slate-500 text-sm mt-0.5">
-            {matchSource === 'matched'
-              ? `Verified caregivers matched to your needs${locationLabel ? ` near ${locationLabel}` : ''}`
-              : `Verified senior caregivers${locationLabel ? ` near ${locationLabel}` : ' near you'}`}
+          <h1 className="text-2xl font-bold text-slate-900">Nearby Caregivers</h1>
+          <p className="text-slate-500 text-sm mt-0.5">Verified caregivers within 25 miles
           </p>
         </div>
 
@@ -518,10 +432,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
             {/* Honest low-supply note — when personalized matching returns a thin
                 list, say so plainly rather than padding with distant caregivers. */}
-            {matchSource === 'matched' && matchedCaregivers.length > 0 && matchedCaregivers.length < 3 && (
+            {matchedCaregivers.length > 0 && matchedCaregivers.length < 3 && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-                Only {matchedCaregivers.length} caregiver{matchedCaregivers.length !== 1 ? 's' : ''} closely
-                {locationLabel ? ` match your needs near ${locationLabel}` : ' match your needs nearby'} right now.
+                Only {matchedCaregivers.length} caregiver{matchedCaregivers.length !== 1 ? 's' : ''} closely match your needs nearby right now.
                 We're adding caregivers in your area daily —{' '}
                 <button onClick={() => navigate('/client/find-caregivers')} className="font-semibold underline hover:text-amber-900">
                   browse all caregivers
@@ -536,8 +449,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                   <CaregiverMatchCard
                     key={caregiver.id}
                     caregiver={caregiver}
-                    matchScore={matchScores[caregiver.id] ?? 0}
-                    matchReasons={getMatchReasons(caregiver)}
+                    matchScore={0}
+                    matchReasons={[]}
                     onBook={handleGatedBook}
                     onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}
                     onMessage={handleGatedMessage}
@@ -593,7 +506,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                       <CaregiverMatchCard
                         key={caregiver.id}
                         caregiver={caregiver}
-                        matchScore={Math.round((caregiver.rating || 4.5) / 5 * 100)}
+                        matchScore={0}
                         matchReasons={[]}
                         onBook={setSelectedCaregiver}
                         onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}

@@ -1504,12 +1504,12 @@ export const CaregiverPaymentsPage: React.FC = () => {
   }, [completedShifts, shiftRows]);
 
   const pendingRows = shiftRows.filter(r =>
-    ['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed'].includes(r.status) ||
+    ['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed', 'payment_failed'].includes(r.status) ||
     // cash approved shifts that need caregiver cash confirmation
     (r.paymentMethod === 'cash' && (r.status === 'approved' || r.status === 'auto_approved'))
   );
   const historyRows = shiftRows.filter(r =>
-    !['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed'].includes(r.status) &&
+    !['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed', 'payment_failed'].includes(r.status) &&
     // exclude cash-approved shifts waiting for confirmation — they still belong in Pending
     !(r.paymentMethod === 'cash' && (r.status === 'approved' || r.status === 'auto_approved'))
   );

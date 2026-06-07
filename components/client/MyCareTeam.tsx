@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Star, Calendar, Clock, Shield, Heart, MessageSquare, User, Search, RefreshCw } from 'lucide-react';
+import { Star, Calendar, Shield, Heart, MessageSquare, User, Search, RefreshCw } from 'lucide-react';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import { Button } from '../ui/Button';
 import { ClientNavigation } from './ClientNavigation';
@@ -24,7 +24,6 @@ interface TeamCaregiver {
   specialties?: string[];
   location?: string;
   scheduleDays?: string[];
-  nextShift?: string;
   careRecipients?: Array<{ firstName?: string; lastName?: string; name?: string; [key: string]: any }>;
   verified?: boolean;
   backgroundCheckStatus?: string;
@@ -133,39 +132,6 @@ export const MyCareTeam: React.FC = () => {
               return bookingData.schedule?.days || [];
             })();
 
-            // Compute next shift — shows "In progress", "Today", or next date
-            const nextShift: string | undefined = (() => {
-              if (!scheduleDays.length) return undefined;
-              const ALL_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-              const normDay = (d: string) =>
-                d.trim().charAt(0).toUpperCase() + d.trim().slice(1, 3).toLowerCase();
-              const now = new Date();
-              const todayNorm = ALL_DAYS[now.getDay()];
-              const normalizedDays = scheduleDays.map(normDay);
-
-              if (normalizedDays.includes(todayNorm)) {
-                // Check if a shift block is currently in progress
-                const todayBlocks: Array<{ start: string; end: string }> =
-                  bookingData.schedule?.dayShiftTimes?.[todayNorm] || [];
-                const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-                const inProgress = todayBlocks.some(b => b.start && b.end && hhmm >= b.start && hhmm <= b.end);
-                return inProgress ? 'In progress' : 'Today';
-              }
-
-              // Find the nearest upcoming scheduled day
-              let earliest: Date | null = null;
-              scheduleDays.forEach(day => {
-                const target = ALL_DAYS.indexOf(normDay(day));
-                if (target === -1) return;
-                const diff = (target - now.getDay() + 7) % 7 || 7;
-                const next = new Date(now);
-                next.setDate(now.getDate() + diff);
-                if (!earliest || next < earliest) earliest = next;
-              });
-              if (!earliest) return undefined;
-              return (earliest as Date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-            })();
-
             const city = cgData.city || '';
             const state = cgData.state || '';
 
@@ -183,7 +149,6 @@ export const MyCareTeam: React.FC = () => {
               specialties: cgData.specializations || cgData.specialties || [],
               location: city ? `${city}${state ? `, ${state}` : ''}` : (cgData.location || ''),
               scheduleDays,
-              nextShift,
               careRecipients: bookingData.careRecipients || [],
               verified: cgData.verificationStatus === 'approved' || cgData.verificationStatus === 'checkr_clear',
               backgroundCheckStatus: cgData.verificationStatus,
@@ -299,6 +264,15 @@ export const MyCareTeam: React.FC = () => {
           <div className="flex-1">
             <h2 className="text-xl font-bold text-gray-900">{caregiver.name}</h2>
             <p className="text-sm text-gray-500 mb-2">Caregiver</p>
+            {activeTab === 'active' && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 bg-green-50 border border-green-200 px-2.5 py-0.5 rounded-full mb-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                Active booking
+              </span>
+            )}
+            {activeTab === 'past' && (
+              <span className="text-xs text-gray-400 italic">Past booking</span>
+            )}
             {renderStars(caregiver.rating)}
             <CaregiverVerificationBadges
               verified={caregiver.verified}
@@ -370,34 +344,6 @@ export const MyCareTeam: React.FC = () => {
               </span>
             </span>
           </div>
-        )}
-
-        {/* Next Shift / In Progress / Today */}
-        {caregiver.nextShift && caregiver.bookingStatus === 'accepted' && (
-          caregiver.nextShift === 'In progress' ? (
-            <div className="flex items-center space-x-2 mt-3 text-sm">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
-              </span>
-              <span className="font-semibold text-green-600">Shift in progress</span>
-            </div>
-          ) : caregiver.nextShift === 'Today' ? (
-            <div className="flex items-center space-x-2 mt-3 text-sm text-gray-600">
-              <Clock className="w-4 h-4 text-primary-500" />
-              <span>Shift <span className="font-semibold text-primary-600">today</span></span>
-            </div>
-          ) : (
-            <div className="flex items-center space-x-2 mt-3 text-sm text-gray-600">
-              <Clock className="w-4 h-4 text-gray-400" />
-              <span>Next shift: <span className="font-medium text-gray-900">{caregiver.nextShift}</span></span>
-            </div>
-          )
-        )}
-
-        {/* Past booking note */}
-        {caregiver.bookingStatus === 'cancelled' && (
-          <div className="mt-4 text-xs text-gray-400 italic">Booking ended</div>
         )}
 
         {/* Action Buttons */}

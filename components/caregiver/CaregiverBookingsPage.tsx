@@ -8,6 +8,7 @@ import {
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { db } from '../../lib/firebase';
+import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
 import firebase from '../../lib/firebase';
 
 type Tab = 'requests' | 'active' | 'past';
@@ -975,7 +976,12 @@ const BookingGroupCard: React.FC<{
       <div className="border-t border-slate-100">
         <p className="px-5 pt-3 pb-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Upcoming Shifts</p>
         {(() => {
-          const allUpcoming = shifts.filter(s => s.status !== 'pending');
+          const allUpcoming = shifts
+            .filter(s => s.status !== 'pending')
+            .sort((a, b) => {
+              const d = (a.date || '').localeCompare(b.date || '');
+              return d !== 0 ? d : (a.startTime || '').localeCompare(b.startTime || '');
+            });
           const visible = showAllShifts ? allUpcoming : allUpcoming.slice(0, 2);
           const hiddenCount = allUpcoming.length - 2;
           return (
@@ -1009,8 +1015,8 @@ const BookingGroupCard: React.FC<{
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-semibold text-slate-800">{fmtDate(shift.date)}</span>
                     <span className="text-xs text-slate-500">{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}</span>
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
-                      {shift.status === 'in-progress' ? 'In Progress' : 'Scheduled'}
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${shiftStatusBadgeClass(shiftDisplayStatus(shift))}`}>
+                      {shiftStatusLabel(shiftDisplayStatus(shift))}
                     </span>
                   </div>
                   {shift.startedAt && (
@@ -1273,8 +1279,8 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
-                    {shift.status === 'completed' ? 'Completed' : 'Cancelled'}
+                  <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${shiftStatusBadgeClass(shiftDisplayStatus(shift))}`}>
+                    {shiftStatusLabel(shiftDisplayStatus(shift))}
                   </span>
                   {isCompleted && <span className="text-slate-400 text-xs">{isOpen ? '▲' : '▼'}</span>}
                 </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Clock, CreditCard, CheckCircle, AlertTriangle, Loader2,
+  Clock, CreditCard, CheckCircle, AlertTriangle, Loader2, RefreshCw,
   ChevronDown, ChevronUp, Banknote, ExternalLink,
   AlertCircle, FileDown,
 } from 'lucide-react';
@@ -237,6 +237,21 @@ const ShiftRow: React.FC<{
   hideCaregiver?: boolean;
 }> = ({ row, onReview, hideCaregiver }) => {
   const [expanded, setExpanded] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  const handleRetry = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      await shiftHoursService.retryPayment(row.id);
+    } catch (err: any) {
+      setRetryError(err?.message || 'Retry failed. Please update your payment method and try again.');
+    } finally {
+      setRetrying(false);
+    }
+  };
   const [shiftDetails, setShiftDetails] = useState<any>(null);
 
   const cfg = STATUS_CONFIG[row.status] || STATUS_CONFIG.pending_client_review;
@@ -481,11 +496,24 @@ const ShiftRow: React.FC<{
             </div>
           )}
           {row.status === 'payment_failed' && (
-            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-              <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-              <p className="text-xs text-red-700 font-medium">
-                Payment failed. Please check your card on file in the Payment Method tab.
-              </p>
+            <div className="space-y-2">
+              <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                <p className="text-xs text-red-700 font-medium">
+                  Payment failed. Please check your card on file in the Payment Method tab.
+                </p>
+              </div>
+              {retryError && (
+                <p className="text-xs text-red-600 px-1">{retryError}</p>
+              )}
+              <button
+                onClick={handleRetry}
+                disabled={retrying}
+                className="w-full py-2.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors"
+              >
+                {retrying ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                {retrying ? 'Retrying…' : 'Retry Payment'}
+              </button>
             </div>
           )}
 
@@ -589,7 +617,7 @@ export const Payments: React.FC = () => {
   }, [reportedRows]);
 
   const filteredRows = useMemo(() => {
-    if (statusFilter === 'needs-review') return rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed');
+    if (statusFilter === 'needs-review') return rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed' || r.status === 'payment_failed');
     if (statusFilter === 'history') return showReport && (reportFrom || reportTo) ? reportedRows : historyRows;
     return rows;
   }, [rows, statusFilter, showReport, reportFrom, reportTo, reportedRows, historyRows]);
@@ -660,7 +688,7 @@ export const Payments: React.FC = () => {
       <ClientNavigation />
 
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 pb-28">
-        <h1 className="text-2xl font-bold text-slate-900 mb-1">Payments</h1>
+        <h1 className="text-2xl font-bold text-slate-900 mb-1">Timesheets</h1>
         <p className="text-sm text-slate-500 mb-6">Approve hours and manage your payment method.</p>
 
         {/* Tabs */}
@@ -702,7 +730,7 @@ export const Payments: React.FC = () => {
             <div className="flex items-center gap-1.5 flex-wrap">
               {([
                 { id: 'all',          label: 'All',          count: rows.length },
-                { id: 'needs-review', label: 'Needs Review', count: rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed').length },
+                { id: 'needs-review', label: 'Needs Review', count: rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed' || r.status === 'payment_failed').length },
                 { id: 'history',      label: 'History',      count: historyRows.length },
               ] as { id: StatusFilter; label: string; count: number }[]).map(f => (
                 <button

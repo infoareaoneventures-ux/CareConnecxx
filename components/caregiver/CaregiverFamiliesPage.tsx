@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Heart, Search as SearchIcon, MessageSquare, Clock, User, X, Phone, FileText } from 'lucide-react';
+import { Heart, Search as SearchIcon, MessageSquare, User, X, Phone, FileText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -18,7 +18,6 @@ interface FamilyEntry {
   // booking details (active/past only)
   scheduleDays?: string[];
   rate?: number | null;
-  nextShift?: string;
   bookingStatus?: string;
   careRecipients?: Array<{ firstName?: string; name?: string; [key: string]: any }>;
 }
@@ -75,41 +74,6 @@ export const CaregiverFamiliesPage: React.FC = () => {
           if (bid) activeBookingIds.add(bid);
         });
 
-        const ALL_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        const normDay = (d: string) =>
-          d.trim().charAt(0).toUpperCase() + d.trim().slice(1, 3).toLowerCase();
-
-        const computeNextShift = (bookingData: any): string | undefined => {
-          const dst = bookingData.schedule?.dayShiftTimes;
-          const scheduleDays: string[] = dst && typeof dst === 'object'
-            ? Object.keys(dst)
-            : (bookingData.schedule?.days || []);
-          if (!scheduleDays.length) return undefined;
-
-          const now = new Date();
-          const todayNorm = ALL_DAYS[now.getDay()];
-          const normalizedDays = scheduleDays.map(normDay);
-
-          if (normalizedDays.includes(todayNorm)) {
-            const todayBlocks: Array<{ start: string; end: string }> =
-              dst?.[todayNorm] || [];
-            const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-            const inProgress = todayBlocks.some(b => b.start && b.end && hhmm >= b.start && hhmm <= b.end);
-            return inProgress ? 'In progress' : 'Today';
-          }
-
-          let earliest: Date | null = null;
-          scheduleDays.forEach(day => {
-            const target = ALL_DAYS.indexOf(normDay(day));
-            if (target === -1) return;
-            const diff = (target - now.getDay() + 7) % 7 || 7;
-            const next = new Date(now);
-            next.setDate(now.getDate() + diff);
-            if (!earliest || next < earliest) earliest = next;
-          });
-          if (!earliest) return undefined;
-          return (earliest as Date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        };
 
         // Build one card per client — Active OR Past, never both.
         // First pass: identify all clients with an active booking.
@@ -153,7 +117,6 @@ export const CaregiverFamiliesPage: React.FC = () => {
             source,
             scheduleDays,
             rate: data.rate ?? null,
-            nextShift: source === 'active' ? computeNextShift(data) : undefined,
             bookingStatus: data.status,
             careRecipients: data.careRecipients || [],
           };
@@ -349,28 +312,6 @@ export const CaregiverFamiliesPage: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Next Shift / In Progress / Today */}
-                  {f.nextShift && f.source === 'active' && (
-                    f.nextShift === 'In progress' ? (
-                      <div className="flex items-center space-x-2 mt-3 text-sm">
-                        <span className="relative flex h-2.5 w-2.5">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" />
-                        </span>
-                        <span className="font-semibold text-green-600">Shift in progress</span>
-                      </div>
-                    ) : f.nextShift === 'Today' ? (
-                      <div className="flex items-center space-x-2 mt-3 text-sm text-gray-600">
-                        <Clock className="w-4 h-4 text-primary-500" />
-                        <span>Shift <span className="font-semibold text-primary-600">today</span></span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center space-x-2 mt-3 text-sm text-gray-600">
-                        <Clock className="w-4 h-4 text-gray-400" />
-                        <span>Next shift: <span className="font-medium text-gray-900">{f.nextShift}</span></span>
-                      </div>
-                    )
-                  )}
 
                   {/* Buttons */}
                   <div className="mt-6 flex gap-2">

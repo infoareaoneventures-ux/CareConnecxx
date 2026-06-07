@@ -9,6 +9,7 @@ import firebase from 'firebase/compat/app';
 import { auth, db } from '../../lib/firebase';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../../services/availabilityService';
+import { shiftDisplayStatus, shiftStatusBlockClass, shiftStatusBadgeClass, shiftStatusDotClass, shiftStatusLabel } from '../../utils/shiftUtils';
 
 const TIME_BLOCKS = [
   { id: 'morning',   label: 'Morning',   hours: '6am – 12pm' },
@@ -119,24 +120,12 @@ function fmt12(t?: string): string {
   return fmtH(parseH(t));
 }
 
-function statusStyle(status: Shift['status']): string {
-  switch (status) {
-    case 'scheduled':   return 'bg-primary-500 border-primary-600';
-    case 'in-progress': return 'bg-accent-500 border-accent-600';
-    case 'completed':   return 'bg-slate-400 border-slate-500';
-    case 'cancelled':   return 'bg-rose-600 border-rose-700';
-    default:            return 'bg-slate-400 border-slate-500';
-  }
+function statusStyle(shift: Shift): string {
+  return shiftStatusBlockClass(shiftDisplayStatus(shift));
 }
 
-function statusBadge(status: Shift['status']): string {
-  switch (status) {
-    case 'scheduled':   return 'bg-primary-100 text-primary-700 border-primary-200';
-    case 'in-progress': return 'bg-accent-100 text-accent-700 border-accent-200';
-    case 'completed':   return 'bg-green-100 text-green-700 border-green-200';
-    case 'cancelled':   return 'bg-rose-100 text-rose-700 border-rose-200';
-    default:            return 'bg-slate-100 text-slate-700';
-  }
+function statusBadge(shift: Shift): string {
+  return shiftStatusBadgeClass(shiftDisplayStatus(shift));
 }
 
 function interviewBlockStyle(status: InterviewEvent['status']): string {
@@ -519,8 +508,8 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                 );
               })()}
               <div>
-                <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
-                  {shift.status === 'in-progress' ? '● In Progress' : shift.status.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusBadge(shift)}`}>
+                  {shift.status === 'in-progress' ? '● In Progress' : shiftStatusLabel(shiftDisplayStatus(shift))}
                 </span>
                 <h3 className="font-bold text-slate-900 text-base mt-1">{shift.clientName || 'Client'}</h3>
                 <p className="text-sm text-slate-500 mt-0.5">
@@ -1179,11 +1168,11 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                                   return (
                                     <button key={`s-${si}`}
                                       onClick={() => { setSelectedShift(shift); setSelectedInterview(null); }}
-                                      className={`absolute rounded-md border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)} ${shift.status === 'in-progress' ? 'ring-2 ring-white ring-opacity-60' : ''}`}
+                                      className={`absolute rounded-md border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift)} ${shift.status === 'in-progress' ? 'ring-2 ring-white ring-opacity-60' : ''}`}
                                       style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '2px', right: hasBoth ? '50%' : '2px' }}>
                                       <p className="px-1.5 pt-1 text-xs font-bold text-white leading-tight truncate">{(shift.clientName || 'Client').split(' ')[0]}</p>
                                       <p className="px-1.5 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
-                                      {shift.status === 'in-progress' && <p className="px-1.5 text-[10px] text-white font-semibold">In Progress</p>}
+                                      {(shiftDisplayStatus(shift) === 'late' || shiftDisplayStatus(shift) === 'overdue' || shift.status === 'in-progress') && <p className="px-1.5 text-[10px] text-white font-semibold">{shift.status === 'in-progress' ? 'In Progress' : shiftStatusLabel(shiftDisplayStatus(shift))}</p>}
                                     </button>
                                   );
                                 })}
@@ -1266,10 +1255,11 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                               return (
                                 <button key={si}
                                   onClick={() => { setSelectedShift(shift); setSelectedInterview(null); }}
-                                  className={`absolute rounded-lg border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift.status)}`}
+                                  className={`absolute rounded-lg border overflow-hidden z-10 text-left hover:brightness-110 transition-all ${statusStyle(shift)}`}
                                   style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '4px', right: dayInterviews.length > 0 ? '50%' : '4px' }}>
                                   <p className="px-2 pt-1.5 text-sm font-bold text-white leading-tight truncate">{shift.clientName || 'Client'}</p>
                                   <p className="px-2 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
+                                  {(shiftDisplayStatus(shift) === 'late' || shiftDisplayStatus(shift) === 'overdue') && <p className="px-2 text-xs text-white font-semibold mt-0.5">{shiftStatusLabel(shiftDisplayStatus(shift))}</p>}
                                 </button>
                               );
                             })}
@@ -1376,8 +1366,8 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                         className="border border-slate-200 rounded-xl p-4 cursor-pointer hover:border-primary-300 hover:shadow-sm transition-all"
                       >
                         <div className="flex justify-between items-center mb-2">
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusBadge(shift.status)}`}>
-                            {shift.status.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusBadge(shift)}`}>
+                            {shiftStatusLabel(shiftDisplayStatus(shift))}
                           </span>
                           <span className="text-sm font-bold text-slate-700">{fmt12(shift.startTime)}{shift.endTime ? `–${fmt12(shift.endTime)}` : ''}</span>
                         </div>
@@ -1501,11 +1491,11 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                             return (
                               <div key={i} onClick={() => { setSelectedShift(s); setSelectedInterview(null); }}
                                 className="flex items-center gap-3 p-4 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-slate-300 hover:shadow-sm transition-all">
-                                <div className={`w-1 self-stretch rounded-full flex-shrink-0 ${s.status === 'scheduled' ? 'bg-primary-500' : s.status === 'in-progress' ? 'bg-accent-500' : s.status === 'completed' ? 'bg-slate-400' : 'bg-red-400'}`} />
+                                <div className={`w-1 self-stretch rounded-full flex-shrink-0 ${shiftStatusDotClass(shiftDisplayStatus(s))}`} />
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 mb-1">
-                                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusBadge(s.status)}`}>
-                                      {s.status.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusBadge(s)}`}>
+                                      {shiftStatusLabel(shiftDisplayStatus(s))}
                                     </span>
                                   </div>
                                   <p className="font-medium text-slate-900 text-sm">{s.clientName || 'Client'}</p>

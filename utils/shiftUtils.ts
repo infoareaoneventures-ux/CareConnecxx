@@ -1,0 +1,86 @@
+export type ShiftDisplayStatus =
+  | 'overdue'
+  | 'late'
+  | 'scheduled'
+  | 'in-progress'
+  | 'completed'
+  | 'cancelled';
+
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function timeToMins(t: string): number {
+  const [h, m] = t.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+export function shiftDisplayStatus(shift: {
+  status: string;
+  date: string;
+  startTime?: string;
+  endTime?: string;
+}): ShiftDisplayStatus {
+  if (shift.status !== 'scheduled') return shift.status as ShiftDisplayStatus;
+
+  const now = new Date();
+  const todayStr = localDateStr(now);
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const startMins = timeToMins(shift.startTime || '00:00');
+  const endMins = timeToMins(shift.endTime || '23:59');
+
+  if (shift.date < todayStr || (shift.date === todayStr && endMins <= nowMins)) return 'overdue';
+  if (shift.date === todayStr && startMins <= nowMins) return 'late';
+  return 'scheduled';
+}
+
+/** Tailwind classes for calendar event blocks */
+export function shiftStatusBlockClass(status: ShiftDisplayStatus): string {
+  switch (status) {
+    case 'overdue':     return 'bg-orange-400 border-orange-500';
+    case 'late':        return 'bg-yellow-400 border-yellow-500';
+    case 'scheduled':   return 'bg-primary-500 border-primary-600';
+    case 'in-progress': return 'bg-accent-500 border-accent-600';
+    case 'completed':   return 'bg-slate-400 border-slate-500';
+    case 'cancelled':   return 'bg-rose-600 border-rose-700';
+    default:            return 'bg-slate-400 border-slate-500';
+  }
+}
+
+/** Tailwind classes for status badge pills */
+export function shiftStatusBadgeClass(status: ShiftDisplayStatus): string {
+  switch (status) {
+    case 'overdue':     return 'bg-orange-100 text-orange-700 border-orange-200';
+    case 'late':        return 'bg-yellow-100 text-yellow-700 border-yellow-200';
+    case 'scheduled':   return 'bg-primary-100 text-primary-700 border-primary-200';
+    case 'in-progress': return 'bg-accent-100 text-accent-700 border-accent-200';
+    case 'completed':   return 'bg-green-100 text-green-700 border-green-200';
+    case 'cancelled':   return 'bg-rose-100 text-rose-700 border-rose-200';
+    default:            return 'bg-slate-100 text-slate-600 border-slate-200';
+  }
+}
+
+/** Left-border dot color for list views */
+export function shiftStatusDotClass(status: ShiftDisplayStatus): string {
+  switch (status) {
+    case 'overdue':     return 'bg-orange-400';
+    case 'late':        return 'bg-yellow-400';
+    case 'scheduled':   return 'bg-primary-500';
+    case 'in-progress': return 'bg-accent-500';
+    case 'completed':   return 'bg-slate-400';
+    case 'cancelled':   return 'bg-rose-600';
+    default:            return 'bg-slate-400';
+  }
+}
+
+export function shiftStatusLabel(status: ShiftDisplayStatus): string {
+  switch (status) {
+    case 'overdue':     return 'Overdue';
+    case 'late':        return 'Late';
+    case 'scheduled':   return 'Scheduled';
+    case 'in-progress': return 'In Progress';
+    case 'completed':   return 'Completed';
+    case 'cancelled':   return 'Cancelled';
+    default:            return String(status);
+  }
+}

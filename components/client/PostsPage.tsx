@@ -714,6 +714,7 @@ export const PostsPage: React.FC = () => {
         clientPhotoURL,
         caregiverId: interview.caregiverId,
         caregiverName: interview.caregiverName,
+        caregiverPhotoURL: interview.caregiverPhoto || null,
         jobId: interview.jobId || null,
         jobTitle: interview.jobTitle || post?.title || '',
         address: bookingDraft.selectedAddress || loadedPlan?.primaryAddress || (post ? [post.city, post.state, post.zipCode].filter(Boolean).join(', ') : ''),
@@ -791,6 +792,17 @@ export const PostsPage: React.FC = () => {
       addToast('Something went wrong. Please try again.', 'error');
     } finally {
       setSendingBooking(false);
+    }
+  };
+
+  const handleCancelBooking = async (bookingId: string) => {
+    if (!db) return;
+    try {
+      await db.collection('booking_requests').doc(bookingId).update({ status: 'cancelled' });
+      addToast('Booking request cancelled.', 'success');
+    } catch (err) {
+      console.error('handleCancelBooking error:', err);
+      addToast('Something went wrong. Please try again.', 'error');
     }
   };
 
@@ -995,7 +1007,16 @@ export const PostsPage: React.FC = () => {
                         {(post.startDate || post.date) && (
                           <p className="flex items-center gap-1.5">
                             <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                            {post.startDate || post.date}{post.endDate ? ` → ${post.endDate}` : ''}
+                            {(() => {
+                              const fmtDate = (s: string) => {
+                                const parts = s.split('-');
+                                if (parts.length !== 3) return s;
+                                const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+                                return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                              };
+                              const start = fmtDate(post.startDate || post.date);
+                              return post.endDate ? `${start} → ${fmtDate(post.endDate)}` : start;
+                            })()}
                           </p>
                         )}
                         <p className="flex items-center gap-1.5">
@@ -1220,9 +1241,17 @@ export const PostsPage: React.FC = () => {
                               )}
                               {interview.status === 'completed' && (() => {
                                 if (booking?.status === 'pending') return (
-                                  <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-600">
-                                    <Clock3 className="w-3.5 h-3.5" /> Booking sent · Awaiting response
-                                  </span>
+                                  <>
+                                    <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-600">
+                                      <Clock3 className="w-3.5 h-3.5" /> Booking sent · Awaiting response
+                                    </span>
+                                    <button
+                                      onClick={() => handleCancelBooking(booking.id)}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
                                 );
                                 if (booking?.status === 'accepted') {
                                   const hasActiveShifts = activeBookingIds.has(booking.id);

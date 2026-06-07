@@ -617,13 +617,13 @@ export const adminResolveShiftHours = functions.https.onCall(async (data, contex
 });
 
 /**
- * Admin manually retries a failed Stripe payment.
+ * Retries a failed payment by resetting status to 'approved', re-triggering the payment flow.
+ * Callable by the shift's own client or an admin.
  */
 export const retryShiftPayment = functions.https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
   }
-  await requireAdmin(context.auth.uid);
 
   const { appointmentId } = data;
   if (!appointmentId) {
@@ -636,12 +636,19 @@ export const retryShiftPayment = functions.https.onCall(async (data, context) =>
     throw new functions.https.HttpsError('not-found', 'Shift hours not found');
   }
   const shift = snap.data()!;
+
+  // Allow the shift's own client or an admin
+  if (shift.clientId !== context.auth.uid) {
+    await requireAdmin(context.auth.uid);
+  }
+
   if (shift.status !== 'payment_failed') {
     throw new functions.https.HttpsError('failed-precondition', 'Not in payment_failed state');
   }
 
-  const result = await processShiftPayment(appointmentId, shift);
-  return { success: result.ok, error: result.error };
+  // Reset to 'approved' — re-triggers the onShiftHoursApproved Firestore trigger
+  await ref.update({ status: 'approved', retryCount: (shift.retryCount ?? 0) + 1 });
+  return { success: true };
 });
 
 // ---------- scheduled ----------

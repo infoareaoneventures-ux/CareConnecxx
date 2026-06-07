@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CalendarCheck, History, MapPin, Clock, MessageSquare,
   XCircle, CalendarDays, Loader2, Repeat, CreditCard, Banknote,
@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { auth, db } from '../../lib/firebase';
 import { ClientNavigation } from './ClientNavigation';
+import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
 
 interface Shift {
   id: string;
@@ -85,6 +86,25 @@ function fmtDate(dateStr: string): string {
   });
 }
 
+const ALL_DAYS_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+interface BookingAmendment {
+  id: string;
+  bookingRequestId: string | null;
+  clientId: string;
+  clientName: string;
+  caregiverId: string;
+  caregiverName: string;
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled';
+  type: 'add_recurring_days';
+  newDays: Record<string, Array<{ start: string; end: string }>>;
+  notes: string;
+  startDate?: string;
+  endDate?: string | null;
+  ongoing?: boolean;
+  createdAt: any;
+}
+
 function fmtTime(t?: string): string {
   if (!t) return '';
   const clean = t.startsWith('~') ? t.slice(1) : t;
@@ -127,6 +147,249 @@ const statusLabel = (s: Shift['status']) => {
   }
 };
 
+// ─── Pending booking request card ────────────────────────────────────────────
+
+interface PendingBookingCardProps {
+  booking: any;
+  onCancel: (id: string) => Promise<void>;
+  navigate: ReturnType<typeof useNavigate>;
+}
+
+const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCancel, navigate }) => {
+  const [cancelling, setCancelling] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  const schedule = (() => {
+    const dst = booking.schedule?.dayShiftTimes;
+    if (!dst || Object.keys(dst).length === 0) return '';
+    return DAY_ORDER
+      .filter(d => dst[d]?.length)
+      .map(d => {
+        const times = dst[d].map((b: any) => `${fmtTime(b.start)}–${fmtTime(b.end)}`).join(', ');
+        return `${d} ${times}`;
+      })
+      .join(' · ');
+  })();
+
+  const handleCancel = async () => {
+    if (!window.confirm('Cancel this booking request?')) return;
+    setCancelling(true);
+    try { await onCancel(booking.id); }
+    finally { setCancelling(false); }
+  };
+
+  return (
+    <div className="bg-white border border-amber-200 rounded-2xl shadow-sm overflow-hidden">
+
+      {/* Header */}
+      <div className="px-5 pt-5 pb-4 flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-12 h-12 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center shrink-0">
+            {(booking.caregiverPhoto || booking.caregiverPhotoURL)
+              ? <img src={booking.caregiverPhoto || booking.caregiverPhotoURL} alt={booking.caregiverName} className="w-full h-full object-cover" />
+              : <span className="text-primary-700 font-bold text-base">
+                  {(booking.caregiverName || 'C').split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase()}
+                </span>
+            }
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold text-slate-900 text-base">{booking.caregiverName || 'Caregiver'}</p>
+            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+              {booking.schedule?.ongoing
+                ? <span className="inline-flex items-center gap-1 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-full">
+                    <Repeat className="w-3 h-3" /> Ongoing
+                  </span>
+                : booking.schedule?.endDate
+                  ? <span className="text-xs text-slate-500">Until {new Date(booking.schedule.endDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                  : null
+              }
+              {booking.jobTitle && <p className="text-xs text-slate-500 truncate">{booking.jobTitle}</p>}
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={() => navigate(`/client/inbox?caregiver=${booking.caregiverId}`)}
+          className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 bg-white rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
+        >
+          <MessageSquare className="w-4 h-4" /> Message
+        </button>
+      </div>
+
+      {/* Booking details */}
+      <div className="px-5 pb-4 space-y-2 border-t border-slate-50 pt-3">
+        {schedule && (
+          <div className="flex items-start gap-2 text-sm text-slate-700">
+            <CalendarDays className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+            <span>{schedule}</span>
+          </div>
+        )}
+        {booking.address && (
+          <div className="flex items-start gap-2 text-sm text-slate-700">
+            <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+            <span>{booking.address}</span>
+          </div>
+        )}
+        {booking.rate != null && (
+          <div className="flex items-center gap-2 text-sm text-slate-700">
+            {booking.paymentMethod === 'credit'
+              ? <CreditCard className="w-4 h-4 text-slate-400 shrink-0" />
+              : <Banknote className="w-4 h-4 text-slate-400 shrink-0" />}
+            <span>
+              <span className="font-semibold">${booking.rate}/hr</span>
+              <span className="text-slate-400"> · {booking.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span>
+            </span>
+          </div>
+        )}
+        {booking.careNeeds?.length > 0 && (
+          <div className="flex flex-wrap gap-1 pt-1">
+            {booking.careNeeds.map((n: string) => (
+              <span key={n} className="text-xs bg-primary-50 text-primary-700 border border-primary-100 px-2 py-0.5 rounded-full">{n}</span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Expandable booking details */}
+      {(booking.careRecipients?.length > 0 || booking.emergencyContact) && (
+        <div className="border-t border-slate-100">
+          <button
+            onClick={() => setDetailsOpen(v => !v)}
+            className="w-full px-5 py-3 flex items-center justify-between text-sm text-primary-600 font-medium hover:bg-slate-50 transition-colors"
+          >
+            <span>Booking details</span>
+            {detailsOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+
+          {detailsOpen && (
+            <div className="px-5 pb-4 space-y-4 border-t border-slate-50">
+              {(booking.careRecipients || []).map((r: any, ri: number) => {
+                const needs = r.careNeeds || [];
+                const details = r.careNeedDetails || {};
+                const ls = r.lifestyle;
+                return (
+                  <div key={ri} className="border-l-4 border-primary-200 pl-3 space-y-2.5 pt-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-9 h-9 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center shrink-0">
+                        {r.photoURL
+                          ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                          : <User className="w-4 h-4 text-primary-500" />}
+                      </div>
+                      <div>
+                        <p className="font-semibold text-slate-800 text-sm">{r.name}</p>
+                        <p className="text-xs text-slate-400">{[r.relationship, r.age ? `Age ${r.age}` : ''].filter(Boolean).join(' · ')}</p>
+                      </div>
+                    </div>
+                    {needs.length > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Plan</p>
+                        {needs.map((need: string) => {
+                          const subtasks = details[need] || [];
+                          return (
+                            <div key={need} className="rounded-xl border border-blue-200 overflow-hidden">
+                              <div className="bg-blue-50 px-3 py-1.5">
+                                <span className="text-xs font-semibold text-blue-700">{need}</span>
+                              </div>
+                              {subtasks.length > 0 && (
+                                <div className="px-3 py-2 flex flex-wrap gap-1.5">
+                                  {subtasks.map((t: string) => <span key={t} className="text-xs bg-white text-slate-600 border border-slate-200 px-2.5 py-0.5 rounded-full">{t}</span>)}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {ls && (
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Lifestyle & Preferences</p>
+                        {ls.favoriteActivities?.length > 0 && (
+                          <div>
+                            <p className="text-xs text-slate-400 mb-1">Enjoys</p>
+                            <div className="flex flex-wrap gap-1">{ls.favoriteActivities.map((a: string) => <span key={a} className="text-xs bg-green-50 text-green-700 border border-green-100 px-2 py-0.5 rounded-full">{a}</span>)}</div>
+                            {ls.favoriteActivitiesOther && <p className="text-xs text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {ls.favoriteActivitiesOther}</p>}
+                          </div>
+                        )}
+                        {ls.helpActivities?.length > 0 && (
+                          <div>
+                            <p className="text-xs text-slate-400 mb-1">Needs help with</p>
+                            <div className="flex flex-wrap gap-1">{ls.helpActivities.map((a: string) => <span key={a} className="text-xs bg-orange-50 text-orange-700 border border-orange-100 px-2 py-0.5 rounded-full">{a}</span>)}</div>
+                            {ls.helpActivitiesOther && <p className="text-xs text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {ls.helpActivitiesOther}</p>}
+                          </div>
+                        )}
+                        {ls.entertainment?.length > 0 && (
+                          <div>
+                            <p className="text-xs text-slate-400 mb-1">Entertainment</p>
+                            <div className="flex flex-wrap gap-1">{ls.entertainment.map((a: string) => <span key={a} className="text-xs bg-pink-50 text-pink-700 border border-pink-100 px-2 py-0.5 rounded-full">{a}</span>)}</div>
+                            {ls.entertainmentOther && <p className="text-xs text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {ls.entertainmentOther}</p>}
+                          </div>
+                        )}
+                        <div className="space-y-1">
+                          {([
+                            { label: 'Enjoys conversation', key: 'enjoysConversation' },
+                            { label: 'Prefers quiet', key: 'prefersQuiet' },
+                            { label: 'Family in area', key: 'familyInArea' },
+                            { label: 'Friends or visitors', key: 'friendsVisitors' },
+                            { label: 'Has appointments', key: 'hasAppointments' },
+                          ] as const).filter(({ key }) => ls[key] !== null && ls[key] !== undefined).map(({ label, key }) => (
+                            <React.Fragment key={key}>
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-slate-500">{label}</span>
+                                <span className={`px-1.5 py-0.5 rounded-full font-semibold text-xs ${ls[key] === true ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>{ls[key] === true ? 'Yes' : 'No'}</span>
+                              </div>
+                              {key === 'familyInArea' && ls.familyInArea === true && ls.familyVisitFreq && (
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-slate-400">Family visit frequency</span>
+                                  <span className="text-slate-600 font-medium">{ls.familyVisitFreq}</span>
+                                </div>
+                              )}
+                              {key === 'friendsVisitors' && ls.friendsVisitors === true && ls.friendsVisitFreq && (
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-slate-400">Friends visit frequency</span>
+                                  <span className="text-slate-600 font-medium">{ls.friendsVisitFreq}</span>
+                                </div>
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </div>
+                        {ls.hasAppointments === true && ls.appointmentsDetails && (
+                          <p className="text-xs text-slate-500"><span className="font-medium text-slate-400">Appointments:</span> {ls.appointmentsDetails}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {booking.emergencyContact && (booking.emergencyContact.name || booking.emergencyContact.phone) && (
+                <div className="bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                  <p className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-1">Emergency Contact</p>
+                  <div className="flex items-center gap-2 text-sm text-red-800">
+                    <Phone className="w-3.5 h-3.5 shrink-0" />
+                    <span className="font-medium">{booking.emergencyContact.name}</span>
+                    {booking.emergencyContact.relationship && <span className="text-red-500">· {booking.emergencyContact.relationship}</span>}
+                    {booking.emergencyContact.phone && <span className="font-semibold">{booking.emergencyContact.phone}</span>}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Footer */}
+      <div className="px-5 py-3 border-t border-slate-100 bg-slate-50 flex justify-end">
+        <button
+          onClick={handleCancel}
+          disabled={cancelling}
+          className="inline-flex items-center gap-1.5 px-4 py-2 border border-red-200 bg-white rounded-xl text-sm text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+        >
+          {cancelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+          Cancel Request
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // ─── Active visit group card (one per booking) ──────────────────────────────
 
 interface ActiveVisitGroupCardProps {
@@ -141,7 +404,10 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
   const [showAll, setShowAll] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
-  const sorted = [...shifts].sort((a, b) => a.date.localeCompare(b.date));
+  const sorted = [...shifts].sort((a, b) => {
+    const d = a.date.localeCompare(b.date);
+    return d !== 0 ? d : (a.startTime || '').localeCompare(b.startTime || '');
+  });
   const preview = showAll ? sorted : sorted.slice(0, 2);
   const ongoing = base.schedule?.ongoing ?? base.recurringWeekly ?? false;
   const endDate  = base.schedule?.endDate;
@@ -290,7 +556,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                     {/* Lifestyle */}
                     {ls && (
                       <div className="space-y-1.5">
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Lifestyle</p>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Lifestyle & Preferences</p>
                         {ls.favoriteActivities && ls.favoriteActivities.length > 0 && (
                           <div>
                             <p className="text-xs text-slate-400 mb-1">Enjoys</p>
@@ -301,29 +567,45 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                         {ls.helpActivities && ls.helpActivities.length > 0 && (
                           <div>
                             <p className="text-xs text-slate-400 mb-1">Needs help with</p>
-                            <div className="flex flex-wrap gap-1">{ls.helpActivities.map(a => <span key={a} className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full">{a}</span>)}</div>
+                            <div className="flex flex-wrap gap-1">{ls.helpActivities.map(a => <span key={a} className="text-xs bg-orange-50 text-orange-700 border border-orange-100 px-2 py-0.5 rounded-full">{a}</span>)}</div>
                             {ls.helpActivitiesOther && <p className="text-xs text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {ls.helpActivitiesOther}</p>}
                           </div>
                         )}
                         {ls.entertainment && ls.entertainment.length > 0 && (
                           <div>
                             <p className="text-xs text-slate-400 mb-1">Entertainment</p>
-                            <div className="flex flex-wrap gap-1">{ls.entertainment.map(a => <span key={a} className="text-xs bg-purple-50 text-purple-700 border border-purple-100 px-2 py-0.5 rounded-full">{a}</span>)}</div>
+                            <div className="flex flex-wrap gap-1">{ls.entertainment.map(a => <span key={a} className="text-xs bg-pink-50 text-pink-700 border border-pink-100 px-2 py-0.5 rounded-full">{a}</span>)}</div>
                             {ls.entertainmentOther && <p className="text-xs text-slate-500 mt-0.5"><span className="font-medium text-slate-400">Other:</span> {ls.entertainmentOther}</p>}
                           </div>
                         )}
-                        {(() => {
-                          const tags = [
-                            ls.enjoysConversation === true && 'Enjoys conversation',
-                            ls.prefersQuiet === true && 'Prefers quiet',
-                            ls.familyInArea === true && (ls.familyVisitFreq ? `Family in area · ${ls.familyVisitFreq}` : 'Family in area'),
-                            ls.friendsVisitors === true && (ls.friendsVisitFreq ? `Friends or visitors · ${ls.friendsVisitFreq}` : 'Friends or visitors'),
-                            ls.hasAppointments === true && 'Has appointments',
-                          ].filter(Boolean) as string[];
-                          return tags.length > 0
-                            ? <div className="flex flex-wrap gap-1">{tags.map(t => <span key={t} className="text-xs bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full">{t}</span>)}</div>
-                            : null;
-                        })()}
+                        <div className="space-y-1">
+                          {([
+                            { label: 'Enjoys conversation', key: 'enjoysConversation' },
+                            { label: 'Prefers quiet', key: 'prefersQuiet' },
+                            { label: 'Family in area', key: 'familyInArea' },
+                            { label: 'Friends or visitors', key: 'friendsVisitors' },
+                            { label: 'Has appointments', key: 'hasAppointments' },
+                          ] as const).filter(({ key }) => (ls as any)[key] !== null && (ls as any)[key] !== undefined).map(({ label, key }) => (
+                            <React.Fragment key={key}>
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-slate-500">{label}</span>
+                                <span className={`px-1.5 py-0.5 rounded-full font-semibold text-xs ${(ls as any)[key] === true ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>{(ls as any)[key] === true ? 'Yes' : 'No'}</span>
+                              </div>
+                              {key === 'familyInArea' && ls.familyInArea === true && ls.familyVisitFreq && (
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-slate-400">Family visit frequency</span>
+                                  <span className="text-slate-600 font-medium">{ls.familyVisitFreq}</span>
+                                </div>
+                              )}
+                              {key === 'friendsVisitors' && ls.friendsVisitors === true && ls.friendsVisitFreq && (
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-slate-400">Friends visit frequency</span>
+                                  <span className="text-slate-600 font-medium">{ls.friendsVisitFreq}</span>
+                                </div>
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </div>
                         {ls.hasAppointments === true && ls.appointmentsDetails && (
                           <p className="text-xs text-slate-500"><span className="font-medium text-slate-400">Appointments:</span> {ls.appointmentsDetails}</p>
                         )}
@@ -356,7 +638,9 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
           Upcoming Shifts
         </p>
         <div className="divide-y divide-slate-50">
-          {preview.map(s => (
+          {preview.map(s => {
+            const ds = shiftDisplayStatus(s);
+            return (
             <div key={s.id} className="px-5 py-3 flex items-center gap-3">
               {/* Cancel single shift — far left */}
               {s.status === 'scheduled' && (
@@ -389,11 +673,12 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                   </p>
                 </div>
               </div>
-              <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border shrink-0 ${statusColor(s.status)}`}>
-                {statusLabel(s.status)}
+              <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border shrink-0 ${shiftStatusBadgeClass(ds)}`}>
+                {shiftStatusLabel(ds)}
               </span>
             </div>
-          ))}
+            );
+          })}
         </div>
         {sorted.length > 2 && (
           <button
@@ -437,7 +722,10 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
   const base = shifts[0];
   const [expanded, setExpanded] = useState(false);
   const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
-  const sorted = [...shifts].sort((a, b) => b.date.localeCompare(a.date));
+  const sorted = [...shifts].sort((a, b) => {
+    const d = b.date.localeCompare(a.date);
+    return d !== 0 ? d : (b.startTime || '').localeCompare(a.startTime || '');
+  });
 
   const completedCount = shifts.filter(s => s.status === 'completed').length;
   const cancelledCount = shifts.filter(s => s.status === 'cancelled').length;
@@ -667,18 +955,50 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-type Tab = 'active' | 'past';
+type Tab = 'requests' | 'active' | 'past';
 
 export const ClientVisitsPage: React.FC = () => {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<Tab>('active');
+  const [searchParams] = useSearchParams();
+  const initialTab = (['requests', 'active', 'past'].includes(searchParams.get('tab') ?? '') ? searchParams.get('tab') : 'active') as Tab;
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [shifts, setShifts] = useState<Shift[]>([]);
+  const [pendingBookings, setPendingBookings] = useState<any[]>([]);
+  const [pendingAmendments, setPendingAmendments] = useState<BookingAmendment[]>([]);
   const [loading, setLoading] = useState(true);
 
   const user = auth?.currentUser;
 
   useEffect(() => {
     if (!user || !db) { setLoading(false); return; }
+
+    const bookingUnsub = db.collection('booking_requests')
+      .where('clientId', '==', user.uid)
+      .where('status', '==', 'pending')
+      .onSnapshot(snap => {
+        const loaded = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+        setPendingBookings(loaded);
+        // Back-fill caregiverPhotoURL for requests saved without it
+        const missing = loaded.filter((b: any) => !b.caregiverPhotoURL && !b.caregiverPhoto && b.caregiverId);
+        if (missing.length > 0 && db) {
+          const uniqueIds = [...new Set(missing.map((b: any) => b.caregiverId as string))];
+          Promise.all(uniqueIds.map(async id => {
+            const cSnap = await db!.collection('caregivers').doc(id).get().catch(() => null);
+            if (cSnap?.exists) {
+              const d = cSnap.data() as any;
+              const photo = d?.photo || d?.profilePhoto || d?.photoURL || d?.imageUrl || '';
+              return [id, photo] as [string, string];
+            }
+            return [id, ''] as [string, string];
+          })).then(entries => {
+            const photoMap = Object.fromEntries(entries);
+            setPendingBookings(prev => prev.map((b: any) =>
+              (b.caregiverPhotoURL || b.caregiverPhoto) ? b : { ...b, caregiverPhotoURL: photoMap[b.caregiverId] || null }
+            ));
+          });
+        }
+      }, () => {});
+
     const unsub = db.collection('shifts')
       .where('clientId', '==', user.uid)
       .orderBy('date', 'desc')
@@ -709,7 +1029,14 @@ export const ClientVisitsPage: React.FC = () => {
         },
         () => setLoading(false),
       );
-    return () => unsub();
+    const amendUnsub = db.collection('booking_amendments')
+      .where('clientId', '==', user.uid)
+      .where('status', '==', 'pending')
+      .onSnapshot(snap => {
+        setPendingAmendments(snap.docs.map(d => ({ id: d.id, ...d.data() } as BookingAmendment)));
+      }, () => {});
+
+    return () => { unsub(); bookingUnsub(); amendUnsub(); };
   }, [user?.uid]);
 
   const handleCancelBooking = async (shiftId: string) => {
@@ -735,6 +1062,11 @@ export const ClientVisitsPage: React.FC = () => {
     }
   };
 
+  const handleCancelPendingBooking = async (bookingId: string) => {
+    if (!db) return;
+    await db.collection('booking_requests').doc(bookingId).update({ status: 'cancelled' });
+  };
+
   const activeShifts = shifts.filter(s => s.status === 'scheduled' || s.status === 'in-progress');
   const pastShifts   = shifts.filter(s => s.status === 'completed'  || s.status === 'cancelled');
 
@@ -750,7 +1082,7 @@ export const ClientVisitsPage: React.FC = () => {
 
   const activeGroups = groupByBooking(activeShifts);
   const pastGroups   = groupByBooking(pastShifts);
-  const isEmpty = tab === 'active' ? activeGroups.size === 0 : pastGroups.size === 0;
+  const isEmpty = tab === 'requests' ? pendingBookings.length === 0 && pendingAmendments.length === 0 : tab === 'active' ? activeGroups.size === 0 : pastGroups.size === 0;
 
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
@@ -764,10 +1096,11 @@ export const ClientVisitsPage: React.FC = () => {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-6">
-        <div className="flex gap-2 mb-6">
+        <div className="flex gap-2 mb-6 flex-wrap">
           {([
-            { id: 'active' as Tab, label: 'Active Bookings', icon: <CalendarCheck className="w-4 h-4" /> },
-            { id: 'past'   as Tab, label: 'Past Bookings', icon: <History className="w-4 h-4" /> },
+            { id: 'requests' as Tab, label: 'Requests', icon: <Clock className="w-4 h-4" />, badge: pendingBookings.length + pendingAmendments.length },
+            { id: 'active'   as Tab, label: 'Active Bookings', icon: <CalendarCheck className="w-4 h-4" /> },
+            { id: 'past'     as Tab, label: 'Past Bookings', icon: <History className="w-4 h-4" /> },
           ]).map(t => (
             <button
               key={t.id}
@@ -779,6 +1112,11 @@ export const ClientVisitsPage: React.FC = () => {
               }`}
             >
               {t.icon}{t.label}
+              {t.badge ? (
+                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full leading-none ${tab === t.id ? 'bg-white text-primary-600' : 'bg-amber-100 text-amber-700'}`}>
+                  {t.badge}
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -791,33 +1129,90 @@ export const ClientVisitsPage: React.FC = () => {
           <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center">
             <CalendarDays className="w-10 h-10 mx-auto mb-3 text-slate-300" />
             <p className="font-semibold text-slate-700 mb-1">
-              {tab === 'active' ? 'No active bookings' : 'No past bookings'}
+              {tab === 'requests' ? 'No pending requests' : tab === 'active' ? 'No active bookings' : 'No past bookings'}
             </p>
             <p className="text-sm text-slate-400">
-              {tab === 'active'
+              {tab === 'requests'
+                ? 'Booking requests you send to caregivers will appear here.'
+                : tab === 'active'
                 ? 'Bookings will appear here once a caregiver accepts your request.'
                 : 'Completed and cancelled bookings will appear here.'}
             </p>
           </div>
         ) : (
           <div className="space-y-4">
-            {tab === 'active'
-              ? Array.from(activeGroups.entries()).map(([key, groupShifts]) => (
-                  <ActiveVisitGroupCard
-                    key={key}
-                    shifts={groupShifts}
-                    onCancelBooking={handleCancelBooking}
-                    navigate={navigate}
-                  />
-                ))
-              : Array.from(pastGroups.entries()).map(([key, groupShifts]) => (
-                  <PastVisitGroupCard
-                    key={key}
-                    shifts={groupShifts}
-                    navigate={navigate}
-                  />
-                ))
-            }
+            {tab === 'requests' && pendingBookings.map(b => (
+              <PendingBookingCard
+                key={b.id}
+                booking={b}
+                onCancel={handleCancelPendingBooking}
+                navigate={navigate}
+              />
+            ))}
+            {tab === 'requests' && pendingAmendments.map(a => (
+              <div key={a.id} className="bg-white border border-amber-200 rounded-2xl shadow-sm overflow-hidden">
+                <div className="px-5 pt-4 pb-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                      <span className="text-sm font-bold text-amber-700">
+                        {(a.caregiverName ?? '?')[0].toUpperCase()}
+                      </span>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-slate-900">{a.caregiverName || 'Caregiver'}</p>
+                      <p className="text-xs text-slate-400">Schedule change request · Awaiting response</p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full shrink-0">
+                    Awaiting response
+                  </span>
+                </div>
+                <div className="border-t border-amber-100 bg-amber-50 px-5 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="space-y-0.5 mb-1">
+                        {ALL_DAYS_ORDER.filter(d => a.newDays?.[d]?.length).map(day => (
+                          <p key={day} className="text-xs text-slate-700">
+                            <span className="font-semibold">{day}</span>
+                            {' · '}
+                            {a.newDays[day].map((b: any) => `${fmtTime(b.start)} – ${fmtTime(b.end)}`).join(', ')}
+                          </p>
+                        ))}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {a.startDate ? `Starts ${fmtDate(a.startDate)}` : 'Starts immediately'}
+                        {a.ongoing ? ' · Ongoing' : a.endDate ? ` → ${fmtDate(a.endDate)}` : ''}
+                      </p>
+                      {a.notes && <p className="text-xs text-slate-400 italic mt-0.5">{a.notes}</p>}
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!db) return;
+                        await db.collection('booking_amendments').doc(a.id).update({ status: 'cancelled' }).catch(() => {});
+                      }}
+                      className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl transition-colors shrink-0 mt-0.5"
+                    >
+                      Cancel Request
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {tab === 'active' && Array.from(activeGroups.entries()).map(([key, groupShifts]) => (
+              <ActiveVisitGroupCard
+                key={key}
+                shifts={groupShifts}
+                onCancelBooking={handleCancelBooking}
+                navigate={navigate}
+              />
+            ))}
+            {tab === 'past' && Array.from(pastGroups.entries()).map(([key, groupShifts]) => (
+              <PastVisitGroupCard
+                key={key}
+                shifts={groupShifts}
+                navigate={navigate}
+              />
+            ))}
           </div>
         )}
       </main>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Loader2, Calendar, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, AlertTriangle, Bell, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video } from 'lucide-react';
+import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, AlertTriangle, Bell, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video } from 'lucide-react';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
 import { ViewType, Caregiver, ClientIntakeData, Senior } from '../../types';
 import { dbService, authService } from '../../services/api';
@@ -13,10 +13,12 @@ import { WhatsNext } from './WhatsNext';
 import { shiftHoursService } from '../../services/api';
 import { ReviewShiftHoursModal } from '../payroll/ReviewShiftHoursModal';
 import { SupportChatModal } from '../shared/SupportChatModal';
+import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import firebase, { db } from '../../lib/firebase';
 import { ClientJobPostingWizard } from './ClientJobPostingWizard';
 import { LiveCareFeed } from './LiveCareFeed';
 import { FamilyEmergency } from './FamilyEmergency';
+import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
 import { useNearbyCaregiversWithScores } from '../../hooks/useNearbyCaregiversWithScores';
 
 
@@ -146,6 +148,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
   const [activeShifts, setActiveShifts] = useState<any[]>([]);
   const [activeCareTeam, setActiveCareTeam] = useState<any[]>([]);
+  const [careTeamProfiles, setCareTeamProfiles] = useState<Record<string, { rating?: number; verified?: boolean; backgroundCheckStatus?: string }>>({});
   const [pendingInterviews, setPendingInterviews] = useState<any[]>([]);
   const [completedInterviews, setCompletedInterviews] = useState<any[]>([]);
   const [pendingBookingRequests, setPendingBookingRequests] = useState<any[]>([]);
@@ -154,7 +157,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [clientAllPosts, setClientAllPosts] = useState<any[]>([]);
   const [allInterviews, setAllInterviews] = useState<any[]>([]);
   const [careRequestTab, setCareRequestTab] = useState<'posts' | 'interviews'>('posts');
+  const [todayBookingTab, setTodayBookingTab] = useState<'active' | 'upcoming'>('upcoming');
   const [ivFilter, setIvFilter] = useState<'pending' | 'accepted' | 'completed'>('pending');
+  const [bookingTab, setBookingTab] = useState<'pending' | 'upcoming'>('pending');
 
   const currentUser = authService.getCurrentUser();
   const { gate, Modals: GateModals } = useAccessGates();
@@ -186,10 +191,27 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     const teamUnsub = db.collection('booking_requests')
       .where('clientId', '==', currentUser.uid)
       .where('status', '==', 'accepted')
-      .onSnapshot(snap => {
+      .onSnapshot(async snap => {
         const docs = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
         setActiveCareTeam(docs);
         setBookedCaregiverIds(new Set(docs.map((d: any) => d.caregiverId).filter(Boolean)));
+        // Fetch caregiver profiles for rating + verification badges
+        const profiles: Record<string, { rating?: number; verified?: boolean; backgroundCheckStatus?: string }> = {};
+        await Promise.all(
+          docs.slice(0, 2).map(async (d: any) => {
+            if (!d.caregiverId) return;
+            try {
+              const cgDoc = await db!.collection('caregivers').doc(d.caregiverId).get();
+              const cg = cgDoc.data() || {};
+              profiles[d.caregiverId] = {
+                rating: cg.rating ?? cg.averageRating ?? undefined,
+                verified: cg.verified === true || cg.identityVerified === true,
+                backgroundCheckStatus: cg.backgroundCheckStatus ?? cg.checkrStatus ?? undefined,
+              };
+            } catch { /* ignore */ }
+          })
+        );
+        setCareTeamProfiles(profiles);
       }, () => {});
     unsubs.push(teamUnsub);
 
@@ -204,17 +226,35 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       }, () => {});
     unsubs.push(shiftsUnsub);
 
-    // All booking requests — used for Action Required card and completed interview filtering
-    db.collection('booking_requests')
+    // All booking requests — real-time so pending/cancel updates reflect immediately
+    const bookingUnsub = db.collection('booking_requests')
       .where('clientId', '==', currentUser.uid)
-      .get()
-      .then(snap => {
+      .onSnapshot(snap => {
         const all = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
         setAllBookingRequests(all);
-        setPendingBookingRequests(all.filter((b: any) => b.status === 'pending'));
         setDeclinedBookings(all.filter((b: any) => b.status === 'declined'));
-      })
-      .catch(() => {});
+        const pending = all.filter((b: any) => b.status === 'pending');
+        setPendingBookingRequests(pending);
+        // Back-fill photo for requests saved without caregiverPhotoURL
+        const missing = pending.filter((b: any) => !b.caregiverPhotoURL && !b.caregiverPhoto && b.caregiverId);
+        if (missing.length > 0) {
+          const uniqueIds = [...new Set(missing.map((b: any) => b.caregiverId as string))];
+          Promise.all(uniqueIds.map(async (id: string) => {
+            const cSnap = await db!.collection('caregivers').doc(id).get().catch(() => null);
+            if (cSnap?.exists) {
+              const d = cSnap.data() as any;
+              return [id, d?.photo || d?.profilePhoto || d?.photoURL || d?.imageUrl || ''] as [string, string];
+            }
+            return [id, ''] as [string, string];
+          })).then(entries => {
+            const photoMap = Object.fromEntries(entries);
+            setPendingBookingRequests(prev => prev.map((b: any) =>
+              (b.caregiverPhotoURL || b.caregiverPhoto) ? b : { ...b, caregiverPhotoURL: photoMap[b.caregiverId] || null }
+            ));
+          });
+        }
+      }, () => {});
+    unsubs.push(bookingUnsub);
 
     // Interviews — all statuses for Care Requests card + derived states
     db.collection('video_interviews')
@@ -237,7 +277,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   useEffect(() => {
     if (!currentUser?.uid) return;
     const unsub = shiftHoursService.subscribeForClient(currentUser.uid, rows => {
-      setShiftsToReview(rows.filter((r: any) => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed'));
+      setShiftsToReview(
+        rows
+          .filter((r: any) => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed')
+          .sort((a: any, b: any) => new Date(a.autoApproveAt).getTime() - new Date(b.autoApproveAt).getTime())
+      );
     });
     return () => { try { (unsub as any)?.(); } catch {} };
   }, [currentUser?.uid]);
@@ -353,6 +397,17 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     }).catch(() => setPaidIds(prev => { const s = new Set(prev); s.delete(id); return s; }));
   };
 
+  const fmtTime = (t?: string) => {
+    if (!t) return '';
+    const [hStr, mStr] = t.split(':');
+    const h = parseInt(hStr, 10);
+    const m = parseInt(mStr || '0', 10);
+    if (isNaN(h)) return t;
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 || 12;
+    return m === 0 ? `${h12} ${ampm}` : `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+  };
+
   const scrollToMatches = () => {
     document
       .getElementById('caregiver-matches')
@@ -419,6 +474,20 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       <ClientNavigation />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-16">
+
+        {/* Greeting — only show when WhatsNext is hidden (active booking exists) */}
+        {hasActiveBooking && (() => {
+          const hour = new Date().getHours();
+          const timeOfDay = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+          const firstName = (currentUser?.displayName || currentUser?.email?.split('@')[0] || '').split(' ')[0];
+          const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+          return (
+            <div className="mb-6">
+              <h1 className="text-2xl font-bold text-slate-900">Good {timeOfDay}, {firstName}!</h1>
+              <p className="text-sm text-slate-500 mt-0.5">{today}</p>
+            </div>
+          );
+        })()}
 
         {/* What's Next hero — only for new clients without an active booking */}
         {!hasActiveBooking && currentUser?.uid && (
@@ -614,7 +683,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                     <Briefcase className="w-4 h-4 text-primary-500" />
                     <h2 className="font-semibold text-slate-900">Care Requests</h2>
                   </div>
-                  <button onClick={() => navigate('/client/posts')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
                 </div>
 
                 {/* Posts / Interviews tab toggle */}
@@ -652,17 +720,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                       ) : (
                         <div className="space-y-3 max-h-72 overflow-y-auto">
                           {[...openPosts].sort((a, b) => (b.createdAt || '') > (a.createdAt || '') ? 1 : -1).slice(0, 2).map((post: any) => {
-                            const careTypes: string[] = post.careTypes || [];
-                            const days: string[] = post.days || post.schedule?.days || [];
-                            const timeBlocks: string[] = post.timeBlocks || post.schedule?.timeBlocks || [];
-                            const schedTags = [...days.slice(0, 3), ...timeBlocks.slice(0, 2)];
-                            const extraCare = careTypes.length > 3 ? careTypes.length - 3 : 0;
                             return (
                               <div key={post.id} className="border border-slate-200 rounded-xl p-3">
-                                <div className="flex items-center gap-2 mb-2 min-w-0">
-                                  <span className="text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-100 px-2 py-0.5 rounded-full flex-shrink-0">{post.scheduleType || post.type || 'Part-time'}</span>
-                                  <span className="text-xs text-slate-400 truncate">{post.hiredCount ?? 0} of {post.caregiversNeeded ?? 1} hired</span>
-                                </div>
                                 <p className="text-sm font-semibold text-slate-900 mb-2">{post.title}</p>
                                 <div className="space-y-1 mb-2">
                                   {post.startDate && (
@@ -683,21 +742,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                 ) : post.rate ? (
                                   <p className="text-sm font-bold text-primary-600 mb-2">${post.rate}/hr</p>
                                 ) : null}
-                                {schedTags.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mb-2">
-                                    {schedTags.map((tag: string, i: number) => (
-                                      <span key={i} className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{tag}</span>
-                                    ))}
-                                  </div>
-                                )}
-                                {careTypes.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mb-2">
-                                    {careTypes.slice(0, 3).map((ct: string, i: number) => (
-                                      <span key={i} className="text-xs bg-primary-50 text-primary-600 px-2 py-0.5 rounded-full">{ct}</span>
-                                    ))}
-                                    {extraCare > 0 && <span className="text-xs text-slate-400 self-center">+{extraCare} more</span>}
-                                  </div>
-                                )}
                                 <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
                                   <span className="flex items-center gap-1 text-xs text-slate-500"><User className="w-3 h-3" />{post.seniorCount ?? 1} senior</span>
                                   <span className="flex items-center gap-1 text-xs text-slate-500"><Users className="w-3 h-3" />{post.applicantCount ?? 0} applicant{(post.applicantCount ?? 0) !== 1 ? 's' : ''}</span>
@@ -761,39 +805,35 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           const ivDt = iv.scheduledTime ? new Date(iv.scheduledTime) : (iv.date && iv.time ? new Date(`${iv.date}T${iv.time}`) : null);
                           const isVideo = iv.interviewType === 'video';
                           return (
-                            <div key={iv.id} className="p-2.5 bg-slate-50 rounded-lg">
-                              <div className="flex items-center gap-2.5">
-                                <div className="w-8 h-8 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
-                                  {iv.caregiverPhotoURL ? (
-                                    <img src={iv.caregiverPhotoURL} alt={iv.caregiverName} className="w-full h-full object-cover" />
+                            <div key={iv.id} className="border border-slate-200 rounded-xl p-3">
+                              {/* Header: avatar + name */}
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
+                                  {iv.caregiverPhoto ? (
+                                    <img src={iv.caregiverPhoto} alt={iv.caregiverName} className="w-full h-full object-cover" />
                                   ) : (
                                     <span className="text-xs font-bold text-primary-600">{(iv.caregiverName || 'C')[0].toUpperCase()}</span>
                                   )}
                                 </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="mb-0.5">
-                                    <p className="text-sm font-medium text-slate-800 truncate">{iv.caregiverName}</p>
+                                <p className="text-sm font-semibold text-slate-900 truncate">{iv.caregiverName}</p>
+                              </div>
+                              {/* Detail lines */}
+                              <div className="space-y-1">
+                                {iv.jobTitle && (
+                                  <p className="text-xs text-slate-500 truncate">{iv.jobTitle}</p>
+                                )}
+                                {ivDt && (
+                                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                                    <Calendar className="w-3 h-3 flex-shrink-0" />
+                                    <span>{ivDt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · {ivDt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</span>
                                   </div>
-                                  {iv.jobTitle && (
-                                    <p className="text-xs text-slate-400 truncate mb-0.5">{iv.jobTitle}</p>
-                                  )}
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    {ivDt && (
-                                      <span className="flex items-center gap-1 text-xs text-slate-400">
-                                        <Calendar className="w-3 h-3" />
-                                        {ivDt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                                        {' · '}
-                                        {ivDt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
-                                      </span>
-                                    )}
-                                    {iv.interviewType && (
-                                      <span className="flex items-center gap-1 text-xs text-slate-400">
-                                        {isVideo ? <Video className="w-3 h-3" /> : <Phone className="w-3 h-3" />}
-                                        {isVideo ? 'Video' : 'Phone'}
-                                      </span>
-                                    )}
+                                )}
+                                {iv.interviewType && (
+                                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                                    {isVideo ? <Video className="w-3 h-3 flex-shrink-0" /> : <Phone className="w-3 h-3 flex-shrink-0" />}
+                                    <span>{isVideo ? 'Video' : 'Phone'}</span>
                                   </div>
-                                </div>
+                                )}
                               </div>
                             </div>
                           );
@@ -804,158 +844,471 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 })()}
               </div>
 
-              {/* Active Booking */}
-              {activeCareTeam.slice(0, 1).map((booking: any) => {
-                const activeShift = activeShifts.find((s: any) => s.caregiverId === booking.caregiverId && s.status === 'in-progress')
-                  || activeShifts.find((s: any) => s.caregiverId === booking.caregiverId);
-                const inProgress = activeShift?.status === 'in-progress';
-                return (
-                  <div key={booking.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="font-semibold text-slate-900">Active Booking</h2>
-                      <button onClick={() => navigate('/client/bookings')} className="text-xs text-primary-600 font-medium hover:underline">View details</button>
-                    </div>
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
-                        {booking.caregiverPhotoURL ? (
-                          <img src={booking.caregiverPhotoURL} alt={booking.caregiverName} className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="text-sm font-bold text-primary-600">{(booking.caregiverName || 'C')[0].toUpperCase()}</span>
-                        )}
+              {/* Today's Booking */}
+              {(() => {
+                const _now = new Date();
+                const todayStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
+                const todayShifts = [...activeShifts]
+                  .filter((s: any) => s.date === todayStr && s.status !== 'completed')
+                  .sort((a: any, b: any) => (a.startTime || '').localeCompare(b.startTime || ''));
+                const activeTab = todayShifts.filter((s: any) => s.status === 'in-progress');
+                const upcomingTab = todayShifts.filter((s: any) => s.status === 'scheduled');
+                const tabShifts = todayBookingTab === 'active' ? activeTab : upcomingTab;
+                const renderShift = (shift: any) => {
+                  const ds = shiftDisplayStatus(shift);
+                  const isInProgress = shift.status === 'in-progress';
+                  const cardBorder = ds === 'overdue' ? 'border-orange-300 bg-orange-50' : ds === 'late' ? 'border-yellow-300 bg-yellow-50' : 'border-slate-200';
+                  const statusColor = isInProgress ? 'text-green-600' : ds === 'overdue' ? 'text-orange-600' : ds === 'late' ? 'text-yellow-600' : 'text-slate-500';
+                  const statusText = isInProgress ? 'In Progress' : ds === 'overdue' ? 'Overdue' : ds === 'late' ? 'Late' : 'Upcoming';
+                  return (
+                    <div key={shift.id} className={`rounded-xl p-3 border ${cardBorder}`}>
+                      <div className="flex items-center gap-2.5 mb-2">
+                        <div className="w-9 h-9 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
+                          {shift.caregiverPhotoURL ? (
+                            <img src={shift.caregiverPhotoURL} alt={shift.caregiverName} className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-sm font-bold text-primary-600">{(shift.caregiverName || 'C')[0].toUpperCase()}</span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-slate-900 text-sm leading-tight truncate">{shift.caregiverName}</p>
+                          <p className={`text-xs font-medium mt-0.5 ${statusColor}`}>
+                            {statusText}
+                          </p>
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-slate-900 text-sm">{booking.caregiverName}</p>
-                        <p className="text-xs text-slate-500">
-                          {activeShift ? `${inProgress ? 'Today' : activeShift.date} · ${activeShift.startTime} – ${activeShift.endTime}` : `$${booking.rate}/hr`}
+                      <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                        <Clock className="w-3 h-3 flex-shrink-0" />
+                        <span className="font-medium">{fmtTime(shift.startTime)} – {fmtTime(shift.endTime)}</span>
+                      </div>
+                      {isInProgress && shift.startedAt && (
+                        <div className="flex items-center gap-1.5 text-xs mt-1 text-green-600 font-medium">
+                          <CheckCircle className="w-3 h-3 flex-shrink-0" />
+                          <span>Started at {(() => {
+                            const d = shift.startedAt?.toDate ? shift.startedAt.toDate() : new Date(shift.startedAt);
+                            return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+                          })()}</span>
+                        </div>
+                      )}
+                      {shift.careRecipients && shift.careRecipients.length > 0 && (
+                        <div className="flex items-center gap-1.5 text-xs mt-1 text-slate-500">
+                          <User className="w-3 h-3 flex-shrink-0" />
+                          <span className="truncate">{shift.careRecipients.map((r: any) => typeof r === 'string' ? r : r.name).filter(Boolean).join(', ')}</span>
+                        </div>
+                      )}
+                      {shift.address && (
+                        <div className="flex items-center gap-1.5 text-xs mt-1 text-slate-500">
+                          <MapPin className="w-3 h-3 flex-shrink-0" />
+                          <span className="truncate">{shift.address}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                };
+                return (
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <CalendarDays className="w-4 h-4 text-primary-500" />
+                        <h2 className="font-semibold text-slate-900">Today's Booking</h2>
+                      </div>
+                    </div>
+                    {/* Tab toggle */}
+                    <div className="flex bg-slate-100 rounded-lg p-0.5 mb-4">
+                      <button
+                        onClick={() => setTodayBookingTab('active')}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-colors ${todayBookingTab === 'active' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        <CheckCircle className="w-3.5 h-3.5" /> Active Shift
+                      </button>
+                      <button
+                        onClick={() => setTodayBookingTab('upcoming')}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-colors ${todayBookingTab === 'upcoming' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        <Clock className="w-3.5 h-3.5" /> Upcoming
+                      </button>
+                    </div>
+                    {/* Section label row — matches Care Requests "Posts" row */}
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-semibold text-slate-700">
+                        {todayBookingTab === 'active' ? 'Active Shifts' : 'Upcoming Shifts'}
+                      </p>
+                      <button onClick={() => navigate('/client/bookings')} className="text-xs text-primary-600 font-medium hover:underline flex items-center gap-0.5">
+                        View all <ChevronRight className="w-3 h-3" />
+                      </button>
+                    </div>
+                    {tabShifts.length > 0 ? (
+                      <div className="space-y-2 max-h-72 overflow-y-auto">
+                        {tabShifts.map(renderShift)}
+                      </div>
+                    ) : (
+                      <div className="text-center py-5">
+                        <p className="text-sm text-slate-400">
+                          {todayBookingTab === 'active' ? 'No active shifts right now' : 'No upcoming shifts today'}
                         </p>
                       </div>
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${inProgress ? 'text-green-700 bg-green-100' : 'text-primary-700 bg-primary-100'}`}>
-                        {inProgress ? 'In Progress' : 'Scheduled'}
-                      </span>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => booking.caregiverId && handleChatClick({ id: booking.caregiverId, name: booking.caregiverName } as any)}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 transition-colors"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        Message
-                      </button>
-                      <button
-                        onClick={() => navigate('/client/bookings')}
-                        className="flex-1 flex items-center justify-center py-2 text-xs font-medium border border-primary-200 rounded-lg text-primary-700 hover:bg-primary-50 transition-colors"
-                      >
-                        Booking Details
-                      </button>
-                    </div>
+                    )}
                   </div>
                 );
-              })}
+              })()}
 
               {/* Care Team */}
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <Users className="w-4 h-4 text-primary-500" />
                     <h2 className="font-semibold text-slate-900">Care Team</h2>
                   </div>
-                  <button onClick={() => navigate('/client/care-team')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
+                  <button onClick={() => navigate('/client/my-care-team')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
                 </div>
-                <div className="space-y-2 mb-3">
-                  {activeCareTeam.slice(0, 2).map((booking: any) => {
-                    const onShift = activeShifts.some((s: any) => s.caregiverId === booking.caregiverId && s.status === 'in-progress');
-                    return (
-                      <div key={booking.id} className="flex items-center gap-3 p-2.5 bg-slate-50 rounded-lg">
-                        <div className="w-9 h-9 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
-                          {booking.caregiverPhotoURL ? (
-                            <img src={booking.caregiverPhotoURL} alt={booking.caregiverName} className="w-full h-full object-cover" />
-                          ) : (
-                            <span className="text-sm font-bold text-primary-600">{(booking.caregiverName || 'C')[0].toUpperCase()}</span>
+                {activeCareTeam.length === 0 ? (
+                  <div className="text-center py-6">
+                    <p className="text-sm text-slate-400">No active caregivers</p>
+                    <button onClick={() => navigate('/client/find-care')} className="text-xs text-primary-600 font-medium hover:underline mt-1">Find a caregiver →</button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {activeCareTeam.slice(0, 2).map((booking: any) => {
+                      const cgProfile = careTeamProfiles[booking.caregiverId] || {};
+                      const schedDays: string[] = (() => {
+                        const dst = booking.schedule?.dayShiftTimes;
+                        if (dst && typeof dst === 'object') return Object.keys(dst);
+                        return booking.schedule?.days || [];
+                      })();
+                      const rate = booking.rate ?? booking.caregiverRate ?? null;
+                      const recipient = (booking.careRecipients || [])[0];
+                      const recipientName = recipient?.name || recipient?.firstName || '';
+
+                      return (
+                        <div key={booking.id} className="border border-slate-200 rounded-xl p-3.5">
+                          {/* Header: avatar + name + role */}
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className="w-11 h-11 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
+                              {booking.caregiverPhotoURL ? (
+                                <img src={booking.caregiverPhotoURL} alt={booking.caregiverName} className="w-full h-full object-cover" />
+                              ) : (
+                                <span className="text-sm font-bold text-primary-600">{(booking.caregiverName || 'C')[0].toUpperCase()}</span>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-bold text-slate-900 truncate">{booking.caregiverName}</p>
+                              <p className="text-xs text-slate-500">{booking.caregiverRole || 'Caregiver'}</p>
+                              {cgProfile.rating != null && (
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />
+                                  <span className="text-xs font-semibold text-slate-700">{Number(cgProfile.rating).toFixed(1)}</span>
+                                </div>
+                              )}
+                            </div>
+                            <CaregiverVerificationBadges
+                              verified={cgProfile.verified}
+                              backgroundCheckStatus={cgProfile.backgroundCheckStatus}
+                              className="flex-shrink-0"
+                            />
+                          </div>
+                          {/* Divider */}
+                          <div className="border-t border-slate-100 mb-3" />
+                          {/* Rate + schedule days */}
+                          <div className="flex items-center gap-3 mb-2 flex-wrap">
+                            {rate != null && (
+                              <p className="text-sm font-bold text-slate-800"><span className="text-primary-600">${rate}</span><span className="text-xs font-normal text-slate-400">/hr</span></p>
+                            )}
+                            {schedDays.length > 0 && (
+                              <div className="flex gap-1 flex-wrap">
+                                {schedDays.slice(0, 5).map(d => (
+                                  <span key={d} className="text-[10px] font-semibold px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">{d.slice(0,3)}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          {/* Caring for */}
+                          {recipientName && (
+                            <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-2">
+                              <Heart className="w-3 h-3 text-rose-400 flex-shrink-0" />
+                              <span>Caring for: <span className="font-semibold text-slate-700">{recipientName}</span></span>
+                            </div>
                           )}
+                          {/* Actions */}
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => booking.caregiverId && handleChatClick({ id: booking.caregiverId, name: booking.caregiverName } as any)}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" /> Message
+                            </button>
+                            <button
+                              onClick={() => navigate(`/client/caregiver/${booking.caregiverId}`)}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
+                            >
+                              <User className="w-3.5 h-3.5" /> Profile
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-900 truncate">{booking.caregiverName}</p>
-                          <p className="text-xs text-slate-500">{booking.caregiverRole || 'Caregiver'}</p>
-                        </div>
-                        {onShift && (
-                          <span className="text-xs font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full flex-shrink-0">On Shift</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                <button
-                  onClick={() => activeCareTeam[0]?.caregiverId && handleChatClick({ id: activeCareTeam[0].caregiverId, name: activeCareTeam[0].caregiverName } as any)}
-                  className="w-full py-2 text-xs font-medium border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors"
-                >
-                  Message Caregiver
-                </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Row 3: Upcoming Bookings + Timesheets & Payments + Caregivers Near You */}
+            {/* Row 3: Upcoming Bookings + Timesheets + Caregivers Near You */}
             <div className="grid lg:grid-cols-3 gap-4">
 
-              {/* Upcoming Bookings */}
+              {/* Bookings — matches Care Requests card pattern */}
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <Calendar className="w-4 h-4 text-primary-500" />
-                    <h2 className="font-semibold text-slate-900">Upcoming Bookings</h2>
+                    <h2 className="font-semibold text-slate-900">Bookings</h2>
                   </div>
-                  <button onClick={() => navigate('/client/bookings')} className="text-xs text-primary-600 font-medium hover:underline">View schedule</button>
                 </div>
-                <div className="space-y-3">
-                  {(() => {
-                    const todayStr = new Date().toISOString().slice(0, 10);
-                    const upcoming = activeShifts.filter((s: any) => s.date >= todayStr);
-                    if (upcoming.length === 0) return <p className="text-sm text-slate-400 py-2">No upcoming shifts scheduled.</p>;
-                    return upcoming.slice(0, 3).map((shift: any) => {
-                      const parts = (shift.date || '').split('-');
-                      const d = parts.length === 3 ? new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])) : null;
-                      return (
-                        <div key={shift.id} className="flex items-center gap-3">
-                          <div className="text-center w-9 flex-shrink-0">
-                            <p className="text-xl font-bold text-slate-900 leading-none">{d ? d.getDate() : '–'}</p>
-                            <p className="text-xs text-slate-400 uppercase">{d ? d.toLocaleDateString('en-US', { month: 'short' }) : ''}</p>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-slate-800 truncate">{shift.caregiverName}</p>
-                            <p className="text-xs text-slate-400">{shift.startTime} – {shift.endTime}</p>
-                          </div>
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${shift.status === 'in-progress' ? 'text-green-700 bg-green-100' : 'text-primary-700 bg-primary-50 border border-primary-100'}`}>
-                            {shift.status === 'in-progress' ? 'In Progress' : 'Scheduled'}
-                          </span>
-                        </div>
-                      );
+
+                {/* Tab toggle */}
+                <div className="flex bg-slate-100 rounded-lg p-0.5 mb-4">
+                  <button
+                    onClick={() => setBookingTab('pending')}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-colors ${bookingTab === 'pending' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    <Clock className="w-3.5 h-3.5" /> Pending
+                  </button>
+                  <button
+                    onClick={() => setBookingTab('upcoming')}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-colors ${bookingTab === 'upcoming' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    <CalendarDays className="w-3.5 h-3.5" /> Upcoming
+                  </button>
+                </div>
+
+                {/* Pending tab */}
+                {bookingTab === 'pending' && (() => {
+                  if (pendingBookingRequests.length === 0) return (
+                    <div className="text-center py-5">
+                      <p className="text-sm text-slate-400 mb-2">No pending bookings</p>
+                      <button onClick={() => navigate('/client/posts?tab=interviews&filter=completed')} className="text-xs text-primary-600 font-medium hover:underline">View completed interviews →</button>
+                    </div>
+                  );
+                  return (
+                    <>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs font-semibold text-slate-700">Pending</p>
+                        <button onClick={() => navigate('/client/bookings?tab=requests')} className="text-xs text-primary-600 font-medium hover:underline flex items-center gap-0.5">
+                          View all <ChevronRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div className="space-y-3 max-h-72 overflow-y-auto">
+                        {pendingBookingRequests.slice(0, 2).map((b: any) => {
+                          const dst = b.schedule?.dayShiftTimes;
+                          const schedLine = dst ? Object.entries(dst).slice(0, 2).map(([day, slots]: [string, any]) => {
+                            const slot = slots?.[0];
+                            return slot ? `${day} ${fmtTime(slot.start)}–${fmtTime(slot.end)}` : day;
+                          }).join(' · ') : null;
+                          return (
+                            <div key={b.id} className="border border-slate-200 rounded-xl p-3">
+                              {/* Header: avatar + name + ongoing */}
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
+                                  {(b.caregiverPhotoURL || b.caregiverPhoto) ? (
+                                    <img src={b.caregiverPhotoURL || b.caregiverPhoto} alt={b.caregiverName} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <span className="text-xs font-bold text-primary-600">{(b.caregiverName || 'C')[0].toUpperCase()}</span>
+                                  )}
+                                </div>
+                                <p className="text-sm font-semibold text-slate-900 truncate flex-1">{b.caregiverName}</p>
+                              </div>
+                              {/* Detail lines */}
+                              <div className="space-y-1 mb-2">
+                                {b.jobTitle && (
+                                  <p className="text-xs text-slate-500 truncate">{b.jobTitle}</p>
+                                )}
+                                {schedLine && (
+                                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                                    <Calendar className="w-3 h-3 flex-shrink-0" />
+                                    <span className="truncate">{schedLine}</span>
+                                  </div>
+                                )}
+                                {b.address && (
+                                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                                    <MapPin className="w-3 h-3 flex-shrink-0" />
+                                    <span className="truncate">{b.address}</span>
+                                  </div>
+                                )}
+                              </div>
+                              {b.rate != null && (
+                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : 'Cash'}</p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  );
+                })()}
+
+                {/* Upcoming tab */}
+                {bookingTab === 'upcoming' && (() => {
+                  const tomorrowStr = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
+                  const upcoming = [...activeShifts]
+                    .filter((s: any) => s.date >= tomorrowStr)
+                    .sort((a: any, b: any) => {
+                      if (a.date !== b.date) return a.date > b.date ? 1 : -1;
+                      return (a.startTime || '').localeCompare(b.startTime || '');
                     });
-                  })()}
-                </div>
+                  if (upcoming.length === 0) return (
+                    <div className="text-center py-5">
+                      <p className="text-sm text-slate-400 mb-2">No upcoming shifts</p>
+                      <button onClick={() => navigate('/client/bookings')} className="text-xs text-primary-600 font-medium hover:underline">View bookings →</button>
+                    </div>
+                  );
+                  return (
+                    <>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs font-semibold text-slate-700">Upcoming Shifts</p>
+                        <button onClick={() => navigate('/client/bookings')} className="text-xs text-primary-600 font-medium hover:underline flex items-center gap-0.5">
+                          View all <ChevronRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div className="space-y-3 max-h-72 overflow-y-auto">
+                        {upcoming.slice(0, 2).map((shift: any) => {
+                          const parts = (shift.date || '').split('-');
+                          const d = parts.length === 3 ? new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])) : null;
+                          const inProgress = shift.status === 'in-progress';
+                          return (
+                            <div key={shift.id} className="border border-slate-200 rounded-xl p-3 flex items-start gap-3">
+                              {/* Date block */}
+                              <div className="text-center w-10 flex-shrink-0 pt-0.5">
+                                <p className="text-xl font-bold text-slate-900 leading-none">{d ? d.getDate() : '–'}</p>
+                                <p className="text-xs font-semibold text-slate-400 uppercase mt-0.5">{d ? d.toLocaleDateString('en-US', { month: 'short' }) : ''}</p>
+                                <p className="text-xs text-slate-400">{d ? d.toLocaleDateString('en-US', { weekday: 'short' }) : ''}</p>
+                              </div>
+                              {/* Details */}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
+                                    {shift.caregiverPhotoURL ? (
+                                      <img src={shift.caregiverPhotoURL} alt={shift.caregiverName} className="w-full h-full object-cover" />
+                                    ) : (
+                                      <span className="text-xs font-bold text-primary-600">{(shift.caregiverName || 'C')[0].toUpperCase()}</span>
+                                    )}
+                                  </div>
+                                  <p className="text-sm font-semibold text-slate-900 truncate flex-1">{shift.caregiverName}</p>
+                                  {inProgress && (
+                                    <span className="text-xs font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full flex-shrink-0">In Progress</span>
+                                  )}
+                                </div>
+                                {(shift.startTime || shift.endTime) && (
+                                  <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-0.5">
+                                    <Clock className="w-3 h-3 flex-shrink-0" />
+                                    <span>{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}</span>
+                                  </div>
+                                )}
+                                {shift.address && (
+                                  <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-0.5">
+                                    <MapPin className="w-3 h-3 flex-shrink-0" />
+                                    <span className="truncate">{shift.address}</span>
+                                  </div>
+                                )}
+                                {shift.rate != null && (
+                                  <p className="text-xs font-semibold text-primary-600 mt-1">${shift.rate}/hr · {shift.paymentMethod === 'credit' ? 'Card' : 'Cash'}</p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
-              {/* Timesheets & Payments */}
+              {/* Timesheets */}
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <FileText className="w-4 h-4 text-primary-500" />
-                    <h2 className="font-semibold text-slate-900">Timesheets & Payments</h2>
+                    <h2 className="font-semibold text-slate-900">Timesheets</h2>
                   </div>
                   <button onClick={() => navigate('/client/payments')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
                 </div>
                 <div className="space-y-2">
                   {shiftsToReview.length > 0 ? (
-                    <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
-                      <div className="w-8 h-8 bg-accent-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Clock className="w-4 h-4 text-accent-600" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-slate-900">{shiftsToReview.length} shift{shiftsToReview.length > 1 ? 's' : ''} to review</p>
-                        <p className="text-xs text-slate-500">Review and approve timesheets</p>
-                      </div>
-                      <button onClick={() => setReviewingShift(shiftsToReview[0])} className="px-2.5 py-1.5 text-xs font-semibold bg-accent-500 text-white rounded-lg hover:bg-accent-600 flex-shrink-0 transition-colors">
-                        Review Now
-                      </button>
-                    </div>
+                    <>
+                      {shiftsToReview.slice(0, 3).map((shift: any) => {
+                        const startTs = shift.finalStartTime ?? shift.submittedStartTime;
+                        const endTs   = shift.finalEndTime   ?? shift.submittedEndTime;
+                        const dispHours = (startTs && endTs)
+                          ? (new Date(endTs).getTime() - new Date(startTs).getTime()) / 3_600_000
+                          : (shift.finalTotalHours ?? shift.submittedTotalHours ?? 0);
+                        const pay = shift.grossPay ?? (dispHours * (shift.payRate ?? 0));
+                        const isCash = shift.paymentMethod !== 'credit';
+                        const fmtTs = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+                        const shiftDate = startTs ? new Date(startTs).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+                        const hh = Math.floor(dispHours);
+                        const mm = Math.round((dispHours % 1) * 60);
+                        const durationStr = dispHours > 0 ? `${hh}h ${mm}m` : '';
+                        const STATUS_MAP: Record<string, { label: string; color: string; bg: string }> = {
+                          pending_client_review:      { label: 'Needs Review',     color: 'text-amber-700',  bg: 'bg-amber-50 border border-amber-200' },
+                          caregiver_counter_proposed: { label: 'Counter Received', color: 'text-yellow-700', bg: 'bg-yellow-50 border border-yellow-200' },
+                          correction_proposed:        { label: 'Correction Sent',  color: 'text-orange-700', bg: 'bg-orange-50 border border-orange-200' },
+                        };
+                        const statusCfg = STATUS_MAP[shift.status] ?? { label: shift.status, color: 'text-slate-600', bg: 'bg-slate-100 border border-slate-200' };
+                        const msLeft = shift.autoApproveAt ? new Date(shift.autoApproveAt).getTime() - Date.now() : 0;
+                        const hoursLeft = Math.max(0, Math.round(msLeft / 3_600_000));
+                        const showAutoApprove = shift.status === 'pending_client_review' && hoursLeft <= 24;
+                        return (
+                          <div key={shift.id} className="border border-slate-200 rounded-xl p-3">
+                            {/* Row 1: avatar + caregiver name + date */}
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                                  {shift.caregiverPhotoURL
+                                    ? <img src={shift.caregiverPhotoURL} className="w-full h-full object-cover" alt="" />
+                                    : <span className="text-xs font-bold text-primary-600">{(shift.caregiverName || 'C')[0].toUpperCase()}</span>
+                                  }
+                                </div>
+                                <span className="text-xs font-semibold text-slate-800 truncate">{shift.caregiverName || 'Caregiver'}</span>
+                              </div>
+                              <span className="text-xs text-slate-400 flex-shrink-0 ml-2">{shiftDate}</span>
+                            </div>
+                            {/* Row 2: time in → out */}
+                            <p className="text-xs text-slate-500 mb-1.5">
+                              {startTs && endTs ? `${fmtTs(startTs)} → ${fmtTs(endTs)}` : '—'}
+                            </p>
+                            {/* Row 3: duration · pay · method · status */}
+                            <div className="flex items-center gap-2 text-xs mb-2 flex-wrap">
+                              {durationStr && <span className="text-slate-500">{durationStr}</span>}
+                              {durationStr && <span className="text-slate-300">·</span>}
+                              <span className="font-semibold text-slate-700">${pay.toFixed(2)}</span>
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${isCash ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
+                                {isCash ? 'Cash' : 'Card'}
+                              </span>
+                              <span className={`ml-auto px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusCfg.bg} ${statusCfg.color}`}>
+                                {statusCfg.label}
+                              </span>
+                            </div>
+                            {/* Auto-approve warning */}
+                            {showAutoApprove && (
+                              <div className="flex items-center gap-1.5 text-[10px] text-amber-600 mb-2">
+                                <Clock className="w-3 h-3 flex-shrink-0" />
+                                <span>Auto-approves in {hoursLeft}h</span>
+                              </div>
+                            )}
+                            {/* Review button */}
+                            <button
+                              onClick={() => setReviewingShift(shift)}
+                              className="w-full py-1.5 text-xs font-semibold bg-accent-500 text-white rounded-lg hover:bg-accent-600 transition-colors"
+                            >
+                              Review
+                            </button>
+                          </div>
+                        );
+                      })}
+                      {shiftsToReview.length > 3 && (
+                        <p className="text-xs text-center text-slate-400 pt-1">
+                          +{shiftsToReview.length - 3} more —{' '}
+                          <button onClick={() => navigate('/client/payments')} className="text-primary-600 hover:underline">View all</button>
+                        </p>
+                      )}
+                    </>
                   ) : (
                     <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg">
                       <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -964,18 +1317,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                       <p className="text-sm text-slate-600">All timesheets reviewed</p>
                     </div>
                   )}
-                  <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
-                    <div className="w-8 h-8 bg-primary-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <DollarSign className="w-4 h-4 text-primary-600" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-slate-900">View payment history</p>
-                      <p className="text-xs text-slate-500">All payments and invoices</p>
-                    </div>
-                    <button onClick={() => navigate('/client/payments')} className="px-2.5 py-1.5 text-xs font-semibold border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-100 flex-shrink-0 transition-colors">
-                      Go to Payments
-                    </button>
-                  </div>
                 </div>
               </div>
 

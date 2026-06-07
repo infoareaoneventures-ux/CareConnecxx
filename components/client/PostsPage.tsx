@@ -109,6 +109,19 @@ export const PostsPage: React.FC = () => {
   const [mainTab, setMainTab] = useState<MainTab>('posts');
   const [postsFilter, setPostsFilter] = useState<PostsFilter>('open');
 
+  // Deep-link from dashboard: ?tab=interviews&filter=pending|accepted|completed
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    const filter = searchParams.get('filter');
+    if (tab === 'interviews') {
+      setMainTab('interviews');
+      if (filter && ['pending','accepted','completed','declined','cancelled','all'].includes(filter)) {
+        setInterviewFilter(filter as any);
+      }
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams]);
+
   // Auto-open booking modal when arriving from Re-book on My Care Team
   useEffect(() => {
     const rebookId = searchParams.get('rebook');

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Loader2, Calendar, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, AlertTriangle, Bell, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, MoreHorizontal, Video } from 'lucide-react';
+import { User, Loader2, Calendar, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, AlertTriangle, Bell, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video } from 'lucide-react';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
 import { ViewType, Caregiver, ClientIntakeData, Senior } from '../../types';
 import { dbService, authService } from '../../services/api';
@@ -150,6 +150,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [completedInterviews, setCompletedInterviews] = useState<any[]>([]);
   const [pendingBookingRequests, setPendingBookingRequests] = useState<any[]>([]);
   const [declinedBookings, setDeclinedBookings] = useState<any[]>([]);
+  const [allBookingRequests, setAllBookingRequests] = useState<any[]>([]);
   const [clientAllPosts, setClientAllPosts] = useState<any[]>([]);
   const [allInterviews, setAllInterviews] = useState<any[]>([]);
   const [careRequestTab, setCareRequestTab] = useState<'posts' | 'interviews'>('posts');
@@ -203,20 +204,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       }, () => {});
     unsubs.push(shiftsUnsub);
 
-    // Pending booking requests (sent, not yet accepted)
+    // All booking requests — used for Action Required card and completed interview filtering
     db.collection('booking_requests')
       .where('clientId', '==', currentUser.uid)
-      .where('status', '==', 'pending')
       .get()
-      .then(snap => setPendingBookingRequests(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }))))
-      .catch(() => {});
-
-    // Declined bookings
-    db.collection('booking_requests')
-      .where('clientId', '==', currentUser.uid)
-      .where('status', '==', 'declined')
-      .get()
-      .then(snap => setDeclinedBookings(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }))))
+      .then(snap => {
+        const all = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+        setAllBookingRequests(all);
+        setPendingBookingRequests(all.filter((b: any) => b.status === 'pending'));
+        setDeclinedBookings(all.filter((b: any) => b.status === 'declined'));
+      })
       .catch(() => {});
 
     // Interviews — all statuses for Care Requests card + derived states
@@ -718,8 +715,22 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 {careRequestTab === 'interviews' && (() => {
                   const iPending = allInterviews.filter(iv => ['requested', 'pending'].includes(iv.status));
                   const iAccepted = allInterviews.filter(iv => iv.status === 'accepted');
-                  const iCompleted = allInterviews.filter(iv => iv.status === 'completed');
-                  const displayList = ivFilter === 'pending' ? iPending : ivFilter === 'accepted' ? iAccepted : iCompleted;
+                  const bookingMap: Record<string, any> = {};
+                  allBookingRequests.forEach((b: any) => {
+                    const key = `${b.caregiverId}_${b.jobId || b.interviewId || ''}`;
+                    bookingMap[key] = b;
+                  });
+                  const iCompleted = allInterviews.filter(iv => {
+                    if (iv.status !== 'completed') return false;
+                    const key = `${iv.caregiverId}_${iv.jobId || iv.id}`;
+                    const booking = bookingMap[key];
+                    // Show only actionable: no booking sent, or booking declined/cancelled
+                    return !booking || booking.status === 'declined' || booking.status === 'cancelled';
+                  });
+                  const sortedPending = [...iPending].sort((a, b) => (b.createdAt || '') > (a.createdAt || '') ? 1 : -1);
+                  const sortedAccepted = [...iAccepted].sort((a, b) => (a.scheduledTime || '') > (b.scheduledTime || '') ? 1 : -1);
+                  const sortedCompleted = [...iCompleted].sort((a, b) => (b.completedAt || b.scheduledTime || '') > (a.completedAt || a.scheduledTime || '') ? 1 : -1);
+                  const displayList = (ivFilter === 'pending' ? sortedPending : ivFilter === 'accepted' ? sortedAccepted : sortedCompleted).slice(0, 2);
 
                   return (
                     <>
@@ -738,8 +749,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                         </button>
                       </div>
                       <div className="flex items-center justify-between mb-2">
-                        <p className="text-xs font-semibold text-slate-700">Interviews</p>
-                        <button onClick={() => navigate('/client/posts')} className="text-xs text-primary-600 font-medium hover:underline flex items-center gap-0.5">
+                        <p className="text-xs font-semibold text-slate-700 capitalize">{ivFilter}</p>
+                        <button onClick={() => navigate(`/client/posts?tab=interviews&filter=${ivFilter}`)} className="text-xs text-primary-600 font-medium hover:underline flex items-center gap-0.5">
                           View all <ChevronRight className="w-3 h-3" />
                         </button>
                       </div>
@@ -747,11 +758,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                         {displayList.length === 0 ? (
                           <p className="text-sm text-slate-400 text-center py-4">No interviews yet</p>
                         ) : displayList.map((iv: any) => {
-                          const isPending = ['requested', 'pending'].includes(iv.status);
-                          const isAccepted = iv.status === 'accepted';
-                          const isCompleted = iv.status === 'completed';
                           const ivDt = iv.scheduledTime ? new Date(iv.scheduledTime) : (iv.date && iv.time ? new Date(`${iv.date}T${iv.time}`) : null);
-                          const isPast = ivDt ? ivDt < new Date() : false;
                           const isVideo = iv.interviewType === 'video';
                           return (
                             <div key={iv.id} className="p-2.5 bg-slate-50 rounded-lg">
@@ -764,16 +771,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                   )}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between gap-1 mb-0.5">
+                                  <div className="mb-0.5">
                                     <p className="text-sm font-medium text-slate-800 truncate">{iv.caregiverName}</p>
-                                    <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${
-                                      isCompleted ? 'text-slate-600 bg-slate-200' :
-                                      isAccepted ? 'text-green-700 bg-green-100' :
-                                      isPending ? 'text-amber-700 bg-amber-100' :
-                                      'text-slate-500 bg-slate-200'
-                                    }`}>
-                                      {isCompleted ? 'Completed' : isAccepted ? 'Accepted' : 'Pending'}
-                                    </span>
                                   </div>
                                   {iv.jobTitle && (
                                     <p className="text-xs text-slate-400 truncate mb-0.5">{iv.jobTitle}</p>
@@ -795,7 +794,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                     )}
                                   </div>
                                 </div>
-                                <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
                               </div>
                             </div>
                           );

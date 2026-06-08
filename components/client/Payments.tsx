@@ -24,7 +24,7 @@ type ShiftHoursStatus =
   | 'paid'
   | 'payment_failed';
 
-type StatusFilter = 'all' | 'needs-review' | 'history';
+type StatusFilter = 'needs-review' | 'history';
 
 interface LineItem {
   type: string;
@@ -548,7 +548,7 @@ export const Payments: React.FC = () => {
   const toggleGroup = (key: string) => setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
   const [rows, setRows] = useState<ShiftHoursRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('needs-review');
   const [reviewRow, setReviewRow] = useState<ShiftHoursRow | null>(null);
   const [showReport, setShowReport] = useState(false);
   const [reportFrom, setReportFrom] = useState('');
@@ -618,8 +618,7 @@ export const Payments: React.FC = () => {
 
   const filteredRows = useMemo(() => {
     if (statusFilter === 'needs-review') return rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed' || r.status === 'payment_failed');
-    if (statusFilter === 'history') return showReport && (reportFrom || reportTo) ? reportedRows : historyRows;
-    return rows;
+    return showReport && (reportFrom || reportTo) ? reportedRows : historyRows;
   }, [rows, statusFilter, showReport, reportFrom, reportTo, reportedRows, historyRows]);
 
   const handleExportCSV = () => {
@@ -729,7 +728,6 @@ export const Payments: React.FC = () => {
             {/* Status filter */}
             <div className="flex items-center gap-1.5 flex-wrap">
               {([
-                { id: 'all',          label: 'All',          count: rows.length },
                 { id: 'needs-review', label: 'Needs Review', count: rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed' || r.status === 'payment_failed').length },
                 { id: 'history',      label: 'History',      count: historyRows.length },
               ] as { id: StatusFilter; label: string; count: number }[]).map(f => (
@@ -823,8 +821,78 @@ export const Payments: React.FC = () => {
               </div>
             ) : (
               <>
-                {/* Group by caregiver */}
-                {(() => {
+                {statusFilter === 'history' ? (() => {
+                  const sorted = filteredRows.slice().sort((a, b) =>
+                    new Date(b.submittedStartTime ?? b.submittedAt).getTime() - new Date(a.submittedStartTime ?? a.submittedAt).getTime()
+                  );
+                  // Group by month
+                  const monthGroups = sorted.reduce((acc, row) => {
+                    const d = new Date(row.submittedStartTime ?? row.submittedAt);
+                    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                    const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                    if (!acc[key]) acc[key] = { label, rows: [] };
+                    acc[key].rows.push(row);
+                    return acc;
+                  }, {} as Record<string, { label: string; rows: typeof filteredRows }>);
+
+                  return Object.entries(monthGroups).map(([monthKey, monthGroup]) => {
+                    const monthTotal = monthGroup.rows.reduce((s, r) => {
+                      const start = r.finalStartTime ?? r.submittedStartTime;
+                      const end = r.finalEndTime ?? r.submittedEndTime;
+                      const hrs = (start && end) ? (new Date(end).getTime() - new Date(start).getTime()) / 3_600_000 : (r.finalTotalHours ?? r.submittedTotalHours ?? 0);
+                      return s + (r.grossPay ?? hrs * (r.payRate ?? 0));
+                    }, 0);
+                    // Group by caregiver within the month
+                    const cgGroups = monthGroup.rows.reduce((acc, row) => {
+                      const key = row.caregiverId || row.caregiverName || 'unknown';
+                      if (!acc[key]) acc[key] = { name: row.caregiverName ?? 'Caregiver', photo: row.caregiverPhotoURL ?? undefined, rows: [] };
+                      acc[key].rows.push(row);
+                      return acc;
+                    }, {} as Record<string, { name: string; photo?: string; rows: typeof filteredRows }>);
+
+                    return (
+                      <div key={monthKey} className="space-y-3">
+                        {/* Month header */}
+                        <div className="flex items-center justify-between px-1 pt-2 border-t border-slate-100 first:border-t-0 first:pt-0">
+                          <span className="text-sm font-bold text-slate-800">{monthGroup.label}</span>
+                          <span className="text-xs text-slate-500">{monthGroup.rows.length} shift{monthGroup.rows.length !== 1 ? 's' : ''} · ${monthTotal.toFixed(2)}</span>
+                        </div>
+                        {/* Caregivers within month */}
+                        {Object.entries(cgGroups).map(([cgKey, cgGroup]) => {
+                          const expandKey = `${monthKey}-${cgKey}`;
+                          const isExpanded = !!expandedGroups[expandKey];
+                          const visible = isExpanded ? cgGroup.rows : cgGroup.rows.slice(0, 2);
+                          const hidden = cgGroup.rows.length - 2;
+                          return (
+                            <div key={cgKey} className="space-y-2">
+                              <div className="flex items-center gap-2 px-1">
+                                <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-xs shrink-0">
+                                  {cgGroup.photo ? <img src={cgGroup.photo} className="w-full h-full object-cover" alt="" /> : cgGroup.name.charAt(0).toUpperCase()}
+                                </div>
+                                <span className="text-sm font-semibold text-slate-700">{cgGroup.name}</span>
+                                <span className="text-xs text-slate-400">{cgGroup.rows.length} shift{cgGroup.rows.length !== 1 ? 's' : ''}</span>
+                              </div>
+                              {visible.map(row => (
+                                <ShiftRow key={row.id} row={row} onReview={setReviewRow} hideCaregiver />
+                              ))}
+                              {hidden > 0 && !isExpanded && (
+                                <button onClick={() => toggleGroup(expandKey)} className="w-full text-xs text-primary-600 hover:text-primary-800 font-medium py-1.5 text-center">
+                                  Show {hidden} more
+                                </button>
+                              )}
+                              {isExpanded && cgGroup.rows.length > 2 && (
+                                <button onClick={() => toggleGroup(expandKey)} className="w-full text-xs text-slate-400 hover:text-slate-600 font-medium py-1.5 text-center">
+                                  Show less
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  });
+                })() : (() => {
+                  // Needs Review — group by caregiver
                   const sorted = filteredRows.slice().sort((a, b) => {
                     const needsAction = (s: ShiftHoursStatus) =>
                       s === 'pending_client_review' || s === 'caregiver_counter_proposed' ? 0 : 1;

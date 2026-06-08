@@ -38,6 +38,8 @@ function fmtTimestamp(iso: string): string {
 
 function fmtTimeRange(startIso: string, endIso: string): string {
   const fmt = (iso: string) =>
+    new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+    ', ' +
     new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
   return `${fmt(startIso)} – ${fmt(endIso)}`;
 }

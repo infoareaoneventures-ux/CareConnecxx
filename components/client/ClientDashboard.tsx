@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, AlertTriangle, Bell, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video } from 'lucide-react';
+import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video, Banknote, CreditCard } from 'lucide-react';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
 import { ViewType, Caregiver, ClientIntakeData, Senior } from '../../types';
 import { dbService, authService } from '../../services/api';
@@ -18,7 +18,7 @@ import firebase, { db } from '../../lib/firebase';
 import { ClientJobPostingWizard } from './ClientJobPostingWizard';
 import { LiveCareFeed } from './LiveCareFeed';
 import { FamilyEmergency } from './FamilyEmergency';
-import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
+import { shiftDisplayStatus } from '../../utils/shiftUtils';
 import { useNearbyCaregiversWithScores } from '../../hooks/useNearbyCaregiversWithScores';
 
 
@@ -149,10 +149,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [activeShifts, setActiveShifts] = useState<any[]>([]);
   const [activeCareTeam, setActiveCareTeam] = useState<any[]>([]);
   const [careTeamProfiles, setCareTeamProfiles] = useState<Record<string, { rating?: number; verified?: boolean; backgroundCheckStatus?: string }>>({});
-  const [pendingInterviews, setPendingInterviews] = useState<any[]>([]);
-  const [completedInterviews, setCompletedInterviews] = useState<any[]>([]);
   const [pendingBookingRequests, setPendingBookingRequests] = useState<any[]>([]);
-  const [declinedBookings, setDeclinedBookings] = useState<any[]>([]);
+  const [pendingAmendments, setPendingAmendments] = useState<any[]>([]);
   const [allBookingRequests, setAllBookingRequests] = useState<any[]>([]);
   const [clientAllPosts, setClientAllPosts] = useState<any[]>([]);
   const [allInterviews, setAllInterviews] = useState<any[]>([]);
@@ -232,7 +230,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       .onSnapshot(snap => {
         const all = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
         setAllBookingRequests(all);
-        setDeclinedBookings(all.filter((b: any) => b.status === 'declined'));
+
         const pending = all.filter((b: any) => b.status === 'pending');
         setPendingBookingRequests(pending);
         // Back-fill photo for requests saved without caregiverPhotoURL
@@ -256,6 +254,15 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       }, () => {});
     unsubs.push(bookingUnsub);
 
+    // Pending booking amendments (schedule change requests awaiting caregiver response)
+    const amendUnsub = db.collection('booking_amendments')
+      .where('clientId', '==', currentUser.uid)
+      .where('status', '==', 'pending')
+      .onSnapshot(snap => {
+        setPendingAmendments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }, () => {});
+    unsubs.push(amendUnsub);
+
     // Interviews — all statuses for Care Requests card + derived states
     db.collection('video_interviews')
       .where('clientId', '==', currentUser.uid)
@@ -265,8 +272,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
         setAllInterviews(all);
         const activeStatuses = new Set(['requested', 'pending', 'scheduled']);
         const pending = all.filter((d: any) => activeStatuses.has(d.status));
-        setPendingInterviews(pending);
-        setCompletedInterviews(all.filter((d: any) => d.status === 'completed'));
+
         setRequestedCaregiverIds(new Set(pending.map((d: any) => d.caregiverId).filter(Boolean)));
       })
       .catch(() => {});
@@ -274,14 +280,18 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     return () => unsubs.forEach(u => { try { u(); } catch {} });
   }, [currentUser?.uid]);
 
+  const [unpaidShifts, setUnpaidShifts] = useState<any[]>([]);
+
   useEffect(() => {
     if (!currentUser?.uid) return;
+    const UNPAID_STATUSES = ['pending_client_review', 'caregiver_counter_proposed', 'correction_proposed', 'payment_failed', 'approved', 'auto_approved'];
     const unsub = shiftHoursService.subscribeForClient(currentUser.uid, rows => {
       setShiftsToReview(
         rows
-          .filter((r: any) => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed')
+          .filter((r: any) => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed' || r.status === 'payment_failed')
           .sort((a: any, b: any) => new Date(a.autoApproveAt).getTime() - new Date(b.autoApproveAt).getTime())
       );
+      setUnpaidShifts(rows.filter((r: any) => UNPAID_STATUSES.includes(r.status)));
     });
     return () => { try { (unsub as any)?.(); } catch {} };
   }, [currentUser?.uid]);
@@ -428,11 +438,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     return days.length > 0 ? days.join('; ') : 'No schedule set';
   };
   
-  // Format care types for display
-  const formatCareTypes = (careTypes?: string[]) => {
-    if (!careTypes || careTypes.length === 0) return 'None specified';
-    return careTypes.join(', ');
-  };
 
   const handleChatCoordinator = () => {
     setShowSupportModal(true);
@@ -523,155 +528,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           /* ── HOME BASE ──────────────────────────────────────────────── */
           <div className="space-y-4">
 
-            {/* Row 1: Action Required (2/3) + Reminders (1/3) */}
-            <div className="grid lg:grid-cols-3 gap-4">
-
-              {/* Action Required */}
-              <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-500" />
-                    <h2 className="font-semibold text-slate-900">Action Required</h2>
-                  </div>
-                  <button onClick={() => navigate('/client/bookings')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
-                </div>
-                {shiftsToReview.length === 0 && pendingBookingRequests.length === 0 && completedInterviews.length === 0 && declinedBookings.length === 0 ? (
-                  <p className="text-sm text-slate-400 py-1">You're all caught up — nothing needs your attention right now.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {shiftsToReview.length > 0 && (
-                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
-                        <div className="w-8 h-8 bg-accent-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <FileText className="w-4 h-4 text-accent-600" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-900">{shiftsToReview.length} shift{shiftsToReview.length > 1 ? 's' : ''} to review</p>
-                          <p className="text-xs text-slate-500">Approve or request a correction</p>
-                        </div>
-                        <button onClick={() => setReviewingShift(shiftsToReview[0])} className="px-3 py-1.5 text-xs font-semibold bg-accent-500 text-white rounded-lg hover:bg-accent-600 flex-shrink-0 transition-colors">
-                          Review Now
-                        </button>
-                      </div>
-                    )}
-                    {pendingBookingRequests.length > 0 && (
-                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
-                        <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <Calendar className="w-4 h-4 text-amber-600" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-900">{pendingBookingRequests.length} booking awaiting response</p>
-                          <p className="text-xs text-slate-500">Caregiver has not responded yet</p>
-                        </div>
-                        <button onClick={() => navigate('/client/bookings')} className="px-3 py-1.5 text-xs font-semibold border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-100 flex-shrink-0 transition-colors">
-                          View Booking
-                        </button>
-                      </div>
-                    )}
-                    {completedInterviews.length > 0 && (
-                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
-                        <div className="w-8 h-8 bg-primary-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <Users className="w-4 h-4 text-primary-600" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-900">{completedInterviews.length} interview{completedInterviews.length > 1 ? 's' : ''} completed</p>
-                          <p className="text-xs text-slate-500">Review and decide to hire</p>
-                        </div>
-                        <button onClick={() => navigate('/client/posts')} className="px-3 py-1.5 text-xs font-semibold border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-100 flex-shrink-0 transition-colors">
-                          View
-                        </button>
-                      </div>
-                    )}
-                    {declinedBookings.length > 0 && (
-                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
-                        <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <AlertTriangle className="w-4 h-4 text-red-500" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-900">{declinedBookings.length} booking declined</p>
-                          <p className="text-xs text-slate-500">Find another caregiver</p>
-                        </div>
-                        <button onClick={() => navigate('/client/find-caregivers')} className="px-3 py-1.5 text-xs font-semibold border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-100 flex-shrink-0 transition-colors">
-                          Find Caregivers
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Reminders */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <Bell className="w-4 h-4 text-primary-500" />
-                    <h2 className="font-semibold text-slate-900">Reminders</h2>
-                  </div>
-                  <button onClick={() => navigate('/client/calendar')} className="text-xs text-primary-600 font-medium hover:underline">View calendar</button>
-                </div>
-                {(() => {
-                  const todayStr = new Date().toISOString().slice(0, 10);
-                  const tmrDate = new Date(); tmrDate.setDate(tmrDate.getDate() + 1);
-                  const tomorrowStr = tmrDate.toISOString().slice(0, 10);
-                  const todayShifts = activeShifts.filter((s: any) => s.date === todayStr);
-                  const tomorrowShifts = activeShifts.filter((s: any) => s.date === tomorrowStr);
-                  const autoApprove = shiftsToReview.filter(s => s.autoApproveAt && (new Date(s.autoApproveAt).getTime() - Date.now()) < 86400000);
-                  if (todayShifts.length === 0 && autoApprove.length === 0 && tomorrowShifts.length === 0) {
-                    return <p className="text-sm text-slate-400">No reminders for the next 2 days.</p>;
-                  }
-                  return (
-                    <div className="space-y-4">
-                      {(todayShifts.length > 0 || autoApprove.length > 0) && (
-                        <div>
-                          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Today</p>
-                          <div className="space-y-2.5">
-                            {todayShifts.map((s: any) => (
-                              <div key={s.id} className="flex items-start gap-2.5">
-                                <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${s.status === 'in-progress' ? 'bg-green-100' : 'bg-primary-100'}`}>
-                                  <div className={`w-2 h-2 rounded-full ${s.status === 'in-progress' ? 'bg-green-500' : 'bg-primary-500'}`} />
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-sm text-slate-800">{s.status === 'in-progress' ? 'Shift in progress' : 'Shift scheduled'} with {s.caregiverName}</p>
-                                  <p className="text-xs text-slate-400">{s.startTime} – {s.endTime}</p>
-                                </div>
-                              </div>
-                            ))}
-                            {autoApprove.length > 0 && (
-                              <div className="flex items-start gap-2.5">
-                                <div className="w-5 h-5 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                  <div className="w-2 h-2 rounded-full bg-amber-500" />
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-sm text-slate-800">{autoApprove.length} shift{autoApprove.length > 1 ? 's' : ''} will auto-approve after 24 hours</p>
-                                  <p className="text-xs text-slate-400">Review before auto-approval</p>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                      {tomorrowShifts.length > 0 && (
-                        <div>
-                          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Tomorrow</p>
-                          <div className="space-y-2.5">
-                            {tomorrowShifts.map((s: any) => (
-                              <div key={s.id} className="flex items-start gap-2.5">
-                                <div className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                  <Calendar className="w-3 h-3 text-slate-500" />
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-sm text-slate-800">Booking scheduled with {s.caregiverName}</p>
-                                  <p className="text-xs text-slate-400">{s.startTime} – {s.endTime}</p>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
 
             {/* Row 2: Care Request in Progress + Active Booking + Care Team */}
             <div className="grid lg:grid-cols-3 gap-4">
@@ -800,7 +656,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                       </div>
                       <div className="space-y-1.5">
                         {displayList.length === 0 ? (
-                          <p className="text-sm text-slate-400 text-center py-4">No interviews yet</p>
+                          <p className="text-sm text-slate-400 text-center py-4">No {ivFilter} interviews yet</p>
                         ) : displayList.map((iv: any) => {
                           const ivDt = iv.scheduledTime ? new Date(iv.scheduledTime) : (iv.date && iv.time ? new Date(`${iv.date}T${iv.time}`) : null);
                           const isVideo = iv.interviewType === 'video';
@@ -1081,7 +937,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
                 {/* Pending tab */}
                 {bookingTab === 'pending' && (() => {
-                  if (pendingBookingRequests.length === 0) return (
+                  const totalPending = pendingBookingRequests.length + pendingAmendments.length;
+                  if (totalPending === 0) return (
                     <div className="text-center py-5">
                       <p className="text-sm text-slate-400 mb-2">No pending bookings</p>
                       <button onClick={() => navigate('/client/posts?tab=interviews&filter=completed')} className="text-xs text-primary-600 font-medium hover:underline">View completed interviews →</button>
@@ -1104,7 +961,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           }).join(' · ') : null;
                           return (
                             <div key={b.id} className="border border-slate-200 rounded-xl p-3">
-                              {/* Header: avatar + name + ongoing */}
                               <div className="flex items-center gap-2 mb-2">
                                 <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
                                   {(b.caregiverPhotoURL || b.caregiverPhoto) ? (
@@ -1115,11 +971,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                 </div>
                                 <p className="text-sm font-semibold text-slate-900 truncate flex-1">{b.caregiverName}</p>
                               </div>
-                              {/* Detail lines */}
                               <div className="space-y-1 mb-2">
-                                {b.jobTitle && (
-                                  <p className="text-xs text-slate-500 truncate">{b.jobTitle}</p>
-                                )}
+                                {b.jobTitle && <p className="text-xs text-slate-500 truncate">{b.jobTitle}</p>}
                                 {schedLine && (
                                   <div className="flex items-center gap-1.5 text-xs text-slate-500">
                                     <Calendar className="w-3 h-3 flex-shrink-0" />
@@ -1136,6 +989,37 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                               {b.rate != null && (
                                 <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : 'Cash'}</p>
                               )}
+                            </div>
+                          );
+                        })}
+                        {pendingAmendments.slice(0, 2).map((a: any) => {
+                          const schedLine = a.newDays
+                            ? Object.entries(a.newDays as Record<string, Array<{ start: string; end: string }>>)
+                                .slice(0, 2)
+                                .map(([day, slots]) => {
+                                  const slot = slots?.[0];
+                                  return slot ? `${day} ${fmtTime(slot.start)}–${fmtTime(slot.end)}` : day;
+                                })
+                                .join(' · ')
+                            : null;
+                          return (
+                            <div key={a.id} className="border border-slate-200 rounded-xl p-3">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
+                                  <span className="text-xs font-bold text-primary-600">{(a.caregiverName || 'C')[0].toUpperCase()}</span>
+                                </div>
+                                <p className="text-sm font-semibold text-slate-900 truncate flex-1">{a.caregiverName}</p>
+                                <span className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full shrink-0">Awaiting response</span>
+                              </div>
+                              <div className="space-y-1">
+                                <p className="text-xs text-slate-500">Schedule change request</p>
+                                {schedLine && (
+                                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                                    <Calendar className="w-3 h-3 flex-shrink-0" />
+                                    <span className="truncate">{schedLine}{a.ongoing ? ' · Ongoing' : ''}</span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           );
                         })}
@@ -1232,7 +1116,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 <div className="space-y-2">
                   {shiftsToReview.length > 0 ? (
                     <>
-                      {shiftsToReview.slice(0, 3).map((shift: any) => {
+                      {shiftsToReview.slice(0, 2).map((shift: any) => {
                         const startTs = shift.finalStartTime ?? shift.submittedStartTime;
                         const endTs   = shift.finalEndTime   ?? shift.submittedEndTime;
                         const dispHours = (startTs && endTs)
@@ -1240,11 +1124,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           : (shift.finalTotalHours ?? shift.submittedTotalHours ?? 0);
                         const pay = shift.grossPay ?? (dispHours * (shift.payRate ?? 0));
                         const isCash = shift.paymentMethod !== 'credit';
-                        const fmtTs = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+                        const fmtTs = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
                         const shiftDate = startTs ? new Date(startTs).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
-                        const hh = Math.floor(dispHours);
-                        const mm = Math.round((dispHours % 1) * 60);
-                        const durationStr = dispHours > 0 ? `${hh}h ${mm}m` : '';
+                        const durationStr = (() => {
+                          if (!dispHours || dispHours <= 0) return '';
+                          const totalSecs = Math.round(dispHours * 3600);
+                          const h = Math.floor(totalSecs / 3600);
+                          const m = Math.floor((totalSecs % 3600) / 60);
+                          const s = totalSecs % 60;
+                          return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+                        })();
                         const STATUS_MAP: Record<string, { label: string; color: string; bg: string }> = {
                           pending_client_review:      { label: 'Needs Review',     color: 'text-amber-700',  bg: 'bg-amber-50 border border-amber-200' },
                           caregiver_counter_proposed: { label: 'Counter Received', color: 'text-yellow-700', bg: 'bg-yellow-50 border border-yellow-200' },
@@ -1292,13 +1181,22 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                 <span>Auto-approves in {hoursLeft}h</span>
                               </div>
                             )}
-                            {/* Review button */}
-                            <button
-                              onClick={() => setReviewingShift(shift)}
-                              className="w-full py-1.5 text-xs font-semibold bg-accent-500 text-white rounded-lg hover:bg-accent-600 transition-colors"
-                            >
-                              Review
-                            </button>
+                            {/* Review / Retry button */}
+                            {shift.status === 'payment_failed' ? (
+                              <button
+                                onClick={() => navigate('/client/payments?filter=needs-review')}
+                                className="w-full py-1.5 text-xs font-semibold bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+                              >
+                                Fix Payment
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => setReviewingShift(shift)}
+                                className="w-full py-1.5 text-xs font-semibold bg-accent-500 text-white rounded-lg hover:bg-accent-600 transition-colors"
+                              >
+                                Review
+                              </button>
+                            )}
                           </div>
                         );
                       })}
@@ -1320,50 +1218,98 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 </div>
               </div>
 
-              {/* Caregivers Near You */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-primary-500" />
-                    <h2 className="font-semibold text-slate-900">Caregivers Near You</h2>
-                  </div>
-                  <button onClick={() => navigate('/client/find-caregivers')} className="text-xs text-primary-600 font-medium hover:underline">Find more</button>
-                </div>
-                <div className="space-y-2">
-                  {matchedCaregivers.filter(c => !bookedCaregiverIds.has(c.id)).slice(0, 2).map(cg => (
-                    <div
-                      key={cg.id}
-                      className="flex items-center gap-3 p-2.5 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition-colors"
-                      onClick={() => navigate(`/client/caregiver/${cg.id}`)}
-                    >
-                      <div className="w-9 h-9 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
-                        {(cg.imageUrl || (cg as any).photo) ? (
-                          <img src={cg.imageUrl || (cg as any).photo} alt={cg.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="text-sm font-bold text-primary-600">{(cg.name || 'C')[0].toUpperCase()}</span>
+              {/* Payment Summary */}
+              {(() => {
+                const shiftAmt = (r: any) => {
+                  const start = r.finalStartTime ?? r.submittedStartTime;
+                  const end   = r.finalEndTime   ?? r.submittedEndTime;
+                  const hrs   = (start && end)
+                    ? (new Date(end).getTime() - new Date(start).getTime()) / 3_600_000
+                    : (r.finalTotalHours ?? r.submittedTotalHours ?? 0);
+                  return r.grossPay ?? (hrs * (r.payRate ?? 0));
+                };
+                const cashShifts = unpaidShifts.filter(r => r.paymentMethod !== 'credit');
+                const cardShifts = unpaidShifts.filter(r => r.paymentMethod === 'credit');
+                const cashTotal  = cashShifts.reduce((s, r) => s + shiftAmt(r), 0);
+                const cardTotal  = cardShifts.reduce((s, r) => s + shiftAmt(r), 0);
+                const grandTotal = cashTotal + cardTotal;
+                const needsActionCount = unpaidShifts.filter(r =>
+                  ['pending_client_review','caregiver_counter_proposed','correction_proposed','payment_failed'].includes(r.status)
+                ).length;
+                const pendingConfirmCount = unpaidShifts.filter(r =>
+                  (r.status === 'approved' || r.status === 'auto_approved') && r.paymentMethod !== 'credit'
+                ).length;
+                return (
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <DollarSign className="w-4 h-4 text-primary-500" />
+                        <h2 className="font-semibold text-slate-900">Payment Summary</h2>
+                      </div>
+                      <button onClick={() => navigate('/client/payments')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
+                    </div>
+
+                    {unpaidShifts.length === 0 ? (
+                      <div className="text-center py-6">
+                        <p className="text-sm text-slate-400">No outstanding payments</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {/* Summary rows */}
+                        <div className="bg-slate-50 rounded-xl p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-slate-500">Open invoices</span>
+                            <span className="text-sm font-semibold text-slate-900">{unpaidShifts.length} shift{unpaidShifts.length !== 1 ? 's' : ''}</span>
+                          </div>
+                          {needsActionCount > 0 && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-amber-600">Needs your action</span>
+                              <span className="text-sm font-semibold text-amber-700">{needsActionCount} shift{needsActionCount !== 1 ? 's' : ''}</span>
+                            </div>
+                          )}
+                          {pendingConfirmCount > 0 && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-slate-500">Pending caregiver confirmation</span>
+                              <span className="text-sm font-semibold text-slate-600">{pendingConfirmCount} shift{pendingConfirmCount !== 1 ? 's' : ''}</span>
+                            </div>
+                          )}
+                          <div className="h-px bg-slate-200" />
+                          {cashTotal > 0 && (
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5 text-sm text-slate-500">
+                                <Banknote className="w-3.5 h-3.5" /> Cash
+                              </div>
+                              <span className="text-sm font-semibold text-slate-900">${cashTotal.toFixed(2)}</span>
+                            </div>
+                          )}
+                          {cardTotal > 0 && (
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5 text-sm text-slate-500">
+                                <CreditCard className="w-3.5 h-3.5" /> Card
+                              </div>
+                              <span className="text-sm font-semibold text-slate-900">${cardTotal.toFixed(2)}</span>
+                            </div>
+                          )}
+                          <div className="h-px bg-slate-200" />
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-semibold text-slate-700">Total outstanding</span>
+                            <span className="text-base font-bold text-primary-600">${grandTotal.toFixed(2)}</span>
+                          </div>
+                        </div>
+
+                        {needsActionCount > 0 && (
+                          <button
+                            onClick={() => navigate('/client/payments?filter=needs-review')}
+                            className="w-full py-2 text-xs font-semibold bg-accent-500 text-white rounded-lg hover:bg-accent-600 transition-colors"
+                          >
+                            Review {needsActionCount} pending shift{needsActionCount !== 1 ? 's' : ''}
+                          </button>
                         )}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-slate-900 truncate">{cg.name}</p>
-                        <div className="flex items-center gap-1">
-                          <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
-                          <span className="text-xs text-slate-500">{cg.rating ? cg.rating.toFixed(1) : '5.0'}</span>
-                          {(cg as any).distanceMiles != null && (
-                            <span className="text-xs text-slate-400 ml-1">· {(cg as any).distanceMiles.toFixed(1)} mi</span>
-                          )}
-                        </div>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
-                    </div>
-                  ))}
-                  {matchedCaregivers.filter(c => !bookedCaregiverIds.has(c.id)).length === 0 && (
-                    <div className="text-center py-4">
-                      <p className="text-sm text-slate-400">No caregivers found nearby</p>
-                      <button onClick={() => navigate('/client/find-caregivers')} className="mt-1 text-xs text-primary-600 font-medium hover:underline">Browse all →</button>
-                    </div>
-                  )}
-                </div>
-              </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         ) : (

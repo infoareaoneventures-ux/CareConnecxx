@@ -15,6 +15,7 @@ interface CaregiverMatchCardProps {
   isSaved?: boolean;
   onToggleSave?: (caregiver: Caregiver) => void;
   isRequested?: boolean;
+  hideSkills?: boolean;
 }
 
 export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
@@ -27,6 +28,7 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
   isSaved = false,
   onToggleSave,
   isRequested = false,
+  hideSkills = false,
 }) => {
   const [imgErrored, setImgErrored] = useState(false);
   const photo = caregiver.imageUrl || (caregiver as any).photo || (caregiver as any).photoURL;
@@ -126,7 +128,7 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
         </div>
 
         {/* Skills pills */}
-        {caregiver.skills && caregiver.skills.length > 0 ? (
+        {!hideSkills && caregiver.skills && caregiver.skills.length > 0 ? (
           <div className="flex flex-wrap gap-2 mb-6 mt-1">
             {caregiver.skills.slice(0, 3).map((skill: string) => (
               <span key={skill} className="px-3.5 py-1.5 bg-slate-100 border border-slate-200 text-slate-800 text-[13px] font-medium rounded-[1rem]">

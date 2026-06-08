@@ -1912,8 +1912,71 @@ export const CaregiverPaymentsPage: React.FC = () => {
                 });
               })()}
 
-              {/* History — grouped by client */}
-              {(tsFilter === 'all' || tsFilter === 'history') && reportedRows.length > 0 && (() => {
+              {/* History — month → client two-level grouping (History filter only) */}
+              {tsFilter === 'history' && reportedRows.length > 0 && (() => {
+                const sorted = reportedRows.slice().sort((a, b) =>
+                  new Date(b.submittedStartTime ?? b.submittedAt ?? '').getTime() -
+                  new Date(a.submittedStartTime ?? a.submittedAt ?? '').getTime()
+                );
+                const monthGroups = sorted.reduce((acc, row) => {
+                  const d = new Date(row.submittedStartTime ?? row.submittedAt ?? '');
+                  const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                  const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                  if (!acc[key]) acc[key] = { label, rows: [] };
+                  acc[key].rows.push(row);
+                  return acc;
+                }, {} as Record<string, { label: string; rows: typeof reportedRows }>);
+                return Object.entries(monthGroups).map(([monthKey, monthGroup]) => {
+                  const monthTotal = monthGroup.rows.reduce((s, r) => s + (r.grossPay ?? 0), 0);
+                  const clientGroups = monthGroup.rows.reduce((acc, row) => {
+                    const key = (row as any).clientId || row.clientName || 'unknown';
+                    if (!acc[key]) acc[key] = { name: row.clientName ?? 'Client', photo: row.clientPhotoURL ?? undefined, rows: [] };
+                    acc[key].rows.push(row);
+                    return acc;
+                  }, {} as Record<string, { name: string; photo?: string; rows: typeof reportedRows }>);
+                  return (
+                    <div key={monthKey} className="space-y-3">
+                      <div className="flex items-center justify-between px-1 pt-2 border-t border-slate-100 first:border-t-0 first:pt-0">
+                        <span className="text-sm font-bold text-slate-800">{monthGroup.label}</span>
+                        <span className="text-xs text-slate-500">{monthGroup.rows.length} shift{monthGroup.rows.length !== 1 ? 's' : ''} · ${monthTotal.toFixed(2)}</span>
+                      </div>
+                      {Object.entries(clientGroups).map(([clientKey, clientGroup]) => {
+                        const expandKey = `h_${monthKey}_${clientKey}`;
+                        const isExpanded = !!expandedGroups[expandKey];
+                        const visible = isExpanded ? clientGroup.rows : clientGroup.rows.slice(0, 2);
+                        const hidden = clientGroup.rows.length - 2;
+                        return (
+                          <div key={clientKey} className="space-y-2">
+                            <div className="flex items-center gap-2 px-1">
+                              <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-xs shrink-0">
+                                {clientGroup.photo ? <img src={clientGroup.photo} className="w-full h-full object-cover" alt="" /> : clientGroup.name.charAt(0).toUpperCase()}
+                              </div>
+                              <span className="text-sm font-semibold text-slate-700">{clientGroup.name}</span>
+                              <span className="text-xs text-slate-400">{clientGroup.rows.length} shift{clientGroup.rows.length !== 1 ? 's' : ''}</span>
+                            </div>
+                            <div className="space-y-2">
+                              {visible.map(row => <HistoryShiftRow key={row.id} row={row} />)}
+                            </div>
+                            {hidden > 0 && !isExpanded && (
+                              <button onClick={() => toggleGroup(expandKey)} className="w-full text-xs text-primary-600 hover:text-primary-800 font-medium py-1.5 text-center">
+                                Show {hidden} more
+                              </button>
+                            )}
+                            {isExpanded && clientGroup.rows.length > 2 && (
+                              <button onClick={() => toggleGroup(expandKey)} className="w-full text-xs text-slate-400 hover:text-slate-600 font-medium py-1.5 text-center">
+                                Show less
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                });
+              })()}
+
+              {/* History — flat client grouping when in All filter */}
+              {tsFilter === 'all' && reportedRows.length > 0 && (() => {
                 const grouped = reportedRows.reduce((acc, row) => {
                   const key = (row as any).clientId || row.clientName || 'unknown';
                   if (!acc[key]) acc[key] = { name: row.clientName ?? 'Client', photo: row.clientPhotoURL ?? undefined, rows: [] };
@@ -1934,7 +1997,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
                         <span className="text-sm font-semibold text-slate-700">{group.name}</span>
                         <span className="text-xs text-slate-400">{group.rows.length} shift{group.rows.length !== 1 ? 's' : ''}</span>
                       </div>
-                      <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100">
+                      <div className="space-y-2">
                         {visible.map(row => <HistoryShiftRow key={row.id} row={row} />)}
                       </div>
                       {hidden > 0 && !isExpanded && <button onClick={() => toggleGroup(gkey)} className="w-full text-xs text-primary-600 hover:text-primary-800 font-medium py-1.5 text-center">Show more</button>}

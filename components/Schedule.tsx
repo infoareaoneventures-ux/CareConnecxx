@@ -143,7 +143,8 @@ export default function Schedule() {
   const [shifts,     setShifts]     = useState<Shift[]>([]);
   const [interviews, setInterviews] = useState<InterviewEvent[]>([]);
   const [loading,    setLoading]    = useState(true);
-  const [caregivers, setCaregivers] = useState<{ id: string; name: string; address?: string; bookingId?: string; schedule?: Record<string, Array<{ start: string; end: string }>> }[]>([]);
+  const [caregivers, setCaregivers] = useState<{ id: string; name: string }[]>([]);
+  const [caregiverBookings, setCaregiverBookings] = useState<Record<string, { bookingId: string; jobTitle: string; address?: string; schedule?: Record<string, Array<{ start: string; end: string }>> }[]>>({});
   const [pendingAmendments, setPendingAmendments] = useState<Array<{
     id: string; caregiverName: string; newDays: Record<string, Array<{ start: string; end: string }>>; startDate?: string; ongoing?: boolean; endDate?: string;
   }>>([]);
@@ -154,6 +155,7 @@ export default function Schedule() {
   const [selectedDay,       setSelectedDay]       = useState(localDate(new Date()));
   const [showAddModal,      setShowAddModal]      = useState(false);
   const [visitCaregiverId,   setVisitCaregiverId]   = useState('');
+  const [visitBookingId,     setVisitBookingId]     = useState('');
   const [selectedDays,       setSelectedDays]       = useState<string[]>([]);
   const [dayTimes,           setDayTimes]           = useState<Record<string, Array<{ start: string; end: string }>>>({});
   const [visitNotes,         setVisitNotes]         = useState('');
@@ -414,29 +416,33 @@ export default function Schedule() {
         if (bid) activeBookingIds.add(bid);
       });
 
-      const seen = new Set<string>();
-      const list: { id: string; name: string; address?: string; bookingId?: string; schedule?: Record<string, Array<{ start: string; end: string }>> }[] = [];
+      const seenCg = new Set<string>();
+      const cgList: { id: string; name: string }[] = [];
+      const bookingMap: Record<string, { bookingId: string; jobTitle: string; address?: string; schedule?: Record<string, Array<{ start: string; end: string }>> }[]> = {};
       bookingsSnap.forEach(doc => {
         const d = doc.data();
-        // Skip if booking has no scheduled shifts (effectively past)
         if (!activeBookingIds.has(doc.id)) return;
-        if (d.caregiverId && !seen.has(d.caregiverId)) {
-          seen.add(d.caregiverId);
-          list.push({
-            id: d.caregiverId,
-            name: d.caregiverName || 'Caregiver',
-            address: d.address || '',
-            bookingId: doc.id,
-            schedule: d.schedule?.dayShiftTimes || {},
-          });
+        if (!d.caregiverId) return;
+        if (!seenCg.has(d.caregiverId)) {
+          seenCg.add(d.caregiverId);
+          cgList.push({ id: d.caregiverId, name: d.caregiverName || 'Caregiver' });
         }
+        if (!bookingMap[d.caregiverId]) bookingMap[d.caregiverId] = [];
+        bookingMap[d.caregiverId].push({
+          bookingId: doc.id,
+          jobTitle: d.jobTitle || d.caregiverName || 'Booking',
+          address: d.address || '',
+          schedule: d.schedule?.dayShiftTimes || {},
+        });
       });
-      setCaregivers(list);
+      setCaregivers(cgList);
+      setCaregiverBookings(bookingMap);
     } catch (e) { console.error(e); }
   };
 
   const resetVisitModal = () => {
     setVisitCaregiverId('');
+    setVisitBookingId('');
     setSelectedDays([]);
     setDayTimes({});
     setVisitNotes('');
@@ -452,6 +458,7 @@ export default function Schedule() {
       const user = auth.currentUser;
       if (!user) return;
       const cg = caregivers.find(c => c.id === visitCaregiverId);
+      const selectedBooking = (caregiverBookings[visitCaregiverId] || []).find(b => b.bookingId === visitBookingId);
 
       // Build newDays from selectedDays + dayTimes (each day can have multiple blocks)
       const newDays: Record<string, Array<{ start: string; end: string }>> = {};
@@ -470,7 +477,7 @@ export default function Schedule() {
       const isOngoing = visitEndOption === 'ongoing';
 
       await fdb.collection('booking_amendments').add({
-        bookingRequestId: cg?.bookingId || null,
+        bookingRequestId: visitBookingId || null,
         clientId: user.uid,
         clientName: user.displayName || '',
         caregiverId: visitCaregiverId,
@@ -1561,6 +1568,7 @@ export default function Schedule() {
 
         const canSubmit =
           !!visitCaregiverId &&
+          !!visitBookingId &&
           selectedDays.length > 0 &&
           selectedDays.every(day => (dayTimes[day] || []).some(b => b.start && b.end)) &&
           !!visitStartDate &&
@@ -1690,14 +1698,28 @@ export default function Schedule() {
                 {/* Caregiver */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Caregiver</label>
-                  <select value={visitCaregiverId} onChange={e => setVisitCaregiverId(e.target.value)}
+                  <select value={visitCaregiverId} onChange={e => { setVisitCaregiverId(e.target.value); setVisitBookingId(''); }}
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white">
                     <option value="">Select caregiver</option>
                     {caregivers.map(cg => <option key={cg.id} value={cg.id}>{cg.name}</option>)}
                   </select>
                 </div>
 
-                {visitCaregiverId && <>
+                {/* Booking — only shown once a caregiver is selected */}
+                {visitCaregiverId && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">Booking</label>
+                    <select value={visitBookingId} onChange={e => setVisitBookingId(e.target.value)}
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white">
+                      <option value="">Select booking</option>
+                      {(caregiverBookings[visitCaregiverId] || []).map(b => (
+                        <option key={b.bookingId} value={b.bookingId}>{b.jobTitle}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {visitCaregiverId && visitBookingId && <>
 
                 {/* Schedule dates */}
                 <div>

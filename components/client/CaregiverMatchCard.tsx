@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Star, Heart, MapPin, MessageSquare, DollarSign, CheckCircle } from 'lucide-react';
+import { Star, Heart, MapPin, MessageSquare, DollarSign, CheckCircle, Briefcase } from 'lucide-react';
 import { Caregiver } from '../../types';
 import { CreditCardBadge } from '../shared/CreditCardBadge';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
@@ -98,7 +98,7 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
         {/* Experience + location + rate */}
         <div className="space-y-3.5 mb-5 mt-1">
           <div className="flex items-center gap-3.5 text-slate-700">
-            <Heart className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
+            <Briefcase className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
             <span className="text-[17px]">
               {(() => {
                 const exp = caregiver.experience;

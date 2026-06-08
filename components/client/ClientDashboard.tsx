@@ -1327,7 +1327,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                   const discoveryCaregivers = matchedCaregivers.filter(c => !bookedCaregiverIds.has(c.id));
                   return discoveryCaregivers.length > 0 ? (
                     <div id="caregiver-matches" className="grid sm:grid-cols-2 gap-4">
-                      {discoveryCaregivers.map((caregiver) => (
+                      {discoveryCaregivers.slice(0, 4).map((caregiver) => (
                         <CaregiverMatchCard
                           key={caregiver.id}
                           caregiver={caregiver}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Heart, MapPin, Star, CheckCircle, Sparkles, TrendingUp,
   MessageSquare, Shield, Search, SlidersHorizontal, X,
@@ -96,13 +96,14 @@ function formatLastActive(iso?: string): string {
 
 export default function FindCaregivers() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [caregivers, setCaregivers] = useState<(Caregiver & { matchScore?: AIMatchScore })[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [clientIntakeData, setClientIntakeData] = useState<any>(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [sortBy, setSortBy] = useState<SortOption>('rating');
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(searchParams.get('tab') === 'favorites');
   const { gate, Modals: GateModals } = useAccessGates();
   const [viewingCaregiver, setViewingCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
   const [interviewCaregiver, setInterviewCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);

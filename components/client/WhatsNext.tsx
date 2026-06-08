@@ -141,12 +141,11 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
   const allDone = currentStep === 'all-done';
 
   if (allDone && dismissed) {
+    const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
     return (
-      <div className="relative mb-6 overflow-hidden rounded-3xl bg-gradient-to-br from-primary-600 via-primary-500 to-primary-400 px-6 py-5 shadow-xl shadow-primary-600/20">
-        <div aria-hidden="true" className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-white opacity-10 blur-2xl" />
-        <h2 className="text-2xl md:text-3xl font-bold text-white tracking-tight">
-          Good {tod}, {firstName}
-        </h2>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-slate-900">Good {tod}, {firstName}!</h1>
+        <p className="text-sm text-slate-500 mt-0.5">{today}</p>
       </div>
     );
   }

@@ -1500,7 +1500,10 @@ export default function Schedule() {
       {/* ── Request Extra Visit Modal ─────────────────────────────────────── */}
       {showAddModal && (() => {
         const selectedCg = caregivers.find(c => c.id === visitCaregiverId);
-        const schedule = selectedCg?.schedule || {};
+        const selectedBooking = visitBookingId
+          ? (caregiverBookings[visitCaregiverId] || []).find(b => b.bookingId === visitBookingId)
+          : null;
+        const schedule: Record<string, Array<{ start: string; end: string }>> = selectedBooking?.schedule || {};
         const DAY_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const VISIT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 

@@ -2,6 +2,7 @@ import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
 import { quickComplete } from "../utils/openaiClient";
+import { isCaregiverBookable } from "../utils/caregiverEligibility";
 
 const db = admin.firestore();
 
@@ -135,6 +136,9 @@ async function broadcastSwapRequest(
   for (const doc of caregiverSnap.docs) {
     if (doc.id === fromCaregiverId) continue;
     const data = doc.data();
+
+    // Canonical bookability post-filter (the where() above is index pre-filtering only)
+    if (!isCaregiverBookable(data)) continue;
 
     // Check weekly availability
     const avail = data.weeklyAvailability?.[dayOfWeek] as Array<{ start: string; end: string }> | undefined;

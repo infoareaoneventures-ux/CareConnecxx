@@ -14,7 +14,7 @@ export const FamilyEmergency: React.FC<FamilyEmergencyProps> = ({ appointmentId 
   const handleConfirm = async () => {
     setSending(true);
     try {
-      const triggerEmergency = httpsCallable(getFunctions(), 'triggerFamilyEmergency');
+      const triggerEmergency = httpsCallable(getFunctions(), 'v1-triggerFamilyEmergency');
       await triggerEmergency({ appointmentId });
       setSent(true);
       setShowConfirm(false);

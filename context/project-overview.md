@@ -35,7 +35,7 @@ CareConnex is a SaaS platform that connects families with vetted caregivers for 
 - Two roles (client, caregiver) on one Firebase Auth.
 - Cara AI agent for onboarding + Q&A + booking assistance over SMS/iMessage (LINQ).
 - AI + ML caregiver matching.
-- Stripe subscriptions + Stripe Connect payouts; Checkr background checks; Twilio interviews.
+- Stripe subscriptions + Stripe Connect payouts; Checkr background checks; Twilio Video interviews.
 
 ### Out of scope (today)
 - Native mobile apps (the product is a responsive SPA + SMS).

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { Caregiver } from '../types';
 import { hasValidTransportDocs } from '../utils/transportDocs';
+import { isCaregiverBookable } from '../utils/caregiverEligibility';
 
 function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 3959;
@@ -151,7 +152,11 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
           fdb.collection('caregivers').where('onboardingStatus', '==', 'profile_complete').limit(100).get().catch(() => null),
         ]);
 
-        const approvedIds = new Set<string>(caregiversSnap?.docs.map(d => d.id) ?? []);
+        // Bookability contract: onboardingStatus 'profile_complete' (the query above)
+        // AND verificationStatus 'approved' (post-filter; the where() is pre-filtering only)
+        const approvedIds = new Set<string>(
+          caregiversSnap?.docs.filter(d => isCaregiverBookable(d.data() as any)).map(d => d.id) ?? []
+        );
         const seenIds = new Set<string>();
         const caregiverList: (Caregiver & { _skillsScore: number; _availScore: number })[] = [];
 

@@ -108,7 +108,7 @@
 ### Test Case 3.2: SMS Notifications
 **Trigger:** Caregiver callout
 **Expected:**
-- Twilio integration active
+- Linq integration active
 - SMS delivered within 60s
 - Invalid numbers handled
 

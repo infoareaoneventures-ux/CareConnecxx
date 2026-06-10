@@ -239,6 +239,36 @@ function passwordResetHtml(name: string, resetUrl: string): string {
   return emailWrapper(body, `<p style="margin:0;">You're receiving this because a password reset was requested for your CareConnex account.</p>`);
 }
 
+// ─── Reusable server-side send helper ────────────────────────────────────────
+
+/**
+ * Send a transactional email from server-side code (other Cloud Functions).
+ * Throws if Resend is not configured or the provider rejects the send.
+ */
+export async function sendTransactionalEmail(opts: {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+  from?: string;
+  fromName?: string;
+}): Promise<{ id?: string }> {
+  if (!resend) {
+    throw new Error("Email service not configured (RESEND_API_KEY missing)");
+  }
+
+  const { data, error } = await resend.emails.send({
+    from: `${opts.fromName || FROM_NAME} <${opts.from || FROM_EMAIL}>`,
+    to: [opts.to],
+    subject: opts.subject.replace(/[<>"']/g, "").substring(0, 200),
+    html: opts.html?.substring(0, 50000),
+    text: opts.text?.substring(0, 10000),
+  });
+
+  if (error) throw new Error(error.message);
+  return { id: data?.id };
+}
+
 // ─── Cloud Functions ─────────────────────────────────────────────────────────
 
 /**

@@ -11,7 +11,7 @@
 
 ### Completed ✅
 - [x] Cara AI Agent deployed on Railway
-- [x] WhatsApp integration with Twilio
+- [x] SMS/iMessage integration with Linq
 - [x] Predictive Health Alerts System
 - [x] Self-Improving Matching Algorithm
 - [x] Automated onboarding via signup flow
@@ -84,9 +84,9 @@
 - **Service:** Cara AI Gateway
 - **Region:** US West
 
-### Twilio
-- **WhatsApp Number:** +15595204349
-- **Webhook:** /webhook/whatsapp
+### Linq (SMS/iMessage)
+- **Phone Number:** `LINQ_PHONE_NUMBER` env var
+- **Webhook:** `linqWebhook` Cloud Function (`functions/src/linq/webhooks.ts`)
 
 ### OpenAI
 - **Model:** GPT-4o-mini

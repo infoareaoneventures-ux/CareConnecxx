@@ -50,7 +50,13 @@ export type AuditEventType =
   | "user_reported"
   | "journal_liked"
   | "journal_unliked"
-  | "journal_comment_added";
+  | "journal_comment_added"
+  | "invoice_created"
+  | "invoice_sent"
+  | "invoice_approved"
+  | "invoice_rejected"
+  | "invoice_auto_approved"
+  | "invoice_deleted";
 
 export interface AuditEvent {
   eventType: AuditEventType;

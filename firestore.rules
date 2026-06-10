@@ -752,6 +752,25 @@ service cloud.firestore {
     }
     
     // ==========================================
+    // INVOICES
+    // Created/updated only via Cloud Functions (Admin SDK bypasses rules).
+    // Admin UI (InvoicingTab) reads the list and deletes docs directly.
+    // ==========================================
+    match /invoices/{invoiceId} {
+      // Admin can read all; client and caregiver can read their own invoices
+      allow read: if isAdmin() || (isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid
+      ));
+
+      // Writes happen server-side only (createInvoice / processClientApproval)
+      allow create, update: if false;
+
+      // Only admins can delete (audited via the onInvoiceDeleted trigger)
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
     // MEMBERSHIPS
     // ==========================================
     match /memberships/{userId} {

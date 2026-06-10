@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendSMSToUser, SMS_TEMPLATES } from "./sms";
 import { Resend } from "resend";
+import { isCaregiverBookable } from "./utils/caregiverEligibility";
 
 // Initialize Firebase Admin if not already done
 if (!admin.apps.length) {
@@ -183,7 +184,10 @@ async function findBackupCaregivers(appointment: Appointment, originalCaregiverI
         const potentialCaregivers: CaregiverProfile[] = [];
 
         // Process caregivers one by one to handle async checks
-        const caregiverDocs = snapshot.docs.filter(doc => doc.id !== originalCaregiverId);
+        // Canonical bookability post-filter (the where() above is index pre-filtering only)
+        const caregiverDocs = snapshot.docs.filter(doc =>
+            doc.id !== originalCaregiverId && isCaregiverBookable(doc.data())
+        );
         
         for (const doc of caregiverDocs) {
             const data = doc.data() as CaregiverProfile;

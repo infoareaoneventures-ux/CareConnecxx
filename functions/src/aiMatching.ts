@@ -10,6 +10,7 @@ import {
   CandidateSignals,
 } from "./ai/claudeMatching";
 import { getOutcomePatternSummary } from "./ai/outcomeAnalytics";
+import { isCaregiverBookable } from "./utils/caregiverEligibility";
 
 /**
  * Cloud Function: Run AI Matching Algorithm
@@ -60,7 +61,10 @@ export const runAiMatching = functions.https.onCall(async (data, context) => {
       getOutcomePatternSummary(db),
     ]);
 
-    console.log(`[runAiMatching] Scoring ${caregiversSnap.size} caregivers, outcome patterns: ${outcomePatterns ? "loaded" : "none yet"}`);
+    // Canonical bookability post-filter (the where() above is index pre-filtering only)
+    const bookableDocs = caregiversSnap.docs.filter(doc => isCaregiverBookable(doc.data()));
+
+    console.log(`[runAiMatching] Scoring ${bookableDocs.length} bookable caregivers (of ${caregiversSnap.size} verified), outcome patterns: ${outcomePatterns ? "loaded" : "none yet"}`);
 
     const clientGenderPref: string | undefined = intakeData.genderPreference;
     const clientLanguage:   string | undefined = intakeData.languagePreference;
@@ -83,7 +87,7 @@ export const runAiMatching = functions.https.onCall(async (data, context) => {
 
     // Step 1: compute objective signals for all caregivers using rule-based scorer
     const scoredRaw = await Promise.all(
-      caregiversSnap.docs.map(async doc => {
+      bookableDocs.map(async doc => {
         const cg = doc.data();
         if (cg.isActive === false) return null;
 
@@ -241,7 +245,7 @@ export const runAiMatching = functions.https.onCall(async (data, context) => {
     return {
       success:      true,
       matches:      validMatches,
-      totalScored:  caregiversSnap.size,
+      totalScored:  bookableDocs.length,
       matchesFound: validMatches.length,
     };
   } catch (error) {

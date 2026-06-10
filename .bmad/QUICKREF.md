@@ -115,7 +115,7 @@
 
 **Current Focus:** Caregiver-family matching experience
 **Key Metrics:** Match rate, time to interview, satisfaction
-**Tech Stack:** React, Firebase, Railway, Twilio, OpenAI
+**Tech Stack:** React, Firebase, Railway, Linq (SMS/iMessage), Twilio Video, OpenAI
 **Compliance:** HIPAA, WCAG accessibility
 
 ---

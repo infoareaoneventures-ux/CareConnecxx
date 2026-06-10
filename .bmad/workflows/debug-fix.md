@@ -42,7 +42,7 @@ Investigate:
 - Review error logs
 - Check Firebase logs
 - Review Railway logs (Cara)
-- Check Twilio logs (WhatsApp)
+- Check Linq logs (SMS/iMessage)
 - Analyze recent changes
 - Database state inspection
 

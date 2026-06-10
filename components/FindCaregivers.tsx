@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import { hasValidTransportDocs } from '../utils/transportDocs';
+import { isCaregiverBookable } from '../utils/caregiverEligibility';
 import firebase from 'firebase/compat/app';
 import { AIMatchScore } from '../services/aiMatchingService';
 import { dbService } from '../services/api';
@@ -236,8 +237,11 @@ export default function FindCaregivers() {
         fdb.collection('caregivers').where('onboardingStatus', '==', 'profile_complete').limit(100).get().catch(() => null),
       ]);
 
-      // Build set of visible caregiver IDs — anyone whose wizard is complete (onboardingStatus: profile_complete)
-      const approvedIds = new Set<string>(caregiversSnap?.docs.map(d => d.id) ?? []);
+      // Build set of visible caregiver IDs — bookability contract: onboardingStatus 'profile_complete'
+      // (the query above) AND verificationStatus 'approved' (post-filter; the where() is pre-filtering only)
+      const approvedIds = new Set<string>(
+        caregiversSnap?.docs.filter(d => isCaregiverBookable(d.data() as any)).map(d => d.id) ?? []
+      );
 
       const seen = new Set<string>();
       const caregiverList: Caregiver[] = [];

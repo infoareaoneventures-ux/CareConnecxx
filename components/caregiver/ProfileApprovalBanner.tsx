@@ -14,9 +14,9 @@ interface ProfileApprovalBannerProps {
 }
 
 export const ProfileApprovalBanner: React.FC<ProfileApprovalBannerProps> = ({ profile, hasEngagement }) => {
-  const isApproved = (profile.verificationStatus === 'approved' || profile.verified === true)
-    && profile.verificationStatus !== 'info_requested'
-    && profile.verificationStatus !== 'rejected';
+  // Canonical contract: approved state requires verificationStatus === 'approved'.
+  // `verified` alone is NOT sufficient (it's a secondary display signal only).
+  const isApproved = profile.verificationStatus === 'approved';
 
   if (isApproved && hasEngagement) return null;
 

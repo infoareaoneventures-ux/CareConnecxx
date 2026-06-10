@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import { scoreCaregiver, ScoringInput } from "../ai/scoring";
+import { isCaregiverBookable } from "../utils/caregiverEligibility";
 
 const db = admin.firestore();
 
@@ -45,7 +46,9 @@ export async function scoreReplacements(
     .limit(40)
     .get();
 
+  // Canonical bookability post-filter (the where() above is index pre-filtering only)
   const candidates = caregiverSnap.docs
+    .filter((d) => isCaregiverBookable(d.data()))
     .map((d) => ({ id: d.id, ...d.data() } as any))
     .filter((c) => c.id !== excludeId);
 

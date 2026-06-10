@@ -45,7 +45,8 @@
   "integrations": {
     "firebase": true,
     "railway": true,
-    "twilio": true,
+    "linq": true,
+    "twilioVideo": true,
     "openai": true,
     "stripe": true
   }

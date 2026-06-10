@@ -34,7 +34,7 @@ Implement a fully automated caregiver callout system with multi-channel notifica
                 ▼               ▼               ▼
          ┌──────────┐    ┌──────────┐    ┌──────────┐
          │   Push   │    │   SMS    │    │  Email   │
-         │   (FCM)  │    │ (Twilio) │    │ (Resend) │
+         │   (FCM)  │    │  (Linq)  │    │ (Resend) │
          └──────────┘    └──────────┘    └──────────┘
 ```
 
@@ -60,7 +60,7 @@ score = (rating * 1) +           // 0-5 points
 **Priority Order:**
 1. **In-app notification** - Instant, persistent
 2. **Push notification** - FCM to all user devices
-3. **SMS** - Twilio within 60 seconds
+3. **SMS** - Linq within 60 seconds
 4. **Email** - HTML + text fallback
 
 **Content Strategy:**
@@ -146,7 +146,7 @@ score = (rating * 1) +           // 0-5 points
 - `useCaregiverCallout` - Hook for real-time notifications
 
 ### Third-Party Services
-- **Twilio** - SMS notifications
+- **Linq** - SMS/iMessage notifications
 - **Resend** - Email delivery
 - **Firebase Cloud Messaging** - Push notifications
 

@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { getJobRecommendationsForCaregiver } from "../agents/jobMatchRecommender";
 import { sendMessage } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { isCaregiverBookable } from "../utils/caregiverEligibility";
 
 const db = admin.firestore();
 
@@ -36,6 +37,9 @@ export const sendJobMatchNotifications = functions.pubsub
     const todayIso = new Date().toISOString();
     for (const cgDoc of caregiverSnap.docs) {
       const cg = cgDoc.data();
+
+      // Canonical bookability post-filter (the where() above is index pre-filtering only)
+      if (!isCaregiverBookable(cg)) continue;
       if (!cg.chatId && !cg.phone) continue;
 
       // Skip paused caregivers

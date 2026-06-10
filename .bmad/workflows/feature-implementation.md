@@ -29,7 +29,7 @@ Analyze:
 - Database schema changes needed
 - API modifications
 - Frontend components affected
-- Third-party integrations (Twilio, Stripe, etc.)
+- Third-party integrations (Linq, Stripe, Twilio Video, etc.)
 - Security/compliance implications
 - Performance impact
 

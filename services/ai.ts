@@ -7,7 +7,7 @@ const apptCostToHours = (cost: number, rate: number = 25) => Math.round(cost / r
 const _callAiProxy = httpsCallable<
   { system: string; user: string; model?: string; maxTokens?: number },
   { text: string }
->(getFunctions(), "aiProxy");
+>(getFunctions(), "v1-aiProxy");
 
 export async function askClaude(
   system: string,

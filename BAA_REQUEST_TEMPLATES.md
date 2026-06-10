@@ -48,7 +48,7 @@ CareConnex Inc.
 
 ---
 
-## TEMPLATE 2: TWILIO
+## TEMPLATE 2: TWILIO (VIDEO ONLY)
 
 **To:** Twilio Sales/Support  
 **Subject:** HIPAA Business Associate Agreement Request - CareConnex
@@ -57,7 +57,7 @@ CareConnex Inc.
 
 Dear Twilio Team,
 
-We are implementing SMS and voice communication services through Twilio for our healthcare platform and require a Business Associate Agreement (BAA) to ensure HIPAA compliance.
+We use Twilio Video to host live caregiver interviews on our healthcare platform and require a Business Associate Agreement (BAA) to ensure HIPAA compliance. Twilio Video is the only Twilio service we use — our SMS/iMessage messaging runs on a separate provider (Linq).
 
 **Organization Information:**
 - Company Name: CareConnex Inc.
@@ -67,15 +67,59 @@ We are implementing SMS and voice communication services through Twilio for our 
 - Phone: [YOUR_PHONE]
 
 **Services Used:**
-- Twilio Programmable SMS
-- Twilio Programmable Voice
-- Twilio Verify (for authentication)
+- Twilio Video (live caregiver interviews)
 
 **Use Case:**
-We use Twilio to:
+We use Twilio Video to:
+- Host live video interviews between families and prospective caregivers
+
+**Data Involved:**
+Video sessions may involve PHI including:
+- Client names and care needs discussed during interviews
+- General health status information shared verbally
+
+**Request:**
+We need a signed BAA covering our use of Twilio Video for HIPAA-compliant communication. We also need confirmation that Twilio Video can be configured to meet HIPAA requirements (encryption, access controls, audit logging).
+
+**Timeline:**
+Please provide the BAA within 10 business days as we are preparing for platform launch.
+
+Please let me know if you need any additional documentation or have questions about our implementation.
+
+Best regards,
+
+[YOUR_NAME]  
+[YOUR_TITLE]  
+CareConnex Inc.
+
+---
+
+## TEMPLATE 2B: LINQ (SMS/iMESSAGE MESSAGING)
+
+**To:** Linq Sales/Support  
+**Subject:** HIPAA Business Associate Agreement Request - CareConnex
+
+---
+
+Dear Linq Team,
+
+We use Linq as our SMS and iMessage messaging provider for our healthcare platform and require a Business Associate Agreement (BAA) to ensure HIPAA compliance.
+
+**Organization Information:**
+- Company Name: CareConnex Inc.
+- Linq Account / Phone Number: [YOUR_LINQ_PHONE_NUMBER]
+- Primary Contact: [YOUR_NAME]
+- Email: [YOUR_EMAIL]
+- Phone: [YOUR_PHONE]
+
+**Services Used:**
+- Linq Partner API (SMS and iMessage messaging)
+
+**Use Case:**
+We use Linq to:
+- Power Cara, our conversational AI assistant, over SMS/iMessage (caregiver onboarding, Q&A, booking assistance)
 - Send appointment reminders to clients
 - Facilitate communication between clients and caregivers
-- Send verification codes for account security
 - Notify caregivers of new booking requests
 
 **Data Involved:**
@@ -85,7 +129,7 @@ Messages may contain PHI including:
 - General health status updates
 
 **Request:**
-We need a signed BAA covering our use of Twilio services for HIPAA-compliant communication. We also need confirmation that Twilio services can be configured to meet HIPAA requirements (encryption, access controls, audit logging).
+We need a signed BAA covering our use of Linq services for HIPAA-compliant communication. We also need confirmation that Linq services can be configured to meet HIPAA requirements (encryption, access controls, audit logging).
 
 **Timeline:**
 Please provide the BAA within 10 business days as we are preparing for platform launch.
@@ -218,7 +262,8 @@ Thank you,
 
 **Require BAA (if handling PHI):**
 - ✅ Google Cloud / Firebase
-- ✅ Twilio (if sending PHI via SMS)
+- ✅ Linq (if sending PHI via SMS/iMessage)
+- ✅ Twilio (if PHI discussed in video interviews)
 - ✅ Stripe (if payment records linked to PHI)
 - ✅ Email service providers (SendGrid, Mailgun, etc.)
 - ✅ Cloud storage providers

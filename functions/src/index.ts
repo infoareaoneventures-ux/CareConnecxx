@@ -86,7 +86,7 @@ export { triggerFamilyEmergency } from './triggers/familyEmergency';
 export { onShiftStatusChanged } from './triggers/shiftStatusTrigger';
 
 // Linq Sprint 3 — family group thread
-export { createFamilyGroup } from './agents/familyGroupManager';
+export { createFamilyGroup, addFamilyGroupMember } from './agents/familyGroupManager';
 
 // Linq Sprint 4 — weekly digest + monthly health trends
 export { sendWeeklyDigests, triggerWeeklyDigestNow } from './scheduled/weeklyDigest';
@@ -118,6 +118,7 @@ export {
   sendInvoiceEmail,
   processClientApproval,
   autoApproveInvoice,
+  onInvoiceDeleted,
 } from './invoicing';
 
 // Cara scheduled jobs

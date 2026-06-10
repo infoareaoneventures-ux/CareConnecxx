@@ -339,6 +339,7 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
         updates["verified"] = true;
         updates["verificationStatus"] = "approved";
         updates["status"] = "active";
+        updates["approvedAt"] = new Date().toISOString();
         updates["backgroundCheckData.checkrClearedAt"] = new Date().toISOString();
         notificationPayload = {
           title: "Background check approved! 🎉",

@@ -28,6 +28,85 @@ export const createFamilyGroup = functions.https.onCall(async (data, context) =>
   }
 });
 
+// ── Callable: triggered from the public /join invite page (JoinFamilyPage) ────
+// The /join page is unauthenticated by design — family members land there from
+// an invite link before they have any account. Authorization is the invite
+// token itself: the payload's primaryPhone must belong to an existing Cara
+// session, otherwise the request is rejected.
+
+export const addFamilyGroupMember = functions.https.onCall(async (data, _context) => {
+  const primaryPhone: unknown = data?.primaryPhone;
+  const memberPhone: unknown = data?.memberPhone;
+
+  const E164 = /^\+\d{10,15}$/;
+  if (typeof primaryPhone !== "string" || !E164.test(primaryPhone)) {
+    throw new functions.https.HttpsError("invalid-argument", "Invalid invitation");
+  }
+  if (typeof memberPhone !== "string" || !E164.test(memberPhone)) {
+    throw new functions.https.HttpsError("invalid-argument", "A valid member phone number is required");
+  }
+
+  try {
+    // Validate the invite: the primary phone must belong to an existing session
+    const sessionRef  = db.collection("agent_sessions").doc(primaryPhone);
+    const sessionSnap = await sessionRef.get();
+    if (!sessionSnap.exists) {
+      throw new functions.https.HttpsError("not-found", "Invalid invitation");
+    }
+    const session = sessionSnap.data() ?? {};
+
+    // Dedupe: already a member → succeed silently
+    const existingSnap = await db.collection("family_group_members")
+      .where("primaryPhone", "==", primaryPhone)
+      .where("memberPhone",  "==", memberPhone)
+      .limit(1)
+      .get();
+
+    if (existingSnap.empty) {
+      // Mirror the webhook ADD_FAMILY_MEMBER data model
+      await sessionRef.update({
+        groupMembers: admin.firestore.FieldValue.arrayUnion(memberPhone),
+      });
+      await db.collection("family_group_members").add({
+        primaryPhone,
+        memberPhone,
+        memberName: "Family member",
+        userId:     session.userId ?? primaryPhone,
+        addedAt:    new Date().toISOString(),
+      });
+    }
+
+    // Best-effort: add the new member to the existing Linq group chat, if any
+    try {
+      const groupSnap = await db.collection("family_groups")
+        .where("phones", "array-contains", primaryPhone)
+        .limit(1)
+        .get();
+      if (!groupSnap.empty) {
+        const groupDoc = groupSnap.docs[0];
+        const phones: string[] = groupDoc.data().phones ?? [];
+        const chatId: string   = groupDoc.data().chatId;
+        if (!phones.includes(memberPhone)) {
+          await addParticipant(chatId, memberPhone).catch(() => {});
+          await groupDoc.ref.update({
+            phones: admin.firestore.FieldValue.arrayUnion(memberPhone),
+          });
+          await db.collection("agent_sessions").doc(memberPhone)
+            .set({ groupChatId: chatId }, { merge: true });
+        }
+      }
+    } catch (err) {
+      console.error("addFamilyGroupMember group-chat join failed:", err);
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    if (err instanceof functions.https.HttpsError) throw err;
+    console.error("addFamilyGroupMember error:", err);
+    throw new functions.https.HttpsError("internal", err.message ?? "Failed to join group");
+  }
+});
+
 // ── Core logic (also called when a new member with phone is added) ─────────────
 
 export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> {

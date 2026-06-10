@@ -117,7 +117,7 @@ async function fetchOutcomePatterns(): Promise<string> {
   }
   try {
     const fn = httpsCallable<Record<string, never>, { patterns: string }>(
-      getFunctions(), 'getMatchPatterns'
+      getFunctions(), 'v1-getMatchPatterns'
     );
     const result = await fn({});
     const patterns = result.data?.patterns ?? '';

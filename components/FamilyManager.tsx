@@ -64,7 +64,7 @@ export const FamilyManager: React.FC<FamilyManagerProps> = ({ onShowToast }) => 
         const phonedMembers = updatedMembers.filter(m => m.phone);
         if (phonedMembers.length >= 2) {
           try {
-            const fn = httpsCallable(getFunctions(), 'createFamilyGroup');
+            const fn = httpsCallable(getFunctions(), 'v1-createFamilyGroup');
             await fn({ seniorId: user.uid });
           } catch {
             // Non-blocking — group creation failure shouldn't surface to user

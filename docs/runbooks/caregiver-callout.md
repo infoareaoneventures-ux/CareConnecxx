@@ -128,12 +128,18 @@ admin.messaging().send(message);
 
 ### Resend SMS
 ```bash
-# Use Twilio console or API
-curl -X POST https://api.twilio.com/2010-04-01/Accounts/{AccountSid}/Messages.json \
-  --data-urlencode "To=+1PHONE_NUMBER" \
-  --data-urlencode "From=+1TWILIO_NUMBER" \
-  --data-urlencode "Body=CareConnex: Your caregiver cancelled. View backup options: https://careconnex.app/a/APPOINTMENT_ID" \
-  -u {AccountSid}:{AuthToken}
+# Use the Linq dashboard or Partner API (see functions/src/linq/client.ts)
+# 1. Create/look up the chat for the recipient
+curl -X POST https://api.linqapp.com/api/partner/v3/chats \
+  -H "Authorization: Bearer $LINQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"address": "+1PHONE_NUMBER"}'
+
+# 2. Send the message to that chat
+curl -X POST https://api.linqapp.com/api/partner/v3/chats/{CHAT_ID}/messages \
+  -H "Authorization: Bearer $LINQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"message": {"text": "CareConnex: Your caregiver cancelled. View backup options: https://careconnex.app/a/APPOINTMENT_ID"}}'
 ```
 
 ### Resend Email
@@ -264,8 +270,8 @@ firebase functions:log --only onCaregiverCallout
 **Fix:** Lower standards temporarily or offer refund
 
 ### Error: "Failed to send SMS"
-**Cause:** Invalid phone number or Twilio issue
-**Fix:** Check phone format, check Twilio dashboard
+**Cause:** Invalid phone number or Linq issue
+**Fix:** Check phone format, check Linq dashboard/logs
 
 ### Error: "FCM token not found"
 **Cause:** Client hasn't enabled push notifications
@@ -282,7 +288,7 @@ firebase functions:log --only onCaregiverCallout
 | Issue | Contact | Method |
 |-------|---------|--------|
 | Firebase outage | Firebase Support | console.firebase.google.com/support |
-| Twilio issues | Twilio Support | twilio.com/help/contact |
+| Linq (SMS/iMessage) issues | Linq Support | linqapp.com support |
 | Resend issues | Resend Support | resend.com/support |
 | Critical system failure | On-call engineer | PagerDuty |
 | HIPAA concern | Compliance team | compliance@careconnex.com |

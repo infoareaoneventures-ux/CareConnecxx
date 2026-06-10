@@ -922,6 +922,26 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Admin alerts — safety escalations, signup/booking/background-check events.
+    // Written server-side (Admin SDK); the AdminAlertsPanel reads + marks resolved.
+    match /admin_alerts/{alertId} {
+      allow read, update: if isAdmin();
+      allow create, delete: if false;
+    }
+
+    // Agent audit log — every consequential Cara action (observability/auditLog.ts).
+    // Written server-side only; AuditTrail/AuditDashboard admin surfaces read it.
+    match /agent_audit_log/{entryId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Shift offers — caregiver YES/NO offer state machine (agents/shiftOffer.ts).
+    // Server-only: created and resolved exclusively via the Admin SDK.
+    match /shift_offers/{offerId} {
+      allow read, write: if false;
+    }
+
     // Turn checkpoints — server-only resume state for in-flight qaAgent turns.
     // Written/read exclusively by Cloud Functions via the Admin SDK (which
     // bypasses rules). No client should ever touch these, so deny outright.

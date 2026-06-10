@@ -72,15 +72,33 @@ const VALID_INTENTS = new Set<Intent>([
 // CANCEL is intentionally NOT here — it cancels a visit, not the account
 const STOP_WORDS = new Set(["STOP", "UNSUBSCRIBE", "QUIT", "END"]);
 
+// Classification result with a degradation flag. `degraded` is true when the
+// LLM call failed, timed out, or returned an unrecognized label and we fell
+// back to "QUESTION" — i.e. the QUESTION you got is a guess, not a decision.
+// Callers MUST NOT take low-scrutiny fast paths (e.g. the runQuickReply
+// trivial-greeting bypass) on a degraded classification; route to the full
+// QA agent instead, which runs the complete safety pipeline.
+export interface IntentClassification {
+  intent:   Intent;
+  degraded: boolean;
+}
+
 export async function classifyIntent(
   text: string,
   hasPendingTask: boolean
 ): Promise<Intent> {
+  return (await classifyIntentDetailed(text, hasPendingTask)).intent;
+}
+
+export async function classifyIntentDetailed(
+  text: string,
+  hasPendingTask: boolean
+): Promise<IntentClassification> {
   const trimmed = text.trim().toUpperCase();
 
-  if (STOP_WORDS.has(trimmed)) return "STOP";
-  if (trimmed === "CANCEL") return "CANCEL_REQUEST";
-  if (hasPendingTask && ["1", "2", "3"].includes(trimmed)) return "TASK_REPLY";
+  if (STOP_WORDS.has(trimmed)) return { intent: "STOP", degraded: false };
+  if (trimmed === "CANCEL") return { intent: "CANCEL_REQUEST", degraded: false };
+  if (hasPendingTask && ["1", "2", "3"].includes(trimmed)) return { intent: "TASK_REPLY", degraded: false };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6_000);
@@ -143,7 +161,7 @@ export async function classifyIntent(
     clearTimeout(timer);
 
     const label = raw.trim().toUpperCase() as Intent;
-    if (VALID_INTENTS.has(label)) return label;
+    if (VALID_INTENTS.has(label)) return { intent: label, degraded: false };
 
     console.warn("intentClassifier: unrecognized label", { label, preview: text.slice(0, 50) });
   } catch (err) {
@@ -151,5 +169,6 @@ export async function classifyIntent(
     console.error("intentClassifier error:", err);
   }
 
-  return "QUESTION";
+  // Degraded fallback — classification failed, so "QUESTION" is a guess.
+  return { intent: "QUESTION", degraded: true };
 }

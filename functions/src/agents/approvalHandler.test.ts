@@ -18,7 +18,7 @@ vi.mock("./pendingActions", () => ({
   resolvePendingAction: hoisted.resolvePendingMock,
 }));
 
-import { classifyApproval, handlePendingApproval } from "./approvalHandler";
+import { classifyApproval, handlePendingApproval, handlePendingApprovals } from "./approvalHandler";
 
 const makePending = (overrides: Record<string, unknown> = {}) => ({
   id:         "pa_42",
@@ -187,5 +187,133 @@ describe("handlePendingApproval", () => {
     });
     expect(result).toEqual({ outcome: "handled" });
     expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_42", "failed", expect.any(Object));
+  });
+});
+
+describe("handlePendingApprovals — batch confirmation", () => {
+  // Newest-first, exactly as getAllPending returns: pa_2 was proposed after pa_1.
+  const makeTwoPendings = () => [
+    makePending({
+      id:        "pa_2",
+      toolName:  "cancel_subscription",
+      toolInput: {},
+      preview:   "Cancel CareConnex subscription",
+      proposedAt: new Date(Date.now() - 1_000).toISOString(),
+    }),
+    makePending({
+      id:        "pa_1",
+      toolName:  "cancel_appointment",
+      toolInput: { appointmentId: "appt_1" },
+      preview:   "Cancel appointment appt_1",
+      proposedAt: new Date(Date.now() - 2_000).toISOString(),
+    }),
+  ];
+
+  it("YES executes ALL pending actions sequentially, oldest first, each single-fire", async () => {
+    const result = await handlePendingApprovals({
+      phone:    "+15550001111",
+      chatId:   "chat_1",
+      text:     "yes",
+      userId:   "user-1",
+      pendings: makeTwoPendings(),
+    });
+
+    expect(result).toEqual({ outcome: "handled" });
+    expect(hoisted.handleToolCallMock).toHaveBeenCalledTimes(2);
+
+    // Proposal order: pa_1 (cancel_appointment) before pa_2 (cancel_subscription).
+    const calls = hoisted.handleToolCallMock.mock.calls as Array<[string, Record<string, unknown>]>;
+    expect(calls[0][0]).toBe("cancel_appointment");
+    expect(calls[0][1]._confirmedActionId).toBe("pa_1");
+    expect(calls[1][0]).toBe("cancel_subscription");
+    expect(calls[1][1]._confirmedActionId).toBe("pa_2");
+
+    // Each action resolved through the single-fire transactional resolver —
+    // a duplicate YES finds no awaiting docs and can't double-execute.
+    expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_1", "executed", expect.any(Object));
+    expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_2", "executed", expect.any(Object));
+    expect(hoisted.sendMessageMock).toHaveBeenCalledWith("chat_1", expect.stringContaining("Done"));
+  });
+
+  it("classifies the reply against a combined numbered preview of all actions", async () => {
+    hoisted.quickCompleteMock.mockResolvedValueOnce("YES");
+    await handlePendingApprovals({
+      phone:    "+15550001111",
+      chatId:   "chat_1",
+      text:     "sounds right, do both of those",
+      pendings: makeTwoPendings(),
+    });
+    const [systemPrompt] = hoisted.quickCompleteMock.mock.calls[0] as [string];
+    expect(systemPrompt).toContain("1. Cancel appointment appt_1");
+    expect(systemPrompt).toContain("2. Cancel CareConnex subscription");
+  });
+
+  it("NO rejects ALL pending actions without executing any", async () => {
+    const result = await handlePendingApprovals({
+      phone:    "+15550001111",
+      chatId:   "chat_1",
+      text:     "no",
+      pendings: makeTwoPendings(),
+    });
+
+    expect(result).toEqual({ outcome: "handled" });
+    expect(hoisted.handleToolCallMock).not.toHaveBeenCalled();
+    expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_1", "rejected");
+    expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_2", "rejected");
+    expect(hoisted.sendMessageMock).toHaveBeenCalledWith("chat_1", expect.stringContaining("Got it"));
+  });
+
+  it("QUESTION falls through without resolving or executing anything", async () => {
+    hoisted.quickCompleteMock.mockResolvedValueOnce("QUESTION");
+    const result = await handlePendingApprovals({
+      phone:    "+15550001111",
+      chatId:   "chat_1",
+      text:     "wait, which appointment was that?",
+      pendings: makeTwoPendings(),
+    });
+
+    expect(result).toEqual({ outcome: "fallthrough", reason: "question" });
+    expect(hoisted.handleToolCallMock).not.toHaveBeenCalled();
+    expect(hoisted.resolvePendingMock).not.toHaveBeenCalled();
+    expect(hoisted.sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("partial failure: still executes the rest and sends the recovery ACK", async () => {
+    hoisted.handleToolCallMock
+      .mockResolvedValueOnce({ _toolError: true, message: "boom" })
+      .mockResolvedValueOnce({ success: true });
+    await handlePendingApprovals({
+      phone:    "+15550001111",
+      chatId:   "chat_1",
+      text:     "yes",
+      pendings: makeTwoPendings(),
+    });
+    expect(hoisted.handleToolCallMock).toHaveBeenCalledTimes(2);
+    expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_1", "failed",   expect.any(Object));
+    expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_2", "executed", expect.any(Object));
+    expect(hoisted.sendMessageMock).toHaveBeenCalledWith("chat_1", expect.stringContaining("ran into a problem"));
+  });
+
+  it("delegates to single-action handling when only one action is pending", async () => {
+    const result = await handlePendingApprovals({
+      phone:    "+15550001111",
+      chatId:   "chat_1",
+      text:     "yes",
+      pendings: [makePending()],
+    });
+    expect(result).toEqual({ outcome: "handled" });
+    expect(hoisted.handleToolCallMock).toHaveBeenCalledTimes(1);
+    expect(hoisted.sendMessageMock).toHaveBeenCalledWith("chat_1", "Done."); // single-action ACK
+  });
+
+  it("falls through (expired) on an empty pendings array", async () => {
+    const result = await handlePendingApprovals({
+      phone:    "+15550001111",
+      chatId:   "chat_1",
+      text:     "yes",
+      pendings: [],
+    });
+    expect(result).toEqual({ outcome: "fallthrough", reason: "expired" });
+    expect(hoisted.handleToolCallMock).not.toHaveBeenCalled();
   });
 });

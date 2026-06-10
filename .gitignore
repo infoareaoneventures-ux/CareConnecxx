@@ -43,3 +43,10 @@ firebase-debug.log
 
 # OS files
 Thumbs.db
+
+# Vendored third-party code - keep out of commits, tests, and typecheck
+third_party/
+
+# Generated Cloud Functions output - rebuild with: npm --prefix functions run build
+# (committed copies caused rebase conflicts in functions/lib/shiftHours.js[.map])
+functions/lib/

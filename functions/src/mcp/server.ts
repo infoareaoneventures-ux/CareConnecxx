@@ -2549,14 +2549,16 @@ export async function handleToolCall(
       // instead of creating a DUPLICATE account. The router checks both the primary
       // session's `groupMembers` array and the `family_group_members` collection.
       {
-        // Resolve the primary's phone: prefer the auto-injected acting phone, else
-        // look it up by clientId.
-        let primaryPhone = (input as Record<string, unknown>).phone as string | undefined;
-        if (!primaryPhone) {
-          const primarySnap = await db.collection("agent_sessions")
-            .where("userId", "==", clientId as string).limit(1).get();
-          if (!primarySnap.empty) primaryPhone = primarySnap.docs[0].id;
-        }
+        // Resolve the primary's phone by clientId lookup ONLY. input.phone can
+        // NOT be trusted here: this tool's schema uses `phone` for the MEMBER
+        // being added, so reading it as the acting user's phone wrote
+        // groupMembers/family_group_members records keyed to the new member's
+        // own phone (a self-referential group the inbound router can't use).
+        let primaryPhone: string | undefined;
+        const primarySnap = await db.collection("agent_sessions")
+          .where("userId", "==", clientId as string).limit(1).get();
+        if (!primarySnap.empty) primaryPhone = primarySnap.docs[0].id;
+        if (primaryPhone === memberPhone) primaryPhone = undefined; // never self-link
         if (primaryPhone) {
           await db.collection("agent_sessions").doc(primaryPhone).update({
             groupMembers: admin.firestore.FieldValue.arrayUnion(memberPhone),

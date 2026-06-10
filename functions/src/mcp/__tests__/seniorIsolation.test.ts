@@ -1,0 +1,145 @@
+// Guards senior-data isolation: a client may only read/update the senior
+// profile they own (senior_profiles.userId), and only whitelisted fields are
+// updatable through the MCP surface.
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const hoisted = vi.hoisted(() => {
+  const docState  = new Map<string, any>();
+  const collState = new Map<string, any[]>();
+  const sets:    Array<{ path: string; data: any; opts?: any }> = [];
+  const adds:    Array<{ path: string; data: any; id: string }> = [];
+  const updates: Array<{ path: string; data: any }> = [];
+
+  const makeDocRef = (path: string) => ({
+    id: path.split("/").pop(),
+    path,
+    get: vi.fn(async () => ({
+      exists: docState.has(path),
+      data:   () => docState.get(path),
+      ref:    makeDocRef(path),
+    })),
+    set: vi.fn(async (data: any, opts?: any) => {
+      sets.push({ path, data, opts });
+      docState.set(path, opts?.merge ? { ...(docState.get(path) ?? {}), ...data } : data);
+    }),
+    update: vi.fn(async (data: any) => {
+      updates.push({ path, data });
+      docState.set(path, { ...(docState.get(path) ?? {}), ...data });
+    }),
+    collection: (sub: string) => makeCollRef(`${path}/${sub}`),
+  });
+
+  const makeCollRef = (path: string): any => {
+    const ref: any = {};
+    ref.doc = (id?: string) => makeDocRef(`${path}/${id ?? `auto-${adds.length}`}`);
+    ref.where   = (..._a: any[]) => ref;
+    ref.orderBy = (..._a: any[]) => ref;
+    ref.limit   = (..._a: any[]) => ref;
+    ref.add = vi.fn(async (data: any) => {
+      const id = `auto-${adds.length}`;
+      adds.push({ path, data, id });
+      docState.set(`${path}/${id}`, data);
+      return { id };
+    });
+    ref.get = vi.fn(async () => {
+      const items = collState.get(path) ?? [];
+      return { empty: items.length === 0, size: items.length, docs: items.map((d: any, i: number) => ({ id: d.id ?? `doc-${i}`, data: () => d, ref: makeDocRef(`${path}/${d.id ?? `doc-${i}`}`) })) };
+    });
+    return ref;
+  };
+
+  return {
+    docState, collState, sets, adds, updates,
+    collectionMock: vi.fn((p: string) => makeCollRef(p)),
+    reset: () => { docState.clear(); collState.clear(); sets.length = 0; adds.length = 0; updates.length = 0; },
+  };
+});
+
+vi.mock("firebase-admin", () => ({
+  __esModule: true,
+  default: { firestore: () => ({ collection: hoisted.collectionMock }) },
+  firestore: Object.assign(() => ({ collection: hoisted.collectionMock }), {
+    FieldValue: {
+      arrayUnion:  (...v: any[]) => ({ __arrayUnion: v }),
+      arrayRemove: (...v: any[]) => ({ __arrayRemove: v }),
+      increment:   (n: number) => ({ __increment: n }),
+      delete:      () => ({ __delete: true }),
+    },
+  }),
+}));
+
+vi.mock("../../observability/auditLog", () => ({
+  logAudit: vi.fn().mockResolvedValue(undefined),
+  logHealthDataAccessed: vi.fn().mockResolvedValue(undefined),
+  logBookingCreated:     vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../../memory/memoryFiles", () => ({
+  readMemoryFile:  vi.fn().mockResolvedValue(""),
+  writeMemoryFile: vi.fn().mockResolvedValue(undefined),
+  MemoryFile: {},
+}));
+
+vi.mock("../../memory/preferences", () => ({
+  getPreferences: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("../../agents/matchingAgent", () => ({
+  runMatchingForClient: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../../utils/toolNotify", () => ({
+  trySend:        vi.fn().mockResolvedValue({ sent: true }),
+  trySendViaCara: vi.fn().mockResolvedValue({ sent: true }),
+}));
+
+import { handleToolCall } from "../server";
+
+describe("senior data isolation (update_senior_profile)", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("denies updates when the senior belongs to a different client", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "OTHER_CLIENT", name: "Mary" });
+    const r = await handleToolCall("update_senior_profile", {
+      seniorId: "s1", clientId: "c1", field: "allergies", value: "penicillin", action: "arrayUnion",
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+    expect(hoisted.sets.filter((s) => s.path === "senior_profiles/s1")).toHaveLength(0);
+  });
+
+  it("allows the owning client to update a whitelisted field", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "c1", name: "Mary" });
+    const r = await handleToolCall("update_senior_profile", {
+      seniorId: "s1", clientId: "c1", field: "allergies", value: "penicillin", action: "arrayUnion",
+    }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.sets.some((s) => s.path === "senior_profiles/s1")).toBe(true);
+  });
+
+  it("rejects non-whitelisted fields outright", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "c1", name: "Mary" });
+    const r = await handleToolCall("update_senior_profile", {
+      seniorId: "s1", clientId: "c1", field: "userId", value: "ATTACKER", action: "set",
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(hoisted.sets.filter((s) => s.path === "senior_profiles/s1")).toHaveLength(0);
+  });
+
+  it("returns NOT_FOUND (not data) for a nonexistent senior", async () => {
+    const r = await handleToolCall("update_senior_profile", {
+      seniorId: "ghost", clientId: "c1", field: "allergies", value: "x", action: "set",
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("NOT_FOUND");
+  });
+
+  it("rejects array actions on scalar fields", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
+    const r = await handleToolCall("update_senior_profile", {
+      seniorId: "s1", clientId: "c1", field: "emergencyContactName", value: "Bob", action: "arrayUnion",
+    }) as any;
+    expect(r._toolError).toBe(true);
+  });
+});

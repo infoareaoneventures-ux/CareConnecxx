@@ -5,6 +5,7 @@ import { Badge } from '../ui/Badge';
 import { dbService } from '../../services/api';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
 import { Caregiver, CaregiverDocuments } from '../../types';
+import { isCaregiverBookable, UNBOOKABLE_BG_STATUSES } from '../../utils/caregiverEligibility';
 
 interface VerificationQueueItem extends Omit<Caregiver, 'backgroundCheckData'> {
   submittedAt?: string;
@@ -15,7 +16,7 @@ interface VerificationQueueItem extends Omit<Caregiver, 'backgroundCheckData'> {
     state?: string;
     consentGiven?: boolean;
     submittedAt?: string;
-    status?: string;           // pending | clear | consider | suspended | canceled
+    status?: string;           // pending | clear | consider | suspended | canceled | disputed | pre_adverse_action | rejected | post_adverse_action
     invitationStatus?: string; // sent | completed | expired | canceled | error
     checkrReportId?: string;
     checkrCandidateId?: string;
@@ -25,13 +26,48 @@ interface VerificationQueueItem extends Omit<Caregiver, 'backgroundCheckData'> {
   };
 }
 
+type VerificationFilter = 'exceptions' | 'pending' | 'approved' | 'rejected' | 'all';
+
+// 'checkr_clear' is the legacy webhook value written before functions/src/checkr.ts
+// started auto-approving clear results (verificationStatus → 'approved'). Both
+// display as approved — no manual "Approve" action is required for them.
+const APPROVED_VERIFICATION_STATUSES = ['approved', 'checkr_clear'];
+const PENDING_VERIFICATION_STATUSES = ['submitted', 'pending', 'info_requested'];
+
+const isApprovedVerification = (item: VerificationQueueItem): boolean =>
+  APPROVED_VERIFICATION_STATUSES.includes(item.verificationStatus || '');
+
+/**
+ * The manual-review (exception) queue: docs/profile review still pending, or the
+ * background check landed in an exception state (canonical UNBOOKABLE_BG_STATUSES).
+ * Final rejections are excluded — they live in the Rejected view.
+ */
+const isExceptionCase = (item: VerificationQueueItem): boolean => {
+  const vs = item.verificationStatus || '';
+  const bg = item.backgroundCheckData?.status || '';
+  if (vs === 'rejected') return false;
+  return (
+    PENDING_VERIFICATION_STATUSES.includes(vs) ||
+    vs === 'pre_adverse_action' ||
+    UNBOOKABLE_BG_STATUSES.includes(bg)
+  );
+};
+
+/** Cara-onboarded caregivers have random doc ids with no uid — prefer the doc id. */
+const getDocId = (item: VerificationQueueItem): string => (item.id || item.uid)!;
+
 interface CaregiverVerificationDashboardProps {
   onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
 /**
- * Admin Dashboard for Manual Caregiver Verification
- * Review background checks, documents, and approve/reject caregivers
+ * Admin Dashboard for Caregiver Verification Exceptions
+ *
+ * Checkr-clear caregivers are AUTO-approved by the webhook (functions/src/checkr.ts
+ * sets verified=true, verificationStatus='approved', status='active') — they need
+ * no manual action here. This dashboard exists for the exceptions: pending docs
+ * review and background checks in consider/suspended/canceled/disputed/
+ * pre_adverse_action/rejected/post_adverse_action states.
  */
 export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashboardProps> = ({
   onShowToast
@@ -39,7 +75,7 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
   const [queue, setQueue] = useState<VerificationQueueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCaregiver, setSelectedCaregiver] = useState<VerificationQueueItem | null>(null);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'checkr_clear' | 'approved' | 'rejected' | 'consider'>('pending');
+  const [filter, setFilter] = useState<VerificationFilter>('exceptions');
   const [searchTerm, setSearchTerm] = useState('');
   const [reviewNotes, setReviewNotes] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -66,22 +102,25 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
   const handleApprove = async (caregiver: VerificationQueueItem) => {
     setIsProcessing(true);
     try {
-      await dbService.updateUser('caregivers', caregiver.uid!, {
+      // Mirror the Checkr auto-approval contract (functions/src/checkr.ts):
+      // verified + verificationStatus 'approved' + status 'active'
+      await dbService.updateUser('caregivers', getDocId(caregiver), {
         verificationStatus: 'approved',
         verified: true,
+        status: 'active', // not on the Caregiver TS type, but the canonical Firestore field the Checkr webhook writes
         onboardingStep: 3,
         approvedAt: new Date().toISOString(),
         approvedBy: 'admin', // Current admin ID
         reviewNotes: reviewNotes
-      });
+      } as Partial<Caregiver>);
 
       // Send approval notification to caregiver
-      await dbService.sendNotification(caregiver.uid!, {
+      await dbService.sendNotification(getDocId(caregiver), {
         type: 'verification_approved',
         title: 'You\'re Verified!',
         body: 'Your background check has been approved. You can now start accepting jobs.',
         message: 'Your background check has been approved. You can now start accepting jobs.',
-        userId: caregiver.uid!,
+        userId: getDocId(caregiver),
         isRead: false,
       });
 
@@ -105,8 +144,9 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
 
     setIsProcessing(true);
     try {
-      await dbService.updateUser('caregivers', caregiver.uid!, {
+      await dbService.updateUser('caregivers', getDocId(caregiver), {
         verificationStatus: 'rejected',
+        verified: false,
         onboardingStep: 2,
         rejectedAt: new Date().toISOString(),
         rejectedBy: 'admin',
@@ -114,12 +154,12 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
       });
 
       // Send rejection notification
-      await dbService.sendNotification(caregiver.uid!, {
+      await dbService.sendNotification(getDocId(caregiver), {
         type: 'verification_rejected',
         title: 'Verification Update',
         body: `Your application was not approved. Reason: ${reviewNotes}`,
         message: `Your application was not approved. Reason: ${reviewNotes}`,
-        userId: caregiver.uid!,
+        userId: getDocId(caregiver),
         isRead: false,
       });
 
@@ -138,18 +178,18 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
   const handleRequestMoreInfo = async (caregiver: VerificationQueueItem) => {
     setIsProcessing(true);
     try {
-      await dbService.updateUser('caregivers', caregiver.uid!, {
+      await dbService.updateUser('caregivers', getDocId(caregiver), {
         verificationStatus: 'info_requested',
         infoRequestNotes: reviewNotes,
         infoRequestedAt: new Date().toISOString()
       });
 
-      await dbService.sendNotification(caregiver.uid!, {
+      await dbService.sendNotification(getDocId(caregiver), {
         type: 'info_requested',
         title: 'Additional Information Needed',
         body: `We need more information to complete your verification: ${reviewNotes}`,
         message: `We need more information to complete your verification: ${reviewNotes}`,
-        userId: caregiver.uid!,
+        userId: getDocId(caregiver),
         isRead: false,
       });
 
@@ -195,14 +235,14 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
     let matchesFilter: boolean;
     if (filter === 'all') {
       matchesFilter = true;
-    } else if (filter === 'consider') {
-      matchesFilter = item.backgroundCheckData?.status === 'consider';
-    } else if (filter === 'checkr_clear') {
-      matchesFilter = item.verificationStatus === 'checkr_clear';
+    } else if (filter === 'exceptions') {
+      matchesFilter = isExceptionCase(item);
     } else if (filter === 'pending') {
-      matchesFilter = item.verificationStatus === 'submitted' || item.verificationStatus === 'pending';
+      matchesFilter = PENDING_VERIFICATION_STATUSES.includes(item.verificationStatus || '');
+    } else if (filter === 'approved') {
+      matchesFilter = isApprovedVerification(item);
     } else {
-      matchesFilter = item.verificationStatus === filter;
+      matchesFilter = item.verificationStatus === 'rejected';
     }
     const matchesSearch = !searchTerm ||
       item.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -211,11 +251,10 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
   });
 
   const stats = {
-    pending: queue.filter(q => q.verificationStatus === 'submitted' || q.verificationStatus === 'pending').length,
-    checkrClear: queue.filter(q => q.verificationStatus === 'checkr_clear').length,
-    approved: queue.filter(q => q.verificationStatus === 'approved').length,
+    exceptions: queue.filter(isExceptionCase).length,
+    pending: queue.filter(q => PENDING_VERIFICATION_STATUSES.includes(q.verificationStatus || '')).length,
+    approved: queue.filter(isApprovedVerification).length,
     rejected: queue.filter(q => q.verificationStatus === 'rejected').length,
-    needsReview: queue.filter(q => q.backgroundCheckData?.status === 'consider').length,
     total: queue.length
   };
 
@@ -224,30 +263,32 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900 mb-2">Caregiver Verification</h1>
-        <p className="text-slate-500">Review and approve caregiver background checks</p>
+        <p className="text-slate-500">
+          Checkr-clear caregivers are approved automatically — review document submissions and background-check exceptions here
+        </p>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-5 gap-4 mb-8">
+        <div className={`p-6 rounded-2xl shadow-sm border ${stats.exceptions > 0 ? 'bg-orange-50 border-orange-200' : 'bg-white border-slate-200'}`}>
+          <div className={`text-3xl font-bold ${stats.exceptions > 0 ? 'text-orange-600' : 'text-slate-400'}`}>{stats.exceptions}</div>
+          <div className="text-sm text-slate-500">Needs Review</div>
+        </div>
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
           <div className="text-3xl font-bold text-accent-600">{stats.pending}</div>
           <div className="text-sm text-slate-500">Awaiting Checkr</div>
         </div>
-        <div className={`p-6 rounded-2xl shadow-sm border ${stats.checkrClear > 0 ? 'bg-teal-50 border-teal-200' : 'bg-white border-slate-200'}`}>
-          <div className={`text-3xl font-bold ${stats.checkrClear > 0 ? 'text-teal-600' : 'text-slate-400'}`}>{stats.checkrClear}</div>
-          <div className="text-sm text-slate-500">Checkr Clear — Approve</div>
-        </div>
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
           <div className="text-3xl font-bold text-emerald-600">{stats.approved}</div>
-          <div className="text-sm text-slate-500">Approved</div>
+          <div className="text-sm text-slate-500">Approved (incl. auto)</div>
         </div>
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
           <div className="text-3xl font-bold text-red-600">{stats.rejected}</div>
           <div className="text-sm text-slate-500">Rejected</div>
         </div>
-        <div className={`p-6 rounded-2xl shadow-sm border ${stats.needsReview > 0 ? 'bg-orange-50 border-orange-200' : 'bg-white border-slate-200'}`}>
-          <div className={`text-3xl font-bold ${stats.needsReview > 0 ? 'text-orange-600' : 'text-slate-900'}`}>{stats.needsReview}</div>
-          <div className="text-sm text-slate-500">Checkr Consider</div>
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+          <div className="text-3xl font-bold text-slate-900">{stats.total}</div>
+          <div className="text-sm text-slate-500">In View</div>
         </div>
       </div>
 
@@ -255,9 +296,8 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
       <div className="flex flex-col md:flex-row gap-4 mb-6">
         <div className="flex gap-2 flex-wrap">
           {([
+            { value: 'exceptions', label: 'Needs Review', count: stats.exceptions, color: 'orange' },
             { value: 'pending', label: 'Awaiting Checkr', count: stats.pending, color: 'accent' },
-            { value: 'checkr_clear', label: 'Checkr Clear', count: stats.checkrClear, color: 'teal' },
-            { value: 'consider', label: 'Needs Review', count: stats.needsReview, color: 'orange' },
             { value: 'approved', label: 'Approved', count: null, color: 'emerald' },
             { value: 'rejected', label: 'Rejected', count: null, color: 'red' },
             { value: 'all', label: 'All', count: null, color: 'slate' },
@@ -267,14 +307,12 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
               onClick={() => setFilter(value)}
               className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                 filter === value
-                  ? color === 'teal' ? 'bg-teal-500 text-white'
-                  : color === 'orange' ? 'bg-orange-500 text-white'
+                  ? color === 'orange' ? 'bg-orange-500 text-white'
                   : color === 'emerald' ? 'bg-emerald-600 text-white'
                   : color === 'red' ? 'bg-red-600 text-white'
                   : 'bg-primary-600 text-white'
                   : count && count > 0
-                  ? color === 'teal' ? 'bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100'
-                  : color === 'orange' ? 'bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100'
+                  ? color === 'orange' ? 'bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100'
                   : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
                   : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
               }`}
@@ -321,7 +359,7 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
             <tbody>
               {filteredQueue.map((caregiver) => (
                 <tr
-                  key={caregiver.uid}
+                  key={getDocId(caregiver)}
                   className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer"
                   onClick={() => setSelectedCaregiver(caregiver)}
                 >
@@ -338,23 +376,32 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
                   </td>
                   <td className="p-4">
                     <div className="flex flex-col gap-1">
-                      <Badge
-                        variant={
-                          caregiver.verificationStatus === 'approved' ? 'success'
-                          : caregiver.verificationStatus === 'rejected' ? 'danger'
-                          : caregiver.verificationStatus === 'checkr_clear' ? 'success'
-                          : 'warning'
-                        }
-                      >
-                        {caregiver.verificationStatus === 'checkr_clear' ? 'Checkr Clear'
-                          : caregiver.verificationStatus === 'submitted' ? 'Awaiting Checkr'
-                          : caregiver.verificationStatus || 'pending'}
-                      </Badge>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge
+                          variant={
+                            isApprovedVerification(caregiver) ? 'success'
+                            : caregiver.verificationStatus === 'rejected' ? 'danger'
+                            : 'warning'
+                          }
+                        >
+                          {isApprovedVerification(caregiver)
+                            ? (caregiver.verificationStatus === 'checkr_clear' ? 'Approved — Checkr clear' : 'Approved')
+                            : caregiver.verificationStatus === 'submitted' ? 'Awaiting Checkr'
+                            : caregiver.verificationStatus || 'pending'}
+                        </Badge>
+                        <span className={`text-xs px-2 py-0.5 rounded-full w-fit font-medium ${
+                          isCaregiverBookable(caregiver)
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-slate-100 text-slate-500'
+                        }`}>
+                          {isCaregiverBookable(caregiver) ? 'Bookable' : 'Not bookable'}
+                        </span>
+                      </div>
                       {caregiver.backgroundCheckData?.status && caregiver.backgroundCheckData.status !== 'pending' && (
                         <span className={`text-xs px-2 py-0.5 rounded-full w-fit font-medium ${
                           caregiver.backgroundCheckData.status === 'clear' ? 'bg-teal-100 text-teal-700'
-                          : caregiver.backgroundCheckData.status === 'consider' ? 'bg-orange-100 text-orange-700'
                           : caregiver.backgroundCheckData.status === 'suspended' ? 'bg-red-100 text-red-700'
+                          : UNBOOKABLE_BG_STATUSES.includes(caregiver.backgroundCheckData.status) ? 'bg-orange-100 text-orange-700'
                           : 'bg-slate-100 text-slate-600'
                         }`}>
                           Checkr: {caregiver.backgroundCheckData.status}
@@ -533,14 +580,17 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
                 {selectedCaregiver.backgroundCheckData?.status && (
                   <div className={`p-3 rounded-xl flex items-center gap-3 text-sm ${
                     selectedCaregiver.backgroundCheckData.status === 'clear' ? 'bg-teal-50 border border-teal-200 text-teal-800'
-                    : selectedCaregiver.backgroundCheckData.status === 'consider' ? 'bg-orange-50 border border-orange-200 text-orange-800'
                     : selectedCaregiver.backgroundCheckData.status === 'suspended' ? 'bg-red-50 border border-red-200 text-red-800'
+                    : UNBOOKABLE_BG_STATUSES.includes(selectedCaregiver.backgroundCheckData.status) ? 'bg-orange-50 border border-orange-200 text-orange-800'
                     : 'bg-slate-50 border border-slate-200 text-slate-700'
                   }`}>
                     <Shield className="w-4 h-4 shrink-0" />
                     <div>
                       <span className="font-semibold">Checkr result: </span>
-                      <span className="capitalize">{selectedCaregiver.backgroundCheckData.status}</span>
+                      <span className="capitalize">{selectedCaregiver.backgroundCheckData.status.replace(/_/g, ' ')}</span>
+                      {selectedCaregiver.backgroundCheckData.status === 'clear' && (
+                        <span className="text-xs ml-2 opacity-70">auto-approved</span>
+                      )}
                       {selectedCaregiver.backgroundCheckData.checkrClearedAt && (
                         <span className="text-xs ml-2 opacity-70">
                           cleared {new Date(selectedCaregiver.backgroundCheckData.checkrClearedAt).toLocaleDateString()}
@@ -566,7 +616,7 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
                         { key: 'registration' as DocumentType, label: 'Vehicle Registration', hasExpiry: true },
                       ]).map(({ key, label, hasExpiry }) => {
                         const doc = (selectedCaregiver.documents as any)?.[key];
-                        const processingKey = `${selectedCaregiver.uid}_${key}`;
+                        const processingKey = `${getDocId(selectedCaregiver)}_${key}`;
                         const isProcessingDoc = docActionProcessing[processingKey];
                         return (
                           <div key={key} className="border border-slate-200 rounded-xl p-3 space-y-2">
@@ -604,14 +654,14 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
                                 )}
                                 <div className="flex gap-2">
                                   <button
-                                    onClick={() => handleDocAction(selectedCaregiver.uid!, key, 'approved')}
+                                    onClick={() => handleDocAction(getDocId(selectedCaregiver), key, 'approved')}
                                     disabled={isProcessingDoc}
                                     className="flex-1 flex items-center justify-center gap-1 text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
                                   >
                                     <Check className="w-3 h-3" /> Approve
                                   </button>
                                   <button
-                                    onClick={() => handleDocAction(selectedCaregiver.uid!, key, 'rejected')}
+                                    onClick={() => handleDocAction(getDocId(selectedCaregiver), key, 'rejected')}
                                     disabled={isProcessingDoc}
                                     className="flex-1 flex items-center justify-center gap-1 text-xs font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
                                   >
@@ -648,8 +698,9 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
                   </div>
                 )}
 
-                {/* Review Actions */}
-                {(['submitted', 'pending', 'checkr_clear', 'info_requested'].includes(selectedCaregiver.verificationStatus || '') || selectedCaregiver.backgroundCheckData?.status === 'consider') && (
+                {/* Review Actions — only exception cases need a manual decision.
+                    Checkr-clear caregivers are auto-approved by the webhook. */}
+                {isExceptionCase(selectedCaregiver) && (
                   <section>
                     <h3 className="font-bold text-slate-900 mb-4">Review Decision</h3>
                     <div className="space-y-4">
@@ -695,12 +746,34 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
                   </section>
                 )}
 
-                {selectedCaregiver.verificationStatus === 'approved' && (
+                {isApprovedVerification(selectedCaregiver) && (
                   <div className="p-4 bg-emerald-50 rounded-xl text-emerald-700 flex items-center gap-3">
                     <Check className="w-5 h-5" />
                     <div>
-                      <p className="font-semibold">Approved</p>
-                      <p className="text-sm">{selectedCaregiver.reviewNotes}</p>
+                      <p className="font-semibold">
+                        {selectedCaregiver.backgroundCheckData?.status === 'clear' && !(selectedCaregiver as any).approvedBy
+                          ? 'Approved — auto-approved on Checkr clear result'
+                          : 'Approved'}
+                      </p>
+                      {selectedCaregiver.reviewNotes && (
+                        <p className="text-sm">{selectedCaregiver.reviewNotes}</p>
+                      )}
+                      <p className="text-sm">
+                        {isCaregiverBookable(selectedCaregiver)
+                          ? 'Bookable — visible to families in search.'
+                          : selectedCaregiver.verificationStatus === 'checkr_clear'
+                          ? 'Not yet bookable — legacy "checkr_clear" status; bookability requires verificationStatus "approved".'
+                          : 'Not yet bookable — profile onboarding incomplete (requires onboardingStatus "profile_complete").'}
+                      </p>
+                      {selectedCaregiver.verificationStatus === 'checkr_clear' && (
+                        <button
+                          onClick={() => handleApprove(selectedCaregiver)}
+                          disabled={isProcessing}
+                          className="mt-2 text-sm font-semibold text-emerald-700 underline hover:text-emerald-800 disabled:opacity-50"
+                        >
+                          {isProcessing ? 'Migrating…' : 'Migrate to approved status'}
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}

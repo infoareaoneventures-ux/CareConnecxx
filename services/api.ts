@@ -3,6 +3,7 @@ import { checkRateLimit, checkSignupRateLimit, RATE_LIMITS } from './rateLimit';
 
 import firebase, { auth, db, functions, isConfigured, googleProvider } from '../lib/firebase';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
+import { UNBOOKABLE_BG_STATUSES } from '../utils/caregiverEligibility';
 
 // ==========================================
 // RATE LIMITING / DEBOUNCING UTILITIES
@@ -2144,9 +2145,33 @@ export const dbService = {
     },
 
     /**
-     * Subscribe to care journal entries for real-time updates
+     * Subscribe to care journal entries for real-time updates.
+     * Entries are written server-side (Cara's journal tools + caregiver flows)
+     * into `care_journal`; rules allow the owning client, the caregiver, and
+     * admins to read. Single-field query + client-side sort — no composite
+     * index needed.
      */
-
+    subscribeCareJournal: (clientId: string, onUpdate: (entries: any[]) => void) => {
+        if (isConfigured && db && clientId) {
+            const q = db.collection('care_journal')
+                .where('clientId', '==', clientId)
+                .limit(50);
+            return q.onSnapshot(snapshot => {
+                const entries = snapshot.docs
+                    .map(doc => ({ id: doc.id, ...doc.data() } as any))
+                    .sort((a, b) => String(b.timestamp ?? '').localeCompare(String(a.timestamp ?? '')));
+                onUpdate(entries);
+            }, (error: any) => {
+                if (error.code === 'permission-denied') {
+                    onUpdate([]);
+                    return;
+                }
+                console.error('Care journal subscription error:', error);
+                onUpdate([]);
+            });
+        }
+        return () => { };
+    },
 
     notifyFamilyOfArrival: async (seniorId: string, caregiverId: string, appointmentTime: string) => {
         // Get senior's profile
@@ -2177,31 +2202,76 @@ export const dbService = {
     },
 
     /**
-     * Get caregivers pending verification (for admin dashboard)
+     * Get caregivers for the admin verification dashboard.
+     *
+     * Supported `status` values:
+     *  - 'exceptions': the manual-review queue — docs awaiting review
+     *    (submitted/pending/info_requested/pre_adverse_action) PLUS any caregiver
+     *    whose background check sits in an exception state (UNBOOKABLE_BG_STATUSES).
+     *    Two queries merged client-side (Firestore has no OR across fields).
+     *  - 'pending': awaiting Checkr / docs review (submitted | pending | info_requested)
+     *  - 'approved': includes legacy 'checkr_clear' docs written before the
+     *    Checkr webhook auto-approved clear results.
+     *  - 'all': everything
+     *  - anything else: exact verificationStatus equality (legacy callers pass 'submitted')
+     *
+     * No server-side orderBy: 'in'/equality + orderBy(submittedAt) would require
+     * composite indexes that don't exist (and orderBy drops docs missing the
+     * field). Results are sorted newest-first client-side instead.
      */
     getCaregiversForVerification: async (status: string = 'submitted') => {
         if (!isConfigured || !db) {
             return [];
         }
 
-        try {
-            let query: firebase.firestore.Query = db.collection('caregivers');
+        const mapDocs = (snap: firebase.firestore.QuerySnapshot) =>
+            snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Record<string, any>));
+        const sortNewest = (rows: Record<string, any>[]) =>
+            rows.sort((a, b) =>
+                String(b.submittedAt ?? b.backgroundCheckData?.submittedAt ?? b.createdAt ?? '')
+                    .localeCompare(String(a.submittedAt ?? a.backgroundCheckData?.submittedAt ?? a.createdAt ?? ''))
+            );
 
-            if (status !== 'all') {
-                // 'pending' in the UI maps to 'submitted' in Firestore (set when caregiver finishes signup)
-                const firestoreStatus = status === 'pending' ? 'submitted' : status;
-                query = query.where('verificationStatus', '==', firestoreStatus);
+        try {
+            const col = db.collection('caregivers');
+
+            if (status === 'all') {
+                return sortNewest(mapDocs(await col.limit(200).get()));
             }
 
-            const snapshot = await query
-                .orderBy('submittedAt', 'desc')
-                .limit(100)
-                .get();
+            if (status === 'exceptions') {
+                const [reviewSnap, bgSnap] = await Promise.all([
+                    col.where('verificationStatus', 'in',
+                        ['submitted', 'pending', 'info_requested', 'pre_adverse_action'])
+                        .limit(100).get(),
+                    col.where('backgroundCheckData.status', 'in', [...UNBOOKABLE_BG_STATUSES])
+                        .limit(100).get(),
+                ]);
+                const byId = new Map<string, Record<string, any>>();
+                for (const doc of [...reviewSnap.docs, ...bgSnap.docs]) {
+                    byId.set(doc.id, { id: doc.id, ...doc.data() });
+                }
+                return sortNewest([...byId.values()]);
+            }
 
-            return snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            if (status === 'pending') {
+                const snap = await col
+                    .where('verificationStatus', 'in', ['submitted', 'pending', 'info_requested'])
+                    .limit(100).get();
+                return sortNewest(mapDocs(snap));
+            }
+
+            if (status === 'approved') {
+                const snap = await col
+                    .where('verificationStatus', 'in', ['approved', 'checkr_clear'])
+                    .limit(100).get();
+                return sortNewest(mapDocs(snap));
+            }
+
+            const snap = await col
+                .where('verificationStatus', '==', status)
+                .limit(100).get();
+            return sortNewest(mapDocs(snap));
         } catch (error) {
             console.error('Failed to fetch caregivers for verification:', error);
             return [];
@@ -2292,6 +2362,48 @@ export const dbService = {
         const fn = functions.httpsCallable('v1-sendApprovedDraftNow');
         const result = await fn({ draftId });
         return (result.data as { success: boolean; error?: string }) ?? { success: false, error: 'no response' };
+    },
+
+    // ==================== ADMIN ALERTS ====================
+
+    /**
+     * Subscribe to admin_alerts, newest first (single-field orderBy → automatic
+     * index, no composite required). Unresolved/resolved filtering happens
+     * client-side so one listener powers both the panel and the sidebar badge.
+     *
+     * NOTE: firestore.rules has no /admin_alerts match block yet, so client
+     * reads are denied by default until an `allow read, update: if isAdmin();`
+     * rule is added. The `v1-listAdminAlerts` / `v1-resolveAdminAlert` callables
+     * (functions/src/adminAlerts.ts) are the rules-bypassing alternative.
+     */
+    subscribeAdminAlerts: (
+        cb: (alerts: Array<Record<string, any>>) => void,
+        onError?: (err: Error) => void
+    ): (() => void) => {
+        if (!isConfigured || !db) {
+            cb([]);
+            return () => {};
+        }
+        return db.collection('admin_alerts')
+            .orderBy('createdAt', 'desc')
+            .limit(200)
+            .onSnapshot(
+                (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+                (err) => {
+                    console.error('subscribeAdminAlerts:', err);
+                    onError?.(err as unknown as Error);
+                    cb([]);
+                }
+            );
+    },
+
+    resolveAdminAlert: async (alertId: string, resolvedBy?: string): Promise<void> => {
+        if (!isConfigured || !db) throw new Error('Not connected');
+        await db.collection('admin_alerts').doc(alertId).update({
+            resolved: true,
+            resolvedAt: new Date().toISOString(),
+            ...(resolvedBy ? { resolvedBy } : {}),
+        });
     },
 
     // ==================== COORDINATOR METHODS ====================

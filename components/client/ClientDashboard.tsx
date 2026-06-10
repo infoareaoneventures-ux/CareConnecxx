@@ -17,6 +17,7 @@ import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadg
 import firebase, { db } from '../../lib/firebase';
 import { ClientJobPostingWizard } from './ClientJobPostingWizard';
 import { LiveCareFeed } from './LiveCareFeed';
+import { CareJournalFeed } from './CareJournalFeed';
 import { FamilyEmergency } from './FamilyEmergency';
 import { shiftDisplayStatus } from '../../utils/shiftUtils';
 import { useNearbyCaregiversWithScores } from '../../hooks/useNearbyCaregiversWithScores';
@@ -514,6 +515,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           if (!active) return null;
           return <LiveCareFeed clientId={currentUser.uid} />;
         })()}
+
+        {/* Care journal — caregiver visit notes (web + Cara tools); hides itself when empty */}
+        {currentUser?.uid && <CareJournalFeed clientId={currentUser.uid} />}
 
         {reviewingShift && (
           <ReviewShiftHoursModal

@@ -53,6 +53,13 @@ const ALWAYS_CONFIRM = new Set<string>([
   "cancel_job_post",
 ]);
 
+// Care-plan fields that are harmless note-like additions — free-text context
+// the caregiver reads, not data that drives clinical decisions. Everything
+// else on the care plan (medications, careNeeds, doctorContacts,
+// specialInstructions — and any future/unknown field, fail-safe) is clinical
+// and MUST round-trip an explicit family confirmation before it changes.
+const CARE_PLAN_NOTE_FIELDS = new Set(["notes", "dietaryNotes"]);
+
 // Tools whose risk depends on an argument value. The predicate inspects the
 // input and returns true when this specific call is irreversible.
 const CONDITIONAL_CONFIRM: Record<string, (input: Record<string, unknown>) => boolean> = {
@@ -61,6 +68,11 @@ const CONDITIONAL_CONFIRM: Record<string, (input: Record<string, unknown>) => bo
   // Rejecting an applicant is irreversible (caregiver sees the decline).
   // Accept is also high-stakes but happens via a separate hire flow.
   respond_to_job_application: (input) => input.decision === "reject",
+  // Clinical care-plan edits (medications, careNeeds, etc.) require
+  // confirmation — a wrong medication entry is a patient-safety incident.
+  // Note-like fields skip the gate so "add a note that mom prefers tea"
+  // doesn't need a confirmation round-trip.
+  update_care_plan: (input) => !CARE_PLAN_NOTE_FIELDS.has(String(input.field)),
 };
 
 export function isHighRisk(toolName: string, toolInput: Record<string, unknown>): boolean {
@@ -94,6 +106,8 @@ export function buildActionPreview(toolName: string, toolInput: Record<string, u
       return `${String(toolInput.action ?? "modify")} recurring schedule ${String(toolInput.scheduleId ?? "")}`.trim();
     case "respond_to_job_application":
       return `${String(toolInput.decision ?? "respond to")} application ${String(toolInput.applicationId ?? "")}`.trim();
+    case "update_care_plan":
+      return `${String(toolInput.action ?? "set")} care plan ${String(toolInput.field ?? "?")}`;
     default:
       return `${toolName} (irreversible)`;
   }
@@ -145,6 +159,32 @@ export async function getLatestPending(phone: string): Promise<PendingAction | n
     return null;
   }
   return { id: doc.id, ...data };
+}
+
+// All unresolved pending actions for a phone, newest first. Same query and
+// lazy-expiry behavior as getLatestPending, without the limit. Used by the
+// webhook to detect the multi-pending case (batch confirmation).
+export async function getAllPending(phone: string): Promise<PendingAction[]> {
+  const snap = await db.collection("pending_actions")
+    .where("phone",  "==", phone)
+    .where("status", "==", "awaiting")
+    .orderBy("proposedAt", "desc")
+    .get();
+  const now = Date.now();
+  const live: PendingAction[] = [];
+  for (const doc of snap.docs) {
+    const data = doc.data() as Omit<PendingAction, "id">;
+    if (new Date(data.expiresAt).getTime() < now) {
+      // Lazily expire — keeps the read fast at the cost of one write per stale doc.
+      await doc.ref.update({
+        status:     "expired",
+        resolvedAt: new Date().toISOString(),
+      }).catch(() => {});
+      continue;
+    }
+    live.push({ id: doc.id, ...data });
+  }
+  return live;
 }
 
 export async function getPendingActionById(id: string): Promise<PendingAction | null> {

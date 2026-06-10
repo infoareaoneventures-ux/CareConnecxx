@@ -3,11 +3,11 @@ import * as admin from "firebase-admin";
 import * as crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability, markChatRead, AgentSession, LinqService } from "./client";
-import { classifyIntent } from "../agents/intentClassifier";
+import { classifyIntentDetailed } from "../agents/intentClassifier";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { handleTaskApproval } from "../agents/taskApprovalHandler";
-import { getLatestPending } from "../agents/pendingActions";
-import { handlePendingApproval } from "../agents/approvalHandler";
+import { getAllPending } from "../agents/pendingActions";
+import { handlePendingApprovals } from "../agents/approvalHandler";
 import { optOutPhoneNumber, optInPhoneNumber, setupCaraContactCard } from "../sms";
 import {
   handleOnboardingStep,
@@ -2625,18 +2625,23 @@ async function handleInbound(event: unknown): Promise<void> {
   // generalist 50-intent classifier would misroute. See pendingActions.ts +
   // approvalHandler.ts for the full design.
   {
-    const pending = await getLatestPending(phone).catch((err) => {
-      console.error("handleInbound: getLatestPending failed", err);
-      return null;
+    // getAllPending so MULTIPLE awaiting actions get a combined numbered
+    // confirmation (YES approves all, NO rejects all) instead of a bare
+    // "yes" silently resolving only the most recent one. With a single
+    // pending action handlePendingApprovals behaves exactly like the old
+    // handlePendingApproval path.
+    const pendings = await getAllPending(phone).catch((err) => {
+      console.error("handleInbound: getAllPending failed", err);
+      return [];
     });
-    if (pending) {
-      const result = await handlePendingApproval({
+    if (pendings.length > 0) {
+      const result = await handlePendingApprovals({
         phone,
         chatId,
         text,
         userId:   session.userId,
         userType: session.userType === "caregiver" ? "caregiver" : "client",
-        pending,
+        pendings,
       });
       if (result.outcome === "handled") return;
       // result.outcome === "fallthrough" — the family asked a question instead
@@ -3565,7 +3570,9 @@ async function handleInbound(event: unknown): Promise<void> {
   if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {/* non-critical */});
 
   try {
-    const intent = await classifyIntent(text, !!pendingTask);
+    // intentDegraded = the classifier errored/timed out and "QUESTION" is a
+    // guess — when set, skip the quick-reply bypass and take the full QA path.
+    const { intent, degraded: intentDegraded } = await classifyIntentDetailed(text, !!pendingTask);
 
     // ── Emergency replacement: 1/2/3 ─────────────────────────────────────────
     if (intent === "TASK_REPLY" && pendingTask && ["1", "2", "3"].includes(text.trim())) {
@@ -4933,8 +4940,10 @@ async function handleInbound(event: unknown): Promise<void> {
     // ── Trivial quick-reply bypass — short generic greetings/thanks ─────────
     // For QUESTION-intent messages with no entity content, skip the full
     // tool-use loop and answer with gpt-4o-mini in ~1s. Conservative heuristic:
-    // anything ambiguous falls through to runQaAgent below.
-    if (intent === "QUESTION" && isTrivialQuickReply(text)) {
+    // anything ambiguous falls through to runQaAgent below. A degraded
+    // classification (classifier error → guessed QUESTION) never qualifies —
+    // the full agent path with its supervisor is the fail-safe.
+    if (intent === "QUESTION" && !intentDegraded && isTrivialQuickReply(text)) {
       const quickReply = await runQuickReply({
         text,
         phone,

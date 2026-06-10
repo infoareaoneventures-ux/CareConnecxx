@@ -30,6 +30,12 @@ const hoisted = vi.hoisted(() => {
     ref.where   = (..._a: any[]) => ref;
     ref.orderBy = (..._a: any[]) => ref;
     ref.limit   = (..._a: any[]) => ref;
+    ref.add = vi.fn(async (data: any) => {
+      const id = `auto-${sets.length}`;
+      sets.push({ path, data });
+      docState.set(`${path}/${id}`, data);
+      return { id };
+    });
     ref.get = vi.fn(async () => {
       const items = collState.get(path) ?? [];
       return { empty: items.length === 0, size: items.length, docs: items.map((d: any, i: number) => ({ id: d.id ?? `doc-${i}`, data: () => d, ref: makeDocRef(`${path}/${d.id ?? `doc-${i}`}`) })) };
@@ -91,7 +97,9 @@ vi.mock("../../utils/toolNotify", () => ({
 import { handleToolCall } from "../server";
 
 describe("family tools", () => {
-  beforeEach(() => { hoisted.reset(); trySend.mockClear(); trySend.mockResolvedValue({ sent: true }); });
+  // mockReset (not mockClear) — clears queued mockResolvedValueOnce values too,
+  // so a test that doesn't consume its Once value can't leak it into the next.
+  beforeEach(() => { hoisted.reset(); trySend.mockReset(); trySend.mockResolvedValue({ sent: true }); });
 
   describe("add_family_member", () => {
     it("requires all fields", async () => {

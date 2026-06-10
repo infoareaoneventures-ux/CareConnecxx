@@ -91,6 +91,18 @@ vi.mock("../../utils/toolNotify", () => ({
   trySendViaCara: vi.fn().mockResolvedValue({ sent: true }),
 }));
 
+// reschedule_appointment now routes through agents/shiftTimeChange → shiftOffer,
+// which texts the caregiver a YES/NO offer over Linq — stub the transport.
+const sendMessage = vi.fn().mockResolvedValue({ message_id: "m1" });
+vi.mock("../../linq/client", () => ({
+  sendMessage:        (...args: unknown[]) => sendMessage(...args),
+  getOrCreateSession: vi.fn().mockResolvedValue({ chatId: "chat-cg" }),
+  sendToPhone:        vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../../utils/caraMessage", () => ({
+  generateCaraMessage: vi.fn(async ({ fallback }: { fallback: string }) => fallback),
+}));
+
 import { handleToolCall } from "../server";
 
 describe("booking tools", () => {
@@ -167,13 +179,35 @@ describe("booking tools", () => {
       expect(r._toolError).toBe(true);
     });
 
-    it("reschedules and notifies caregiver", async () => {
-      hoisted.docState.set("appointments/a1", { clientId: "c1", status: "confirmed", caregiverId: "cg1", date: "2026-06-01", startTime: "09:00", durationHours: 2 });
+    it("does NOT move the appointment — stamps pendingTimeChange and sends a caregiver offer", async () => {
+      hoisted.docState.set("appointments/a1", { clientId: "c1", status: "confirmed", caregiverId: "cg1", caregiverName: "Alice", date: "2026-06-01", startTime: "09:00", endTime: "11:00", durationHours: 2 });
       hoisted.docState.set("caregivers/cg1", { phone: "+15555550101" });
       const r = await handleToolCall("reschedule_appointment", { appointmentId: "a1", clientId: "c1", newDate: "2026-06-02", newTime: "10:00" }) as any;
       expect(r.success).toBe(true);
-      expect(r.newDate).toBe("2026-06-02");
-      expect(r.notification.sent).toBe(true);
+      expect(r.status).toBe("pending_caregiver_confirmation");
+
+      // Appointment keeps its original schedule until the caregiver accepts
+      const appt = hoisted.docState.get("appointments/a1");
+      expect(appt.date).toBe("2026-06-01");
+      expect(appt.startTime).toBe("09:00");
+      expect(appt.pendingTimeChange).toMatchObject({ newDate: "2026-06-02", newStartTime: "10:00" });
+
+      // A shift offer was created and the caregiver was texted a YES/NO prompt
+      const offerAdd = hoisted.adds.find((a) => a.path === "shift_offers");
+      expect(offerAdd).toBeTruthy();
+      expect(offerAdd!.data.kind).toBe("time_change");
+      expect(offerAdd!.data.status).toBe("pending");
+      expect(sendMessage).toHaveBeenCalledWith("chat-cg", expect.stringContaining("Reply YES"));
+    });
+
+    it("applies directly (with admin alert) when the caregiver has no phone", async () => {
+      hoisted.docState.set("appointments/a1", { clientId: "c1", status: "confirmed", caregiverId: "cg1", date: "2026-06-01", startTime: "09:00", durationHours: 2 });
+      hoisted.docState.set("caregivers/cg1", {});
+      const r = await handleToolCall("reschedule_appointment", { appointmentId: "a1", clientId: "c1", newDate: "2026-06-02", newTime: "10:00" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.status).toBe("applied_directly");
+      expect(hoisted.docState.get("appointments/a1").date).toBe("2026-06-02");
+      expect(hoisted.adds.some((a) => a.path === "admin_alerts" && a.data.type === "time_change_unconfirmed")).toBe(true);
     });
   });
 });

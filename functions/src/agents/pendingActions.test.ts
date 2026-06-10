@@ -93,6 +93,7 @@ import {
   buildActionPreview,
   proposePendingAction,
   getLatestPending,
+  getAllPending,
   resolvePendingAction,
   buildPendingActionStub,
   PENDING_ACTION_TTL_MS,
@@ -131,6 +132,23 @@ describe("isHighRisk", () => {
   it("conditionally flags respond_to_job_application only on reject", () => {
     expect(isHighRisk("respond_to_job_application", { applicationId: "x", decision: "reject" })).toBe(true);
     expect(isHighRisk("respond_to_job_application", { applicationId: "x", decision: "accept" })).toBe(false);
+  });
+
+  it("requires confirmation for clinical update_care_plan fields", () => {
+    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "medications",         value: ["Lisinopril 10mg"], action: "append" })).toBe(true);
+    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "careNeeds",           value: ["mobility"],        action: "set"    })).toBe(true);
+    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "doctorContacts",      value: ["Dr. Chen"],        action: "append" })).toBe(true);
+    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "specialInstructions", value: "never leave alone", action: "set"    })).toBe(true);
+  });
+
+  it("fails safe when update_care_plan field is missing or unknown", () => {
+    expect(isHighRisk("update_care_plan", { clientId: "c1" })).toBe(true);
+    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "allergies", value: ["penicillin"], action: "append" })).toBe(true);
+  });
+
+  it("does NOT gate harmless note-like update_care_plan fields", () => {
+    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "notes",        value: "Prefers tea in the morning", action: "set" })).toBe(false);
+    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "dietaryNotes", value: "No dairy at dinner",         action: "set" })).toBe(false);
   });
 });
 
@@ -214,6 +232,39 @@ describe("getLatestPending", () => {
   it("does not return actions for a different phone", async () => {
     await proposePendingAction({ phone: "+15550009999", toolName: "cancel_appointment", toolInput: {} });
     expect(await getLatestPending("+15550001111")).toBeNull();
+  });
+});
+
+describe("getAllPending", () => {
+  it("returns an empty array when nothing awaiting", async () => {
+    expect(await getAllPending("+15550001111")).toEqual([]);
+  });
+
+  it("returns ALL awaiting actions for the phone, newest first", async () => {
+    const first = await proposePendingAction({ phone: "+15550001111", toolName: "cancel_appointment",  toolInput: { appointmentId: "a1" } });
+    await new Promise((r) => setTimeout(r, 5)); // ensure timestamps differ
+    const second = await proposePendingAction({ phone: "+15550001111", toolName: "cancel_subscription", toolInput: {} });
+    await proposePendingAction({ phone: "+15550009999", toolName: "delete_reminder", toolInput: { reminderId: "r1" } });
+
+    const got = await getAllPending("+15550001111");
+    expect(got.map((a) => a.id)).toEqual([second.id, first.id]);
+  });
+
+  it("lazily expires stale docs and excludes them from the result", async () => {
+    const live  = await proposePendingAction({ phone: "+15550001111", toolName: "cancel_appointment", toolInput: { appointmentId: "a1" } });
+    const stale = await proposePendingAction({ phone: "+15550001111", toolName: "delete_reminder",    toolInput: { reminderId: "r1" } });
+    const snap = hoisted.snapshot();
+    hoisted.seed(snap.map(([id, data]) =>
+      id === stale.id
+        ? [id, { ...data, expiresAt: new Date(Date.now() - 1000).toISOString() }] as [string, any]
+        : [id, data] as [string, any],
+    ));
+
+    const got = await getAllPending("+15550001111");
+    expect(got.map((a) => a.id)).toEqual([live.id]);
+
+    const after = hoisted.snapshot().find(([k]) => k === stale.id)![1];
+    expect(after.status).toBe("expired"); // lazily marked
   });
 });
 

@@ -61,36 +61,21 @@ export type ApprovalResult =
   | { outcome: "handled" }
   | { outcome: "fallthrough"; reason: "question" | "expired" };
 
-// Main entry point. Loads or accepts the pending action, classifies the
-// reply, and executes / rejects / falls through as appropriate.
-export async function handlePendingApproval(params: {
-  phone:       string;
-  chatId:      string;
-  text:        string;
-  userId?:     string;
-  userType?:   "client" | "caregiver";
-  pending:     PendingAction;
-}): Promise<ApprovalResult> {
-  const { phone, chatId, text, userId, userType = "client", pending } = params;
-  const decision = await classifyApproval(text, pending.preview);
+// Execute one confirmed action: dispatch the tool with the bypass flag set,
+// then mark the pending doc executed/failed. resolvePendingAction is
+// transactional and single-fire, so a duplicate YES racing through here
+// can't double-resolve; the dispatch carries _confirmedActionId so the MCP
+// gate executes instead of re-proposing (see mcp/server.ts).
+// Returns true when the tool reported success.
+async function executeConfirmedAction(params: {
+  phone:    string;
+  chatId:   string;
+  userId?:  string;
+  userType: "client" | "caregiver";
+  pending:  PendingAction;
+}): Promise<boolean> {
+  const { phone, chatId, userId, userType, pending } = params;
 
-  if (decision === "QUESTION") {
-    // Don't resolve the pending action — let the QA agent answer the question
-    // and re-prompt for confirmation. The webhook caller treats this as a
-    // normal QA turn but should inject context about the pending action
-    // so Cara knows what's still awaiting confirmation.
-    return { outcome: "fallthrough", reason: "question" };
-  }
-
-  if (decision === "NO") {
-    await resolvePendingAction(pending.id, "rejected");
-    await sendMessage(chatId, "Got it — leaving things as they are.").catch((err) => {
-      console.error("handlePendingApproval: sendMessage (NO) failed", err);
-    });
-    return { outcome: "handled" };
-  }
-
-  // decision === "YES" — execute the tool with the bypass flag set.
   console.info("approvalHandler.execute", {
     phone,
     actionId: pending.id,
@@ -126,6 +111,41 @@ export async function handlePendingApproval(params: {
     { executionPreview },
   );
 
+  return succeeded;
+}
+
+// Main entry point. Loads or accepts the pending action, classifies the
+// reply, and executes / rejects / falls through as appropriate.
+export async function handlePendingApproval(params: {
+  phone:       string;
+  chatId:      string;
+  text:        string;
+  userId?:     string;
+  userType?:   "client" | "caregiver";
+  pending:     PendingAction;
+}): Promise<ApprovalResult> {
+  const { phone, chatId, text, userId, userType = "client", pending } = params;
+  const decision = await classifyApproval(text, pending.preview);
+
+  if (decision === "QUESTION") {
+    // Don't resolve the pending action — let the QA agent answer the question
+    // and re-prompt for confirmation. The webhook caller treats this as a
+    // normal QA turn but should inject context about the pending action
+    // so Cara knows what's still awaiting confirmation.
+    return { outcome: "fallthrough", reason: "question" };
+  }
+
+  if (decision === "NO") {
+    await resolvePendingAction(pending.id, "rejected");
+    await sendMessage(chatId, "Got it — leaving things as they are.").catch((err) => {
+      console.error("handlePendingApproval: sendMessage (NO) failed", err);
+    });
+    return { outcome: "handled" };
+  }
+
+  // decision === "YES" — execute the tool with the bypass flag set.
+  const succeeded = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
+
   // Acknowledge to the family. Keep it short — the tool itself may have
   // already sent richer downstream notifications (e.g. caregiver SMS).
   const ackMessage = succeeded
@@ -133,6 +153,69 @@ export async function handlePendingApproval(params: {
     : "I tried to do that but ran into a problem — give me a moment and I'll try again.";
   await sendMessage(chatId, ackMessage).catch((err) => {
     console.error("handlePendingApproval: sendMessage (YES) failed", err);
+  });
+
+  return { outcome: "handled" };
+}
+
+// Batch variant — used by the webhook when MORE THAN ONE action is awaiting
+// confirmation for the same phone. A bare "yes" against a single preview
+// would silently approve actions the family may not remember, so the YES/NO
+// classification runs against a combined numbered preview of everything
+// pending. YES executes ALL of them sequentially (each through the
+// single-fire resolvePendingAction + dispatch in executeConfirmedAction, so
+// a double YES can't double-execute), NO rejects all, QUESTION falls
+// through to the QA agent exactly like the single-action path.
+//
+// With exactly one pending action this delegates to handlePendingApproval,
+// so callers can pass whatever getAllPending returned.
+export async function handlePendingApprovals(params: {
+  phone:       string;
+  chatId:      string;
+  text:        string;
+  userId?:     string;
+  userType?:   "client" | "caregiver";
+  pendings:    PendingAction[];
+}): Promise<ApprovalResult> {
+  const { phone, chatId, text, userId, userType = "client", pendings } = params;
+
+  if (pendings.length === 0) return { outcome: "fallthrough", reason: "expired" };
+  if (pendings.length === 1) {
+    return handlePendingApproval({ phone, chatId, text, userId, userType, pending: pendings[0] });
+  }
+
+  // getAllPending returns newest-first; show and execute in proposal order
+  // so "1." matches what Cara asked about first.
+  const ordered = [...pendings].reverse();
+  const combinedPreview = ordered.map((p, i) => `${i + 1}. ${p.preview}`).join("  ");
+  const decision = await classifyApproval(text, combinedPreview);
+
+  if (decision === "QUESTION") {
+    return { outcome: "fallthrough", reason: "question" };
+  }
+
+  if (decision === "NO") {
+    for (const pending of ordered) {
+      await resolvePendingAction(pending.id, "rejected");
+    }
+    await sendMessage(chatId, "Got it — leaving everything as it is.").catch((err) => {
+      console.error("handlePendingApprovals: sendMessage (NO) failed", err);
+    });
+    return { outcome: "handled" };
+  }
+
+  // decision === "YES" — execute all sequentially.
+  let failures = 0;
+  for (const pending of ordered) {
+    const succeeded = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
+    if (!succeeded) failures++;
+  }
+
+  const ackMessage = failures === 0
+    ? "Done — all set."
+    : "I took care of part of that but ran into a problem on the rest — give me a moment and I'll try again.";
+  await sendMessage(chatId, ackMessage).catch((err) => {
+    console.error("handlePendingApprovals: sendMessage (YES) failed", err);
   });
 
   return { outcome: "handled" };

@@ -71,13 +71,16 @@ function lastLinkPart() {
 }
 
 describe("sendOnboardingLink", () => {
+  // 20s timeout: the first test pays the dynamic-import cost of the heavy
+  // onboardingConversation module graph, which can exceed the 5s default when
+  // the full suite runs in parallel under load.
   it("sends a pure token link (caregiver_photo) as a canonical link part", async () => {
     const { sendOnboardingLink } = await import("./onboardingConversation");
     const res = await sendOnboardingLink("+15551112222", "caregiver_photo");
 
     expect(res).toEqual({ success: true, linkType: "caregiver_photo" });
     expect(lastLinkPart()).toEqual({ type: "link", value: expect.stringContaining("/upload/photo?t=tok-123") });
-  });
+  }, 20_000);
 
   it("sends the Stripe identity link for client_identity", async () => {
     const { sendOnboardingLink } = await import("./onboardingConversation");

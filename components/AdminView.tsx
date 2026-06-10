@@ -4,7 +4,7 @@ import {
   ChevronLeft, AlertCircle, MessageSquare, Search,
   FileText, TrendingUp, UserCheck, X, HeartHandshake,
   Heart, Users, Phone, Filter, Download, Shield,
-  Star, ClipboardList, BookOpen,
+  Star, ClipboardList, BookOpen, ShieldCheck, BellRing,
 } from 'lucide-react';
 import { SupportTicket, AdminUser, JobPost, Caregiver, ClientIntakeData } from '../types';
 import { dbService } from '../services/api';
@@ -23,6 +23,7 @@ import { CoordinatorManagement } from './admin/CoordinatorManagement';
 import { AdminBlogManager } from './admin/AdminBlogManager';
 import { AuditTrail } from './admin/AuditTrail';
 import { ProactiveReflectionDashboard } from './admin/ProactiveReflectionDashboard';
+import { AdminAlertsPanel } from './admin/AdminAlertsPanel';
 
 interface AdminViewProps {
   onBack: () => void;
@@ -32,7 +33,7 @@ type TabId =
   | 'overview' | 'clients' | 'caregivers' | 'verification' | 'coordinators'
   | 'appointments' | 'reviews' | 'intakes' | 'matching' | 'assignments'
   | 'finance' | 'disputes' | 'tickets' | 'messages' | 'blog' | 'audit'
-  | 'proactive_drafts';
+  | 'proactive_drafts' | 'alerts';
 
 const StatCard = ({ icon: Icon, label, value, trend, color, onClick }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -96,7 +97,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
       if (ok) {
         const s = await dbService.getSystemStats();
         setStats(s);
-        const pending = await dbService.getCaregiversForVerification('submitted');
+        // 'exceptions' = docs awaiting review + background-check exception states
+        // (Checkr-clear caregivers are auto-approved and never enter this queue)
+        const pending = await dbService.getCaregiversForVerification('exceptions');
         setPendingCaregivers(pending as Caregiver[]);
       }
     })();
@@ -109,6 +112,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
 
   useEffect(() => {
     const unsub = dbService.subscribeToIntakeLeads(setIntakeLeads);
+    return () => unsub();
+  }, []);
+
+  const [openAlertsCount, setOpenAlertsCount] = useState(0);
+  useEffect(() => {
+    const unsub = dbService.subscribeAdminAlerts((alerts) =>
+      setOpenAlertsCount(alerts.filter(a => !a.resolved).length)
+    );
     return () => unsub();
   }, []);
 
@@ -142,6 +153,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
       items: [
         { id: 'clients' as TabId, label: 'Clients', icon: Heart },
         { id: 'caregivers' as TabId, label: 'Caregivers', icon: UserCheck },
+        { id: 'verification' as TabId, label: 'Verification', icon: ShieldCheck },
       ],
     },
     {
@@ -160,6 +172,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
         { id: 'finance' as TabId, label: 'Invoicing', icon: DollarSign },
         { id: 'disputes' as TabId, label: 'Shift Disputes', icon: AlertCircle },
         { id: 'tickets' as TabId, label: 'Support', icon: MessageSquare, badge: openTicketsCount },
+        { id: 'alerts' as TabId, label: 'Alerts', icon: BellRing, badge: openAlertsCount },
         { id: 'messages' as TabId, label: 'Messages', icon: MessageSquare },
       ],
     },
@@ -302,7 +315,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
                   <div className="bg-white rounded-xl border border-slate-200 p-5">
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="font-semibold text-slate-900 text-sm">Pending Verifications</h3>
-                      <button onClick={() => setActiveTab('caregivers')} className="text-xs text-primary-600 hover:text-primary-700 font-medium">
+                      <button onClick={() => setActiveTab('verification')} className="text-xs text-primary-600 hover:text-primary-700 font-medium">
                         View all →
                       </button>
                     </div>
@@ -312,13 +325,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
                         <p className="text-sm text-slate-400">All clear</p>
                       </div>
                     ) : pendingCaregivers.slice(0, 4).map(cg => (
-                      <button key={cg.uid} onClick={() => setActiveTab('caregivers')} className="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors text-left mb-1">
+                      <button key={(cg as any).id || cg.uid} onClick={() => setActiveTab('verification')} className="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors text-left mb-1">
                         <div className="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center shrink-0">
                           <span className="text-primary-700 font-semibold text-xs">{cg.name?.charAt(0)}</span>
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-slate-900 text-sm truncate">{cg.name}</p>
-                          <p className="text-xs text-slate-500">Background check submitted</p>
+                          <p className="text-xs text-slate-500">Needs verification review</p>
                         </div>
                         <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">Review</span>
                       </button>
@@ -467,6 +480,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {/* ── TICKETS ──────────────────────────────── */}
             {activeTab === 'tickets' && (
               <TicketManager onShowToast={(msg, type) => { if (type === 'error') showToast(msg); }} />
+            )}
+
+            {/* ── SYSTEM ALERTS ────────────────────────── */}
+            {activeTab === 'alerts' && (
+              <AdminAlertsPanel onShowToast={(msg) => showToast(msg)} />
             )}
 
             {/* ── AUDIT LOG ────────────────────────────── */}

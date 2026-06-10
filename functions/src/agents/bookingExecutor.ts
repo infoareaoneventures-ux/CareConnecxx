@@ -1,9 +1,11 @@
 import * as admin from "firebase-admin";
-import { sendMessage, getOrCreateSession } from "../linq/client";
+import { sendMessage } from "../linq/client";
 import { notifyAdminBookingConfirmed } from "../notifications";
 import { logBookingCreated } from "../observability/auditLog";
 import { closeJobPost } from "../triggers/jobNotifications";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { isCaregiverBookable } from "../utils/caregiverEligibility";
+import { createShiftOffer } from "./shiftOffer";
 
 async function hasConflict(
   caregiverId: string,
@@ -151,16 +153,19 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
 
   // Idempotency guard: if Cloud Functions retries this invocation after a partial commit,
   // agentTaskId is already on every appointment written in the first attempt — skip if found.
+  // Appointments are written pending_caregiver_confirmation, so reset the task to that state.
   const existingAppts = await db.collection("appointments")
     .where("agentTaskId", "==", taskId)
     .limit(1)
     .get();
   if (!existingAppts.empty) {
-    await taskRef.update({ status: "approved", humanApproved: true }).catch(() => {});
+    await taskRef.update({ status: "pending_caregiver_confirmation", humanApproved: true }).catch(() => {});
     return;
   }
 
-  // Write each appointment — this is the ONLY place appointments are written by the agent
+  // Write each appointment — this is the ONLY place appointments are written by the agent.
+  // Family approval does NOT confirm the visit: the caregiver must accept the shift offer
+  // first (see shiftOffer.ts), so everything is written pending_caregiver_confirmation.
   const batch = db.batch();
   const apptRefs: admin.firestore.DocumentReference[] = [];
 
@@ -168,24 +173,106 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     const ref = db.collection("appointments").doc();
     apptRefs.push(ref);
     batch.set(ref, {
-      clientId:        task.clientId,
-      caregiverId:     task.caregiverId,
-      caregiverName:   task.caregiverName,
-      date:            appt.date,
-      startTime:       appt.startTime,
-      endTime:         appt.endTime,
-      durationHours:   appt.durationHours,
-      status:          "confirmed",
-      createdByAgent:  true,
-      agentTaskId:     taskId,
-      humanApproved:   true,
-      approvedAt:      now,
-      createdAt:       now,
+      clientId:           task.clientId,
+      caregiverId:        task.caregiverId,
+      caregiverName:      task.caregiverName,
+      date:               appt.date,
+      startTime:          appt.startTime,
+      endTime:            appt.endTime,
+      durationHours:      appt.durationHours,
+      status:             "pending_caregiver_confirmation",
+      caregiverConfirmed: false,
+      createdByAgent:     true,
+      agentTaskId:        taskId,
+      humanApproved:      true,
+      approvedAt:         now,
+      createdAt:          now,
     });
   }
 
-  batch.update(taskRef, { status: "approved", humanApproved: true, approvedAt: now });
+  batch.update(taskRef, { status: "pending_caregiver_confirmation", humanApproved: true, approvedAt: now });
   await batch.commit();
+
+  // Send the caregiver a YES/NO shift offer. Confirmation, family notification,
+  // and payment setup all happen in finalizeAcceptedBooking() once they accept.
+  const [caregiverSnapForOffer, clientSnapForOffer] = await Promise.all([
+    db.collection("caregivers").doc(task.caregiverId).get(),
+    db.collection("users").doc(task.clientId).get(),
+  ]);
+  const offerCgPhone = caregiverSnapForOffer.data()?.phone as string | undefined;
+
+  if (!offerCgPhone) {
+    // Can't reach the caregiver over SMS — fall back to immediate confirmation
+    // (legacy behavior) and flag for admin follow-up so a human verifies coverage.
+    await db.collection("admin_alerts").add({
+      type:          "shift_offer_undeliverable",
+      caregiverId:   task.caregiverId,
+      caregiverName: task.caregiverName,
+      clientPhone,
+      agentTaskId:   taskId,
+      createdAt:     now,
+      resolved:      false,
+    }).catch(() => {});
+    const confirmBatch = db.batch();
+    for (const ref of apptRefs) confirmBatch.update(ref, { status: "confirmed" });
+    confirmBatch.update(taskRef, { status: "approved" });
+    await confirmBatch.commit();
+    await finalizeAcceptedBooking(taskId, clientPhone);
+    return;
+  }
+
+  const offerSeniorName = clientSnapForOffer.data()?.seniorName
+    ?? (clientSnapForOffer.data()?.senior as { name?: string } | undefined)?.name
+    ?? null;
+  const offerFirstAppt = task.appointments[0];
+  const offerVisitPay  = ((caregiverSnapForOffer.data()?.hourlyRate ?? 20) * offerFirstAppt.durationHours).toFixed(2);
+  const offerClientLabel = offerSeniorName ? `with ${offerSeniorName}` : "with a client";
+  const offerLines = task.appointments.map((a) => `${a.date} · ${a.startTime}–${a.endTime}`).join("\n");
+  const offerSummary = `New booking ${offerClientLabel}: ${task.appointments.length} visit${task.appointments.length === 1 ? "" : "s"} starting ${offerFirstAppt.date} at ${offerFirstAppt.startTime}, $${offerVisitPay} per visit`;
+
+  await createShiftOffer({
+    kind:           "booking",
+    caregiverId:    task.caregiverId,
+    caregiverName:  task.caregiverName,
+    caregiverPhone: offerCgPhone,
+    clientId:       task.clientId,
+    clientPhone,
+    appointmentIds: apptRefs.map((r) => r.id),
+    agentTaskId:    taskId,
+    summary:        offerSummary,
+    offerMessage:
+      `New booking request ${offerClientLabel}!\n\n` +
+      `${offerLines}\n\n` +
+      `$${offerVisitPay} per visit, paid automatically after each one.`,
+  });
+
+  // Tell the family the request is out — NOT confirmed yet.
+  const waitingSessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
+  if (waitingSessionSnap.exists) {
+    const waitingMsg = await generateCaraMessage({
+      audience: "family",
+      context:  `You just sent ${task.caregiverName} the booking request. Tell the family you've asked ${task.caregiverName} to confirm and you'll text the moment they accept (usually fast). Do NOT say the booking is confirmed yet.`,
+      fallback: `I've sent the request to ${task.caregiverName} — I'll text you the moment they confirm (usually pretty quick).`,
+      maxTokens: 80,
+    });
+    await sendMessage(waitingSessionSnap.data()!.chatId, waitingMsg);
+  }
+  return;
+}
+
+// ── Post-acceptance finalization ───────────────────────────────────────────────
+// Runs AFTER the caregiver accepts the shift offer (shiftOffer.ts) — or, when the
+// caregiver has no phone on file, immediately as a legacy fallback. Owns the
+// family confirmation message, recurring-care offer, payment setup nudge, job
+// post closure, audit logging, and admin notification.
+
+export async function finalizeAcceptedBooking(taskId: string, clientPhone: string): Promise<void> {
+  const taskSnap = await db.collection("agent_tasks").doc(taskId).get();
+  if (!taskSnap.exists) {
+    console.error(`finalizeAcceptedBooking: agent_tasks/${taskId} not found`);
+    return;
+  }
+  const task = taskSnap.data() as BookingTask;
 
   await closeJobPost(task.clientId).catch((err) =>
     console.error("[executeBookings] closeJobPost failed:", err)
@@ -222,7 +309,7 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
 
     const bookingConfirmOpener = await generateCaraMessage({
       audience: "family",
-      context:  `You just confirmed ${task.appointments.length} ${task.appointments.length === 1 ? "visit" : "visits"} with ${task.caregiverName} for a total of $${task.totalCost.toFixed(2)}. Write a warm 1-sentence opening celebrating that the booking is confirmed.`,
+      context:  `${task.caregiverName} just accepted the booking — ${task.appointments.length} ${task.appointments.length === 1 ? "visit" : "visits"} confirmed for a total of $${task.totalCost.toFixed(2)}. Write a warm 1-sentence opening celebrating that the booking is confirmed.`,
       fallback: "All booked! Here's your confirmed schedule:",
       maxTokens: 80,
     });
@@ -318,32 +405,8 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     }
   }
 
-  // Notify caregiver
-  const [caregiverSnap, clientSnap] = await Promise.all([
-    db.collection("caregivers").doc(task.caregiverId).get(),
-    db.collection("users").doc(task.clientId).get(),
-  ]);
-  const cgPhone   = caregiverSnap.data()?.phone as string | undefined;
-  const seniorName = clientSnap.data()?.seniorName
-    ?? (clientSnap.data()?.senior as any)?.name
-    ?? null;
-  if (cgPhone) {
-    const cgSession  = await getOrCreateSession(cgPhone, { caregiverId: task.caregiverId });
-    const firstAppt  = task.appointments[0];
-    const visitPay   = ((caregiverSnap.data()?.hourlyRate ?? 20) * firstAppt.durationHours).toFixed(2);
-    const clientLabel = seniorName ? `with ${seniorName as string}` : "with your client";
-    const cgBookingOpener = await generateCaraMessage({
-      audience: "caregiver",
-      context:  `Write a warm 1-sentence opener congratulating the caregiver on their new booking — they're starting ${clientLabel} on ${firstAppt.date} at ${firstAppt.startTime}, earning $${visitPay} per visit.`,
-      fallback: `You're booked ${clientLabel} starting ${firstAppt.date} at ${firstAppt.startTime}.`,
-      maxTokens: 80,
-    });
-    await sendMessage(cgSession.chatId,
-      `${cgBookingOpener}\n\n` +
-      `$${visitPay} per visit, paid automatically after each one.\n\n` +
-      `I'll text you the care plan and directions the morning of every visit.`
-    );
-  }
+  // Caregiver acknowledgment is handled by shiftOffer.ts at acceptance time —
+  // no caregiver notification here.
 }
 
 // ── Create a booking task (called from webhooks/agents) ───────────────────────
@@ -357,10 +420,11 @@ export async function createBookingTask(params: {
   hourlyRate:             number;
   isEmergencyReplacement?: boolean;
 }): Promise<string> {
-  // Block booking if caregiver's background check is still pending
+  // Canonical eligibility gate — only profile_complete + approved caregivers
+  // are bookable (covers pending/failed background checks, adverse actions,
+  // and incomplete onboarding). See utils/caregiverEligibility.ts.
   const cgSnap = await db.collection("caregivers").doc(params.caregiverId).get();
-  const cgStatus = cgSnap.data()?.status as string | undefined;
-  if (cgStatus === "pending_review") {
+  if (!isCaregiverBookable(cgSnap.data())) {
     const submittedAt = cgSnap.data()?.backgroundCheckData?.submittedAt as string | undefined;
     const daysInReview = submittedAt
       ? Math.ceil((Date.now() - new Date(submittedAt).getTime()) / (1000 * 60 * 60 * 24))

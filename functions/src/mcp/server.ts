@@ -12,6 +12,7 @@ import {
 } from "../memory/memoryFiles";
 import { getPreferences } from "../memory/preferences";
 import { isHighRisk, proposePendingAction, buildPendingActionStub } from "../agents/pendingActions";
+import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
 
 const db = admin.firestore();
@@ -2735,16 +2736,28 @@ export async function handleToolCall(
       const [h, m] = (newTime as string).split(":").map(Number);
       const totalMins = h * 60 + m + durationHours * 60;
       const newEndTime = `${String(Math.floor(totalMins / 60) % 24).padStart(2,"0")}:${String(totalMins % 60).padStart(2,"0")}`;
-      await apptSnap.ref.update({ date: newDate, startTime: newTime, endTime: newEndTime, rescheduledAt: nowIso, previousDate: appt.date, previousStartTime: appt.startTime });
-      const cgSnap2 = await db.collection("caregivers").doc(appt.caregiverId as string).get();
-      const cgPhone2 = cgSnap2.data()?.phone as string | undefined;
-      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
-      if (cgPhone2) {
-        const { trySend } = await import("../utils/toolNotify");
-        notification = await trySend(cgPhone2, `Your appointment has been moved to ${newDate} at ${newTime}. Please confirm you can still make it.`, "mcp:reschedule_appointment");
+      // The appointment does NOT move until the caregiver accepts the shift
+      // offer — requestShiftTimeChange stamps pendingTimeChange and texts them
+      // a YES/NO offer (shiftOffer.ts applies or discards the change).
+      const { requestShiftTimeChange } = await import("../agents/shiftTimeChange");
+      const tcResult = await requestShiftTimeChange({
+        appointmentId: appointmentId as string,
+        clientId:      clientId as string,
+        clientPhone:   (input as Record<string, unknown>).phone as string | undefined,
+        newDate:       newDate as string,
+        newStartTime:  newTime as string,
+        newEndTime,
+      });
+      if (!tcResult.ok) return toolError("INVALID_INPUT", `Could not request the reschedule (${tcResult.reason ?? "unknown error"})`);
+      logAudit({ eventType: "appointment_rescheduled", userId: clientId as string, data: { source: "mcp:reschedule_appointment", appointmentId, newDate, newTime, status: tcResult.status } }).catch(() => {});
+      if (tcResult.status === "applied_directly") {
+        return { success: true, appointmentId, newDate, newTime, newEndTime, status: "applied_directly", note: "Caregiver had no phone on file — change applied and flagged for admin follow-up." };
       }
-      logAudit({ eventType: "appointment_rescheduled", userId: clientId as string, data: { source: "mcp:reschedule_appointment", appointmentId, newDate, newTime, notificationSent: notification.sent } }).catch(() => {});
-      return { success: true, appointmentId, newDate, newTime, newEndTime, notification };
+      return {
+        success: true, appointmentId, newDate, newTime, newEndTime,
+        status: "pending_caregiver_confirmation",
+        note: `The visit stays at its original time until ${appt.caregiverName ?? "the caregiver"} accepts the new time. Tell the family you've asked the caregiver to confirm and will follow up — do NOT say the reschedule is done.`,
+      };
     }
 
     if (name === "create_care_journal_entry") {
@@ -3796,6 +3809,7 @@ export async function handleToolCall(
       for (const doc of snap.docs) {
         if (doc.id === data.caregiverId) continue;
         const cg = doc.data();
+        if (!isCaregiverBookable(cg)) continue;
         const avail = cg.weeklyAvailability?.[dayOfWeek] as Array<{ start: string; end: string }> | undefined;
         if (!avail?.some(s => parseInt(s.start.split(":")[0], 10) <= shiftHour && shiftHour < parseInt(s.end.split(":")[0], 10))) continue;
         const conflict = await db.collection("appointments").where("caregiverId", "==", doc.id).where("date", "==", data.date).where("status", "in", ["confirmed"]).limit(1).get();

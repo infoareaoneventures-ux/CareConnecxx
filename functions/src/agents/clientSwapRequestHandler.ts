@@ -1,6 +1,8 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
+import { isCaregiverBookable } from "../utils/caregiverEligibility";
+import { createShiftOffer } from "./shiftOffer";
 
 const db = admin.firestore();
 
@@ -117,6 +119,7 @@ export async function handleClientSwapRequest(
     for (const doc of caregiverSnap.docs) {
       if (doc.id === visit.caregiverId) continue;
       const data = doc.data();
+      if (!isCaregiverBookable(data)) continue;
       const avail = data.weeklyAvailability?.[dayOfWeek] as Array<{ start: string; end: string }> | undefined;
       if (!avail?.length) continue;
       const slotOk = avail.some(slot => {
@@ -176,20 +179,47 @@ export async function handleClientSwapRequest(
     }
 
     const appointmentId = session.clientSwapAppointmentId as string;
-    await db.collection("appointments").doc(appointmentId).update({
-      caregiverId: chosen.id,
-      caregiverName: chosen.name,
-      swapNote: `Client-requested caregiver swap`,
-    });
+    const swapDate      = session.clientSwapDate as string;
 
     await db.collection("agent_sessions").doc(clientPhone).update({ clientSwapStep: admin.firestore.FieldValue.delete() });
 
-    // Notify new caregiver
+    // The appointment is NOT modified yet — the new caregiver must accept the
+    // shift offer first (shiftOffer.ts applies the swap on YES).
     const newCgSnap = await db.collection("caregivers").doc(chosen.id).get();
-    if (newCgSnap.exists && newCgSnap.data()?.chatId) {
-      await sendMessage(newCgSnap.data()!.chatId, `Hi ${chosen.name}, you've been assigned a new visit on ${session.clientSwapDate}. Cara will send you more details soon.`);
+    const newCgPhone = newCgSnap.data()?.phone as string | undefined;
+    if (!newCgPhone) {
+      await sendMessage(chatId,
+        `I couldn't reach ${chosen.name} to confirm — your current caregiver is still assigned. ` +
+        `Want to pick a different caregiver from the list?`
+      );
+      return;
     }
 
-    await sendMessage(chatId, `Done — ${chosen.name} is now set for ${session.clientSwapDate}. I'll notify them. Let me know if you need anything else.`);
+    const apptSnap = await db.collection("appointments").doc(appointmentId).get();
+    const apptTime = (apptSnap.data()?.time ?? apptSnap.data()?.startTime ?? "") as string;
+
+    await createShiftOffer({
+      kind:           "swap",
+      caregiverId:    chosen.id,
+      caregiverName:  chosen.name,
+      caregiverPhone: newCgPhone,
+      clientId,
+      clientPhone,
+      appointmentIds: [appointmentId],
+      payload: {
+        date:                  swapDate,
+        previousCaregiverId:   apptSnap.data()?.caregiverId ?? null,
+        previousCaregiverName: apptSnap.data()?.caregiverName ?? null,
+      },
+      summary: `Cover a visit on ${swapDate}${apptTime ? ` at ${apptTime}` : ""} (client-requested caregiver swap)`,
+      offerMessage:
+        `Hi ${chosen.name} — a family would like you to cover a visit on ${swapDate}${apptTime ? ` at ${apptTime}` : ""}. ` +
+        `I'll send the care plan and directions if you take it.`,
+    });
+
+    await sendMessage(chatId,
+      `I've asked ${chosen.name} to confirm they can cover ${swapDate}. ` +
+      `Your current caregiver stays assigned until ${chosen.name} accepts — I'll text you the moment they do.`
+    );
   }
 }

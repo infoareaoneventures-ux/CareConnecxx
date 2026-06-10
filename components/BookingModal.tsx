@@ -222,7 +222,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({ caregiver, onClose, 
       isoDate,
       time: selectedTime,
       duration,
-      status: 'confirmed',
+      // Caregiver must accept before the visit is confirmed — they see it in
+      // their pending requests (api.getPendingBookingRequests) and via Cara.
+      status: 'pending_caregiver_confirmation',
       paymentStatus: 'pending',
       paymentMethod: 'credit' as const,
       cost: totalCost,

@@ -137,6 +137,7 @@ export { sendClientThirtyMinReminders } from './scheduled/clientThirtyMinReminde
 export { sendThirtyMinShiftReminders } from './scheduled/thirtyMinShiftReminder';
 export { processDndQueue } from './scheduled/dndQueueProcessor';
 export { expirePostVisitFeedback } from './scheduled/feedbackExpiry';
+export { expirePendingShiftOffers } from './scheduled/shiftOfferExpiry';
 export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';
 export { sendOnboardingReengagement } from './scheduled/onboardingReengagement';
 export { sendPaywallWinback } from './scheduled/paywallWinback';

@@ -2640,6 +2640,19 @@ async function handleInbound(event: unknown): Promise<void> {
 
   // ── Caregiver keyword handling ──────────────────────────────────────────────
   if (session.userType === "caregiver") {
+    // ── Shift offer YES/NO — new bookings, client swaps, time changes ─────────
+    // Appointments only become confirmed (or change caregiver/time) after the
+    // caregiver accepts; see agents/shiftOffer.ts. A question falls through so
+    // the QA agent can answer it while the offer stays pending.
+    if ((session as any).pendingShiftOfferId) {
+      const { handleShiftOfferReply } = await import("../agents/shiftOffer");
+      const offerOutcome = await handleShiftOfferReply({ phone, chatId, text }).catch((err) => {
+        console.error("handleInbound: handleShiftOfferReply failed", err);
+        return "fallthrough" as const;
+      });
+      if (offerOutcome === "handled") return;
+    }
+
     // ── Swap acceptance/decline — when another caregiver was asked to cover ──
     // Stale shift-swap requests (> 4h old) shouldn't hijack unrelated caregiver
     // messages weeks later. Clear the lingering field on stale state.

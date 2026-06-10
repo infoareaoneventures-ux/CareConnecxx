@@ -24,7 +24,6 @@
         "@google/genai": "^0.8.0",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "axios": "^1.16.0",
-        "careconnex": "file:..",
         "firebase-admin": "^11.11.1",
         "firebase-functions": "^5.1.1",
         "googleapis": "^144.0.0",

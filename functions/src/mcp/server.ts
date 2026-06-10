@@ -3332,13 +3332,32 @@ export async function handleToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const cgSnap6 = await db.collection("caregivers").doc(caregiverId as string).get();
       if (!cgSnap6.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const upd6: Record<string, unknown> = { updatedAt: nowIso };
+      const upd6: Record<string, unknown> = { updatedAt: nowIso, availabilityUpdatedAt: nowIso };
       if (Array.isArray(availableDays) && availableDays.length > 0)
         upd6["availability"] = admin.firestore.FieldValue.arrayUnion(...(availableDays as string[]));
       if (Array.isArray(unavailableDays) && unavailableDays.length > 0)
         upd6["availability"] = admin.firestore.FieldValue.arrayRemove(...(unavailableDays as string[]));
       if (typeof preferredTimeOfDay === "string")
         upd6["preferredTimeOfDay"] = preferredTimeOfDay;
+      // Web parity: the caregiver calendar and swap/replacement matching read the
+      // weeklyAvailability map ({ monday: [{start,end}], ... }) — keep it in sync
+      // with the day list. Added days get a default day-window slot if absent.
+      const existingWeekly = (cgSnap6.data()?.weeklyAvailability ?? {}) as Record<string, Array<{ start: string; end: string }>>;
+      if (Array.isArray(availableDays)) {
+        for (const day of availableDays as string[]) {
+          const key = day.toLowerCase();
+          if (!existingWeekly[key]?.length) {
+            const slotStart = preferredTimeOfDay === "evening" ? "16:00" : preferredTimeOfDay === "afternoon" ? "12:00" : "08:00";
+            const slotEnd   = preferredTimeOfDay === "morning" ? "12:00" : preferredTimeOfDay === "afternoon" ? "17:00" : "20:00";
+            upd6[`weeklyAvailability.${key}`] = [{ start: slotStart, end: slotEnd }];
+          }
+        }
+      }
+      if (Array.isArray(unavailableDays)) {
+        for (const day of unavailableDays as string[]) {
+          upd6[`weeklyAvailability.${day.toLowerCase()}`] = admin.firestore.FieldValue.delete();
+        }
+      }
       await cgSnap6.ref.update(upd6);
       logAudit({ eventType: "caregiver_availability_updated", userId: caregiverId as string, data: { source: "mcp:update_caregiver_availability", availableDays, unavailableDays } }).catch(() => {});
 

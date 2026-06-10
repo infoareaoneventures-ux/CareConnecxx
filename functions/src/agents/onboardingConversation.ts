@@ -150,11 +150,20 @@ async function detectCorrection(text: string): Promise<{ field: string; value: s
 
 // ── Silent Firebase Auth account creation ────────────────────────────────────
 
-async function createFirebaseAuthAccount(phone: string, displayName: string): Promise<void> {
+// Creates (or finds) the Firebase Auth account for this phone and returns its
+// uid — the canonical doc ID for caregivers/{uid} and users/{uid} (Cara/web
+// data contract: Cara must write where the web reads, and the web is uid-keyed).
+async function createFirebaseAuthAccount(phone: string, displayName: string): Promise<string | null> {
   try {
-    await admin.auth().createUser({ phoneNumber: phone, displayName });
+    const user = await admin.auth().createUser({ phoneNumber: phone, displayName });
+    return user.uid;
   } catch (err: any) {
     if (err.code !== "auth/phone-number-already-exists") throw err;
+    try {
+      return (await admin.auth().getUserByPhoneNumber(phone)).uid;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -1797,10 +1806,11 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
     inviteUrl = resp.data?.invitation_url ?? inviteUrl;
 
     // Pre-create the caregivers doc so the Checkr webhook can find this caregiver
-    // by checkrCandidateId when the report comes back.
+    // by checkrCandidateId when the report comes back. Keyed by the Firebase Auth
+    // uid so Cara writes land where the web reads (uid-keyed caregivers/{uid}).
     const candidateId = (resp.data?.candidate_id ?? resp.data?.id) as string | undefined;
     if (candidateId && !session.caregiverId) {
-      const caregiverRef = await db.collection("caregivers").add({
+      const docData = {
         phone,
         status:    "pending_review",
         createdAt: new Date().toISOString(),
@@ -1811,8 +1821,16 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
           mvrIncluded:       mvrPaid,
         },
         ...(mvrPaid && { mvrPaid: true }),
-      });
-      await updateSession(phone, { caregiverId: caregiverRef.id });
+      };
+      const authUid = await createFirebaseAuthAccount(phone, (d.name ?? "") as string).catch(() => null);
+      let caregiverDocId: string;
+      if (authUid) {
+        await db.collection("caregivers").doc(authUid).set({ ...docData, uid: authUid }, { merge: true });
+        caregiverDocId = authUid;
+      } else {
+        caregiverDocId = (await db.collection("caregivers").add(docData)).id;
+      }
+      await updateSession(phone, { caregiverId: caregiverDocId });
     }
   } catch (err) {
     console.error("Checkr invitation error:", err);
@@ -2211,10 +2229,24 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           locationPool: [{ city, zipCode, primary: true, ...(hasCoords ? { lat, lng } : {}) }],
           updatedAt: new Date().toISOString(),
         }, { merge: true });
+
+        // senior_profiles/{uid} parity write — CarePlan, matching, and the
+        // family dashboard read this doc (web signup creates it; Cara must too).
+        await db.collection("senior_profiles").doc(uid).set({
+          userId:    uid,
+          name:      seniorName,
+          ...(seniorAge !== undefined ? { age: seniorAge } : {}),
+          needs:     careNeeds,
+          diagnoses: conditions,
+          zipCode:   zipCode || null,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true }).catch((err) => console.error("senior_profiles parity write error:", err));
       }
 
-      // Write intake to Firestore for admin records
-      await db.collection("clientIntakes").add({
+      // Write intake — uid-keyed so the web app (ClientIntakeFlowV2, matching
+      // hooks) reads the same doc Cara writes. Random-ID fallback only when no
+      // auth uid could be resolved.
+      const intakeData = {
         phone,
         userId:      uid ?? null,
         firstName:   d.firstName,
@@ -2231,7 +2263,12 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         hoursPerDay: d.hoursPerDay,
         status:      "pending",
         createdAt:   new Date().toISOString(),
-      });
+      };
+      if (uid) {
+        await db.collection("clientIntakes").doc(uid).set(intakeData, { merge: true });
+      } else {
+        await db.collection("clientIntakes").add(intakeData);
+      }
 
       // Notify admin of new client signup
       notifyAdminNewClientSignup({
@@ -2426,23 +2463,67 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       // queue — but never clobber a terminal status the Checkr webhook may have already set.
       const TERMINAL_VSTATUSES = ["approved", "rejected", "pre_adverse_action", "checkr_clear"];
 
+      // Resolve the Firebase Auth uid first — the canonical caregivers/{uid} doc ID
+      // (Cara/web data contract). Also enables the users/{uid} parity write below.
+      const authUid = await createFirebaseAuthAccount(phone, (d.name ?? "") as string).catch((err) => {
+        console.error("createFirebaseAuthAccount error:", err);
+        return null;
+      });
+
       let caregiverId: string;
       if (session.caregiverId) {
-        // Doc was pre-created during bg check — update it with full profile.
         const existingSnap = await db.collection("caregivers").doc(session.caregiverId).get();
         const currentVStatus = existingSnap.data()?.verificationStatus as string | undefined;
         const vStatusPatch = (!currentVStatus || !TERMINAL_VSTATUSES.includes(currentVStatus))
           ? { verificationStatus: "submitted" }
           : {};
-        await db.collection("caregivers").doc(session.caregiverId).update({ ...profileData, ...vStatusPatch });
-        caregiverId = session.caregiverId;
+        if (authUid && session.caregiverId !== authUid) {
+          // Legacy random-ID doc (pre-created before uid-keying landed) — migrate
+          // everything onto caregivers/{uid} and drop the orphan. The Checkr webhook
+          // looks caregivers up by backgroundCheckData.checkrCandidateId (a query,
+          // not a doc ID), so the lookup survives the move.
+          const oldData = existingSnap.exists ? existingSnap.data()! : {};
+          await db.collection("caregivers").doc(authUid).set(
+            { ...oldData, ...profileData, ...vStatusPatch, uid: authUid },
+            { merge: true }
+          );
+          if (existingSnap.exists) await existingSnap.ref.delete().catch(() => {});
+          caregiverId = authUid;
+        } else {
+          // Doc was pre-created during bg check — update it with full profile.
+          await db.collection("caregivers").doc(session.caregiverId).update({ ...profileData, ...vStatusPatch });
+          caregiverId = session.caregiverId;
+        }
+      } else if (authUid) {
+        await db.collection("caregivers").doc(authUid).set({
+          ...profileData,
+          uid: authUid,
+          verificationStatus: "submitted",
+          createdAt: new Date().toISOString(),
+        }, { merge: true });
+        caregiverId = authUid;
       } else {
+        // No auth uid resolvable — random-ID fallback (legacy identity model).
         const caregiverRef = await db.collection("caregivers").add({
           ...profileData,
           verificationStatus: "submitted",
           createdAt: new Date().toISOString(),
         });
         caregiverId = caregiverRef.id;
+      }
+
+      // users/{uid} parity write — the web dashboard, admin tools, and booking
+      // flows read users/{uid} (userType, name, phone) for caregivers too.
+      if (authUid) {
+        await db.collection("users").doc(authUid).set({
+          uid:        authUid,
+          userType:   "caregiver",
+          name:       (d.name ?? null) as string | null,
+          phone,
+          email:      (d.email ?? null) as string | null,
+          caregiverId,
+          updatedAt:  admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true }).catch((err) => console.error("caregiver users/{uid} parity write error:", err));
       }
 
       await updateSession(phone, {
@@ -2456,9 +2537,6 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       notifyWaitlistedFamilies((d.city as string) ?? "").catch((err) =>
         console.error("notifyWaitlistedFamilies error:", err)
       );
-
-      // Silently create Firebase Auth account so web dashboard login works later
-      await createFirebaseAuthAccount(phone, (d.name ?? "") as string);
 
       // Notify admin
       notifyAdminNewCaregiverSignup({

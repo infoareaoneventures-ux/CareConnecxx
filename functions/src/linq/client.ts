@@ -343,6 +343,14 @@ export async function sendMessage(
   // structured callers that already set their own preferred_service, theirs wins.
   const svc = preferredService ? { preferred_service: preferredService } : {};
 
+  // Mirror Cara's outbound message into the web chat inbox (threads/{id}/messages).
+  // Fire-and-forget — mirroring must never delay or block SMS delivery.
+  try {
+    const { mirrorToWebThread, extractMirrorText } = await import("./threadMirror");
+    const mirrorText = typeof textOrMessage === "string" ? textOrMessage : extractMirrorText(textOrMessage);
+    void mirrorToWebThread({ chatId, direction: "outbound", text: mirrorText });
+  } catch { /* non-critical */ }
+
   // Structured callers (already LinqMessage) send as-is. Plain strings may
   // contain URLs — split them into text + per-URL link messages so iMessage/
   // RCS clients render rich preview cards instead of bare URLs.

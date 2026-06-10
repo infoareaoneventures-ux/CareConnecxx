@@ -1720,6 +1720,13 @@ async function handleInbound(event: unknown): Promise<void> {
       update.service = service;
     }
     await db.collection("agent_sessions").doc(phone).update(update).catch(() => {});
+
+    // Mirror the user's inbound message into the web chat inbox so the Cara
+    // conversation shows up in Chat/ChatInbox. Best-effort, never blocks.
+    if (text && stored.userId) {
+      const { mirrorToWebThread } = await import("./threadMirror");
+      void mirrorToWebThread({ userId: stored.userId, direction: "inbound", text });
+    }
   }
 
   // ── New user — texted first (MO consent) ────────────────────────────────────

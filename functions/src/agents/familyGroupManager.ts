@@ -55,26 +55,29 @@ export const addFamilyGroupMember = functions.https.onCall(async (data, _context
     }
     const session = sessionSnap.data() ?? {};
 
-    // Dedupe: already a member → succeed silently
-    const existingSnap = await db.collection("family_group_members")
-      .where("primaryPhone", "==", primaryPhone)
-      .where("memberPhone",  "==", memberPhone)
-      .limit(1)
-      .get();
-
-    if (existingSnap.empty) {
+    // Dedupe: deterministic doc ID + atomic create() so concurrent requests
+    // converge on a single membership doc (no check-then-add race).
+    // Create the membership doc FIRST so a create failure leaves no partial
+    // state; the arrayUnion update is idempotent, so running it after an
+    // ALREADY_EXISTS "success" is safe.
+    try {
       // Mirror the webhook ADD_FAMILY_MEMBER data model
-      await sessionRef.update({
-        groupMembers: admin.firestore.FieldValue.arrayUnion(memberPhone),
-      });
-      await db.collection("family_group_members").add({
-        primaryPhone,
-        memberPhone,
-        memberName: "Family member",
-        userId:     session.userId ?? primaryPhone,
-        addedAt:    new Date().toISOString(),
-      });
+      await db.collection("family_group_members")
+        .doc(`${primaryPhone}_${memberPhone}`)
+        .create({
+          primaryPhone,
+          memberPhone,
+          memberName: "Family member",
+          userId:     session.userId ?? primaryPhone,
+          addedAt:    new Date().toISOString(),
+        });
+    } catch (err: any) {
+      // ALREADY_EXISTS (gRPC code 6) → already a member, succeed silently
+      if (err?.code !== 6 && err?.code !== "already-exists") throw err;
     }
+    await sessionRef.update({
+      groupMembers: admin.firestore.FieldValue.arrayUnion(memberPhone),
+    });
 
     // Best-effort: add the new member to the existing Linq group chat, if any
     try {
@@ -87,7 +90,9 @@ export const addFamilyGroupMember = functions.https.onCall(async (data, _context
         const phones: string[] = groupDoc.data().phones ?? [];
         const chatId: string   = groupDoc.data().chatId;
         if (!phones.includes(memberPhone)) {
-          await addParticipant(chatId, memberPhone).catch(() => {});
+          await addParticipant(chatId, memberPhone).catch((err) => {
+            console.warn(`addFamilyGroupMember: addParticipant failed for chat ${chatId}, member ${memberPhone}:`, err);
+          });
           await groupDoc.ref.update({
             phones: admin.firestore.FieldValue.arrayUnion(memberPhone),
           });

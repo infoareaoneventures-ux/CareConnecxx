@@ -50,12 +50,15 @@ interface CallableUsage {
   name: string;
 }
 
-// Two-arg form: httpsCallable(functions, 'name') / httpsCallable(getFunctions(), 'name')
+// Two-arg form: httpsCallable(functions, 'name') / httpsCallable(getFunctions(app), 'name')
 // — optionally with generic type params, which may span multiple lines.
+// Only single/double-quoted literals are matched (no backticks): template
+// literals may contain ${...} interpolation, which this static guard cannot
+// resolve — callable names must be plain string literals.
 const TWO_ARG_RE =
-  /httpsCallable\s*(?:<[\s\S]*?>)?\s*\(\s*[\w$.]+(?:\(\s*\))?\s*,\s*['"`]([^'"`]+)['"`]/g;
+  /httpsCallable\s*(?:<[\s\S]*?>)?\s*\(\s*[\w$.]+(?:\([^)]*\))?\s*,\s*['"]([^'"]+)['"]/g;
 // Single-arg form: functions.httpsCallable('name')
-const SINGLE_ARG_RE = /httpsCallable\s*(?:<[\s\S]*?>)?\s*\(\s*['"`]([^'"`]+)['"`]/g;
+const SINGLE_ARG_RE = /httpsCallable\s*(?:<[\s\S]*?>)?\s*\(\s*['"]([^'"]+)['"]/g;
 
 function findCallableUsages(): CallableUsage[] {
   const usages: CallableUsage[] = [];
@@ -89,6 +92,21 @@ describe('Firebase callable v1- prefix contract', () => {
     expect(byName('v1-createFamilyGroup')).toBe(true); // inline getFunctions() (components/FamilyManager.tsx)
     expect(byName('v1-triggerFamilyEmergency')).toBe(true); // inline getFunctions() (components/client/FamilyEmergency.tsx)
     expect(byName('v1-addFamilyGroupMember')).toBe(true); // components/pages/JoinFamilyPage.tsx
+  });
+
+  it('intentionally ignores template-literal names (cannot be statically verified)', () => {
+    const sample = [
+      'httpsCallable(functions, `v1-${name}`);',
+      'functions.httpsCallable(`v1-${name}`);',
+      "httpsCallable(getFunctions(app), 'v1-real');",
+    ].join('\n');
+    const matches: string[] = [];
+    for (const re of [TWO_ARG_RE, SINGLE_ARG_RE]) {
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(sample)) !== null) matches.push(m[1]);
+    }
+    expect(matches).toEqual(['v1-real']);
   });
 
   it('every httpsCallable string-literal function name starts with "v1-"', () => {

@@ -27,10 +27,11 @@ const PLATFORM_FEE_RATE = envRate('INVOICE_PLATFORM_FEE_RATE', 0.02);
 // Signed PDF URLs expire after 7 days; regenerate via generateInvoicePDF.
 const PDF_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Same admin gate pattern as shiftHours.ts
+// Mirrors firestore.rules isAdmin(): userType == 'admin' OR isAdmin == true
 async function requireAdmin(uid: string) {
     const userDoc = await db.collection('users').doc(uid).get();
-    if (!userDoc.exists || userDoc.data()?.userType !== 'admin') {
+    const userData = userDoc.exists ? userDoc.data() : undefined;
+    if (userData?.userType !== 'admin' && userData?.isAdmin !== true) {
         throw new functions.https.HttpsError('permission-denied', 'Admin access required');
     }
 }

@@ -36,3 +36,11 @@ export function isCaregiverBookable(
     caregiver.verificationStatus === 'approved'
   );
 }
+
+/**
+ * Convenience predicate for Array#filter over Firestore doc data:
+ *   snap.docs.map(d => d.data()).filter(bookableFilter)
+ */
+export const bookableFilter = (
+  caregiver: CaregiverEligibilityFields | undefined | null
+): boolean => isCaregiverBookable(caregiver);

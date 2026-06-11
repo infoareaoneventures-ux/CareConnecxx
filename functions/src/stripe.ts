@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
+import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from './utils/webhookLedger';
 
 // Initialize Stripe with secret key
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
@@ -136,16 +137,14 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
 
   // Handle the event
   try {
-    // Idempotency check: Ensure we don't process the same event twice
-    const eventRef = admin.firestore().collection('processed_stripe_events').doc(event.id);
-    const eventDoc = await eventRef.get();
-    if (eventDoc.exists) {
+    // Exactly-once guard: atomically claim the event id before any side effect.
+    // The claim is only stamped "processed" after the handler succeeds — a
+    // failed run releases it so Stripe's retry can reprocess.
+    if (await claimWebhookEvent(STRIPE_EVENTS_COLLECTION, event.id) === 'duplicate') {
       console.log(`Event ${event.id} already processed. Skipping.`);
       res.json({ received: true, status: 'already_processed' });
       return;
     }
-    // Mark as processing/processed
-    await eventRef.set({ processedAt: admin.firestore.FieldValue.serverTimestamp() });
 
     switch (event.type) {
       case 'checkout.session.completed': {
@@ -215,9 +214,12 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
         console.log(`Unhandled event type: ${event.type}`);
     }
 
+    await settleWebhookEvent(STRIPE_EVENTS_COLLECTION, event.id, 'processed');
     res.json({ received: true });
   } catch (error) {
     console.error('Error handling webhook event:', error);
+    // Release the claim so Stripe's retry of this 500 actually reprocesses.
+    await settleWebhookEvent(STRIPE_EVENTS_COLLECTION, event.id, 'failed');
     res.status(500).send('Internal server error');
   }
 });

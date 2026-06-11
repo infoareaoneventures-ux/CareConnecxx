@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import * as crypto from "crypto";
+import { claimWebhookEvent, settleWebhookEvent, CHECKR_EVENTS_COLLECTION } from "./utils/webhookLedger";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -234,6 +235,19 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
   const type: string = typeof event.type === "string" ? event.type : "";
   const payload: Record<string, any> = event?.data?.object || {};
 
+  // Exactly-once guard — a replayed report.completed would otherwise re-fire
+  // family notifications, re-advance Cara onboarding, and duplicate admin
+  // alerts. Events without an id (unexpected shape) process without dedupe.
+  const eventId: string | null = typeof event.id === "string" && event.id ? event.id : null;
+  if (eventId) {
+    if (await claimWebhookEvent(CHECKR_EVENTS_COLLECTION, eventId) === "duplicate") {
+      res.status(200).json({ received: true, status: "already_processed" });
+      return;
+    }
+  }
+  const settle = (outcome: "processed" | "failed") =>
+    eventId ? settleWebhookEvent(CHECKR_EVENTS_COLLECTION, eventId, outcome) : Promise.resolve();
+
   try {
     // candidate.* events carry the candidate in payload.id; all others reference it via candidate_id
     const lookupId: string | undefined = type.startsWith("candidate")
@@ -241,12 +255,14 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
       : payload.candidate_id;
 
     if (!lookupId) {
+      await settle("processed");
       res.status(200).json({ received: true, ignored: "no candidate reference" });
       return;
     }
 
     const caregiverUid = await findCaregiverUidByCandidateId(lookupId);
     if (!caregiverUid) {
+      await settle("processed");
       res.status(200).json({ received: true, ignored: "caregiver not found" });
       return;
     }
@@ -283,6 +299,7 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
       type === "candidate.post_adverse_action"
     ) {
       // Silently acknowledge — report-level events handle the meaningful state changes
+      await settle("processed");
       res.status(200).json({ received: true, ignored: type });
       return;
 
@@ -519,6 +536,7 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
       };
 
     } else {
+      await settle("processed");
       res.status(200).json({ received: true, ignored: type });
       return;
     }
@@ -530,11 +548,15 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
       await createCaregiverNotification(caregiverUid, notificationPayload.title, notificationPayload.body);
     }
 
+    await settle("processed");
     res.status(200).json({ received: true });
   } catch (error: any) {
     if (process.env.NODE_ENV !== "production") {
       console.error("checkrWebhook handler error:", error?.message);
     }
+    // Release the claim — we ack 200 (no Checkr retry), but a freed id lets a
+    // manual dashboard "resend" reprocess instead of being eaten as a duplicate.
+    await settle("failed");
     // Acknowledge to prevent Checkr retry storms on handler bugs; we log for our own diagnostics.
     res.status(200).json({ received: true, error: "handled" });
   }

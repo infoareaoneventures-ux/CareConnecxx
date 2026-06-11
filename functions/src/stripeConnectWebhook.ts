@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from "./utils/webhookLedger";
 const Stripe = require("stripe");
 
 if (!admin.apps.length) {
@@ -37,6 +38,15 @@ export const stripeConnectWebhook = functions
         }
 
         try {
+            // Exactly-once guard — a duplicate account.updated would otherwise
+            // re-fire advanceOnboardingStep and double-advance Cara's conversation.
+            // (Stripe event ids are unique across webhook endpoints, so the
+            // ledger collection is shared with the subscription webhook.)
+            if (await claimWebhookEvent(STRIPE_EVENTS_COLLECTION, event.id) === "duplicate") {
+                res.json({ received: true, status: "already_processed" });
+                return;
+            }
+
             if (event.type === "account.updated") {
                 const account = event.data.object;
                 const accountId: string = account.id;
@@ -80,9 +90,12 @@ export const stripeConnectWebhook = functions
                 console.log(`Unhandled Connect event: ${event.type}`);
             }
 
+            await settleWebhookEvent(STRIPE_EVENTS_COLLECTION, event.id, "processed");
             res.json({ received: true });
         } catch (error) {
             console.error("Error handling Connect webhook event:", error);
+            // Release the claim so Stripe's retry of this 500 reprocesses.
+            await settleWebhookEvent(STRIPE_EVENTS_COLLECTION, event.id, "failed");
             res.status(500).send("Internal server error");
         }
     });

@@ -942,6 +942,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Webhook idempotency ledgers (utils/webhookLedger.ts) — server-only.
+    match /processed_stripe_events/{eventId} {
+      allow read, write: if false;
+    }
+    match /processed_checkr_events/{eventId} {
+      allow read, write: if false;
+    }
+
     // Turn checkpoints — server-only resume state for in-flight qaAgent turns.
     // Written/read exclusively by Cloud Functions via the Admin SDK (which
     // bypasses rules). No client should ever touch these, so deny outright.

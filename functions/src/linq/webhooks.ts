@@ -1607,7 +1607,9 @@ async function handleRecurringResume(phone: string, chatId: string, session: Age
 
 // ── Main inbound handler ──────────────────────────────────────────────────────
 
-async function handleInbound(event: unknown): Promise<void> {
+// Exported for the routing characterization tests (__tests__/handleInbound.routing.test.ts),
+// which pin the guard ORDER below — the order IS the product behavior.
+export async function handleInbound(event: unknown): Promise<void> {
   const ev      = event as any;
   const phone   = ev.data?.sender_handle?.handle as string | undefined;
   const chatId  = ev.data?.chat?.id as string | undefined;

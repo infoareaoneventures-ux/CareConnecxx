@@ -82,9 +82,9 @@ vi.mock("firebase-admin", () => ({
 }));
 
 // ── Linq client + messaging ──────────────────────────────────────────────────
-const sendMessage = vi.fn(async () => ({ message_id: "m1" }));
+const sendMessage = vi.fn(async (..._a: any[]) => ({ message_id: "m1" }));
 vi.mock("../client", () => ({
-  sendMessage:      (...a: unknown[]) => sendMessage(...a),
+  sendMessage:      (...a: any[]) => sendMessage(...a),
   startTyping:      vi.fn(async () => {}),
   stopTyping:       vi.fn(async () => {}),
   shareContactCard: vi.fn(async () => {}),
@@ -97,60 +97,62 @@ vi.mock("../threadMirror", () => ({
 }));
 
 // ── Routing collaborators (the spine asserts on these) ──────────────────────
-const classifyIntentDetailed = vi.fn(async () => ({ intent: "QUESTION", degraded: false }));
+const classifyIntentDetailed = vi.fn(async (..._a: any[]) => ({ intent: "QUESTION", degraded: false }));
 vi.mock("../../agents/intentClassifier", () => ({
-  classifyIntentDetailed: (...a: unknown[]) => classifyIntentDetailed(...a),
+  classifyIntentDetailed: (...a: any[]) => classifyIntentDetailed(...a),
   classifyIntent: vi.fn(async () => "QUESTION"),
 }));
 
-const runQaAgent          = vi.fn(async () => "qa reply");
-const runQuickReply       = vi.fn(async () => "quick reply");
-const isTrivialQuickReply = vi.fn(() => false);
+const runQaAgent          = vi.fn(async (..._a: any[]) => "qa reply");
+const runQuickReply       = vi.fn(async (..._a: any[]) => "quick reply");
+const isTrivialQuickReply = vi.fn((..._a: any[]) => false);
 vi.mock("../../agents/qaAgent", () => ({
-  runQaAgent:          (...a: unknown[]) => runQaAgent(...a),
-  runQuickReply:       (...a: unknown[]) => runQuickReply(...a),
-  isTrivialQuickReply: (...a: unknown[]) => isTrivialQuickReply(...a),
+  runQaAgent:          (...a: any[]) => runQaAgent(...a),
+  runQuickReply:       (...a: any[]) => runQuickReply(...a),
+  isTrivialQuickReply: (...a: any[]) => isTrivialQuickReply(...a),
 }));
 
-const getAllPending          = vi.fn(async (): Promise<any[]> => []);
-const handlePendingApprovals = vi.fn(async () => ({ outcome: "fallthrough" as const }));
+const getAllPending          = vi.fn(async (..._a: any[]): Promise<any[]> => []);
+const handlePendingApprovals = vi.fn(
+  async (..._a: any[]): Promise<{ outcome: "handled" | "fallthrough" }> => ({ outcome: "fallthrough" })
+);
 vi.mock("../../agents/pendingActions", () => ({
-  getAllPending: (...a: unknown[]) => getAllPending(...a),
+  getAllPending: (...a: any[]) => getAllPending(...a),
 }));
 vi.mock("../../agents/approvalHandler", () => ({
-  handlePendingApprovals: (...a: unknown[]) => handlePendingApprovals(...a),
+  handlePendingApprovals: (...a: any[]) => handlePendingApprovals(...a),
 }));
 
-const handleShiftOfferReply = vi.fn(async () => "fallthrough" as const);
+const handleShiftOfferReply = vi.fn(async (..._a: any[]): Promise<"handled" | "fallthrough"> => "fallthrough");
 vi.mock("../../agents/shiftOffer", () => ({
-  handleShiftOfferReply: (...a: unknown[]) => handleShiftOfferReply(...a),
+  handleShiftOfferReply: (...a: any[]) => handleShiftOfferReply(...a),
 }));
 
-const optOutPhoneNumber = vi.fn(async () => {});
-const optInPhoneNumber  = vi.fn(async () => {});
+const optOutPhoneNumber = vi.fn(async (..._a: any[]) => {});
+const optInPhoneNumber  = vi.fn(async (..._a: any[]) => {});
 vi.mock("../../sms", () => ({
-  optOutPhoneNumber:   (...a: unknown[]) => optOutPhoneNumber(...a),
-  optInPhoneNumber:    (...a: unknown[]) => optInPhoneNumber(...a),
+  optOutPhoneNumber:   (...a: any[]) => optOutPhoneNumber(...a),
+  optInPhoneNumber:    (...a: any[]) => optInPhoneNumber(...a),
   setupCaraContactCard: vi.fn(async () => {}),
 }));
 
-const handleOnboardingStep   = vi.fn(async () => {});
-const sendBgCheckRenewalLink = vi.fn(async () => {});
+const handleOnboardingStep   = vi.fn(async (..._a: any[]) => {});
+const sendBgCheckRenewalLink = vi.fn(async (..._a: any[]) => {});
 vi.mock("../../agents/onboardingConversation", () => ({
-  handleOnboardingStep:   (...a: unknown[]) => handleOnboardingStep(...a),
-  sendBgCheckRenewalLink: (...a: unknown[]) => sendBgCheckRenewalLink(...a),
+  handleOnboardingStep:   (...a: any[]) => handleOnboardingStep(...a),
+  sendBgCheckRenewalLink: (...a: any[]) => sendBgCheckRenewalLink(...a),
 }));
 
-const detectCrisis      = vi.fn((_t: string): string | null => null);
-const isLikelyRealCrisis = vi.fn(async () => true);
+const detectCrisis      = vi.fn((..._a: any[]): string | null => null);
+const isLikelyRealCrisis = vi.fn(async (..._a: any[]) => true);
 vi.mock("../../safety/crisisDetector", () => ({
-  detectCrisis:       (...a: unknown[]) => detectCrisis(...(a as [string])),
-  isLikelyRealCrisis: (...a: unknown[]) => isLikelyRealCrisis(...a),
+  detectCrisis:       (...a: any[]) => detectCrisis(...a),
+  isLikelyRealCrisis: (...a: any[]) => isLikelyRealCrisis(...a),
 }));
 
-const quickComplete = vi.fn(async () => "NONE");
+const quickComplete = vi.fn(async (..._a: any[]) => "NONE");
 vi.mock("../../utils/openaiClient", () => ({
-  quickComplete: (...a: unknown[]) => quickComplete(...a),
+  quickComplete: (...a: any[]) => quickComplete(...a),
 }));
 
 // ── Inert collaborators (must load, never fire in these scenarios) ──────────
@@ -317,7 +319,7 @@ describe("pre-checks", () => {
   });
 });
 
-describe("opt-out protocol (order: health gate → START re-opt-in → STOP)", () => {
+describe("opt-out protocol (order: health gate -> START re-opt-in -> STOP)", () => {
   it("Linq OPTED_OUT health marks the session opted out and stays silent", async () => {
     seedSession();
     await handleInbound(makeEvent("hello", { health: "OPTED_OUT" }));

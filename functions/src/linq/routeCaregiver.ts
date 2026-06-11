@@ -1,0 +1,1633 @@
+import * as admin from "firebase-admin";
+import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
+import { quickComplete } from "../utils/openaiClient";
+import { generateCaraMessage } from "../utils/caraMessage";
+import { sendIfNotDND } from "../utils/dndGuard";
+import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { handleCaregiverSwapRequest, handleSwapAcceptance } from "../agents/caregiverSwapHandler";
+import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
+import { handleCaregiverProfileUpdate } from "../agents/caregiverProfileHandler";
+import { handleJobResponse, handleAvailabilityConfirmation } from "../triggers/jobNotifications";
+import { handleCaregiverAvailabilityReply } from "../agents/interviewAgent";
+
+const db = admin.firestore();
+
+export interface CaregiverRouteContext {
+  phone: string;
+  chatId: string;
+  text: string;
+  norm: string;
+  session: AgentSession;
+}
+
+// ── Caregiver keyword handlers ────────────────────────────────────────────────
+
+async function handleArrived(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  // Find today's appointment for this caregiver
+  const today  = new Date().toISOString().slice(0, 10);
+  const caregiverId = session.caregiverId;
+  if (!caregiverId) return;
+
+  const snap = await db.collection("appointments")
+    .where("caregiverId", "==", caregiverId)
+    .where("date",        "==", today)
+    .where("status",      "in", ["confirmed", "pending_caregiver_confirmation"])
+    .limit(1).get();
+
+  if (snap.empty) {
+    const noVisitMsg = await generateCaraMessage({
+      audience: "caregiver",
+      context: "Caregiver texted ARRIVED but no active appointment was found for them today. Let them know and invite them to flag if something looks wrong.",
+      fallback: "I don't see a scheduled visit for you today. Let me know if something looks wrong.",
+    });
+    await sendMessage(chatId, noVisitMsg);
+    return;
+  }
+
+  const appt = snap.docs[0];
+  const apptData = appt.data();
+  const arrivedAt = new Date().toISOString();
+  await appt.ref.update({ arrivedAt, status: "in-progress" });
+
+  // Track lateness if caregiver arrived >= 15 min after scheduled start
+  const scheduledStart = apptData.startTime ?? apptData.time ?? "";
+  if (scheduledStart && session.caregiverId) {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const schedMs  = new Date(`${todayStr}T${scheduledStart.slice(0, 5)}:00`).getTime();
+    const minutesLate = Math.round((Date.now() - schedMs) / 60000);
+    if (minutesLate >= 15) {
+      const cgSnap  = await db.collection("caregivers").doc(session.caregiverId).get();
+      const cgName  = cgSnap.data()?.name ?? "Unknown";
+      const { recordLatenessEvent, checkLatenessPattern } = await import("../agents/latenessTracker");
+      recordLatenessEvent({
+        caregiverId:   session.caregiverId,
+        caregiverName: cgName,
+        appointmentId: appt.id,
+        clientId:      apptData.clientId ?? "",
+        date:          todayStr,
+        scheduledTime: scheduledStart.slice(0, 5),
+        minutesLate,
+        selfReported:  false,
+      }).catch(() => {});
+      checkLatenessPattern(session.caregiverId, cgName).catch(() => {});
+    }
+  }
+
+  // Notify family (DND-aware: high urgency — queued but priority delivery)
+  const clientPhone = await getClientPhoneForAppt(apptData);
+  if (clientPhone) {
+    const cgName2 = session.caregiverId
+      ? (await db.collection("caregivers").doc(session.caregiverId).get()).data()?.name ?? "Your caregiver"
+      : "Your caregiver";
+    await sendIfNotDND(clientPhone, {
+      content:     `${cgName2} just arrived for ${apptData.clientName ?? "the visit"}.`,
+      urgency:     "immediate",
+      sourceAgent: "arrived_notification",
+      canDrop:     false,
+    }, "high");
+  }
+
+  const arrivedAckMsg = await generateCaraMessage({
+    audience: "caregiver",
+    context: `Caregiver just arrived at the client's home${apptData.clientName ? ` for ${apptData.clientName}` : ""}. The family has been notified. Wish them a good visit.`,
+    fallback: "Got it — I've let the family know you're there. Have a good visit.",
+  });
+  await sendMessage(chatId, arrivedAckMsg);
+
+  // Send caregiver a care plan task overview for the shift (fire-and-forget)
+  sendArrivalCarePlanBriefing(chatId, apptData).catch(() => {});
+}
+
+// ── Day-before shift confirmation handler ────────────────────────────────────
+
+async function handleShiftConfirmation(
+  phone:   string,
+  chatId:  string,
+  text:    string,
+  session: AgentSession
+): Promise<void> {
+  const info = (session as any).pendingShiftConfirmation as {
+    appointmentId:   string;
+    appointmentDate: string;
+    clientId:        string;
+    seniorName:      string;
+    startTime:       string;
+    caregiverName:   string;
+  };
+
+
+  // Parse YES / NO / question
+  const parseRaw = await quickComplete(
+    "The caregiver is responding to a shift confirmation request for tomorrow. " +
+      "Reply CONFIRM if they said yes, they'll be there. " +
+      "Reply CANCEL if they said no, they can't make it. " +
+      "Reply QUESTION if it is a question or unclear. " +
+      "Reply with exactly one word.",
+    text,
+    { maxTokens: 10 },
+  ).catch(() => "");
+
+  const decision = parseRaw.trim().toUpperCase();
+
+  // Always clear the state flag
+  await db.collection("agent_sessions").doc(phone).update({
+    pendingShiftConfirmation: admin.firestore.FieldValue.delete(),
+    stateExpiresAt:           admin.firestore.FieldValue.delete(),
+  });
+
+  const cgFirstName  = info.caregiverName.split(" ")[0] || "Your caregiver";
+  const displayDate  = (info as any).appointmentDisplay || info.appointmentDate;
+
+  if (decision === "CONFIRM") {
+    await db.collection("appointments").doc(info.appointmentId).update({
+      caregiverDayBeforeConfirmed:   true,
+      caregiverDayBeforeConfirmedAt: new Date().toISOString(),
+    });
+
+    const confirmMsg = await generateCaraMessage({
+      audience: "caregiver",
+      context:
+        `${cgFirstName} just confirmed they'll be at ${info.seniorName}'s shift ` +
+        `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. ` +
+        `Write a warm, brief thank-you confirming you've got them set. Sound genuinely grateful.`,
+      fallback:
+        `You're all set — thanks for confirming, ${cgFirstName}! See you at ${info.seniorName}'s on ${displayDate}.`,
+    });
+    await sendMessage(chatId, confirmMsg);
+
+    // Notify family
+    const clientPhone = await getClientPhoneByClientId(info.clientId);
+    if (clientPhone) {
+      const familyMsg = await generateCaraMessage({
+        audience: "family",
+        context:
+          `${cgFirstName} just confirmed they'll be at ${info.seniorName}'s care visit ` +
+          `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. ` +
+          `Write a warm, reassuring message letting the family know everything's confirmed. ` +
+          `Sound like a coordinator who genuinely cares about their peace of mind.`,
+        fallback:
+          `Great news! ${cgFirstName} has confirmed they'll be there for ${info.seniorName}'s visit ` +
+          `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. You're all set — no action needed!`,
+      });
+      await sendViaInteractionAgent(clientPhone, {
+        content:     familyMsg,
+        urgency:     "standard",
+        sourceAgent: "shift_confirm_family_update",
+        canDrop:     true,
+      });
+    }
+
+  } else if (decision === "CANCEL") {
+    await db.collection("appointments").doc(info.appointmentId).update({
+      caregiverDayBeforeCancelled:   true,
+      caregiverDayBeforeCancelledAt: new Date().toISOString(),
+    });
+
+    const cancelMsg = await generateCaraMessage({
+      audience: "caregiver",
+      context:
+        `${cgFirstName} just let you know they can't make ${info.seniorName}'s shift on ${displayDate}. ` +
+        `Write a brief, understanding response — acknowledge the situation without judgment, ` +
+        `let them know the family will be notified and you'll take care of it from here. ` +
+        `Be warm, not cold.`,
+      fallback:
+        `Understood, ${cgFirstName} — I'll let the family know and start working on coverage for ${displayDate}. ` +
+        `I appreciate you letting me know ahead of time.`,
+    });
+    await sendMessage(chatId, cancelMsg);
+
+    // Alert family with urgency
+    const clientPhone = await getClientPhoneByClientId(info.clientId);
+    if (clientPhone) {
+      const alertMsg = await generateCaraMessage({
+        audience: "family",
+        context:
+          `Unfortunately ${cgFirstName} just let us know they can't make ${info.seniorName}'s visit ` +
+          `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. ` +
+          `Write an urgent but calm message to the family alerting them. ` +
+          `Let them know we're already working on finding a replacement. ` +
+          `Tell them to reply HELP if they need immediate support. ` +
+          `Be direct but not alarming — this is being handled.`,
+        fallback:
+          `Heads up — ${cgFirstName} won't be able to make ${info.seniorName}'s visit on ${displayDate}. ` +
+          `I'm already working on finding coverage. Reply HELP if you need anything in the meantime.`,
+      });
+      await sendViaInteractionAgent(clientPhone, {
+        content:     alertMsg,
+        urgency:     "immediate",
+        sourceAgent: "shift_confirm_family_update",
+        canDrop:     false,
+      });
+    }
+
+    // Trigger replacement agent (fire-and-forget). runEmergencyReplacement requires
+    // { appointmentId, clientId, clientPhone, appt } — we must load the appointment to
+    // build `appt` (caregiverId/time/date) and pass the family's phone. A failure here
+    // is safety-critical (the family was just told coverage is being found), so we alert
+    // admins on any error instead of silently swallowing it.
+    if (clientPhone) {
+      (async () => {
+        try {
+          const apptSnap = await db.collection("appointments").doc(info.appointmentId).get();
+          const appt = {
+            ...(apptSnap.data() || {}),
+            caregiverName: info.caregiverName,
+            date:          info.appointmentDate,
+            time:          info.startTime,
+          };
+          const { runEmergencyReplacement } = await import("../agents/replacementAgent");
+          if (typeof runEmergencyReplacement === "function") {
+            await runEmergencyReplacement({
+              appointmentId: info.appointmentId,
+              clientId:      info.clientId,
+              clientPhone,
+              appt,
+            });
+          }
+        } catch (err) {
+          console.error("[handleShiftConfirmation] emergency replacement failed:", err);
+          await db.collection("admin_alerts").add({
+            type:          "emergency_replacement_failed",
+            severity:      "critical",
+            appointmentId: info.appointmentId,
+            clientId:      info.clientId,
+            clientPhone,
+            seniorName:    info.seniorName,
+            error:         String((err as any)?.message ?? err),
+            createdAt:     new Date().toISOString(),
+          }).catch(() => {});
+        }
+      })();
+    } else {
+      console.error("[handleShiftConfirmation] no clientPhone for appointment", info.appointmentId, "— cannot run replacement");
+      await db.collection("admin_alerts").add({
+        type:          "emergency_replacement_no_client_phone",
+        severity:      "critical",
+        appointmentId: info.appointmentId,
+        clientId:      info.clientId,
+        seniorName:    info.seniorName,
+        createdAt:     new Date().toISOString(),
+      }).catch(() => {});
+    }
+
+  } else {
+    // QUESTION or unclear — answer the question, then re-ask the confirmation.
+    // Generate the answer inline so we control message ordering (otherwise the
+    // re-ask can land before the interaction agent's reply).
+    let answer = "";
+    try {
+      answer = await quickComplete(
+        "You are Cara, an AI care assistant. A caregiver was asked to confirm they'll be at " +
+        `${info.seniorName}'s shift on ${info.appointmentDate} (start ${info.startTime}). ` +
+        "Instead they sent the message below — likely a question about the shift, address, client, or logistics. " +
+        "Answer briefly (1–2 sentences). Do NOT ask them to confirm — that prompt comes next.",
+        text,
+        { maxTokens: 180 },
+      );
+    } catch {
+      answer = "Let me get back to you on that. In the meantime —";
+    }
+    await sendMessage(chatId, answer);
+
+    // Re-set the flag and re-ask (sequentially so the question is acknowledged first)
+    await db.collection("agent_sessions").doc(phone).update({
+      pendingShiftConfirmation: info,
+      stateExpiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+    });
+    await sendMessage(chatId,
+      `So — can you confirm you'll be at ${info.seniorName}'s shift on ${info.appointmentDate}? Reply YES or NO.`
+    );
+  }
+}
+
+// ── Care plan briefing sent to caregiver at arrival ───────────────────────────
+
+async function sendArrivalCarePlanBriefing(
+  chatId:   string,
+  apptData: admin.firestore.DocumentData
+): Promise<void> {
+  const clientId = (apptData.clientId ?? "") as string;
+  const seniorId = (apptData.seniorId ?? clientId) as string;
+  const seniorName = (apptData.clientName ?? "your client") as string;
+
+  // Load care plan (same dual-path as shiftTaskNudges)
+  let dailyRoutine: Array<{ id: string; time: string; description: string; category: string }> = [];
+  let medications:  Array<{ name: string; dosage: string; frequency: string }> = [];
+
+  for (const [collection, docId] of [
+    ["senior_profiles", seniorId],
+    ["senior_profiles", clientId],
+  ] as [string, string][]) {
+    if (!docId) continue;
+    const snap = await db.collection(collection).doc(docId)
+      .collection("care_plans").doc("default").get().catch(() => null);
+    if (snap?.exists) {
+      const d = snap.data()!;
+      dailyRoutine = (d.dailyRoutine ?? []) as typeof dailyRoutine;
+      medications  = (d.medications  ?? []) as typeof medications;
+      break;
+    }
+  }
+  if (!dailyRoutine.length && !medications.length) {
+    // Try legacy flat collection
+    const snap = await db.collection("care_plans").doc(clientId).get().catch(() => null);
+    if (snap?.exists) {
+      const d = snap.data()!;
+      dailyRoutine = (d.dailyRoutine ?? []) as typeof dailyRoutine;
+      medications  = (d.medications  ?? []) as typeof medications;
+    }
+  }
+
+  // Day-of tasks added by family (via pre-shift check-in)
+  const dayOfVisitTasks = (apptData.dayOfVisitTasks ?? []) as string[];
+
+  if (!dailyRoutine.length && !medications.length && !dayOfVisitTasks.length) return;
+
+  // Sort tasks by time (unparseable times go to end)
+  const sorted = [...dailyRoutine].sort((a, b) => {
+    const toMin = (t: string): number => {
+      const m = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (m) {
+        let h = parseInt(m[1], 10);
+        if (m[3].toUpperCase() === "AM" && h === 12) h = 0;
+        if (m[3].toUpperCase() === "PM" && h !== 12) h += 12;
+        return h * 60 + parseInt(m[2], 10);
+      }
+      const h24 = t.match(/^(\d{1,2}):(\d{2})$/);
+      return h24 ? parseInt(h24[1], 10) * 60 + parseInt(h24[2], 10) : 9999;
+    };
+    return toMin(a.time) - toMin(b.time);
+  });
+
+  const lines = sorted.map(t => `• ${t.time} — ${t.description}`);
+
+  if (medications.length > 0) {
+    const medLine = medications
+      .slice(0, 3)
+      .map(m => `${m.name} ${m.dosage} (${m.frequency})`)
+      .join(", ");
+    lines.push(`\nMedications: ${medLine}`);
+  }
+
+  // Day-of tasks added by family today (highest priority — show first)
+  let dayOfSection = "";
+  if (dayOfVisitTasks.length > 0) {
+    const dayOfLines = dayOfVisitTasks.map(t => `• ${t}`).join("\n");
+    dayOfSection = `Added for today's visit by the family:\n${dayOfLines}\n\n`;
+  }
+
+  const planSection = lines.length > 0
+    ? `Regular care plan:\n${lines.join("\n")}`
+    : "";
+
+  const cgFirstName = ((apptData.caregiverName ?? "") as string).split(" ")[0] || "there";
+  const opening = await generateCaraMessage({
+    audience: "caregiver",
+    context:
+      `Write one warm, brief opening line (1 sentence) welcoming ${cgFirstName} to ${seniorName}'s visit. ` +
+      `${dayOfVisitTasks.length > 0 ? "Mention there are some family additions to the plan today." : "Keep it encouraging."}`,
+    fallback: `You're checked in — here's the plan for ${seniorName}'s visit today!`,
+    maxTokens: 60,
+  });
+
+  const body =
+    `${opening}\n\n` +
+    dayOfSection +
+    planSection +
+    `\n\nReply DONE when the visit is complete, or ISSUE if anything comes up.`;
+
+  await sendMessage(chatId, body);
+}
+
+async function handleDone(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
+  const caregiverId = session.caregiverId;
+  if (!caregiverId) return;
+
+  // If DONE arrived with extra text (e.g. "DONE but I need to ask you something"),
+  // surface a question check. The pure-keyword path passes text === "DONE" and
+  // we skip the LLM hop.
+  if (text && text.trim().toUpperCase() !== "DONE" && text.trim().length > 8) {
+    const qRaw = await quickComplete(
+      "A caregiver just signaled they're done with a visit. " +
+        "Reply YES if their message also contains a question they need answered. " +
+        "Reply NO if it's only a sign-off. Only reply YES or NO.",
+      text,
+      { maxTokens: 5 },
+    ).catch(() => "NO");
+    if (qRaw.trim().toUpperCase().startsWith("Y")) {
+      let answer = "";
+      try {
+        answer = await quickComplete(
+          "You are Cara. A caregiver said they're done with a visit and also asked a question. " +
+            "Answer it briefly (1-2 sentences). Do NOT ask them for visit notes yet — that prompt comes next.",
+          text,
+          { maxTokens: 180 },
+        );
+      } catch { answer = "Let me get back to you on that. In the meantime —"; }
+      await sendMessage(chatId, answer);
+    }
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const snap  = await db.collection("appointments")
+    .where("caregiverId", "==", caregiverId)
+    .where("date",        "==", today)
+    .where("status",      "==", "in-progress")
+    .limit(1).get();
+
+  const apptData = snap.empty ? null : snap.docs[0].data();
+
+  if (!snap.empty) {
+    await snap.docs[0].ref.update({ completedAt: new Date().toISOString() });
+  }
+
+  // Store that we're awaiting care notes
+  await db.collection("agent_sessions").doc(phone).update({
+    awaitingCareNotes: true,
+    careNotesApptId:   snap.empty ? "" : snap.docs[0].id,
+    stateExpiresAt:    new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+  });
+
+  const seniorName  = (apptData?.clientName ?? apptData?.seniorName ?? "your client") as string;
+  const cgFirstName = session.caregiverId
+    ? ((await db.collection("caregivers").doc(session.caregiverId).get().catch(() => null))
+        ?.data()?.name ?? "").split(" ")[0]
+    : "";
+
+  const doneMessage = await generateCaraMessage({
+    audience: "caregiver",
+    context:
+      `${cgFirstName ? cgFirstName + " just" : "The caregiver just"} finished their shift with ${seniorName}. ` +
+      `Write a warm, celebratory wrap-up message asking them to share how the visit went. ` +
+      `Ask them to mention: what they did with ${seniorName}, how ${seniorName} was feeling/acting, ` +
+      `notes on any tasks completed, and anything ${seniorName} asked for that wasn't in the regular plan. ` +
+      `Tell them you'll put together a nice update for the family. ` +
+      `Sound genuinely appreciative of their work — like a coordinator who cares.`,
+    fallback:
+      `Amazing work today${cgFirstName ? ", " + cgFirstName : ""}! 🙌 ` +
+      `Before I send the family an update — tell me how it went with ${seniorName}. ` +
+      `What did you two get up to, how was ${seniorName} feeling, and anything special to note? ` +
+      `I'll take it from there.`,
+    maxTokens: 200,
+  });
+
+  await sendMessage(chatId, doneMessage);
+}
+
+async function handleRunningLate(phone: string, chatId: string): Promise<void> {
+  await db.collection("agent_sessions").doc(phone).update({
+    awaitingLateMinutes: true,
+    stateExpiresAt:      new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+  });
+  const howLateMsg = await generateCaraMessage({
+    audience: "caregiver",
+    context: "Caregiver said they're running late. Cara is asking how late they expect to be.",
+    fallback: "How late do you think you'll be?",
+    maxTokens: 60,
+  });
+  await sendMessage(chatId, howLateMsg);
+}
+
+async function handleIssue(phone: string, chatId: string): Promise<void> {
+  await db.collection("agent_sessions").doc(phone).update({
+    awaitingIssueDescription: true,
+    stateExpiresAt:           new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+  });
+  const issuePromptMsg = await generateCaraMessage({
+    audience: "caregiver",
+    context: "Caregiver reported an issue during a visit. Cara is asking them to describe what's happening.",
+    fallback: "I'm sorry to hear that. Can you describe what's happening?",
+    maxTokens: 80,
+  });
+  await sendMessage(chatId, issuePromptMsg);
+}
+
+async function getClientPhoneForAppt(appt: admin.firestore.DocumentData): Promise<string | null> {
+  const clientId = appt.clientId as string;
+  if (!clientId) return null;
+  const snap = await db.collection("agent_sessions")
+    .where("userId", "==", clientId).limit(1).get();
+  if (snap.empty) return null;
+  return (snap.docs[0].data() as any).phone ?? snap.docs[0].id;
+}
+
+async function getClientPhoneByClientId(clientId: string): Promise<string | null> {
+  if (!clientId) return null;
+  const snap = await db.collection("agent_sessions")
+    .where("userId", "==", clientId).limit(1).get();
+  if (snap.empty) return null;
+  return (snap.docs[0].data() as any).phone ?? snap.docs[0].id;
+}
+
+// ── Mid-shift family micro-update (task completed) ────────────────────────────
+
+async function sendFamilyTaskUpdate(params: {
+  taskDescription: string;
+  taskCategory:    string;
+  notes:           string;
+  clientId:        string;
+  seniorId:        string;
+  clientPhone:     string;
+  caregiverId:     string;
+}): Promise<void> {
+  const { taskDescription, taskCategory, notes, clientId, seniorId, clientPhone, caregiverId } = params;
+
+  // Resolve names
+  let seniorName = "";
+  if (seniorId) {
+    const snap = await db.collection("senior_profiles").doc(seniorId).get().catch(() => null);
+    seniorName = (snap?.data()?.name ?? "") as string;
+  }
+  if (!seniorName && clientId) {
+    const snap = await db.collection("users").doc(clientId).get().catch(() => null);
+    seniorName = (snap?.data()?.seniorName ?? "") as string;
+  }
+  if (!seniorName) seniorName = "your loved one";
+
+  let cgFirstName = "";
+  if (caregiverId) {
+    const snap = await db.collection("caregivers").doc(caregiverId).get().catch(() => null);
+    const name = (snap?.data()?.name ?? "") as string;
+    cgFirstName = name.split(" ")[0] || name;
+  }
+  if (!cgFirstName) cgFirstName = "Your caregiver";
+
+
+  let content: string;
+  try {
+    const raw = await quickComplete(
+      "You write a brief 1-2 sentence real-time care update for a family member.\n" +
+        "Tone: warm, direct, reassuring. From Cara (a care coordinator), not the caregiver.\n" +
+        "Keep it short — this is a mid-shift task update. No emoji. Output only the message text.",
+      `Task just completed: ${taskDescription}\n` +
+        `Category: ${taskCategory}\n` +
+        `Caregiver notes: ${notes || "no additional notes"}\n` +
+        `Senior: ${seniorName}\n` +
+        `Caregiver: ${cgFirstName}`,
+      { maxTokens: 120 },
+    );
+    content = raw.trim();
+    if (!content) throw new Error("empty");
+  } catch {
+    content = `${cgFirstName} just completed ${taskDescription} for ${seniorName}.${notes ? " " + notes : ""}`;
+  }
+
+  await sendViaInteractionAgent(clientPhone, {
+    content,
+    urgency:     "standard",
+    sourceAgent: "shift_task_family_update",
+    canDrop:     true,
+  });
+}
+
+// ── Shift-end family update (after care notes parsed) ────────────────────────
+
+async function sendFamilyShiftEndUpdate(params: {
+  caregiverName: string;
+  clientId:      string;
+  seniorId:      string;
+  apptData:      admin.firestore.DocumentData | null;
+  entry:         Record<string, unknown>;
+}): Promise<void> {
+  const { caregiverName, clientId, seniorId, apptData, entry } = params;
+
+  const clientPhone = await getClientPhoneByClientId(clientId);
+  if (!clientPhone) return;
+
+  // Resolve senior name
+  let seniorName = (apptData?.clientName ?? "") as string;
+  if (!seniorName && seniorId) {
+    const snap = await db.collection("senior_profiles").doc(seniorId).get().catch(() => null);
+    seniorName = (snap?.data()?.name ?? "") as string;
+  }
+  if (!seniorName) seniorName = "your loved one";
+
+  const cgFirstName        = caregiverName.split(" ")[0] || caregiverName;
+  const mood               = (entry.mood               ?? "")  as string;
+  const appetite           = (entry.appetite           ?? "")  as string;
+  const activities         = (entry.activities         ?? [])  as string[];
+  const observations       = (entry.observations       ?? "")  as string;
+  const notes              = (entry.notes              ?? "")  as string;
+  const unplannedActivities = (entry.unplannedActivities ?? []) as string[];
+  const taskNotes          = (entry.taskNotes          ?? "")  as string;
+
+
+  let content: string;
+  try {
+    const unplannedLine = unplannedActivities.length > 0
+      ? `Unplanned activities (requested by senior): ${unplannedActivities.join(", ")}`
+      : "No unplanned activities";
+
+    const raw = await quickComplete(
+      "You write a warm, personal text message to a family member after their loved one's care visit.\n" +
+        "Tone: warm and reassuring, like a trusted care coordinator. From Cara, not the caregiver.\n" +
+        "Structure: 1) Start with the visit wrapping up and overall mood/meals. " +
+        "2) Mention planned tasks completed with any notes. " +
+        "3) If the senior asked for anything outside the plan, mention it clearly. " +
+        "4) End with whether there are any concerns.\n" +
+        "Keep it to 4-5 sentences. No bullet points. No emoji. Output only the message text, no greeting or sign-off.",
+      `Senior: ${seniorName}\n` +
+        `Caregiver: ${cgFirstName}\n` +
+        `Mood: ${mood || "not reported"}\n` +
+        `Appetite: ${appetite || "not reported"}\n` +
+        `Activities completed: ${activities.length > 0 ? activities.join(", ") : "not reported"}\n` +
+        `Notes on completed tasks: ${taskNotes || "none"}\n` +
+        `${unplannedLine}\n` +
+        `Observations: ${observations || "none"}\n` +
+        `Additional notes: ${notes || "none"}`,
+      { maxTokens: 280 },
+    );
+    content = raw.trim();
+    if (!content) throw new Error("empty");
+  } catch {
+    const moodLine      = mood       ? ` ${seniorName} was in a ${mood} mood.` : "";
+    const ateLine       = appetite   ? ` Appetite was ${appetite}.` : "";
+    const actLine       = activities.length > 0 ? ` Activities: ${activities.slice(0, 2).join(" and ")}.` : "";
+    const unplannedNote = unplannedActivities.length > 0
+      ? ` ${seniorName} also asked for: ${unplannedActivities.join(", ")}.`
+      : "";
+    const obsLine       = observations ? ` ${observations}` : "";
+    content =
+      `${cgFirstName} just finished their visit with ${seniorName}.` +
+      moodLine + ateLine + actLine + unplannedNote + obsLine +
+      " No concerns to flag.";
+  }
+
+  await sendViaInteractionAgent(clientPhone, {
+    content,
+    urgency:     "standard",
+    sourceAgent: "shift_end_family_update",
+    canDrop:     true,
+  });
+}
+
+// ── Task acknowledgment handler ───────────────────────────────────────────────
+
+async function handleTaskAck(
+  phone:   string,
+  chatId:  string,
+  text:    string,
+  session: AgentSession
+): Promise<void> {
+  const taskInfo = (session as any).awaitingTaskAck as {
+    taskId:          string;
+    taskDescription: string;
+    taskCategory:    string;
+    appointmentId:   string;
+    clientId:        string;
+    seniorId:        string;
+    seniorName:      string;
+  };
+
+
+  // isQuestionOrOther check — CLAUDE.md requirement
+  const questionRaw = await quickComplete(
+    "Is this message a question or completely unrelated to completing a care task? " +
+      "Reply only YES or NO.",
+    text,
+    { maxTokens: 5 },
+  ).catch(() => "");
+
+  const isQuestion = questionRaw.trim().toUpperCase().startsWith("Y");
+
+  if (isQuestion) {
+    // Let the normal caraAgent handle the question, then re-ask about the task
+    await sendViaInteractionAgent(phone, {
+      content:     text,
+      urgency:     "standard",
+      sourceAgent: "task_ack_question",
+      canDrop:     true,
+    });
+    await sendMessage(chatId, `By the way — did you complete ${taskInfo.taskDescription}?`);
+    return;
+  }
+
+  // Parse completion + any brief notes
+  const ackRaw = await quickComplete(
+    "Did the caregiver confirm completing the task? Also extract any brief notes about how it went. " +
+      'Reply JSON only: {"completed":"YES"|"NO"|"UNCLEAR","notes":"brief detail or empty string"}',
+    text,
+    { maxTokens: 80 },
+  ).catch(() => "{}");
+
+  let completed = true; // default to trusting the caregiver
+  let notes = "";
+  try {
+    const parsed = JSON.parse(ackRaw || "{}");
+    completed = (parsed.completed ?? "YES") !== "NO";
+    notes = ((parsed.notes ?? "") as string).trim();
+  } catch { /* keep defaults */ }
+
+  if (completed) {
+    // Mark task done on appointment doc
+    await db.collection("appointments").doc(taskInfo.appointmentId).update({
+      completedTaskIds: admin.firestore.FieldValue.arrayUnion(taskInfo.taskId),
+    }).catch(() => {});
+
+    // Send family micro-update
+    const clientPhone = await getClientPhoneByClientId(taskInfo.clientId);
+    if (clientPhone) {
+      sendFamilyTaskUpdate({
+        taskDescription: taskInfo.taskDescription,
+        taskCategory:    taskInfo.taskCategory,
+        notes,
+        clientId:    taskInfo.clientId,
+        seniorId:    taskInfo.seniorId,
+        clientPhone,
+        caregiverId: session.caregiverId ?? "",
+      }).catch(err => console.error("[handleTaskAck] sendFamilyTaskUpdate error:", err));
+    }
+
+    const ackMsg = await generateCaraMessage({
+      audience: "caregiver",
+      context: notes
+        ? `The caregiver just confirmed completing "${taskInfo.taskDescription}" for ${taskInfo.seniorName} ` +
+          `and added a brief note: "${notes}". Write a warm 1-sentence acknowledgment — thank them and ` +
+          `mention you'll pass the update along to the family.`
+        : `The caregiver just confirmed completing "${taskInfo.taskDescription}" for ${taskInfo.seniorName}. ` +
+          `Write a warm, brief 1-sentence acknowledgment.`,
+      fallback: notes ? `Got it — I'll let the family know!` : `Got it — great work!`,
+      maxTokens: 60,
+    });
+    await sendMessage(chatId, ackMsg);
+  } else {
+    const notDoneMsg = await generateCaraMessage({
+      audience: "caregiver",
+      context: `The caregiver said they haven't completed "${taskInfo.taskDescription}" for ` +
+        `${taskInfo.seniorName} yet. Write a gentle, understanding 1-sentence reply — ` +
+        `no pressure, Cara will follow up with them again soon.`,
+      fallback: `No worries — I'll check back with you soon!`,
+      maxTokens: 60,
+    });
+    await sendMessage(chatId, notDoneMsg);
+  }
+
+  // Clear state
+  await db.collection("agent_sessions").doc(phone).update({
+    awaitingTaskAck: admin.firestore.FieldValue.delete(),
+    stateExpiresAt:  admin.firestore.FieldValue.delete(),
+  });
+}
+
+// ── Caregiver voice/text → structured journal ─────────────────────────────────
+
+async function handleCareNotes(
+  phone:    string,
+  chatId:   string,
+  text:     string,
+  session:  AgentSession
+): Promise<void> {
+
+  // ── isQuestionOrOther — if caregiver is asking a question alongside (or
+  // instead of) shift notes, answer it first then re-prompt. Skip the LLM
+  // hop for short messages that look like a clear answer (< 30 chars).
+  if (text.trim().length >= 30) {
+    const questionRaw = await quickComplete(
+      "A caregiver was asked to share notes about a care visit they just finished " +
+        "(mood, meals, activities, anything notable). " +
+        "Reply YES if their message is primarily a question to the assistant rather than visit notes. " +
+        "Reply NO if it is visit notes (even if a small question is buried inside). Only reply YES or NO.",
+      text,
+      { maxTokens: 5 },
+    ).catch(() => "NO");
+    if (questionRaw.trim().toUpperCase().startsWith("Y")) {
+      let answer = "";
+      try {
+        answer = await quickComplete(
+          "You are Cara, an AI care assistant. A caregiver just finished a shift and was asked for visit notes, " +
+            "but instead they asked a question. Answer it briefly (1-2 sentences). " +
+            "Do NOT ask them for notes — that prompt comes next.",
+          text,
+          { maxTokens: 180 },
+        );
+      } catch { answer = "Let me get back to you on that. In the meantime —"; }
+      await sendMessage(chatId, answer);
+      await sendMessage(chatId, "Now — tell me how the visit went so I can send the family an update. (Mood, meals, activities, anything notable.)");
+      return;
+    }
+  }
+
+  const structuredRaw = await quickComplete(
+    "Convert this caregiver note into a structured care journal entry. " +
+      'Reply in JSON: {"overallWellness":1,"mood":"happy|neutral|agitated|confused|tired",' +
+      '"appetite":"good|fair|poor|refused","activities":[],"medications":[],' +
+      '"observations":"","notes":"","unplannedActivities":[],"taskNotes":""}',
+    text,
+    { maxTokens: 300 },
+  ).catch(() => "{}");
+
+  let entry: Record<string, unknown> = {};
+  try {
+    entry = JSON.parse(structuredRaw || "{}");
+  } catch { entry = { notes: text }; }
+
+  const apptId = (session as any).careNotesApptId ?? "";
+  const caregiverId = session.caregiverId ?? "";
+
+  // Get clientId from appointment and re-validate status
+  let clientId = "";
+  let seniorId = "";
+  if (apptId) {
+    const apptSnap = await db.collection("appointments").doc(apptId).get();
+    const apptData = apptSnap.data();
+    clientId = apptData?.clientId ?? "";
+    seniorId = apptData?.seniorId ?? clientId;
+
+    // Re-validate: only write notes if appointment was actually in progress or just completed
+    const validStatuses = ["in-progress", "completed", "confirmed"];
+    if (apptData && !validStatuses.includes(apptData.status ?? "")) {
+      await db.collection("agent_sessions").doc(phone).update({ awaitingCareNotes: false, careNotesApptId: "" });
+      const cancelledNotesMsg = await generateCaraMessage({
+        audience: "caregiver",
+        context: "Caregiver submitted care notes but the visit was cancelled so notes cannot be saved. Let them know apologetically.",
+        fallback: "I wasn't able to save those notes — it looks like that visit was cancelled.",
+        maxTokens: 80,
+      });
+      await sendMessage(chatId, cancelledNotesMsg);
+      return;
+    }
+
+    // Dedup + write in a single transaction to prevent duplicate journal entries if
+    // two requests race (e.g. duplicate webhook delivery or fast caregiver retap).
+    let alreadyExists = false;
+    const journalRef  = db.collection("care_journal").doc();
+    const sessionRef  = db.collection("agent_sessions").doc(phone);
+
+    await db.runTransaction(async (t) => {
+      const existingSnap = await t.get(
+        db.collection("care_journal")
+          .where("appointmentId", "==", apptId)
+          .limit(1)
+      );
+      if (!existingSnap.empty) {
+        alreadyExists = true;
+        return;
+      }
+      t.set(journalRef, {
+        caregiverId,
+        seniorId,
+        appointmentId: apptId,
+        timestamp:     new Date().toISOString(),
+        notes:         entry.notes ?? text,
+        wellness: {
+          ateWell:   entry.appetite === "good",
+          tookMeds:  Array.isArray(entry.medications) && (entry.medications as unknown[]).length > 0,
+          wasActive: Array.isArray(entry.activities)  && (entry.activities  as unknown[]).length > 0,
+          mood:      entry.mood ?? "neutral",
+        },
+        activities:    entry.activities ?? [],
+        observations:  entry.observations ?? "",
+      });
+      t.update(sessionRef, { awaitingCareNotes: false, careNotesApptId: "" });
+    });
+
+    if (alreadyExists) {
+      await db.collection("agent_sessions").doc(phone).update({ awaitingCareNotes: false, careNotesApptId: "" });
+      const notesAlreadySavedMsg = await generateCaraMessage({
+        audience: "caregiver",
+        context: "Caregiver tried to submit notes but notes for this visit are already saved. Let them know briefly.",
+        fallback: "Notes for this visit are already saved.",
+        maxTokens: 60,
+      });
+      await sendMessage(chatId, notesAlreadySavedMsg);
+      return;
+    }
+  } else {
+    // No apptId — write without dedup guard and clear flag
+    await db.collection("care_journal").add({
+      caregiverId,
+      seniorId,
+      appointmentId: apptId,
+      timestamp:     new Date().toISOString(),
+      notes:         entry.notes ?? text,
+      wellness: {
+        ateWell:   entry.appetite === "good",
+        tookMeds:  Array.isArray(entry.medications) && (entry.medications as unknown[]).length > 0,
+        wasActive: Array.isArray(entry.activities)  && (entry.activities  as unknown[]).length > 0,
+        mood:      entry.mood ?? "neutral",
+      },
+      activities:    entry.activities ?? [],
+      observations:  entry.observations ?? "",
+    });
+    await db.collection("agent_sessions").doc(phone).update({ awaitingCareNotes: false, careNotesApptId: "" });
+  }
+
+  const cgSnap    = await db.collection("caregivers").doc(caregiverId).get();
+  const hourlyRate = cgSnap.data()?.hourlyRate ?? 20;
+
+  const apptSnap = apptId
+    ? await db.collection("appointments").doc(apptId).get()
+    : null;
+  const durationHours = apptSnap?.data()?.durationHours ?? 4;
+  const pay = (hourlyRate * durationHours).toFixed(2);
+
+  // Fire shift-end family update (fire-and-forget — alreadyExists early-returns above, so if we
+  // reach here the journal entry was newly written)
+  if (apptId && clientId) {
+    sendFamilyShiftEndUpdate({
+      caregiverName: cgSnap.data()?.name ?? "Your caregiver",
+      clientId,
+      seniorId,
+      apptData:      apptSnap?.data() ?? null,
+      entry,
+    }).catch(err => console.error("[handleCareNotes] family update error:", err));
+  }
+
+  // Fire visit billing (fire-and-forget so it doesn't block caregiver confirmation)
+  if (apptId && clientId) {
+    const { createVisitPayment } = await import("../billing/visitBilling");
+    createVisitPayment({
+      appointmentId:  apptId,
+      clientId,
+      clientPhone:    "", // Family phone looked up inside createVisitPayment if needed
+      caregiverId,
+      caregiverName:  cgSnap.data()?.name ?? "Your caregiver",
+      caregiverPhone: phone,
+      durationHours,
+      hourlyRate,
+      date:           new Date().toISOString().slice(0, 10),
+    }).catch((err) => console.error("createVisitPayment error:", err));
+  }
+
+  // Find next appointment for this caregiver
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const nextSnap = await db.collection("appointments")
+    .where("caregiverId", "==", caregiverId)
+    .where("date",        ">=", tomorrow.toISOString().slice(0, 10))
+    .where("status",      "in", ["confirmed"])
+    .orderBy("date", "asc").limit(1).get();
+
+  const nextLine = nextSnap.empty
+    ? "No upcoming visits scheduled yet."
+    : `Next visit: ${nextSnap.docs[0].data().date} at ${nextSnap.docs[0].data().startTime ?? ""}`;
+
+  await sendMessage(chatId,
+    `Got it — notes saved.\n\n` +
+    `Your payment of $${pay} will be processed tonight.\n` +
+    `${nextLine}\n\n` +
+    `Have a great rest of your day.`
+  );
+}
+
+// ── Caregiver inbound routing — extracted verbatim from webhooks.ts handleInbound ──
+// Returns "handled" when the message was fully handled (handleInbound must return),
+// or "fallthrough" when no caregiver path matched (handleInbound continues).
+export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise<"handled" | "fallthrough"> {
+  const { phone, chatId, text, norm, session } = ctx;
+
+    // ── Shift offer YES/NO — new bookings, client swaps, time changes ─────────
+    // Appointments only become confirmed (or change caregiver/time) after the
+    // caregiver accepts; see agents/shiftOffer.ts. A question falls through so
+    // the QA agent can answer it while the offer stays pending.
+    if ((session as any).pendingShiftOfferId) {
+      const { handleShiftOfferReply } = await import("../agents/shiftOffer");
+      const offerOutcome = await handleShiftOfferReply({ phone, chatId, text }).catch((err) => {
+        console.error("handleInbound: handleShiftOfferReply failed", err);
+        return "fallthrough" as const;
+      });
+      if (offerOutcome === "handled") return "handled";
+    }
+
+    // ── Swap acceptance/decline — when another caregiver was asked to cover ──
+    // Stale shift-swap requests (> 4h old) shouldn't hijack unrelated caregiver
+    // messages weeks later. Clear the lingering field on stale state.
+    if ((session as any).pendingSwapRequestId) {
+      const swapSetAt   = (session as any).pendingSwapSetAt as string | undefined;
+      const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+      if (swapSetAt && swapSetAt < fourHoursAgo) {
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingSwapRequestId: admin.firestore.FieldValue.delete(),
+          pendingSwapFromName:  admin.firestore.FieldValue.delete(),
+          pendingSwapSetAt:     admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+        (session as any).pendingSwapRequestId = undefined;
+      }
+    }
+    if ((session as any).pendingSwapRequestId) {
+      const swapRequestId  = (session as any).pendingSwapRequestId as string;
+      const fromName       = (session as any).pendingSwapFromName as string ?? "A caregiver";
+      const swapRaw = await quickComplete(
+        "The caregiver is responding to a shift-swap request. " +
+          "Reply ACCEPT if they agree to cover the shift. " +
+          "Reply DECLINE if they refuse. " +
+          "Reply UNSURE if it is unclear. " +
+          "Reply with exactly one word.",
+        text,
+        { maxTokens: 10 },
+      ).catch(() => "");
+      const swapDecision = swapRaw.trim().toUpperCase();
+
+      if (swapDecision === "ACCEPT") {
+        const cgName = session.caregiverId
+          ? (await db.collection("caregivers").doc(session.caregiverId).get()).data()?.name ?? "Caregiver"
+          : "Caregiver";
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingSwapRequestId: admin.firestore.FieldValue.delete(),
+          pendingSwapFromName:  admin.firestore.FieldValue.delete(),
+        });
+        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+        try {
+          await handleSwapAcceptance(session.caregiverId ?? phone, cgName, swapRequestId, chatId);
+        } finally {
+          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+        }
+        return "handled";
+      }
+
+      if (swapDecision === "DECLINE") {
+        await db.collection("shift_swap_requests").doc(swapRequestId).update({
+          candidateResponses: admin.firestore.FieldValue.arrayUnion({
+            caregiverId: session.caregiverId ?? phone,
+            response:    "declined",
+            at:          new Date().toISOString(),
+          }),
+        }).catch(() => {});
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingSwapRequestId: admin.firestore.FieldValue.delete(),
+          pendingSwapFromName:  admin.firestore.FieldValue.delete(),
+        });
+        const swapDeclineMsg = await generateCaraMessage({
+          audience: "caregiver",
+          context: `Caregiver declined a shift swap request from ${fromName}. Cara is acknowledging the decline and thanking them for letting the coordinator know.`,
+          fallback: `No problem — thanks for letting ${fromName}'s coordinator know!`,
+          maxTokens: 60,
+        });
+        await sendMessage(chatId, swapDeclineMsg);
+        return "handled";
+      }
+      // UNSURE — fall through to normal routing so Claude can answer the message
+    }
+
+    const KEYWORDS: Record<string, () => Promise<void>> = {
+      ARRIVED:    () => handleArrived(phone, chatId, session),
+      DONE:       () => handleDone(phone, chatId, session, text),
+      LATE:       () => handleRunningLate(phone, chatId),
+      ISSUE:      () => handleIssue(phone, chatId),
+      CONFIRM:    async () => {
+        // Find most recent appointment for this caregiver not yet confirmed
+        const now = new Date().toISOString();
+        const apptSnap = await db.collection("appointments")
+          .where("caregiverId", "==", session.caregiverId ?? "")
+          .where("status",      "==", "confirmed")
+          .where("caregiverConfirmed", "!=", true)
+          .orderBy("caregiverConfirmed")
+          .orderBy("date", "asc")
+          .limit(1).get();
+        if (!apptSnap.empty) {
+          const appt = apptSnap.docs[0].data();
+          const updateFields: Record<string, unknown> = { caregiverConfirmed: true, caregiverConfirmedAt: now };
+          // Mark check-in confirmed so escalation guard skips it
+          if (appt.caregiverCheckInSent) {
+            updateFields.caregiverCheckInConfirmed = true;
+            updateFields.caregiverCheckInAt        = now;
+          }
+          await apptSnap.docs[0].ref.update(updateFields);
+          // Notify family
+          const familySnap = await db.collection("agent_sessions").doc(appt.clientId ?? appt.clientPhone).get();
+          if (familySnap.exists) {
+            await sendMessage(familySnap.data()!.chatId,
+              `${appt.caregiverName ?? "Your caregiver"} confirmed the visit on ${appt.date}. You're all set.`
+            );
+          }
+          await sendMessage(chatId, "Confirmed! See you then. 👍");
+        } else {
+          await sendMessage(chatId, "Got it — confirmed! 👍");
+        }
+      },
+      RESCHEDULE: async () => {
+        await db.collection("agent_sessions").doc(phone).update({
+          caregiverRescheduling: true,
+          stateExpiresAt:        new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
+        const rescheduleMsg = await generateCaraMessage({
+          audience: "caregiver",
+          context: "Caregiver wants to reschedule a visit. Cara is asking them to suggest 2–3 times that work and will relay them to the family.",
+          fallback: "No problem — text me 2–3 times that work for you and I'll let the family know right away.",
+          maxTokens: 80,
+        });
+        await sendMessage(chatId, rescheduleMsg);
+      },
+      PASS:       async () => {
+        await handleCaregiverAvailabilityReply(phone, session.caregiverId ?? "", "", chatId, "PASS");
+      },
+      PAYOUT:     async () => {
+        if (!session.caregiverId) {
+          await sendMessage(chatId, "I couldn't find your caregiver profile. Please contact support.");
+          return;
+        }
+        const { startInstantPayout } = await import("../agents/instantPayoutHandler");
+        await startInstantPayout(session.caregiverId, phone, chatId);
+      },
+      REACTIVATE: async () => {
+        if (!session.caregiverId) return;
+        await handleCaregiverProfileUpdate(
+          session.caregiverId,
+          phone,
+          text,
+          session as unknown as Record<string, unknown>,
+          chatId,
+          "reactivate",
+        );
+      },
+    };
+
+    if (norm in KEYWORDS) {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {/* non-critical */});
+      try { await KEYWORDS[norm](); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
+      return "handled";
+    }
+
+    // YES / NO to replacement candidate request
+    if (norm === "YES" || norm === "NO") {
+      const candidateSnap = await db.collection("replacement_candidates")
+        .where("phone",  "==", phone)
+        .where("status", "==", "contacted")
+        .orderBy("contactedAt", "desc")
+        .limit(1)
+        .get();
+
+      if (!candidateSnap.empty) {
+        const candidate = candidateSnap.docs[0].data();
+        const taskSnap  = await db.collection("agent_tasks").doc(candidate.taskId).get();
+        const task      = taskSnap.data();
+
+        if (task && task.status === "awaiting_approval") {
+          if (norm === "YES") {
+            await candidateSnap.docs[0].ref.update({ status: "available", respondedAt: new Date().toISOString() });
+            const jobConfirmMsg = await generateCaraMessage({
+              audience: "caregiver",
+              context: "Caregiver indicated availability for a job. Cara will confirm with the family and follow up shortly.",
+              fallback: "Got it — we'll confirm with the family and follow up shortly.",
+              maxTokens: 60,
+            });
+            await sendMessage(chatId, jobConfirmMsg);
+          } else {
+            await candidateSnap.docs[0].ref.update({ status: "declined", respondedAt: new Date().toISOString() });
+            const jobDeclineMsg = await generateCaraMessage({
+              audience: "caregiver",
+              context: "Caregiver declined a job offer. Cara is acknowledging gracefully.",
+              fallback: "No worries — thanks for letting us know!",
+              maxTokens: 60,
+            });
+            await sendMessage(chatId, jobDeclineMsg);
+          }
+          return "handled";
+        }
+      }
+    }
+
+    // Day-before shift confirmation reply
+    if ((session as any).pendingShiftConfirmation) {
+      const scExpiry = (session as any).stateExpiresAt as string | undefined;
+      if (scExpiry && new Date(scExpiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingShiftConfirmation: admin.firestore.FieldValue.delete(),
+          stateExpiresAt:           admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+        // fall through to normal routing
+      } else {
+        await handleShiftConfirmation(phone, chatId, text, session);
+        return "handled";
+      }
+    }
+
+    // Day-before CLIENT shift confirmation reply (CONFIRM / CANCEL / question)
+    if ((session as any).pendingClientShiftConfirm) {
+      const csExpiry = (session as any).stateExpiresAt as string | undefined;
+      if (csExpiry && new Date(csExpiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingClientShiftConfirm: admin.firestore.FieldValue.delete(),
+          stateExpiresAt:            admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+        // fall through to normal routing
+      } else {
+        const { handleClientShiftConfirm } = await import("../agents/clientShiftConfirmHandler");
+        await handleClientShiftConfirm(phone, chatId, text, session as unknown as Record<string, unknown>);
+        return "handled";
+      }
+    }
+
+    // Awaiting task acknowledgment after a mid-shift nudge
+    if ((session as any).awaitingTaskAck) {
+      const taskAckExpiry = (session as any).stateExpiresAt as string | undefined;
+      if (taskAckExpiry && new Date(taskAckExpiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({
+          awaitingTaskAck: admin.firestore.FieldValue.delete(),
+          stateExpiresAt:  admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+      } else {
+        await handleTaskAck(phone, chatId, text, session);
+        return "handled";
+      }
+    }
+
+    // Awaiting care notes after DONE
+    if ((session as any).awaitingCareNotes) {
+      const cnExpiry = (session as any).stateExpiresAt as string | undefined;
+      if (cnExpiry && new Date(cnExpiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({ awaitingCareNotes: false, stateExpiresAt: admin.firestore.FieldValue.delete() }).catch(() => {});
+      } else {
+        await handleCareNotes(phone, chatId, text, session);
+        return "handled";
+      }
+    }
+
+    // Awaiting late minutes
+    if ((session as any).awaitingLateMinutes) {
+      const lmExpiry = (session as any).stateExpiresAt as string | undefined;
+      if (lmExpiry && new Date(lmExpiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({ awaitingLateMinutes: false, stateExpiresAt: admin.firestore.FieldValue.delete() }).catch(() => {});
+        // fall through to normal message processing
+      } else {
+        await db.collection("agent_sessions").doc(phone).update({ awaitingLateMinutes: false });
+        const today2 = new Date().toISOString().slice(0, 10);
+        const lateApptSnap = await db.collection("appointments")
+          .where("caregiverId", "==", session.caregiverId ?? "")
+          .where("date",        "==", today2).limit(1).get();
+        const clientPhone = lateApptSnap.empty ? null : await getClientPhoneForAppt(lateApptSnap.docs[0].data());
+
+        // Record lateness event
+        if (!lateApptSnap.empty && session.caregiverId) {
+          const lateApptData = lateApptSnap.docs[0].data();
+          const minutesLateNum = parseInt(text.replace(/\D/g, ""), 10);
+          if (!isNaN(minutesLateNum) && minutesLateNum > 0) {
+            const cgSnap2 = await db.collection("caregivers").doc(session.caregiverId).get();
+            const cgName2 = cgSnap2.data()?.name ?? "Unknown";
+            const { recordLatenessEvent, checkLatenessPattern } = await import("../agents/latenessTracker");
+            recordLatenessEvent({
+              caregiverId:   session.caregiverId,
+              caregiverName: cgName2,
+              appointmentId: lateApptSnap.docs[0].id,
+              clientId:      lateApptData.clientId ?? "",
+              date:          today2,
+              scheduledTime: (lateApptData.startTime ?? "").slice(0, 5),
+              minutesLate:   minutesLateNum,
+              selfReported:  true,
+            }).catch(() => {});
+            checkLatenessPattern(session.caregiverId, cgName2).catch(() => {});
+          }
+        }
+
+        if (clientPhone) {
+          const cgSnap = session.caregiverId
+            ? await db.collection("caregivers").doc(session.caregiverId).get()
+            : null;
+          const cgName    = cgSnap?.data()?.name ?? "Your caregiver";
+          const origTime  = lateApptSnap.empty ? "" : ` (originally ${lateApptSnap.docs[0].data().startTime})`;
+          await sendIfNotDND(clientPhone, {
+            content:     `${cgName} is running about ${text} late. They're on their way${origTime}.`,
+            urgency:     "immediate",
+            sourceAgent: "late_notification",
+            canDrop:     false,
+          }, "high");
+        }
+        const driveMsg = await generateCaraMessage({
+          audience: "caregiver",
+          context: "Caregiver said how late they'll be and Cara has already notified the family. Send a brief acknowledgment and wish them a safe drive.",
+          fallback: "I've notified the family. Drive safe.",
+          maxTokens: 60,
+        });
+        await sendMessage(chatId, driveMsg);
+        return "handled";
+      }
+    }
+
+    // Awaiting issue description — smart classification + multi-level escalation
+    if ((session as any).awaitingIssueDescription) {
+      const idExpiry = (session as any).stateExpiresAt as string | undefined;
+      if (idExpiry && new Date(idExpiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({ awaitingIssueDescription: false, stateExpiresAt: admin.firestore.FieldValue.delete() }).catch(() => {});
+        // fall through to normal message processing
+      } else {
+      await db.collection("agent_sessions").doc(phone).update({ awaitingIssueDescription: false });
+
+      const issueToday = new Date().toISOString().slice(0, 10);
+      const issueApptSnap = await db.collection("appointments")
+        .where("caregiverId", "==", session.caregiverId ?? "")
+        .where("date",        "==", issueToday)
+        .where("status",      "in", ["confirmed", "in-progress"])
+        .limit(1).get();
+      const issueAppt = issueApptSnap.empty ? null : issueApptSnap.docs[0].data();
+      const clientPhone = issueApptSnap.empty ? null : await getClientPhoneForAppt(issueAppt!);
+
+      const cgSnap      = session.caregiverId
+        ? await db.collection("caregivers").doc(session.caregiverId).get()
+        : null;
+      const cgName       = cgSnap?.data()?.name ?? "Your caregiver";
+      const seniorId     = issueAppt?.seniorId ?? issueAppt?.clientId ?? "";
+      const seniorSnap   = seniorId ? await db.collection("senior_profiles").doc(seniorId).get() : null;
+      const seniorName   = seniorSnap?.data()?.name ?? (issueAppt as any)?.clientName ?? "your client";
+
+      const { handleCaregiverIssue } = await import("../agents/issueEscalator");
+      await handleCaregiverIssue({
+        caregiverId:    session.caregiverId ?? phone,
+        caregiverPhone: phone,
+        caregiverName:  cgName,
+        appointmentId:  issueApptSnap.empty ? "" : issueApptSnap.docs[0].id,
+        clientId:       issueAppt?.clientId ?? "",
+        clientPhone:    clientPhone ?? "",
+        seniorId,
+        seniorName,
+        description:    text,
+      }).catch(async (err) => {
+        console.error("handleCaregiverIssue failed:", err);
+        // Fallback: write plain admin alert
+        await db.collection("admin_alerts").add({
+          type:        "caregiver_issue",
+          caregiverId: session.caregiverId ?? phone,
+          phone, description: text, severity: "medium",
+          createdAt: new Date().toISOString(), resolved: false,
+        });
+      });
+
+      const issueFlaggedMsg = await generateCaraMessage({
+        audience: "caregiver",
+        context: "Caregiver reported an issue during a visit. Cara has escalated it to the team and notified the family. Thank them for letting Cara know.",
+        fallback: "I've flagged this for our team and notified the family. Thank you for letting me know.",
+        maxTokens: 80,
+      });
+      await sendMessage(chatId, issueFlaggedMsg);
+      return "handled";
+      } // end stateExpiresAt else
+    }
+
+    // Awaiting issue closure check (sent 20h after an ISSUE was filed)
+    if ((session as any).awaitingIssueClosureCheck) {
+      const issueLogId = (session as any).awaitingIssueClosureCheck as string;
+      await db.collection("agent_sessions").doc(phone).update({
+        awaitingIssueClosureCheck: admin.firestore.FieldValue.delete(),
+      });
+      const normReply = text.trim().toUpperCase();
+      if (normReply === "YES" || normReply.startsWith("YES")) {
+        await db.collection("issue_log").doc(issueLogId).update({
+          resolvedAt: new Date().toISOString(),
+        }).catch(() => {});
+        const issueResolvedMsg = await generateCaraMessage({
+          audience: "caregiver",
+          context: "Caregiver confirmed the issue from a prior visit is resolved. Cara is glad to hear it and wraps up the check-in.",
+          fallback: "Good to hear — glad everything's okay.",
+          maxTokens: 60,
+        });
+        await sendMessage(chatId, issueResolvedMsg);
+      } else {
+        const issueUpdateMsg = await generateCaraMessage({
+          audience: "caregiver",
+          context: "Caregiver gave an update on an ongoing issue rather than confirming it's resolved. Cara acknowledges the update and notes it.",
+          fallback: "Thanks for the update — I've noted it. Let me know if anything changes.",
+          maxTokens: 60,
+        });
+        await sendMessage(chatId, issueUpdateMsg);
+      }
+      return "handled";
+    }
+
+    // ── Wellbeing check-in response: "4 3 5" style reply ──────────────────────
+    // Only fires if the message is ONLY three numbers separated by whitespace
+    // — otherwise "I'm 32, need help 3 mornings" used to hijack this handler.
+    // Also gated to 7 days of staleness from when the check-in was sent.
+    if ((session as any).pendingWellbeingCheckin) {
+      const sentAtIso = (session as any).wellbeingCheckinSentAt as string | undefined;
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const isFresh = !sentAtIso || sentAtIso > sevenDaysAgo;
+      const trimmed = text.trim();
+      const isPureRatingReply = /^[1-5](?:\s+[1-5]){2}$/.test(trimmed);
+
+      if (!isFresh) {
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingWellbeingCheckin: admin.firestore.FieldValue.delete(),
+          wellbeingCheckinSentAt:  admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+        (session as any).pendingWellbeingCheckin = undefined;
+      } else if (!isPureRatingReply) {
+        // Don't hijack — message isn't a rating answer. Fall through.
+      } else {
+        const parts = trimmed.split(/\s+/).map(Number).filter(n => !isNaN(n) && n >= 1 && n <= 5);
+        if (parts.length === 3) {
+          const [energy, stress, satisfaction] = parts;
+          await db.collection("wellbeing_checkins").add({
+            caregiverId: session.caregiverId ?? session.userId ?? phone,
+            phone,
+            energy,
+            stress,
+            satisfaction,
+            recordedAt: new Date().toISOString(),
+          });
+          await db.collection("agent_sessions").doc(phone).update({
+            pendingWellbeingCheckin: admin.firestore.FieldValue.delete(),
+            wellbeingCheckinSentAt:  admin.firestore.FieldValue.delete(),
+          });
+          const avg = (energy + stress + satisfaction) / 3;
+          const reply = avg < 3
+            ? `Thank you for being honest 💙 Your scores tell me you might need some support. Would you like to:\n\n1. Adjust your schedule\n2. Talk to our support team\n3. Get info on mental health resources\n\nReply 1, 2, or 3 — or just ignore this if you're okay.`
+            : `Checked in. Sounds like things are going well — your clients are in good hands.`;
+          await sendMessage(chatId, reply);
+          return "handled";
+        }
+      }
+    }
+
+    // Caregiver rescheduling — parse new times and notify family
+    if ((session as any).caregiverRescheduling) {
+      let timeList: string[] = [];
+      try {
+        const parsedRaw = await quickComplete(
+          "Extract interview time proposals from this message as a JSON array of human-readable strings. " +
+            "Reply with only a JSON array, e.g. [\"Tuesday 2pm\",\"Wednesday 10am\"]. Keep them short.",
+          text,
+          { maxTokens: 100 },
+        );
+        timeList = JSON.parse(parsedRaw || "[]") as string[];
+      } catch { /* fall through — use raw text below */ }
+      const timesText = timeList.length > 0 ? timeList.join(", ") : text;
+
+      // Find the relevant interview request
+      const caregiverId = session.caregiverId ?? "";
+      const cgSnap      = caregiverId ? await db.collection("caregivers").doc(caregiverId).get() : null;
+      const cgName      = cgSnap?.data()?.name ?? "Your caregiver";
+      const reqSnap     = await db.collection("interview_requests")
+        .where("caregiverId", "==", caregiverId)
+        .where("status",      "in", ["scheduled", "awaiting_client_confirmation"])
+        .orderBy("createdAt", "desc").limit(1).get();
+
+      if (!reqSnap.empty) {
+        const reqData       = reqSnap.docs[0].data();
+        const familyPhone   = reqData.clientPhone as string;
+        const familySession = await db.collection("agent_sessions").doc(familyPhone).get();
+        if (familySession.exists) {
+          await sendMessage(familySession.data()!.chatId,
+            `${cgName} needs to reschedule the interview.\n\n` +
+            `They're available: ${timesText}\n\n` +
+            `Reply with which time works, or PASS to find someone new.`
+          );
+          // Let family's next reply be handled as a time selection
+          await db.collection("agent_sessions").doc(familyPhone).update({
+            pendingTimeSelection: { interviewRequestId: reqSnap.docs[0].id, caregiverName: cgName },
+            stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+          });
+        }
+        await reqSnap.docs[0].ref.update({ status: "awaiting_client_confirmation", caregiverAvailability: timeList });
+      }
+
+      // Clear the flag only after the family has been notified successfully
+      await db.collection("agent_sessions").doc(phone).update({ caregiverRescheduling: admin.firestore.FieldValue.delete() });
+      await sendMessage(chatId, "Got it — I've sent those times to the family. I'll let you know once they confirm.");
+      return "handled";
+    }
+
+    // Caregiver availability reply (for interview scheduling)
+    if ((session as any).pendingInterviewAvailabilityRequest) {
+      await handleCaregiverAvailabilityReply(
+        phone,
+        session.caregiverId ?? "",
+        "",
+        chatId,
+        text
+      );
+      return "handled";
+    }
+
+    // ── Job alert: YES/NO/natural-language response ────────────────────────
+    if ((session as any).awaitingJobResponse === true) {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try { await handleJobResponse(phone, text, chatId, session as any); }
+      finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
+      return "handled";
+    }
+
+    // ── Job alert: availability confirmation (any text) ─────────────────────
+    if ((session as any).awaitingAvailabilityConfirmation === true) {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try { await handleAvailabilityConfirmation(phone, text, chatId, session as any); }
+      finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
+      return "handled";
+    }
+
+    // ── Caregiver shift swap — multi-step state machine ───────────────────
+    if ((session as any).swapStep) {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try {
+        const cgDoc = session.caregiverId
+          ? await db.collection("caregivers").doc(session.caregiverId).get()
+          : null;
+        await handleCaregiverSwapRequest(
+          session.caregiverId ?? phone,
+          cgDoc?.data()?.name ?? "Caregiver",
+          phone,
+          text,
+          session as unknown as Record<string, unknown>,
+          chatId
+        );
+      } finally {
+        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+      }
+      return "handled";
+    }
+
+    // ── Caregiver-initiated shift cancellation — multi-step state machine ─
+    if ((session as any).cancelStep) {
+      const expiry = (session as any).stateExpiresAt as string | undefined;
+      if (expiry && new Date(expiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({
+          cancelStep:          admin.firestore.FieldValue.delete(),
+          cancelCandidates:    admin.firestore.FieldValue.delete(),
+          cancelShiftId:       admin.firestore.FieldValue.delete(),
+          cancelShiftDate:     admin.firestore.FieldValue.delete(),
+          cancelShiftClientId: admin.firestore.FieldValue.delete(),
+          stateExpiresAt:      admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+      } else {
+        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+        try {
+          const cgDoc = session.caregiverId
+            ? await db.collection("caregivers").doc(session.caregiverId).get()
+            : null;
+          await handleCaregiverCancelShift(
+            session.caregiverId ?? phone,
+            cgDoc?.data()?.name ?? "Caregiver",
+            phone,
+            text,
+            session as unknown as Record<string, unknown>,
+            chatId,
+          );
+        } finally {
+          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+        }
+        return "handled";
+      }
+    }
+
+    // ── Profile update flow (rate / skills / bio / photo / pause / reactivate)
+    if ((session as any).profileUpdateStep) {
+      const expiry = (session as any).stateExpiresAt as string | undefined;
+      if (expiry && new Date(expiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({
+          profileUpdateStep:  admin.firestore.FieldValue.delete(),
+          profileUpdateField: admin.firestore.FieldValue.delete(),
+          profileUpdateValue: admin.firestore.FieldValue.delete(),
+          stateExpiresAt:     admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+      } else if (session.caregiverId) {
+        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+        try {
+          await handleCaregiverProfileUpdate(
+            session.caregiverId,
+            phone,
+            text,
+            session as unknown as Record<string, unknown>,
+            chatId,
+          );
+        } finally {
+          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+        }
+        return "handled";
+      }
+    }
+
+    // ── PAYOUT instant-payout YES/NO confirmation ──────────────────────────
+    if ((session as any).pendingInstantPayoutConfirm) {
+      const setAt = (session as any).pendingInstantPayoutConfirm as string;
+      const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      if (setAt < tenMinAgo) {
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingInstantPayoutConfirm: admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+      } else {
+        const { handleInstantPayoutConfirm } = await import("../agents/instantPayoutHandler");
+        await handleInstantPayoutConfirm(
+          session.caregiverId ?? phone,
+          phone,
+          text,
+          chatId,
+        );
+        return "handled";
+      }
+    }
+
+    // ── Caregiver NLU fallback — handle natural-language keyword variants ──
+    // Runs only when no exact keyword matched and no state machine is active.
+    // Catches "I just arrived", "I'm done now", "running about 10 min late", etc.
+    {
+      const nluRaw = await quickComplete(
+        "Classify this caregiver message as one of: ARRIVED, DONE, LATE, ISSUE, CONFIRM, RESCHEDULE, NONE. " +
+          "ARRIVED = caregiver arrived at or is entering a care visit. " +
+          "DONE = caregiver has finished a care visit. " +
+          "LATE = caregiver is running late to a visit. " +
+          "ISSUE = caregiver is reporting a problem or concern during a visit. " +
+          "CONFIRM = caregiver is confirming an upcoming appointment. " +
+          "RESCHEDULE = caregiver wants to change the time of an appointment. " +
+          "NONE = does not fit any of the above. " +
+          "Reply with exactly one word.",
+        text,
+        { maxTokens: 15 },
+      ).catch(() => "");
+      const nluAction = nluRaw.trim().toUpperCase();
+      if (nluAction in KEYWORDS) {
+        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+        try { await KEYWORDS[nluAction](); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
+        return "handled";
+      }
+    }
+
+  return "fallthrough";
+}

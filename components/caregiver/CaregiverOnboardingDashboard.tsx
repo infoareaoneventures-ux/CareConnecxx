@@ -51,8 +51,7 @@ const CaregiverProgressCard: React.FC<{
   const activeStep = !profileComplete ? 1
     : !hasPaid ? 2
     : !checkrInitiated ? 3
-    : !isApproved ? 4
-    : 5;
+    : 4;
 
   // CTA card content
   let cardTitle = '';
@@ -101,7 +100,6 @@ const CaregiverProgressCard: React.FC<{
     { label: 'Membership', done: hasPaid, inProgress: !hasPaid && profileComplete },
     { label: 'Background Check', done: bgCheckDone, inProgress: bgCheckInProgress },
     { label: 'Under Review', done: isApproved, inProgress: underReview },
-    { label: 'Apply', done: isApproved, inProgress: false },
   ];
 
   return (

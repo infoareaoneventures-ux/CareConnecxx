@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays, Clock, MapPin, CheckCircle, XCircle,
   Loader2, MessageSquare, Star, Banknote, CreditCard, ChevronDown,
@@ -1456,7 +1456,11 @@ const EmptyState: React.FC<{ icon: React.ReactNode; title: string; body: string 
 
 export const CaregiverBookingsPage: React.FC = () => {
   const { currentUser, addToast } = useCareConnex();
-  const [tab, setTab] = useState<Tab>('requests');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = searchParams.get('tab');
+    return (t === 'active' || t === 'past' || t === 'requests') ? t : 'requests';
+  });
 
   const [requests, setRequests] = useState<BookingRequest[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(true);

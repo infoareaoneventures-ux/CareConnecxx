@@ -1176,9 +1176,6 @@ export const PostsPage: React.FC = () => {
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0 ml-2">
-                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full border capitalize ${interviewStatusStyle(interview.status)}`}>
-                              {interview.status.replace('-', ' ')}
-                            </span>
                             <button onClick={() => navigate(`/client/caregiver/${interview.caregiverId}`)} className="p-1 hover:bg-slate-100 rounded-lg">
                               <ChevronRight className="w-4 h-4 text-slate-400" />
                             </button>

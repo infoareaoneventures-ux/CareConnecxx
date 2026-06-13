@@ -7,10 +7,10 @@ type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn';
 
 const StatusBadge: React.FC<{ status: ApplicationStatus }> = ({ status }) => {
   const styles: Record<ApplicationStatus, { icon: React.ReactNode; className: string; label: string }> = {
-    pending: { icon: <Clock4 className="w-3 h-3" />, className: 'text-primary-700 bg-primary-50', label: 'Pending' },
-    accepted: { icon: <CheckCircle className="w-3 h-3" />, className: 'text-emerald-700 bg-emerald-50', label: 'Accepted' },
-    rejected: { icon: <XCircle className="w-3 h-3" />, className: 'text-rose-700 bg-rose-50', label: 'Not Selected' },
-    withdrawn: { icon: null, className: 'text-slate-600 bg-slate-100', label: 'Withdrawn' },
+    pending:   { icon: <Clock4 className="w-3 h-3" />,      className: 'text-primary-700 bg-primary-50',   label: 'Pending' },
+    accepted:  { icon: <CheckCircle className="w-3 h-3" />, className: 'text-emerald-700 bg-emerald-50',   label: 'Accepted' },
+    rejected:  { icon: <XCircle className="w-3 h-3" />,     className: 'text-rose-700 bg-rose-50',         label: 'Not Selected' },
+    withdrawn: { icon: null,                                  className: 'text-slate-600 bg-slate-100',     label: 'Withdrawn' },
   };
   const s = styles[status] || styles.pending;
   return (

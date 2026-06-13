@@ -19,6 +19,7 @@ export default function InterviewOutcome() {
     id: string;
     caregiverName: string;
     caregiverId: string;
+    jobId?: string;
     date: string;
     time: string;
     type: string;
@@ -43,6 +44,7 @@ export default function InterviewOutcome() {
               id: doc.id,
               caregiverName: d.caregiverName || 'Unknown Caregiver',
               caregiverId: d.caregiverId || d.caregiverUid || '',
+              jobId: d.jobId,
               date: d.date || (scheduledDate ? scheduledDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''),
               time: d.time || (scheduledDate ? scheduledDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''),
               type: d.type || 'video',

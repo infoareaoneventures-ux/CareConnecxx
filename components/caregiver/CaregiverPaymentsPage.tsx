@@ -243,7 +243,7 @@ const STATUS_LABEL: Record<string, string> = {
   auto_approved:             'Auto-approved',
   disputed_admin_review:     'Admin reviewing',
   paid:                      'Paid',
-  payment_failed:            'Payment failed',
+  payment_failed:            'Awaiting Payment',
 };
 
 const STATUS_STYLE: Record<string, string> = {
@@ -254,7 +254,7 @@ const STATUS_STYLE: Record<string, string> = {
   auto_approved:             'bg-blue-50 text-blue-700 border-blue-200',
   disputed_admin_review:     'bg-purple-50 text-purple-700 border-purple-200',
   paid:                      'bg-green-50 text-green-700 border-green-200',
-  payment_failed:            'bg-red-50 text-red-700 border-red-200',
+  payment_failed:            'bg-amber-50 text-amber-700 border-amber-200',
 };
 
 // ── sub-components ────────────────────────────────────────────────────────────

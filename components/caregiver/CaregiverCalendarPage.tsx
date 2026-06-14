@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   Calendar as CalendarIcon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, X,
-  Video, Phone, Home, Loader2, User, MapPin, CheckCircle, Clock,
+  Video, Phone, Home, Loader2, User, MapPin, CheckCircle,
 } from 'lucide-react';
 import firebase from 'firebase/compat/app';
 import { auth, db } from '../../lib/firebase';
@@ -138,7 +138,7 @@ interface CaregiverCalendarPageProps {
   onNavigate: (view: any) => void;
 }
 
-export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ onNavigate }) => {
+export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ onNavigate: _onNavigate }) => {
   const navigate = useNavigate();
   const [view,       setView]       = useState<'week' | 'month' | 'day' | 'list'>('week');
   const [dateFilter, setDateFilter] = useState<'upcoming' | 'this-week' | 'this-month' | 'last-30' | 'all'>('upcoming');
@@ -393,13 +393,18 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
   const ShiftDetail = ({ shift, onClose }: { shift: Shift; onClose: () => void }) => {
     const now = new Date();
     const shiftStart = new Date(`${shift.date}T${shift.startTime}`);
-    const shiftEnd   = new Date(`${shift.date}T${shift.endTime || shift.startTime}`);
+    const endTimeStr = shift.endTime || shift.startTime;
+    // If end time is earlier in the day than start time, the shift crosses midnight — end is on the next day
+    const endDate = endTimeStr < (shift.startTime || '00:00')
+      ? (() => { const d = new Date(shift.date + 'T12:00:00'); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0]; })()
+      : shift.date;
+    const shiftEnd      = new Date(`${endDate}T${endTimeStr}`);
     const minUntilStart = (shiftStart.getTime() - now.getTime()) / 60000;
     const shiftEnded    = shiftEnd <= now;
 
     // Which actions are available
-    // canStart: within 30 min of start, OR shift time already passed (late start)
-    const canStart  = shift.status === 'scheduled' && minUntilStart <= 30;
+    // canStart: within 15 min of start OR late (started but not ended yet) — not overdue
+    const canStart  = shift.status === 'scheduled' && minUntilStart <= 15 && !shiftEnded;
     const canEnd    = shift.status === 'in-progress';
     const canCancel = shift.status === 'scheduled';
 
@@ -709,18 +714,18 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           {/* Scheduled: not yet startable */}
           {shift.status === 'scheduled' && !canStart && !shiftEnded && (
             <p className="text-xs text-slate-400 text-center py-1">
-              Start available 30 min before shift
+              Start available 15 min before shift
             </p>
           )}
 
-          {/* Scheduled + within 30 min (or late): Start Shift */}
+          {/* Scheduled + within 15 min of start (or past start but not ended): Start Shift */}
           {canStart && (
             <button
               onClick={() => handleStartShift(shift.id)}
               className="w-full py-2.5 bg-accent-500 hover:bg-accent-600 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
             >
               <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-              {shiftEnded ? 'Start Shift (Late)' : 'Start Shift'}
+              Start Shift
             </button>
           )}
 
@@ -767,7 +772,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
               </div>
               {shift.completionNotes && (
                 <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-600 border border-slate-200">
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shift Notes</p>
+                  <p className="text-xs font-semibold text-slate-500 mb-1">Caregiver Notes</p>
                   {shift.completionNotes}
                 </div>
               )}
@@ -1172,7 +1177,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                                       style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '2px', right: hasBoth ? '50%' : '2px' }}>
                                       <p className="px-1.5 pt-1 text-xs font-bold text-white leading-tight truncate">{(shift.clientName || 'Client').split(' ')[0]}</p>
                                       <p className="px-1.5 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
-                                      {(shiftDisplayStatus(shift) === 'late' || shiftDisplayStatus(shift) === 'overdue' || shift.status === 'in-progress') && <p className="px-1.5 text-[10px] text-white font-semibold">{shift.status === 'in-progress' ? 'In Progress' : shiftStatusLabel(shiftDisplayStatus(shift))}</p>}
+                                      {(shiftDisplayStatus(shift) === 'overdue' || shift.status === 'in-progress') && <p className="px-1.5 text-[10px] text-white font-semibold">{shift.status === 'in-progress' ? 'In Progress' : shiftStatusLabel(shiftDisplayStatus(shift))}</p>}
                                     </button>
                                   );
                                 })}
@@ -1259,7 +1264,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                                   style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '4px', right: dayInterviews.length > 0 ? '50%' : '4px' }}>
                                   <p className="px-2 pt-1.5 text-sm font-bold text-white leading-tight truncate">{shift.clientName || 'Client'}</p>
                                   <p className="px-2 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
-                                  {(shiftDisplayStatus(shift) === 'late' || shiftDisplayStatus(shift) === 'overdue') && <p className="px-2 text-xs text-white font-semibold mt-0.5">{shiftStatusLabel(shiftDisplayStatus(shift))}</p>}
+                                  {shiftDisplayStatus(shift) === 'overdue' && <p className="px-2 text-xs text-white font-semibold mt-0.5">{shiftStatusLabel(shiftDisplayStatus(shift))}</p>}
                                 </button>
                               );
                             })}

@@ -713,9 +713,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 const renderShift = (shift: any) => {
                   const ds = shiftDisplayStatus(shift);
                   const isInProgress = shift.status === 'in-progress';
-                  const cardBorder = ds === 'overdue' ? 'border-orange-300 bg-orange-50' : ds === 'late' ? 'border-yellow-300 bg-yellow-50' : 'border-slate-200';
-                  const statusColor = isInProgress ? 'text-green-600' : ds === 'overdue' ? 'text-orange-600' : ds === 'late' ? 'text-yellow-600' : 'text-slate-500';
-                  const statusText = isInProgress ? 'In Progress' : ds === 'overdue' ? 'Overdue' : ds === 'late' ? 'Late' : 'Upcoming';
+                  const cardBorder = ds === 'overdue' ? 'border-orange-300 bg-orange-50' : 'border-slate-200';
+                  const statusColor = isInProgress ? 'text-green-600' : ds === 'overdue' ? 'text-orange-600' : 'text-slate-500';
+                  const statusText = isInProgress ? 'In Progress' : ds === 'overdue' ? 'Overdue' : 'Upcoming';
                   return (
                     <div key={shift.id} className={`rounded-xl p-3 border ${cardBorder}`}>
                       <div className="flex items-center gap-2.5 mb-2">

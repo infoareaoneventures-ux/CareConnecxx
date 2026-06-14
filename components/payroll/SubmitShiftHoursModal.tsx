@@ -22,8 +22,9 @@ export interface CompletedShift {
   date: string;       // 'YYYY-MM-DD'
   startTime: string;  // scheduled 'HH:MM'
   endTime?: string;   // scheduled 'HH:MM'
-  startedAt?: any;    // Firestore Timestamp or ISO — actual clock-in
-  completedAt?: any;  // Firestore Timestamp or ISO — actual clock-out
+  startedAt?: any;          // Firestore Timestamp or ISO — actual clock-in
+  completedAt?: any;        // Firestore Timestamp or ISO — actual clock-out
+  loggedManually?: boolean; // true when caregiver self-reported via Log Hours modal
   paymentMethod?: string;
   rate?: number;
   careRecipients?: Array<{ name: string; relationship?: string; age?: string; photoURL?: string | null }>;

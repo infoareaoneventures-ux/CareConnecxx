@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import {
   Calendar, CalendarDays, Clock, CheckCircle, Briefcase,
   Users, MapPin, Star, MessageSquare, DollarSign,
-  TrendingUp, FileText, Mail, Heart, Video, Phone,
+  TrendingUp, FileText, Mail, Heart, Video, Phone, Loader2, ChevronRight,
 } from 'lucide-react';
 import type { Caregiver, AddToastFunction } from '../../types';
 import { db } from '../../lib/firebase';
+import firebase from '../../lib/firebase';
 import { authService, shiftHoursService } from '../../services/api';
 import { shiftDisplayStatus } from '../../utils/shiftUtils';
 import { CaregiverOnboardingDashboard } from './CaregiverOnboardingDashboard';
@@ -28,6 +29,12 @@ function fmtTime(t?: string): string {
   const ampm = h >= 12 ? 'PM' : 'AM';
   const h12 = h % 12 || 12;
   return m === 0 ? `${h12} ${ampm}` : `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function fmtTs(ts: any): string {
+  if (!ts) return '';
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
 }
 
 function fmtDate(iso: string): string {
@@ -71,6 +78,10 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   // UI tabs
   const [bookingTab, setBookingTab] = useState<'pending' | 'upcoming'>('pending');
   const [scheduleTab, setScheduleTab] = useState<'active' | 'upcoming'>('upcoming');
+  const [startingShift, setStartingShift] = useState<string | null>(null);
+  const [endingShift, setEndingShift] = useState<string | null>(null);
+  const [endNote, setEndNote] = useState('');
+  const [taskModalShift, setTaskModalShift] = useState<any | null>(null);
   const [careRequestsTab, setCareRequestsTab] = useState<'applications' | 'interviews'>('applications');
   const [ivDashTab, setIvDashTab] = useState<'pending' | 'scheduled'>('pending');
 
@@ -166,7 +177,8 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   const hasActiveFamilies = acceptedBookings.length > 0;
 
   const todayShifts = allShifts.filter(s => s.date === todayStr);
-  const activeShifts = todayShifts.filter(s => s.status === 'in-progress').sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+  // Include in-progress shifts from any date — caregiver may have started a shift yesterday and not ended it
+  const activeShifts = allShifts.filter(s => s.status === 'in-progress').sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
   const upcomingTodayShifts = todayShifts.filter(s => s.status === 'scheduled').sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
   const upcomingShifts = allShifts
     .filter(s => s.date > todayStr && (s.status === 'scheduled' || s.status === 'in-progress'))
@@ -519,9 +531,6 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                   : <Clock className="w-3.5 h-3.5" />
                 }
                 {tab}
-                {tab === 'active' && activeShifts.length > 0 && (
-                  <span className="ml-0.5 bg-green-100 text-green-700 text-[10px] font-bold px-1.5 rounded-full">{activeShifts.length}</span>
-                )}
               </button>
             ))}
           </div>
@@ -540,9 +549,9 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                 {list.map((s: any) => {
                   const ds = shiftDisplayStatus(s);
                   const isInProgress = s.status === 'in-progress';
-                  const cardBorder = isInProgress ? 'border-green-300 bg-green-50' : ds === 'overdue' ? 'border-orange-300 bg-orange-50' : ds === 'late' ? 'border-yellow-300 bg-yellow-50' : 'border-slate-200';
-                  const statusColor = isInProgress ? 'text-green-600' : ds === 'overdue' ? 'text-orange-600' : ds === 'late' ? 'text-yellow-600' : 'text-slate-500';
-                  const statusText = isInProgress ? 'In Progress' : ds === 'overdue' ? 'Overdue' : ds === 'late' ? 'Late' : 'Upcoming';
+                  const cardBorder = isInProgress ? 'border-green-300 bg-green-50' : ds === 'overdue' ? 'border-orange-300 bg-orange-50' : 'border-slate-200';
+                  const statusColor = isInProgress ? 'text-green-600' : ds === 'overdue' ? 'text-orange-600' : 'text-slate-500';
+                  const statusText = isInProgress ? 'In Progress' : ds === 'overdue' ? 'Overdue' : 'Upcoming';
                   return (
                     <div key={s.id} className={`rounded-xl p-3 border ${cardBorder}`}>
                       <div className="flex items-center gap-2 mb-1.5">
@@ -561,6 +570,12 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                         <Clock className="w-3 h-3 flex-shrink-0" />
                         <span className="font-medium">{fmtTime(s.startTime)} – {fmtTime(s.endTime)}</span>
                       </div>
+                      {isInProgress && s.startedAt && (
+                        <div className="flex items-center gap-1.5 text-xs text-green-600 mt-0.5">
+                          <CheckCircle className="w-3 h-3 flex-shrink-0" />
+                          <span>Started {fmtTs(s.startedAt)}</span>
+                        </div>
+                      )}
                       {s.careRecipients?.length > 0 && (
                         <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1">
                           <Heart className="w-3 h-3 flex-shrink-0 text-rose-400" />
@@ -573,6 +588,102 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                           <span className="truncate">{s.address}</span>
                         </div>
                       )}
+                      {isInProgress && (() => {
+                        const recipients: any[] = s.careRecipients || [];
+                        const completed: string[] = s.tasksCompleted || [];
+                        let totalTasks = 0; let doneTasks = 0;
+                        recipients.forEach((r: any, ri: number) => {
+                          const needs: string[] = r.careNeeds || [];
+                          const det: Record<string, string[]> = r.careNeedDetails || {};
+                          needs.forEach(need => {
+                            const subs = det[need] || [];
+                            if (subs.length > 0) { totalTasks += subs.length; doneTasks += subs.filter((sub: string) => completed.includes(`${ri}_${need}_${sub}`)).length; }
+                            else { totalTasks++; if (completed.includes(`${ri}_${need}`)) doneTasks++; }
+                          });
+                        });
+                        if (totalTasks === 0) return null;
+                        return (
+                          <button
+                            onClick={() => setTaskModalShift(s)}
+                            className="mt-2 w-full flex items-center justify-between px-3 py-2 bg-white hover:bg-primary-50 border border-primary-300 rounded-xl transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <CheckCircle className="w-3.5 h-3.5 text-primary-500" />
+                              <span className="text-xs font-semibold text-primary-700">View Tasks</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${doneTasks === totalTasks ? 'bg-green-100 text-green-700' : 'bg-primary-100 text-primary-700'}`}>{doneTasks}/{totalTasks}</span>
+                              <ChevronRight className="w-3.5 h-3.5 text-primary-400" />
+                            </div>
+                          </button>
+                        );
+                      })()}
+                      {isInProgress && endingShift !== s.id && (
+                        <button
+                          onClick={() => { setEndingShift(s.id); setEndNote(''); }}
+                          className="mt-2 w-full py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition-colors"
+                        >
+                          End Shift
+                        </button>
+                      )}
+                      {isInProgress && endingShift === s.id && (
+                        <div className="mt-2 space-y-2">
+                          <textarea
+                            value={endNote}
+                            onChange={e => setEndNote(e.target.value)}
+                            placeholder="Add a note (optional)..."
+                            rows={2}
+                            className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-primary-400"
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setEndingShift(null)}
+                              className="flex-1 py-1.5 border border-slate-200 text-slate-600 text-xs font-semibold rounded-lg hover:bg-slate-50 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (!db) return;
+                                await db.collection('shifts').doc(s.id).update({
+                                  status: 'completed',
+                                  completedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                                  ...(endNote.trim() ? { completionNotes: endNote.trim() } : {}),
+                                });
+                                setEndingShift(null);
+                                setEndNote('');
+                              }}
+                              className="flex-1 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg transition-colors"
+                            >
+                              Confirm
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {(() => {
+                        if (isInProgress) return null;
+                        if (ds === 'overdue') return null;
+                        const minsUntil = (new Date(`${s.date}T${s.startTime}`).getTime() - Date.now()) / 60000;
+                        if (minsUntil > 15) return null;
+                        return (
+                          <button
+                            onClick={async () => {
+                              if (!db || startingShift) return;
+                              setStartingShift(s.id);
+                              try {
+                                await db.collection('shifts').doc(s.id).update({ status: 'in-progress', startedAt: new Date() });
+                              } finally {
+                                setStartingShift(null);
+                              }
+                            }}
+                            disabled={startingShift === s.id}
+                            className="mt-2 w-full py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 disabled:opacity-50 transition-colors"
+                          >
+                            {startingShift === s.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                            Start Shift
+                          </button>
+                        );
+                      })()}
                     </div>
                   );
                 })}
@@ -916,6 +1027,109 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
         <div>{Sidebar}</div>
 
       </div>
+
+      {/* Task Modal */}
+      {taskModalShift && (() => {
+        const s = taskModalShift;
+        const recipients: any[] = s.careRecipients || [];
+        const completed: string[] = s.tasksCompleted || [];
+        const toggleTask = async (key: string) => {
+          if (!db) return;
+          const updated = completed.includes(key) ? completed.filter((t: string) => t !== key) : [...completed, key];
+          await db.collection('shifts').doc(s.id).update({ tasksCompleted: updated }).catch(() => {});
+          setTaskModalShift((prev: any) => prev ? { ...prev, tasksCompleted: updated } : null);
+        };
+        const toggleCategory = async (subKeys: string[]) => {
+          if (!db) return;
+          const allDone = subKeys.every(k => completed.includes(k));
+          const updated = allDone ? completed.filter((k: string) => !subKeys.includes(k)) : [...new Set([...completed, ...subKeys])];
+          await db.collection('shifts').doc(s.id).update({ tasksCompleted: updated }).catch(() => {});
+          setTaskModalShift((prev: any) => prev ? { ...prev, tasksCompleted: updated } : null);
+        };
+        let totalTasks = 0; let doneTasks = 0;
+        recipients.forEach((r: any, ri: number) => {
+          const needs: string[] = r.careNeeds || [];
+          const det: Record<string, string[]> = r.careNeedDetails || {};
+          needs.forEach(need => {
+            const subs = det[need] || [];
+            if (subs.length > 0) { totalTasks += subs.length; doneTasks += subs.filter((sub: string) => completed.includes(`${ri}_${need}_${sub}`)).length; }
+            else { totalTasks++; if (completed.includes(`${ri}_${need}`)) doneTasks++; }
+          });
+        });
+        return (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40" onClick={() => setTaskModalShift(null)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                <div>
+                  <p className="font-bold text-slate-900 text-sm">{s.clientName || 'Shift'}</p>
+                  <p className="text-xs text-slate-500">{fmtTime(s.startTime)} – {fmtTime(s.endTime)}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${doneTasks === totalTasks ? 'bg-green-100 text-green-700' : 'bg-primary-100 text-primary-700'}`}>{doneTasks}/{totalTasks}</span>
+                  <button onClick={() => setTaskModalShift(null)} className="text-slate-400 hover:text-slate-600">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-y-auto p-4 space-y-2">
+                {recipients.map((r: any, ri: number) => {
+                  const needs: string[] = r.careNeeds || [];
+                  const det: Record<string, string[]> = r.careNeedDetails || {};
+                  if (needs.length === 0) return null;
+                  return (
+                    <div key={ri} className="space-y-1.5">
+                      {needs.map(need => {
+                        const subtasks: string[] = det[need] || [];
+                        if (subtasks.length > 0) {
+                          const subKeys = subtasks.map((sub: string) => `${ri}_${need}_${sub}`);
+                          const allDone = subKeys.every(k => completed.includes(k));
+                          return (
+                            <div key={need} className="rounded-lg border border-blue-200 overflow-hidden">
+                              <button type="button" onClick={() => toggleCategory(subKeys)}
+                                className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${allDone ? 'bg-primary-500' : 'bg-primary-50 hover:bg-primary-100'}`}>
+                                <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center ${allDone ? 'bg-white border-white' : 'border-primary-300 bg-white'}`}>
+                                  {allDone && <CheckCircle className="w-2.5 h-2.5 text-primary-500" />}
+                                </div>
+                                <span className={`text-xs font-semibold ${allDone ? 'text-white line-through' : 'text-primary-700'}`}>{need}</span>
+                              </button>
+                              <div className="px-3 pb-1">
+                                {subtasks.map((sub: string) => {
+                                  const key = `${ri}_${need}_${sub}`;
+                                  const done = completed.includes(key);
+                                  return (
+                                    <button key={key} type="button" onClick={() => toggleTask(key)} className="w-full flex items-center gap-2 text-left py-1.5 pl-2">
+                                      <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${done ? 'bg-primary-500 border-primary-500' : 'border-slate-300'}`}>
+                                        {done && <CheckCircle className="w-2.5 h-2.5 text-white" />}
+                                      </div>
+                                      <span className={`text-xs ${done ? 'line-through text-slate-400' : 'text-slate-700'}`}>{sub}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        }
+                        const key = `${ri}_${need}`;
+                        const done = completed.includes(key);
+                        return (
+                          <button key={need} type="button" onClick={() => toggleTask(key)}
+                            className={`w-full flex items-center gap-2 text-left rounded-lg border overflow-hidden px-3 py-2 transition-colors ${done ? 'bg-primary-500 border-primary-500' : 'bg-primary-50 border-blue-200 hover:bg-primary-100'}`}>
+                            <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center ${done ? 'bg-white border-white' : 'border-primary-300 bg-white'}`}>
+                              {done && <CheckCircle className="w-2.5 h-2.5 text-primary-500" />}
+                            </div>
+                            <span className={`text-xs font-semibold ${done ? 'text-white line-through' : 'text-primary-700'}`}>{need}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
     </div>
   );
 };

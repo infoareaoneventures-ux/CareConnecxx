@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays, Clock, MapPin, CheckCircle, XCircle,
   Loader2, MessageSquare, Star, Banknote, CreditCard, ChevronDown,
-  ChevronUp, Phone, AlertCircle, Repeat, FileText,
+  ChevronUp, Phone, AlertCircle, Repeat, FileText, ClipboardList,
 } from 'lucide-react';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -216,14 +216,6 @@ function sortBlocks<T extends { start: string }>(blocks: T[]): T[] {
   });
 }
 
-const statusBadge = (status: Shift['status']) => {
-  switch (status) {
-    case 'scheduled':   return 'bg-blue-100 text-blue-700 border-blue-200';
-    case 'in-progress': return 'bg-green-100 text-green-700 border-green-200';
-    case 'completed':   return 'bg-slate-100 text-slate-600 border-slate-200';
-    case 'cancelled':   return 'bg-red-100 text-red-600 border-red-200';
-  }
-};
 
 const ClientAvatar: React.FC<{ photoURL?: string | null; name?: string; size?: string; textColor?: string }> = ({
   photoURL, name, size = 'w-12 h-12', textColor = 'text-primary-700',
@@ -977,7 +969,7 @@ const BookingGroupCard: React.FC<{
         <p className="px-5 pt-3 pb-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Upcoming Shifts</p>
         {(() => {
           const allUpcoming = shifts
-            .filter(s => s.status !== 'pending')
+            .filter(s => s.status !== 'pending' && shiftDisplayStatus(s) !== 'overdue')
             .sort((a, b) => {
               const d = (a.date || '').localeCompare(b.date || '');
               return d !== 0 ? d : (a.startTime || '').localeCompare(b.startTime || '');
@@ -1044,16 +1036,23 @@ const BookingGroupCard: React.FC<{
                       {isExpanded ? 'Hide' : 'Tasks'}
                     </button>
                   )}
-                  {shift.status === 'scheduled' && (
-                    <button
-                      onClick={() => handleStart(shift.id)}
-                      disabled={submitting === shift.id}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-xs font-semibold disabled:opacity-50 transition-colors"
-                    >
-                      {submitting === shift.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                      Start
-                    </button>
-                  )}
+                  {(() => {
+                    if (shift.status !== 'scheduled') return null;
+                    const ds = shiftDisplayStatus(shift);
+                    if (ds === 'overdue') return null;
+                    const minsUntilStart = (new Date(`${shift.date}T${shift.startTime}`).getTime() - Date.now()) / 60000;
+                    if (minsUntilStart > 15) return null;
+                    return (
+                      <button
+                        onClick={() => handleStart(shift.id)}
+                        disabled={submitting === shift.id}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-xs font-semibold disabled:opacity-50 transition-colors"
+                      >
+                        {submitting === shift.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                        Start Shift
+                      </button>
+                    );
+                  })()}
                   {shift.status === 'in-progress' && endingShiftId !== shift.id && (
                     <button
                       onClick={() => setEndingShiftId(shift.id)}
@@ -1205,7 +1204,7 @@ const BookingGroupCard: React.FC<{
 
 // ── Past Booking Group Card ──────────────────────────────────────────────────
 
-const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
+const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shift) => void }> = ({ shifts, onLogHours }) => {
   const navigate = useNavigate();
   const base = shifts[0];
   const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
@@ -1213,6 +1212,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
 
   const completedCount = shifts.filter(s => s.status === 'completed').length;
   const cancelledCount = shifts.filter(s => s.status === 'cancelled').length;
+  const missedCount    = shifts.filter(s => s.status === 'scheduled' || s.status === 'pending').length;
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
@@ -1227,6 +1227,11 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
               {completedCount > 0 && (
                 <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">
                   <CheckCircle className="w-3 h-3" /> {completedCount} completed
+                </span>
+              )}
+              {missedCount > 0 && (
+                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full border bg-orange-50 text-orange-600 border-orange-200">
+                  {missedCount} missed
                 </span>
               )}
               {cancelledCount > 0 && (
@@ -1249,6 +1254,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
       <div className="border-t border-slate-100">
         {(showAllShifts ? shifts : shifts.slice(0, 2)).map(shift => {
           const isCompleted = shift.status === 'completed';
+          const isMissed    = shift.status === 'scheduled' || shift.status === 'pending';
           const isOpen = expandedShiftId === shift.id;
           const actualStart = fmtTs(shift.startedAt);
           const actualEnd   = fmtTs(shift.completedAt);
@@ -1263,9 +1269,9 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
                 onClick={() => isCompleted && setExpandedShiftId(isOpen ? null : shift.id)}
               >
                 {/* Date block */}
-                <div className={`w-11 h-11 rounded-xl flex flex-col items-center justify-center shrink-0 ${isCompleted ? 'bg-slate-100' : 'bg-red-50'}`}>
-                  <span className={`text-[9px] font-semibold uppercase leading-none ${isCompleted ? 'text-slate-500' : 'text-red-400'}`}>{dayAbbr}</span>
-                  <span className={`text-base font-bold leading-tight ${isCompleted ? 'text-slate-700' : 'text-red-500'}`}>{dayNum}</span>
+                <div className={`w-11 h-11 rounded-xl flex flex-col items-center justify-center shrink-0 ${isCompleted ? 'bg-slate-100' : isMissed ? 'bg-orange-50' : 'bg-red-50'}`}>
+                  <span className={`text-[9px] font-semibold uppercase leading-none ${isCompleted ? 'text-slate-500' : isMissed ? 'text-orange-400' : 'text-red-400'}`}>{dayAbbr}</span>
+                  <span className={`text-base font-bold leading-tight ${isCompleted ? 'text-slate-700' : isMissed ? 'text-orange-500' : 'text-red-500'}`}>{dayNum}</span>
                 </div>
 
                 <div className="flex-1 min-w-0">
@@ -1279,10 +1285,21 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${shiftStatusBadgeClass(shiftDisplayStatus(shift))}`}>
-                    {shiftStatusLabel(shiftDisplayStatus(shift))}
-                  </span>
-                  {isCompleted && <span className="text-slate-400 text-xs">{isOpen ? '▲' : '▼'}</span>}
+                  {isMissed ? (
+                    <button
+                      onClick={e => { e.stopPropagation(); onLogHours?.(shift); }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 bg-primary-600 text-white text-xs font-semibold rounded-lg hover:bg-primary-700 transition-colors"
+                    >
+                      <ClipboardList className="w-3 h-3" /> Log Hours
+                    </button>
+                  ) : (
+                    <>
+                      <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${shiftStatusBadgeClass(shiftDisplayStatus(shift))}`}>
+                        {shiftStatusLabel(shiftDisplayStatus(shift))}
+                      </span>
+                      {isCompleted && <span className="text-slate-400 text-xs">{isOpen ? '▲' : '▼'}</span>}
+                    </>
+                  )}
                 </div>
               </div>
               {isCompleted && isOpen && (
@@ -1413,7 +1430,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[] }> = ({ shifts }) => {
                   {/* Caregiver notes */}
                   {shift.completionNotes && (
                     <div className="p-3 bg-white border border-slate-200 rounded-xl">
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Caregiver Notes</p>
+                      <p className="text-xs font-semibold text-slate-500 mb-1">Caregiver Notes</p>
                       <p className="text-xs text-slate-600">{shift.completionNotes}</p>
                     </div>
                   )}
@@ -1471,6 +1488,15 @@ export const CaregiverBookingsPage: React.FC = () => {
 
   const [pastShifts, setPastShifts] = useState<Shift[]>([]);
   const [pastLoading, setPastLoading] = useState(true);
+  const [overdueShifts, setOverdueShifts] = useState<Shift[]>([]);
+  const [logHoursShift, setLogHoursShift] = useState<Shift | null>(null);
+  const [logStartDate, setLogStartDate] = useState('');
+  const [logStart, setLogStart] = useState('');
+  const [logEndDate, setLogEndDate] = useState('');
+  const [logEnd, setLogEnd] = useState('');
+  const [logTasks, setLogTasks] = useState<string[]>([]);
+  const [logNote, setLogNote] = useState('');
+  const [loggingHours, setLoggingHours] = useState(false);
 
   const [amendments, setAmendments] = useState<BookingAmendment[]>([]);
 
@@ -1526,6 +1552,21 @@ export const CaregiverBookingsPage: React.FC = () => {
         setPastShifts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Shift)));
         setPastLoading(false);
       }, () => setPastLoading(false));
+    return () => unsub();
+  }, [uid]);
+
+  // Fetch overdue shifts (scheduled but date has passed)
+  useEffect(() => {
+    if (!uid || !db) return;
+    const n = new Date();
+    const today = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
+    const unsub = db.collection('shifts')
+      .where('caregiverId', '==', uid)
+      .where('status', 'in', ['scheduled', 'pending'])
+      .where('date', '<', today)
+      .onSnapshot(snap => {
+        setOverdueShifts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Shift)));
+      }, () => {});
     return () => unsub();
   }, [uid]);
 
@@ -1727,6 +1768,7 @@ export const CaregiverBookingsPage: React.FC = () => {
   const orphanAmendments = amendments;
 
   return (
+    <>
     <div className="min-h-screen bg-slate-50 pb-24">
       <CaregiverTopNav />
 
@@ -1884,7 +1926,7 @@ export const CaregiverBookingsPage: React.FC = () => {
           <div className="space-y-4">
             {pastLoading ? (
               <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-500" /></div>
-            ) : pastShifts.length === 0 ? (
+            ) : pastShifts.length === 0 && overdueShifts.length === 0 ? (
               <EmptyState
                 icon={<CalendarDays className="w-6 h-6" />}
                 title="No past bookings"
@@ -1893,13 +1935,31 @@ export const CaregiverBookingsPage: React.FC = () => {
             ) : (
               (() => {
                 const groups = new Map<string, Shift[]>();
-                pastShifts.forEach(s => {
-                  const key = s.bookingRequestId || s.id;
+                // Merge overdue (missed) shifts into the same grouping as past shifts
+                [...overdueShifts, ...pastShifts].forEach(s => {
+                  const key = s.bookingRequestId || s.clientId || s.id;
                   if (!groups.has(key)) groups.set(key, []);
                   groups.get(key)!.push(s);
                 });
                 return Array.from(groups.entries()).map(([key, groupShifts]) => (
-                  <PastBookingGroupCard key={key} shifts={groupShifts} />
+                  <PastBookingGroupCard
+                    key={key}
+                    shifts={groupShifts}
+                    onLogHours={shift => {
+                      setLogHoursShift(shift);
+                      setLogStartDate(shift.date || '');
+                      setLogStart(shift.startTime || '');
+                      // If shift crosses midnight, end date is next day
+                      const crossesMidnight = (shift.endTime || '') < (shift.startTime || '');
+                      const endD = crossesMidnight
+                        ? (() => { const d = new Date(shift.date + 'T12:00:00'); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0]; })()
+                        : shift.date || '';
+                      setLogEndDate(endD);
+                      setLogEnd(shift.endTime || '');
+                      setLogTasks([]);
+                      setLogNote('');
+                    }}
+                  />
                 ));
               })()
             )}
@@ -1907,5 +1967,188 @@ export const CaregiverBookingsPage: React.FC = () => {
         )}
       </div>
     </div>
+
+    {/* ── Log Hours Modal ── */}
+    {logHoursShift && (() => {
+      type RecipientType = { name: string; relationship?: string; age?: string; photoURL?: string | null; careNeeds?: string[]; careNeedDetails?: Record<string, string[]> };
+      const recipients = (logHoursShift.careRecipients || []) as RecipientType[];
+      const hasTasks = recipients.some(r => (r.careNeeds || []).length > 0) || (logHoursShift.careNeeds || []).length > 0;
+      const toggleTask = (key: string) => setLogTasks(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+
+      // Total hours calculation
+      const totalMins = (() => {
+        if (!logStartDate || !logStart || !logEndDate || !logEnd) return null;
+        const s = new Date(`${logStartDate}T${logStart}:00`).getTime();
+        const e = new Date(`${logEndDate}T${logEnd}:00`).getTime();
+        if (isNaN(s) || isNaN(e) || e <= s) return null;
+        return Math.round((e - s) / 60000);
+      })();
+      const totalLabel = totalMins != null
+        ? `${Math.floor(totalMins / 60)}h ${totalMins % 60}m`
+        : null;
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm max-h-[90vh] flex flex-col">
+            <div className="overflow-y-auto flex-1 p-6 space-y-5">
+              {/* Header */}
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Log Hours</h3>
+                  <p className="text-sm text-slate-500 mt-0.5">{logHoursShift.clientName}</p>
+                </div>
+                {totalLabel && (
+                  <span className="text-sm font-bold text-primary-600 bg-primary-50 px-3 py-1 rounded-full border border-primary-200">
+                    {totalLabel}
+                  </span>
+                )}
+              </div>
+
+              {/* Start date + time */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">Actual Start</label>
+                <div className="flex gap-2">
+                  <input type="date" value={logStartDate} onChange={e => setLogStartDate(e.target.value)}
+                    className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-400" />
+                  <input type="time" value={logStart} onChange={e => setLogStart(e.target.value)}
+                    className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-400" />
+                </div>
+              </div>
+
+              {/* End date + time */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">Actual End</label>
+                <div className="flex gap-2">
+                  <input type="date" value={logEndDate} onChange={e => setLogEndDate(e.target.value)}
+                    className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-400" />
+                  <input type="time" value={logEnd} onChange={e => setLogEnd(e.target.value)}
+                    className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-400" />
+                </div>
+              </div>
+
+              {/* Tasks — hierarchical */}
+              {hasTasks && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 mb-2">Tasks Completed</p>
+                  <div className="space-y-3">
+                    {recipients.some(r => (r.careNeeds || []).length > 0) ? (
+                      recipients.map((r, ri) => {
+                        const cats = r.careNeeds || [];
+                        if (cats.length === 0) return null;
+                        const det = r.careNeedDetails || {};
+                        return (
+                          <div key={ri}>
+                            <p className="text-xs font-semibold text-slate-500 mb-1.5">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}</p>
+                            <div className="space-y-1.5">
+                              {cats.map((cat, ci) => {
+                                const subs = det[cat] || [];
+                                if (subs.length > 0) {
+                                  const allDone = subs.every((sub: string) => logTasks.includes(`${ri}_${cat}_${sub}`));
+                                  const doneCnt = subs.filter((sub: string) => logTasks.includes(`${ri}_${cat}_${sub}`)).length;
+                                  return (
+                                    <div key={ci} className="border border-slate-200 rounded-xl overflow-hidden">
+                                      <div className={`flex items-center gap-2 px-3 py-2 ${allDone ? 'bg-green-50' : 'bg-slate-50'}`}>
+                                        <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${allDone ? 'text-green-500' : 'text-slate-300'}`} />
+                                        <p className={`text-xs font-semibold flex-1 ${allDone ? 'text-green-700' : 'text-primary-600'}`}>{cat}</p>
+                                        <span className="text-[10px] text-slate-400">{doneCnt}/{subs.length}</span>
+                                      </div>
+                                      <div className="px-3 py-2 space-y-1.5 border-t border-slate-100">
+                                        {subs.map((sub: string, si: number) => {
+                                          const key = `${ri}_${cat}_${sub}`;
+                                          const done = logTasks.includes(key);
+                                          return (
+                                            <button key={si} onClick={() => toggleTask(key)}
+                                              className={`w-full flex items-center gap-2 text-xs text-left transition-colors ${done ? 'text-green-700' : 'text-slate-500'}`}>
+                                              <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                                              {sub}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                const key = `${ri}_${cat}`;
+                                const done = logTasks.includes(key);
+                                return (
+                                  <button key={ci} onClick={() => toggleTask(key)}
+                                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-xs text-left transition-colors ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+                                    <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                                    <span className="font-semibold">{cat}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="space-y-1.5">
+                        {(logHoursShift.careNeeds || []).map((t: string, i: number) => {
+                          const done = logTasks.includes(t);
+                          return (
+                            <button key={i} onClick={() => toggleTask(t)}
+                              className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-xs text-left transition-colors ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+                              <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
+                              <span className="font-semibold">{t}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Caregiver Notes */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Caregiver Notes <span className="font-normal text-slate-400">(optional)</span></label>
+                <textarea value={logNote} onChange={e => setLogNote(e.target.value)} rows={3}
+                  placeholder="Any notes about the visit…"
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-800 resize-none focus:outline-none focus:ring-2 focus:ring-primary-400" />
+              </div>
+            </div>
+
+            {/* Sticky footer */}
+            <div className="p-4 border-t border-slate-100 flex gap-2">
+              <button onClick={() => setLogHoursShift(null)}
+                className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors">
+                Cancel
+              </button>
+              <button
+                disabled={loggingHours || !logStartDate || !logStart || !logEndDate || !logEnd || !totalMins || totalMins <= 0}
+                onClick={async () => {
+                  if (!db || !logHoursShift || !logStart || !logEnd || !logStartDate || !logEndDate) return;
+                  setLoggingHours(true);
+                  try {
+                    const startedAt = new Date(`${logStartDate}T${logStart}:00`);
+                    const completedAt = new Date(`${logEndDate}T${logEnd}:00`);
+                    await db.collection('shifts').doc(logHoursShift.id).update({
+                      status: 'completed',
+                      startedAt: firebase.firestore.Timestamp.fromDate(startedAt),
+                      completedAt: firebase.firestore.Timestamp.fromDate(completedAt),
+                      loggedManually: true,
+                      tasksCompleted: logTasks,
+                      ...(logNote.trim() ? { completionNotes: logNote.trim() } : {}),
+                      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    });
+                    addToast('Hours logged successfully', 'success');
+                    setLogHoursShift(null);
+                  } catch {
+                    addToast('Failed to log hours', 'error');
+                  } finally {
+                    setLoggingHours(false);
+                  }
+                }}
+                className="flex-1 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 disabled:opacity-50 transition-colors"
+              >
+                {loggingHours ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    })()}
+    </>
   );
 };

@@ -76,6 +76,7 @@ interface ShiftHoursRow {
   submittedAt: string;
   autoApproveAt: string;
   status: ShiftHoursStatus;
+  loggedManually?: boolean;
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -305,6 +306,7 @@ const ShiftRow: React.FC<{
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap ml-auto shrink-0">
+          {row.loggedManually && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 border-slate-200">Logged</span>}
           {isCorrected && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-teal-50 text-teal-700 border-teal-200">Corrected</span>}
           <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>{cfg.label}</span>
         </div>
@@ -323,7 +325,7 @@ const ShiftRow: React.FC<{
                 <span className="font-semibold text-slate-700">${row.payRate}/hr</span>
               </div>
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-slate-500">Clock in / out</span>
+                <span className="text-slate-500">{row.loggedManually ? 'Reported in / out' : 'Clock in / out'}</span>
                 <span className="font-semibold text-slate-700">
                   {fmtDateTime(row.submittedStartTime)} – {fmtDateTime(row.submittedEndTime)}
                 </span>

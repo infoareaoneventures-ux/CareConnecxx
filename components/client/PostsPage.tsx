@@ -771,6 +771,23 @@ export const PostsPage: React.FC = () => {
           decision: 'hire',
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
+
+        // Mark the caregiver's application as accepted
+        if (interview.jobId) {
+          try {
+            const appSnap = await db.collection('job_applications')
+              .where('caregiverId', '==', interview.caregiverId)
+              .where('jobId', '==', interview.jobId)
+              .limit(1)
+              .get();
+            if (!appSnap.empty) {
+              await appSnap.docs[0].ref.update({
+                status: 'accepted',
+                acceptedAt: firebase.firestore.FieldValue.serverTimestamp(),
+              });
+            }
+          } catch { /* non-critical */ }
+        }
       }
 
       await db.collection('users').doc(interview.caregiverId).collection('notifications').add({

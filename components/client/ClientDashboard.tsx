@@ -1178,26 +1178,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                             </div>
                             {/* Auto-approve warning */}
                             {showAutoApprove && (
-                              <div className="flex items-center gap-1.5 text-[10px] text-amber-600 mb-2">
+                              <div className="flex items-center gap-1.5 text-[10px] text-amber-600">
                                 <Clock className="w-3 h-3 flex-shrink-0" />
                                 <span>Auto-approves in {hoursLeft}h</span>
                               </div>
-                            )}
-                            {/* Review / Retry button */}
-                            {shift.status === 'payment_failed' ? (
-                              <button
-                                onClick={() => navigate('/client/payments?filter=needs-review')}
-                                className="w-full py-1.5 text-xs font-semibold bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
-                              >
-                                Review
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => setReviewingShift(shift)}
-                                className="w-full py-1.5 text-xs font-semibold bg-accent-500 text-white rounded-lg hover:bg-accent-600 transition-colors"
-                              >
-                                Review
-                              </button>
                             )}
                           </div>
                         );

@@ -704,11 +704,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
               {(() => {
                 const _now = new Date();
                 const todayStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
-                const todayShifts = [...activeShifts]
-                  .filter((s: any) => s.date === todayStr && s.status !== 'completed')
+                const activeTab = [...activeShifts]
+                  .filter((s: any) => s.status === 'in-progress')
+                  .sort((a: any, b: any) => (a.date || '').localeCompare(b.date || '') || (a.startTime || '').localeCompare(b.startTime || ''));
+                const upcomingTab = [...activeShifts]
+                  .filter((s: any) => s.date === todayStr && s.status === 'scheduled')
                   .sort((a: any, b: any) => (a.startTime || '').localeCompare(b.startTime || ''));
-                const activeTab = todayShifts.filter((s: any) => s.status === 'in-progress');
-                const upcomingTab = todayShifts.filter((s: any) => s.status === 'scheduled');
                 const tabShifts = todayBookingTab === 'active' ? activeTab : upcomingTab;
                 const renderShift = (shift: any) => {
                   const ds = shiftDisplayStatus(shift);

@@ -104,7 +104,7 @@ async function notifyAdmins(type, title, message, data) {
  * Caregiver submits hours for a completed appointment.
  */
 exports.submitShiftHours = functions.https.onCall(async (data, context) => {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
     }
@@ -178,6 +178,7 @@ exports.submitShiftHours = functions.https.onCall(async (data, context) => {
         submittedAt,
         autoApproveAt,
         paymentAttemptCount: 0,
+        loggedManually: (_a = shiftDoc.loggedManually) !== null && _a !== void 0 ? _a : false,
         status: 'pending_client_review',
         correctionHistory: [{
                 by: 'caregiver',
@@ -198,18 +199,18 @@ exports.submitShiftHours = functions.https.onCall(async (data, context) => {
     // iMessage: notify client so they can approve or dispute without opening the app
     try {
         const clientUserSnap = await db.collection("users").doc(shiftDoc.clientId).get();
-        const clientPhone = (_a = clientUserSnap.data()) === null || _a === void 0 ? void 0 : _a.phone;
+        const clientPhone = (_b = clientUserSnap.data()) === null || _b === void 0 ? void 0 : _b.phone;
         if (clientPhone) {
             const amount = grossPay.toFixed(2);
             const { sendToPhone } = await Promise.resolve().then(() => __importStar(require("./linq/client")));
-            await sendToPhone(clientPhone, `${(_b = caregiverData.name) !== null && _b !== void 0 ? _b : "Your caregiver"} submitted ${fmtHours(totalHours)} for ` +
-                `${(_c = shiftDoc.date) !== null && _c !== void 0 ? _c : "today"}'s visit ($${amount}).\n\n` +
+            await sendToPhone(clientPhone, `${(_c = caregiverData.name) !== null && _c !== void 0 ? _c : "Your caregiver"} submitted ${fmtHours(totalHours)} for ` +
+                `${(_d = shiftDoc.date) !== null && _d !== void 0 ? _d : "today"}'s visit ($${amount}).\n\n` +
                 `Reply APPROVE to confirm, or DISPUTE if something looks wrong.`);
             await db.collection("agent_sessions").doc(clientPhone).set({
                 pendingShiftApproval: {
                     appointmentId: shiftId,
                     amount,
-                    caregiverName: (_d = caregiverData.name) !== null && _d !== void 0 ? _d : "Caregiver",
+                    caregiverName: (_e = caregiverData.name) !== null && _e !== void 0 ? _e : "Caregiver",
                 },
                 pendingShiftApprovalSetAt: new Date().toISOString(),
             }, { merge: true });

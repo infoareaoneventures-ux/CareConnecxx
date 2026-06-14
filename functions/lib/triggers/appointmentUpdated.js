@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.onAppointmentUpdated = void 0;
+exports.onBookingRequestCreated = exports.onAppointmentUpdated = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const client_1 = require("../linq/client");
@@ -45,6 +45,28 @@ function hoursUntil(date, time) {
     return (apptMs - Date.now()) / (1000 * 60 * 60);
 }
 const db = admin.firestore();
+// ── Chat room auto-creation ───────────────────────────────────────────────────
+async function ensureChatRoom(clientId, clientName, caregiverId, caregiverName) {
+    if (!clientId || !caregiverId)
+        return;
+    const sorted = [clientId, caregiverId].sort();
+    const roomId = sorted.join('_');
+    const roomRef = db.collection('chatRooms').doc(roomId);
+    const snap = await roomRef.get();
+    if (snap.exists)
+        return;
+    const names = sorted.map(id => id === clientId ? clientName : caregiverName);
+    await roomRef.set({
+        participants: sorted,
+        participantNames: names,
+        participantAvatars: ['', ''],
+        lastMessage: '',
+        lastMessageTime: '',
+        lastMessageTimestamp: null,
+        unreadCount: { [clientId]: 0, [caregiverId]: 0 },
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+}
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function getClientPhone(clientId) {
     var _a, _b;
@@ -67,7 +89,7 @@ async function getCaregiverPhone(caregiverId) {
 exports.onAppointmentUpdated = functions.firestore
     .document("appointments/{appointmentId}")
     .onUpdate(async (change) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
     try {
         const before = change.before.data();
         const after = change.after.data();
@@ -97,8 +119,9 @@ exports.onAppointmentUpdated = functions.firestore
             });
             return;
         }
-        // ── Booking confirmed → notify caregiver + schedule pre-visit check-in ──
+        // ── Booking confirmed → ensure chat room exists + notify caregiver ──────
         if (after.status === "confirmed" && before.status !== "confirmed" && after.caregiverId) {
+            await ensureChatRoom(after.clientId, (_b = after.clientName) !== null && _b !== void 0 ? _b : 'Client', after.caregiverId, (_c = after.caregiverName) !== null && _c !== void 0 ? _c : 'Caregiver').catch(err => console.error('[appointmentUpdated] ensureChatRoom failed:', err));
             const caregiverPhone = await getCaregiverPhone(after.caregiverId);
             if (caregiverPhone) {
                 const msg = `Booking confirmed.\n` +
@@ -111,8 +134,8 @@ exports.onAppointmentUpdated = functions.firestore
                 try {
                     const visitMs = new Date(`${after.date}T${after.time.slice(0, 5)}:00`).getTime();
                     const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
-                    const clientId = (_d = (_c = (_b = sessionSnap.data()) === null || _b === void 0 ? void 0 : _b.userId) !== null && _c !== void 0 ? _c : after.clientId) !== null && _d !== void 0 ? _d : "";
-                    const cgName = (_e = after.caregiverName) !== null && _e !== void 0 ? _e : "Your caregiver";
+                    const clientId = (_f = (_e = (_d = sessionSnap.data()) === null || _d === void 0 ? void 0 : _d.userId) !== null && _e !== void 0 ? _e : after.clientId) !== null && _f !== void 0 ? _f : "";
+                    const cgName = (_g = after.caregiverName) !== null && _g !== void 0 ? _g : "Your caregiver";
                     // Schedule 1h-before family reminder
                     const remindMs = visitMs - 60 * 60 * 1000;
                     if (remindMs > Date.now()) {
@@ -130,7 +153,7 @@ exports.onAppointmentUpdated = functions.firestore
                         const checkInMs = visitMs - 2 * 60 * 60 * 1000;
                         if (checkInMs > Date.now()) {
                             const cgSessionSnap = await db.collection("agent_sessions").doc(caregiverPhone).get();
-                            const cgUserId = (_h = (_g = (_f = cgSessionSnap.data()) === null || _f === void 0 ? void 0 : _f.userId) !== null && _g !== void 0 ? _g : after.caregiverId) !== null && _h !== void 0 ? _h : "";
+                            const cgUserId = (_k = (_j = (_h = cgSessionSnap.data()) === null || _h === void 0 ? void 0 : _h.userId) !== null && _j !== void 0 ? _j : after.caregiverId) !== null && _k !== void 0 ? _k : "";
                             await (0, triggerEngine_1.scheduleTrigger)({
                                 userId: cgUserId,
                                 phone: caregiverPhone,
@@ -149,7 +172,7 @@ exports.onAppointmentUpdated = functions.firestore
         }
         // ── Visit completed ──────────────────────────────────────────────────
         if (after.status === "completed" && before.status !== "completed") {
-            const msg = `${(_j = after.caregiverName) !== null && _j !== void 0 ? _j : "Your caregiver"}'s visit is complete. ` +
+            const msg = `${(_l = after.caregiverName) !== null && _l !== void 0 ? _l : "Your caregiver"}'s visit is complete. ` +
                 `A care journal entry will be posted shortly.`;
             await (0, caraAgent_1.sendViaInteractionAgent)(phone, {
                 content: msg, urgency: "standard", sourceAgent: "visit_summary", canDrop: true,
@@ -254,4 +277,14 @@ async function handleCaregiverCancellation(appointmentId, appt, phone) {
         appointmentId, taskId: taskRef.id, sentAt: new Date().toISOString(),
     });
 }
+// ── onCreate: create chat room when a booking request is sent (interview tab) ─
+exports.onBookingRequestCreated = functions.firestore
+    .document("booking_requests/{bookingId}")
+    .onCreate(async (snap) => {
+    var _a, _b;
+    const data = snap.data();
+    if (!(data === null || data === void 0 ? void 0 : data.clientId) || !(data === null || data === void 0 ? void 0 : data.caregiverId))
+        return;
+    await ensureChatRoom(data.clientId, (_a = data.clientName) !== null && _a !== void 0 ? _a : 'Client', data.caregiverId, (_b = data.caregiverName) !== null && _b !== void 0 ? _b : 'Caregiver').catch(err => console.error('[onBookingRequestCreated] ensureChatRoom failed:', err));
+});
 //# sourceMappingURL=appointmentUpdated.js.map

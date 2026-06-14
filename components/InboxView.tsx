@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Send, Search, Phone, Video, MoreVertical, CheckCheck, Flag, Lock } from 'lucide-react';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
+import { ChevronLeft, Send, Search, MoreVertical, CheckCheck, Flag, Lock } from 'lucide-react';
 import { chatService, ChatRoom, Message } from '../services/chatService';
 import { authService } from '../services/api';
+import { useCareConnex } from '../context/CareConnexContext';
 import { ViewType } from '../types';
 import { db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
@@ -13,7 +14,6 @@ interface InboxViewProps {
   userType: 'client' | 'caregiver';
   onNavigate: (view: ViewType) => void;
   onShowToast?: (message: string, type: 'success' | 'error' | 'info') => void;
-  onScheduleVideoCall?: (caregiverId: string, caregiverName: string) => void;
   onViewProfile?: (caregiverId: string) => void;
 }
 
@@ -50,7 +50,6 @@ export const InboxView: React.FC<InboxViewProps> = ({
   userType,
   onNavigate,
   onShowToast,
-  onScheduleVideoCall,
   onViewProfile,
 }) => {
   const [searchParams] = useSearchParams();
@@ -65,10 +64,14 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const [reportReason, setReportReason] = useState('');
   const [reportContactId, setReportContactId] = useState('');
   const [reportContactName, setReportContactName] = useState('');
+  const [contactPhoto, setContactPhoto] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const navigate = useNavigate();
+  const location = useLocation();
+  const pendingRoomState = (location.state as any)?.pendingRoom as (ChatRoom & { id: string }) | undefined;
+  const { appointments } = useCareConnex();
   const currentUser = authService.getCurrentUser();
   const currentUid = currentUser?.uid ?? '';
   const currentName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'You';
@@ -78,13 +81,34 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const [caregiverVerified, setCaregiverVerified] = useState(true);
   useEffect(() => {
     if (isClient || !currentUid || !db) return;
-    db.collection('caregivers').doc(currentUid).get().then(snap => {
+    const unsub = db.collection('caregivers').doc(currentUid).onSnapshot(snap => {
       const d = snap.data() as any;
       if (!d) return;
       const hasPaid = !!(d.membershipPaid === true || (d.membershipStatus && d.membershipStatus !== 'none' && d.membershipStatus !== 'inactive'));
       const bgOk = ['checkr_clear', 'approved'].includes(d.verificationStatus) || d.backgroundCheckStatus === 'clear' || d.backgroundCheckComplete === true;
       setCaregiverVerified(hasPaid && bgOk);
-    }).catch(() => {});
+    }, () => {});
+    return unsub;
+  }, [currentUid, isClient]);
+
+  // Also track accepted booking_requests for care-team classification
+  const [acceptedBookingPartnerIds, setAcceptedBookingPartnerIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!currentUid || !db) return;
+    const field = isClient ? 'clientId' : 'caregiverId';
+    const otherField = isClient ? 'caregiverId' : 'clientId';
+    const unsub = db.collection('booking_requests')
+      .where(field, '==', currentUid)
+      .where('status', '==', 'accepted')
+      .onSnapshot(snap => {
+        const ids = new Set<string>();
+        snap.forEach(doc => {
+          const other = doc.data()[otherField];
+          if (other) ids.add(other);
+        });
+        setAcceptedBookingPartnerIds(ids);
+      }, () => {});
+    return unsub;
   }, [currentUid, isClient]);
 
   const handleBlock = async (contactId: string, contactName: string) => {
@@ -145,6 +169,32 @@ export const InboxView: React.FC<InboxViewProps> = ({
     return unsub;
   }, [selectedRoomId, currentUid]);
 
+  // Fetch contact photo from Firestore when selected room changes
+  useEffect(() => {
+    setContactPhoto('');
+    if (!selectedRoomId || !db) return;
+    const room = rooms.find(r => r.id === selectedRoomId);
+    if (!room) return;
+    const otherIdx = room.participants.indexOf(currentUid) === 0 ? 1 : 0;
+    const storedAvatar = room.participantAvatars?.[otherIdx] || '';
+    if (storedAvatar) { setContactPhoto(storedAvatar); return; }
+    const otherId = room.participants[otherIdx];
+    if (!otherId) return;
+    (async () => {
+      const cgSnap = await db.collection('caregivers').doc(otherId).get().catch(() => null);
+      if (cgSnap?.exists) {
+        const d = cgSnap.data() as any;
+        setContactPhoto(d?.photo || d?.imageUrl || d?.profilePhotoUrl || '');
+        return;
+      }
+      const uSnap = await db.collection('users').doc(otherId).get().catch(() => null);
+      if (uSnap?.exists) {
+        const d = uSnap.data() as any;
+        setContactPhoto(d?.photoURL || d?.photo || d?.imageUrl || '');
+      }
+    })();
+  }, [selectedRoomId, currentUid]);
+
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -155,7 +205,8 @@ export const InboxView: React.FC<InboxViewProps> = ({
     if (selectedRoomId) inputRef.current?.focus();
   }, [selectedRoomId]);
 
-  const activeRoom = rooms.find(r => r.id === selectedRoomId);
+  const activeRoom = rooms.find(r => r.id === selectedRoomId)
+    || (pendingRoomState?.id === selectedRoomId ? pendingRoomState : undefined);
 
   // Derive contact info for a room
   function getContact(room: ChatRoom) {
@@ -173,7 +224,12 @@ export const InboxView: React.FC<InboxViewProps> = ({
     setInputText('');
     setSending(true);
     try {
-      await chatService.sendMessage(selectedRoomId, currentUid, currentName, text);
+      const roomExists = !!rooms.find(r => r.id === selectedRoomId);
+      await chatService.sendMessage(
+        selectedRoomId, currentUid, currentName, text,
+        'text', undefined,
+        roomExists ? undefined : pendingRoomState
+      );
 
       // Notify the other participant via their notifications subcollection
       const contact = activeRoom ? getContact(activeRoom) : null;
@@ -205,6 +261,19 @@ export const InboxView: React.FC<InboxViewProps> = ({
     return c.name.toLowerCase().includes(search.toLowerCase()) ||
       r.lastMessage?.toLowerCase().includes(search.toLowerCase());
   });
+
+  // Derive care team IDs from active bookings (appointments + accepted booking_requests)
+  const careTeamIds = new Set([
+    ...appointments
+      .filter(a => ['pending_caregiver_confirmation', 'confirmed', 'in-progress'].includes(a.status))
+      .map(a => isClient ? a.caregiverId : (a.clientId || ''))
+      .filter(Boolean),
+    ...acceptedBookingPartnerIds,
+  ]);
+
+  const careTeamRooms = filteredRooms.filter(r => !r.isSupport && careTeamIds.has(getContact(r).id));
+  const supportRooms = filteredRooms.filter(r => r.isSupport);
+  const otherRooms = filteredRooms.filter(r => !r.isSupport && !careTeamIds.has(getContact(r).id));
 
   // Group messages by date
   const groupedMessages: { date: string; msgs: Message[] }[] = [];
@@ -259,42 +328,55 @@ export const InboxView: React.FC<InboxViewProps> = ({
               </div>
               No conversations yet
             </div>
-          ) : filteredRooms.map(room => {
-            const c = getContact(room);
-            const unread = room.unreadCount?.[currentUid] || 0;
-            const isActive = room.id === selectedRoomId;
-            return (
-              <button
-                key={room.id}
-                onClick={() => setSelectedRoomId(room.id)}
-                className={`w-full text-left px-4 py-3.5 border-b border-slate-100 transition-colors hover:bg-white ${isActive ? 'bg-white border-l-4 border-l-primary-500 pl-3' : ''}`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="relative flex-shrink-0">
-                    {c.avatar ? (
-                      <img src={c.avatar} alt={c.name} className="w-11 h-11 rounded-full object-cover" />
-                    ) : (
-                      <div className="w-11 h-11 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-base">
-                        {c.name.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    {unread > 0 && (
-                      <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-primary-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">{unread}</span>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline justify-between gap-1">
-                      <p className={`text-sm truncate ${unread > 0 ? 'font-bold text-slate-900' : 'font-semibold text-slate-700'}`}>{c.name}</p>
-                      <span className="text-[10px] text-slate-400 whitespace-nowrap flex-shrink-0">{formatRoomTime(room.lastMessageTime)}</span>
-                    </div>
-                    <p className={`text-xs truncate mt-0.5 ${unread > 0 ? 'font-medium text-slate-700' : 'text-slate-400'}`}>
-                      {room.lastMessage || 'Start a conversation'}
-                    </p>
-                  </div>
+          ) : (
+            <>
+              {[
+                { label: isClient ? 'My Care Team' : 'My Families', rooms: careTeamRooms },
+                { label: isClient ? 'Other Caregivers' : 'Other Clients', rooms: otherRooms },
+                { label: 'Support', rooms: supportRooms },
+              ].map(({ label, rooms: sectionRooms }) => sectionRooms.length === 0 ? null : (
+                <div key={label}>
+                  <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</p>
+                  {sectionRooms.map(room => {
+                    const c = getContact(room);
+                    const unread = room.unreadCount?.[currentUid] || 0;
+                    const isActive = room.id === selectedRoomId;
+                    return (
+                      <button
+                        key={room.id}
+                        onClick={() => setSelectedRoomId(room.id)}
+                        className={`w-full text-left px-4 py-3.5 border-b border-slate-100 transition-colors hover:bg-white ${isActive ? 'bg-white border-l-4 border-l-primary-500 pl-3' : ''}`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="relative flex-shrink-0">
+                            {c.avatar ? (
+                              <img src={c.avatar} alt={c.name} className="w-11 h-11 rounded-full object-cover" />
+                            ) : (
+                              <div className="w-11 h-11 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-base">
+                                {c.name.charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                            {unread > 0 && (
+                              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-primary-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">{unread}</span>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-baseline justify-between gap-1">
+                              <p className={`text-sm truncate ${unread > 0 ? 'font-bold text-slate-900' : 'font-semibold text-slate-700'}`}>{c.name}</p>
+                              <span className="text-[10px] text-slate-400 whitespace-nowrap flex-shrink-0">{formatRoomTime(room.lastMessageTime)}</span>
+                            </div>
+                            <p className={`text-xs truncate mt-0.5 ${unread > 0 ? 'font-medium text-slate-700' : 'text-slate-400'}`}>
+                              {room.lastMessage || 'Start a conversation'}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
-              </button>
-            );
-          })}
+              ))}
+            </>
+          )}
         </div>
       </div>
 
@@ -308,8 +390,8 @@ export const InboxView: React.FC<InboxViewProps> = ({
                 <button onClick={() => setSelectedRoomId(null)} className="md:hidden p-1 text-slate-400">
                   <ChevronLeft className="w-6 h-6" />
                 </button>
-                {contact.avatar ? (
-                  <img src={contact.avatar} alt={contact.name} className="w-10 h-10 rounded-full object-cover" />
+                {contactPhoto || contact.avatar ? (
+                  <img src={contactPhoto || contact.avatar} alt={contact.name} className="w-10 h-10 rounded-full object-cover" />
                 ) : (
                   <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold">
                     {contact.name.charAt(0).toUpperCase()}
@@ -317,28 +399,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
                 )}
                 <div>
                   <p className="font-bold text-slate-900 text-sm">{contact.name}</p>
-                  <p className="text-xs text-green-600 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full" />
-                    Online
-                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-1 relative">
-                <button
-                  onClick={() => onShowToast?.('Voice calls coming soon', 'info')}
-                  className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors"
-                >
-                  <Phone className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => {
-                    if (contact.id && onScheduleVideoCall) onScheduleVideoCall(contact.id, contact.name);
-                    else onShowToast?.('Video calls coming soon', 'info');
-                  }}
-                  className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors"
-                >
-                  <Video className="w-4 h-4" />
-                </button>
                 <div className="relative">
                   <button onClick={() => setShowMenu(v => !v)} className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors">
                     <MoreVertical className="w-4 h-4" />

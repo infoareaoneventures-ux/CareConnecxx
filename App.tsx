@@ -335,7 +335,6 @@ const AppContent: React.FC = () => {
             userType="client"
             onNavigate={handleNavigation}
             onShowToast={addToast}
-            onScheduleVideoCall={() => { /* V5: interviews scheduled via Cara iMessage */ }}
             onViewProfile={(caregiverId) => {
               navigate(`/client/caregiver/${caregiverId}`);
             }}

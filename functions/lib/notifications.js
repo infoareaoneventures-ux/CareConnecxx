@@ -49,6 +49,27 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 const db = admin.firestore();
+async function ensureChatRoom(clientId, clientName, caregiverId, caregiverName) {
+    if (!clientId || !caregiverId)
+        return;
+    const sorted = [clientId, caregiverId].sort();
+    const roomId = sorted.join('_');
+    const roomRef = db.collection('chatRooms').doc(roomId);
+    const snap = await roomRef.get();
+    if (snap.exists)
+        return;
+    const names = sorted.map(id => id === clientId ? clientName : caregiverName);
+    await roomRef.set({
+        participants: sorted,
+        participantNames: names,
+        participantAvatars: ['', ''],
+        lastMessage: '',
+        lastMessageTime: '',
+        lastMessageTimestamp: null,
+        unreadCount: { [clientId]: 0, [caregiverId]: 0 },
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+}
 /**
  * Helper function to create a notification in Firestore
  */
@@ -72,8 +93,13 @@ async function createNotification(userId, notification) {
 exports.onAppointmentCreated = functions.firestore
     .document('appointments/{appointmentId}')
     .onCreate(async (snap, context) => {
+    var _a, _b;
     const appointment = snap.data();
     try {
+        // Ensure chat room exists between client and caregiver
+        if (appointment.clientId && appointment.caregiverId) {
+            await ensureChatRoom(appointment.clientId, (_a = appointment.clientName) !== null && _a !== void 0 ? _a : 'Client', appointment.caregiverId, (_b = appointment.caregiverName) !== null && _b !== void 0 ? _b : 'Caregiver').catch(err => console.error('[onAppointmentCreated] ensureChatRoom failed:', err));
+        }
         // Notify caregiver
         if (appointment.caregiverId) {
             const caregiverId = appointment.caregiverId.toString();

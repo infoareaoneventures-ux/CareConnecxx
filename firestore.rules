@@ -255,8 +255,9 @@ service cloud.firestore {
     // ==========================================
     match /chatRooms/{roomId} {
       // Participants can read their own rooms; admin can read all
+      // resource == null allows reading non-existent docs (needed for get-or-create pattern)
       allow read: if isAuthenticated() && (
-        request.auth.uid in resource.data.participants || isAdmin()
+        resource == null || request.auth.uid in resource.data.participants || isAdmin()
       );
 
       // Participants or admin can update (lastMessage, unreadCount, etc.)

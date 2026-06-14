@@ -40,15 +40,18 @@ const CaregiverProgressCard: React.FC<{
 }> = ({ profile, onNavigate, onShowToast }) => {
   const [showBgModal, setShowBgModal] = useState(false);
   const p = profile as any;
-  const isApproved = p.verificationStatus === 'approved' || profile.verified === true;
+  const accountApproved = p.verificationStatus === 'approved' || profile.verified === true;
+  const membershipApproved = !!(p.membershipPaid === true || (p.membershipStatus && p.membershipStatus !== 'none' && p.membershipStatus !== 'inactive'));
+  const bgApprovedFull = p.backgroundCheckStatus === 'clear' || p.backgroundCheckComplete === true;
+  const isApproved = accountApproved && membershipApproved && bgApprovedFull;
   const profileComplete = p.onboardingStatus === 'profile_complete' || p.onboardingStatus === 'submitted' || isApproved;
-  const hasPaid = !!(p.membershipPaid === true || (p.membershipStatus && p.membershipStatus !== 'none' && p.membershipStatus !== 'inactive'));
+  const hasPaid = membershipApproved;
   const checkrInitiated = !!p.backgroundCheckData?.checkrCandidateId;
   const underReview = p.verificationStatus === 'submitted';
   const rejected = p.verificationStatus === 'rejected';
   const infoRequested = p.verificationStatus === 'info_requested';
-  const bgCheckDone = underReview || isApproved;
-  const bgCheckInProgress = checkrInitiated && !underReview && !isApproved;
+  const bgCheckDone = checkrInitiated || bgApprovedFull;
+  const bgCheckInProgress = checkrInitiated && !bgApprovedFull;
 
   if (isApproved) return null;
 
@@ -103,7 +106,7 @@ const CaregiverProgressCard: React.FC<{
     { label: 'Profile', done: profileComplete, inProgress: !profileComplete },
     { label: 'Membership', done: hasPaid, inProgress: !hasPaid && profileComplete },
     { label: 'Background Check', done: bgCheckDone, inProgress: bgCheckInProgress },
-    { label: 'Under Review', done: isApproved, inProgress: underReview },
+    { label: 'Under Review', done: isApproved, inProgress: underReview && hasPaid && bgCheckDone },
   ];
 
   return (

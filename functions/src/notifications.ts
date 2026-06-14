@@ -10,6 +10,28 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
+async function ensureChatRoom(
+  clientId: string, clientName: string, caregiverId: string, caregiverName: string
+): Promise<void> {
+  if (!clientId || !caregiverId) return;
+  const sorted = [clientId, caregiverId].sort();
+  const roomId = sorted.join('_');
+  const roomRef = db.collection('chatRooms').doc(roomId);
+  const snap = await roomRef.get();
+  if (snap.exists) return;
+  const names = sorted.map(id => id === clientId ? clientName : caregiverName);
+  await roomRef.set({
+    participants: sorted,
+    participantNames: names,
+    participantAvatars: ['', ''],
+    lastMessage: '',
+    lastMessageTime: '',
+    lastMessageTimestamp: null,
+    unreadCount: { [clientId]: 0, [caregiverId]: 0 },
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
 /**
  * Helper function to create a notification in Firestore
  */
@@ -44,6 +66,16 @@ export const onAppointmentCreated = functions.firestore
         const appointment = snap.data();
 
         try {
+            // Ensure chat room exists between client and caregiver
+            if (appointment.clientId && appointment.caregiverId) {
+                await ensureChatRoom(
+                    appointment.clientId,
+                    appointment.clientName ?? 'Client',
+                    appointment.caregiverId,
+                    appointment.caregiverName ?? 'Caregiver'
+                ).catch(err => console.error('[onAppointmentCreated] ensureChatRoom failed:', err));
+            }
+
             // Notify caregiver
             if (appointment.caregiverId) {
                 const caregiverId = appointment.caregiverId.toString();

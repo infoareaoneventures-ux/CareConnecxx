@@ -444,13 +444,30 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   };
 
   const handleChatClick = async (caregiver: Caregiver) => {
+    const clientUid = currentUser?.uid;
+    if (!clientUid) { onShowToast?.('Could not start chat', 'error'); return; }
     try {
-      await dbService.createThread(
-        caregiver.id.toString(),
-        caregiver.name || 'Caregiver',
-        caregiver.imageUrl || (caregiver as any).photo || ''
-      );
-      navigate('/client/inbox');
+      const caregiverId = caregiver.id.toString();
+      const sorted = [clientUid, caregiverId].sort();
+      const roomId = sorted.join('_');
+      const clientName = (currentUser as any)?.displayName || 'Client';
+      const names = sorted.map(id => id === clientUid ? clientName : (caregiver.name || 'Caregiver'));
+      const avatars = sorted.map(id => id === clientUid ? '' : (caregiver.imageUrl || (caregiver as any).photo || ''));
+      navigate(`/client/inbox?room=${roomId}`, {
+        state: {
+          pendingRoom: {
+            id: roomId,
+            participants: sorted,
+            participantNames: names,
+            participantAvatars: avatars,
+            unreadCount: { [clientUid]: 0, [caregiverId]: 0 },
+            lastMessage: '',
+            lastMessageTime: '',
+            lastMessageTimestamp: null,
+            createdAt: null,
+          }
+        }
+      });
     } catch {
       onShowToast?.('Could not start chat', 'error');
     }
@@ -1342,33 +1359,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                   </div>
                 )}
 
-                {topRatedCaregivers.length > 0 && appointments.filter(a => a.status === 'confirmed').length === 0 && (() => {
-                  const deduped = topRatedCaregivers.filter(c => !matchedCaregivers.find(m => m.id === c.id)).slice(0, 4);
-                  if (!deduped.length) return null;
-                  return (
-                    <section>
-                      <div className="flex items-center justify-between mb-3">
-                        <h2 className="text-lg font-bold text-slate-900">Top Rated Near You</h2>
-                        <button onClick={() => navigate('/client/find-caregivers')} className="text-sm text-primary-600 font-medium hover:underline">See more →</button>
-                      </div>
-                      <div className="grid sm:grid-cols-2 gap-4">
-                        {deduped.map(caregiver => (
-                          <CaregiverMatchCard
-                            key={caregiver.id}
-                            caregiver={caregiver}
-                            matchScore={0}
-                            matchReasons={[]}
-                            onBook={(cg) => setScheduleInterviewCaregiver(cg)}
-                            onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}
-                            isSaved={savedIds.includes(caregiver.id)}
-                            onToggleSave={handleToggleSave}
-                            isRequested={requestedCaregiverIds.has(caregiver.id)}
-                          />
-                        ))}
-                      </div>
-                    </section>
-                  );
-                })()}
 
                 {appointments.filter(a => a.status === 'pending_caregiver_confirmation').length > 0 && (
                   <section>

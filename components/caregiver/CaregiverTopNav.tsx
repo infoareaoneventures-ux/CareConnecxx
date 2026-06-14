@@ -243,7 +243,16 @@ const DesktopNav: React.FC<{
                 support@careconnex.com
               </a>
               <button
-                onClick={() => { setHelpOpen(false); navigate('/caregiver/inbox'); }}
+                onClick={async () => {
+                  setHelpOpen(false);
+                  const user = authService.getCurrentUser();
+                  if (!user) { navigate('/caregiver/inbox'); return; }
+                  try {
+                    const { chatService } = await import('../../services/chatService');
+                    const roomId = await chatService.createOrGetSupportRoom(user.uid, user.displayName || user.email?.split('@')[0] || 'Caregiver');
+                    navigate(`/caregiver/inbox?room=${roomId}`);
+                  } catch { navigate('/caregiver/inbox'); }
+                }}
                 className="w-full flex items-center justify-center gap-1.5 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg transition-colors">
                 <MessageSquare className="w-3.5 h-3.5" />Chat with Us
               </button>

@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { ViewType } from '../types';
 import { useCareConnex } from '../context/CareConnexContext';
 import { dbService } from '../services/api';
+import { db } from '../lib/firebase';
 
 import { CaregiverHomeDashboard } from './caregiver/CaregiverHomeDashboard';
 import { CaregiverOnboardingWizard } from './caregiver/CaregiverOnboardingWizard';
@@ -18,12 +19,13 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
    const [showWizard, setShowWizard] = useState(false);
 
    useEffect(() => {
-      let active = true;
-      if (!currentUser?.uid) return;
-      dbService.getUser(currentUser.uid).then(p => {
-         if (active && p) setProfile(p);
-      }).catch(() => {});
-      return () => { active = false; };
+      if (!currentUser?.uid || !db) return;
+      const unsub = db.collection('caregivers').doc(currentUser.uid).onSnapshot(snap => {
+         if (snap.exists) setProfile({ uid: snap.id, ...snap.data() });
+      }, () => {
+         dbService.getUser(currentUser.uid).then(p => { if (p) setProfile(p); }).catch(() => {});
+      });
+      return unsub;
    }, [currentUser?.uid]);
 
    const refreshProfile = async () => {

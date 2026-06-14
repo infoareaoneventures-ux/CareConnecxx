@@ -176,7 +176,8 @@ export const chatService = {
     senderName: string,
     text: string,
     type: 'text' | 'image' = 'text',
-    imageUrl?: string
+    imageUrl?: string,
+    roomMeta?: { participants: string[], participantNames: string[], participantAvatars: string[], unreadCount: Record<string, number> }
   ): Promise<void> {
     // Validate inputs
     validators.id(chatRoomId, 'chatRoomId');
@@ -223,6 +224,19 @@ export const chatService = {
         lastMessageTime: new Date().toISOString(),
         lastMessageTimestamp: serverTimestamp(),
         unreadCount: newUnreadCount
+      });
+    } else if (roomMeta) {
+      // Room doesn't exist yet — create it on first message
+      const newUnreadCount = { ...roomMeta.unreadCount };
+      const otherParticipant = roomMeta.participants.find(id => id !== senderId);
+      if (otherParticipant) newUnreadCount[otherParticipant] = 1;
+      batch.set(roomRef, {
+        ...roomMeta,
+        lastMessage: text,
+        lastMessageTime: new Date().toISOString(),
+        lastMessageTimestamp: serverTimestamp(),
+        unreadCount: newUnreadCount,
+        createdAt: serverTimestamp(),
       });
     }
 

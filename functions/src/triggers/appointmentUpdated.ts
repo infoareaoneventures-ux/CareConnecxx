@@ -12,6 +12,33 @@ function hoursUntil(date: string, time: string): number {
 
 const db = admin.firestore();
 
+// ── Chat room auto-creation ───────────────────────────────────────────────────
+
+async function ensureChatRoom(
+  clientId: string,
+  clientName: string,
+  caregiverId: string,
+  caregiverName: string
+): Promise<void> {
+  if (!clientId || !caregiverId) return;
+  const sorted = [clientId, caregiverId].sort();
+  const roomId = sorted.join('_');
+  const roomRef = db.collection('chatRooms').doc(roomId);
+  const snap = await roomRef.get();
+  if (snap.exists) return;
+  const names = sorted.map(id => id === clientId ? clientName : caregiverName);
+  await roomRef.set({
+    participants: sorted,
+    participantNames: names,
+    participantAvatars: ['', ''],
+    lastMessage: '',
+    lastMessageTime: '',
+    lastMessageTimestamp: null,
+    unreadCount: { [clientId]: 0, [caregiverId]: 0 },
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function getClientPhone(clientId: string): Promise<string | null> {
@@ -71,8 +98,15 @@ export const onAppointmentUpdated = functions.firestore
         return;
       }
 
-      // ── Booking confirmed → notify caregiver + schedule pre-visit check-in ──
+      // ── Booking confirmed → ensure chat room exists + notify caregiver ──────
       if (after.status === "confirmed" && before.status !== "confirmed" && after.caregiverId) {
+        await ensureChatRoom(
+          after.clientId,
+          after.clientName ?? 'Client',
+          after.caregiverId,
+          after.caregiverName ?? 'Caregiver'
+        ).catch(err => console.error('[appointmentUpdated] ensureChatRoom failed:', err));
+
         const caregiverPhone = await getCaregiverPhone(after.caregiverId);
         if (caregiverPhone) {
           const msg =
@@ -256,3 +290,18 @@ async function handleCaregiverCancellation(
     appointmentId, taskId: taskRef.id, sentAt: new Date().toISOString(),
   });
 }
+
+// ── onCreate: create chat room when a booking request is sent (interview tab) ─
+
+export const onBookingRequestCreated = functions.firestore
+  .document("booking_requests/{bookingId}")
+  .onCreate(async (snap) => {
+    const data = snap.data();
+    if (!data?.clientId || !data?.caregiverId) return;
+    await ensureChatRoom(
+      data.clientId,
+      data.clientName ?? 'Client',
+      data.caregiverId,
+      data.caregiverName ?? 'Caregiver'
+    ).catch(err => console.error('[onBookingRequestCreated] ensureChatRoom failed:', err));
+  });

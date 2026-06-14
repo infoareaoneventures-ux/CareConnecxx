@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import {
   Calendar, CalendarDays, Clock, CheckCircle, Briefcase,
   Users, MapPin, Star, MessageSquare, DollarSign,
-  TrendingUp, FileText, Mail, Heart,
+  TrendingUp, FileText, Mail, Heart, Video, Phone,
 } from 'lucide-react';
 import type { Caregiver, AddToastFunction } from '../../types';
 import { db } from '../../lib/firebase';
 import { authService, shiftHoursService } from '../../services/api';
+import { shiftDisplayStatus } from '../../utils/shiftUtils';
 import { CaregiverOnboardingDashboard } from './CaregiverOnboardingDashboard';
 
 interface CaregiverHomeDashboardProps {
@@ -59,6 +60,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
 
   // Data
   const [bookingRequests, setBookingRequests] = useState<any[]>([]);
+  const [bookingsLoaded, setBookingsLoaded] = useState(false);
   const [pendingAmendments, setPendingAmendments] = useState<any[]>([]);
   const [allShifts, setAllShifts] = useState<any[]>([]);
   const [shiftHours, setShiftHours] = useState<any[]>([]);
@@ -70,6 +72,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   const [bookingTab, setBookingTab] = useState<'pending' | 'upcoming'>('pending');
   const [scheduleTab, setScheduleTab] = useState<'active' | 'upcoming'>('upcoming');
   const [careRequestsTab, setCareRequestsTab] = useState<'applications' | 'interviews'>('applications');
+  const [ivDashTab, setIvDashTab] = useState<'pending' | 'scheduled'>('pending');
 
   // Real-time: booking requests + shifts
   useEffect(() => {
@@ -80,7 +83,8 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
       .where('caregiverId', '==', uid)
       .onSnapshot(snap => {
         setBookingRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      }, () => {});
+        setBookingsLoaded(true);
+      }, () => { setBookingsLoaded(true); });
     unsubs.push(brUnsub);
 
     const sUnsub = db.collection('shifts')
@@ -145,7 +149,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
     db.collection('job_applications')
       .where('caregiverId', '==', uid)
       .orderBy('appliedAt', 'desc')
-      .limit(5)
+      .limit(20)
       .get()
       .then(snap => setMyApplications(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
       .catch(() => {});
@@ -153,14 +157,17 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
 
   // ── Derived state ──────────────────────────────────────────────────────────
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  })();
   const pendingBookings = bookingRequests.filter(b => b.status === 'pending');
   const acceptedBookings = bookingRequests.filter(b => b.status === 'accepted');
   const hasActiveFamilies = acceptedBookings.length > 0;
 
   const todayShifts = allShifts.filter(s => s.date === todayStr);
-  const activeShifts = todayShifts.filter(s => s.status === 'in-progress');
-  const upcomingTodayShifts = todayShifts.filter(s => s.status === 'scheduled');
+  const activeShifts = todayShifts.filter(s => s.status === 'in-progress').sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+  const upcomingTodayShifts = todayShifts.filter(s => s.status === 'scheduled').sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
   const upcomingShifts = allShifts
     .filter(s => s.date > todayStr && (s.status === 'scheduled' || s.status === 'in-progress'))
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -191,6 +198,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   const timeOfDay = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
   const firstName = getFirstName(profile.name);
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
 
   // ── Sidebar — shared between both states ───────────────────────────────────
 
@@ -254,16 +262,20 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
           ) : (
             <div className="space-y-2">
               {myApplications.slice(0, 3).map((a: any) => {
-                const statusCfg: Record<string, { label: string; color: string }> = {
-                  pending:  { label: 'Pending',  color: 'text-amber-700' },
-                  accepted: { label: 'Accepted', color: 'text-green-700' },
-                  rejected: { label: 'Declined', color: 'text-red-600' },
+                const statusColors: Record<string, string> = {
+                  pending:  'text-amber-700',
+                  accepted: 'text-green-700',
+                  rejected: 'text-red-600',
                 };
-                const cfg = statusCfg[a.status] ?? { label: a.status, color: 'text-slate-500' };
+                const statusLabels: Record<string, string> = {
+                  pending:  'Pending',
+                  accepted: 'Accepted',
+                  rejected: 'Declined',
+                };
                 return (
                   <div key={a.id} className="flex items-center justify-between gap-2">
                     <p className="text-xs font-medium text-slate-700 truncate flex-1">{a.jobTitle || 'Care Job'}</p>
-                    <span className={`text-[10px] font-bold flex-shrink-0 ${cfg.color}`}>{cfg.label}</span>
+                    <span className={`text-[10px] font-bold flex-shrink-0 ${statusColors[a.status] ?? 'text-slate-500'}`}>{statusLabels[a.status] ?? a.status}</span>
                   </div>
                 );
               })}
@@ -297,6 +309,8 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
       </div>
     </div>
   );
+
+  if (!bookingsLoaded) return null;
 
   if (!hasActiveFamilies) {
     return (
@@ -345,48 +359,52 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
             </button>
           </div>
 
-          {/* My Applications tab */}
+          {/* My Applications tab — only truly pending (no interview activity) */}
           {careRequestsTab === 'applications' && (() => {
-            if (myApplications.length === 0) return (
+            const interviewJobIds = new Set(myInterviews.map((iv: any) => iv.jobId).filter(Boolean));
+            const trulyPending = myApplications.filter((a: any) => a.status === 'pending' && !interviewJobIds.has(a.jobId));
+            if (trulyPending.length === 0) return (
               <div className="text-center py-5">
-                <p className="text-sm text-slate-400 mb-2">No applications yet</p>
+                <p className="text-sm text-slate-400 mb-2">No pending applications</p>
                 <button onClick={() => navigate('/caregiver/jobs')} className="text-xs text-primary-600 font-medium hover:underline">Browse Jobs →</button>
               </div>
             );
             return (
               <>
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold text-slate-700">Applications</p>
+                  <p className="text-xs font-semibold text-slate-700">Pending Applications</p>
                   <button onClick={() => navigate('/caregiver/jobs?tab=applications')} className="text-xs text-primary-600 font-medium hover:underline flex items-center gap-0.5">View all &rsaquo;</button>
                 </div>
-                <div className="space-y-3 max-h-64 overflow-y-auto">
-                  {myApplications.slice(0, 4).map((a: any) => {
-                    const statusCfg: Record<string, { label: string; color: string }> = {
-                      pending:  { label: 'Pending',  color: 'text-amber-600' },
-                      accepted: { label: 'Accepted', color: 'text-green-600' },
-                      rejected: { label: 'Declined', color: 'text-red-500' },
-                    };
-                    const cfg = statusCfg[a.status] ?? { label: a.status, color: 'text-slate-500' };
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {trulyPending.slice(0, 2).map((a: any) => {
                     const appliedDate = a.appliedAt ? new Date(a.appliedAt?.toDate?.() ?? a.appliedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+                    const rate = a.jobRate ?? a.rate;
+                    const location = a.jobLocation ?? a.location;
+                    const days: string[] = Array.isArray(a.jobDaysOfWeek) ? a.jobDaysOfWeek : [];
                     return (
-                      <div key={a.id} className="border-b border-slate-100 pb-3 last:border-0 last:pb-0">
-                        <div className="flex items-start justify-between gap-2 mb-1">
-                          <p className="text-sm font-semibold text-slate-900 leading-snug flex-1">{a.jobTitle || 'Care Job'}</p>
-                          <div className="text-right flex-shrink-0">
-                            {a.rate != null && <p className="text-xs font-bold text-green-700 bg-green-50 px-1.5 py-0.5 rounded">${a.rate}/hr</p>}
-                            <p className={`text-xs font-semibold mt-0.5 ${cfg.color}`}>{cfg.label}</p>
-                          </div>
-                        </div>
-                        {(a.location || a.clientName) && (
-                          <div className="flex items-center gap-1 text-xs text-slate-500 mb-1">
-                            <MapPin className="w-3 h-3 flex-shrink-0" />
-                            <span className="truncate">{[a.location, a.clientName].filter(Boolean).join(' · ')}</span>
+                      <div key={a.id} className="border border-slate-200 rounded-xl p-3">
+                        <p className="text-sm font-bold text-slate-900 leading-snug mb-1.5">{a.jobTitle || 'Care Job'}</p>
+                        {appliedDate && (
+                          <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
+                            <Calendar className="w-3 h-3 flex-shrink-0 text-slate-400" />
+                            <span>{appliedDate}</span>
                           </div>
                         )}
-                        {a.interviewStatus && (
-                          <p className="text-xs text-slate-400 italic">{a.interviewStatus}</p>
+                        {location && (
+                          <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1.5">
+                            <MapPin className="w-3 h-3 flex-shrink-0 text-slate-400" />
+                            <span className="truncate">{location}</span>
+                          </div>
                         )}
-                        {appliedDate && <p className="text-[10px] text-slate-400 mt-1">Applied {appliedDate}</p>}
+                        {rate != null && (
+                          <p className="text-sm font-bold text-primary-600 mb-1.5">${rate}/hr</p>
+                        )}
+                        {days.length > 0 && (
+                          <div className="flex items-center gap-1 text-xs text-slate-500">
+                            <CalendarDays className="w-3 h-3 flex-shrink-0" />
+                            {days.join(', ')}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -397,56 +415,86 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
 
           {/* Interviews tab */}
           {careRequestsTab === 'interviews' && (() => {
-            if (myInterviews.length === 0) return (
+            const now = new Date();
+            const pendingIvs   = myInterviews.filter((iv: any) => ['pending', 'requested'].includes(iv.status));
+            const scheduledIvs = myInterviews.filter((iv: any) => {
+              if (!['accepted', 'confirmed', 'scheduled'].includes(iv.status)) return false;
+              const t = iv.scheduledTime ? new Date(iv.scheduledTime?.toDate?.() ?? iv.scheduledTime) : null;
+              return !t || t >= now;
+            });
+            const activeInterviews = myInterviews.filter((iv: any) => ['pending', 'requested', 'accepted', 'scheduled', 'confirmed'].includes(iv.status));
+            if (activeInterviews.length === 0) return (
               <div className="text-center py-5">
                 <p className="text-sm text-slate-400 mb-2">No interviews scheduled</p>
                 <button onClick={() => navigate('/caregiver/jobs?tab=interviews')} className="text-xs text-primary-600 font-medium hover:underline">View Job Board →</button>
               </div>
             );
+            const visibleIvs = ivDashTab === 'pending' ? pendingIvs : scheduledIvs;
             return (
               <>
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold text-slate-700">Interviews</p>
-                  <button onClick={() => navigate('/caregiver/jobs?tab=interviews')} className="text-xs text-primary-600 font-medium hover:underline flex items-center gap-0.5">View all &rsaquo;</button>
+                {/* Sub-tabs: Pending | Scheduled */}
+                <div className="flex items-start gap-2 mb-3">
+                  <button
+                    onClick={() => setIvDashTab('pending')}
+                    className={`flex-1 flex flex-col items-center justify-center rounded-xl border-2 py-2 px-3 transition-all ${ivDashTab === 'pending' ? 'border-amber-400 bg-amber-50' : 'border-slate-200 bg-white hover:border-amber-200'}`}
+                  >
+                    <span className={`text-2xl font-bold leading-none ${ivDashTab === 'pending' ? 'text-amber-600' : 'text-slate-500'}`}>{pendingIvs.length}</span>
+                    <span className={`text-xs font-medium mt-0.5 ${ivDashTab === 'pending' ? 'text-amber-600' : 'text-slate-400'}`}>Pending</span>
+                  </button>
+                  <button
+                    onClick={() => setIvDashTab('scheduled')}
+                    className={`flex-1 flex flex-col items-center justify-center rounded-xl border-2 py-2 px-3 transition-all ${ivDashTab === 'scheduled' ? 'border-green-400 bg-green-50' : 'border-slate-200 bg-white hover:border-green-200'}`}
+                  >
+                    <span className={`text-2xl font-bold leading-none ${ivDashTab === 'scheduled' ? 'text-green-600' : 'text-slate-500'}`}>{scheduledIvs.length}</span>
+                    <span className={`text-xs font-medium mt-0.5 ${ivDashTab === 'scheduled' ? 'text-green-600' : 'text-slate-400'}`}>Scheduled</span>
+                  </button>
+                  <button onClick={() => navigate(`/caregiver/jobs?tab=interviews&filter=${ivDashTab === 'pending' ? 'pending' : 'accepted'}`)} className="self-center ml-1 text-xs text-primary-600 font-medium hover:underline whitespace-nowrap">View all &rsaquo;</button>
                 </div>
-                <div className="space-y-3 max-h-64 overflow-y-auto">
-                  {myInterviews.slice(0, 4).map((iv: any) => {
-                    const scheduled = iv.scheduledTime ? new Date(iv.scheduledTime?.toDate?.() ?? iv.scheduledTime) : null;
-                    const dateStr = scheduled ? scheduled.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
-                    const timeStr = scheduled ? scheduled.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
-                    const statusCfg: Record<string, { label: string; color: string }> = {
-                      accepted:   { label: 'Accepted',  color: 'text-green-600' },
-                      scheduled:  { label: 'Scheduled', color: 'text-primary-600' },
-                      completed:  { label: 'Completed', color: 'text-slate-500' },
-                      declined:   { label: 'Declined',  color: 'text-red-500' },
-                      cancelled:  { label: 'Cancelled', color: 'text-red-500' },
-                      pending:    { label: 'Pending',   color: 'text-amber-600' },
-                    };
-                    const cfg = statusCfg[iv.status] ?? { label: iv.status, color: 'text-slate-500' };
-                    const ivType = iv.interviewType || iv.type || '';
-                    return (
-                      <div key={iv.id} className="border-b border-slate-100 pb-3 last:border-0 last:pb-0">
-                        <div className="flex items-start justify-between gap-2 mb-1">
-                          <p className="text-sm font-semibold text-slate-900 leading-snug flex-1">{iv.jobTitle || 'Interview'}</p>
-                          <p className={`text-xs font-semibold flex-shrink-0 ${cfg.color}`}>{cfg.label}</p>
+
+                {visibleIvs.length === 0 ? (
+                  <div className="text-center py-4">
+                    <p className="text-sm text-slate-400">No {ivDashTab} interviews</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {visibleIvs.slice(0, 4).map((iv: any) => {
+                      const scheduled = iv.scheduledTime ? new Date(iv.scheduledTime?.toDate?.() ?? iv.scheduledTime) : null;
+                      const ivType = iv.interviewType || iv.type || '';
+                      const isVideo = ivType === 'video';
+                      return (
+                        <div key={iv.id} className="border border-slate-200 rounded-xl p-3">
+                          <div className="flex items-center gap-2 mb-2">
+                            <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
+                              {iv.clientPhotoURL || iv.clientPhoto ? (
+                                <img src={iv.clientPhotoURL || iv.clientPhoto} alt={iv.clientName} className="w-full h-full object-cover" />
+                              ) : (
+                                <span className="text-xs font-bold text-primary-600">{(iv.clientName || 'C')[0].toUpperCase()}</span>
+                              )}
+                            </div>
+                            <p className="text-sm font-semibold text-slate-900 truncate">{iv.clientName || 'Client'}</p>
+                          </div>
+                          <div className="space-y-1">
+                            {(iv.jobTitle) && (
+                              <p className="text-xs text-slate-500 truncate">{iv.jobTitle}</p>
+                            )}
+                            {scheduled && (
+                              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                                <Calendar className="w-3 h-3 flex-shrink-0" />
+                                <span>{scheduled.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · {scheduled.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</span>
+                              </div>
+                            )}
+                            {ivType && (
+                              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                                {isVideo ? <Video className="w-3 h-3 flex-shrink-0" /> : <Phone className="w-3 h-3 flex-shrink-0" />}
+                                <span className="capitalize">{ivType}</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        {iv.clientName && (
-                          <div className="flex items-center gap-1 text-xs text-slate-500 mb-1">
-                            <MapPin className="w-3 h-3 flex-shrink-0" />
-                            <span className="truncate">{iv.clientName}</span>
-                          </div>
-                        )}
-                        {(dateStr || timeStr) && (
-                          <div className="flex items-center gap-1 text-xs text-slate-500">
-                            <Clock className="w-3 h-3 flex-shrink-0" />
-                            <span>{dateStr}{timeStr ? ` · ${timeStr}` : ''}</span>
-                          </div>
-                        )}
-                        {ivType && <p className="text-[10px] text-slate-400 mt-0.5 capitalize">{ivType}</p>}
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </>
             );
           })()}
@@ -459,7 +507,6 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
               <CalendarDays className="w-4 h-4 text-primary-500" />
               <h2 className="font-semibold text-slate-900">Today's Schedule</h2>
             </div>
-            <button onClick={() => navigate('/caregiver/calendar')} className="text-xs text-primary-600 font-medium hover:underline">Calendar</button>
           </div>
           <div className="flex bg-slate-100 rounded-lg p-0.5 mb-4">
             {(['active', 'upcoming'] as const).map(tab => (
@@ -484,40 +531,51 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
               <div className="text-center py-5">
                 <CalendarDays className="w-8 h-8 text-slate-200 mx-auto mb-2" />
                 <p className="text-sm text-slate-400">
-                  {scheduleTab === 'active' ? 'No active shifts right now' : 'No more shifts today'}
+                  {scheduleTab === 'active' ? 'No active shifts right now' : 'No upcoming shifts today'}
                 </p>
               </div>
             );
             return (
-              <div className="space-y-3">
-                {list.slice(0, 3).map((s: any) => (
-                  <div key={s.id} className={`rounded-xl p-3 border ${s.status === 'in-progress' ? 'border-green-300 bg-green-50' : 'border-slate-200'}`}>
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
-                        {s.clientPhotoURL
-                          ? <img src={s.clientPhotoURL} alt={s.clientName} className="w-full h-full object-cover" />
-                          : <span className="text-sm font-bold text-primary-600">{(s.clientName || 'F')[0].toUpperCase()}</span>
-                        }
+              <div className="space-y-3 max-h-72 overflow-y-auto">
+                {list.map((s: any) => {
+                  const ds = shiftDisplayStatus(s);
+                  const isInProgress = s.status === 'in-progress';
+                  const cardBorder = isInProgress ? 'border-green-300 bg-green-50' : ds === 'overdue' ? 'border-orange-300 bg-orange-50' : ds === 'late' ? 'border-yellow-300 bg-yellow-50' : 'border-slate-200';
+                  const statusColor = isInProgress ? 'text-green-600' : ds === 'overdue' ? 'text-orange-600' : ds === 'late' ? 'text-yellow-600' : 'text-slate-500';
+                  const statusText = isInProgress ? 'In Progress' : ds === 'overdue' ? 'Overdue' : ds === 'late' ? 'Late' : 'Upcoming';
+                  return (
+                    <div key={s.id} className={`rounded-xl p-3 border ${cardBorder}`}>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                          {s.clientPhotoURL
+                            ? <img src={s.clientPhotoURL} alt={s.clientName} className="w-full h-full object-cover" />
+                            : <span className="text-sm font-bold text-primary-600">{(s.clientName || 'F')[0].toUpperCase()}</span>
+                          }
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-slate-900 text-sm truncate">{s.clientName || 'Family'}</p>
+                          <p className={`text-xs font-medium ${statusColor}`}>{statusText}</p>
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-slate-900 text-sm truncate">{s.clientName || 'Family'}</p>
-                        <p className={`text-xs font-medium ${s.status === 'in-progress' ? 'text-green-600' : 'text-slate-500'}`}>
-                          {s.status === 'in-progress' ? 'In Progress' : 'Upcoming'}
-                        </p>
+                      <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                        <Clock className="w-3 h-3 flex-shrink-0" />
+                        <span className="font-medium">{fmtTime(s.startTime)} – {fmtTime(s.endTime)}</span>
                       </div>
+                      {s.careRecipients?.length > 0 && (
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1">
+                          <Heart className="w-3 h-3 flex-shrink-0 text-rose-400" />
+                          <span className="truncate">{s.careRecipients.map((r: any) => r.name || r).join(', ')}</span>
+                        </div>
+                      )}
+                      {s.address && (
+                        <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-1">
+                          <MapPin className="w-3 h-3 flex-shrink-0" />
+                          <span className="truncate">{s.address}</span>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                      <Clock className="w-3 h-3 flex-shrink-0" />
-                      <span className="font-medium">{fmtTime(s.startTime)} – {fmtTime(s.endTime)}</span>
-                    </div>
-                    {s.address && (
-                      <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-1">
-                        <MapPin className="w-3 h-3 flex-shrink-0" />
-                        <span className="truncate">{s.address}</span>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             );
           })()}
@@ -532,27 +590,60 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
             </div>
             <button onClick={() => navigate('/caregiver/families')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
           </div>
-          <div className="space-y-3 max-h-64 overflow-y-auto">
-            {acceptedBookings.slice(0, 4).map((b: any) => (
-              <div key={b.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-slate-50 transition-colors">
-                <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
-                  {b.clientPhotoURL
-                    ? <img src={b.clientPhotoURL} alt={b.clientName} className="w-full h-full object-cover" />
-                    : <span className="text-sm font-bold text-primary-600">{(b.clientName || 'F')[0].toUpperCase()}</span>
-                  }
+          <div className="space-y-3 max-h-80 overflow-y-auto">
+            {acceptedBookings.filter((b: any, i: number, arr: any[]) => arr.findIndex((x: any) => x.clientId === b.clientId) === i).slice(0, 2).map((b: any) => {
+              const schedDays: string[] = (() => {
+                const dst = b.schedule?.dayShiftTimes;
+                if (dst && typeof dst === 'object') return Object.keys(dst);
+                return b.schedule?.days || [];
+              })();
+              const rate = b.rate ?? b.caregiverRate ?? null;
+              return (
+                <div key={b.id} className="border border-slate-200 rounded-xl p-3.5">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-11 h-11 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center flex-shrink-0">
+                      {b.clientPhotoURL
+                        ? <img src={b.clientPhotoURL} alt={b.clientName} className="w-full h-full object-cover" />
+                        : <span className="text-sm font-bold text-primary-600">{(b.clientName || 'F')[0].toUpperCase()}</span>
+                      }
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-slate-900 truncate">{b.clientName || 'Family'}</p>
+                      <p className="text-xs text-slate-500">Client</p>
+                    </div>
+                  </div>
+                  <div className="border-t border-slate-100 mb-3" />
+                  <div className="flex items-center gap-3 mb-2 flex-wrap">
+                    {rate != null && (
+                      <p className="text-sm font-bold text-slate-800"><span className="text-primary-600">${rate}</span><span className="text-xs font-normal text-slate-400">/hr</span></p>
+                    )}
+                    {schedDays.length > 0 && (
+                      <div className="flex gap-1 flex-wrap">
+                        {schedDays.slice(0, 5).map((d: string) => (
+                          <span key={d} className="text-[10px] font-semibold px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">{d.slice(0,3)}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {(() => {
+                    const recipient = (b.careRecipients || [])[0];
+                    const recipientName = recipient?.name || recipient?.firstName || b.clientName || '';
+                    return recipientName ? (
+                      <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-3">
+                        <Heart className="w-3 h-3 text-rose-400 flex-shrink-0" />
+                        <span>Caring for: <span className="font-semibold text-slate-700">{recipientName}</span></span>
+                      </div>
+                    ) : null;
+                  })()}
+                  <button
+                    onClick={() => navigate('/caregiver/inbox')}
+                    className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" /> Message
+                  </button>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-slate-900 truncate">{b.clientName || 'Family'}</p>
-                  {b.jobTitle && <p className="text-xs text-slate-500 truncate">{b.jobTitle}</p>}
-                </div>
-                <button
-                  onClick={() => navigate('/caregiver/inbox')}
-                  className="p-1.5 rounded-lg hover:bg-primary-50 text-slate-400 hover:text-primary-600 transition-colors flex-shrink-0"
-                >
-                  <MessageSquare className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 

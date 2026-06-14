@@ -1618,7 +1618,8 @@ export const CaregiverBookingsPage: React.FC = () => {
         d.setDate(d.getDate() + days);
         return d.toISOString().split('T')[0];
       };
-      const today = new Date().toISOString().split('T')[0];
+      const _n = new Date();
+      const today = `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`;
       const generateFrom = amendment.startDate && amendment.startDate >= today ? amendment.startDate : today;
       const generateTo = addDaysLocal(generateFrom, 27);
 

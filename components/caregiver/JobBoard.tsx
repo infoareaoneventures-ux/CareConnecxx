@@ -47,10 +47,10 @@ type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn';
 
 const StatusBadge: React.FC<{ status: ApplicationStatus }> = ({ status }) => {
   const styles: Record<ApplicationStatus, { icon: React.ReactNode; className: string; label: string }> = {
-    pending:   { icon: <Clock4 className="w-3 h-3" />,      className: 'text-[var(--color-warning-600)] bg-[var(--color-warning-50)]', label: 'Pending' },
-    accepted:  { icon: <CheckCircle className="w-3 h-3" />, className: 'text-[var(--color-success-600)] bg-[var(--color-success-50)]', label: 'Accepted' },
-    rejected:  { icon: <XCircle className="w-3 h-3" />,     className: 'text-[var(--color-error-600)] bg-[var(--color-error-50)]',    label: 'Not Selected' },
-    withdrawn: { icon: null,                                  className: 'text-[var(--color-neutral-600)] bg-[var(--color-neutral-100)]', label: 'Withdrawn' },
+    pending:   { icon: <Clock4 className="w-3 h-3" />,      className: 'text-[var(--color-warning-600)] bg-[var(--color-warning-50)]',   label: 'Pending' },
+    accepted:  { icon: <CheckCircle className="w-3 h-3" />, className: 'text-[var(--color-success-600)] bg-[var(--color-success-50)]',   label: 'Accepted' },
+    rejected:  { icon: <XCircle className="w-3 h-3" />,     className: 'text-[var(--color-error-600)] bg-[var(--color-error-50)]',       label: 'Declined by client' },
+    withdrawn: { icon: null,                                  className: 'text-[var(--color-neutral-600)] bg-[var(--color-neutral-100)]', label: 'Withdrawn by you' },
   };
   const style = styles[status] || styles.pending;
   return (
@@ -113,8 +113,12 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     const [interviews, setInterviews] = useState<InterviewItem[]>([]);
     const [interviewsLoading, setInterviewsLoading] = useState(false);
     const [submittingInterview, setSubmittingInterview] = useState<string | null>(null);
-    const [appFilter, setAppFilter] = useState<'pending' | 'accepted' | 'rejected'>('pending');
-    const [ivFilter, setIvFilter] = useState<'all' | 'pending' | 'accepted' | 'confirmed' | 'completed' | 'declined' | 'cancelled'>('all');
+    const [appFilter, setAppFilter] = useState<'pending' | 'closed'>('pending');
+    const [ivFilter, setIvFilter] = useState<'all' | 'pending' | 'accepted' | 'confirmed' | 'completed' | 'declined' | 'cancelled'>(() => {
+        const f = searchParams.get('filter');
+        if (f === 'pending' || f === 'accepted' || f === 'confirmed' || f === 'completed' || f === 'declined' || f === 'cancelled') return f;
+        return 'all';
+    });
 
     const [hiddenJobs, setHiddenJobs] = useState<JobPost[]>([]);
     const [hiddenJobsLoading, setHiddenJobsLoading] = useState(false);
@@ -812,7 +816,9 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                     interviews.filter(iv => iv.jobId).map(iv => [iv.jobId!, iv])
                 );
                 const baseApps = applications;
-                const visibleApps = baseApps.filter(a => a.status === appFilter);
+                const visibleApps = appFilter === 'pending'
+                    ? baseApps.filter(a => a.status === 'pending')
+                    : baseApps.filter(a => a.status === 'rejected' || a.status === 'withdrawn');
                 return (
                     <div className="space-y-4">
                         {applicationsLoading ? (
@@ -827,27 +833,21 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                             </div>
                         ) : (
                             <>
-                            {/* Tabs: Pending | Accepted | Declined */}
+                            {/* Tabs: Pending | Closed */}
                             <div className="flex bg-slate-100 rounded-lg p-0.5 mb-2">
                                 {([
-                                    { key: 'pending',  label: 'Pending' },
-                                    { key: 'accepted', label: 'Accepted' },
-                                    { key: 'rejected', label: 'Declined' },
-                                ] as const).map(({ key, label }) => {
-                                    const count = key === 'pending'
-                                        ? baseApps.filter(a => a.status === 'pending').length
-                                        : baseApps.filter(a => a.status === key).length;
-                                    return (
-                                        <button key={key} onClick={() => setAppFilter(key)}
-                                            className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors ${appFilter === key ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>
-                                            {label}{count > 0 ? ` (${count})` : ''}
-                                        </button>
-                                    );
-                                })}
+                                    { key: 'pending', label: 'Pending', count: baseApps.filter(a => a.status === 'pending').length },
+                                    { key: 'closed',  label: 'Closed',  count: baseApps.filter(a => a.status === 'rejected' || a.status === 'withdrawn').length },
+                                ] as const).map(({ key, label, count }) => (
+                                    <button key={key} onClick={() => setAppFilter(key)}
+                                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors ${appFilter === key ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>
+                                        {label}{count > 0 ? ` (${count})` : ''}
+                                    </button>
+                                ))}
                             </div>
                             {visibleApps.length === 0 ? (
                                 <div className="text-center p-8 text-[var(--color-neutral-400)] bg-[var(--color-neutral-50)] rounded-2xl">
-                                    <p>No {appFilter === 'rejected' ? 'declined' : appFilter} applications.</p>
+                                    <p>No {appFilter} applications.</p>
                                 </div>
                             ) : visibleApps.map((app) => {
                                 const rawDate = (app.appliedAt as any)?.toDate ? (app.appliedAt as any).toDate() : new Date(app.appliedAt);
@@ -861,7 +861,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                 <h4 className="font-bold text-[var(--color-neutral-900)] text-lg leading-tight">{app.jobTitle}</h4>
                                                 <div className="flex items-center text-sm text-[var(--color-neutral-500)] mt-1 gap-3 flex-wrap">
                                                     {app.jobLocation && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{app.jobLocation}</span>}
-                                                    <span>{app.clientName}</span>
+                                                    {linkedInterview && <span>{app.clientName}</span>}
                                                 </div>
                                             </div>
                                             <div className="flex flex-col items-end gap-1.5 ml-3 flex-shrink-0">

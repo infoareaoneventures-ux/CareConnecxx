@@ -1900,7 +1900,7 @@ export default function Schedule() {
 
               {/* Footer */}
               <div className="px-6 pb-6 pt-4 border-t border-slate-100 shrink-0">
-                <div className="flex gap-3">
+<div className="flex gap-3">
                   <button onClick={() => { setShowAddModal(false); resetVisitModal(); }}
                     className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50">
                     Cancel

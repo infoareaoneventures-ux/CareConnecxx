@@ -150,8 +150,11 @@ exports.onBookingAccepted = functions.firestore
     const bookingId = context.params.bookingId;
     const today = new Date().toISOString().split('T')[0];
     const startDate = ((_a = after.schedule) === null || _a === void 0 ? void 0 : _a.startDate) || today;
-    const generateFrom = startDate >= today ? startDate : today;
-    const generateTo = addDays(generateFrom, 13); // 2 weeks
+    // Allow up to 2 days in the past to handle UTC vs local timezone differences
+    // (e.g. client sets startDate = "today" in PDT but server UTC is already "tomorrow")
+    const twoDaysAgo = addDays(today, -2);
+    const generateFrom = startDate >= twoDaysAgo ? startDate : today;
+    const generateTo = addDays(generateFrom >= today ? generateFrom : today, 13); // 2 weeks
     try {
         const created = await generateShiftsForBooking(bookingId, after, generateFrom, generateTo);
         console.log(`onBookingAccepted: created ${created} shifts for booking ${bookingId}`);

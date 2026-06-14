@@ -4,7 +4,7 @@ import { ViewType } from '../types';
 import { useCareConnex } from '../context/CareConnexContext';
 import { dbService } from '../services/api';
 
-import { CaregiverOnboardingDashboard } from './caregiver/CaregiverOnboardingDashboard';
+import { CaregiverHomeDashboard } from './caregiver/CaregiverHomeDashboard';
 import { CaregiverOnboardingWizard } from './caregiver/CaregiverOnboardingWizard';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 
@@ -56,15 +56,15 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
          {showWizard && currentUser?.uid && (
             <CaregiverOnboardingWizard
                uid={currentUser.uid}
-               firstName={profile.firstName || currentUser.displayName?.split(' ')[0] || ''}
-               city={profile.city || ''}
-               state={profile.state || ''}
+               firstName={(profile as any).firstName || currentUser.displayName?.split(' ')[0] || ''}
+               city={(profile as any).city || ''}
+               state={(profile as any).state || ''}
                onComplete={() => { setShowWizard(false); refreshProfile(); }}
                onShowToast={onShowToast}
             />
          )}
 
-         <CaregiverOnboardingDashboard
+         <CaregiverHomeDashboard
             profile={profile}
             onNavigate={onNavigate}
             onShowToast={onShowToast}

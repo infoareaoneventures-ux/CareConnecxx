@@ -771,6 +771,23 @@ export const PostsPage: React.FC = () => {
           decision: 'hire',
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
+
+        // Mark the caregiver's application as accepted
+        if (interview.jobId) {
+          try {
+            const appSnap = await db.collection('job_applications')
+              .where('caregiverId', '==', interview.caregiverId)
+              .where('jobId', '==', interview.jobId)
+              .limit(1)
+              .get();
+            if (!appSnap.empty) {
+              await appSnap.docs[0].ref.update({
+                status: 'accepted',
+                acceptedAt: firebase.firestore.FieldValue.serverTimestamp(),
+              });
+            }
+          } catch { /* non-critical */ }
+        }
       }
 
       await db.collection('users').doc(interview.caregiverId).collection('notifications').add({
@@ -1176,9 +1193,6 @@ export const PostsPage: React.FC = () => {
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0 ml-2">
-                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full border capitalize ${interviewStatusStyle(interview.status)}`}>
-                              {interview.status.replace('-', ' ')}
-                            </span>
                             <button onClick={() => navigate(`/client/caregiver/${interview.caregiverId}`)} className="p-1 hover:bg-slate-100 rounded-lg">
                               <ChevronRight className="w-4 h-4 text-slate-400" />
                             </button>

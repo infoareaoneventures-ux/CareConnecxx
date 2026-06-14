@@ -4,6 +4,7 @@ const hoisted = vi.hoisted(() => {
   const docState  = new Map<string, any>();
   const collState = new Map<string, any[]>();
   const sets:    Array<{ path: string; data: any; opts?: any }> = [];
+  const adds:    Array<{ path: string; data: any; id: string }> = [];
   const updates: Array<{ path: string; data: any }> = [];
 
   const makeDocRef = (path: string) => ({
@@ -31,8 +32,8 @@ const hoisted = vi.hoisted(() => {
     ref.orderBy = (..._a: any[]) => ref;
     ref.limit   = (..._a: any[]) => ref;
     ref.add = vi.fn(async (data: any) => {
-      const id = `auto-${sets.length}`;
-      sets.push({ path, data });
+      const id = `auto-${adds.length}`;
+      adds.push({ path, data, id });
       docState.set(`${path}/${id}`, data);
       return { id };
     });
@@ -44,9 +45,9 @@ const hoisted = vi.hoisted(() => {
   };
 
   return {
-    docState, collState, sets, updates,
+    docState, collState, sets, adds, updates,
     collectionMock: vi.fn((p: string) => makeCollRef(p)),
-    reset: () => { docState.clear(); collState.clear(); sets.length = 0; updates.length = 0; },
+    reset: () => { docState.clear(); collState.clear(); sets.length = 0; adds.length = 0; updates.length = 0; },
   };
 });
 

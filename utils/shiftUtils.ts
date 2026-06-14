@@ -1,6 +1,5 @@
 export type ShiftDisplayStatus =
   | 'overdue'
-  | 'late'
   | 'scheduled'
   | 'in-progress'
   | 'completed'
@@ -29,8 +28,10 @@ export function shiftDisplayStatus(shift: {
   const startMins = timeToMins(shift.startTime || '00:00');
   const endMins = timeToMins(shift.endTime || '23:59');
 
-  if (shift.date < todayStr || (shift.date === todayStr && endMins <= nowMins)) return 'overdue';
-  if (shift.date === todayStr && startMins <= nowMins) return 'late';
+  // For shifts crossing midnight (e.g. 11:45 PM → 12:00 AM), endMins < startMins.
+  // Treat the effective end as endMins + 1440 so the shift isn't falsely overdue.
+  const effectiveEndMins = endMins < startMins ? endMins + 1440 : endMins;
+  if (shift.date < todayStr || (shift.date === todayStr && effectiveEndMins <= nowMins)) return 'overdue';
   return 'scheduled';
 }
 
@@ -38,7 +39,6 @@ export function shiftDisplayStatus(shift: {
 export function shiftStatusBlockClass(status: ShiftDisplayStatus): string {
   switch (status) {
     case 'overdue':     return 'bg-orange-400 border-orange-500';
-    case 'late':        return 'bg-yellow-400 border-yellow-500';
     case 'scheduled':   return 'bg-primary-500 border-primary-600';
     case 'in-progress': return 'bg-accent-500 border-accent-600';
     case 'completed':   return 'bg-slate-400 border-slate-500';
@@ -51,7 +51,6 @@ export function shiftStatusBlockClass(status: ShiftDisplayStatus): string {
 export function shiftStatusBadgeClass(status: ShiftDisplayStatus): string {
   switch (status) {
     case 'overdue':     return 'bg-orange-100 text-orange-700 border-orange-200';
-    case 'late':        return 'bg-yellow-100 text-yellow-700 border-yellow-200';
     case 'scheduled':   return 'bg-primary-100 text-primary-700 border-primary-200';
     case 'in-progress': return 'bg-accent-100 text-accent-700 border-accent-200';
     case 'completed':   return 'bg-green-100 text-green-700 border-green-200';
@@ -64,7 +63,6 @@ export function shiftStatusBadgeClass(status: ShiftDisplayStatus): string {
 export function shiftStatusDotClass(status: ShiftDisplayStatus): string {
   switch (status) {
     case 'overdue':     return 'bg-orange-400';
-    case 'late':        return 'bg-yellow-400';
     case 'scheduled':   return 'bg-primary-500';
     case 'in-progress': return 'bg-accent-500';
     case 'completed':   return 'bg-slate-400';
@@ -76,7 +74,6 @@ export function shiftStatusDotClass(status: ShiftDisplayStatus): string {
 export function shiftStatusLabel(status: ShiftDisplayStatus): string {
   switch (status) {
     case 'overdue':     return 'Overdue';
-    case 'late':        return 'Late';
     case 'scheduled':   return 'Scheduled';
     case 'in-progress': return 'In Progress';
     case 'completed':   return 'Completed';

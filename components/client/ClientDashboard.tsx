@@ -708,18 +708,19 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
               {(() => {
                 const _now = new Date();
                 const todayStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
-                const todayShifts = [...activeShifts]
-                  .filter((s: any) => s.date === todayStr && s.status !== 'completed')
+                const activeTab = [...activeShifts]
+                  .filter((s: any) => s.status === 'in-progress')
+                  .sort((a: any, b: any) => (a.date || '').localeCompare(b.date || '') || (a.startTime || '').localeCompare(b.startTime || ''));
+                const upcomingTab = [...activeShifts]
+                  .filter((s: any) => s.date === todayStr && s.status === 'scheduled')
                   .sort((a: any, b: any) => (a.startTime || '').localeCompare(b.startTime || ''));
-                const activeTab = todayShifts.filter((s: any) => s.status === 'in-progress');
-                const upcomingTab = todayShifts.filter((s: any) => s.status === 'scheduled');
                 const tabShifts = todayBookingTab === 'active' ? activeTab : upcomingTab;
                 const renderShift = (shift: any) => {
                   const ds = shiftDisplayStatus(shift);
                   const isInProgress = shift.status === 'in-progress';
-                  const cardBorder = ds === 'overdue' ? 'border-orange-300 bg-orange-50' : ds === 'late' ? 'border-yellow-300 bg-yellow-50' : 'border-slate-200';
-                  const statusColor = isInProgress ? 'text-green-600' : ds === 'overdue' ? 'text-orange-600' : ds === 'late' ? 'text-yellow-600' : 'text-slate-500';
-                  const statusText = isInProgress ? 'In Progress' : ds === 'overdue' ? 'Overdue' : ds === 'late' ? 'Late' : 'Upcoming';
+                  const cardBorder = ds === 'overdue' ? 'border-orange-300 bg-orange-50' : 'border-slate-200';
+                  const statusColor = isInProgress ? 'text-green-600' : ds === 'overdue' ? 'text-orange-600' : 'text-slate-500';
+                  const statusText = isInProgress ? 'In Progress' : ds === 'overdue' ? 'Overdue' : 'Upcoming';
                   return (
                     <div key={shift.id} className={`rounded-xl p-3 border ${cardBorder}`}>
                       <div className="flex items-center gap-2.5 mb-2">
@@ -1142,6 +1143,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           pending_client_review:      { label: 'Needs Review',     color: 'text-amber-700',  bg: 'bg-amber-50 border border-amber-200' },
                           caregiver_counter_proposed: { label: 'Counter Received', color: 'text-yellow-700', bg: 'bg-yellow-50 border border-yellow-200' },
                           correction_proposed:        { label: 'Correction Sent',  color: 'text-orange-700', bg: 'bg-orange-50 border border-orange-200' },
+                          payment_failed:             { label: 'Payment Failed',   color: 'text-red-700',    bg: 'bg-red-50 border border-red-200' },
                         };
                         const statusCfg = STATUS_MAP[shift.status] ?? { label: shift.status, color: 'text-slate-600', bg: 'bg-slate-100 border border-slate-200' };
                         const msLeft = shift.autoApproveAt ? new Date(shift.autoApproveAt).getTime() - Date.now() : 0;
@@ -1180,33 +1182,17 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                             </div>
                             {/* Auto-approve warning */}
                             {showAutoApprove && (
-                              <div className="flex items-center gap-1.5 text-[10px] text-amber-600 mb-2">
+                              <div className="flex items-center gap-1.5 text-[10px] text-amber-600">
                                 <Clock className="w-3 h-3 flex-shrink-0" />
                                 <span>Auto-approves in {hoursLeft}h</span>
                               </div>
                             )}
-                            {/* Review / Retry button */}
-                            {shift.status === 'payment_failed' ? (
-                              <button
-                                onClick={() => navigate('/client/payments?filter=needs-review')}
-                                className="w-full py-1.5 text-xs font-semibold bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
-                              >
-                                Fix Payment
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => setReviewingShift(shift)}
-                                className="w-full py-1.5 text-xs font-semibold bg-accent-500 text-white rounded-lg hover:bg-accent-600 transition-colors"
-                              >
-                                Review
-                              </button>
-                            )}
                           </div>
                         );
                       })}
-                      {shiftsToReview.length > 3 && (
+                      {shiftsToReview.length > 2 && (
                         <p className="text-xs text-center text-slate-400 pt-1">
-                          +{shiftsToReview.length - 3} more —{' '}
+                          +{shiftsToReview.length - 2} more —{' '}
                           <button onClick={() => navigate('/client/payments')} className="text-primary-600 hover:underline">View all</button>
                         </p>
                       )}

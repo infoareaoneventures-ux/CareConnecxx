@@ -175,6 +175,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     submittedAt,
     autoApproveAt,
     paymentAttemptCount: 0,
+    loggedManually: shiftDoc.loggedManually ?? false,
     status: 'pending_client_review' as ShiftHoursStatus,
     correctionHistory: [{
       by: 'caregiver',

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Search, Loader2, Briefcase, MapPin, Calendar, Clock, Lock, X, FileText, CheckCircle, XCircle, Clock4, Sun, Moon, Users, CreditCard, Banknote, EyeOff, Eye, Car, SlidersHorizontal, Video, Phone, Home } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -46,10 +47,10 @@ type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn';
 
 const StatusBadge: React.FC<{ status: ApplicationStatus }> = ({ status }) => {
   const styles: Record<ApplicationStatus, { icon: React.ReactNode; className: string; label: string }> = {
-    pending: { icon: <Clock4 className="w-3 h-3" />, className: 'text-[var(--color-warning-600)] bg-[var(--color-warning-50)]', label: 'Pending' },
-    accepted: { icon: <CheckCircle className="w-3 h-3" />, className: 'text-[var(--color-success-600)] bg-[var(--color-success-50)]', label: 'Accepted' },
-    rejected: { icon: <XCircle className="w-3 h-3" />, className: 'text-[var(--color-error-600)] bg-[var(--color-error-50)]', label: 'Not Selected' },
-    withdrawn: { icon: null, className: 'text-[var(--color-neutral-600)] bg-[var(--color-neutral-100)]', label: 'Withdrawn' },
+    pending:   { icon: <Clock4 className="w-3 h-3" />,      className: 'text-[var(--color-warning-600)] bg-[var(--color-warning-50)]',   label: 'Pending' },
+    accepted:  { icon: <CheckCircle className="w-3 h-3" />, className: 'text-[var(--color-success-600)] bg-[var(--color-success-50)]',   label: 'Accepted' },
+    rejected:  { icon: <XCircle className="w-3 h-3" />,     className: 'text-[var(--color-error-600)] bg-[var(--color-error-50)]',       label: 'Declined by client' },
+    withdrawn: { icon: null,                                  className: 'text-[var(--color-neutral-600)] bg-[var(--color-neutral-100)]', label: 'Withdrawn by you' },
   };
   const style = styles[status] || styles.pending;
   return (
@@ -88,7 +89,13 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     const [viewingJob, setViewingJob] = useState<JobPost | null>(null);
     const [applyingJob, setApplyingJob] = useState<JobPost | null>(null);
     const [acceptingGigId, setAcceptingGigId] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<TabType>('available');
+    const [searchParams] = useSearchParams();
+    const [activeTab, setActiveTab] = useState<TabType>(() => {
+        const t = searchParams.get('tab');
+        if (t === 'applications' || t === 'my-applications') return 'my-applications';
+        if (t === 'interviews') return 'interviews';
+        return 'available';
+    });
     const [coverLetter, setCoverLetter] = useState('');
     const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
@@ -106,8 +113,12 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     const [interviews, setInterviews] = useState<InterviewItem[]>([]);
     const [interviewsLoading, setInterviewsLoading] = useState(false);
     const [submittingInterview, setSubmittingInterview] = useState<string | null>(null);
-    const [appFilter, setAppFilter] = useState<'all' | 'pending' | 'accepted' | 'rejected' | 'withdrawn'>('all');
-    const [ivFilter, setIvFilter] = useState<'all' | 'pending' | 'accepted' | 'confirmed' | 'completed' | 'declined' | 'cancelled'>('all');
+    const [appFilter, setAppFilter] = useState<'pending' | 'closed'>('pending');
+    const [ivFilter, setIvFilter] = useState<'all' | 'pending' | 'accepted' | 'confirmed' | 'completed' | 'declined' | 'cancelled'>(() => {
+        const f = searchParams.get('filter');
+        if (f === 'pending' || f === 'accepted' || f === 'confirmed' || f === 'completed' || f === 'declined' || f === 'cancelled') return f;
+        return 'all';
+    });
 
     const [hiddenJobs, setHiddenJobs] = useState<JobPost[]>([]);
     const [hiddenJobsLoading, setHiddenJobsLoading] = useState(false);
@@ -136,20 +147,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         return now;
     });
 
-    const LS_APP_FILTER_KEY = (f: string) => `careconnex.jobboard.lastChecked.app.${f}`;
     const LS_IV_FILTER_KEY  = (f: string) => `careconnex.jobboard.lastChecked.iv.${f}`;
-
-    const [lastCheckedAppFilter, setLastCheckedAppFilter] = useState<Record<string, number>>(() => {
-        const now = Date.now();
-        const result: Record<string, number> = {};
-        (['pending', 'accepted', 'rejected', 'withdrawn'] as const).forEach(f => {
-            const v = localStorage.getItem(`careconnex.jobboard.lastChecked.app.${f}`);
-            const parsed = v ? parseInt(v, 10) : 0;
-            if (parsed > MIN_VALID_TS) { result[f] = parsed; }
-            else { localStorage.setItem(`careconnex.jobboard.lastChecked.app.${f}`, String(now)); result[f] = now; }
-        });
-        return result;
-    });
 
     const [lastCheckedIvFilter, setLastCheckedIvFilter] = useState<Record<string, number>>(() => {
         const now = Date.now();
@@ -817,8 +815,10 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                 const interviewByJobId = new Map(
                     interviews.filter(iv => iv.jobId).map(iv => [iv.jobId!, iv])
                 );
-                const baseApps = applications; // show ALL applications regardless of interview status
-                const visibleApps = appFilter === 'all' ? baseApps : baseApps.filter(a => a.status === appFilter);
+                const baseApps = applications;
+                const visibleApps = appFilter === 'pending'
+                    ? baseApps.filter(a => a.status === 'pending')
+                    : baseApps.filter(a => a.status === 'rejected' || a.status === 'withdrawn');
                 return (
                     <div className="space-y-4">
                         {applicationsLoading ? (
@@ -833,39 +833,17 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                             </div>
                         ) : (
                             <>
-                            {/* Filter chips */}
-                            <div className="flex gap-2 flex-wrap">
-                                {(['all', 'pending', 'accepted', 'rejected', 'withdrawn'] as const).map(f => {
-                                    const total = f === 'all' ? baseApps.length : baseApps.filter(a => a.status === f).length;
-                                    if (f !== 'all' && total === 0) return null;
-                                    const label = f === 'all' ? 'All' : f === 'rejected' ? 'Not Selected' : f.charAt(0).toUpperCase() + f.slice(1);
-                                    const newCount = f === 'all' ? 0 : applications.filter(a => {
-                                        if (a.status !== f) return false;
-                                        const tsMs = (v: any): number => {
-                                            if (!v) return 0;
-                                            if (typeof v.toMillis === 'function') return v.toMillis();
-                                            if (typeof v.toDate === 'function') return v.toDate().getTime();
-                                            const ms = new Date(v).getTime();
-                                            return isNaN(ms) ? 0 : ms;
-                                        };
-                                        return tsMs(a.appliedAt) > (lastCheckedAppFilter[f] ?? 0);
-                                    }).length;
-                                    return (
-                                        <button key={f} onClick={() => {
-                                            setAppFilter(f);
-                                            if (f !== 'all') {
-                                                const now = Date.now();
-                                                localStorage.setItem(LS_APP_FILTER_KEY(f), String(now));
-                                                setLastCheckedAppFilter(prev => ({ ...prev, [f]: now }));
-                                            }
-                                        }} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${appFilter === f ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}>
-                                            {label}
-                                            {newCount > 0 && appFilter !== f && (
-                                                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">{newCount}</span>
-                                            )}
-                                        </button>
-                                    );
-                                })}
+                            {/* Tabs: Pending | Closed */}
+                            <div className="flex bg-slate-100 rounded-lg p-0.5 mb-2">
+                                {([
+                                    { key: 'pending', label: 'Pending', count: baseApps.filter(a => a.status === 'pending').length },
+                                    { key: 'closed',  label: 'Closed',  count: baseApps.filter(a => a.status === 'rejected' || a.status === 'withdrawn').length },
+                                ] as const).map(({ key, label, count }) => (
+                                    <button key={key} onClick={() => setAppFilter(key)}
+                                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors ${appFilter === key ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>
+                                        {label}{count > 0 ? ` (${count})` : ''}
+                                    </button>
+                                ))}
                             </div>
                             {visibleApps.length === 0 ? (
                                 <div className="text-center p-8 text-[var(--color-neutral-400)] bg-[var(--color-neutral-50)] rounded-2xl">
@@ -883,7 +861,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                 <h4 className="font-bold text-[var(--color-neutral-900)] text-lg leading-tight">{app.jobTitle}</h4>
                                                 <div className="flex items-center text-sm text-[var(--color-neutral-500)] mt-1 gap-3 flex-wrap">
                                                     {app.jobLocation && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{app.jobLocation}</span>}
-                                                    <span>{app.clientName}</span>
+                                                    {linkedInterview && <span>{app.clientName}</span>}
                                                 </div>
                                             </div>
                                             <div className="flex flex-col items-end gap-1.5 ml-3 flex-shrink-0">

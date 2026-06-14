@@ -82,6 +82,7 @@ interface ShiftRow {
   autoApproveAt?: string;
   status: string;
   stripeFailureReason?: string;
+  loggedManually?: boolean;
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -242,7 +243,7 @@ const STATUS_LABEL: Record<string, string> = {
   auto_approved:             'Auto-approved',
   disputed_admin_review:     'Admin reviewing',
   paid:                      'Paid',
-  payment_failed:            'Payment failed',
+  payment_failed:            'Awaiting Payment',
 };
 
 const STATUS_STYLE: Record<string, string> = {
@@ -253,7 +254,7 @@ const STATUS_STYLE: Record<string, string> = {
   auto_approved:             'bg-blue-50 text-blue-700 border-blue-200',
   disputed_admin_review:     'bg-purple-50 text-purple-700 border-purple-200',
   paid:                      'bg-green-50 text-green-700 border-green-200',
-  payment_failed:            'bg-red-50 text-red-700 border-red-200',
+  payment_failed:            'bg-amber-50 text-amber-700 border-amber-200',
 };
 
 // ── sub-components ────────────────────────────────────────────────────────────
@@ -462,6 +463,9 @@ const PendingShiftRow: React.FC<{
           <Divider />
           <Col label="Method"   value="Cash"                                  className="shrink-0 w-[46px]" />
           <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+            {row.loggedManually && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 whitespace-nowrap">Logged</span>
+            )}
             <span className="text-xs font-medium px-2 py-0.5 rounded-full border whitespace-nowrap bg-green-100 text-green-700 border-green-300">
               Awaiting confirmation
             </span>
@@ -482,7 +486,7 @@ const PendingShiftRow: React.FC<{
               )}
               {dispStart && dispEnd && (
                 <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-slate-400">Clock in / out</span>
+                  <span className="text-slate-400">{row.loggedManually ? 'Reported in / out' : 'Clock in / out'}</span>
                   <span className="font-medium text-slate-700">
                     {fmtDateTime(dispStart)} – {fmtDateTime(dispEnd)}
                   </span>
@@ -589,6 +593,9 @@ const PendingShiftRow: React.FC<{
           <Col label="Method"   value={method}                               className="shrink-0 w-[46px]" />
 
           <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+            {row.loggedManually && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 whitespace-nowrap">Logged</span>
+            )}
             <span className="text-xs font-medium px-2 py-0.5 rounded-full border bg-yellow-50 text-yellow-700 border-yellow-200 whitespace-nowrap">
               Counter sent
             </span>
@@ -612,7 +619,7 @@ const PendingShiftRow: React.FC<{
                 )}
                 {row.submittedStartTime && row.submittedEndTime && (
                   <div className="flex items-center justify-between px-3 py-1.5 text-xs">
-                    <span className="text-slate-400">Clock in / out</span>
+                    <span className="text-slate-400">{row.loggedManually ? 'Reported in / out' : 'Clock in / out'}</span>
                     <span className="text-slate-700">
                       {fmtDateTime(new Date(row.submittedStartTime))} – {fmtDateTime(new Date(row.submittedEndTime))}
                     </span>
@@ -704,6 +711,9 @@ const PendingShiftRow: React.FC<{
             <Divider />
             <Col label="Method"   value={method}                                 className="shrink-0 w-[46px]" />
             <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+              {row.loggedManually && (
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 whitespace-nowrap">Logged</span>
+              )}
               <span className="text-xs font-medium px-2 py-0.5 rounded-full border bg-orange-50 text-orange-700 border-orange-200 whitespace-nowrap">
                 Correction Received
               </span>
@@ -731,7 +741,7 @@ const PendingShiftRow: React.FC<{
                   )}
                   {row.submittedStartTime && row.submittedEndTime && (
                     <div className="flex items-center justify-between px-3 py-1.5 text-xs">
-                      <span className="text-slate-400">Clock in / out</span>
+                      <span className="text-slate-400">{row.loggedManually ? 'Reported in / out' : 'Clock in / out'}</span>
                       <span className="text-slate-700">{fmtDateTime(new Date(row.submittedStartTime))} – {fmtDateTime(new Date(row.submittedEndTime))}</span>
                     </div>
                   )}
@@ -832,6 +842,9 @@ const PendingShiftRow: React.FC<{
         <Col label="Method"   value={method}                                className="shrink-0 w-[46px]" />
 
         <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+          {row.loggedManually && (
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 whitespace-nowrap">Logged</span>
+          )}
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full border whitespace-nowrap ${STATUS_STYLE[row.status] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
             {STATUS_LABEL[row.status] || row.status}
           </span>
@@ -958,6 +971,9 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
         <Col label="Method"   value={method}                                className="shrink-0 w-[46px]" />
 
         <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+          {row.loggedManually && (
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 whitespace-nowrap">Logged</span>
+          )}
           {(['caregiver', 'admin', 'system_auto_accept'].includes(row.resolvedBy ?? '')
             || (row.resolvedBy === 'client' && Array.isArray(row.correctionHistory) && row.correctionHistory.some((e: any) => ['correction_proposed', 'counter_proposed'].includes(e.action)))) && (
             <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-teal-50 text-teal-700 border-teal-200 whitespace-nowrap">
@@ -1135,18 +1151,28 @@ const ShiftDetailModal: React.FC<{ shiftId: string; onClose: () => void }> = ({ 
                   <div className="flex items-start gap-3 text-xs pt-2 border-t border-slate-200">
                     <span className="w-24 text-slate-400 shrink-0 pt-0.5">Completed</span>
                     <div className="font-semibold text-slate-700 leading-relaxed">
-                      {fmtDate(data.completedAt) && (
-                        <span className="block text-slate-500 font-normal">{fmtDate(data.completedAt)}</span>
-                      )}
-                      <span>
-                        {fmtTs(data.startedAt)}
-                        {fmtTs(data.completedAt) && (
-                          <><span className="text-slate-400 font-normal"> – </span>{fmtTs(data.completedAt)}</>
-                        )}
-                        {fmtDur(data.startedAt, data.completedAt) && (
-                          <span className="text-primary-600 font-semibold"> · {fmtDur(data.startedAt, data.completedAt)}</span>
-                        )}
-                      </span>
+                      {(() => {
+                        const startDate = fmtDate(data.startedAt);
+                        const endDate   = fmtDate(data.completedAt);
+                        return (
+                          <span className="block">
+                            {data.startedAt && (
+                              <><span className="text-slate-500 font-normal">{startDate}</span>{' '}{fmtTs(data.startedAt)}</>
+                            )}
+                            {data.completedAt && (
+                              <>
+                                <span className="text-slate-400 font-normal"> – </span>
+                                <span className="text-slate-500 font-normal">{endDate}</span>
+                                {' '}{fmtTs(data.completedAt)}
+                              </>
+                            )}
+                            {fmtDur(data.startedAt, data.completedAt) && (
+                              <span className="text-primary-600 font-semibold"> · {fmtDur(data.startedAt, data.completedAt)}</span>
+                            )}
+                          </span>
+                        );
+                      })()}
+
                     </div>
                   </div>
                 )}
@@ -1240,7 +1266,7 @@ const ShiftDetailModal: React.FC<{ shiftId: string; onClose: () => void }> = ({ 
               {/* Completion notes */}
               {data.completionNotes && (
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shift Notes</p>
+                  <p className="text-xs font-semibold text-slate-500 mb-1">Caregiver Notes</p>
                   <p className="text-xs text-slate-600">{data.completionNotes}</p>
                 </div>
               )}
@@ -1308,6 +1334,11 @@ const SubmittableShiftCard: React.FC<{
 
         {/* Status badge + chevron — pushed to the right */}
         <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+          {shift.loggedManually && (
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 whitespace-nowrap">
+              Logged
+            </span>
+          )}
           <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
             Not submitted
           </span>
@@ -1346,18 +1377,18 @@ const SubmittableShiftCard: React.FC<{
             <div className="flex items-center justify-between px-3 py-2">
               <span className="text-slate-400">Scheduled</span>
               <span className="font-medium text-slate-700">
-                {shift.date} · {shift.startTime}{shift.endTime ? `–${shift.endTime}` : ''}
+                {fmtDate(schedStart)} · {fmtTime(schedStart)}{shift.endTime ? `–${fmtTime(schedEnd)}` : ''}
               </span>
             </div>
             {hasActual && (
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-slate-400">Clock in</span>
+                <span className="text-slate-400">{shift.loggedManually ? 'Reported in' : 'Clock in'}</span>
                 <span className="font-medium text-slate-700">{fmtDateTime(actualStart!)}</span>
               </div>
             )}
             {hasActual && (
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-slate-400">Clock out</span>
+                <span className="text-slate-400">{shift.loggedManually ? 'Reported out' : 'Clock out'}</span>
                 <span className="font-medium text-slate-700">{fmtDateTime(actualEnd!)}</span>
               </div>
             )}

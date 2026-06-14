@@ -757,7 +757,7 @@ export default function Schedule() {
         {shift.notes && <div className="p-3 bg-slate-50 rounded-xl text-slate-600 text-xs">{shift.notes}</div>}
         {shift.completionNotes && (
           <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shift Notes</p>
+            <p className="text-xs font-semibold text-slate-500 mb-1">Caregiver Notes</p>
             <p className="text-xs text-slate-600">{shift.completionNotes}</p>
           </div>
         )}
@@ -979,7 +979,6 @@ export default function Schedule() {
         <div className="flex items-center gap-5 px-4 py-2.5 mb-4 bg-white rounded-xl border border-slate-200 text-xs text-slate-500 flex-wrap">
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-500 inline-block" />Scheduled</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-accent-500 inline-block" />In Progress</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-yellow-400 inline-block" />Late</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-orange-400 inline-block" />Overdue</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" />Completed</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-rose-600 inline-block" />Cancelled</span>
@@ -1092,7 +1091,7 @@ export default function Schedule() {
                                       style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '2px', right: hasBoth ? '50%' : '2px' }}>
                                       <p className="px-1.5 pt-1 text-xs font-bold text-white leading-tight truncate">{shift.caregiverName.split(' ')[0]}</p>
                                       <p className="px-1.5 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
-                                      {(shiftDisplayStatus(shift) === 'overdue' || shiftDisplayStatus(shift) === 'late') && <p className="px-1.5 text-xs text-white font-semibold">{shiftStatusLabel(shiftDisplayStatus(shift))}</p>}
+                                      {shiftDisplayStatus(shift) === 'overdue' && <p className="px-1.5 text-xs text-white font-semibold">{shiftStatusLabel(shiftDisplayStatus(shift))}</p>}
                                     </button>
                                   );
                                 })}
@@ -1184,7 +1183,7 @@ export default function Schedule() {
                                   style={{ top: (cs - H_START) * CELL_H + 1, height: (ce - cs) * CELL_H - 2, left: '4px', right: dayInterviews.length > 0 ? '50%' : '4px' }}>
                                   <p className="px-2 pt-1.5 text-sm font-bold text-white leading-tight truncate">{shift.caregiverName}</p>
                                   <p className="px-2 text-xs text-white/80">{fmt12(shift.startTime)}{shift.endTime ? ` – ${fmt12(shift.endTime)}` : ''}</p>
-                                  {(shiftDisplayStatus(shift) === 'overdue' || shiftDisplayStatus(shift) === 'late') && <p className="px-2 text-xs text-white font-semibold mt-0.5">{shiftStatusLabel(shiftDisplayStatus(shift))}</p>}
+                                  {shiftDisplayStatus(shift) === 'overdue' && <p className="px-2 text-xs text-white font-semibold mt-0.5">{shiftStatusLabel(shiftDisplayStatus(shift))}</p>}
                                   {shift.status === 'in-progress' && <p className="px-2 text-xs text-white font-semibold mt-0.5">In Progress</p>}
                                 </button>
                               );
@@ -1900,7 +1899,7 @@ export default function Schedule() {
 
               {/* Footer */}
               <div className="px-6 pb-6 pt-4 border-t border-slate-100 shrink-0">
-                <div className="flex gap-3">
+<div className="flex gap-3">
                   <button onClick={() => { setShowAddModal(false); resetVisitModal(); }}
                     className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50">
                     Cancel

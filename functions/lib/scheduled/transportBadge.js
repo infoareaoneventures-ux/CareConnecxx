@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.refreshTransportBadge = exports.evaluateTransportBadges = void 0;
+exports.evaluateTransportBadges = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const db = admin.firestore();
@@ -67,13 +67,8 @@ exports.evaluateTransportBadges = functions.pubsub
     for (const doc of snap.docs) {
         const data = doc.data();
         const services = data.services || data.skills || [];
-        if (!services.includes('Transportation')) {
-            // Not a transport caregiver — strip badge if they somehow have it
-            if (data.transportationBadge === true) {
-                batch.update(doc.ref, { transportationBadge: false });
-            }
+        if (!services.includes('Transportation'))
             continue;
-        }
         const docs = data.documents || {};
         const license = docs.driversLicense;
         const insurance = docs.insurance;
@@ -85,18 +80,14 @@ exports.evaluateTransportBadges = functions.pubsub
             isExpired(insurance === null || insurance === void 0 ? void 0 : insurance.expirationDate) ||
             isExpired(registration === null || registration === void 0 ? void 0 : registration.expirationDate);
         const shouldHaveBadge = allApproved && !anyExpired;
-        if (shouldHaveBadge !== (data.transportationBadge === true)) {
-            batch.update(doc.ref, { transportationBadge: shouldHaveBadge });
-            if (!shouldHaveBadge && data.transportationBadge === true) {
-                // Badge just revoked — notify caregiver
-                notifications.push(db.collection('users').doc(doc.id).collection('notifications').add({
-                    title: 'Transportation badge removed',
-                    body: 'One or more of your transportation documents has expired. Upload updated documents to restore your badge.',
-                    type: 'system',
-                    isRead: false,
-                    createdAt: new Date().toISOString(),
-                }));
-            }
+        if (!shouldHaveBadge) {
+            notifications.push(db.collection('users').doc(doc.id).collection('notifications').add({
+                title: 'Transportation documents expired',
+                body: 'One or more of your transportation documents has expired. Upload updated documents to keep your transportation status active.',
+                type: 'system',
+                isRead: false,
+                createdAt: new Date().toISOString(),
+            }));
         }
         // Warn about docs expiring within 30 days
         const expiringSoon = [];
@@ -129,29 +120,4 @@ exports.evaluateTransportBadges = functions.pubsub
  * Callable trigger: re-evaluate a single caregiver's transport badge immediately.
  * Used by admin panel after approving/rejecting a transport doc.
  */
-exports.refreshTransportBadge = functions.https.onCall(async (data, context) => {
-    var _a, _b, _c, _d, _e, _f;
-    if (!context.auth)
-        throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
-    const targetUid = (data === null || data === void 0 ? void 0 : data.uid) || context.auth.uid;
-    const snap = await db.collection('caregivers').doc(targetUid).get();
-    if (!snap.exists)
-        throw new functions.https.HttpsError('not-found', 'Caregiver not found');
-    const caregiverData = snap.data() || {};
-    const services = caregiverData.services || caregiverData.skills || [];
-    if (!services.includes('Transportation') || !caregiverData.verified) {
-        await snap.ref.update({ transportationBadge: false });
-        return { badge: false };
-    }
-    const docs = caregiverData.documents || {};
-    const allApproved = ((_a = docs.driversLicense) === null || _a === void 0 ? void 0 : _a.status) === 'approved' &&
-        ((_b = docs.insurance) === null || _b === void 0 ? void 0 : _b.status) === 'approved' &&
-        ((_c = docs.registration) === null || _c === void 0 ? void 0 : _c.status) === 'approved';
-    const anyExpired = isExpired((_d = docs.driversLicense) === null || _d === void 0 ? void 0 : _d.expirationDate) ||
-        isExpired((_e = docs.insurance) === null || _e === void 0 ? void 0 : _e.expirationDate) ||
-        isExpired((_f = docs.registration) === null || _f === void 0 ? void 0 : _f.expirationDate);
-    const badge = allApproved && !anyExpired;
-    await snap.ref.update({ transportationBadge: badge });
-    return { badge };
-});
 //# sourceMappingURL=transportBadge.js.map

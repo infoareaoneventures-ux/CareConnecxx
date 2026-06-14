@@ -154,8 +154,6 @@ exports.runAiMatching = functions.https.onCall(async (data, context) => {
                 hourlyRate: cg.hourlyRate,
                 reliabilityScore: cg.reliabilityScore,
                 retentionRate: cg.retentionRate,
-                hasDementiaCert: (0, claudeMatching_1.detectDementiaCert)(cgSkills),
-                hasMedicalCred: (0, claudeMatching_1.detectMedicalCred)(cgSkills),
                 feedbackSummary: personalBoost > 2
                     ? "previously hired by this family"
                     : personalBoost < -1

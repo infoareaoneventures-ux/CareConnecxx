@@ -85,6 +85,7 @@ import { Home, Settings, MessageSquare, ClipboardList, Loader2 } from 'lucide-re
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CareConnexProvider, useCareConnex } from './context/CareConnexContext';
 
+
 // Push Notifications
 import { PushNotificationPrompt } from './components/PushNotificationPrompt';
 import { FloatingOnboardingHelper } from './components/shared/FloatingOnboardingHelper';

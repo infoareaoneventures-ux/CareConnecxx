@@ -89,7 +89,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     const [viewingJob, setViewingJob] = useState<JobPost | null>(null);
     const [applyingJob, setApplyingJob] = useState<JobPost | null>(null);
     const [acceptingGigId, setAcceptingGigId] = useState<string | null>(null);
-    const [searchParams] = useSearchParams();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [activeTab, setActiveTab] = useState<TabType>(() => {
         const t = searchParams.get('tab');
         if (t === 'applications' || t === 'my-applications') return 'my-applications';
@@ -312,6 +312,16 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             onShowToast('Failed to load job details', 'error');
         }
     };
+
+    // Auto-open a specific job when navigated here with ?job=<id> (e.g. from dashboard cards)
+    useEffect(() => {
+        const jobId = searchParams.get('job');
+        if (!jobId) return;
+        handleViewJobDetails(jobId);
+        // Clear the param so the modal can be closed without it reopening
+        setSearchParams(prev => { const next = new URLSearchParams(prev); next.delete('job'); return next; }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handleWithdrawApplication = async (applicationId: string) => {
         try {

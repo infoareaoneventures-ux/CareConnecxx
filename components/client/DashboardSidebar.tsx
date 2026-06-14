@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Heart, MessageSquare, Mail,
   Briefcase, Plus, Users, Bookmark, Search,
 } from 'lucide-react';
 import { db } from '../../lib/firebase';
@@ -22,13 +21,12 @@ interface SavedSearch {
 
 interface DashboardSidebarProps {
   currentUserUid?: string;
-  onChatCoordinator: () => void;
+  onChatCoordinator?: () => void;
   hideCareRequests?: boolean;
 }
 
 export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
   currentUserUid,
-  onChatCoordinator,
   hideCareRequests = false,
 }) => {
   const navigate = useNavigate();
@@ -160,26 +158,6 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
 
 
 
-      {/* Support */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="bg-gradient-to-r from-primary-600 to-primary-500 px-4 py-3">
-          <h3 className="font-bold text-white text-sm flex items-center gap-2">
-            <Heart className="w-4 h-4" />
-            Need Help?
-          </h3>
-        </div>
-        <div className="p-4">
-          <p className="text-xs text-slate-500 mb-3">Our care team is here to help you find the right caregiver.</p>
-          <div className="space-y-1.5 mb-3">
-            <a href="mailto:support@careconnex.com" className="flex items-center gap-2 text-xs text-slate-600 hover:text-primary-600">
-              <Mail className="w-3.5 h-3.5 text-slate-400" />support@careconnex.com
-            </a>
-          </div>
-          <button onClick={onChatCoordinator} className="w-full flex items-center justify-center gap-1.5 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg transition-colors">
-            <MessageSquare className="w-3.5 h-3.5" />Chat with Us
-          </button>
-        </div>
-      </div>
     </div>
   );
 };

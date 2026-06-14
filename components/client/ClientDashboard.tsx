@@ -1186,12 +1186,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           </div>
                         );
                       })}
-                      {shiftsToReview.length > 2 && (
-                        <p className="text-xs text-center text-slate-400 pt-1">
-                          +{shiftsToReview.length - 2} more —{' '}
-                          <button onClick={() => navigate('/client/payments')} className="text-primary-600 hover:underline">View all</button>
-                        </p>
-                      )}
                     </>
                   ) : (
                     <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg">
@@ -1244,7 +1238,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                         {/* Summary rows */}
                         <div className="bg-slate-50 rounded-xl p-4 space-y-3">
                           <div className="flex items-center justify-between">
-                            <span className="text-sm text-slate-500">Open invoices</span>
+                            <span className="text-sm text-slate-500">Outstanding</span>
                             <span className="text-sm font-semibold text-slate-900">{unpaidShifts.length} shift{unpaidShifts.length !== 1 ? 's' : ''}</span>
                           </div>
                           {needsActionCount > 0 && (
@@ -1283,14 +1277,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           </div>
                         </div>
 
-                        {needsActionCount > 0 && (
-                          <button
-                            onClick={() => navigate('/client/payments?filter=needs-review')}
-                            className="w-full py-2 text-xs font-semibold bg-accent-500 text-white rounded-lg hover:bg-accent-600 transition-colors"
-                          >
-                            Review {needsActionCount} pending shift{needsActionCount !== 1 ? 's' : ''}
-                          </button>
-                        )}
                       </div>
                     )}
                   </div>
@@ -1351,7 +1337,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 {matchedCaregivers.length > 0 && (
                   <div className="text-center pt-1 pb-2">
                     <button onClick={() => navigate('/client/find-caregivers')} className="inline-flex items-center gap-1.5 text-sm text-primary-600 font-medium hover:text-primary-700 hover:underline transition-colors">
-                      See more results →
+                      See more →
                     </button>
                   </div>
                 )}

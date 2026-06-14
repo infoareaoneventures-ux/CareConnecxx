@@ -4,6 +4,7 @@ const hoisted = vi.hoisted(() => {
   const docState  = new Map<string, any>();
   const collState = new Map<string, any[]>();
   const sets:    Array<{ path: string; data: any; opts?: any }> = [];
+  const adds:    Array<{ path: string; data: any; id: string }> = [];
   const updates: Array<{ path: string; data: any }> = [];
 
   const makeDocRef = (path: string) => ({
@@ -30,6 +31,12 @@ const hoisted = vi.hoisted(() => {
     ref.where   = (..._a: any[]) => ref;
     ref.orderBy = (..._a: any[]) => ref;
     ref.limit   = (..._a: any[]) => ref;
+    ref.add = vi.fn(async (data: any) => {
+      const id = `auto-${adds.length}`;
+      adds.push({ path, data, id });
+      docState.set(`${path}/${id}`, data);
+      return { id };
+    });
     ref.get = vi.fn(async () => {
       const items = collState.get(path) ?? [];
       return { empty: items.length === 0, size: items.length, docs: items.map((d: any, i: number) => ({ id: d.id ?? `doc-${i}`, data: () => d, ref: makeDocRef(`${path}/${d.id ?? `doc-${i}`}`) })) };
@@ -38,9 +45,9 @@ const hoisted = vi.hoisted(() => {
   };
 
   return {
-    docState, collState, sets, updates,
+    docState, collState, sets, adds, updates,
     collectionMock: vi.fn((p: string) => makeCollRef(p)),
-    reset: () => { docState.clear(); collState.clear(); sets.length = 0; updates.length = 0; },
+    reset: () => { docState.clear(); collState.clear(); sets.length = 0; adds.length = 0; updates.length = 0; },
   };
 });
 
@@ -91,7 +98,7 @@ vi.mock("../../utils/toolNotify", () => ({
 import { handleToolCall } from "../server";
 
 describe("family tools", () => {
-  beforeEach(() => { hoisted.reset(); trySend.mockClear(); trySend.mockResolvedValue({ sent: true }); });
+  beforeEach(() => { hoisted.reset(); trySend.mockReset(); trySend.mockResolvedValue({ sent: true }); });
 
   describe("add_family_member", () => {
     it("requires all fields", async () => {

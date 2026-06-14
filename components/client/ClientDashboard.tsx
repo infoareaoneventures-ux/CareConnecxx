@@ -1189,7 +1189,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                 onClick={() => navigate('/client/payments?filter=needs-review')}
                                 className="w-full py-1.5 text-xs font-semibold bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
                               >
-                                Fix Payment
+                                Review
                               </button>
                             ) : (
                               <button

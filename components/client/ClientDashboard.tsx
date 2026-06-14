@@ -1139,6 +1139,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           pending_client_review:      { label: 'Needs Review',     color: 'text-amber-700',  bg: 'bg-amber-50 border border-amber-200' },
                           caregiver_counter_proposed: { label: 'Counter Received', color: 'text-yellow-700', bg: 'bg-yellow-50 border border-yellow-200' },
                           correction_proposed:        { label: 'Correction Sent',  color: 'text-orange-700', bg: 'bg-orange-50 border border-orange-200' },
+                          payment_failed:             { label: 'Payment Failed',   color: 'text-red-700',    bg: 'bg-red-50 border border-red-200' },
                         };
                         const statusCfg = STATUS_MAP[shift.status] ?? { label: shift.status, color: 'text-slate-600', bg: 'bg-slate-100 border border-slate-200' };
                         const msLeft = shift.autoApproveAt ? new Date(shift.autoApproveAt).getTime() - Date.now() : 0;
@@ -1201,9 +1202,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           </div>
                         );
                       })}
-                      {shiftsToReview.length > 3 && (
+                      {shiftsToReview.length > 2 && (
                         <p className="text-xs text-center text-slate-400 pt-1">
-                          +{shiftsToReview.length - 3} more —{' '}
+                          +{shiftsToReview.length - 2} more —{' '}
                           <button onClick={() => navigate('/client/payments')} className="text-primary-600 hover:underline">View all</button>
                         </p>
                       )}

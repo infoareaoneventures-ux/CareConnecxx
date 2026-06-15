@@ -9,6 +9,7 @@ import { dbService } from '../../services/api';
 import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
 import { jobApplicationService, useMyApplications } from '../../hooks/useJobApplications';
+import { useCareConnex } from '../../context/CareConnexContext';
 import { Skeleton } from '../ui/Skeleton';
 
 // Pure math — no API calls. Jobs store lat/lng at creation time.
@@ -84,6 +85,7 @@ const CHIP = (selected: boolean) =>
     `px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${selected ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`;
 
 export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobAccepted, hideApplicationsTab = false }) => {
+    const { blockedIds } = useCareConnex();
     const [jobs, setJobs] = useState<JobPost[]>([]);
     const [jobsLoading, setJobsLoading] = useState(false);
     const [viewingJob, setViewingJob] = useState<JobPost | null>(null);
@@ -407,6 +409,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     };
 
     const filteredJobs = jobs.filter(job => {
+        if (blockedIds.has(job.clientId)) return false;
         const q = searchQuery.toLowerCase();
         if (q && !(
             (job.title ?? '').toLowerCase().includes(q) ||
@@ -999,7 +1002,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                             })}
                         </div>
                         <div className="space-y-3">
-                            {interviews.filter(iv => ivFilter === 'all' || iv.status === ivFilter).map(iv => {
+                            {interviews.filter(iv => !blockedIds.has(iv.clientId) && (ivFilter === 'all' || iv.status === ivFilter)).map(iv => {
                                 const date = new Date(iv.scheduledAt);
                                 const app = iv.jobId ? applications.find(a => a.jobId === iv.jobId) : undefined;
                                 const ivStatusColor = iv.status === 'pending' ? 'bg-yellow-50 text-yellow-700' : iv.status === 'accepted' || iv.status === 'confirmed' ? 'bg-green-50 text-green-700' : iv.status === 'completed' ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-600';

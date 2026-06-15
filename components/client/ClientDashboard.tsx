@@ -114,7 +114,7 @@ async function buildSeniorProfile(
 
 export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) => {
   const navigate = useNavigate();
-  const { appointments, addToast: onShowToast } = useCareConnex();
+  const { appointments, addToast: onShowToast, blockedIds } = useCareConnex();
   
   // Modal states
   const [scheduleInterviewCaregiver, setScheduleInterviewCaregiver] = useState<Caregiver | null>(null);
@@ -1313,7 +1313,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
               <div className="lg:col-span-2 space-y-6 min-w-0">
 
                 {(() => {
-                  const discoveryCaregivers = matchedCaregivers.filter(c => !bookedCaregiverIds.has(c.id));
+                  const discoveryCaregivers = matchedCaregivers.filter(c => !bookedCaregiverIds.has(c.id) && !blockedIds.has(c.id));
                   return discoveryCaregivers.length > 0 ? (
                     <div id="caregiver-matches" className="grid sm:grid-cols-2 gap-4">
                       {discoveryCaregivers.slice(0, 4).map((caregiver) => (

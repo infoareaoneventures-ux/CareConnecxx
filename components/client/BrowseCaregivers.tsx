@@ -8,7 +8,6 @@ import {
 import { Button } from '../ui/Button';
 import { authService } from '../../services/api';
 import { db } from '../../lib/firebase';
-import { chatService } from '../../services/chatService';
 import { logMatchSignal } from '../../services/matchFeedback';
 import { ClientNavigation } from './ClientNavigation';
 import { CreditCardBadge } from '../shared/CreditCardBadge';
@@ -48,7 +47,7 @@ const specialtyIcons: Record<string, React.ReactNode> = {
 
 export const BrowseCaregivers: React.FC = () => {
   const navigate = useNavigate();
-  const { addToast } = useCareConnex();
+  const { addToast, blockedIds } = useCareConnex();
   const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
   const [filteredCaregivers, setFilteredCaregivers] = useState<Caregiver[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -110,9 +109,9 @@ export const BrowseCaregivers: React.FC = () => {
     return () => { isMounted = false; };
   }, []);
 
-  // Filter caregivers when tab or search changes
+  // Filter caregivers when tab, search, or blocked list changes
   useEffect(() => {
-    let filtered = caregivers;
+    let filtered = caregivers.filter(cg => !blockedIds.has(cg.id));
 
     // Apply specialty filter
     if (activeFilter !== 'All') {
@@ -134,7 +133,7 @@ export const BrowseCaregivers: React.FC = () => {
     }
 
     setFilteredCaregivers(filtered);
-  }, [activeFilter, searchQuery, caregivers]);
+  }, [activeFilter, searchQuery, caregivers, blockedIds]);
 
   // Load identity check status
   const toggleFavorite = (caregiverId: string) => {
@@ -152,22 +151,23 @@ export const BrowseCaregivers: React.FC = () => {
     });
   };
 
-  const openChat = async (caregiverId: string, caregiverName: string) => {
-    try {
-      const currentUid = authService.getCurrentUser()?.uid;
-      const currentName = authService.getCurrentUser()?.displayName
-        || authService.getCurrentUser()?.email?.split('@')[0]
-        || 'Client';
-      if (currentUid) {
-        const roomId = await chatService.getOrCreateChatRoom(currentUid, currentName, caregiverId, caregiverName);
-        logMatchSignal(caregiverId, 'messaged');
-        navigate(`/client/inbox?room=${roomId}`);
-      } else {
-        navigate('/client/inbox');
+  const openChat = (caregiverId: string, caregiverName: string) => {
+    const currentUid = authService.getCurrentUser()?.uid;
+    if (!currentUid) { navigate('/client/inbox'); return; }
+    const currentName = authService.getCurrentUser()?.displayName || authService.getCurrentUser()?.email?.split('@')[0] || 'Client';
+    const sorted = [currentUid, caregiverId].sort();
+    const roomId = sorted.join('_');
+    const names = sorted.map(id => id === currentUid ? currentName : caregiverName);
+    logMatchSignal(caregiverId, 'messaged');
+    navigate(`/client/inbox?room=${roomId}`, {
+      state: {
+        pendingRoom: {
+          id: roomId, participants: sorted, participantNames: names, participantAvatars: ['', ''],
+          unreadCount: { [currentUid]: 0, [caregiverId]: 0 },
+          lastMessage: '', lastMessageTime: '', lastMessageTimestamp: null, createdAt: null,
+        }
       }
-    } catch {
-      navigate('/client/inbox');
-    }
+    });
   };
 
   const handleMessage = (caregiverId: string, caregiverName: string) => {

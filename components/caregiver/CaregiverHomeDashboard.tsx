@@ -10,6 +10,7 @@ import type { Caregiver, AddToastFunction } from '../../types';
 import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
 import { authService, shiftHoursService, dbService } from '../../services/api';
+import { useCareConnex } from '../../context/CareConnexContext';
 import { CaregiverCareRequestsCard } from './CaregiverCareRequestsCard';
 import { CaregiverBookingsCard } from './CaregiverBookingsCard';
 import { shiftDisplayStatus } from '../../utils/shiftUtils';
@@ -67,6 +68,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   onShowToast,
 }) => {
   const navigate = useNavigate();
+  const { blockedIds } = useCareConnex();
   const currentUser = authService.getCurrentUser();
   const uid = profile.uid || profile.id || currentUser?.uid || '';
 
@@ -212,7 +214,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
         profile={profile}
         onNavigate={onNavigate}
         onShowToast={onShowToast}
-        jobs={openJobs}
+        jobs={openJobs.filter((j: any) => !blockedIds.has(j.clientId))}
         jobsLoaded={jobsLoaded}
       />
     );

@@ -53,8 +53,10 @@ async function ensureChatRoom(clientId, clientName, caregiverId, caregiverName) 
     const roomId = sorted.join('_');
     const roomRef = db.collection('chatRooms').doc(roomId);
     const snap = await roomRef.get();
-    if (snap.exists)
+    if (snap.exists) {
+        await roomRef.update({ deletedAt: admin.firestore.FieldValue.delete() });
         return;
+    }
     const names = sorted.map(id => id === clientId ? clientName : caregiverName);
     await roomRef.set({
         participants: sorted,

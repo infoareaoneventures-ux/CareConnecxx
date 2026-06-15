@@ -56,11 +56,15 @@ function Section({
 // ── Component ────────────────────────────────────────────────────────────────
 export const AccountSettings: React.FC = () => {
   const navigate = useNavigate();
-  const { addToast } = useCareConnex();
+  const { addToast, blockedIds, blockedUserProfiles, unblockUser } = useCareConnex();
+  const blockedProfiles = [
+    ...Object.entries(blockedUserProfiles).map(([id, p]) => ({ id, ...p })),
+    ...Array.from(blockedIds).filter(id => !blockedUserProfiles[id]).map(id => ({ id, name: 'Blocked User', photo: '' })),
+  ];
 
   // ── Section open/close ────────────────────────────────────────────────────
   const [open, setOpen] = useState({
-    basics: true, privacy: true, communication: true,
+    basics: true, privacy: true, communication: true, blocked: false,
   });
   const toggle = (key: keyof typeof open) =>
     setOpen(prev => ({ ...prev, [key]: !prev[key] }));
@@ -699,6 +703,36 @@ export const AccountSettings: React.FC = () => {
                   </div>
                 </div>
               </div>
+            </Section>
+
+            {/* ── 4. Blocked Users ──────────────────────────────────── */}
+            <Section title="Blocked Users" open={open.blocked} onToggle={() => toggle('blocked')}>
+              {blockedProfiles.length === 0 ? (
+                <p className="text-sm text-slate-500">You haven't blocked anyone.</p>
+              ) : (
+                <div className="space-y-3">
+                  {blockedProfiles.map(p => (
+                    <div key={p.id} className="flex items-center justify-between gap-3 py-2 border-b border-slate-100 last:border-0">
+                      <div className="flex items-center gap-3">
+                        {p.photo ? (
+                          <img src={p.photo} alt={p.name} className="w-9 h-9 rounded-full object-cover" />
+                        ) : (
+                          <div className="w-9 h-9 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 text-sm font-semibold">
+                            {p.name.charAt(0)}
+                          </div>
+                        )}
+                        <span className="text-sm font-medium text-slate-800">{p.name}</span>
+                      </div>
+                      <button
+                        onClick={() => unblockUser(p.id).then(() => addToast(`${p.name} unblocked.`, 'success'))}
+                        className="text-xs text-primary-600 hover:text-primary-700 font-medium border border-primary-200 hover:border-primary-400 px-3 py-1 rounded-lg transition-colors"
+                      >
+                        Unblock
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </Section>
 
           </div>

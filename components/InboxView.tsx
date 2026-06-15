@@ -71,7 +71,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const navigate = useNavigate();
   const location = useLocation();
   const pendingRoomState = (location.state as any)?.pendingRoom as (ChatRoom & { id: string }) | undefined;
-  const { appointments } = useCareConnex();
+  const { appointments, blockedIds } = useCareConnex();
   const currentUser = authService.getCurrentUser();
   const currentUid = currentUser?.uid ?? '';
   const currentName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'You';
@@ -111,18 +111,30 @@ export const InboxView: React.FC<InboxViewProps> = ({
     return unsub;
   }, [currentUid, isClient]);
 
-  const handleBlock = async (contactId: string, contactName: string) => {
+  const handleBlock = async (contactId: string, contactName: string, contactAvatar?: string) => {
     if (!currentUid || !contactId) return;
     const fdb = db;
     if (!fdb) return;
     try {
       await fdb.collection('users').doc(currentUid).update({
-        blockedUsers: firebase.firestore.FieldValue.arrayUnion(contactId)
+        blockedUsers: firebase.firestore.FieldValue.arrayUnion(contactId),
+        [`blockedUserProfiles.${contactId}`]: { name: contactName, photo: contactAvatar || '' },
       });
       onShowToast?.(`${contactName} has been blocked.`, 'success');
       setSelectedRoomId(null);
     } catch {
       onShowToast?.('Failed to block user. Please try again.', 'error');
+    }
+  };
+
+  const handleDeleteConversation = async () => {
+    if (!currentUid || !selectedRoomId) return;
+    try {
+      await chatService.deleteConversation(selectedRoomId, currentUid);
+      setSelectedRoomId(null);
+      onShowToast?.('Conversation deleted.', 'success');
+    } catch {
+      onShowToast?.('Failed to delete conversation.', 'error');
     }
   };
 
@@ -159,15 +171,29 @@ export const InboxView: React.FC<InboxViewProps> = ({
     return unsub;
   }, [currentUid]);
 
-  // Subscribe to messages for selected room
+  // Subscribe to messages for selected room, filtered by deletedAt / messagesCutoff for this user
   useEffect(() => {
     if (!selectedRoomId) { setMessages([]); return; }
     const unsub = chatService.subscribeToMessages(selectedRoomId, (msgs) => {
-      setMessages(msgs);
+      const room = rooms.find(r => r.id === selectedRoomId);
+      const deletedAtTs = room?.deletedAt?.[currentUid];
+      const cutoffTs = room?.messagesCutoff?.[currentUid];
+      // Use whichever cutoff is later
+      const toMs = (ts: any) => ts?.toMillis ? ts.toMillis() : new Date(ts).getTime();
+      const effectiveCutoff = deletedAtTs && cutoffTs
+        ? (toMs(deletedAtTs) >= toMs(cutoffTs) ? deletedAtTs : cutoffTs)
+        : (deletedAtTs || cutoffTs);
+      const filtered = effectiveCutoff
+        ? msgs.filter(m => {
+            if (!m.timestamp) return true;
+            return toMs(m.timestamp) > toMs(effectiveCutoff);
+          })
+        : msgs;
+      setMessages(filtered);
       if (currentUid) chatService.markMessagesAsRead(selectedRoomId, currentUid).catch(() => {});
     });
     return unsub;
-  }, [selectedRoomId, currentUid]);
+  }, [selectedRoomId, currentUid, rooms]);
 
   // Fetch contact photo from Firestore when selected room changes
   useEffect(() => {
@@ -256,6 +282,8 @@ export const InboxView: React.FC<InboxViewProps> = ({
   };
 
   const filteredRooms = rooms.filter(r => {
+    const otherId = r.participants.find(uid => uid !== currentUid) ?? '';
+    if (blockedIds.has(otherId)) return false;
     if (!search) return true;
     const c = getContact(r);
     return c.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -285,7 +313,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
   });
 
   const contact = activeRoom ? getContact(activeRoom) : null;
-  const unreadTotal = rooms.reduce((sum, r) => sum + (r.unreadCount?.[currentUid] || 0), 0);
+  const unreadTotal = rooms
+    .filter(r => !blockedIds.has(r.participants.find(uid => uid !== currentUid) ?? ''))
+    .reduce((sum, r) => sum + (r.unreadCount?.[currentUid] || 0), 0);
 
   return (
     <>
@@ -403,22 +433,27 @@ export const InboxView: React.FC<InboxViewProps> = ({
               </div>
               <div className="flex items-center gap-1 relative">
                 <div className="relative">
+                  {!careTeamIds.has(contact.id) && !activeRoom.isSupport && (
                   <button onClick={() => setShowMenu(v => !v)} className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors">
                     <MoreVertical className="w-4 h-4" />
                   </button>
-                  {showMenu && (
+                  )}
+                  {showMenu && !careTeamIds.has(contact.id) && !activeRoom.isSupport && (
                     <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50">
                       {onViewProfile && (
                         <button onClick={() => { setShowMenu(false); onViewProfile(contact.id); }} className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
                           View Profile
                         </button>
                       )}
-                      <button onClick={() => { setShowMenu(false); handleBlock(contact.id, contact.name); }} className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50">
+                      <button onClick={() => { setShowMenu(false); handleBlock(contact.id, contact.name, contact.avatar); }} className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50">
                         Block User
                       </button>
                       <button onClick={() => { setShowMenu(false); setReportContactId(contact.id); setReportContactName(contact.name); setShowReportModal(true); }} className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2">
                         <Flag className="w-3.5 h-3.5" />
                         Report
+                      </button>
+                      <button onClick={() => { setShowMenu(false); handleDeleteConversation(); }} className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50">
+                        Delete Conversation
                       </button>
                     </div>
                   )}

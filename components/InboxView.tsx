@@ -310,9 +310,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
     if (!selectedRoomId) return;
     const careTeamLabel = isClient ? 'My Care Team' : 'My Families';
     const otherLabel = isClient ? 'Other Caregivers' : 'Other Clients';
-    if (careTeamRooms.findIndex(r => r.id === selectedRoomId) > 0)
+    if (careTeamRooms.findIndex(r => r.id === selectedRoomId) >= 3)
       setExpandedSections(prev => prev[careTeamLabel] ? prev : { ...prev, [careTeamLabel]: true });
-    if (otherRooms.findIndex(r => r.id === selectedRoomId) > 0)
+    if (otherRooms.findIndex(r => r.id === selectedRoomId) >= 3)
       setExpandedSections(prev => prev[otherLabel] ? prev : { ...prev, [otherLabel]: true });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRoomId, careTeamRooms.length, otherRooms.length]);
@@ -381,8 +381,8 @@ export const InboxView: React.FC<InboxViewProps> = ({
               ].map(({ label, rooms: sectionRooms, collapsible }) => {
                 if (sectionRooms.length === 0) return null;
                 const isExpanded = expandedSections[label] ?? false;
-                const visibleRooms = collapsible && !isExpanded ? sectionRooms.slice(0, 1) : sectionRooms;
-                const hiddenCount = sectionRooms.length - 1;
+                const visibleRooms = collapsible && !isExpanded ? sectionRooms.slice(0, 3) : sectionRooms;
+                const hiddenCount = sectionRooms.length - 3;
                 return (
                 <div key={label}>
                   <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</p>
@@ -427,7 +427,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                       onClick={() => setExpandedSections(prev => ({ ...prev, [label]: !isExpanded }))}
                       className="w-full px-4 py-2 text-xs font-medium text-primary-600 hover:bg-slate-100 transition-colors text-left border-b border-slate-100"
                     >
-                      {isExpanded ? 'Show less' : `Show ${hiddenCount} more`}
+                      {isExpanded ? 'Show less' : 'Show more'}
                     </button>
                   )}
                 </div>

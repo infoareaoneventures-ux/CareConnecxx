@@ -62,6 +62,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const [search, setSearch] = useState('');
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportReason, setReportReason] = useState('');
+  const [reportDetails, setReportDetails] = useState('');
   const [reportContactId, setReportContactId] = useState('');
   const [reportContactName, setReportContactName] = useState('');
   const [contactPhoto, setContactPhoto] = useState<string>('');
@@ -149,10 +150,12 @@ export const InboxView: React.FC<InboxViewProps> = ({
         reportedUser: reportContactId,
         reportedUserName: reportContactName,
         reason: reportReason,
+        details: reportDetails.trim() || null,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
       setShowReportModal(false);
       setReportReason('');
+      setReportDetails('');
       onShowToast?.('Report submitted. Our team will review it.', 'success');
     } catch {
       onShowToast?.('Failed to submit report. Please try again.', 'error');
@@ -595,7 +598,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl">
             <h3 className="text-lg font-bold text-slate-900 mb-1">Report User</h3>
             <p className="text-sm text-slate-500 mb-4">What's the reason for this report?</p>
-            <div className="space-y-2 mb-6">
+            <div className="space-y-2 mb-4">
               {['Inappropriate behavior', 'Spam or scam', 'Harassment', 'Fake profile', 'Other'].map(r => (
                 <button
                   key={r}
@@ -610,9 +613,25 @@ export const InboxView: React.FC<InboxViewProps> = ({
                 </button>
               ))}
             </div>
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                Additional details <span className="text-slate-400 font-normal">(optional)</span>
+              </label>
+              <textarea
+                value={reportDetails}
+                onChange={e => setReportDetails(e.target.value)}
+                placeholder="Describe what happened…"
+                rows={3}
+                maxLength={500}
+                className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-200 resize-none placeholder-slate-400"
+              />
+              {reportDetails.length > 0 && (
+                <p className="text-xs text-slate-400 text-right mt-1">{reportDetails.length}/500</p>
+              )}
+            </div>
             <div className="flex gap-3">
               <button
-                onClick={() => { setShowReportModal(false); setReportReason(''); }}
+                onClick={() => { setShowReportModal(false); setReportReason(''); setReportDetails(''); }}
                 className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
               >
                 Cancel

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Flag, CheckCircle, Trash2, ChevronDown, ChevronUp, User } from 'lucide-react';
 import { db } from '../../lib/firebase';
-import firebase from 'firebase/compat/app';
 
 interface Report {
   id: string;
@@ -9,6 +8,7 @@ interface Report {
   reportedUser: string;
   reportedUserName: string;
   reason: string;
+  details?: string | null;
   createdAt: any;
   status?: 'new' | 'reviewed';
   reporterName?: string;
@@ -187,6 +187,12 @@ export const AdminReports: React.FC = () => {
                     <p className="text-xs text-slate-400 uppercase font-semibold mb-1">Reason</p>
                     <p className="text-slate-700">{report.reason}</p>
                   </div>
+                  {report.details && (
+                    <div className="col-span-2">
+                      <p className="text-xs text-slate-400 uppercase font-semibold mb-1">Details</p>
+                      <p className="text-slate-700 whitespace-pre-wrap">{report.details}</p>
+                    </div>
+                  )}
                   <div>
                     <p className="text-xs text-slate-400 uppercase font-semibold mb-1">Submitted</p>
                     <p className="text-slate-700">{formatDate(report.createdAt)}</p>

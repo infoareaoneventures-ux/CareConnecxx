@@ -911,6 +911,17 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ==========================================
+    // REPORTS COLLECTION
+    // ==========================================
+    match /reports/{reportId} {
+      // Any authenticated user can submit a report about another user
+      allow create: if isAuthenticated() &&
+        request.resource.data.reportedBy == request.auth.uid;
+      // Only admins can read, update (mark reviewed), or delete reports
+      allow read, update, delete: if isAdmin();
+    }
+
     // DENY ALL OTHER ACCESS BY DEFAULT
     // ==========================================
     match /{document=**} {

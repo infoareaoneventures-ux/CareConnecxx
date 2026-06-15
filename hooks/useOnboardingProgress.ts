@@ -83,12 +83,15 @@ export function useOnboardingProgress(uid: string | undefined): OnboardingProgre
     const unsubs: Array<() => void> = [];
 
     if (db) {
+      let resolved = 0;
+      const maybeReady = () => { if (++resolved >= 3) setLoading(false); };
+
       const jobPostingsUnsub = db
         .collection('job_postings')
         .doc(uid)
         .onSnapshot(
-          (doc) => setJobPostingsData(doc.exists ? doc.data() : null),
-          () => setJobPostingsData(null)
+          (doc) => { setJobPostingsData(doc.exists ? doc.data() : null); maybeReady(); },
+          () => { setJobPostingsData(null); maybeReady(); }
         );
       unsubs.push(jobPostingsUnsub);
 
@@ -96,8 +99,8 @@ export function useOnboardingProgress(uid: string | undefined): OnboardingProgre
         .collection('carePlans')
         .doc(uid)
         .onSnapshot(
-          (doc) => setCarePlanData(doc.exists ? doc.data() : null),
-          () => setCarePlanData(null)
+          (doc) => { setCarePlanData(doc.exists ? doc.data() : null); maybeReady(); },
+          () => { setCarePlanData(null); maybeReady(); }
         );
       unsubs.push(carePlanUnsub);
 
@@ -113,16 +116,18 @@ export function useOnboardingProgress(uid: string | undefined): OnboardingProgre
                 data.membershipStatus === 'active' ||
                 data.membershipStatus === 'trialing'
             );
+            maybeReady();
           },
           () => {
             setIdentityVerified(false);
             setMembershipActive(false);
+            maybeReady();
           }
         );
       unsubs.push(userUnsub);
+    } else {
+      setLoading(false);
     }
-
-    setLoading(false);
 
     return () => {
       unsubs.forEach((u) => {

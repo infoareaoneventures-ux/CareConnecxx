@@ -9,6 +9,7 @@ import { db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
 import { ClientNavigation } from './client/ClientNavigation';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
+import { useAccessGates } from '../hooks/useAccessGates';
 
 interface InboxViewProps {
   userType: 'client' | 'caregiver';
@@ -78,6 +79,10 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const currentUid = currentUser?.uid ?? '';
   const currentName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'You';
   const isClient = userType === 'client';
+
+  // Gate: clients must complete identity + membership before messaging
+  const { identityVerified, membershipActive, Modals: GateModals } = useAccessGates();
+  const clientCanMessage = !isClient || (identityVerified && membershipActive);
 
   // For caregivers: check if they have passed membership + background check
   const [caregiverVerified, setCaregiverVerified] = useState(true);
@@ -543,7 +548,20 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
             {/* Input */}
             <div className="px-4 py-3 bg-white border-t border-slate-100">
-              {!isClient && !caregiverVerified ? (
+              {isClient && !clientCanMessage ? (
+                <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                  <div className="flex items-center gap-2 text-amber-700">
+                    <Lock className="w-4 h-4 flex-shrink-0" />
+                    <span className="text-sm font-medium">Verify your identity &amp; activate membership to send messages</span>
+                  </div>
+                  <button
+                    onClick={() => navigate('/client/dashboard')}
+                    className="text-xs font-semibold text-amber-700 hover:text-amber-800 underline whitespace-nowrap"
+                  >
+                    Complete setup →
+                  </button>
+                </div>
+              ) : !isClient && !caregiverVerified ? (
                 <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
                   <div className="flex items-center gap-2 text-amber-700">
                     <Lock className="w-4 h-4 flex-shrink-0" />
@@ -591,6 +609,8 @@ export const InboxView: React.FC<InboxViewProps> = ({
           </div>
         )}
       </div>
+
+      {isClient && <GateModals />}
 
       {/* Report Modal */}
       {showReportModal && (

@@ -394,11 +394,6 @@ const AppContent: React.FC = () => {
         />
       )}
 
-      {/* Floating onboarding helper — visible on all authenticated pages */}
-      {currentUser && currentUser.userType !== 'admin' && (
-        <FloatingOnboardingHelper />
-      )}
-
       {/* PWA Install Prompt */}
       <PWAInstallPrompt />
 

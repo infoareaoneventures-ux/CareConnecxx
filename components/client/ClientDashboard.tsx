@@ -476,6 +476,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const handleGatedMessage = (caregiver: Caregiver) =>
     gate('message', caregiver.name, () => handleChatClick(caregiver));
 
+  const handleGatedInterview = (caregiver: Caregiver) =>
+    gate('interview', caregiver.name, () => setScheduleInterviewCaregiver(caregiver));
+
   // Match score per caregiver. When the matching engine produced a personalized,
   // proximity-aware score, use it verbatim. Otherwise (generic fallback list) fall
   // back to an honest rating/experience heuristic — never an inflated default.
@@ -1322,7 +1325,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           caregiver={caregiver}
                           matchScore={0}
                           matchReasons={[]}
-                          onBook={(cg) => setScheduleInterviewCaregiver(cg)}
+                          onBook={handleGatedInterview}
                           onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}
                           onMessage={handleGatedMessage}
                           isSaved={savedIds.includes(caregiver.id)}

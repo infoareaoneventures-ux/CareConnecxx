@@ -5,6 +5,7 @@ import {
   Clock, Star, MessageSquare, User, CheckCircle, XCircle, Clock3,
   Video, Phone, ChevronRight, X, Send, Edit2, Pencil, RefreshCw,
 } from 'lucide-react';
+import { useAccessGates } from '../../hooks/useAccessGates';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
 import { EditJobPostModal } from './EditJobPostModal';
 import { ClientNavigation } from './ClientNavigation';
@@ -90,6 +91,8 @@ export const PostsPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { currentUser, addToast } = useCareConnex();
+  const { gate, Modals: GateModals } = useAccessGates();
+  const handleNewRequest = () => gate('booking', undefined, () => navigate('/client/post-job'));
 
   const [posts, setPosts] = useState<JobPost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(true);
@@ -878,6 +881,7 @@ export const PostsPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      <GateModals />
       <ClientNavigation />
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
 
@@ -885,7 +889,7 @@ export const PostsPage: React.FC = () => {
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Care Requests</h1>
           <button
-            onClick={() => navigate('/client/post-job')}
+            onClick={handleNewRequest}
             className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-sm transition-colors"
           >
             <Plus className="w-4 h-4" /> New Request
@@ -941,7 +945,7 @@ export const PostsPage: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {postsFilter === 'open' && (
                   <button
-                    onClick={() => navigate('/client/post-job')}
+                    onClick={handleNewRequest}
                     className="flex flex-col items-center justify-center text-center border-2 border-dashed border-slate-300 rounded-2xl px-4 py-10 bg-white hover:border-primary-400 hover:bg-primary-50/30 transition-colors min-h-[180px]"
                   >
                     <Briefcase className="w-8 h-8 text-slate-300 mb-2" />
@@ -1231,7 +1235,7 @@ export const PostsPage: React.FC = () => {
                             <div className="flex items-center gap-2 mt-3 pt-2 border-t border-slate-100 flex-wrap">
                               {(interview.status === 'pending' || interview.status === 'accepted') && (
                                 <button
-                                  onClick={() => navigate(`/client/inbox?caregiver=${interview.caregiverId}`)}
+                                  onClick={() => gate('message', interview.caregiverName, () => navigate(`/client/inbox?caregiver=${interview.caregiverId}`))}
                                   className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50"
                                 >
                                   <MessageSquare className="w-3.5 h-3.5" /> Message
@@ -2329,7 +2333,7 @@ export const PostsPage: React.FC = () => {
                         Profile
                       </button>
                       <button
-                        onClick={() => navigate(`/client/inbox?caregiver=${a.caregiverId}`)}
+                        onClick={() => { setPanelPostId(null); gate('message', a.caregiverName, () => navigate(`/client/inbox?caregiver=${a.caregiverId}`)); }}
                         className="px-4 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
                       >
                         Message
@@ -2356,7 +2360,7 @@ export const PostsPage: React.FC = () => {
                               </button>
                             ) : (
                               <button
-                                onClick={() => setSchedulingFor(a)}
+                                onClick={() => { setPanelPostId(null); gate('interview', a.caregiverName, () => setSchedulingFor(a)); }}
                                 className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-semibold transition-colors"
                               >
                                 Request Interview

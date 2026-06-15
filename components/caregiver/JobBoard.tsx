@@ -189,7 +189,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                     const appliedJobIds = new Set(applications.map(a => a.jobId));
                     const hidden = new Set<string>(JSON.parse(localStorage.getItem('careconnex.hiddenJobs') || '[]'));
                     const allJobs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as JobPost[];
-                    setJobs(allJobs.filter(job => !appliedJobIds.has(job.id) && !hidden.has(job.id)));
+                    setJobs(allJobs.filter(job => !appliedJobIds.has(job.id) && !hidden.has(job.id) && (job as any).clientActive !== false));
                     setJobsLoading(false);
                 },
                 (error) => {

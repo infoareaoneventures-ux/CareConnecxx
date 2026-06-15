@@ -126,11 +126,7 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
     }).catch(() => {});
   }, [uid, loading, identityVerified, membershipActive]);
 
-  if (loading) {
-    return (
-      <div className="mb-6 rounded-3xl bg-gradient-to-br from-primary-600 via-primary-500 to-primary-50 shadow-xl shadow-primary-600/20 p-6 md:p-8 h-48 animate-pulse" />
-    );
-  }
+  if (loading) return null;
 
   const firstName = (displayName || 'there').split(' ')[0];
   const hour = new Date().getHours();

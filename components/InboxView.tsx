@@ -65,6 +65,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const [reportContactId, setReportContactId] = useState('');
   const [reportContactName, setReportContactName] = useState('');
   const [contactPhoto, setContactPhoto] = useState<string>('');
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -303,6 +304,19 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const supportRooms = filteredRooms.filter(r => r.isSupport);
   const otherRooms = filteredRooms.filter(r => !r.isSupport && !careTeamIds.has(getContact(r).id));
 
+  // Auto-expand section if the selected room sits beyond the first visible item
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    if (!selectedRoomId) return;
+    const careTeamLabel = isClient ? 'My Care Team' : 'My Families';
+    const otherLabel = isClient ? 'Other Caregivers' : 'Other Clients';
+    if (careTeamRooms.findIndex(r => r.id === selectedRoomId) > 0)
+      setExpandedSections(prev => prev[careTeamLabel] ? prev : { ...prev, [careTeamLabel]: true });
+    if (otherRooms.findIndex(r => r.id === selectedRoomId) > 0)
+      setExpandedSections(prev => prev[otherLabel] ? prev : { ...prev, [otherLabel]: true });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRoomId, careTeamRooms.length, otherRooms.length]);
+
   // Group messages by date
   const groupedMessages: { date: string; msgs: Message[] }[] = [];
   messages.forEach(msg => {
@@ -361,13 +375,18 @@ export const InboxView: React.FC<InboxViewProps> = ({
           ) : (
             <>
               {[
-                { label: isClient ? 'My Care Team' : 'My Families', rooms: careTeamRooms },
-                { label: isClient ? 'Other Caregivers' : 'Other Clients', rooms: otherRooms },
-                { label: 'Support', rooms: supportRooms },
-              ].map(({ label, rooms: sectionRooms }) => sectionRooms.length === 0 ? null : (
+                { label: isClient ? 'My Care Team' : 'My Families', rooms: careTeamRooms, collapsible: true },
+                { label: isClient ? 'Other Caregivers' : 'Other Clients', rooms: otherRooms, collapsible: true },
+                { label: 'Support', rooms: supportRooms, collapsible: false },
+              ].map(({ label, rooms: sectionRooms, collapsible }) => {
+                if (sectionRooms.length === 0) return null;
+                const isExpanded = expandedSections[label] ?? false;
+                const visibleRooms = collapsible && !isExpanded ? sectionRooms.slice(0, 1) : sectionRooms;
+                const hiddenCount = sectionRooms.length - 1;
+                return (
                 <div key={label}>
                   <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</p>
-                  {sectionRooms.map(room => {
+                  {visibleRooms.map(room => {
                     const c = getContact(room);
                     const unread = room.unreadCount?.[currentUid] || 0;
                     const isActive = room.id === selectedRoomId;
@@ -403,8 +422,17 @@ export const InboxView: React.FC<InboxViewProps> = ({
                       </button>
                     );
                   })}
+                  {collapsible && hiddenCount > 0 && (
+                    <button
+                      onClick={() => setExpandedSections(prev => ({ ...prev, [label]: !isExpanded }))}
+                      className="w-full px-4 py-2 text-xs font-medium text-primary-600 hover:bg-slate-100 transition-colors text-left border-b border-slate-100"
+                    >
+                      {isExpanded ? 'Show less' : `Show ${hiddenCount} more`}
+                    </button>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </>
           )}
         </div>

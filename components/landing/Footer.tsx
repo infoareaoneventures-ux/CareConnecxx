@@ -53,7 +53,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                                 <li><button onClick={() => onNavigate('caregiver-signup')} className="hover:text-primary-600">Find Jobs</button></li>
                                 <li><button onClick={() => onNavigate('caregiver-login')} className="hover:text-primary-600">Log In</button></li>
                                 <li><button onClick={() => onNavigate('trust')} className="hover:text-primary-600">Trust & Safety</button></li>
-                                <li><button onClick={() => onNavigate('caregiver-signup')} className="hover:text-primary-600">Apply Online</button></li>
+                                <li><button onClick={() => onNavigate('caregiver-apply')} className="hover:text-primary-600">Apply Online</button></li>
                             </ul>
                         </div>
                     </div>

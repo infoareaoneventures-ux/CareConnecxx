@@ -63,10 +63,10 @@ export async function handleClientSwapRequest(
       index: i + 1,
       id: d.id,
       date: d.data().date,
-      time: d.data().time,
+      time: d.data().startTime ?? d.data().time,
       caregiverName: d.data().caregiverName,
       caregiverId: d.data().caregiverId,
-      duration: d.data().duration,
+      duration: d.data().durationHours ?? d.data().duration,
     }));
 
     await db.collection("agent_sessions").doc(clientPhone).update({

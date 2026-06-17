@@ -73,6 +73,12 @@ const CONDITIONAL_CONFIRM: Record<string, (input: Record<string, unknown>) => bo
   // Note-like fields skip the gate so "add a note that mom prefers tea"
   // doesn't need a confirmation round-trip.
   update_care_plan: (input) => !CARE_PLAN_NOTE_FIELDS.has(String(input.field)),
+  // Real-world healthcare browser actions: booking an appointment or requesting
+  // a refill submits on a third-party portal and is irreversible — gate it.
+  // insurance_check is a read-only lookup (account-holder-scoped in the handler,
+  // KTD-8) and is NOT gated.
+  perform_web_action: (input) =>
+    input.loginAction === "schedule_appointment" || input.loginAction === "pharmacy_refill",
 };
 
 export function isHighRisk(toolName: string, toolInput: Record<string, unknown>): boolean {
@@ -108,6 +114,22 @@ export function buildActionPreview(toolName: string, toolInput: Record<string, u
       return `${String(toolInput.decision ?? "respond to")} application ${String(toolInput.applicationId ?? "")}`.trim();
     case "update_care_plan":
       return `${String(toolInput.action ?? "set")} care plan ${String(toolInput.field ?? "?")}`;
+    case "perform_web_action": {
+      // Real-world healthcare actions — state the EXACT thing being approved (R2).
+      if (toolInput.loginAction === "schedule_appointment") {
+        const slot = (toolInput.chosenSlot ?? {}) as { provider?: string; datetime?: string; location?: string };
+        const provider = slot.provider ?? (toolInput.doctorName as string | undefined) ?? "your doctor";
+        const when     = slot.datetime ? ` on ${slot.datetime}` : "";
+        const where    = slot.location ? ` at ${slot.location}` : "";
+        return `Book appointment with ${provider}${when}${where}`;
+      }
+      if (toolInput.loginAction === "pharmacy_refill") {
+        const med      = (toolInput.medicationName as string | undefined) ?? (toolInput.rxNumber ? `Rx ${toolInput.rxNumber}` : "your prescription");
+        const pharmacy = (toolInput.pharmacyService as string | undefined) ?? "your pharmacy";
+        return `Request refill of ${med} at ${pharmacy}`;
+      }
+      return `${String(toolInput.loginAction ?? "perform")} web action`;
+    }
     default:
       return `${toolName} (irreversible)`;
   }

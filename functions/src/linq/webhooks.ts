@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import * as crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
+import { claimWebhookEvent, settleWebhookEvent, LINQ_EVENTS_COLLECTION } from "../utils/webhookLedger";
 import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability, markChatRead, AgentSession, LinqService } from "./client";
 import { routeCaregiverMessage } from "./routeCaregiver";
 import { routeClientStateMachines } from "./routeClient";
@@ -1816,10 +1817,31 @@ export const linqWebhook = functions
     const event = req.body;
     // Linq v3 envelope uses event_type; fall back to X-Webhook-Event header for safety
     const eventType: string = event.event_type ?? (req.headers["x-webhook-event"] as string) ?? "";
-
-    // Deduplicate all event types by event_id (Linq delivers at-least-once).
-    // Transaction makes the check-and-write atomic so concurrent deliveries don't both pass.
     const eventId: string | undefined = event.event_id ?? event.id;
+
+    // message.received uses claim-BEFORE-process / settle-AFTER semantics: a
+    // handler throw settles "failed" (deletes the claim) so Linq's at-least-once
+    // retry re-drives the turn, instead of the old write-before-process dedup
+    // that left a failed turn permanently suppressed (user wedged, no recovery).
+    if (eventType === "message.received") {
+      if (eventId && (await claimWebhookEvent(LINQ_EVENTS_COLLECTION, eventId)) === "duplicate") {
+        sendOk();
+        return;
+      }
+      try {
+        await handleInbound(event);
+        if (eventId) await settleWebhookEvent(LINQ_EVENTS_COLLECTION, eventId, "processed");
+      } catch (err) {
+        console.error("linqWebhook handleInbound:", err);
+        if (eventId) await settleWebhookEvent(LINQ_EVENTS_COLLECTION, eventId, "failed");
+      }
+      sendOk();
+      return;
+    }
+
+    // Deduplicate the remaining (idempotent / non-critical) event types by
+    // event_id. Transaction makes the check-and-write atomic so concurrent
+    // deliveries don't both pass.
     if (eventId) {
       const logRef = db.collection("agent_event_log").doc(eventId);
       let alreadyProcessed = false;
@@ -1833,9 +1855,7 @@ export const linqWebhook = functions
 
   switch (eventType) {
     case "message.received":
-      await handleInbound(event).catch((err) =>
-        console.error("linqWebhook handleInbound:", err)
-      );
+      // Handled above with claim/settle + retry-on-failure; unreachable here.
       break;
 
     case "message.read":

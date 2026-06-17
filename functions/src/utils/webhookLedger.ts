@@ -22,6 +22,10 @@ const STALE_CLAIM_MS = 10 * 60 * 1000;
 
 export const STRIPE_EVENTS_COLLECTION = "processed_stripe_events";
 export const CHECKR_EVENTS_COLLECTION = "processed_checkr_events";
+// Linq inbound events. Reused here so a failed message.received run deletes its
+// claim and Linq's at-least-once retry can re-drive the turn (vs. the old write-
+// before-process dedup that left a failed turn permanently suppressed).
+export const LINQ_EVENTS_COLLECTION = "agent_event_log";
 
 export type WebhookClaim = "claimed" | "duplicate";
 

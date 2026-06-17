@@ -21,6 +21,7 @@ import { MCP_TOOLS, CAREGIVER_TOOLS, handleToolCall, handleToolCallForCaregiver 
 import { callClaudeWithRetry } from "../utils/claudeRetry";
 import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent } from "./toolCapabilities";
+import { withToolsCacheControl } from "./toolCache";
 import type { Intent } from "./intentClassifier";
 import { MEMORY_GUIDELINES } from "./memoryGuidelines";
 import { VOICE_EXEMPLARS } from "./voiceExemplars";
@@ -1268,6 +1269,12 @@ export async function runQaAgent(params: {
       { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } } as any,
     ];
 
+    // Cache the tools block too. With ~88 tool schemas cycled up to 5x per turn,
+    // the tools array is a big share of input tokens; an uncached array was
+    // re-tokenized every iteration. A cache breakpoint on the LAST tool caches
+    // the whole stable block (separate from the system-prompt breakpoint).
+    const cachedTools = withToolsCacheControl(activeTools);
+
     let reply = "";
     // Budget guard: cap wall-clock at ~60s so users never wait 3+ min while the
     // tool loop iterates. Each Claude call gets a tight timeout; we exit early
@@ -1306,9 +1313,9 @@ export async function runQaAgent(params: {
       metrics.iterations = (metrics.iterations ?? 0) + 1;
       const response = await callClaudeWithRetry(getSharedClient(), {
         model:       "claude-sonnet-4-6",
-        max_tokens:  600,
+        max_tokens:  1024,
         system:      cachedSystem as any,
-        tools:       activeTools as any,
+        tools:       cachedTools as any,
         tool_choice: { type: "auto" },
         messages,
       }, { timeoutMs: 15_000, maxAttempts: 1 });

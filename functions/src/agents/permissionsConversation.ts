@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
+import { quickComplete } from "../utils/openaiClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { getAppUrl } from "../config/appUrl";
@@ -13,6 +14,76 @@ async function askClaude(system: string, userText: string): Promise<string> {
     return ((res.content[0] as { text: string }).text ?? "").trim();
   } catch { return "__error__"; }
 }
+
+// Classify a reply to a YES/NO permission question. Strict tokens short-circuit
+// (CLAUDE.md allows === for explicit "Reply YES or NO" prompts); everything else
+// goes to the LLM, which crucially distinguishes a QUESTION ("what if I change
+// my mind?") from a decline — without this, any non-YES reply was silently
+// recorded as NO, denying a permission the user never declined.
+export async function classifyPermissionReply(text: string): Promise<"yes" | "no" | "question"> {
+  const norm = text.trim().toUpperCase();
+  if (["YES", "Y", "1", "YEP", "YEAH", "SURE", "OK", "OKAY"].includes(norm)) return "yes";
+  if (["NO", "N", "2", "NOPE", "NAH"].includes(norm)) return "no";
+  const raw = await quickComplete(
+    "A care assistant asked the user a YES/NO permission question. Classify their reply as one word: " +
+      "YES (they agree/approve), NO (they decline), or QUESTION (they're asking something, unsure, or " +
+      "anything that isn't a clear yes/no). Reply with only YES, NO, or QUESTION.",
+    text,
+    { maxTokens: 5 },
+  ).catch(() => "QUESTION");
+  const v = raw.trim().toUpperCase();
+  if (v.startsWith("YES")) return "yes";
+  if (v.startsWith("NO")) return "no";
+  return "question";
+}
+
+// Answer a mid-flow question without recording a permission, then re-ask the
+// current question so the user can still answer it.
+async function answerPermissionQuestion(
+  audience: "family" | "caregiver",
+  chatId:   string,
+  userText: string,
+  desc:     string,
+  reask:    string,
+): Promise<void> {
+  const who = audience === "family" ? "the family" : "the caregiver";
+  const answer = await generateCaraMessage({
+    audience,
+    context: `During permissions setup, ${who} was asked: "${desc}". Instead of answering yes/no they said: ` +
+      `"${userText}". Answer their question or concern briefly, warmly, and honestly. Do NOT include the ` +
+      `yes/no prompt — it is appended separately.`,
+    fallback: "Good question — happy to clarify.",
+  });
+  await sendMessage(chatId, `${answer}\n\n${reask}`);
+}
+
+// Per-step question text + re-ask line, used to answer a mid-flow question and
+// then re-pose the exact question the user was on.
+const CLIENT_STEPS: Record<string, { desc: string; reask: string }> = {
+  client_permissions_contact: {
+    desc:  "Can Cara reach out to caregivers on your behalf to schedule interviews once you select someone?",
+    reask: "Can I reach out to caregivers on your behalf to schedule interviews once you select someone?\n\nReply YES or NO",
+  },
+  client_permissions_booking: {
+    desc:  "Once you've approved a caregiver, can Cara book their first visits for you (always showing you what's booked and waiting for confirmation)?",
+    reask: "Once you've approved a caregiver after an interview, can I book their first visits for you? I'll always show you exactly what I'm booking and wait for your confirmation.\n\nReply YES or NO",
+  },
+  client_permissions_autobook: {
+    desc:  "For recurring visits with a caregiver you've already approved, can Cara book automatically without checking each time?",
+    reask: "For recurring visits with a caregiver you've already approved, can I go ahead and book automatically without checking each time?\n\n1️⃣ Yes, book automatically\n2️⃣ No, always ask me first",
+  },
+};
+
+const CAREGIVER_STEPS: Record<string, { desc: string; reask: string }> = {
+  caregiver_permissions_decline: {
+    desc:  "Can Cara automatically decline job requests that are outside your stated availability?",
+    reask: "Can I automatically decline job requests that are outside your stated availability?\n(Saves you time on requests you can't take)\n\nReply YES or NO",
+  },
+  caregiver_permissions_arrival: {
+    desc:  "When you arrive at a client's home, do you want Cara to automatically notify the family?",
+    reask: "When you arrive at a client's home, want me to automatically notify the family?\nThey love knowing their caregiver has arrived.\n\nReply YES or NO",
+  },
+};
 
 const db = admin.firestore();
 
@@ -94,9 +165,15 @@ export async function handleClientPermissionsReply(
   session: AgentSession,
   userId:  string
 ): Promise<void> {
-  const norm  = text.trim().toUpperCase();
-  const step  = (session as any).onboardingStep ?? "";
-  const isYes = norm === "YES" || norm === "Y";
+  const step = (session as any).onboardingStep ?? "";
+
+  // Answer a mid-flow question instead of silently recording it as a denial.
+  const verdict = await classifyPermissionReply(text);
+  if (verdict === "question" && CLIENT_STEPS[step]) {
+    await answerPermissionQuestion("family", chatId, text, CLIENT_STEPS[step].desc, CLIENT_STEPS[step].reask);
+    return;
+  }
+  const isYes = verdict === "yes";
 
   if (step === "client_permissions_contact") {
     await setPermissions(phone, userId, "client", {
@@ -192,10 +269,16 @@ export async function handleCaregiverPermissionsReply(
   session:     AgentSession,
   caregiverId: string
 ): Promise<void> {
-  const norm  = text.trim().toUpperCase();
-  const step  = (session as any).onboardingStep ?? "";
-  const isYes = norm === "YES" || norm === "Y";
-  const d     = session.onboardingData ?? {};
+  const step = (session as any).onboardingStep ?? "";
+  const d    = session.onboardingData ?? {};
+
+  // Answer a mid-flow question instead of silently recording it as a denial.
+  const verdict = await classifyPermissionReply(text);
+  if (verdict === "question" && CAREGIVER_STEPS[step]) {
+    await answerPermissionQuestion("caregiver", chatId, text, CAREGIVER_STEPS[step].desc, CAREGIVER_STEPS[step].reask);
+    return;
+  }
+  const isYes = verdict === "yes";
 
   if (step === "caregiver_permissions_decline") {
     await setPermissions(phone, caregiverId, "caregiver", {

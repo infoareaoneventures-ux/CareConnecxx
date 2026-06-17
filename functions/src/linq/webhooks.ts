@@ -18,7 +18,7 @@ import {
   handleClientPermissionsReply,
   handleCaregiverPermissionsReply,
 } from "../agents/permissionsConversation";
-import { detectCrisis, isLikelyRealCrisis } from "../safety/crisisDetector";
+import { detectCrisis, isLikelyRealCrisis, classifyCrisisMultilingual } from "../safety/crisisDetector";
 import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
 import { logCrisisDetected } from "../observability/auditLog";
 import { isBereavementTrigger, activateBereavementMode } from "../agents/bereavement";
@@ -892,6 +892,33 @@ export async function handleInbound(event: unknown): Promise<void> {
       return;
     }
     console.info("crisisDetector: emotional keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
+  }
+
+  // No crisis keyword fired. For messages that look non-English (Spanish is a
+  // supported language), run a multilingual LLM crisis classify to catch
+  // paraphrased or code-switched crisis text the keyword lists can't enumerate.
+  // Gated to likely-non-English to avoid adding an LLM call to every English
+  // message — see the launch-readiness plan's open question (every-message vs
+  // non-English). The classifier already judges genuineness, so a positive
+  // result routes straight to the crisis response (no second verify call).
+  if (crisis === null) {
+    const looksNonEnglish = sessionLang === "es" || /[ñ¿¡áéíóúü]/i.test(text);
+    if (looksNonEnglish) {
+      const llmCrisis = await classifyCrisisMultilingual(text);
+      if (llmCrisis === "medical") {
+        await sendMessage(chatId, tr.crisis_medical(sessionLang));
+        logCrisisDetected(phone, "medical", text).catch(() => {});
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString() },
+        }).catch(() => {});
+        return;
+      }
+      if (llmCrisis === "emotional") {
+        await sendMessage(chatId, tr.crisis_emotional(sessionLang));
+        logCrisisDetected(phone, "emotional", text).catch(() => {});
+        return;
+      }
+    }
   }
 
   // ── Persona-shift resolution ────────────────────────────────────────────────

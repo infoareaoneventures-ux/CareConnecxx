@@ -193,6 +193,25 @@ export async function getPendingActionById(id: string): Promise<PendingAction | 
   return { id: snap.id, ...(snap.data() as Omit<PendingAction, "id">) };
 }
 
+// Validate a _confirmedActionId at the MCP gate so the gate's safety lives in
+// CODE, not in caller discipline: the confirmation must reference a real,
+// still-awaiting (the legit re-run dispatches before resolving), unexpired
+// action for the SAME phone and tool. A forged/expired/mismatched id is refused.
+export function isConfirmedActionValid(
+  pending:  PendingAction | null,
+  toolName: string,
+  phone:    string | undefined,
+  nowMs:    number = Date.now(),
+): boolean {
+  return (
+    pending !== null &&
+    (pending.status === "awaiting" || pending.status === "approved") &&
+    new Date(pending.expiresAt).getTime() > nowMs &&
+    pending.toolName === toolName &&
+    pending.phone === phone
+  );
+}
+
 // Mark resolved with the given status. Idempotent — calling twice with the
 // same status is a no-op; calling with a different status logs a warning so
 // downstream race conditions surface.

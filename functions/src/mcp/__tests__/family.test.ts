@@ -100,7 +100,12 @@ import { handleToolCall } from "../server";
 describe("family tools", () => {
   // mockReset (not mockClear) — clears queued mockResolvedValueOnce values too,
   // so a test that doesn't consume its Once value can't leak it into the next.
-  beforeEach(() => { hoisted.reset(); trySend.mockReset(); trySend.mockResolvedValue({ sent: true }); });
+  beforeEach(() => {
+    hoisted.reset(); trySend.mockReset(); trySend.mockResolvedValue({ sent: true });
+    // Confirmed-action gate (U12): seed a pending doc matching the
+    // remove_family_member bypass calls below.
+    hoisted.docState.set("pending_actions/test", { toolName: "remove_family_member", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" });
+  });
 
   describe("add_family_member", () => {
     it("requires all fields", async () => {

@@ -11,7 +11,7 @@ import {
   MemoryFile,
 } from "../memory/memoryFiles";
 import { getPreferences } from "../memory/preferences";
-import { isHighRisk, proposePendingAction, buildPendingActionStub } from "../agents/pendingActions";
+import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingActionById, isConfirmedActionValid } from "../agents/pendingActions";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
 import { getAppUrl } from "../config/appUrl";
@@ -1747,6 +1747,19 @@ export async function handleToolCall(
   const confirmedActionId = input._confirmedActionId as string | undefined;
   if (confirmedActionId) {
     delete input._confirmedActionId;
+    // Validate the confirmation against the pending doc so the gate's safety
+    // lives HERE, not in caller discipline: a forged, expired, already-resolved,
+    // wrong-phone, or wrong-tool id is refused instead of blindly bypassing.
+    // The legit re-run (approvalHandler) dispatches BEFORE resolving, so the
+    // doc is still "awaiting" at this point.
+    const pending = await getPendingActionById(confirmedActionId);
+    const valid = isConfirmedActionValid(pending, name, input.phone as string | undefined);
+    if (!valid) {
+      console.warn("MCP gate: rejected invalid _confirmedActionId", {
+        name, confirmedActionId, status: pending?.status,
+      });
+      return toolError("PERMISSION_DENIED", "This confirmation is no longer valid. Please try the action again.");
+    }
   } else if (isHighRisk(name, input)) {
     const phone = input.phone as string | undefined;
     if (!phone) {

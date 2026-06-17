@@ -404,7 +404,9 @@ describe("MCP tool smoke coverage", () => {
   // ── Notification surfacing — invariant checks ─────────────────────────────
   describe("notification surfacing invariant", () => {
     it("refactored tools always return a notification field with sent boolean", async () => {
-      // cancel_appointment (high-risk — _confirmedActionId bypasses HITL gate)
+      // cancel_appointment (high-risk — _confirmedActionId bypasses HITL gate;
+      // U12 validates it against a real pending doc, so seed one).
+      hoisted.docState.set("pending_actions/test", { toolName: "cancel_appointment", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" });
       hoisted.docState.set("appointments/a1", { clientId: "c1", status: "confirmed", caregiverId: "cg1" });
       hoisted.docState.set("caregivers/cg1", { phone: "+15555550101" });
       const cancel = await handleToolCall("cancel_appointment", { appointmentId: "a1", clientId: "c1", _confirmedActionId: "test" }) as any;

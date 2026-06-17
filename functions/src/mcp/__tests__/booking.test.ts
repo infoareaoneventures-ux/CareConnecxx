@@ -106,7 +106,12 @@ vi.mock("../../utils/caraMessage", () => ({
 import { handleToolCall } from "../server";
 
 describe("booking tools", () => {
-  beforeEach(() => { hoisted.reset(); trySend.mockClear(); trySend.mockResolvedValue({ sent: true }); });
+  beforeEach(() => {
+    hoisted.reset(); trySend.mockClear(); trySend.mockResolvedValue({ sent: true });
+    // Confirmed-action gate (U12) now validates _confirmedActionId against a real
+    // pending doc; seed one matching the cancel_appointment bypass calls below.
+    hoisted.docState.set("pending_actions/test", { toolName: "cancel_appointment", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" });
+  });
 
   describe("cancel_appointment", () => {
     it("requires appointmentId + clientId", async () => {

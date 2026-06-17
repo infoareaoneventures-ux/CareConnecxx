@@ -2465,6 +2465,12 @@ export async function handleToolCall(
         try {
           // ── Login-required portal actions ──────────────────────────────────
           if (loginAction) {
+            // H-U7: the credential vault is userId-keyed — fail CLOSED if there's
+            // no resolvable account, rather than silently missing the credential.
+            if (!userId2 || userId2 === "unknown") {
+              return toolError("PERMISSION_DENIED",
+                "I can only do this on a registered account. Please make sure you're signed up, then try again.");
+            }
             switch (loginAction) {
               case "schedule_appointment": {
                 const portalSvc = (input.portalService as string | undefined ?? "mychart") as import("../browser/credentialVault").PortalService;

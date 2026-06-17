@@ -1,6 +1,14 @@
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { storeCredential, PortalService } from "./credentialVault";
+
+// A stored password must look like a real credential — at least 6 chars and no
+// internal whitespace (a sentence/question would have spaces and was already
+// filtered upstream). Rejecting garbage here prevents a broken login later.
+export function isPlausiblePassword(pw: string): boolean {
+  const t = (pw ?? "").trim();
+  return t.length >= 6 && !/\s/.test(t);
+}
 import { quickComplete } from "../utils/openaiClient";
 
 const db = admin.firestore();
@@ -173,6 +181,19 @@ export async function handleCredentialReply(params: {
 
     const username = (session.collectingCredentialUsername as string | undefined)?.trim() ?? "";
     const password = text.trim();
+
+    // H-U7: reject an obviously-wrong password BEFORE storing — a garbage value
+    // silently breaks every future portal login. (isCredentialReply already
+    // filtered questions/sentences; this is a final sanity gate.)
+    if (!isPlausiblePassword(password)) {
+      await sendViaInteractionAgent(phone, {
+        content:     `That doesn't look like a complete ${config.name} password. When you're ready, send just your password.`,
+        urgency:     "standard",
+        sourceAgent: "credential_collector",
+        canDrop:     false,
+      });
+      return true; // stay on the password step
+    }
 
     // Encrypt and store — username is never persisted in plaintext after this point
     await storeCredential(userId, service, username, password);

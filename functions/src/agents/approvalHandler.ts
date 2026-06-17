@@ -16,6 +16,8 @@ import { sendMessage } from "../linq/client";
 import {
   type PendingAction,
   resolvePendingAction,
+  claimPendingAction,
+  logHealthcareAudit,
 } from "./pendingActions";
 import { handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
 
@@ -82,11 +84,25 @@ async function executeConfirmedAction(params: {
     toolName: pending.toolName,
   });
 
+  // H-U5: claim BEFORE dispatch (awaiting → executing) so a duplicate YES / retry
+  // can't double-dispatch. A second confirmation finds it already executing/
+  // executed and no-ops here.
+  const claim = await claimPendingAction(pending.id);
+  if (claim !== "claimed") {
+    console.info("approvalHandler.execute: action not claimable (duplicate/expired) — skipping", { actionId: pending.id });
+    return false;
+  }
+  logHealthcareAudit(pending, "confirmed");
+
   const dispatch = userType === "caregiver" ? handleToolCallForCaregiver : handleToolCall;
+  // Strip any _confirmedActionId that rode in on the stored tool input (e.g.
+  // injected via extracted portal text) — only THIS direct dispatch may set it.
+  const { _confirmedActionId: _injected, ...safeToolInput } = pending.toolInput as Record<string, unknown>;
+  void _injected;
   // Inject identifiers + the bypass flag so the MCP gate executes instead of
   // re-proposing. _confirmedActionId is read by the MCP gate; see mcp/server.ts.
   const enrichedInput: Record<string, unknown> = {
-    ...pending.toolInput,
+    ...safeToolInput,
     phone,
     chatId,
     ...(userId ? { clientId: userId, userId } : {}),
@@ -110,6 +126,15 @@ async function executeConfirmedAction(params: {
     succeeded ? "executed" : "failed",
     { executionPreview },
   );
+  logHealthcareAudit(pending, succeeded ? "executed" : "failed", succeeded ? undefined : executionPreview);
+
+  // H-U4: tell the requester (if a secondary member triggered it) the outcome.
+  if (pending.triggeredByPhone && pending.triggeredByPhone !== phone) {
+    await sendMessage(pending.triggeredByPhone, succeeded
+      ? `Update: the account holder approved "${pending.preview}" and it's done.`
+      : `Update: "${pending.preview}" couldn't be completed. The account holder has been notified.`,
+    ).catch(() => {});
+  }
 
   return succeeded;
 }
@@ -125,6 +150,20 @@ export async function handlePendingApproval(params: {
   pending:     PendingAction;
 }): Promise<ApprovalResult> {
   const { phone, chatId, text, userId, userType = "client", pending } = params;
+
+  // H-U4: only the account holder can approve a healthcare write action. The
+  // approver-keyed pending doc means a non-approver's reply usually won't even
+  // match this doc, but guard explicitly: a YES from a non-approver does NOT
+  // execute and the action stays awaiting the account holder.
+  if (pending.approverPhone && phone !== pending.approverPhone) {
+    const decisionForApprover = await classifyApproval(text, pending.preview);
+    if (decisionForApprover === "YES") {
+      await sendMessage(chatId, "Only the primary account holder can approve this — I've asked them to confirm.").catch(() => {});
+      return { outcome: "handled" };
+    }
+    return { outcome: "fallthrough", reason: "question" };
+  }
+
   const decision = await classifyApproval(text, pending.preview);
 
   if (decision === "QUESTION") {

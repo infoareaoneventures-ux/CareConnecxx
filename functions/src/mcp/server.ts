@@ -1813,18 +1813,52 @@ export async function handleToolCall(
       console.warn("MCP gate: high-risk tool called without phone — refusing", { name });
       return toolError("PERMISSION_DENIED", "This action requires explicit confirmation and cannot be executed without an SMS session.");
     }
-    const action = await proposePendingAction({
-      phone,
-      userId:    input.userId as string | undefined,
-      toolName:  name,
-      toolInput: input,
-    });
+    let action;
+    try {
+      action = await proposePendingAction({
+        phone,
+        userId:    input.userId as string | undefined,
+        toolName:  name,
+        toolInput: input,
+      });
+    } catch (err) {
+      // Fail closed: a healthcare action with no resolvable account holder is
+      // refused, never executed (H-U4). Never fall back to the triggering phone.
+      console.warn("MCP gate: proposePendingAction failed (fail-closed)", { name, err: (err as Error)?.message });
+      return toolError("PERMISSION_DENIED",
+        "I couldn't verify the primary account holder for this action, so I can't proceed. " +
+        "Please have the account holder text me directly.");
+    }
     console.info("MCP gate: proposed pending action", {
       phone,
       actionId: action.id,
       toolName: name,
       preview:  action.preview,
     });
+    // H-U4: a healthcare action triggered by a secondary member routes its
+    // approval to the ACCOUNT HOLDER. Send the proposal to them; tell the
+    // requester it was routed (they cannot approve it themselves).
+    if (action.approverPhone && action.triggeredByPhone && action.approverPhone !== action.triggeredByPhone) {
+      try {
+        const { sendViaInteractionAgent } = await import("../agents/caraAgent");
+        await sendViaInteractionAgent(action.approverPhone, {
+          content:     `${action.preview}? A family member asked me to handle this. Reply YES to approve or NO to decline.`,
+          urgency:     "immediate",
+          sourceAgent: "healthcare_approval",
+          canDrop:     false,
+        });
+      } catch (e) {
+        console.error("MCP gate: failed to send proposal to account holder", e);
+      }
+      return {
+        _pending_action: true,
+        actionId: action.id,
+        routed_to_account_holder: true,
+        guidance:
+          "Tell the family member you've sent this to the primary account holder to approve and you'll " +
+          "let them know once it's confirmed. Do NOT ask them to confirm — only the account holder can.",
+      };
+    }
     return buildPendingActionStub(action);
   }
 

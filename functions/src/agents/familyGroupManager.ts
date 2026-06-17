@@ -36,7 +36,7 @@ export function verifyFamilyJoinToken(token: unknown): { primaryPhone: string; s
   };
 }
 
-async function resolvePrimaryPhone(userId: string): Promise<string | undefined> {
+export async function resolvePrimaryPhone(userId: string): Promise<string | undefined> {
   const userSnap = await db.collection("users").doc(userId).get().catch(() => null);
   const userPhone = userSnap?.data()?.phone as string | undefined;
   if (userPhone) return userPhone;

@@ -31,7 +31,7 @@ import {
   sendOnboardingOffer,
   shouldReoffer,
 } from "../agents/profileCompleteness";
-import { STATE_MACHINE_FLAGS, clearAllStateFlags } from "../utils/sessionState";
+import { STATE_MACHINE_FLAGS, clearAllStateFlags, claimInboundProcessing, releaseInboundProcessing } from "../utils/sessionState";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { writeFeedbackSignal } from "../ai/feedback";
 import {
@@ -357,7 +357,37 @@ async function handleVisitFeedback(params: {
 
 // Exported for the routing characterization tests (__tests__/handleInbound.routing.test.ts),
 // which pin the guard ORDER below — the order IS the product behavior.
+// Public entry point. Serializes processing per phone so a user's rapid-fire
+// messages (or Linq at-least-once redelivery of distinct messages) can't run
+// concurrently and clobber each other's session writes. Acquires a per-phone
+// lock (bounded wait), then delegates to handleInboundInner; releases in a
+// finally so every internal return path still frees the lock.
 export async function handleInbound(event: unknown): Promise<void> {
+  const phone = (event as any)?.data?.sender_handle?.handle as string | undefined;
+  // No phone → nothing to serialize on; inner will drop it.
+  if (!phone) return handleInboundInner(event);
+
+  // Wait briefly for an in-flight message from the same phone to finish. SMS
+  // bursts arrive within a few seconds, so a short window catches the common
+  // race; if we still can't acquire (rare long-held lock), fail open and
+  // process rather than drop the message — the TTL bounds any stuck holder.
+  let acquired = false;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    if (await claimInboundProcessing(phone, db)) { acquired = true; break; }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  if (!acquired) {
+    console.warn("handleInbound: per-phone lock busy after wait — proceeding fail-open", { phone });
+  }
+
+  try {
+    await handleInboundInner(event);
+  } finally {
+    if (acquired) await releaseInboundProcessing(phone, db);
+  }
+}
+
+async function handleInboundInner(event: unknown): Promise<void> {
   const ev      = event as any;
   const phone   = ev.data?.sender_handle?.handle as string | undefined;
   const chatId  = ev.data?.chat?.id as string | undefined;

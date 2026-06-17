@@ -222,6 +222,9 @@ vi.mock("../../agents/caregiverProfileHandler", () => ({
 vi.mock("../../utils/sessionState", () => ({
   STATE_MACHINE_FLAGS: ["stateExpiresAt"],
   clearAllStateFlags:  vi.fn(async () => {}),
+  claimInboundProcessing:   vi.fn(async () => true),
+  releaseInboundProcessing: vi.fn(async () => {}),
+  INBOUND_LOCK_TTL_MS: 90_000,
 }));
 vi.mock("../../utils/caraMessage", () => ({
   generateCaraMessage: vi.fn(async ({ fallback }: any) => fallback ?? "msg"),

@@ -99,3 +99,49 @@ export async function clearAllStateFlags(
   }
   await db.collection("agent_sessions").doc(phone).update(update);
 }
+
+// ── Per-phone inbound serialization ──────────────────────────────────────────
+// Linq is at-least-once AND a user can fire several messages in quick
+// succession; each lands in its own function instance and races on the same
+// session doc. event_id dedup stops DUPLICATES but not distinct concurrent
+// messages, so two near-simultaneous texts can read the same session snapshot
+// and write conflicting flags (the root cause of wedged state / double-books).
+// A transactional per-phone claim serializes them. A TTL lets a crashed holder
+// self-heal so the lock can never wedge a conversation permanently.
+export const INBOUND_LOCK_TTL_MS = 90_000;
+
+const inboundLockRef = (phone: string, db: admin.firestore.Firestore) =>
+  db.collection("agent_inbound_locks").doc(phone);
+
+/**
+ * Try to claim the per-phone inbound lock. Returns true if acquired (free, or
+ * a stale claim past the TTL from a crashed holder), false if a live claim is
+ * held by another in-flight message. Fails OPEN (returns true) on transaction
+ * error — dropping a user's message is a worse failure than a rare race.
+ */
+export async function claimInboundProcessing(
+  phone: string,
+  db: admin.firestore.Firestore,
+  nowMs: number = Date.now(),
+): Promise<boolean> {
+  try {
+    const ref = inboundLockRef(phone, db);
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const lockedAt = (snap.data() as { lockedAt?: number } | undefined)?.lockedAt ?? 0;
+      if (snap.exists && nowMs - lockedAt < INBOUND_LOCK_TTL_MS) return false;
+      tx.set(ref, { lockedAt: nowMs });
+      return true;
+    });
+  } catch {
+    return true;
+  }
+}
+
+/** Release the per-phone inbound lock. Best-effort — TTL covers any miss. */
+export async function releaseInboundProcessing(
+  phone: string,
+  db: admin.firestore.Firestore,
+): Promise<void> {
+  await inboundLockRef(phone, db).delete().catch(() => {});
+}

@@ -105,7 +105,7 @@ export const AuditTrail: React.FC = () => {
 
   const [anomalies, setAnomalies] = useState<Set<string>>(new Set());
 
-  const fetchPage = useCallback(async (cursor: QueryDocumentSnapshot<DocumentData> | null) => {
+  const fetchPage = useCallback(async (cursor: QueryDocumentSnapshot<DocumentData> | null, pageIndexArg = 0) => {
     if (!db) return null;
     const fdb = db;
     setLoading(true);
@@ -142,11 +142,14 @@ export const AuditTrail: React.FC = () => {
       }));
 
       setHasMore(more);
-      // Merge the action ledger into the first unfiltered page only. With any
-      // filter active (including the client-side phone filter) the ledger is
-      // skipped so filtered results stay consistent; page 2+ is pure audit-log
-      // and paginates off the audit cursor.
-      if (!cursor && !filterType && !filterPhone && !filterDateFrom && !filterDateTo) {
+      // Merge the action ledger into the first unfiltered page only. Gated on
+      // pageIndex === 0 (not merely !cursor) because page 1 can legitimately
+      // return a null cursor — when ledger entries fill the whole visible page —
+      // and a null cursor on page 2+ would otherwise re-trigger the merge,
+      // duplicating entries. With any filter active (including the client-side
+      // phone filter) the ledger is skipped so filtered results stay consistent;
+      // page 2+ is pure audit-log and paginates off the audit cursor.
+      if (pageIndexArg === 0 && !filterType && !filterPhone && !filterDateFrom && !filterDateTo) {
        try {
         const ledgerSnap = await getDocs(query(
           collection(fdb, 'agent_action_ledger'),
@@ -215,14 +218,14 @@ export const AuditTrail: React.FC = () => {
   useEffect(() => {
     setCursors([null]);
     setPageIndex(0);
-    fetchPage(null).then((lastDoc) => {
+    fetchPage(null, 0).then((lastDoc) => {
       setCursors([null, lastDoc]);
     });
   }, [fetchPage]);
 
   async function goNext() {
     const nextCursor = cursors[pageIndex + 1] ?? null;
-    const lastDoc = await fetchPage(nextCursor);
+    const lastDoc = await fetchPage(nextCursor, pageIndex + 1);
     setPageIndex((p) => p + 1);
     setCursors((prev) => {
       const updated = [...prev];
@@ -233,7 +236,7 @@ export const AuditTrail: React.FC = () => {
 
   async function goPrev() {
     const prevCursor = cursors[pageIndex - 1] ?? null;
-    await fetchPage(prevCursor);
+    await fetchPage(prevCursor, pageIndex - 1);
     setPageIndex((p) => p - 1);
   }
 

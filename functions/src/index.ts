@@ -277,31 +277,44 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
 
   if (referralId && role === "caregiver") {
     const referralRef = db.collection("referrals").doc(referralId);
-    const referralSnap = await referralRef.get();
-    if (referralSnap.exists) {
+    const authUid = context.auth.uid;
+    let mismatchExpectedPhone: string | null = null;
+    // Atomic claim: a generic referral link (no referredPhone) can be opened by
+    // many caregivers concurrently. Read-and-claim inside a transaction so only
+    // the FIRST signup wins; a link already claimed by a different user is left
+    // intact instead of being overwritten by a later concurrent signup.
+    await db.runTransaction(async (tx) => {
+      const referralSnap = await tx.get(referralRef);
+      if (!referralSnap.exists) return;
       const referral = referralSnap.data() ?? {};
       const referredPhone = (referral.referredPhone as string | undefined)?.trim();
-      const terminalStatuses = new Set(["approved", "first_booking_completed", "rejected", "successful"]);
-      if (!referredPhone || referredPhone === phone) {
-        await referralRef.set({
-          status: terminalStatuses.has(String(referral.status ?? "")) ? referral.status : "started",
-          referredUserId: context.auth.uid,
-          signupPhone: phone,
-          startedAt: admin.firestore.Timestamp.fromDate(now),
-          updatedAt: now.toISOString(),
-        }, { merge: true });
-      } else {
-        await db.collection("admin_alerts").add({
-          type: "referral_phone_mismatch",
-          severity: "medium",
-          referralId,
-          expectedPhone: referredPhone,
-          verifiedPhone: phone,
-          userId: context.auth.uid,
-          createdAt: now.toISOString(),
-          resolved: false,
-        }).catch(() => {});
+      if (referredPhone && referredPhone !== phone) {
+        mismatchExpectedPhone = referredPhone;
+        return;
       }
+      if (referral.referredUserId && referral.referredUserId !== authUid) {
+        return; // already claimed by another caregiver
+      }
+      const terminalStatuses = new Set(["approved", "first_booking_completed", "rejected", "successful"]);
+      tx.set(referralRef, {
+        status: terminalStatuses.has(String(referral.status ?? "")) ? referral.status : "started",
+        referredUserId: authUid,
+        signupPhone: phone,
+        startedAt: admin.firestore.Timestamp.fromDate(now),
+        updatedAt: now.toISOString(),
+      }, { merge: true });
+    });
+    if (mismatchExpectedPhone) {
+      await db.collection("admin_alerts").add({
+        type: "referral_phone_mismatch",
+        severity: "medium",
+        referralId,
+        expectedPhone: mismatchExpectedPhone,
+        verifiedPhone: phone,
+        userId: authUid,
+        createdAt: now.toISOString(),
+        resolved: false,
+      }).catch(() => {});
     }
   }
 

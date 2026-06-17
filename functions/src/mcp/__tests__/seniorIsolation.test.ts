@@ -158,8 +158,8 @@ describe("senior data isolation (PHI read tools)", () => {
   });
 
   it("get_senior_profile allows the owning client", async () => {
-    hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
-    hoisted.docState.set("seniors/s1", { name: "Mary", diagnoses: ["dementia"] });
+    // Profile data lives on senior_profiles (the authorized + primary read source).
+    hoisted.docState.set("senior_profiles/s1", { userId: "c1", name: "Mary", diagnoses: ["dementia"] });
     const r = await handleToolCall("get_senior_profile", { seniorId: "s1", clientId: "c1" }) as any;
     expect(r.success).toBe(true);
     expect(r.results?.name).toBe("Mary");

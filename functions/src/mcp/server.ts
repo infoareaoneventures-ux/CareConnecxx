@@ -1839,7 +1839,14 @@ export async function handleToolCall(
         const denied = await assertSeniorAccess(input.seniorId as string, input.clientId ?? input.userId);
         if (denied) return denied;
         logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:get_senior_profile").catch(() => {});
-        const snap = await db.collection("seniors").doc(input.seniorId as string).get();
+        // Read from senior_profiles — the collection assertSeniorAccess authorized
+        // against — so a migrated household senior (random-id profile doc with no
+        // matching `seniors` doc) doesn't return a false NOT_FOUND. Fall back to
+        // the legacy `seniors` collection only when no profile doc exists.
+        const profileSnap = await db.collection("senior_profiles").doc(input.seniorId as string).get();
+        const snap = profileSnap.exists
+          ? profileSnap
+          : await db.collection("seniors").doc(input.seniorId as string).get();
         if (!snap.exists) return toolError("NOT_FOUND", "Senior profile not found");
         const data = snap.data()!;
         return { success: true, results: data, hasMore: false };

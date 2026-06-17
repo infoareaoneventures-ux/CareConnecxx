@@ -942,6 +942,10 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
     return { ok: true };
   }
 
+  // Declared outside the try so the catch can record it on payment_failed —
+  // a `let` scoped inside the try is invisible to the catch (ReferenceError).
+  let paymentIntentId: string | undefined = shift.stripeChargeId;
+
   try {
     const caregiverSnap = await db.collection('caregivers').doc(shift.caregiverId).get();
     const caregiverStripeAccountId = caregiverSnap.data()?.stripeAccountId;
@@ -961,11 +965,16 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
       throw new Error('Client has no Stripe customer');
     }
 
-    // Typed default-export Stripe returns Customer | DeletedCustomer; a shift
-    // charge only runs for a live customer, so assert the non-deleted shape.
-    const customer = await stripe.customers.retrieve(stripeCustomerId) as Stripe.Customer;
-    const defaultPm = customer.invoice_settings?.default_payment_method
-      || customer.default_source;
+    // stripe.customers.retrieve returns Customer | DeletedCustomer. A deleted
+    // customer has none of the billing fields, so guard explicitly before
+    // reading invoice_settings rather than blind-casting to the live shape.
+    const customer = await stripe.customers.retrieve(stripeCustomerId);
+    if ((customer as Stripe.DeletedCustomer).deleted) {
+      throw new Error('Client Stripe customer has been deleted');
+    }
+    const liveCustomer = customer as Stripe.Customer;
+    const defaultPm = liveCustomer.invoice_settings?.default_payment_method
+      || liveCustomer.default_source;
     if (!defaultPm) {
       throw new Error('Client has no default payment method');
     }
@@ -979,7 +988,6 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
     // some payment methods settle asynchronously ('processing'). We must NOT
     // pay the caregiver until the charge has truly settled — paying earlier
     // risks an un-recoverable payout if the charge later fails.
-    let paymentIntentId: string | undefined = shift.stripeChargeId;
     let replacedTerminalChargeId: string | undefined;
     let chargeStatus: string;
     if (paymentIntentId) {

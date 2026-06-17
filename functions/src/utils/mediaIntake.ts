@@ -39,6 +39,107 @@ export interface InboundMediaPart {
 const IMAGE_EXT = ["jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "tiff", "bmp"];
 const DOC_EXT   = ["pdf", "doc", "docx", "txt", "rtf", "csv"];
 
+// ── SSRF guard ───────────────────────────────────────────────────────────────
+// part.url comes from the inbound webhook payload, which is attacker-influenced.
+// Without a host allowlist, fetchBytes is an SSRF primitive (it would happily GET
+// http://169.254.169.254/… metadata or internal services). We only fetch media
+// from known Linq/attachment/storage CDNs over https, and never from raw IPs.
+const DEFAULT_MEDIA_HOSTS = [
+  "linqapp.com", "amazonaws.com", "googleapis.com",
+  "twilio.com", "twiliocdn.com", "cloudfront.net",
+];
+
+function isIpLiteral(host: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":");
+}
+
+/** True only for https URLs on an allowlisted media host (suffix match). */
+export function isSafeMediaUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase();
+    if (host === "localhost" || isIpLiteral(host)) return false;
+    const envHosts = (process.env.MEDIA_ALLOWED_HOSTS ?? "")
+      .split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+    const allowed = [...DEFAULT_MEDIA_HOSTS, ...envHosts];
+    return allowed.some((suffix) => host === suffix || host.endsWith("." + suffix));
+  } catch {
+    return false;
+  }
+}
+
+// ── Magic-byte sniffing ──────────────────────────────────────────────────────
+// A filename/content_type is attacker-controlled metadata; the bytes are not.
+// We sniff the leading bytes so a ".jpg" carrying an executable (or a PDF) is
+// rejected before it's stored.
+export type SniffedKind = "image" | "document" | "executable" | "text" | "unknown";
+
+export function sniffBufferKind(buffer: Buffer): SniffedKind {
+  if (!buffer || buffer.length < 4) return "unknown";
+  const b = buffer;
+  const ascii = (start: number, len: number) =>
+    b.slice(start, start + len).toString("latin1");
+
+  // Executables / shared objects — always rejected regardless of claimed kind.
+  if (b[0] === 0x4d && b[1] === 0x5a) return "executable";                 // MZ (PE/EXE/DLL)
+  if (b[0] === 0x7f && ascii(1, 3) === "ELF") return "executable";        // ELF
+  if ((b.readUInt32BE(0) >>> 0) === 0xfeedface ||
+      (b.readUInt32BE(0) >>> 0) === 0xcafebabe ||
+      (b.readUInt32BE(0) >>> 0) === 0xcffaedfe) return "executable";      // Mach-O
+
+  // Images
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image";    // JPEG
+  if (ascii(0, 8) === "\x89PNG\r\n\x1a\n") return "image";               // PNG
+  if (ascii(0, 4) === "GIF8") return "image";                            // GIF
+  if (ascii(0, 4) === "RIFF" && ascii(8, 4) === "WEBP") return "image";  // WEBP
+  if (ascii(0, 2) === "BM") return "image";                              // BMP
+  if (ascii(0, 4) === "II\x2a\x00" || ascii(0, 4) === "MM\x00\x2a") return "image"; // TIFF
+  if (ascii(4, 4) === "ftyp") return "image";                            // HEIC/HEIF (ISO-BMFF)
+
+  // Documents
+  if (ascii(0, 4) === "%PDF") return "document";                         // PDF
+  if (b[0] === 0x50 && b[1] === 0x4b && (b[2] === 0x03 || b[2] === 0x05 || b[2] === 0x07))
+    return "document";                                                    // ZIP (docx/xlsx)
+  if (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0)
+    return "document";                                                    // OLE (legacy .doc/.xls)
+
+  // Plausibly plain text (txt/csv/rtf) — high ratio of printable bytes.
+  const sample = b.slice(0, Math.min(b.length, 512));
+  let printable = 0;
+  for (const byte of sample) {
+    if (byte === 9 || byte === 10 || byte === 13 || (byte >= 32 && byte <= 126)) printable++;
+  }
+  if (sample.length > 0 && printable / sample.length > 0.85) return "text";
+
+  return "unknown";
+}
+
+/** Reject content whose bytes contradict the claimed kind, or are executable. */
+function assertContentMatches(kind: InboundMediaKind, buffer: Buffer): void {
+  const sniff = sniffBufferKind(buffer);
+  if (sniff === "executable") {
+    throw new Error("mediaIntake: rejected executable content");
+  }
+  if (kind === "image" && (sniff === "document" || sniff === "text")) {
+    throw new Error(`mediaIntake: claimed image but content sniffed as ${sniff}`);
+  }
+  if (kind === "document" && sniff === "image") {
+    throw new Error("mediaIntake: claimed document but content sniffed as image");
+  }
+}
+
+/** Reject content_type/ext outside the image/document allowlist. */
+function assertAllowedType(kind: InboundMediaKind, contentType: string, ext: string): void {
+  const ct = (contentType ?? "").toLowerCase();
+  const e  = (ext ?? "").toLowerCase();
+  const ctOk = kind === "image" ? isImageContentType(ct) : isDocContentType(ct);
+  const extOk = (kind === "image" ? IMAGE_EXT : DOC_EXT).includes(e);
+  if (!ctOk && !extOk) {
+    throw new Error(`mediaIntake: disallowed ${kind} type (content_type="${ct}", ext="${e}")`);
+  }
+}
+
 function extOf(filename?: string): string {
   if (!filename) return "";
   const m = filename.toLowerCase().match(/\.([a-z0-9]+)(?:\?|$)/);
@@ -166,6 +267,10 @@ export async function downloadMedia(part: InboundMediaPart): Promise<DownloadedM
 
 async function fetchBytes(url: string): Promise<{ buffer: Buffer; headerType: string }> {
   const MAX = 25 * 1024 * 1024; // 25 MB ceiling for an inbound photo/document
+  // SSRF guard: only fetch from allowlisted media hosts over https.
+  if (!isSafeMediaUrl(url)) {
+    throw new Error("mediaIntake: blocked non-allowlisted media URL (SSRF guard)");
+  }
   try {
     const res = await axios.get<ArrayBuffer>(url, {
       responseType:     "arraybuffer",
@@ -226,6 +331,12 @@ export async function storeInboundMedia(params: {
   content_type: string;
   ext:          string;
 }): Promise<string> {
+  // Validate type + bytes before persisting: a filename/content_type is
+  // attacker-controlled metadata; reject disallowed types and any content whose
+  // magic bytes contradict the claimed kind (or look executable).
+  assertAllowedType(params.kind, params.content_type, params.ext);
+  assertContentMatches(params.kind, params.buffer);
+
   const folder    = params.kind === "image" ? "profile_photos" : "caregiver_docs";
   const safePhone = params.phone.replace(/[^0-9]/g, "");
   const path      = `${folder}/${safePhone}_${Date.now()}.${params.ext}`;

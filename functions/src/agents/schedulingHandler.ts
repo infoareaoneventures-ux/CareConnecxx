@@ -84,15 +84,66 @@ export async function handleScheduleRequest(
   });
 }
 
+export type TriggerAction = "list" | "cancel" | "create" | "question";
+
+// Classify reminder-management intent with an LLM instead of keyword `.includes`
+// matching (which mis-fired on negation, e.g. "don't cancel anything" → cancel).
+export async function classifyTriggerAction(userMessage: string): Promise<TriggerAction> {
+  const raw = await quickComplete(
+    "A user is managing reminders with a care assistant. Classify their message as one word: " +
+      "LIST (see existing reminders), CANCEL (remove/stop a reminder), CREATE (set up a new reminder), " +
+      "or QUESTION (asking how reminders work, or anything that isn't one of the above). " +
+      "Reply with only one word.",
+    userMessage,
+    { maxTokens: 5 },
+  ).catch(() => "create");
+  const v = raw.trim().toUpperCase();
+  if (v.startsWith("LIST")) return "list";
+  if (v.startsWith("CANCEL")) return "cancel";
+  if (v.startsWith("QUESTION")) return "question";
+  return "create";
+}
+
+// Resolve which reminder the user wants to cancel via the LLM, not a substring
+// match on the label (which broke on paraphrase and partial names).
+export async function resolveCancelTarget(
+  userMessage: string,
+  triggers:    UserTrigger[],
+): Promise<UserTrigger | null> {
+  if (triggers.length === 0) return null;
+  if (triggers.length === 1) return triggers[0];
+  const labels = triggers.map((t, i) => `${i}: ${t.label}`).join("; ");
+  const raw = await quickComplete(
+    `The user wants to cancel one of these reminders (index: label): ${labels}. ` +
+      "Which index do they mean? Reply with only the number, or NONE if unclear.",
+    userMessage,
+    { maxTokens: 5 },
+  ).catch(() => "NONE");
+  const idx = parseInt(raw.trim(), 10);
+  return Number.isInteger(idx) && idx >= 0 && idx < triggers.length ? triggers[idx] : null;
+}
+
 export async function handleTriggerManagement(
   phone:       string,
   userMessage: string,
   session:     Record<string, unknown>
 ): Promise<void> {
-  const norm = userMessage.trim().toLowerCase();
+  const action = await classifyTriggerAction(userMessage);
+
+  if (action === "question") {
+    await sendViaInteractionAgent(phone, {
+      content:
+        "Happy to help with reminders! You can say things like 'Remind me every Monday at 9am about " +
+        "mom's medications', 'show my reminders', or 'cancel the medication reminder'.",
+      urgency:     "standard",
+      sourceAgent: "scheduling_handler",
+      canDrop:     false,
+    });
+    return;
+  }
 
   // "show my reminders" / "list reminders"
-  if (norm.includes("show") || norm.includes("list") || norm.includes("what reminders")) {
+  if (action === "list") {
     const triggers = await listUserTriggers(phone);
     if (triggers.length === 0) {
       await sendViaInteractionAgent(phone, {
@@ -116,7 +167,7 @@ export async function handleTriggerManagement(
   }
 
   // "cancel my [label] reminder"
-  if (norm.includes("cancel") || norm.includes("delete") || norm.includes("remove")) {
+  if (action === "cancel") {
     const triggers = await listUserTriggers(phone);
     if (triggers.length === 0) {
       await sendViaInteractionAgent(phone, {
@@ -128,10 +179,8 @@ export async function handleTriggerManagement(
       return;
     }
 
-    // Find the best matching trigger by label
-    const match = triggers.find(t =>
-      norm.includes(t.label.toLowerCase())
-    );
+    // Resolve which reminder via the LLM, not a substring match.
+    const match = await resolveCancelTarget(userMessage, triggers);
 
     if (!match) {
       const labels = triggers.map(t => t.label).join(", ");

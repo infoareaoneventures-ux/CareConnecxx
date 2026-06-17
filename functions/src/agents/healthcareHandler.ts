@@ -21,6 +21,14 @@ async function proposeHealthcareAction(params: {
   sendMessage: (msg: string) => Promise<unknown>;
   toolInput: Record<string, unknown>;
 }): Promise<void> {
+  // H-U9: ship dark — flag-off never proposes or commits.
+  const { realWorldHealthcareActionsEnabled } = await import("../config/featureFlags");
+  if (!realWorldHealthcareActionsEnabled()) {
+    await params.sendMessage(
+      "I can look up info and find the right links for you — taking action directly on your healthcare portals is coming soon.",
+    );
+    return;
+  }
   let action;
   try {
     action = await proposePendingAction({

@@ -2465,6 +2465,15 @@ export async function handleToolCall(
         try {
           // ── Login-required portal actions ──────────────────────────────────
           if (loginAction) {
+            // H-U9: ship DARK behind the flag. Flag-off → coming-soon; nothing is
+            // proposed or committed until the pre-launch gate closes.
+            const { realWorldHealthcareActionsEnabled } = await import("../config/featureFlags");
+            if (!realWorldHealthcareActionsEnabled()) {
+              return {
+                status: "coming_soon",
+                message: "I can look up info and find the right links for you — taking action directly on your healthcare portals is coming soon.",
+              };
+            }
             // H-U7: the credential vault is userId-keyed — fail CLOSED if there's
             // no resolvable account, rather than silently missing the credential.
             if (!userId2 || userId2 === "unknown") {

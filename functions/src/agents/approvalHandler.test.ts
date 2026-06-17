@@ -6,6 +6,8 @@ const hoisted = vi.hoisted(() => ({
   handleToolCallMock:   vi.fn(async (_n: string, _i: Record<string, unknown>): Promise<Record<string, unknown>> => ({ success: true })),
   handleToolCallForCaregiverMock: vi.fn(async (_n: string, _i: Record<string, unknown>): Promise<Record<string, unknown>> => ({ success: true })),
   resolvePendingMock:   vi.fn(async () => undefined),
+  claimPendingMock:     vi.fn(async () => "claimed"),
+  logHealthcareAuditMock: vi.fn(),
 }));
 
 vi.mock("../utils/openaiClient", () => ({ quickComplete: hoisted.quickCompleteMock }));
@@ -16,6 +18,8 @@ vi.mock("../mcp/server", () => ({
 }));
 vi.mock("./pendingActions", () => ({
   resolvePendingAction: hoisted.resolvePendingMock,
+  claimPendingAction:   hoisted.claimPendingMock,
+  logHealthcareAudit:   hoisted.logHealthcareAuditMock,
 }));
 
 import { classifyApproval, handlePendingApproval, handlePendingApprovals } from "./approvalHandler";

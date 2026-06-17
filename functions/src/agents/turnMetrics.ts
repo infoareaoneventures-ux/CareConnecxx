@@ -152,4 +152,33 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
   delete (payload as { startedAt?: number }).startedAt;
 
   console.info("cara.turn", payload);
+
+  // Bounded Firestore mirror — ONLY for experiment-enrolled turns (a small
+  // fraction of traffic), so the weekly experiment scorecard (experimentScorecard.ts)
+  // can aggregate per-variant outcomes. This is the minimal store needed to
+  // CLOSE the improvement loop; non-experiment turns still write nothing, so the
+  // module's "no per-turn writes" cost stance holds for the common case.
+  if (metrics.experiments && Object.keys(metrics.experiments).length > 0) {
+    mirrorExperimentTurn({
+      experiments:               metrics.experiments,
+      errored:                   !!payload.errored,
+      replyEmpty:                !!payload.replyEmpty,
+      durationMs,
+      warmthReflectionIncluded:  metrics.warmthReflectionIncluded ?? null,
+      pathway:                   metrics.pathway,
+      at:                        new Date().toISOString(),
+    });
+  }
+}
+
+// Fire-and-forget, fully guarded so it never touches the hot path or throws
+// into a caller (and stays harmless in tests without firebase-admin init).
+function mirrorExperimentTurn(record: Record<string, unknown>): void {
+  try {
+    // Lazy require so module load never depends on admin being initialized.
+    const admin = require("firebase-admin") as typeof import("firebase-admin");
+    admin.firestore().collection("cara_turn_metrics").add(record).catch(() => {});
+  } catch {
+    /* no-op */
+  }
 }

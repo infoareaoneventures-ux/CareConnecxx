@@ -128,6 +128,7 @@ export { sendStaleSessionNudges } from './scheduled/staleSessionNudge';
 export { familySilenceCheckinJob } from './scheduled/familySilenceCheckin';
 export { consolidateMemoryNightly } from './scheduled/nightlyMemory';
 export { wowMomentsDaily } from './scheduled/wowMomentsJob';
+export { experimentScorecardWeekly } from './scheduled/experimentScorecard';
 export { extendRecurringSchedules } from './scheduled/recurringScheduler';
 export { upcomingVisitReminder } from './scheduled/upcomingVisitReminder';
 export { sendShiftTaskNudges } from './scheduled/shiftTaskNudges';

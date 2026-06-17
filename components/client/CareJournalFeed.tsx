@@ -16,11 +16,16 @@ export interface CareJournalEntry {
   medsGiven?: boolean | string | null;
   timestamp?: string;
   source?: string;
+  wellness?: { mood?: string };
 }
 
+// Covers both writer vocabularies: the SMS/care-notes path
+// (happy|neutral|agitated|confused|tired) and the MCP tool (good|fair|poor),
+// plus legacy values — so an entry from either path renders an emoji.
 const MOOD_EMOJI: Record<string, string> = {
-  happy: '😊', good: '🙂', calm: '😌', tired: '😴',
-  anxious: '😟', sad: '😢', agitated: '😠',
+  happy: '😊', good: '🙂', calm: '😌', neutral: '😐', fair: '😐',
+  tired: '😴', anxious: '😟', sad: '😢', agitated: '😠',
+  confused: '😕', poor: '😞',
 };
 
 interface CareJournalFeedProps {
@@ -53,7 +58,9 @@ export const CareJournalFeed: React.FC<CareJournalFeedProps> = ({ clientId, limi
                 month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
               })
             : '';
-          const mood = e.mood ? (MOOD_EMOJI[e.mood.toLowerCase()] ?? '') : '';
+          // SMS/care-notes entries nest mood under wellness; MCP entries put it top-level.
+          const moodValue = e.mood ?? e.wellness?.mood;
+          const mood = moodValue ? (MOOD_EMOJI[moodValue.toLowerCase()] ?? '') : '';
 
           return (
             <div key={e.id} className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm">

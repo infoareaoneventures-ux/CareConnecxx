@@ -83,8 +83,10 @@ vi.mock("firebase-admin", () => ({
 
 // ── Linq client + messaging ──────────────────────────────────────────────────
 const sendMessage = vi.fn(async (..._a: any[]) => ({ message_id: "m1" }));
+const sendToPhone = vi.fn(async (..._a: any[]) => ({ message_id: "m2" }));
 vi.mock("../client", () => ({
   sendMessage:      (...a: any[]) => sendMessage(...a),
+  sendToPhone:      (...a: any[]) => sendToPhone(...a),
   startTyping:      vi.fn(async () => {}),
   stopTyping:       vi.fn(async () => {}),
   shareContactCard: vi.fn(async () => {}),
@@ -153,6 +155,11 @@ vi.mock("../../safety/crisisDetector", () => ({
 const quickComplete = vi.fn(async (..._a: any[]) => "NONE");
 vi.mock("../../utils/openaiClient", () => ({
   quickComplete: (...a: any[]) => quickComplete(...a),
+}));
+
+const handleToolCall = vi.fn(async (..._a: any[]) => ({ success: true, notification: { sent: true } }));
+vi.mock("../../mcp/server", () => ({
+  handleToolCall: (...a: any[]) => handleToolCall(...a),
 }));
 
 // ── Inert collaborators (must load, never fire in these scenarios) ──────────
@@ -299,6 +306,7 @@ beforeEach(() => {
   detectCrisis.mockReturnValue(null);
   isLikelyRealCrisis.mockResolvedValue(true);
   quickComplete.mockResolvedValue("NONE");
+  handleToolCall.mockResolvedValue({ success: true, notification: { sent: true } });
   sendMessage.mockResolvedValue({ message_id: "m1" });
 });
 
@@ -448,6 +456,21 @@ describe("pending-approval gate and shift-offer interception (order-critical)", 
 });
 
 describe("QA tail (quick-reply bypass vs full agent)", () => {
+  it("routes pending add-family phone replies before intent classification", async () => {
+    seedSession({
+      seniorId: "senior1",
+      pendingAddFamilyMember: { name: "Sarah", phone: null },
+    });
+    await handleInbound(makeEvent("+1 555 222 3333"));
+    expect(classifyIntentDetailed).not.toHaveBeenCalled();
+    expect(handleToolCall).toHaveBeenCalledWith("add_family_member", {
+      seniorId: "senior1",
+      name: "Sarah",
+      memberPhone: "+15552223333",
+      clientId: "u1",
+    });
+  });
+
   it("trivial QUESTION takes the quick-reply bypass, not the full agent", async () => {
     seedSession();
     classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });

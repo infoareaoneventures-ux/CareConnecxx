@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const hoisted = vi.hoisted(() => {
   // Module-load-time env for stripe.ts / checkr.ts (vi.hoisted runs first).
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
+  process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_connect_test";
   process.env.STRIPE_SECRET_KEY = "sk_test_x";
   process.env.CHECKR_WEBHOOK_SECRET = "";
   process.env.FUNCTIONS_EMULATOR = "true"; // checkr: skip signature verification
@@ -114,6 +115,7 @@ vi.mock("firebase-admin", () => ({
 vi.mock("stripe", () => ({ __esModule: true, default: hoisted.StripeClass }));
 
 import { stripeWebhook } from "../stripe";
+import { stripeConnectWebhook } from "../stripeConnectWebhook";
 import { checkrWebhook } from "../checkr";
 
 function makeRes() {
@@ -232,5 +234,54 @@ describe("checkrWebhook — exactly-once", () => {
     expect(res1.json).toHaveBeenCalledWith({ received: true });
     expect(res2.json).toHaveBeenCalledWith({ received: true });
     expect(hoisted.updates.filter((u) => u.path === "caregivers/cg1").length).toBe(2);
+  });
+
+  it("does NOT auto-approve on a 'consider' result, and dedupes the replay", async () => {
+    const considerEvent = (id: string) => ({
+      id,
+      type: "report.completed",
+      data: { object: { id: "rep_2", candidate_id: "cand_1", result: "consider", status: "complete" } },
+    });
+    const res1 = makeRes();
+    await (checkrWebhook as any)(checkrReq(considerEvent("evt_chk_consider")), res1);
+    expect(res1.json).toHaveBeenCalledWith({ received: true });
+    // A 'consider' result must NOT clear the caregiver for booking.
+    expect(hoisted.docs.get("caregivers/cg1")?.verificationStatus).not.toBe("approved");
+    expect(hoisted.docs.get("caregivers/cg1")?.verified).not.toBe(true);
+    const cgUpdatesAfterFirst = hoisted.updates.filter((u) => u.path === "caregivers/cg1").length;
+
+    const res2 = makeRes();
+    await (checkrWebhook as any)(checkrReq(considerEvent("evt_chk_consider")), res2);
+    expect(res2.json).toHaveBeenCalledWith({ received: true, status: "already_processed" });
+    expect(hoisted.updates.filter((u) => u.path === "caregivers/cg1").length).toBe(cgUpdatesAfterFirst);
+  });
+});
+
+describe("stripeConnectWebhook — exactly-once", () => {
+  const accountUpdatedEvent = (id: string) => ({
+    id,
+    type: "account.updated",
+    data: { object: { id: "acct_1", charges_enabled: true, payouts_enabled: true, details_submitted: true } },
+  });
+
+  beforeEach(() => {
+    // Caregiver matched by stripeAccountId; no phone → skip the Cara-advance path.
+    hoisted.collState.set("caregivers", [
+      { id: "cg1", stripeAccountId: "acct_1" },
+    ]);
+  });
+
+  it("marks Connect onboarding complete once; a replayed account.updated is skipped", async () => {
+    const res1 = makeRes();
+    await (stripeConnectWebhook as any)(stripeReq(accountUpdatedEvent("evt_conn_1")), res1);
+    expect(res1.json).toHaveBeenCalledWith({ received: true });
+    expect(hoisted.docs.get("caregivers/cg1")).toMatchObject({ stripeOnboardingComplete: true });
+    expect(hoisted.docs.get("processed_stripe_events/evt_conn_1")).toMatchObject({ status: "processed" });
+    const updatesAfterFirst = hoisted.updates.filter((u) => u.path === "caregivers/cg1").length;
+
+    const res2 = makeRes();
+    await (stripeConnectWebhook as any)(stripeReq(accountUpdatedEvent("evt_conn_1")), res2);
+    expect(res2.json).toHaveBeenCalledWith({ received: true, status: "already_processed" });
+    expect(hoisted.updates.filter((u) => u.path === "caregivers/cg1").length).toBe(updatesAfterFirst);
   });
 });

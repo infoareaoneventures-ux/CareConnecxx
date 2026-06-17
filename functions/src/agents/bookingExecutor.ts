@@ -6,6 +6,7 @@ import { closeJobPost } from "../triggers/jobNotifications";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { createShiftOffer } from "./shiftOffer";
+import { getAppUrl } from "../config/appUrl";
 
 async function hasConflict(
   caregiverId: string,
@@ -298,7 +299,7 @@ export async function finalizeAcceptedBooking(taskId: string, clientPhone: strin
   const { addKnownNames } = await import("../utils/knownNames");
   await addKnownNames(clientPhone, [task.caregiverName]);
 
-  const appUrl = process.env.APP_URL ?? "https://cara.app";
+  const appUrl = getAppUrl();
 
   // Confirm to family
   const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();

@@ -15,8 +15,8 @@
  *   2. Downloads the bytes (direct signed URL, falling back to authenticated
  *      fetch, or resolving an attachment_id via the Attachments API).
  *   3. Stores the file in Firebase Storage on the SAME paths the web upload page
- *      uses (`profile_photos/…`, `caregiver_docs/…`) and returns a long-lived
- *      read URL, so the rest of Cara treats a texted photo identically to a
+ *      uses (`profile_photos/…`, `caregiver_docs/…`) and returns a bounded
+ *      signed read URL, so the rest of Cara treats a texted photo identically to a
  *      web-uploaded one.
  *
  * Audio (voice memos), location pins, stickers, and plain text are deliberately
@@ -217,8 +217,7 @@ function guessExt(contentType: string, filename?: string): string {
 /**
  * Store inbound media in Firebase Storage on the SAME path convention the web
  * upload page uses (`profile_photos/…` for headshots, `caregiver_docs/…` for
- * documents) and return a long-lived signed read URL — matching the existing
- * signed-URL pattern in invoicing.ts / voiceSummary.ts.
+ * documents) and return a bounded signed read URL.
  */
 export async function storeInboundMedia(params: {
   phone:        string;
@@ -238,6 +237,9 @@ export async function storeInboundMedia(params: {
     resumable:   false,
   });
 
-  const [url] = await file.getSignedUrl({ action: "read", expires: "01-01-2100" });
+  const ttlDaysRaw = Number(process.env.MEDIA_SIGNED_URL_TTL_DAYS ?? "7");
+  const ttlDays = Number.isFinite(ttlDaysRaw) && ttlDaysRaw > 0 && ttlDaysRaw <= 30 ? ttlDaysRaw : 7;
+  const expires = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+  const [url] = await file.getSignedUrl({ action: "read", expires });
   return url;
 }

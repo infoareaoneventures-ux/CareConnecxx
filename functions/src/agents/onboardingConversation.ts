@@ -23,6 +23,7 @@ import { reverseGeocode, SharedLocation } from "../utils/locationShare";
 import { downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/mediaIntake";
 import { addKnownNames } from "../utils/knownNames";
 import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
+import { getAppUrl } from "../config/appUrl";
 
 /** iMessage/RCS can share a location pin; plain SMS cannot. */
 function isRichService(service?: string): boolean {
@@ -55,7 +56,7 @@ function getStripe(): Stripe {
   return _stripe;
 }
 
-const APP_URL = process.env.APP_URL ?? "https://cara.com";
+const APP_URL = getAppUrl();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -224,7 +225,7 @@ async function absorbClientFields(text: string, existing: Record<string, unknown
       `"careNeeds":["short need phrase"],` +
       `"conditions":["short condition phrase"],` +
       `"city":"city name",` +
-      `"zip":"5-digit US zip code",` +
+      `"zipCode":"5-digit US zip code",` +
       `"schedule":"plain-English schedule like '3 mornings a week'"}. ` +
       "Be conservative — only include a field if it is unambiguously stated. Reply with raw JSON, no markdown.",
     text,

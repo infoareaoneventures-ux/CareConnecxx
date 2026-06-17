@@ -15,6 +15,7 @@
 export type DocIdScheme =
   | "uid"            // Firebase Auth uid (canonical for user-owned docs)
   | "phone"          // E.164 phone number (agent sessions)
+  | "composite"      // deterministic multi-field key
   | "auto"           // Firestore auto-ID
   | "appointmentId"  // keyed by the related appointment's doc ID
   | "subcollection"; // nested under a parent doc
@@ -108,6 +109,20 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: false,
     notes: "Caregiver YES/NO offer state machine (agents/shiftOffer.ts).",
   },
+  family_groups: {
+    path: "family_groups",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes: "Linq group chat metadata for family care groups. Server-created through familyGroupManager.",
+  },
+  family_group_members: {
+    path: "family_group_members",
+    docId: "composite",
+    caraWrites: true,
+    webReads: false,
+    notes: "Deterministic primaryPhone_memberPhone membership index used by inbound routing and /join.",
+  },
   shiftHours: {
     path: "shiftHours",
     docId: "appointmentId",
@@ -150,12 +165,26 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: true,
     notes: "Cara-drafted proactive messages awaiting admin review.",
   },
+  referrals: {
+    path: "referrals",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Client/caregiver referral lifecycle. Cara writes SMS referrals; web ReferralProgram reads user referral status.",
+  },
   agent_audit_log: {
     path: "agent_audit_log",
     docId: "auto",
     caraWrites: true,
     webReads: true,
     notes: "Every consequential agent action (observability/auditLog.ts); AuditTrail admin surface reads.",
+  },
+  agent_action_ledger: {
+    path: "agent_action_ledger",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Durable status ledger for consequential Cara actions; admin audit surfaces read it.",
   },
 };
 

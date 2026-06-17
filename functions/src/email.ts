@@ -1,13 +1,14 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { Resend } from "resend";
+import { getAppUrl } from "./config/appUrl";
 
 const resendApiKey = process.env.RESEND_API_KEY || functions.config().resend?.api_key;
 const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@careconnex.com";
 const FROM_NAME = process.env.RESEND_FROM_NAME || "CareConnex";
-const APP_URL = process.env.APP_URL || "https://careconnex-d4c8b.web.app";
+const APP_URL = getAppUrl();
 
 // In-memory rate limiter (resets on cold start)
 const rateLimiter = new Map<string, number>();

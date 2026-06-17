@@ -17,6 +17,7 @@ import {
   ClaudeScoredMatch,
 } from "../ai/claudeMatching";
 import { getOutcomePatternSummary } from "../ai/outcomeAnalytics";
+import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
 
@@ -340,7 +341,7 @@ export async function runMatchingForClient(
     }
 
     const seniorName = (intake.seniorName ?? "your loved one") as string;
-    const appUrl     = process.env.APP_URL ?? "https://cara.app";
+    const appUrl     = getAppUrl();
     const userId     = (session as any)?.userId ?? phone;
 
     // Surface remembered client preferences so Cara can reference them naturally

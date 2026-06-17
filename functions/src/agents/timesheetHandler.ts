@@ -139,22 +139,12 @@ export async function handleTimesheetApproval(
         approvedBy: clientId,
       });
 
-      // Fire payment processing (fire-and-forget)
-      if (tsData.appointmentId && tsData.caregiverId && tsData.amountCents > 0) {
-        import("../billing/visitBilling").then(({ createVisitPayment }) => {
-          createVisitPayment({
-            appointmentId:  tsData.appointmentId,
-            clientId,
-            clientPhone:    "",
-            caregiverId:    tsData.caregiverId,
-            caregiverName:  tsData.caregiverName,
-            caregiverPhone: "",
-            durationHours:  tsData.hours,
-            hourlyRate:     tsData.amountCents / 100 / Math.max(tsData.hours, 1),
-            date:           tsData.date,
-          });
-        }).catch(() => {});
-      }
+      // Payment is processed by the onShiftHoursApproved Firestore trigger
+      // (functions/src/shiftHours.ts) the moment status flips to "approved"
+      // above — it charges the client (incl. the 1.5% platform fee) and
+      // transfers net pay to the caregiver's Stripe Connect account. No
+      // separate billing call here (the old createVisitPayment path never
+      // captured the charge and double-promised payment).
 
       const approveMsg = await generateCaraMessage({
         audience:  "family",

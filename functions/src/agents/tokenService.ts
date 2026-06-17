@@ -10,12 +10,14 @@ export type TokenTask =
   | "quick_confirm"
   | "interview_confirm"
   | "booking_confirm"
-  | "caregiver_membership";
+  | "caregiver_membership"
+  | "family_join";
 
 export interface TokenPayload {
   phone:        string;
   userId?:      string;
   caregiverId?: string;
+  seniorName?:  string;
   task:         TokenTask;
   taskId?:      string;
   exp:          number;

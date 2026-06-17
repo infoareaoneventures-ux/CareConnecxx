@@ -14,6 +14,7 @@ import { getPreferences } from "../memory/preferences";
 import { isHighRisk, proposePendingAction, buildPendingActionStub } from "../agents/pendingActions";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
+import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
 
@@ -614,12 +615,13 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        seniorId: { type: "string", description: "The senior's profile document ID" },
-        name:     { type: "string", description: "The new member's name" },
-        phone:    { type: "string", description: "The new member's phone number" },
-        clientId: { type: "string", description: "The primary client's user ID" },
+        seniorId:    { type: "string", description: "The senior's profile document ID" },
+        name:        { type: "string", description: "The new member's name" },
+        memberPhone: { type: "string", description: "Phone number (E.164) of the family member being added" },
+        phone:       { type: "string", description: "The acting user's phone — auto-injected; this is NOT the member being added" },
+        clientId:    { type: "string", description: "The primary client's user ID" },
       },
-      required: ["seniorId", "name", "phone", "clientId"],
+      required: ["seniorId", "name", "memberPhone", "clientId"],
     },
   },
   {
@@ -631,10 +633,11 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         seniorId: { type: "string", description: "The senior's profile document ID" },
-        phone:    { type: "string", description: "Phone number of the member to remove" },
+        memberPhone: { type: "string", description: "Phone number (E.164) of the family member to remove" },
+        phone:    { type: "string", description: "The acting user's phone — auto-injected for SMS confirmation; this is NOT the member being removed" },
         clientId: { type: "string", description: "The primary client's user ID" },
       },
-      required: ["seniorId", "phone", "clientId"],
+      required: ["seniorId", "memberPhone", "clientId"],
     },
   },
   {
@@ -720,7 +723,11 @@ export const MCP_TOOLS: McpTool[] = [
     name: "reschedule_appointment",
     description:
       "Move an existing confirmed appointment to a new date and/or time. " +
-      "Checks caregiver availability. Confirm with family before calling.",
+      "Checks caregiver availability. Confirm with family before calling. " +
+      "IMPORTANT — a reschedule is usually NOT immediate. Inspect the returned `status`: " +
+      "`pending_caregiver_confirmation` means the visit stays at its ORIGINAL time until the caregiver accepts — " +
+      "tell the family you've asked the caregiver to confirm and will follow up, and do NOT say the reschedule is done. " +
+      "Only `applied_directly` means the change already took effect.",
     input_schema: {
       type: "object",
       properties: {
@@ -1700,6 +1707,32 @@ function toolError(code: "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "
   return { _toolError: true, success: false, code, message };
 }
 
+// Ownership gate for senior PHI reads. The owning client is recorded on
+// senior_profiles as `userId` (new direct-onboarding docs) OR `clientId` (the
+// household back-reference written by migrateSeniorsToHousehold — those docs
+// have NO userId). Check both: a recorded owner that doesn't match the session
+// client is denied. When NEITHER owner field is present the doc is genuinely
+// owner-less; rather than leaving PHI readable by anyone (the prior behavior),
+// fail closed — except for the legacy single-senior model where the profile was
+// keyed by the client's own uid (seniorId === sessionClientId), which stays
+// reachable by its rightful owner. Returns a toolError on denial, or null when
+// access is allowed.
+async function assertSeniorAccess(seniorId: string, sessionClientId: unknown) {
+  const data = (await db.collection("senior_profiles").doc(seniorId).get()).data();
+  const ownerId = data?.userId ?? data?.clientId;
+  if (ownerId) {
+    if (ownerId !== sessionClientId) {
+      return toolError("PERMISSION_DENIED", "Not authorized to access this senior's data");
+    }
+    return null;
+  }
+  // No recorded owner — allow only the legacy self-owned case, else fail closed.
+  if (seniorId !== sessionClientId) {
+    return toolError("PERMISSION_DENIED", "Not authorized to access this senior's data");
+  }
+  return null;
+}
+
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
 export async function handleToolCall(
@@ -1746,6 +1779,8 @@ export async function handleToolCall(
     switch (name) {
       case "get_senior_profile": {
         if (!input.seniorId) return toolError("INVALID_INPUT", "seniorId is required");
+        const denied = await assertSeniorAccess(input.seniorId as string, input.clientId ?? input.userId);
+        if (denied) return denied;
         logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:get_senior_profile").catch(() => {});
         const snap = await db.collection("seniors").doc(input.seniorId as string).get();
         if (!snap.exists) return toolError("NOT_FOUND", "Senior profile not found");
@@ -1775,6 +1810,8 @@ export async function handleToolCall(
 
       case "get_care_journal": {
         if (!input.seniorId) return toolError("INVALID_INPUT", "seniorId is required");
+        const denied = await assertSeniorAccess(input.seniorId as string, input.clientId ?? input.userId);
+        if (denied) return denied;
         logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:get_care_journal").catch(() => {});
         const limit = Math.min((input.limit as number) ?? 5, 20);
         const snap = await db
@@ -1860,6 +1897,8 @@ export async function handleToolCall(
 
       case "get_health_signals": {
         if (!input.seniorId) return toolError("INVALID_INPUT", "seniorId is required");
+        const denied = await assertSeniorAccess(input.seniorId as string, input.clientId ?? input.userId);
+        if (denied) return denied;
         logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:get_health_signals").catch(() => {});
         const snap = await db
           .collection("health_signals")
@@ -2534,8 +2573,8 @@ export async function handleToolCall(
     }
 
     if (name === "add_family_member") {
-      const { seniorId, name: memberName, phone: memberPhone, clientId } = input as Record<string, unknown>;
-      if (!seniorId || !memberName || !memberPhone || !clientId) return toolError("INVALID_INPUT", "seniorId, name, phone, and clientId are required");
+      const { seniorId, name: memberName, memberPhone, clientId } = input as Record<string, unknown>;
+      if (!seniorId || !memberName || !memberPhone || !clientId) return toolError("INVALID_INPUT", "seniorId, name, memberPhone, and clientId are required");
       const seniorSnap = await db.collection("senior_profiles").doc(seniorId as string).get();
       if (!seniorSnap.exists) return toolError("NOT_FOUND", "Senior profile not found");
       const seniorData = seniorSnap.data()!;
@@ -2548,13 +2587,12 @@ export async function handleToolCall(
       // so when this member first texts in they're recognized as a secondary member
       // instead of creating a DUPLICATE account. The router checks both the primary
       // session's `groupMembers` array and the `family_group_members` collection.
+      // Resolve the primary's phone by clientId lookup (authoritative). The
+      // member being added is `memberPhone`; the acting user's `phone` is
+      // auto-injected separately and is intentionally not used for the member.
+      let primaryPhone: string | undefined;
+      let memberDocId: string | undefined;
       {
-        // Resolve the primary's phone by clientId lookup ONLY. input.phone can
-        // NOT be trusted here: this tool's schema uses `phone` for the MEMBER
-        // being added, so reading it as the acting user's phone wrote
-        // groupMembers/family_group_members records keyed to the new member's
-        // own phone (a self-referential group the inbound router can't use).
-        let primaryPhone: string | undefined;
         const primarySnap = await db.collection("agent_sessions")
           .where("userId", "==", clientId as string).limit(1).get();
         if (!primarySnap.empty) primaryPhone = primarySnap.docs[0].id;
@@ -2563,18 +2601,32 @@ export async function handleToolCall(
           await db.collection("agent_sessions").doc(primaryPhone).update({
             groupMembers: admin.firestore.FieldValue.arrayUnion(memberPhone),
           }).catch(() => {});
-          // Idempotent: only add the collection record if it doesn't already exist.
-          const existingMember = await db.collection("family_group_members")
-            .where("memberPhone", "==", memberPhone as string).limit(1).get();
-          if (existingMember.empty) {
-            await db.collection("family_group_members").add({
+          const { familyMemberDocId } = await import("../agents/familyGroupManager");
+          memberDocId = familyMemberDocId(primaryPhone, memberPhone as string);
+          const memberRef = db.collection("family_group_members").doc(memberDocId);
+          const memberSnap = await memberRef.get().catch(() => null);
+          if (!memberSnap?.exists) {
+            // Do NOT swallow silently: a failed index write means the inbound
+            // router won't recognize this member and may spawn a duplicate
+            // account, so surface it loudly for admin follow-up. Kept non-fatal
+            // because senior_profiles.familyMembers (written above) is the
+            // source of truth buildOrUpdateFamilyGroup reads, and the dup-guard
+            // earlier in this handler would block a clean retry of the add.
+            await memberRef.set({
               primaryPhone,
               memberPhone,
               memberName:  memberName ?? "Family member",
               userId:      clientId,
+              seniorId,
+              seniorName:  seniorData.name ?? seniorData.seniorName ?? null,
               addedAt:     nowIso,
+              joinedAt:    null,
               source:      "mcp:add_family_member",
-            }).catch(() => {});
+            }).catch((err) => {
+              // Log only non-PII correlation IDs — phone numbers (and memberDocId,
+              // which is derived from them) are PII and must not hit logs.
+              console.error("add_family_member: family_group_members index write failed", { seniorId, clientId, error: err instanceof Error ? err.message : String(err) });
+            });
           }
         }
       }
@@ -2584,16 +2636,37 @@ export async function handleToolCall(
       const { trySend } = await import("../utils/toolNotify");
       const notification = await trySend(
         memberPhone as string,
-        "Hi! You've been added to a CareConnex care group. You'll receive updates about your loved one's care here. Text any question anytime.",
+        `Hi - you've been added to ${seniorData.name ?? seniorData.seniorName ?? "your loved one's"} CareConnex care group. I'm Cara, and I'll send care updates here. You can text me questions anytime. Reply STOP to opt out.`,
         "mcp:add_family_member",
       );
+      const { logAgentAction } = await import("../observability/actionLedger");
       logAudit({ eventType: "family_member_added", userId: clientId as string, data: { source: "mcp:add_family_member", seniorId, newMemberPhone: memberPhone, notificationSent: notification.sent } }).catch(() => {});
+      logAudit({
+        eventType: notification.sent ? "family_member_welcome_sent" : "family_member_welcome_failed",
+        userId: clientId as string,
+        data: { source: "mcp:add_family_member", seniorId, newMemberPhone: memberPhone, notification },
+      }).catch(() => {});
+      logAgentAction({
+        actionType: "family_member_add",
+        status: notification.sent ? "executed" : "failed",
+        userId: clientId as string,
+        role: "client",
+        toolName: "add_family_member",
+        targetCollection: "family_group_members",
+        targetDocId: memberDocId ?? (typeof memberPhone === "string" ? String(memberPhone) : undefined),
+        errorReason: notification.sent ? undefined : notification.reason,
+        metadata: { seniorId, memberName, memberPhone, source: "mcp:add_family_member" },
+      }).catch(() => {});
       return { success: true, added: true, name: memberName, phone: memberPhone, notification };
     }
 
     if (name === "remove_family_member") {
-      const { seniorId, phone: targetPhone, clientId } = input as Record<string, unknown>;
-      if (!seniorId || !targetPhone || !clientId) return toolError("INVALID_INPUT", "seniorId, phone, and clientId are required");
+      const { seniorId, clientId } = input as Record<string, unknown>;
+      // Target is memberPhone only. `input.phone` is the acting user's phone
+      // (auto-injected for the confirmation round-trip), so falling back to it
+      // here would remove the actor themselves when memberPhone is missing.
+      const targetPhone = input.memberPhone as unknown;
+      if (!seniorId || !targetPhone || !clientId) return toolError("INVALID_INPUT", "seniorId, memberPhone, and clientId are required");
       const seniorSnap = await db.collection("senior_profiles").doc(seniorId as string).get();
       if (!seniorSnap.exists) return toolError("NOT_FOUND", "Senior profile not found");
       const seniorData = seniorSnap.data()!;
@@ -2612,6 +2685,18 @@ export async function handleToolCall(
         "mcp:remove_family_member",
       );
       logAudit({ eventType: "family_member_removed", userId: clientId as string, data: { source: "mcp:remove_family_member", seniorId, removedPhone: targetPhone, notificationSent: notification.sent } }).catch(() => {});
+      const { logAgentAction } = await import("../observability/actionLedger");
+      logAgentAction({
+        actionType: "family_member_remove",
+        status: notification.sent ? "executed" : "failed",
+        userId: clientId as string,
+        role: "client",
+        toolName: "remove_family_member",
+        targetCollection: "family_group_members",
+        targetDocId: String(targetPhone),
+        errorReason: notification.sent ? undefined : notification.reason,
+        metadata: { seniorId, removedPhone: targetPhone, source: "mcp:remove_family_member" },
+      }).catch(() => {});
       return { success: true, ...result, notification };
     }
 
@@ -2883,7 +2968,23 @@ export async function handleToolCall(
       const durationHours3 = Math.round((totalMins3 / 60) * 100) / 100;
       const hourlyRate3    = (appt3.hourlyRate as number) ?? 22;
       const amountCents3   = Math.round(durationHours3 * hourlyRate3 * 100);
-      await db.collection("shiftHours").doc(appointmentId as string).set({ appointmentId, caregiverId, clientId: appt3.clientId, clockInTime, clockOutTime, breakMinutes: Number(breakMinutes) || 0, durationHours: durationHours3, date: appt3.date, hourlyRate: hourlyRate3, amountCents: amountCents3, status: "pending_client_review", submittedAt: nowIso, paymentAttemptCount: 0 }, { merge: false });
+      const grossPay3      = Math.round(durationHours3 * hourlyRate3 * 100) / 100;
+      await db.collection("shiftHours").doc(appointmentId as string).set({
+        appointmentId, caregiverId, clientId: appt3.clientId,
+        caregiverName: (appt3.caregiverName as string) ?? "Caregiver",
+        clientName: (appt3.clientName as string) ?? "Client",
+        clockInTime, clockOutTime, breakMinutes: Number(breakMinutes) || 0,
+        durationHours: durationHours3,
+        submittedTotalHours: durationHours3,
+        date: appt3.date, hourlyRate: hourlyRate3, payRate: hourlyRate3,
+        amountCents: amountCents3,
+        // Charge-engine fields (processShiftPayment reads grossPay/paymentMethod/currency)
+        basePay: grossPay3, grossPay: grossPay3, currency: "usd",
+        paymentMethod: String(appt3.paymentMethod ?? "").toLowerCase().trim() === "cash" ? "cash" : "credit",
+        status: "pending_client_review", submittedAt: nowIso,
+        autoApproveAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        paymentAttemptCount: 0,
+      }, { merge: false });
       const clientSessSnap3 = await db.collection("agent_sessions").where("userId", "==", appt3.clientId).limit(1).get();
       if (!clientSessSnap3.empty) {
         const { sendViaInteractionAgent } = await import("../agents/caraAgent");
@@ -3541,7 +3642,8 @@ export async function handleToolCall(
             timestamp:    entry.timestamp,
             caregiverName: (cg9.name ?? `${cg9.firstName ?? ""} ${cg9.lastName ?? ""}`.trim()) || "Caregiver",
             notes:        entry.notes       ?? null,
-            mood:         entry.mood        ?? null,
+            // SMS/care-notes entries nest mood under wellness; surface it consistently.
+            mood:         entry.mood        ?? entry.wellness?.mood ?? null,
             activities:   entry.activities  ?? [],
             wellness:     entry.wellness    ?? null,
           };
@@ -3641,7 +3743,7 @@ export async function handleToolCall(
       const { getStripeClient } = await import("../stripe");
       const sc = getStripeClient();
 
-      const appUrl = process.env.APP_URL ?? "https://cara.app";
+      const appUrl = getAppUrl();
       const session = await sc.billingPortal.sessions.create({
         customer:   stripeCustomerId,
         return_url: `${appUrl}/settings/billing`,

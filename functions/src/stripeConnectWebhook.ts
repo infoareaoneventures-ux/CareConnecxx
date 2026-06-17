@@ -1,7 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from "./utils/webhookLedger";
-const Stripe = require("stripe");
+import Stripe from "stripe";
 
 if (!admin.apps.length) {
     admin.initializeApp();

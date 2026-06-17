@@ -6,8 +6,18 @@ type PageState = "loading" | "ready" | "joining" | "joined" | "error" | "invalid
 
 function decodeJoinToken(token: string): { primaryPhone: string; seniorName: string } | null {
   try {
-    const decoded = atob(token);
-    return JSON.parse(decoded);
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const body = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const decoded = atob(body.padEnd(body.length + ((4 - body.length % 4) % 4), "="));
+    const parsed = JSON.parse(decoded);
+    if (parsed?.task !== "family_join" || typeof parsed?.phone !== "string") return null;
+    return {
+      primaryPhone: parsed.phone,
+      seniorName: typeof parsed.seniorName === "string" && parsed.seniorName.trim()
+        ? parsed.seniorName.trim()
+        : "your loved one",
+    };
   } catch {
     return null;
   }
@@ -54,7 +64,7 @@ export default function JoinFamilyPage() {
       const { getFunctions, httpsCallable } = await import("firebase/functions");
       const fns  = getFunctions();
       const join = httpsCallable(fns, "v1-addFamilyGroupMember");
-      await join({ primaryPhone: data.primaryPhone, memberPhone: formatted, seniorName: data.seniorName });
+      await join({ token, memberPhone: formatted });
 
       setState("joined");
     } catch (err) {

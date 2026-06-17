@@ -538,7 +538,9 @@ export async function handleInbound(event: unknown): Promise<void> {
     const webSessionRef  = db.collection("web_onboarding_sessions").doc(phone);
     const webSessionSnap = await webSessionRef.get();
     if (webSessionSnap.exists && webSessionSnap.data()?.status === "awaiting_inbound") {
-      const webRole  = (webSessionSnap.data()?.role as string | undefined) === "caregiver" ? "caregiver" : "client";
+      const webSessionData = webSessionSnap.data() ?? {};
+      const webRole  = (webSessionData.role as string | undefined) === "caregiver" ? "caregiver" : "client";
+      const referralId = webRole === "caregiver" ? (webSessionData.referralId as string | undefined) : undefined;
       const firstStep = webRole === "caregiver" ? "caregiver_ask_name" : "client_ask_name";
 
       // Returning user — phone already linked to an account. Skip re-onboarding;
@@ -566,7 +568,8 @@ export async function handleInbound(event: unknown): Promise<void> {
           optedOut:       false,
           preferredLanguage,
           createdAt:      new Date().toISOString(),
-          webOnboardingUid: webSessionSnap.data()?.uid ?? null,
+          webOnboardingUid: webSessionData.uid ?? null,
+          ...(referralId ? { referralId } : {}),
         });
       } else {
         await db.collection("agent_sessions").doc(phone).set({
@@ -579,7 +582,8 @@ export async function handleInbound(event: unknown): Promise<void> {
           optedOut:       false,
           preferredLanguage,
           createdAt:      new Date().toISOString(),
-          webOnboardingUid: webSessionSnap.data()?.uid ?? null,
+          webOnboardingUid: webSessionData.uid ?? null,
+          ...(referralId ? { referralId } : {}),
         });
       }
 

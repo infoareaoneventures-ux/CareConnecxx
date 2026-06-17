@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, sendToPhone, AgentSession } from "../linq/client";
+import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
 
@@ -166,7 +167,7 @@ async function runMonthlyHealthTrends(): Promise<number> {
         seniorName: data.seniorName,
       });
 
-      const appUrl     = process.env.APP_URL ?? "https://cara.app";
+      const appUrl     = getAppUrl();
       const summaryUrl = `${appUrl}/health-summary/${shareToken}`;
       const monthName  = new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
 

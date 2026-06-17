@@ -2,10 +2,13 @@ import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
 import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from './utils/webhookLedger';
+import { fetchWithTimeout } from './utils/httpTimeout';
+import { appLink } from './config/appUrl';
 
 // Initialize Stripe with secret key
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
   apiVersion: '2023-10-16',
+  timeout: 10_000, // cap SDK calls (default 80s) so a slow Stripe response can't hold a webhook claim open to the function deadline
 });
 
 export function getStripeClient(): Stripe { return stripe; }
@@ -358,7 +361,7 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     };
     if (workLocations.length) candidateBody.work_locations = workLocations;
 
-    const candidateRes = await fetch(`${CHECKR_BASE}/candidates`, {
+    const candidateRes = await fetchWithTimeout(`${CHECKR_BASE}/candidates`, {
       method: 'POST',
       headers: { Authorization: authHeader, 'Content-Type': 'application/json', 'Idempotency-Key': `${userId}-candidate-${dateKey}` },
       body: JSON.stringify(candidateBody),
@@ -376,7 +379,7 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     const invBody: Record<string, unknown> = { candidate_id: candidateId, package: CHECKR_PKG };
     if (workLocations.length) invBody.work_locations = workLocations;
 
-    const invRes = await fetch(`${CHECKR_BASE}/invitations`, {
+    const invRes = await fetchWithTimeout(`${CHECKR_BASE}/invitations`, {
       method: 'POST',
       headers: { Authorization: authHeader, 'Content-Type': 'application/json', 'Idempotency-Key': `${userId}-invitation-${dateKey}` },
       body: JSON.stringify(invBody),
@@ -829,6 +832,18 @@ async function handleShiftPaymentIntentSucceeded(intent: Stripe.PaymentIntent) {
     chargeConfirmedAt: admin.firestore.FieldValue.serverTimestamp(),
     stripeChargeStatus: 'succeeded',
   });
+
+  // The charge has actually settled — complete the payout for a shift that was
+  // held in 'charge_pending' because its charge settled asynchronously.
+  // Idempotent: a shift already 'paid' is a no-op, and the transfer
+  // idempotency key guards a duplicate webhook delivery. Dynamic import avoids
+  // a module-load cycle between stripe.ts and shiftHours.ts.
+  try {
+    const { completeShiftPaymentAfterCharge } = await import('./shiftHours');
+    await completeShiftPaymentAfterCharge(appointmentId);
+  } catch (err) {
+    console.error(`completeShiftPaymentAfterCharge failed for ${appointmentId}:`, err);
+  }
 }
 
 async function handleShiftPaymentIntentFailed(intent: Stripe.PaymentIntent) {
@@ -839,8 +854,38 @@ async function handleShiftPaymentIntentFailed(intent: Stripe.PaymentIntent) {
   const ref = admin.firestore().collection('shiftHours').doc(appointmentId);
   const snap = await ref.get();
   if (!snap.exists) return;
+  const shift = snap.data()!;
 
   const reason = intent.last_payment_error?.message || 'payment_intent.payment_failed';
+
+  // If a payout already went out (charge had settled, transfer was created) and
+  // the charge LATER failed, the caregiver was paid from money we never
+  // collected. Reverse the transfer; if reversal fails, escalate to admins —
+  // never leave an un-reversed payout silently.
+  if (shift.stripeTransferId) {
+    try {
+      const { reverseShiftTransfer } = await import('./shiftHours');
+      await reverseShiftTransfer(appointmentId, shift);
+      await ref.update({
+        reversedStripeTransferId: shift.stripeTransferId,
+        stripeTransferReversedAt: new Date().toISOString(),
+        stripeTransferId: admin.firestore.FieldValue.delete(),
+      });
+    } catch (err) {
+      console.error(`reverseShiftTransfer failed for ${appointmentId}:`, err);
+      await admin.firestore().collection('admin_alerts').add({
+        type: 'transfer_reversal_failed',
+        appointmentId,
+        caregiverId: shift.caregiverId ?? null,
+        stripeTransferId: shift.stripeTransferId,
+        errorMessage: err instanceof Error ? err.message : String(err),
+        createdAt: new Date().toISOString(),
+        resolved: false,
+        severity: 'high',
+      });
+    }
+  }
+
   await ref.update({
     status: 'payment_failed',
     stripeFailureReason: reason,
@@ -897,7 +942,7 @@ export const createCaregiverBillingPortalSession = functions.https.onCall(async 
   }
 
   const userId = context.auth.uid;
-  const returnUrl = (data as any)?.returnUrl || `${process.env.APP_URL || 'https://careconnex.app'}/caregiver/payments`;
+  const returnUrl = (data as any)?.returnUrl || appLink('/caregiver/payments');
 
   try {
     const customerDoc = await admin.firestore().collection('customers').doc(userId).get();
@@ -927,6 +972,32 @@ async function handlePaymentMethodAttached(pm: Stripe.PaymentMethod): Promise<vo
   if (!customerId) return;
 
   const db = admin.firestore();
+
+  // Make the attached card the customer's default invoice payment method when
+  // none is set yet. This is the linchpin of off-session shift charging:
+  // processShiftPayment (shiftHours.ts) reads
+  // customer.invoice_settings.default_payment_method, but neither subscription-
+  // mode nor setup-mode Checkout sets that field automatically — subscription
+  // mode only sets subscription.default_payment_method, and setup mode sets
+  // nothing customer-level. Without this, a client who successfully added a card
+  // would still hit "Client has no default payment method" and every shift would
+  // fail to charge. Runs for ALL attaches (before the booking-task early-return)
+  // and is idempotent — we never overwrite an existing default.
+  try {
+    const customer = await stripe.customers.retrieve(customerId);
+    if (
+      !customer.deleted &&
+      !customer.invoice_settings?.default_payment_method &&
+      !customer.default_source
+    ) {
+      await stripe.customers.update(customerId, {
+        invoice_settings: { default_payment_method: pm.id },
+      });
+      console.log(`[handlePaymentMethodAttached] set default payment method ${pm.id} for customer ${customerId}`);
+    }
+  } catch (err) {
+    console.error(`[handlePaymentMethodAttached] failed to set default payment method for ${customerId}:`, err);
+  }
 
   // Find booking tasks awaiting payment setup for this customer
   const taskSnap = await db.collection("agent_tasks")

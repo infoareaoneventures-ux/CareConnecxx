@@ -4,6 +4,16 @@ import { db, functions } from '../../lib/firebase';
 import { Invoice } from '../../types';
 import { Plus, Eye, Edit, Trash2, Send, Download, CheckCircle, XCircle } from 'lucide-react';
 
+const readRate = (name: string, fallback: number): number => {
+    const raw = (import.meta.env[name] as string | undefined) ?? '';
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : fallback;
+};
+
+const INVOICE_TAX_RATE = readRate('VITE_INVOICE_TAX_RATE', 0.05);
+const INVOICE_PLATFORM_FEE_RATE = readRate('VITE_INVOICE_PLATFORM_FEE_RATE', 0.02);
+const formatPercent = (rate: number) => `${(rate * 100).toFixed(rate * 100 % 1 === 0 ? 0 : 2)}%`;
+
 export const InvoicingTab = () => {
     const { addToast, currentUser } = useCareConnex();
     const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -57,8 +67,8 @@ export const InvoicingTab = () => {
     const calculateTotals = () => {
         const validItems = lineItems.filter(item => item.hours > 0 && item.rate > 0);
         const subtotal = validItems.reduce((acc, item) => acc + (item.hours * item.rate), 0);
-        const taxes = subtotal * 0.05;
-        const fees = subtotal * 0.02;
+        const taxes = subtotal * INVOICE_TAX_RATE;
+        const fees = subtotal * INVOICE_PLATFORM_FEE_RATE;
         return { subtotal, taxes, fees, total: subtotal + taxes + fees };
     };
 
@@ -247,8 +257,8 @@ export const InvoicingTab = () => {
                         <div className="bg-slate-100 p-4 rounded-lg flex justify-between items-center">
                             <div>
                                 <p className="text-sm">Subtotal: ${calculateTotals().subtotal.toFixed(2)}</p>
-                                <p className="text-sm">Taxes (5%): ${calculateTotals().taxes.toFixed(2)}</p>
-                                <p className="text-sm">Fees (2%): ${calculateTotals().fees.toFixed(2)}</p>
+                                <p className="text-sm">Taxes ({formatPercent(INVOICE_TAX_RATE)}): ${calculateTotals().taxes.toFixed(2)}</p>
+                                <p className="text-sm">Fees ({formatPercent(INVOICE_PLATFORM_FEE_RATE)}): ${calculateTotals().fees.toFixed(2)}</p>
                             </div>
                             <div className="text-2xl font-bold">Total: ${calculateTotals().total.toFixed(2)}</div>
                         </div>

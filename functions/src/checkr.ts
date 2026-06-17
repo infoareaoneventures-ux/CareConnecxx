@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import * as crypto from "crypto";
 import { claimWebhookEvent, settleWebhookEvent, CHECKR_EVENTS_COLLECTION } from "./utils/webhookLedger";
+import { fetchWithTimeout } from "./utils/httpTimeout";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -33,7 +34,7 @@ async function checkrPost(path: string, body: Record<string, unknown>, idempoten
   const baseUrl = process.env.CHECKR_API_URL || "https://api.checkr.com/v1";
   const keySource = process.env.CHECKR_KEY ? "CHECKR_KEY" : "CHECKR_API_KEY";
   console.log(`Checkr POST ${baseUrl}${path} key=${apiKey.slice(0,8)}... (from ${keySource})`);
-  const res = await fetch(`${baseUrl}${path}`, {
+  const res = await fetchWithTimeout(`${baseUrl}${path}`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),

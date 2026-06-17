@@ -779,8 +779,8 @@ export const dbService = {
                     action: 'delete_job',
                     component: 'dbService',
                     additionalData: { 
-                        jobId, 
-                        clientId: validators.hashForLogging(clientId),
+                        jobId,
+                        clientId: await validators.hashForLogging(clientId),
                         timestamp: new Date().toISOString()
                     }
                 });
@@ -877,32 +877,55 @@ export const dbService = {
                 // Extract date and time for availability check
                 const { caregiverId, date, time, clientId } = appointmentData;
                 
-                // CRITICAL FIX: Use atomic lock acquisition to prevent race conditions
-                // The lock document ID is based on the time slot - if it exists, someone else is booking
+                // CRITICAL FIX: Use atomic lock acquisition to prevent race conditions.
+                // Two deterministic lock docs participate in the transaction's
+                // consistency boundary: one keyed by the caregiver's slot (blocks two
+                // clients grabbing the same caregiver+time) and one keyed by the
+                // client's slot (blocks one client booking two caregivers at the same
+                // time). Concurrent in-flight bookings are serialized by these
+                // transactional reads+writes.
                 const lockId = `${caregiverId}_${date}_${time}`;
                 const lockRef = fdb.collection('appointment_locks').doc(lockId);
-                
-                // Try to create lock atomically
+                const clientLockId = `client_${clientId}_${date}_${time}`;
+                const clientLockRef = fdb.collection('appointment_locks').doc(clientLockId);
+
+                // Firestore requires all transactional reads before any writes.
                 const lockDoc = await transaction.get(lockRef);
-                if (lockDoc.exists) {
-                    const lockData = lockDoc.data();
-                    if (lockData && lockData.expiresAt && new Date(lockData.expiresAt) > new Date()) {
-                        throw new Error('This time slot is currently being booked by another user. Please try again in a moment or select a different time.');
-                    }
+                const clientLockDoc = await transaction.get(clientLockRef);
+
+                const lockData = lockDoc.exists ? lockDoc.data() : null;
+                if (lockData && lockData.expiresAt && new Date(lockData.expiresAt) > new Date()) {
+                    throw new Error('This time slot is currently being booked by another user. Please try again in a moment or select a different time.');
                 }
-                
+                const clientLockData = clientLockDoc.exists ? clientLockDoc.data() : null;
+                if (clientLockData && clientLockData.expiresAt && new Date(clientLockData.expiresAt) > new Date()) {
+                    throw new Error('You already have an appointment being booked at this time.');
+                }
+
+                const lockCreatedAt = new Date().toISOString();
+                const lockExpiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
                 transaction.set(lockRef, {
                     lockId,
                     caregiverId,
                     date,
                     time,
                     clientId,
-                    createdAt: new Date().toISOString(),
-                    expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString()
+                    createdAt: lockCreatedAt,
+                    expiresAt: lockExpiresAt
                 });
-                
-                // Check for double-booking: Query for existing appointments
-                // These queries are now part of the transaction for true atomicity
+                transaction.set(clientLockRef, {
+                    lockId: clientLockId,
+                    caregiverId,
+                    date,
+                    time,
+                    clientId,
+                    createdAt: lockCreatedAt,
+                    expiresAt: lockExpiresAt
+                });
+
+                // Secondary check for ALREADY-COMMITTED appointments (concurrent
+                // in-flight bookings are handled by the locks above). These plain
+                // queries are NOT part of the transaction.
                 const existingApptsQuery = fdb.collection('appointments')
                     .where('caregiverId', '==', caregiverId)
                     .where('date', '==', date)
@@ -934,11 +957,14 @@ export const dbService = {
                 const docRef = fdb.collection('appointments').doc();
                 const docId = docRef.id;
 
-                // Determine status based on booking type
-                // If caregiverId is provided (direct booking), it needs caregiver confirmation
-                // If it's from job board accept, it's already confirmed
-                const isDirectBooking = !!appointmentData.caregiverId && !appointmentData.isRecurring;
-                const status = isDirectBooking ? 'pending_caregiver_confirmation' : 'confirmed';
+                // No-silent-booking contract: any booking that assigns a SPECIFIC
+                // caregiver requires that caregiver's confirmation before it's
+                // 'confirmed' — whether one-time or recurring. (Previously recurring
+                // direct bookings auto-confirmed, silently assigning a caregiver who
+                // never accepted.) Bookings with no assigned caregiver (job-board
+                // posts) confirm through their own acceptance flow.
+                const needsCaregiverConfirmation = !!appointmentData.caregiverId;
+                const status = needsCaregiverConfirmation ? 'pending_caregiver_confirmation' : 'confirmed';
 
                 const newAppt = {
                     ...appointmentData,
@@ -954,8 +980,9 @@ export const dbService = {
 
                 transaction.set(docRef, cleanedAppt);
                 
-                // Release the lock after successful booking
+                // Release both locks after successful booking
                 transaction.delete(lockRef);
+                transaction.delete(clientLockRef);
                 
                 // Clear rate limit on successful booking
                 clearLocalRateLimit(`booking_${appointmentData.clientId}_${appointmentData.caregiverId}`);
@@ -1360,7 +1387,10 @@ export const dbService = {
                 
                 return true;
             } catch (e: any) {
-                if (e.code === 'permission-denied') return true;
+                // A permission-denied error means the update did NOT happen —
+                // surface it instead of masking the authorization failure as
+                // success (which would leave the caller believing the write
+                // applied).
                 throw e;
             }
         }
@@ -2513,18 +2543,21 @@ export const dbService = {
                 await db.collection('users').doc(userId).update({ referralCode });
             }
 
-            // Get referrals
-            const referralsSnapshot = await db.collection('referrals')
-                .where('referrerId', '==', userId)
-                .get();
-
-            const referrals = referralsSnapshot.docs.map(doc => doc.data());
-            const successful = referrals.filter(r => r.status === 'successful');
+            const [legacySnapshot, caraSnapshot] = await Promise.all([
+                db.collection('referrals').where('referrerId', '==', userId).get(),
+                db.collection('referrals').where('referrerUserId', '==', userId).get(),
+            ]);
+            const referralMap = new Map<string, any>();
+            [...legacySnapshot.docs, ...caraSnapshot.docs].forEach(doc => referralMap.set(doc.id, doc.data()));
+            const referrals = [...referralMap.values()];
+            const successfulStatuses = new Set(['successful', 'approved', 'first_booking_completed']);
+            const pendingStatuses = new Set(['pending', 'invited', 'started']);
+            const successful = referrals.filter(r => successfulStatuses.has(r.status));
 
             return {
                 totalReferrals: referrals.length,
                 successfulReferrals: successful.length,
-                pendingReferrals: referrals.filter(r => r.status === 'pending').length,
+                pendingReferrals: referrals.filter(r => pendingStatuses.has(r.status)).length,
                 totalEarnings: successful.reduce((sum, r) => sum + (r.reward || 0), 0),
                 referralCode
             };
@@ -2549,15 +2582,18 @@ export const dbService = {
         }
 
         try {
-            const snapshot = await db.collection('referrals')
-                .where('referrerId', '==', userId)
-                .orderBy('createdAt', 'desc')
-                .get();
-
-            return snapshot.docs.map(doc => ({
+            const [legacySnapshot, caraSnapshot] = await Promise.all([
+                db.collection('referrals').where('referrerId', '==', userId).orderBy('createdAt', 'desc').get(),
+                db.collection('referrals').where('referrerUserId', '==', userId).orderBy('createdAt', 'desc').get(),
+            ]);
+            const referralMap = new Map<string, any>();
+            [...legacySnapshot.docs, ...caraSnapshot.docs].forEach(doc => referralMap.set(doc.id, {
                 id: doc.id,
                 ...doc.data()
             }));
+            return [...referralMap.values()].sort((a, b) =>
+                String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))
+            );
         } catch (error) {
             console.error('Failed to get referrals:', error);
             return [];
@@ -2580,6 +2616,7 @@ export const dbService = {
             // Create referral record
             await db.collection('referrals').add({
                 referrerId: userId,
+                referrerUserId: userId,
                 referredEmail: email,
                 status: 'pending',
                 referralCode,
@@ -2604,6 +2641,29 @@ export const dbService = {
         }
 
         try {
+            const now = new Date().toISOString();
+            const directReferralRef = db.collection('referrals').doc(referralCode);
+            const directReferralSnap = await directReferralRef.get();
+            if (directReferralSnap.exists) {
+                const referral = directReferralSnap.data() || {};
+                const referrerId = referral.referrerUserId || referral.referrerId;
+                await directReferralRef.update({
+                    referredId: newUserId,
+                    referredUserId: newUserId,
+                    status: ['approved', 'first_booking_completed', 'successful', 'rejected'].includes(referral.status)
+                        ? referral.status
+                        : 'started',
+                    startedAt: referral.startedAt || now,
+                    updatedAt: now
+                });
+                await db.collection('users').doc(newUserId).set({
+                    referralCode: generateReferralCode(),
+                    ...(referrerId ? { referredBy: referrerId } : {}),
+                    sourceReferralId: directReferralSnap.id,
+                }, { merge: true });
+                return;
+            }
+
             // Find referrer
             const referrerSnapshot = await db.collection('users')
                 .where('referralCode', '==', referralCode)
@@ -2624,8 +2684,10 @@ export const dbService = {
             if (!referralSnapshot.empty) {
                 await referralSnapshot.docs[0].ref.update({
                     referredId: newUserId,
-                    status: 'pending', // Will be 'successful' after first booking
-                    updatedAt: new Date().toISOString()
+                    referredUserId: newUserId,
+                    status: 'started',
+                    startedAt: now,
+                    updatedAt: now
                 });
             }
 

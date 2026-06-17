@@ -34,6 +34,41 @@ import { handleRecurringConfirm } from "./inboundHelpers";
 
 const db = admin.firestore();
 
+function normalizeE164(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  if (raw.trim().startsWith("+") && digits.length >= 10 && digits.length <= 15) return `+${digits}`;
+  return null;
+}
+
+async function extractFamilyMember(text: string): Promise<{ name: string | null; phone: string | null }> {
+  const extractionRaw = await quickComplete(
+    "Extract the family member name and phone number from this message. " +
+      "Reply with JSON only: {\"name\":\"...\",\"phone\":\"+1...\"}. " +
+      "If no name is present, name=null. If no phone is present, phone=null.",
+    text,
+    { maxTokens: 80 },
+  ).catch(() => "{}");
+
+  try {
+    const parsed = JSON.parse(extractionRaw || "{}");
+    return {
+      name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : null,
+      phone: normalizeE164(typeof parsed.phone === "string" ? parsed.phone : null),
+    };
+  } catch {
+    // JSON parse failed (malformed LLM output). Only fall back to treating the
+    // raw text as a phone number when it actually LOOKS like one — digits plus
+    // common phone punctuation. Prose with stray digits (addresses, "3 days a
+    // week", etc.) must not be coerced into a bogus E.164 number.
+    const trimmed = text.trim();
+    const phoneLike = /^[+(]?[\d\s().+-]{8,}$/.test(trimmed) && trimmed.replace(/\D/g, "").length >= 10;
+    return { name: null, phone: phoneLike ? normalizeE164(text) : null };
+  }
+}
+
 // ── Recurring schedule: PAUSE / CANCEL / RESUME ───────────────────────────────
 
 async function handleRecurringPause(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -149,6 +184,72 @@ export interface IntentRouteContext {
   session: AgentSession;
 }
 
+async function handleAddFamilyMemberIntent(
+  phone: string,
+  chatId: string,
+  text: string,
+  session: AgentSession
+): Promise<void> {
+  if ((session as any).isSecondaryMember) {
+    await sendMessage(chatId, "I can help with updates here, but only the primary account holder can add people to this care group.");
+    return;
+  }
+
+  const pendingAdd = (session as any).pendingAddFamilyMember as { name?: string | null; phone?: string | null } | undefined;
+  const extracted = await extractFamilyMember(text);
+  const memberName  = extracted.name  ?? pendingAdd?.name  ?? null;
+  const memberPhone = extracted.phone ?? pendingAdd?.phone ?? null;
+
+  if (!memberPhone) {
+    await db.collection("agent_sessions").doc(phone).update({
+      pendingAddFamilyMember: { name: memberName, phone: null },
+      stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    }).catch(() => {});
+    await sendMessage(chatId, "I can add them. What phone number should I use?");
+    return;
+  }
+  if (!memberName) {
+    await db.collection("agent_sessions").doc(phone).update({
+      pendingAddFamilyMember: { name: null, phone: memberPhone },
+      stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    }).catch(() => {});
+    await sendMessage(chatId, "Got the number. What name should I use for them?");
+    return;
+  }
+
+  const clientId = session.userId;
+  const seniorId = (session as any).seniorId ?? session.userId;
+  if (!clientId || !seniorId) {
+    await sendMessage(chatId, "I need to finish linking your account before I can add someone to this care group.");
+    return;
+  }
+
+  await db.collection("agent_sessions").doc(phone).update({
+    pendingAddFamilyMember: admin.firestore.FieldValue.delete(),
+    stateExpiresAt: admin.firestore.FieldValue.delete(),
+  }).catch(() => {});
+
+  const { handleToolCall } = await import("../mcp/server");
+  const result = await handleToolCall("add_family_member", {
+    seniorId,
+    name: memberName,
+    memberPhone,
+    clientId,
+  }) as any;
+
+  if (result?._toolError) {
+    await sendMessage(chatId, result.message ?? "I couldn't add them yet. Please check the number and try again.");
+    return;
+  }
+
+  await sendMessage(
+    chatId,
+    result?.notification?.sent === false
+      ? `I added ${memberName} to the care group, but the welcome text did not go through. Please check the number.`
+      : `Done - ${memberName} is in the care group, and I texted them the welcome message.`,
+  );
+}
+
 // ── Intent routing — extracted verbatim from webhooks.ts handleInbound ───────
 // Covers: pendingRematch, the pending agent_task lookup, intent classification
 // and ALL intent branches through the QA-agent fallback. The try/catch/finally
@@ -176,6 +277,11 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
   const pendingTask = taskSnap.empty ? null : taskSnap.docs[0];
 
   if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {/* non-critical */});
+
+    if ((session as any).pendingAddFamilyMember) {
+      await handleAddFamilyMemberIntent(phone, chatId, text, session);
+      return;
+    }
 
     // intentDegraded = the classifier errored/timed out and "QUESTION" is a
     // guess — when set, skip the quick-reply bypass and take the full QA path.
@@ -780,104 +886,71 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     }
 
     if (intent === "ADD_FAMILY_MEMBER") {
-      const extractionRaw = await quickComplete(
-        "Extract the name and phone number from this message. Reply with JSON only: {\"name\": \"...\", \"phone\": \"+1...\"}. If no phone found, phone = null.",
-        text,
-        { maxTokens: 80 },
-      ).catch(() => "{}");
-
-      let memberName: string | null = null;
-      let memberPhone: string | null = null;
-      try {
-        const parsed = JSON.parse(extractionRaw || "{}");
-        memberName  = parsed.name  ?? null;
-        memberPhone = parsed.phone ?? null;
-      } catch { /* */ }
-
-      if (!memberPhone) {
-        await sendMessage(chatId, "I didn't catch a phone number — please include it (e.g. 'add my sister Sarah at +1 555 000 1234').");
-        return;
-      }
-
-      // Add to groupMembers array in session
-      await db.collection("agent_sessions").doc(phone).update({
-        groupMembers: admin.firestore.FieldValue.arrayUnion(memberPhone),
-      });
-
-      // Add to family_group_members collection
-      await db.collection("family_group_members").add({
-        primaryPhone:  phone,
-        memberPhone,
-        memberName:    memberName ?? "Family member",
-        userId:        session.userId ?? phone,
-        addedAt:       new Date().toISOString(),
-      });
-
-      await sendViaInteractionAgent(phone, {
-        content:     `Done — ${memberName ?? memberPhone} is now in your care group. They'll get the same updates you do.`,
-        urgency:     "standard",
-        sourceAgent: "family_group",
-        canDrop:     false,
-      });
+      await handleAddFamilyMemberIntent(phone, chatId, text, session);
       return;
+
+
+      // Both pieces are now in hand — clear the partial-capture state.
     }
 
     if (intent === "REMOVE_FAMILY_MEMBER") {
-      const extractionRaw = await quickComplete(
-        "Extract the name and/or phone number of the person to remove from this message. Reply with JSON only: {\"name\": \"...\", \"phone\": \"+1...\"}. If no phone found, phone = null.",
-        text,
-        { maxTokens: 80 },
-      ).catch(() => "{}");
+      if ((session as any).isSecondaryMember) {
+        await sendMessage(chatId, "I can help with updates here, but only the primary account holder can remove people from this care group.");
+        return;
+      }
 
-      let targetName: string | null = null;
-      let targetPhone: string | null = null;
-      try {
-        const parsed = JSON.parse(extractionRaw || "{}");
-        targetName  = parsed.name  ?? null;
-        targetPhone = parsed.phone ?? null;
-      } catch { /* */ }
+      const { name: targetName, phone: extractedPhone } = await extractFamilyMember(text);
+      let targetPhone: string | null = extractedPhone;
 
-      // If no phone provided, try to resolve by name from family_group_members
       if (!targetPhone && targetName) {
         const memberSnap = await db.collection("family_group_members")
           .where("primaryPhone", "==", phone)
           .get();
-        const match = memberSnap.docs.find(d =>
-          (d.data().memberName as string ?? "").toLowerCase().includes(targetName!.toLowerCase())
+        // Exact (normalized) name match, not substring — substring would let
+        // "Ann" resolve to "Joanna" and remove the wrong person. If more than
+        // one member shares the name, ask for the phone to disambiguate rather
+        // than guessing on a destructive action.
+        const target = targetName.toLowerCase().trim();
+        const matches = memberSnap.docs.filter(d =>
+          (d.data().memberName as string ?? "").toLowerCase().trim() === target
         );
-        if (match) targetPhone = match.data().memberPhone as string;
+        if (matches.length > 1) {
+          await sendMessage(chatId, `I have more than one ${targetName} in your care group. What's their phone number so I remove the right person?`);
+          return;
+        }
+        if (matches.length === 1) targetPhone = matches[0].data().memberPhone as string;
       }
 
       if (!targetPhone) {
-        await sendMessage(chatId, "I didn't find that person in your care group. Try including their phone number (e.g. 'remove +1 555 000 1234').");
+        await sendMessage(chatId, "I can remove them, but I need their phone number so I remove the right person.");
         return;
       }
 
-      // Look up seniorId from session
       const seniorId: string = (session as any).seniorId ?? session.userId ?? phone;
-      const { removeMemberFromGroup } = await import("../agents/familyGroupManager");
-      const result = await removeMemberFromGroup(seniorId, targetPhone);
+      const clientId = session.userId;
+      if (!clientId) {
+        await sendMessage(chatId, "I need to finish linking your account before I can remove someone from this care group.");
+        return;
+      }
 
-      if (result.removed) {
-        // Also remove from family_group_members collection and session
-        const memberSnap = await db.collection("family_group_members")
-          .where("primaryPhone", "==", phone)
-          .where("memberPhone",  "==", targetPhone)
-          .limit(1)
-          .get();
-        if (!memberSnap.empty) await memberSnap.docs[0].ref.delete();
+      const { handleToolCall } = await import("../mcp/server");
+      const result = await handleToolCall("remove_family_member", {
+        seniorId,
+        memberPhone: targetPhone,
+        phone,
+        clientId,
+        userId: clientId,
+      }) as any;
 
-        await db.collection("agent_sessions").doc(phone).update({
-          groupMembers: admin.firestore.FieldValue.arrayRemove(targetPhone),
-        }).catch(() => {});
-
-        await sendMessage(chatId, `Done — ${targetName ?? targetPhone} has been removed from your care group. They'll no longer receive updates.`);
+      if (result?._pending_action) {
+        await sendMessage(chatId, `Before I remove ${targetName ?? targetPhone} from the care group, please reply YES to confirm.`);
+      } else if (result?._toolError) {
+        await sendMessage(chatId, result.message ?? `I couldn't remove ${targetName ?? targetPhone} yet.`);
       } else {
-        await sendMessage(chatId, `I couldn't find ${targetName ?? targetPhone} in your care group. Let me know if you need help.`);
+        await sendMessage(chatId, `Done - ${targetName ?? targetPhone} has been removed from your care group.`);
       }
       return;
     }
-
     // ── hireMode step B — schedule reply ─────────────────────────────────────
     if ((session as any).hireMode && (session as any).hireModeDate) {
       const hire      = (session as any).hireMode      as { caregiverName: string; caregiverId: string };

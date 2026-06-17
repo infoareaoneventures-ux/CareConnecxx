@@ -13,6 +13,7 @@ type Step = 'role' | 'consent' | 'phone' | 'verify' | 'handoff' | 'connected';
 
 interface Props {
   initialRole?: OnboardingRole | null;
+  referralId?: string | null;
 }
 
 const RECAPTCHA_CONTAINER = 'careconnex-recaptcha-container';
@@ -32,7 +33,7 @@ function formatDisplay(val: string): string {
   return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
 }
 
-export const OnboardingFlow: React.FC<Props> = ({ initialRole }) => {
+export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => {
   const device = useDeviceClass();
   const [role, setRole] = useState<OnboardingRole | null>(initialRole ?? null);
   const [step, setStep] = useState<Step>(initialRole ? 'consent' : 'role');
@@ -109,7 +110,7 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole }) => {
       await confirmationRef.current.confirm(code);
       // Phone Auth succeeded — caller now has a Firebase token bound to this phone.
       const create = functions.httpsCallable('v1-createWebOnboardingSession');
-      const resp = await create({ phone: e164, role, consentText: CONSENT_VERSION });
+      const resp = await create({ phone: e164, role, consentText: CONSENT_VERSION, referralId });
       const data = resp.data as { linqPhone?: string };
       if (!data?.linqPhone) throw new Error('No LINQ number returned');
       setLinqPhone(data.linqPhone);

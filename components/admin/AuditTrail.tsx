@@ -132,7 +132,7 @@ export const AuditTrail: React.FC = () => {
       const more = docs.length > PAGE_SIZE;
       const pageDocs = more ? docs.slice(0, PAGE_SIZE) : docs;
 
-      const parsed: AuditEntry[] = pageDocs.map((d) => ({
+      let parsed: AuditEntry[] = pageDocs.map((d) => ({
         id: d.id,
         eventType: d.data().eventType ?? 'unknown',
         userId: d.data().userId,
@@ -141,11 +141,72 @@ export const AuditTrail: React.FC = () => {
         timestamp: parseTimestamp(d.data().timestamp),
       }));
 
-      setEntries(parsed);
       setHasMore(more);
+      // Merge the action ledger into the first unfiltered page only. With any
+      // filter active (including the client-side phone filter) the ledger is
+      // skipped so filtered results stay consistent; page 2+ is pure audit-log
+      // and paginates off the audit cursor.
+      if (!cursor && !filterType && !filterPhone && !filterDateFrom && !filterDateTo) {
+       try {
+        const ledgerSnap = await getDocs(query(
+          collection(fdb, 'agent_action_ledger'),
+          orderBy('updatedAt', 'desc'),
+          limit(PAGE_SIZE)
+        ));
+        const ledgerEntries: AuditEntry[] = ledgerSnap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: `ledger:${d.id}`,
+            eventType: `action:${data.actionType ?? 'unknown'}`,
+            userId: data.userId,
+            phone: data.phone,
+            data: {
+              status: data.status,
+              role: data.role,
+              toolName: data.toolName,
+              targetCollection: data.targetCollection,
+              targetDocId: data.targetDocId,
+              errorReason: data.errorReason,
+              ...(data.metadata ?? {}),
+            },
+            // Fall back to epoch when both timestamps are missing so the entry
+            // parses to a sortable date (epoch sorts oldest) instead of '—',
+            // which would become NaN in the merge sort below.
+            timestamp: parseTimestamp(data.updatedAt ?? data.createdAt ?? new Date(0).toISOString()),
+          };
+        });
+        parsed = [...parsed, ...ledgerEntries]
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+          .slice(0, PAGE_SIZE);
+       } catch (err) {
+        // A ledger read failure (missing collection/index, permissions) must not
+        // blank the whole panel — fall back to showing the audit log alone.
+        console.error('agent_action_ledger merge failed; showing audit log only', err);
+       }
+      }
+
+      setEntries(parsed);
       setAnomalies(detectAnomalies(parsed));
 
-      return pageDocs[pageDocs.length - 1] ?? null;
+      // Pagination cursor: continue from the last AUDIT-LOG entry that actually
+      // survived the merge+slice above, not the last *fetched* audit doc. On
+      // page 1 the ledger merge can push older audit rows off the visible page;
+      // paginating from the last fetched audit doc would skip those displaced
+      // rows on every later page. Surviving audit rows are always a timestamp
+      // prefix of pageDocs, so the last pageDoc still present in `parsed` is the
+      // boundary. When no merge happened (page 2+, or filtered), every pageDoc
+      // survives and this resolves to pageDocs[last] — the original behavior.
+      const survivingAuditIds = new Set(
+        parsed.filter((e) => !e.id.startsWith('ledger:')).map((e) => e.id)
+      );
+      for (let i = pageDocs.length - 1; i >= 0; i--) {
+        if (survivingAuditIds.has(pageDocs[i].id)) return pageDocs[i];
+      }
+      // No audit row survived the merge (every visible slot went to a newer
+      // ledger entry). Returning a fetched-but-undisplayed doc here would make
+      // page 2 start past rows the user never saw, skipping them — so return
+      // null instead and let the caller treat it as "no further cursor".
+      return null;
     } finally {
       setLoading(false);
     }

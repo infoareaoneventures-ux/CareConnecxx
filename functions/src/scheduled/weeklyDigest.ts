@@ -120,53 +120,102 @@ async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>, use
   }
 }
 
+// ── Caregiver earnings (shiftHours rail) ─────────────────────────────────────
+// Successful visits bill through the shiftHours rail now; the legacy
+// visit_payments collection is no longer written for them, so the weekly
+// earnings summary reads shiftHours. A shift counts toward "this week's
+// earnings" once the client has approved it — money that is on its way or
+// already sent. pending_client_review is excluded: it is not yet confirmed.
+export const EARNED_SHIFT_STATUSES: ReadonlySet<string> = new Set([
+  "approved",
+  "auto_approved",
+  "paid",
+]);
+
+// Resolve a shift's gross caregiver pay in cents. The rails disagree on field
+// names: in-app submitShiftHours writes grossPay (dollars); the Cara MCP and
+// care-notes rails write amountCents. Mirror processShiftPayment's resolution
+// and never return a non-finite or negative value.
+export function shiftGrossCents(shift: any): number {
+  const cents =
+    typeof shift?.grossPay === "number"      ? shift.grossPay * 100
+    : typeof shift?.amountCents === "number" ? shift.amountCents
+    : Number(shift?.finalTotalHours ?? shift?.submittedTotalHours ?? 0) *
+      Number(shift?.payRate ?? shift?.hourlyRate ?? 0) * 100;
+  return Number.isFinite(cents) && cents > 0 ? Math.round(cents) : 0;
+}
+
+// True when an earned shift falls in the digest window. submittedAt is written
+// by every rail; createdAt is a fallback. ISO strings compare lexicographically.
+export function isShiftEarnedSince(shift: any, sinceIso: string): boolean {
+  if (!EARNED_SHIFT_STATUSES.has(shift?.status)) return false;
+  const ts = (shift?.submittedAt ?? shift?.createdAt ?? "") as string;
+  return ts >= sinceIso;
+}
+
 // ── Core logic (shared by scheduled + manual trigger) ────────────────────────
 
-async function runWeeklyDigests(): Promise<number> {
+// Process work in bounded-concurrency batches instead of one-at-a-time. The old
+// sequential loop (one user per iteration, each awaiting a Claude call + several
+// Firestore reads + a 200ms sleep) grows linearly and breaches the Cloud
+// Function deadline at a few hundred users. Returns the count of items that the
+// callback reported as sent (true). Per-item failures are isolated by the
+// callback's own try/catch and counted as not-sent.
+const DIGEST_BATCH_SIZE = 15;
+
+async function runInBatches<T>(items: T[], size: number, fn: (item: T) => Promise<boolean>): Promise<number> {
+  let sent = 0;
+  for (let i = 0; i < items.length; i += size) {
+    const results = await Promise.allSettled(items.slice(i, i + size).map(fn));
+    sent += results.filter(r => r.status === "fulfilled" && r.value === true).length;
+  }
+  return sent;
+}
+
+// Send one client's weekly care digest. Returns true when a digest was sent.
+async function sendClientDigest(sessionDoc: any, today: string): Promise<boolean> {
+  const session = sessionDoc.data() as AgentSession;
+  if (!session.userId || session.optedIn === false) return false;
+
+  const phone = sessionDoc.id;
+  const perms = await getPermissions(session.userId).catch(() => null);
+  if (perms !== null && perms.canSendWeeklyDigest === false) return false;
+
+  const seniorId = session.seniorId ?? session.userId;
+  const data     = await getWeekData(seniorId, session.userId);
+  const digest   = await generateDigest(data, session.userId);
+
+  await sendViaInteractionAgent(phone, {
+    content:     digest,
+    urgency:     "standard",
+    sourceAgent: "weekly_digest",
+    canDrop:     true,
+  });
+
+  await db.collection("weekly_digests").doc(`${session.userId}_${today}`).set({
+    clientId:  session.userId,
+    seniorId,
+    phone,
+    sentAt:    new Date().toISOString(),
+    digestLen: digest.length,
+  });
+  return true;
+}
+
+export async function runWeeklyDigests(): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10);
+
   const sessionsSnap = await db
     .collection("agent_sessions")
     .where("optedOut", "==", false)
     .get();
 
-  let sent = 0;
-
-  for (const sessionDoc of sessionsSnap.docs) {
-    const session = sessionDoc.data() as AgentSession;
-    if (!session.userId || session.optedIn === false) continue;
-
-    try {
-      const phone    = sessionDoc.id;
-
-      // Check permission before sending
-      const perms = await getPermissions(session.userId).catch(() => null);
-      if (perms !== null && perms.canSendWeeklyDigest === false) continue;
-
-      const seniorId = session.seniorId ?? session.userId;
-      const data     = await getWeekData(seniorId, session.userId);
-      const digest   = await generateDigest(data, session.userId);
-
-      await sendViaInteractionAgent(phone, {
-        content:     digest,
-        urgency:     "standard",
-        sourceAgent: "weekly_digest",
-        canDrop:     true,
-      });
-
-      const today = new Date().toISOString().slice(0, 10);
-      await db.collection("weekly_digests").doc(`${session.userId}_${today}`).set({
-        clientId:  session.userId,
-        seniorId,
-        phone,
-        sentAt:    new Date().toISOString(),
-        digestLen: digest.length,
-      });
-
-      sent++;
-      await new Promise(r => setTimeout(r, 200));
-    } catch (err) {
-      console.error(`weeklyDigest error for session ${sessionDoc.id}:`, err);
-    }
-  }
+  const sent = await runInBatches(sessionsSnap.docs, DIGEST_BATCH_SIZE, (doc) =>
+    sendClientDigest(doc, today).catch((err) => {
+      console.error(`weeklyDigest error for session ${doc.id}:`, err);
+      return false;
+    }),
+  );
 
   // ── Caregiver earnings summaries ─────────────────────────────────────────────
   const cgSessionsSnap = await db
@@ -176,71 +225,78 @@ async function runWeeklyDigests(): Promise<number> {
     .get();
 
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const today   = new Date().toISOString().slice(0, 10);
 
-  for (const cgDoc of cgSessionsSnap.docs) {
-    const cgSession = cgDoc.data();
-    if (!cgSession.caregiverId || cgSession.optedIn === false) continue;
+  const cgSent = await runInBatches(cgSessionsSnap.docs, DIGEST_BATCH_SIZE, (doc) =>
+    sendCaregiverEarnings(doc, weekAgo, today).catch((err) => {
+      console.error(`caregiver earnings digest error for ${doc.id}:`, err);
+      return false;
+    }),
+  );
 
-    try {
-      const cgPhone = cgDoc.id;
-      const paySnap = await db
-        .collection("visit_payments")
-        .where("caregiverId", "==", cgSession.caregiverId)
-        .where("createdAt",   ">=", weekAgo)
-        .where("status",      "in", ["pending", "paid"])
-        .get();
+  const total = sent + cgSent;
+  console.log(`weeklyDigest: sent ${total} digests (${sent} client, ${cgSent} caregiver)`);
+  return total;
+}
 
-      if (paySnap.empty) continue;
+// Send one caregiver's weekly earnings summary. Returns true when sent.
+async function sendCaregiverEarnings(cgDoc: any, weekAgo: string, today: string): Promise<boolean> {
+  const cgSession = cgDoc.data();
+  if (!cgSession.caregiverId || cgSession.optedIn === false) return false;
 
-      const visits   = paySnap.docs.map(d => d.data());
-      const totalCents = visits.reduce((s, v) => s + (v.amountCents ?? 0), 0);
-      const totalStr = `$${(totalCents / 100).toFixed(2)}`;
-      const cgSnap   = await db.collection("caregivers").doc(cgSession.caregiverId).get();
-      const cgName   = (cgSnap.data()?.name as string | undefined)?.split(" ")[0] ?? "there";
+  const cgPhone = cgDoc.id;
+  // Successful visits bill through shiftHours now (visit_payments is retired
+  // for them). Query by caregiver only — no composite index required — then
+  // filter to "earned this week" in memory via the shared helpers.
+  const shiftSnap = await db
+    .collection("shiftHours")
+    .where("caregiverId", "==", cgSession.caregiverId)
+    .get();
 
-      const visitLines = visits.slice(0, 5).map(v =>
-        `· ${v.date ?? "this week"} — $${((v.amountCents ?? 0) / 100).toFixed(2)}`
-      ).join("\n");
+  const visits = shiftSnap.docs
+    .map(d => d.data())
+    .filter(v => isShiftEarnedSince(v, weekAgo));
 
-      const earningsMsg = await generateCaraMessage({
-        audience: "caregiver",
-        context:
-          `Caregiver first name: ${cgName}. ` +
-          `This week's earnings summary: ${visits.length} visit${visits.length !== 1 ? "s" : ""}, ${totalStr} total, on its way. ` +
-          `Visit breakdown:\n${visitLines}\n` +
-          "Write a warm morning earnings summary. Express genuine appreciation for the work they do for these families. " +
-          "Mention that payments hit within 2 business days.",
-        fallback:
-          `Morning ${cgName}. ${visits.length} visit${visits.length !== 1 ? "s" : ""} this week, ${totalStr} on its way to you.\n\n` +
-          `${visitLines}\n\n` +
-          `That's real work. Thank you for taking care of these families.\n\n` +
-          `Payments hit within 2 business days.`,
-      });
+  if (visits.length === 0) return false;
 
-      await sendViaInteractionAgent(cgPhone, {
-        content:     earningsMsg,
-        urgency:     "standard",
-        sourceAgent: "weekly_digest",
-        canDrop:     true,
-      });
+  const totalCents = visits.reduce((s, v) => s + shiftGrossCents(v), 0);
+  const totalStr = `$${(totalCents / 100).toFixed(2)}`;
+  const cgSnap   = await db.collection("caregivers").doc(cgSession.caregiverId).get();
+  const cgName   = (cgSnap.data()?.name as string | undefined)?.split(" ")[0] ?? "there";
 
-      await db.collection("weekly_digests").doc(`cg_${cgSession.caregiverId}_${today}`).set({
-        caregiverId: cgSession.caregiverId,
-        phone:       cgPhone,
-        sentAt:      new Date().toISOString(),
-        totalCents,
-        visitCount:  visits.length,
-      });
+  const visitLines = visits.slice(0, 5).map(v =>
+    `· ${v.date ?? (v.submittedAt as string | undefined)?.slice(0, 10) ?? "this week"} — $${(shiftGrossCents(v) / 100).toFixed(2)}`
+  ).join("\n");
 
-      await new Promise(r => setTimeout(r, 200));
-    } catch (err) {
-      console.error(`caregiver earnings digest error for ${cgDoc.id}:`, err);
-    }
-  }
+  const earningsMsg = await generateCaraMessage({
+    audience: "caregiver",
+    context:
+      `Caregiver first name: ${cgName}. ` +
+      `This week's earnings summary: ${visits.length} visit${visits.length !== 1 ? "s" : ""}, ${totalStr} total, on its way. ` +
+      `Visit breakdown:\n${visitLines}\n` +
+      "Write a warm morning earnings summary. Express genuine appreciation for the work they do for these families. " +
+      "Mention that payments hit within 2 business days.",
+    fallback:
+      `Morning ${cgName}. ${visits.length} visit${visits.length !== 1 ? "s" : ""} this week, ${totalStr} on its way to you.\n\n` +
+      `${visitLines}\n\n` +
+      `That's real work. Thank you for taking care of these families.\n\n` +
+      `Payments hit within 2 business days.`,
+  });
 
-  console.log(`weeklyDigest: sent ${sent} digests`);
-  return sent;
+  await sendViaInteractionAgent(cgPhone, {
+    content:     earningsMsg,
+    urgency:     "standard",
+    sourceAgent: "weekly_digest",
+    canDrop:     true,
+  });
+
+  await db.collection("weekly_digests").doc(`cg_${cgSession.caregiverId}_${today}`).set({
+    caregiverId: cgSession.caregiverId,
+    phone:       cgPhone,
+    sentAt:      new Date().toISOString(),
+    totalCents,
+    visitCount:  visits.length,
+  });
+  return true;
 }
 
 // ── Scheduled function — every Sunday at 8am ET ───────────────────────────────

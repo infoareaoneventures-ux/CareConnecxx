@@ -3,12 +3,52 @@ import * as admin from "firebase-admin";
 import {
   createChat,
   sendMessage,
+  sendToPhone,
   addParticipant,
   updateChatName,
   removeParticipant,
 } from "../linq/client";
+import { logAudit } from "../observability/auditLog";
+import { logAgentAction } from "../observability/actionLedger";
+import { generateToken, verifyToken } from "./tokenService";
 
 const db = admin.firestore();
+const E164 = /^\+\d{10,15}$/;
+
+export function familyMemberDocId(primaryPhone: string, memberPhone: string): string {
+  return `${primaryPhone}_${memberPhone}`.replace(/\//g, "_");
+}
+
+export function createFamilyJoinToken(primaryPhone: string, seniorName: string, ttlSeconds = 7 * 24 * 60 * 60): string {
+  if (!E164.test(primaryPhone)) throw new Error("Invalid primary phone");
+  return generateToken({ phone: primaryPhone, task: "family_join", seniorName }, ttlSeconds);
+}
+
+export function verifyFamilyJoinToken(token: unknown): { primaryPhone: string; seniorName: string } | null {
+  if (typeof token !== "string" || !token.trim()) return null;
+  const payload = verifyToken(token);
+  if (!payload || payload.task !== "family_join" || !E164.test(payload.phone)) return null;
+  return {
+    primaryPhone: payload.phone,
+    seniorName: typeof payload.seniorName === "string" && payload.seniorName.trim()
+      ? payload.seniorName.trim()
+      : "your loved one",
+  };
+}
+
+async function resolvePrimaryPhone(userId: string): Promise<string | undefined> {
+  const userSnap = await db.collection("users").doc(userId).get().catch(() => null);
+  const userPhone = userSnap?.data()?.phone as string | undefined;
+  if (userPhone) return userPhone;
+
+  const sessionSnap = await db.collection("agent_sessions")
+    .where("userId", "==", userId)
+    .limit(1)
+    .get()
+    .catch(() => null);
+  if (!sessionSnap || sessionSnap.empty) return undefined;
+  return (sessionSnap.docs[0].data() as any).phone ?? sessionSnap.docs[0].id;
+}
 
 // ── Callable: triggered from FamilyManager UI ─────────────────────────────────
 
@@ -29,22 +69,20 @@ export const createFamilyGroup = functions.https.onCall(async (data, context) =>
 });
 
 // ── Callable: triggered from the public /join invite page (JoinFamilyPage) ────
-// The /join page is unauthenticated by design — family members land there from
-// an invite link before they have any account. Authorization is the invite
-// token itself: the payload's primaryPhone must belong to an existing Cara
-// session, otherwise the request is rejected.
+// The /join page is unauthenticated by design. Authorization is a signed,
+// expiring family_join token; caller-supplied phones or names are never trusted.
 
 export const addFamilyGroupMember = functions.https.onCall(async (data, _context) => {
-  const primaryPhone: unknown = data?.primaryPhone;
+  const invite = verifyFamilyJoinToken(data?.token);
   const memberPhone: unknown = data?.memberPhone;
 
-  const E164 = /^\+\d{10,15}$/;
-  if (typeof primaryPhone !== "string" || !E164.test(primaryPhone)) {
+  if (!invite) {
     throw new functions.https.HttpsError("invalid-argument", "Invalid invitation");
   }
   if (typeof memberPhone !== "string" || !E164.test(memberPhone)) {
     throw new functions.https.HttpsError("invalid-argument", "A valid member phone number is required");
   }
+  const { primaryPhone, seniorName } = invite;
 
   try {
     // Validate the invite: the primary phone must belong to an existing session
@@ -61,14 +99,16 @@ export const addFamilyGroupMember = functions.https.onCall(async (data, _context
     // state; the arrayUnion update is idempotent, so running it after an
     // ALREADY_EXISTS "success" is safe.
     try {
-      // Mirror the webhook ADD_FAMILY_MEMBER data model
+      // Mirror the webhook ADD_FAMILY_MEMBER data model.
       await db.collection("family_group_members")
-        .doc(`${primaryPhone}_${memberPhone}`)
+        .doc(familyMemberDocId(primaryPhone, memberPhone))
         .create({
           primaryPhone,
           memberPhone,
           memberName: "Family member",
           userId:     session.userId ?? primaryPhone,
+          seniorName,
+          source:      "join_page",
           addedAt:    new Date().toISOString(),
         });
     } catch (err: any) {
@@ -90,19 +130,75 @@ export const addFamilyGroupMember = functions.https.onCall(async (data, _context
         const phones: string[] = groupDoc.data().phones ?? [];
         const chatId: string   = groupDoc.data().chatId;
         if (!phones.includes(memberPhone)) {
+          let addedToLinq = true;
           await addParticipant(chatId, memberPhone).catch((err) => {
+            addedToLinq = false;
             console.warn(`addFamilyGroupMember: addParticipant failed for chat ${chatId}, member ${memberPhone}:`, err);
+            logAudit({
+              eventType: "family_group_participant_add_failed",
+              userId: session.userId ?? primaryPhone,
+              phone: primaryPhone,
+              data: { primaryPhone, memberPhone, chatId, error: err instanceof Error ? err.message : String(err) },
+            }).catch(() => {});
+            logAgentAction({
+              actionType: "family_group_participant_add",
+              status: "failed",
+              userId: session.userId ?? primaryPhone,
+              phone: primaryPhone,
+              role: "family",
+              targetCollection: "family_groups",
+              targetDocId: groupDoc.id,
+              errorReason: err instanceof Error ? err.message : String(err),
+              metadata: { memberPhone, chatId },
+            }).catch(() => {});
           });
-          await groupDoc.ref.update({
-            phones: admin.firestore.FieldValue.arrayUnion(memberPhone),
-          });
-          await db.collection("agent_sessions").doc(memberPhone)
-            .set({ groupChatId: chatId }, { merge: true });
+          if (addedToLinq) {
+            await groupDoc.ref.update({
+              phones: admin.firestore.FieldValue.arrayUnion(memberPhone),
+            });
+            await db.collection("agent_sessions").doc(memberPhone)
+              .set({ groupChatId: chatId }, { merge: true });
+            logAudit({
+              eventType: "family_group_participant_added",
+              userId: session.userId ?? primaryPhone,
+              phone: primaryPhone,
+              data: { primaryPhone, memberPhone, chatId, source: "join_page" },
+            }).catch(() => {});
+          }
         }
       }
     } catch (err) {
       console.error("addFamilyGroupMember group-chat join failed:", err);
     }
+
+    let welcomeSent = true;
+    await sendToPhone(
+      memberPhone,
+      `Hi - you've joined ${seniorName}'s CareConnex care group. I'm Cara, and I'll send care updates here. You can text me questions anytime. Reply STOP to opt out.`,
+    ).catch((err) => {
+      welcomeSent = false;
+      logAudit({
+        eventType: "family_member_welcome_failed",
+        userId: session.userId ?? primaryPhone,
+        phone: memberPhone,
+        data: { primaryPhone, memberPhone, source: "join_page", error: err instanceof Error ? err.message : String(err) },
+      }).catch(() => {});
+    });
+    if (welcomeSent) {
+      logAudit({
+        eventType: "family_member_welcome_sent",
+        userId: session.userId ?? primaryPhone,
+        phone: memberPhone,
+        data: { primaryPhone, memberPhone, source: "join_page" },
+      }).catch(() => {});
+    }
+
+    logAudit({
+      eventType: "family_member_invited",
+      userId: session.userId ?? primaryPhone,
+      phone: primaryPhone,
+      data: { primaryPhone, memberPhone, source: "join_page" },
+    }).catch(() => {});
 
     return { success: true };
   } catch (err: any) {
@@ -124,8 +220,7 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
   const familyMembers: any[] = senior.familyMembers ?? [];
 
   // Collect all phones that have sessions (primary client + family members with phones)
-  const primarySnap = await db.collection("users").doc(seniorId).get();
-  const primaryPhone: string | undefined = primarySnap.data()?.phone;
+  const primaryPhone = await resolvePrimaryPhone(seniorId);
 
   const familyPhones: string[] = familyMembers
     .map((m) => m.phone)
@@ -151,11 +246,33 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
 
     for (const phone of allPhones) {
       if (!existing.has(phone)) {
-        await addParticipant(chatId, phone).catch(() => {});
-        await sendMessage(chatId, `Welcome to the group! You'll receive care updates here and can text the assistant anytime.`);
-        await groupDoc.ref.update({
-          phones: admin.firestore.FieldValue.arrayUnion(phone),
+        let addedToLinq = true;
+        await addParticipant(chatId, phone).catch((err) => {
+          addedToLinq = false;
+          logAudit({
+            eventType: "family_group_participant_add_failed",
+            userId: seniorId,
+            phone,
+            data: { seniorId, chatId, error: err instanceof Error ? err.message : String(err) },
+          }).catch(() => {});
         });
+        if (addedToLinq) {
+          // Best-effort welcome — a delivery failure must NOT skip the phones
+          // array update + audit below, or the member would be in the Linq chat
+          // yet unrecorded in Firestore and re-added on the next run.
+          await sendMessage(chatId, `Welcome to the group! You'll receive care updates here and can text the assistant anytime.`).catch((err) => {
+            console.warn(`buildOrUpdateFamilyGroup: welcome sendMessage failed for chat ${chatId}, ${phone}:`, err);
+          });
+          await groupDoc.ref.update({
+            phones: admin.firestore.FieldValue.arrayUnion(phone),
+          });
+          logAudit({
+            eventType: "family_group_participant_added",
+            userId: seniorId,
+            phone,
+            data: { seniorId, chatId, source: "buildOrUpdateFamilyGroup" },
+          }).catch(() => {});
+        }
       }
     }
     return;
@@ -185,12 +302,28 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
   await updateChatName(chatId, `${seniorName.split(" ")[0]}'s Care · Cara`);
 
   // Persist group record
-  await db.collection("family_groups").add({
+  const groupRef = await db.collection("family_groups").add({
     seniorId,
     chatId,
     phones:    allPhones,
     createdAt: new Date().toISOString(),
   });
+  logAudit({
+    eventType: "family_group_created",
+    userId: seniorId,
+    phone: primaryPhone,
+    data: { seniorId, chatId, phones: allPhones },
+  }).catch(() => {});
+  logAgentAction({
+    actionType: "family_group_created",
+    status: "executed",
+    userId: seniorId,
+    phone: primaryPhone,
+    role: "family",
+    targetCollection: "family_groups",
+    targetDocId: groupRef.id,
+    metadata: { chatId, phones: allPhones },
+  }).catch(() => {});
 
   // Update each participant's agent_session with the group chatId
   for (const phone of allPhones) {

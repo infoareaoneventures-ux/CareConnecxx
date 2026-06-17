@@ -1,111 +1,19 @@
 import * as admin from "firebase-admin";
-import Stripe from "stripe";
 import { sendToPhone } from "../linq/client";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
-import { logBookingCreated } from "../observability/auditLog";
+import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
 
-let _stripe: Stripe | null = null;
-function getStripe(): Stripe {
-  if (!_stripe) {
-    _stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "", { apiVersion: "2023-10-16" as any });
-  }
-  return _stripe;
-}
-
 const SUPPORT_PHONE = process.env.SUPPORT_PHONE ?? "1-800-555-0199";
 
-export interface VisitPaymentParams {
-  appointmentId: string;
-  clientId:      string;
-  clientPhone:   string;
-  caregiverId:   string;
-  caregiverName: string;
-  caregiverPhone?: string;
-  durationHours: number;
-  hourlyRate:    number;
-  date:          string;
-}
-
-export async function createVisitPayment(params: VisitPaymentParams): Promise<void> {
-  const {
-    appointmentId, clientId, clientPhone, caregiverId, caregiverName,
-    caregiverPhone, durationHours, hourlyRate, date,
-  } = params;
-
-  const amountCents = Math.round(durationHours * hourlyRate * 100);
-  const now = new Date().toISOString();
-
-  // Retrieve client's Stripe customer ID + phone (if not supplied)
-  const userSnap = await db.collection("users").doc(clientId).get();
-  const resolvedPhone = clientPhone || (userSnap.data()?.phone as string | undefined) || "";
-  const customerId = userSnap.data()?.stripeCustomerId as string | undefined;
-
-  let paymentIntentId: string | undefined;
-
-  if (customerId) {
-    try {
-      const pi = await getStripe().paymentIntents.create({
-        amount:               amountCents,
-        currency:             "usd",
-        customer:             customerId,
-        application_fee_amount: 0, // Caregivers keep 100%
-        description:          `Care visit — ${caregiverName} on ${date}`,
-        metadata: {
-          appointmentId,
-          clientId,
-          caregiverId,
-        },
-        confirm:              false, // Confirm separately when client approves
-      });
-      paymentIntentId = pi.id;
-    } catch (err) {
-      console.error("createVisitPayment Stripe error:", err);
-    }
-  }
-
-  // Write visit_payments doc
-  await db.collection("visit_payments").doc(appointmentId).set({
-    appointmentId,
-    clientId,
-    caregiverId,
-    caregiverName,
-    date,
-    durationHours,
-    hourlyRate,
-    amountCents,
-    status:          paymentIntentId ? "pending" : "no_payment_method",
-    stripePaymentIntentId: paymentIntentId ?? null,
-    createdAt:       now,
-  });
-
-  logBookingCreated(clientId, caregiverId, [date]).catch(() => {});
-
-  // Notify client (low urgency — informational)
-  const totalStr = `$${(amountCents / 100).toFixed(2)}`;
-  if (resolvedPhone) await sendViaInteractionAgent(resolvedPhone, {
-    content:
-      `Visit complete! A payment of ${totalStr} will be processed for today's ` +
-      `${durationHours}h visit with ${caregiverName}.`,
-    urgency:     "low",
-    sourceAgent: "visit_billing",
-    canDrop:     true,
-  }).catch(() => {});
-
-
-  // Notify caregiver directly (bypass interaction agent — caregiver-initiated message path)
-  if (caregiverPhone) {
-    await sendToPhone(caregiverPhone,
-      `Visit logged for ${date}. Your payment of ${totalStr} will be processed shortly.`
-    ).catch(() => {});
-    // Flag the session so any follow-up reply routes to qaAgent with payout context
-    await admin.firestore().collection("agent_sessions").doc(caregiverPhone).update({
-      pendingPayoutNotificationAck:      `${totalStr} for ${date} visit`,
-      pendingPayoutNotificationAckSetAt: new Date().toISOString(),
-    }).catch(() => {});
-  }
-}
+// NOTE: visit charges are handled exclusively by the shiftHours rail
+// (functions/src/shiftHours.ts → onShiftHoursApproved → processShiftPayment),
+// which charges the client incl. the 1.5% platform fee and transfers net pay to
+// the caregiver's Stripe Connect account. The former createVisitPayment() here
+// created a PaymentIntent with confirm:false that was never captured, so it took
+// no money and double-promised payment — it has been removed and all callers
+// (timesheet approval, SMS visit completion) now funnel into shiftHours.
 
 export async function handlePaymentError(params: {
   appointmentId: string;
@@ -154,7 +62,7 @@ export async function handlePaymentError(params: {
   // Notify client with a tap-to-fix link — immediate, can't drop
   try {
     const { generateToken } = await import("../agents/tokenService");
-    const appUrl    = process.env.APP_URL ?? "https://cara.app";
+    const appUrl    = getAppUrl();
     const token     = generateToken({ phone: clientPhone, task: "payment" });
     const updateUrl = `${appUrl}/done?task=payment&t=${token}`;
     await sendViaInteractionAgent(clientPhone, {

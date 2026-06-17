@@ -235,9 +235,13 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
   const phone   = (data.phone   as string | undefined)?.trim();
   const role    = (data.role    as string | undefined) === "caregiver" ? "caregiver" : "client";
   const consent = (data.consentText as string | undefined) ?? "v1.0";
+  const referralId = (data.referralId as string | undefined)?.trim();
 
   if (!phone || !/^\+1\d{10}$/.test(phone)) {
     throw new functions.https.HttpsError("invalid-argument", "A valid US/CA phone number is required.");
+  }
+  if (referralId && !/^[A-Za-z0-9_-]{1,128}$/.test(referralId)) {
+    throw new functions.https.HttpsError("invalid-argument", "Invalid referral link.");
   }
 
   // Caller's Firebase Auth token must have phone_number matching what they're claiming.
@@ -263,10 +267,41 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
     role,
     phone,
     consentText: consent,
+    ...(referralId && role === "caregiver" ? { referralId } : {}),
     status:      "awaiting_inbound",
     createdAt:   admin.firestore.Timestamp.fromDate(now),
     ttlExpireAt: admin.firestore.Timestamp.fromDate(ttlExpireAt),
   }, { merge: true });
+
+  if (referralId && role === "caregiver") {
+    const referralRef = db.collection("referrals").doc(referralId);
+    const referralSnap = await referralRef.get();
+    if (referralSnap.exists) {
+      const referral = referralSnap.data() ?? {};
+      const referredPhone = (referral.referredPhone as string | undefined)?.trim();
+      const terminalStatuses = new Set(["approved", "first_booking_completed", "rejected", "successful"]);
+      if (!referredPhone || referredPhone === phone) {
+        await referralRef.set({
+          status: terminalStatuses.has(String(referral.status ?? "")) ? referral.status : "started",
+          referredUserId: context.auth.uid,
+          signupPhone: phone,
+          startedAt: admin.firestore.Timestamp.fromDate(now),
+          updatedAt: now.toISOString(),
+        }, { merge: true });
+      } else {
+        await db.collection("admin_alerts").add({
+          type: "referral_phone_mismatch",
+          severity: "medium",
+          referralId,
+          expectedPhone: referredPhone,
+          verifiedPhone: phone,
+          userId: context.auth.uid,
+          createdAt: now.toISOString(),
+          resolved: false,
+        }).catch(() => {});
+      }
+    }
+  }
 
   return {
     success:     true,

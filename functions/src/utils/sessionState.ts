@@ -20,6 +20,7 @@ export const STATE_MACHINE_FLAGS = [
   "awaitingAvailabilityConfirmation",
   "pendingShiftApproval",
   "pendingDisputeDetail",
+  "pendingAddFamilyMember",
   "collectingCredential",
   "stateExpiresAt",
   "jobPostingStep",

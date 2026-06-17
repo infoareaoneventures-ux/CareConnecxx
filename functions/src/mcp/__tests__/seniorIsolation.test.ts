@@ -143,3 +143,98 @@ describe("senior data isolation (update_senior_profile)", () => {
     expect(r._toolError).toBe(true);
   });
 });
+
+describe("senior data isolation (PHI read tools)", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("get_senior_profile denies a client reading another household's senior", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "OTHER_CLIENT", name: "Mary" });
+    hoisted.docState.set("seniors/s1", { name: "Mary", diagnoses: ["dementia"] });
+    const r = await handleToolCall("get_senior_profile", { seniorId: "s1", clientId: "c1" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+    // The PHI itself must not leak in the denied response.
+    expect(r.results).toBeUndefined();
+  });
+
+  it("get_senior_profile allows the owning client", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
+    hoisted.docState.set("seniors/s1", { name: "Mary", diagnoses: ["dementia"] });
+    const r = await handleToolCall("get_senior_profile", { seniorId: "s1", clientId: "c1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.results?.name).toBe("Mary");
+  });
+
+  it("get_care_journal denies cross-tenant access", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "OTHER_CLIENT" });
+    hoisted.collState.set("care_journal", [{ seniorId: "s1", notes: "private" }]);
+    const r = await handleToolCall("get_care_journal", { seniorId: "s1", clientId: "c1" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+    expect(r.results).toBeUndefined();
+  });
+
+  it("get_care_journal allows the owning client", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
+    hoisted.collState.set("care_journal", [{ seniorId: "s1", notes: "ate well today", timestamp: "2026-01-01T00:00:00Z" }]);
+    const r = await handleToolCall("get_care_journal", { seniorId: "s1", clientId: "c1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.results).toBeDefined();
+  });
+
+  it("get_health_signals denies cross-tenant access", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "OTHER_CLIENT" });
+    hoisted.collState.set("health_signals", [{ seniorId: "s1", signal: "fall_risk" }]);
+    const r = await handleToolCall("get_health_signals", { seniorId: "s1", clientId: "c1" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+    expect(r.results).toBeUndefined();
+  });
+
+  it("get_health_signals allows the owning client", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
+    hoisted.collState.set("health_signals", [{ seniorId: "s1", signal: "fall_risk", detectedAt: "2026-06-01T00:00:00Z" }]);
+    const r = await handleToolCall("get_health_signals", { seniorId: "s1", clientId: "c1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.results).toBeDefined();
+  });
+
+  it("allows the owning client of a migrated household senior (clientId back-reference, no userId)", async () => {
+    // migrateSeniorsToHousehold writes clientId but no userId — the gate must
+    // recognize clientId as the owner so the rightful client keeps access.
+    hoisted.docState.set("senior_profiles/random-id", { clientId: "c1", name: "Mary" });
+    hoisted.docState.set("seniors/random-id", { name: "Mary", diagnoses: ["dementia"] });
+    const r = await handleToolCall("get_senior_profile", { seniorId: "random-id", clientId: "c1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.results?.name).toBe("Mary");
+  });
+
+  it("denies a migrated household senior to a non-owning client", async () => {
+    hoisted.docState.set("senior_profiles/random-id", { clientId: "OTHER_CLIENT", name: "Mary" });
+    hoisted.docState.set("seniors/random-id", { name: "Mary", diagnoses: ["dementia"] });
+    const r = await handleToolCall("get_senior_profile", { seniorId: "random-id", clientId: "c1" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+    expect(r.results).toBeUndefined();
+  });
+
+  it("fails closed for an owner-less senior whose id is not the requesting client", async () => {
+    // No userId AND no clientId recorded, and seniorId !== clientId → deny.
+    // Closes the prior gap where any client could read an unowned senior's PHI.
+    hoisted.docState.set("senior_profiles/s1", { name: "Mary" });
+    hoisted.docState.set("seniors/s1", { name: "Mary", diagnoses: ["dementia"] });
+    const r = await handleToolCall("get_senior_profile", { seniorId: "s1", clientId: "c1" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+    expect(r.results).toBeUndefined();
+  });
+
+  it("allows the legacy self-owned senior (profile keyed by the client's own uid)", async () => {
+    // Legacy single-senior model: the profile doc id IS the client uid and has
+    // no owner field. The rightful owner (seniorId === clientId) keeps access.
+    hoisted.docState.set("seniors/c1", { name: "Mary" });
+    const r = await handleToolCall("get_senior_profile", { seniorId: "c1", clientId: "c1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.results?.name).toBe("Mary");
+  });
+});

@@ -1,9 +1,10 @@
 import * as admin from "firebase-admin";
+import { fetchWithTimeout } from "../utils/httpTimeout";
 
 // ── FaceTime Link ──────────────────────────────────────────────────────────────
 
 export async function generateFaceTimeLink(): Promise<string> {
-  const res = await fetch("https://facetime.apple.com/api/v1/links", {
+  const res = await fetchWithTimeout("https://facetime.apple.com/api/v1/links", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),

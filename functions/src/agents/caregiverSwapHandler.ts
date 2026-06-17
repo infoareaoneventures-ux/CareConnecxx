@@ -221,13 +221,23 @@ export async function handleSwapAcceptance(
     return;
   }
   const swap = swapDoc.data()!;
+  // Cheap pre-check for the common (uncontended) case and a fast UX reply.
   if (swap.status !== "open") {
     await sendMessage(chatId, "This shift has already been filled. Thanks anyway!");
     return;
   }
 
-  // Accept: update swap request + appointment
+  // Authoritative claim: re-read status INSIDE the transaction so two caregivers
+  // accepting concurrently can't both win. Without this, both pass the pre-check
+  // above and the second tx's blind update overwrites the first (last-write-wins
+  // on appointments.caregiverId). Mirrors shiftOffer.ts claimOffer.
+  let claimed = false;
   await db.runTransaction(async (tx) => {
+    const fresh = await tx.get(swapRef);
+    if (!fresh.exists || fresh.data()!.status !== "open") {
+      return; // another caregiver won the race — leave their assignment intact
+    }
+    claimed = true;
     tx.update(swapRef, {
       status: "accepted",
       toCaregiverId: caregiverId,
@@ -241,6 +251,11 @@ export async function handleSwapAcceptance(
       swapNote: `Swapped from ${swap.fromCaregiverName} to ${caregiverName}`,
     });
   });
+
+  if (!claimed) {
+    await sendMessage(chatId, "This shift has already been filled. Thanks anyway!");
+    return;
+  }
 
   // Confirm with accepting caregiver
   await sendMessage(chatId, `You've got it! The ${swap.date} shift is now yours. The family will be notified. Thank you!`);

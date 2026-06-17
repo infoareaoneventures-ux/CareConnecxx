@@ -890,9 +890,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Family groups — members can read; writes via Cloud Functions only
+    // Family groups — members can read; writes via Cloud Functions only.
+    // `phones` holds E.164 numbers, so match the caller's verified phone number
+    // (not their uid) against it.
     match /family_groups/{groupId} {
-      allow read: if isAuthenticated() && request.auth.uid in resource.data.phones;
+      allow read: if isAuthenticated() && request.auth.token.phone_number in resource.data.phones;
+      allow write: if false;
+    }
+
+    // Family group member index — server-maintained membership lookup.
+    match /family_group_members/{memberId} {
+      allow read: if isAdmin();
       allow write: if false;
     }
 
@@ -934,6 +942,54 @@ service cloud.firestore {
     match /agent_audit_log/{entryId} {
       allow read: if isAdmin();
       allow write: if false;
+    }
+
+    // Agent action ledger — execution status for high-impact Cara actions.
+    // Written server-side only; admin reads failure/risk state.
+    match /agent_action_ledger/{entryId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Referrals — users can read their own referral rows; writes are server/web-service controlled.
+    match /referrals/{referralId} {
+      allow read: if isAuthenticated() && (
+        resource.data.referrerId == request.auth.uid ||
+        resource.data.referrerUserId == request.auth.uid ||
+        resource.data.referredId == request.auth.uid ||
+        isAdmin()
+      );
+      // Create: the referrer (or server/admin) creates their own referral row.
+      allow create: if isAuthenticated() && (
+        request.resource.data.referrerId == request.auth.uid ||
+        request.resource.data.referrerUserId == request.auth.uid ||
+        isAdmin()
+      );
+      // Update: ownership fields are immutable, so an existing referral can't be
+      // taken over by rewriting referrerId/referrerUserId to the caller's uid.
+      // Within that constraint the referrer can update their own row, and a
+      // referred user can claim an as-yet-unclaimed referral for themselves
+      // (the web signup-attribution flow in api.ts processReferral).
+      allow update: if isAuthenticated() && (
+        isAdmin() || (
+          !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['referrerId', 'referrerUserId']) && (
+            resource.data.referrerId == request.auth.uid ||
+            resource.data.referrerUserId == request.auth.uid ||
+            // Claim path: a referred user attaches themselves to an unclaimed
+            // row. Locked to exactly the fields the signup-attribution flow
+            // writes, so the claimer can't tamper with credit/reward fields or
+            // self-promote the referral to a converted status.
+            (resource.data.referredId == null &&
+             request.resource.data.referredId == request.auth.uid &&
+             request.resource.data.referredUserId == request.auth.uid &&
+             request.resource.data.status == 'started' &&
+             request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['referredId', 'referredUserId', 'status', 'startedAt', 'updatedAt']))
+          )
+        )
+      );
+      allow delete: if false;
     }
 
     // Shift offers — caregiver YES/NO offer state machine (agents/shiftOffer.ts).

@@ -4,10 +4,11 @@ import { parseWithClaude } from "../utils/parseWithClaude";
 import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { generateToken } from "./tokenService";
+import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
 
-const APP_URL = process.env.APP_URL ?? "https://cara.com";
+const APP_URL = getAppUrl();
 
 /**
  * Caregiver profile update flow — covers rate, skills, bio, photo, pause, reactivate.

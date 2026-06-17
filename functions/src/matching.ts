@@ -1,14 +1,14 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { Resend } from "resend";
+import { sendToPhone } from "./linq/client";
+import { appLink } from "./config/appUrl";
 // Initialize email service
 const resendApiKey = process.env.RESEND_API_KEY || functions.config().resend?.api_key;
 const resend = resendApiKey ? new Resend(resendApiKey) : null;
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@careconnex.com";
 
-// SMS via Twilio removed (V5 — all messaging via Linq iMessage)
-const twilioClient: null = null;
-const twilioPhoneNumber: string | undefined = undefined;
+// SMS/iMessage is handled through Linq. Twilio is intentionally not part of launch messaging.
 
 /**
  * Cloud Function: Create Match Assignment on Intake Completion
@@ -218,7 +218,7 @@ export const onHireRequestApproved = functions.firestore
             
             console.log(`[onHireRequestApproved] Caregiver notified: ${newData.caregiverId}`);
             
-            // Send email and SMS to caregiver
+            // Send email plus Linq SMS/iMessage to caregiver.
             await Promise.all([
                 sendHireOfferEmail(newData.caregiverId, newData),
                 sendHireOfferSMS(newData.caregiverId, newData)
@@ -420,14 +420,9 @@ async function sendIntakeNotificationEmail(intakeData: any, matchAssignmentId: s
 }
 
 /**
- * Send SMS to caregiver when hired
+ * Send Linq SMS/iMessage to caregiver when hired.
  */
 async function sendHireOfferSMS(caregiverId: string, hireRequestData: any): Promise<void> {
-    if (!twilioClient || !twilioPhoneNumber) {
-        console.log('[sendHireOfferSMS] Twilio not configured, skipping SMS');
-        return;
-    }
-    
     try {
         const db = admin.firestore();
         
@@ -446,10 +441,11 @@ async function sendHireOfferSMS(caregiverId: string, hireRequestData: any): Prom
             return;
         }
         
-        // SMS via Twilio removed in V5 — messaging handled by Linq agent
-        console.log(`[sendHireOfferSMS] SMS skipped (Linq handles messaging): ${phone}`);
-        
-        console.log(`[sendHireOfferSMS] Sent to caregiver ${caregiverId}`);
+        const message =
+            `You have a new CareConnex hire offer. Review the visit details and accept or decline here: ` +
+            `${appLink("/caregiver")}`;
+        await sendToPhone(phone, message, { preferredService: "SMS" });
+        console.log(`[sendHireOfferSMS] Sent Linq hire offer to caregiver ${caregiverId}`);
     } catch (error) {
         console.error('[sendHireOfferSMS] Error:', error);
     }

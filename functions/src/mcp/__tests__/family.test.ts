@@ -110,20 +110,20 @@ describe("family tools", () => {
 
     it("rejects when senior belongs to a different client (IDOR)", async () => {
       hoisted.docState.set("senior_profiles/s1", { userId: "OTHER" });
-      const r = await handleToolCall("add_family_member", { seniorId: "s1", name: "Aunt Mae", phone: "+15555550111", clientId: "c1" }) as any;
+      const r = await handleToolCall("add_family_member", { seniorId: "s1", name: "Aunt Mae", memberPhone: "+15555550111", clientId: "c1" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("PERMISSION_DENIED");
     });
 
     it("rejects duplicate phone in family group", async () => {
       hoisted.docState.set("senior_profiles/s1", { userId: "c1", familyMembers: [{ phone: "+15555550111" }] });
-      const r = await handleToolCall("add_family_member", { seniorId: "s1", name: "Aunt Mae", phone: "+15555550111", clientId: "c1" }) as any;
+      const r = await handleToolCall("add_family_member", { seniorId: "s1", name: "Aunt Mae", memberPhone: "+15555550111", clientId: "c1" }) as any;
       expect(r._toolError).toBe(true);
     });
 
     it("adds member and sends welcome SMS, surfacing notification status", async () => {
       hoisted.docState.set("senior_profiles/s1", { userId: "c1", familyMembers: [] });
-      const r = await handleToolCall("add_family_member", { seniorId: "s1", name: "Aunt Mae", phone: "+15555550111", clientId: "c1" }) as any;
+      const r = await handleToolCall("add_family_member", { seniorId: "s1", name: "Aunt Mae", memberPhone: "+15555550111", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
       expect(r.added).toBe(true);
       expect(r.notification.sent).toBe(true);
@@ -133,10 +133,29 @@ describe("family tools", () => {
     it("surfaces notification.sent=false when welcome SMS fails", async () => {
       hoisted.docState.set("senior_profiles/s1", { userId: "c1", familyMembers: [] });
       trySend.mockResolvedValueOnce({ sent: false, reason: "linq_send_failed" });
-      const r = await handleToolCall("add_family_member", { seniorId: "s1", name: "Aunt Mae", phone: "+15555550111", clientId: "c1" }) as any;
+      const r = await handleToolCall("add_family_member", { seniorId: "s1", name: "Aunt Mae", memberPhone: "+15555550111", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
       expect(r.added).toBe(true);
       expect(r.notification.sent).toBe(false);
+    });
+
+    it("adds the MEMBER (memberPhone), not the acting user, when phone is auto-injected (qaAgent path)", async () => {
+      // The qaAgent loop spreads the model's input then overwrites `phone` with
+      // the acting user's number. Using a distinct `memberPhone` key keeps the
+      // member's number from being clobbered. Here the acting user is the
+      // primary client's phone; the member is a different number.
+      hoisted.docState.set("senior_profiles/s1", { userId: "c1", familyMembers: [] });
+      const r = await handleToolCall("add_family_member", {
+        seniorId: "s1", name: "Aunt Mae",
+        memberPhone: "+15555550111",   // the member being added
+        phone: "+15550009999",          // acting user's phone, auto-injected
+        clientId: "c1",
+      }) as any;
+      expect(r.success).toBe(true);
+      // Welcome SMS must go to the MEMBER, not the acting user — definitive proof
+      // the right person was added despite phone being auto-injected.
+      expect(trySend).toHaveBeenCalledWith("+15555550111", expect.stringContaining("CareConnex care group"), "mcp:add_family_member");
+      expect(trySend).not.toHaveBeenCalledWith("+15550009999", expect.anything(), expect.anything());
     });
   });
 
@@ -150,13 +169,13 @@ describe("family tools", () => {
       hoisted.docState.set("senior_profiles/s1", { userId: "OTHER" });
       // _confirmedActionId bypasses the runtime HITL gate (see pendingActions.ts)
       // so the tool body's IDOR check runs instead of the gate's confirmation flow.
-      const r = await handleToolCall("remove_family_member", { seniorId: "s1", phone: "+15555550111", clientId: "c1", _confirmedActionId: "test" }) as any;
+      const r = await handleToolCall("remove_family_member", { seniorId: "s1", memberPhone: "+15555550111", clientId: "c1", _confirmedActionId: "test" }) as any;
       expect(r._toolError).toBe(true);
     });
 
     it("removes member and notifies them they were removed", async () => {
       hoisted.docState.set("senior_profiles/s1", { userId: "c1", familyMembers: [{ phone: "+15555550111", name: "Aunt Mae" }] });
-      const r = await handleToolCall("remove_family_member", { seniorId: "s1", phone: "+15555550111", clientId: "c1", _confirmedActionId: "test" }) as any;
+      const r = await handleToolCall("remove_family_member", { seniorId: "s1", memberPhone: "+15555550111", clientId: "c1", _confirmedActionId: "test" }) as any;
       expect(r.success).toBe(true);
       expect(r.notification.sent).toBe(true);
       expect(trySend).toHaveBeenCalledWith("+15555550111", expect.stringContaining("removed from"), "mcp:remove_family_member");

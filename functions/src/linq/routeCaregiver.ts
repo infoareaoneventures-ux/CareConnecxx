@@ -1,5 +1,5 @@
 import * as admin from "firebase-admin";
-import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
+import { sendMessage, sendToPhone, startTyping, stopTyping, AgentSession } from "./client";
 import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { sendIfNotDND } from "../utils/dndGuard";
@@ -9,8 +9,13 @@ import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandle
 import { handleCaregiverProfileUpdate } from "../agents/caregiverProfileHandler";
 import { handleJobResponse, handleAvailabilityConfirmation } from "../triggers/jobNotifications";
 import { handleCaregiverAvailabilityReply } from "../agents/interviewAgent";
+import { logAudit } from "../observability/auditLog";
+import { logAgentAction } from "../observability/actionLedger";
+import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
+
+const APP_URL = getAppUrl();
 
 export interface CaregiverRouteContext {
   phone: string;
@@ -18,6 +23,208 @@ export interface CaregiverRouteContext {
   text: string;
   norm: string;
   session: AgentSession;
+}
+
+interface PendingCaregiverReferral {
+  referredName?:  string;
+  referredPhone?: string;
+  startedAt?:     string;
+}
+
+function normalizeReferralPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return raw.trim();
+}
+
+function extractPhoneFromText(text: string): string {
+  const match = text.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/);
+  return match ? normalizeReferralPhone(match[0]) : "";
+}
+
+// Name extraction is meaning-parsing of free-form text — CLAUDE.md mandates an
+// LLM, never a keyword-strip heuristic. (Phone extraction stays regex: that is
+// format detection, the explicitly-allowed exception, like email validation.)
+async function extractReferralName(text: string): Promise<string> {
+  const raw = await quickComplete(
+    "Extract the referred caregiver's name from this text. If no name is present, reply with an empty string. Reply with only the name.",
+    text,
+    { maxTokens: 30 },
+  ).catch(() => "");
+  return raw.trim().replace(/^["']|["']$/g, "");
+}
+
+// Intent detection on free-form SMS — CLAUDE.md forbids regex/keyword matching
+// here. The `norm` fast-path is allowed: it's the upstream LLM classifier's
+// result, not a string heuristic. Everything else goes through the LLM.
+async function isCaregiverReferralIntent(text: string, norm: string): Promise<boolean> {
+  if (norm === "REFER" || norm === "REFERRAL") return true;
+  const raw = await quickComplete(
+    "Does this caregiver's message express intent to refer, invite, or recommend ANOTHER person to become a CareConnex caregiver? Reply only YES or NO.",
+    text,
+    { maxTokens: 5 },
+  ).catch(() => "");
+  return raw.trim().toUpperCase().startsWith("Y");
+}
+
+async function resolveCaregiverName(caregiverId: string | undefined, fallbackPhone: string): Promise<string> {
+  if (caregiverId) {
+    const snap = await db.collection("caregivers").doc(caregiverId).get().catch(() => null);
+    const name = (snap?.data()?.name ?? "") as string;
+    if (name.trim()) return name.trim();
+  }
+  return fallbackPhone;
+}
+
+async function handleCaregiverReferral(
+  phone: string,
+  chatId: string,
+  text: string,
+  session: AgentSession,
+  pending?: PendingCaregiverReferral,
+): Promise<void> {
+  // CLAUDE.md handler checklist: while collecting referral details, a mid-flow
+  // question must not be misparsed as a name/phone. Detect it (LLM, not regex)
+  // and re-ask the current question instead of extracting garbage from it.
+  if (pending) {
+    const qRaw = await quickComplete(
+      "A caregiver is being asked for a referral's name and phone number. Is THIS message a question or off-topic, rather than a name/phone answer? Reply only YES or NO.",
+      text,
+      { maxTokens: 5 },
+    ).catch(() => "");
+    if (qRaw.trim().toUpperCase().startsWith("Y")) {
+      const reAsk = pending.referredName
+        ? `What phone number should I text for ${pending.referredName}?`
+        : "Who should I invite? Send me their name.";
+      await sendMessage(chatId, reAsk);
+      return;
+    }
+  }
+
+  const extractedPhone = extractPhoneFromText(text);
+  const extractedName  = await extractReferralName(text);
+  const next: PendingCaregiverReferral = {
+    ...(pending ?? {}),
+    ...(extractedName  ? { referredName: extractedName } : {}),
+    ...(extractedPhone ? { referredPhone: extractedPhone } : {}),
+    startedAt: pending?.startedAt ?? new Date().toISOString(),
+  };
+
+  if (!next.referredName) {
+    await db.collection("agent_sessions").doc(phone).set({
+      pendingCaregiverReferral: next,
+      stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    }, { merge: true });
+    await sendMessage(chatId, "Who should I invite? Send me their name.");
+    return;
+  }
+
+  if (!next.referredPhone) {
+    await db.collection("agent_sessions").doc(phone).set({
+      pendingCaregiverReferral: next,
+      stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    }, { merge: true });
+    await sendMessage(chatId, `What phone number should I text for ${next.referredName}?`);
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const referrerName = await resolveCaregiverName(session.caregiverId, phone);
+  const referralRef = db.collection("referrals").doc();
+  const startLink = `${APP_URL}/start?role=caregiver&ref=${encodeURIComponent(referralRef.id)}`;
+  const inviteText =
+    `${referrerName} thought you might be a good fit as a CareConnex caregiver.\n\n` +
+    `You can start here: ${startLink}\n\n` +
+    `CareConnex caregivers complete onboarding and Checkr background screening before they can accept visits. Reply STOP to opt out.`;
+
+  await referralRef.set({
+    referrerUserId: session.caregiverId ?? session.userId ?? phone,
+    referrerRole: "caregiver",
+    referredRole: "caregiver",
+    referredName: next.referredName,
+    referredPhone: next.referredPhone,
+    source: "cara_sms",
+    status: "invited",
+    inviteUrl: startLink,
+    createdAt: now,
+    updatedAt: now,
+    checkrRequired: true,
+    bookable: false,
+    eligibilityRequired: {
+      onboardingStatus: "profile_complete",
+      verificationStatus: "approved",
+      checkrResult: "clear",
+    },
+  });
+
+  try {
+    await sendToPhone(next.referredPhone, inviteText, { preferredService: "SMS" });
+    await referralRef.update({ inviteSentAt: now, deliveryStatus: "sent", updatedAt: now });
+    logAudit({
+      eventType: "referral_invited",
+      userId: session.caregiverId ?? session.userId ?? phone,
+      phone,
+      data: {
+        referralId: referralRef.id,
+        referredRole: "caregiver",
+        referredPhone: next.referredPhone,
+        source: "cara_sms",
+        deliveryStatus: "sent",
+      },
+    }).catch(() => {});
+    logAgentAction({
+      actionType: "referral_invite",
+      status: "executed",
+      userId: session.caregiverId ?? session.userId ?? phone,
+      phone,
+      role: "caregiver",
+      toolName: "caregiver_referral",
+      targetCollection: "referrals",
+      targetDocId: referralRef.id,
+      metadata: {
+        referredRole: "caregiver",
+        referredPhone: next.referredPhone,
+        source: "cara_sms",
+      },
+    }).catch(() => {});
+    await sendMessage(chatId, `Sent. I texted ${next.referredName} the caregiver application link.`);
+  } catch (err) {
+    const errorReason = err instanceof Error ? err.message : String(err);
+    await referralRef.update({ deliveryStatus: "failed", errorReason, updatedAt: now }).catch(() => {});
+    await db.collection("admin_alerts").add({
+      type: "caregiver_referral_invite_failed",
+      severity: "medium",
+      referralId: referralRef.id,
+      referrerUserId: session.caregiverId ?? session.userId ?? phone,
+      referredPhone: next.referredPhone,
+      createdAt: now,
+      resolved: false,
+      error: errorReason,
+    }).catch(() => {});
+    logAgentAction({
+      actionType: "referral_invite",
+      status: "failed",
+      userId: session.caregiverId ?? session.userId ?? phone,
+      phone,
+      role: "caregiver",
+      toolName: "caregiver_referral",
+      targetCollection: "referrals",
+      targetDocId: referralRef.id,
+      errorReason,
+      metadata: {
+        referredRole: "caregiver",
+        referredPhone: next.referredPhone,
+        source: "cara_sms",
+      },
+    }).catch(() => {});
+    await sendMessage(chatId, `I saved the referral, but I couldn't text ${next.referredName} yet. I flagged it for admin review.`);
+  } finally {
+    await db.collection("agent_sessions").doc(phone).update({
+      pendingCaregiverReferral: admin.firestore.FieldValue.delete(),
+      stateExpiresAt: admin.firestore.FieldValue.delete(),
+    }).catch(() => {});
+  }
 }
 
 // ── Caregiver keyword handlers ────────────────────────────────────────────────
@@ -593,6 +800,8 @@ async function sendFamilyShiftEndUpdate(params: {
 
   const clientPhone = await getClientPhoneByClientId(clientId);
   if (!clientPhone) return;
+  const clientSessionSnap = await db.collection("agent_sessions").doc(clientPhone).get().catch(() => null);
+  const hasFamilyGroup = !!clientSessionSnap?.data()?.groupChatId;
 
   // Resolve senior name
   let seniorName = (apptData?.clientName ?? "") as string;
@@ -653,12 +862,41 @@ async function sendFamilyShiftEndUpdate(params: {
       " No concerns to flag.";
   }
 
+  const finalContent = hasFamilyGroup
+    ? content
+    : `${content}\n\nWant me to keep someone else updated too? Send me their name and phone.`;
+
   await sendViaInteractionAgent(clientPhone, {
-    content,
+    content: finalContent,
     urgency:     "standard",
     sourceAgent: "shift_end_family_update",
     canDrop:     true,
   });
+  logAudit({
+    eventType: "care_update_shared",
+    userId: clientId,
+    phone: clientPhone,
+    data: {
+      source: "shift_end_family_update",
+      seniorId,
+      deliveryTarget: hasFamilyGroup ? "family_group" : "primary_client",
+      caregiverName,
+      appointmentId: apptData?.id ?? apptData?.appointmentId ?? null,
+    },
+  }).catch(() => {});
+  logAgentAction({
+    actionType: "care_update_shared",
+    status: "executed",
+    userId: clientId,
+    phone: clientPhone,
+    role: "client",
+    targetCollection: "care_journal",
+    metadata: {
+      seniorId,
+      deliveryTarget: hasFamilyGroup ? "family_group" : "primary_client",
+      source: "shift_end_family_update",
+    },
+  }).catch(() => {});
 }
 
 // ── Task acknowledgment handler ───────────────────────────────────────────────
@@ -865,6 +1103,7 @@ async function handleCareNotes(
       }
       t.set(journalRef, {
         caregiverId,
+        clientId,
         seniorId,
         appointmentId: apptId,
         timestamp:     new Date().toISOString(),
@@ -896,6 +1135,7 @@ async function handleCareNotes(
     // No apptId — write without dedup guard and clear flag
     await db.collection("care_journal").add({
       caregiverId,
+      clientId,
       seniorId,
       appointmentId: apptId,
       timestamp:     new Date().toISOString(),
@@ -919,13 +1159,13 @@ async function handleCareNotes(
     ? await db.collection("appointments").doc(apptId).get()
     : null;
   const durationHours = apptSnap?.data()?.durationHours ?? 4;
-  const pay = (hourlyRate * durationHours).toFixed(2);
+  const cgName = cgSnap.data()?.name ?? "Your caregiver";
 
   // Fire shift-end family update (fire-and-forget — alreadyExists early-returns above, so if we
   // reach here the journal entry was newly written)
   if (apptId && clientId) {
     sendFamilyShiftEndUpdate({
-      caregiverName: cgSnap.data()?.name ?? "Your caregiver",
+      caregiverName: cgName,
       clientId,
       seniorId,
       apptData:      apptSnap?.data() ?? null,
@@ -933,20 +1173,142 @@ async function handleCareNotes(
     }).catch(err => console.error("[handleCareNotes] family update error:", err));
   }
 
-  // Fire visit billing (fire-and-forget so it doesn't block caregiver confirmation)
-  if (apptId && clientId) {
-    const { createVisitPayment } = await import("../billing/visitBilling");
-    createVisitPayment({
-      appointmentId:  apptId,
-      clientId,
-      clientPhone:    "", // Family phone looked up inside createVisitPayment if needed
-      caregiverId,
-      caregiverName:  cgSnap.data()?.name ?? "Your caregiver",
-      caregiverPhone: phone,
-      durationHours,
-      hourlyRate,
-      date:           new Date().toISOString().slice(0, 10),
-    }).catch((err) => console.error("createVisitPayment error:", err));
+  // Submit the completed visit into the real payment rail: create a shiftHours
+  // doc (pending_client_review) and ask the family to APPROVE. On approval,
+  // routeClient → approveShiftHoursForClient flips it to "approved", which fires
+  // the onShiftHoursApproved trigger to charge the client (incl. the 1.5%
+  // platform fee) and transfer net pay to the caregiver's Connect account.
+  // Idempotent on appointmentId so it never double-bills if hours were already
+  // submitted (e.g. via the MCP submit_shift_hours tool).
+  //
+  // NOTE: this replaces the old createVisitPayment call, which created a Stripe
+  // PaymentIntent with confirm:false that was never confirmed — so visits
+  // completed over SMS were never actually charged and no fee was taken.
+  let billingSubmitted = false;   // the visit is in the shiftHours rail (will be paid)
+  let familyNotified = false;      // the family was actually pinged to APPROVE
+  const grossPay = Math.round(hourlyRate * durationHours * 100) / 100;
+  if (apptId && clientId && grossPay > 0) {
+    const shiftRef = db.collection("shiftHours").doc(apptId);
+    const submittedAt = new Date().toISOString();
+    const apptDate = (apptSnap?.data()?.date as string) ?? submittedAt.slice(0, 10);
+    // Resolve the billing rail from the appointment's paymentMethod. Guard the
+    // type explicitly: String() coercion of a non-string (object/number/bool)
+    // would silently yield "[object Object]"/"123" and route to "credit"
+    // without signal. Treat any non-string as the credit default, but log it.
+    const rawPaymentMethod = apptSnap?.data()?.paymentMethod;
+    if (rawPaymentMethod != null && typeof rawPaymentMethod !== "string") {
+      console.warn("[handleCareNotes] unexpected paymentMethod type on appointment", { apptId, type: typeof rawPaymentMethod });
+    }
+    const paymentMethod = typeof rawPaymentMethod === "string" && rawPaymentMethod.toLowerCase().trim() === "cash" ? "cash" : "credit";
+    let created = false;
+    try {
+      // create() is atomic: it fails (ALREADY_EXISTS) if the doc already exists,
+      // closing the get-then-set race where two concurrent submissions could both
+      // pass an existence check and the second overwrite the first (re-firing side
+      // effects). Mirrors the transactional care_journal dedup above.
+      await shiftRef.create({
+        id: apptId, appointmentId: apptId, shiftId: apptId,
+        caregiverId, caregiverName: cgName,
+        clientId, clientName: (apptSnap?.data()?.clientName ?? apptSnap?.data()?.seniorName ?? "Client"),
+        payRate: hourlyRate, hourlyRate, currency: "usd",
+        paymentMethod,
+        submittedTotalHours: durationHours, finalTotalHours: durationHours, durationHours,
+        basePay: grossPay, grossPay, amountCents: Math.round(grossPay * 100),
+        date: apptDate, status: "pending_client_review", submittedAt,
+        autoApproveAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        paymentAttemptCount: 0, createdAt: submittedAt, updatedAt: submittedAt,
+      });
+      created = true;
+      billingSubmitted = true;
+      logAgentAction({
+        actionType: "shift_hours_submitted",
+        status: "executed",
+        userId: caregiverId,
+        phone,
+        role: "caregiver",
+        targetCollection: "shiftHours",
+        targetDocId: apptId,
+        metadata: { clientId, grossPay, durationHours, source: "care_notes_completion" },
+      }).catch(() => {});
+    } catch (err: any) {
+      // ALREADY_EXISTS (gRPC code 6): hours were already submitted for this visit
+      // (e.g. via the MCP submit_shift_hours tool) — it's in the rail, not an error.
+      if (err?.code === 6 || /already exists/i.test(err?.message ?? "")) {
+        billingSubmitted = true;
+      } else {
+        console.error("[handleCareNotes] shiftHours create error:", err);
+      }
+    }
+
+    // Prompt the family over SMS (handled by routeClient's pendingShiftApproval
+    // flow). Only on a fresh create — if the doc already existed the first
+    // submitter already notified them. Mark familyNotified only on real success.
+    if (created) {
+      const clientPhone = await getClientPhoneByClientId(clientId);
+      if (clientPhone) {
+        try {
+          await db.collection("agent_sessions").doc(clientPhone).set({
+            pendingShiftApproval:      { appointmentId: apptId, amount: grossPay.toFixed(2), caregiverName: cgName },
+            pendingShiftApprovalSetAt: submittedAt,
+          }, { merge: true });
+          await sendViaInteractionAgent(clientPhone, {
+            content:
+              `${cgName} just finished the visit on ${apptDate} (${durationHours}h, $${grossPay.toFixed(2)}).\n\n` +
+              `Reply APPROVE to confirm and release payment, or DISPUTE if something looks off.`,
+            urgency:     "standard",
+            sourceAgent: "visit_completion",
+            canDrop:     false,
+          });
+          familyNotified = true;
+          logAgentAction({
+            actionType: "shift_hours_approval_prompt",
+            status: "executed",
+            userId: clientId,
+            phone: clientPhone,
+            role: "client",
+            targetCollection: "shiftHours",
+            targetDocId: apptId,
+            metadata: { caregiverId, grossPay, source: "care_notes_completion" },
+          }).catch(() => {});
+        } catch (notifyErr) {
+          console.error("[handleCareNotes] family approval notification failed:", notifyErr);
+          await db.collection("admin_alerts").add({
+            type: "shift_hours_approval_notification_failed",
+            severity: "high",
+            appointmentId: apptId,
+            caregiverId,
+            clientId,
+            clientPhone,
+            createdAt: new Date().toISOString(),
+            resolved: false,
+            error: notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+          }).catch(() => {});
+          logAgentAction({
+            actionType: "shift_hours_approval_prompt",
+            status: "failed",
+            userId: clientId,
+            phone: clientPhone,
+            role: "client",
+            targetCollection: "shiftHours",
+            targetDocId: apptId,
+            errorReason: notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+            metadata: { caregiverId, grossPay, source: "care_notes_completion" },
+          }).catch(() => {});
+        }
+      } else {
+        console.error("[handleCareNotes] no client phone found to request shift approval", { clientId, apptId });
+        await db.collection("admin_alerts").add({
+          type: "shift_hours_approval_notification_failed",
+          severity: "high",
+          appointmentId: apptId,
+          caregiverId,
+          clientId,
+          createdAt: new Date().toISOString(),
+          resolved: false,
+          error: "no_client_phone",
+        }).catch(() => {});
+      }
+    }
   }
 
   // Find next appointment for this caregiver
@@ -962,9 +1324,15 @@ async function handleCareNotes(
     ? "No upcoming visits scheduled yet."
     : `Next visit: ${nextSnap.docs[0].data().date} at ${nextSnap.docs[0].data().startTime ?? ""}`;
 
+  const paymentLine = !billingSubmitted
+    ? `Thanks for the update.`
+    : familyNotified
+      ? `I've sent your hours to the family to confirm — you'll be paid once they approve (auto-approves in 24h if they don't reply).`
+      : `Your hours are recorded — you'll be paid once they're approved (auto-approves in 24h).`;
+
   await sendMessage(chatId,
     `Got it — notes saved.\n\n` +
-    `Your payment of $${pay} will be processed tonight.\n` +
+    `${paymentLine}\n` +
     `${nextLine}\n\n` +
     `Have a great rest of your day.`
   );
@@ -1057,6 +1425,35 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         return "handled";
       }
       // UNSURE — fall through to normal routing so Claude can answer the message
+    }
+
+    const pendingReferral = (session as any).pendingCaregiverReferral as PendingCaregiverReferral | undefined;
+    if (pendingReferral) {
+      const referralExpiry = (session as any).stateExpiresAt as string | undefined;
+      if (referralExpiry && new Date(referralExpiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingCaregiverReferral: admin.firestore.FieldValue.delete(),
+          stateExpiresAt: admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+      } else {
+        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+        try {
+          await handleCaregiverReferral(phone, chatId, text, session, pendingReferral);
+        } finally {
+          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+        }
+        return "handled";
+      }
+    }
+
+    if (await isCaregiverReferralIntent(text, norm)) {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try {
+        await handleCaregiverReferral(phone, chatId, text, session);
+      } finally {
+        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+      }
+      return "handled";
     }
 
     const KEYWORDS: Record<string, () => Promise<void>> = {

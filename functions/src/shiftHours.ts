@@ -1,8 +1,10 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
-const Stripe = require('stripe');
+import Stripe from 'stripe';
 
-const stripe = new Stripe(functions.config().stripe?.secret || process.env.STRIPE_SECRET_KEY);
+const stripe = new Stripe(functions.config().stripe?.secret || process.env.STRIPE_SECRET_KEY, {
+  timeout: 10_000, // cap SDK calls (default 80s) so a slow Stripe response can't run a payment handler to the function deadline
+});
 const db = admin.firestore();
 
 type PaymentMethod = 'cash' | 'credit';
@@ -14,6 +16,7 @@ type ShiftHoursStatus =
   | 'approved'
   | 'auto_approved'
   | 'disputed_admin_review'
+  | 'charge_pending'
   | 'paid'
   | 'payment_failed';
 
@@ -781,6 +784,12 @@ export const onShiftHoursApproved = functions
     if (!nowPayable || wasPayable) {
       return null;
     }
+    // Re-approve guard: a shift that already has a transfer was already paid out.
+    // Without this, an approved -> payment_failed -> re-approved cycle (before
+    // is payment_failed, so wasPayable is false) would fire a second transfer.
+    if (after.stripeTransferId) {
+      return null;
+    }
 
     if (after.paymentMethod === 'cash') {
       // Cash shifts: client has approved — notify caregiver to confirm cash receipt.
@@ -801,7 +810,127 @@ export const onShiftHoursApproved = functions
 
 // ---------- core Stripe flow ----------
 
-async function processShiftPayment(appointmentId: string, shift: any): Promise<{ ok: boolean; error?: string }> {
+// Resolve gross pay in cents. shiftHours docs come from three rails that
+// historically disagreed on field names: in-app submitShiftHours writes
+// `grossPay` (dollars); the Cara MCP tool and care-notes completion write
+// `amountCents`. Fall back through the known shapes so every approved shift
+// charges instead of dying on "grossPay not set".
+function computeGrossCents(shift: any): number {
+  const grossDollars =
+    typeof shift.grossPay === 'number'   ? shift.grossPay
+    : typeof shift.amountCents === 'number' ? shift.amountCents / 100
+    : Number(shift.finalTotalHours ?? shift.submittedTotalHours ?? 0) *
+      Number(shift.payRate ?? shift.hourlyRate ?? 0);
+  const grossCents = Math.round(grossDollars * 100);
+  // Number.isFinite guards against NaN/Infinity from malformed data: typeof NaN
+  // is 'number' (so it passes the field-shape checks above) and NaN <= 0 is
+  // false, so without this an invalid amount would slip through to Stripe.
+  if (!Number.isFinite(grossDollars) || grossCents <= 0) {
+    throw new Error('grossPay not set or invalid');
+  }
+  return grossCents;
+}
+
+function isTerminalPaymentIntentStatus(status: string | undefined): boolean {
+  return status === 'canceled' || status === 'requires_payment_method';
+}
+
+/**
+ * Create the Connect transfer to the caregiver, sync the appointment, mark the
+ * shift paid, and notify. Called ONLY once the funding charge has actually
+ * settled — synchronously in processShiftPayment, or later from the
+ * payment_intent.succeeded webhook. Transfer creation is idempotency-keyed so
+ * a double invocation never double-pays.
+ */
+export async function settleShiftTransfer(
+  appointmentId: string,
+  shift: any,
+  grossCents: number,
+  caregiverStripeAccountId: string,
+  attempt: number,
+): Promise<void> {
+  const ref = db.collection('shiftHours').doc(appointmentId);
+  const now = nowIso();
+
+  let transferId: string | undefined = shift.stripeTransferId;
+  if (!transferId) {
+    const transfer = await stripe.transfers.create({
+      amount: grossCents,
+      currency: shift.currency || 'usd',
+      destination: caregiverStripeAccountId,
+      transfer_group: appointmentId,
+      metadata: { appointmentId, shiftHoursId: appointmentId },
+    }, {
+      idempotencyKey: attempt > 1 ? `shift-transfer-${appointmentId}-attempt-${attempt}` : `shift-transfer-${appointmentId}`,
+    });
+    transferId = transfer.id;
+  }
+
+  // Sync the appointment's paymentStatus so the EarningsPanel and other
+  // appointment-driven UIs reflect what really happened.
+  const apptRef = db.collection('appointments').doc(appointmentId);
+  const apptSnap = await apptRef.get();
+  if (apptSnap.exists) {
+    await apptRef.update({
+      paymentStatus: 'pending',  // pending payout — money is in Connect balance, not yet to bank
+      chargedAt: now,
+      stripeChargeId: shift.stripeChargeId,
+    });
+  }
+
+  await ref.update({
+    status: 'paid',
+    stripeChargeId: shift.stripeChargeId,
+    stripeTransferId: transferId,
+    stripeChargeStatus: 'succeeded',
+    paymentAttemptCount: attempt,
+    lastPaymentAttemptAt: now,
+    updatedAt: now,
+  });
+
+  await pushNotification(shift.caregiverId, 'shift_hours_paid', 'Payment sent', `$${(grossCents / 100).toFixed(2)} is on its way.`, { appointmentId });
+}
+
+/**
+ * Completion path for a charge that settled asynchronously — invoked by the
+ * payment_intent.succeeded webhook. Idempotent: a shift already paid is a
+ * no-op, and the transfer idempotency key guards a duplicate webhook delivery.
+ */
+export async function completeShiftPaymentAfterCharge(appointmentId: string): Promise<void> {
+  const ref = db.collection('shiftHours').doc(appointmentId);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const shift = snap.data()!;
+  if (shift.status === 'paid' && shift.stripeTransferId) return; // already settled
+  if (shift.paymentMethod === 'cash') return;                    // cash never transfers
+  if (!shift.stripeChargeId) return;                             // no charge initiated
+
+  const caregiverSnap = await db.collection('caregivers').doc(shift.caregiverId).get();
+  const caregiverStripeAccountId = caregiverSnap.data()?.stripeAccountId;
+  if (!caregiverStripeAccountId) return;
+
+  const grossCents = computeGrossCents(shift);
+  await settleShiftTransfer(appointmentId, shift, grossCents, caregiverStripeAccountId, (shift.paymentAttemptCount || 0));
+}
+
+/**
+ * Reverse a caregiver transfer when the funding charge later fails — the case
+ * where the charge settled (transfer fired) but a subsequent
+ * payment_intent.payment_failed means we paid from money we never collected.
+ * Only acts when a transfer exists; idempotency-keyed against double-reversal.
+ * Returns true when a reversal was issued.
+ */
+export async function reverseShiftTransfer(appointmentId: string, shift: any): Promise<boolean> {
+  if (!shift.stripeTransferId) return false;
+  await stripe.transfers.createReversal(shift.stripeTransferId, {
+    metadata: { appointmentId, reason: 'charge_failed_after_payout' },
+  }, {
+    idempotencyKey: `shift-reversal-${appointmentId}`,
+  });
+  return true;
+}
+
+export async function processShiftPayment(appointmentId: string, shift: any): Promise<{ ok: boolean; error?: string }> {
   const ref = db.collection('shiftHours').doc(appointmentId);
   const attempt = (shift.paymentAttemptCount || 0) + 1;
   const now = nowIso();
@@ -820,27 +949,47 @@ async function processShiftPayment(appointmentId: string, shift: any): Promise<{
       throw new Error('Caregiver has no Stripe Connect account');
     }
 
-    const customerSnap = await db.collection('customers').doc(shift.clientId).get();
-    const stripeCustomerId = customerSnap.data()?.stripeCustomerId;
+    // The Stripe customer id lives in customers/{clientId} (written when the
+    // checkout session is created) AND is mirrored onto users/{clientId} by the
+    // checkout webhook. Read customers first, then fall back to users so a
+    // client subscribed via either path can be charged.
+    let stripeCustomerId = (await db.collection('customers').doc(shift.clientId).get()).data()?.stripeCustomerId;
+    if (!stripeCustomerId) {
+      stripeCustomerId = (await db.collection('users').doc(shift.clientId).get()).data()?.stripeCustomerId;
+    }
     if (!stripeCustomerId) {
       throw new Error('Client has no Stripe customer');
     }
 
-    const customer = await stripe.customers.retrieve(stripeCustomerId);
+    // Typed default-export Stripe returns Customer | DeletedCustomer; a shift
+    // charge only runs for a live customer, so assert the non-deleted shape.
+    const customer = await stripe.customers.retrieve(stripeCustomerId) as Stripe.Customer;
     const defaultPm = customer.invoice_settings?.default_payment_method
       || customer.default_source;
     if (!defaultPm) {
       throw new Error('Client has no default payment method');
     }
 
-    const grossCents = Math.round((shift.grossPay || 0) * 100);
-    if (grossCents <= 0) {
-      throw new Error('grossPay not set');
-    }
+    const grossCents = computeGrossCents(shift);
     const feeCents = Math.max(Math.round(grossCents * PLATFORM_FEE_RATE), Math.round(PLATFORM_FEE_MIN * 100));
     const totalChargeCents = grossCents + feeCents;
 
+    // Charge the client, then capture whether it actually settled. An
+    // off_session card charge usually returns 'succeeded' synchronously, but
+    // some payment methods settle asynchronously ('processing'). We must NOT
+    // pay the caregiver until the charge has truly settled — paying earlier
+    // risks an un-recoverable payout if the charge later fails.
     let paymentIntentId: string | undefined = shift.stripeChargeId;
+    let replacedTerminalChargeId: string | undefined;
+    let chargeStatus: string;
+    if (paymentIntentId) {
+      const existing = await stripe.paymentIntents.retrieve(paymentIntentId);
+      chargeStatus = existing.status;
+      if (isTerminalPaymentIntentStatus(chargeStatus)) {
+        replacedTerminalChargeId = paymentIntentId;
+        paymentIntentId = undefined;
+      }
+    }
 
     if (!paymentIntentId) {
       const intent = await stripe.paymentIntents.create({
@@ -855,47 +1004,55 @@ async function processShiftPayment(appointmentId: string, shift: any): Promise<{
       }, {
         // Idempotency-keyed by appointmentId so re-firing the Firestore
         // trigger never creates a second charge for the same shift.
-        idempotencyKey: `shift-charge-${appointmentId}`,
+        idempotencyKey: replacedTerminalChargeId || shift.status === 'payment_failed'
+          ? `shift-charge-${appointmentId}-attempt-${attempt}`
+          : `shift-charge-${appointmentId}`,
       });
       paymentIntentId = intent.id;
+      chargeStatus = intent.status;
+    } else {
+      // Retry path: a charge already exists — re-check whether it has settled
+      // before deciding whether to pay out.
+      const existing = await stripe.paymentIntents.retrieve(paymentIntentId);
+      chargeStatus = existing.status;
     }
 
-    let transferId: string | undefined = shift.stripeTransferId;
-    if (!transferId) {
-      const transfer = await stripe.transfers.create({
-        amount: grossCents,
-        currency: shift.currency || 'usd',
-        destination: caregiverStripeAccountId,
-        transfer_group: appointmentId,
-        metadata: { appointmentId, shiftHoursId: appointmentId },
-      }, {
-        idempotencyKey: `shift-transfer-${appointmentId}`,
-      });
-      transferId = transfer.id;
-    }
-
-    // Sync the appointment's paymentStatus so the EarningsPanel and other
-    // appointment-driven UIs reflect what really happened.
-    const apptRef = db.collection('appointments').doc(appointmentId);
-    const apptSnap = await apptRef.get();
-    if (apptSnap.exists) {
-      await apptRef.update({
-        paymentStatus: 'pending',  // pending payout — money is in Connect balance, not yet to bank
-        chargedAt: now,
+    if (chargeStatus !== 'succeeded') {
+      // A charge that reached a TERMINAL failure state will never emit a
+      // payment_intent.succeeded webhook, so it must not be parked in
+      // charge_pending forever. 'canceled' is terminal; an off_session intent
+      // that reverts to 'requires_payment_method' means the card was declined.
+      // (The create path throws on decline and is handled by the catch below;
+      // this guards the retrieve/retry path, where we read an already-failed
+      // intent.) Throwing routes it through the payment_failed handling — and
+      // retry/escalation — in the catch block.
+      if (isTerminalPaymentIntentStatus(chargeStatus)) {
+        throw new Error(`Charge ${paymentIntentId} is in terminal failure state '${chargeStatus}'`);
+      }
+      // Genuinely pending/processing (e.g. 'processing', 'requires_action').
+      // Hold the payout in 'charge_pending'; the payment_intent.succeeded webhook
+      // then calls completeShiftPaymentAfterCharge to create the transfer once the
+      // money has actually moved. Retry jobs only act on 'payment_failed', so
+      // they correctly leave a charge_pending shift alone (no double-charge).
+      await ref.update({
+        status: 'charge_pending',
         stripeChargeId: paymentIntentId,
+        stripeChargeStatus: chargeStatus,
+        paymentAttemptCount: attempt,
+        lastPaymentAttemptAt: now,
+        updatedAt: now,
       });
+      return { ok: true };
     }
 
-    await ref.update({
-      status: 'paid',
-      stripeChargeId: paymentIntentId,
-      stripeTransferId: transferId,
-      paymentAttemptCount: attempt,
-      lastPaymentAttemptAt: now,
-      updatedAt: now,
-    });
-
-    await pushNotification(shift.caregiverId, 'shift_hours_paid', 'Payment sent', `$${(grossCents / 100).toFixed(2)} is on its way.`, { appointmentId });
+    // Charge settled synchronously — safe to pay the caregiver now.
+    await settleShiftTransfer(
+      appointmentId,
+      { ...shift, stripeChargeId: paymentIntentId },
+      grossCents,
+      caregiverStripeAccountId,
+      attempt,
+    );
 
     return { ok: true };
   } catch (err: any) {
@@ -907,6 +1064,7 @@ async function processShiftPayment(appointmentId: string, shift: any): Promise<{
       lastPaymentAttemptAt: now,
       updatedAt: now,
     };
+    if (paymentIntentId) updates.stripeChargeId = paymentIntentId;
     await ref.update(updates);
 
     if (attempt >= MAX_PAYMENT_ATTEMPTS) {

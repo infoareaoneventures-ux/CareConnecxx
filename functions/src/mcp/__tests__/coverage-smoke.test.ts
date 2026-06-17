@@ -213,8 +213,9 @@ describe("MCP tool smoke coverage", () => {
 
   // ── Read-only senior/care queries ──────────────────────────────────────────
   it("get_senior_profile happy path", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
     hoisted.docState.set("seniors/s1", { name: "Linda", age: 78 });
-    const r = await handleToolCall("get_senior_profile", { seniorId: "s1" }) as any;
+    const r = await handleToolCall("get_senior_profile", { seniorId: "s1", clientId: "c1" }) as any;
     expect(r.success).toBe(true);
   });
 
@@ -229,8 +230,9 @@ describe("MCP tool smoke coverage", () => {
   });
 
   it("get_care_journal happy path", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
     hoisted.collState.set("care_journal", [{ id: "j1", notes: "good visit" }]);
-    const r = await handleToolCall("get_care_journal", { seniorId: "s1" }) as any;
+    const r = await handleToolCall("get_care_journal", { seniorId: "s1", clientId: "c1" }) as any;
     expect(r.success).toBe(true);
   });
 
@@ -258,8 +260,9 @@ describe("MCP tool smoke coverage", () => {
   });
 
   it("get_health_signals happy path", async () => {
+    hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
     hoisted.collState.set("health_signals", []);
-    const r = await handleToolCall("get_health_signals", { seniorId: "s1" }) as any;
+    const r = await handleToolCall("get_health_signals", { seniorId: "s1", clientId: "c1" }) as any;
     expect(r.success).toBe(true);
   });
 

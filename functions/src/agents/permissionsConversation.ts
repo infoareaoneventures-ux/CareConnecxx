@@ -2,6 +2,7 @@ import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { getAppUrl } from "../config/appUrl";
 
 async function askClaude(system: string, userText: string): Promise<string> {
   try {
@@ -220,7 +221,7 @@ export async function handleCaregiverPermissionsReply(
       onboardingStep: "complete",
       optedIn:        true,
     });
-    const appUrl  = process.env.APP_URL ?? "https://cara.app";
+    const appUrl  = getAppUrl();
     const name    = d.name    ? `, ${d.name as string}` : "";
     const city    = d.city    ? ` in ${d.city as string}` : "";
 

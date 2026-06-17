@@ -194,10 +194,25 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
     }
   }
   if ((session as any).pendingShiftApproval && (norm === "APPROVE" || norm.startsWith("DISPUTE"))) {
+    if ((session as any).isSecondaryMember) {
+      await sendMessage(chatId, "I can keep you updated here, but the primary account holder has to approve or dispute payment.");
+      return "handled";
+    }
     const { appointmentId, amount, caregiverName } = (session as any).pendingShiftApproval;
     if (norm === "APPROVE") {
       const { approveShiftHoursForClient } = await import("../shiftHours");
       await approveShiftHoursForClient(appointmentId as string);
+      const { logAgentAction } = await import("../observability/actionLedger");
+      logAgentAction({
+        actionType: "shift_hours_approved",
+        status: "executed",
+        userId: session.userId ?? phone,
+        phone,
+        role: "client",
+        targetCollection: "shiftHours",
+        targetDocId: appointmentId as string,
+        metadata: { amount, caregiverName, source: "cara_sms" },
+      }).catch(() => {});
       await sendMessage(chatId, `Approved. ${caregiverName as string} will be paid $${amount as string}.`);
     } else {
       // Create admin alert and set a pending state to capture the follow-up detail
@@ -215,6 +230,17 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
         pendingShiftApproval:    admin.firestore.FieldValue.delete(),
         pendingDisputeDetail:    { alertId: alertRef.id, caregiverName },
       });
+      const { logAgentAction } = await import("../observability/actionLedger");
+      logAgentAction({
+        actionType: "shift_hours_disputed",
+        status: "executed",
+        userId: session.userId ?? phone,
+        phone,
+        role: "client",
+        targetCollection: "admin_alerts",
+        targetDocId: alertRef.id,
+        metadata: { appointmentId, amount, caregiverName, source: "cara_sms" },
+      }).catch(() => {});
       await sendMessage(chatId,
         `Got it — flagged for review. Our team will follow up within 24 hours.\n\n` +
         `What looks wrong with the hours? (reply to add details, or just ignore this message)`

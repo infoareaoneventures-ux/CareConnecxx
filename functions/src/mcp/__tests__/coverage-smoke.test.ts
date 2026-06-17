@@ -402,6 +402,52 @@ describe("MCP tool smoke coverage", () => {
   });
 
   // ── Notification surfacing — invariant checks ─────────────────────────────
+  describe("CRUD-gap tools (U15)", () => {
+    it("delete_comment removes the author's comment", async () => {
+      hoisted.docState.set("care_journal/e1/comments/c1", { userId: "u1", comment: "hi" });
+      const r = await handleToolCall("delete_comment", { userId: "u1", entryId: "e1", commentId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.deleted).toBe(true);
+    });
+
+    it("delete_comment refuses a non-author", async () => {
+      hoisted.docState.set("care_journal/e1/comments/c1", { userId: "u1" });
+      const r = await handleToolCall("delete_comment", { userId: "other", entryId: "e1", commentId: "c1" }) as any;
+      expect(r._toolError).toBe(true);
+    });
+
+    it("edit_review updates the author's review", async () => {
+      hoisted.docState.set("reviews/r1", { clientId: "c1", rating: 3 });
+      const r = await handleToolCall("edit_review", { clientId: "c1", reviewId: "r1", rating: 5 }) as any;
+      expect(r.success).toBe(true);
+      expect(r.updated).toBe(true);
+    });
+
+    it("edit_review rejects an out-of-range rating", async () => {
+      hoisted.docState.set("reviews/r1", { clientId: "c1", rating: 3 });
+      const r = await handleToolCall("edit_review", { clientId: "c1", reviewId: "r1", rating: 9 }) as any;
+      expect(r._toolError).toBe(true);
+    });
+
+    it("edit_review refuses a non-author", async () => {
+      hoisted.docState.set("reviews/r1", { clientId: "c1" });
+      const r = await handleToolCall("edit_review", { clientId: "other", reviewId: "r1", comment: "x" }) as any;
+      expect(r._toolError).toBe(true);
+    });
+
+    it("cancel_followup deletes the owner's scheduled follow-up", async () => {
+      hoisted.docState.set("proactive_triggers/t1", { userId: "u1", message: "check in" });
+      const r = await handleToolCall("cancel_followup", { triggerId: "t1", userId: "u1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.cancelled).toBe(true);
+    });
+
+    it("cancel_followup returns NOT_FOUND for a missing follow-up", async () => {
+      const r = await handleToolCall("cancel_followup", { triggerId: "nope" }) as any;
+      expect(r._toolError).toBe(true);
+    });
+  });
+
   describe("notification surfacing invariant", () => {
     it("refactored tools always return a notification field with sent boolean", async () => {
       // cancel_appointment (high-risk — _confirmedActionId bypasses HITL gate;

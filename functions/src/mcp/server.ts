@@ -1498,6 +1498,45 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["userId", "entryId", "comment"],
     },
   },
+  {
+    name: "delete_comment",
+    description: "Delete a comment the user previously left on a care journal entry. Use when the family says 'delete my last comment' or 'remove what I said on that entry'. Only the comment's author can delete it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:    { type: "string", description: "The user who left the comment" },
+        entryId:   { type: "string", description: "The care_journal entry ID" },
+        commentId: { type: "string", description: "The comment ID to delete" },
+      },
+      required: ["userId", "entryId", "commentId"],
+    },
+  },
+  {
+    name: "edit_review",
+    description: "Update a review the family already submitted for a caregiver — change the rating and/or comment. Use when they say 'change my review to 5 stars' or 'update what I wrote'. Only the review's author can edit it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string", description: "The client who wrote the review" },
+        reviewId: { type: "string", description: "The review ID to edit" },
+        rating:   { type: "number", description: "New rating 1-5 (optional)" },
+        comment:  { type: "string", description: "New comment text (optional)" },
+      },
+      required: ["clientId", "reviewId"],
+    },
+  },
+  {
+    name: "cancel_followup",
+    description: "Cancel a previously scheduled follow-up (from schedule_followup) before it fires. Use when the family says 'never mind that follow-up' or 'cancel the check-in you set'. Pass the triggerId returned by schedule_followup.",
+    input_schema: {
+      type: "object",
+      properties: {
+        triggerId: { type: "string", description: "The follow-up triggerId returned by schedule_followup" },
+        userId:    { type: "string", description: "The owning user (ownership check)" },
+      },
+      required: ["triggerId"],
+    },
+  },
 ];
 
 // Tools available to caregivers — scoped to what's relevant to their role
@@ -4271,6 +4310,60 @@ export async function handleToolCall(
       }
       logAudit({ eventType: "journal_comment_added", userId: userId as string, data: { source: "mcp:comment_on_journal_entry", entryId, commentId: commentRef.id, notificationSent: notification.sent } }).catch(() => {});
       return { success: true, commentId: commentRef.id, notification };
+    }
+
+    // ── delete_comment ──────────────────────────────────────────────────────
+    if (name === "delete_comment") {
+      const { userId, entryId, commentId } = input as Record<string, unknown>;
+      if (!userId || !entryId || !commentId) return toolError("INVALID_INPUT", "userId, entryId, and commentId are required");
+      const commentRef = db.collection("care_journal").doc(entryId as string).collection("comments").doc(commentId as string);
+      const snap = await commentRef.get();
+      if (!snap.exists) return toolError("NOT_FOUND", "Comment not found.");
+      if (snap.data()?.userId !== userId) return toolError("PERMISSION_DENIED", "You can only delete your own comments.");
+      await commentRef.delete();
+      await db.collection("care_journal").doc(entryId as string)
+        .set({ commentCount: admin.firestore.FieldValue.increment(-1) }, { merge: true }).catch(() => {});
+      logAudit({ eventType: "journal_comment_deleted", userId: userId as string, data: { source: "mcp:delete_comment", entryId, commentId } }).catch(() => {});
+      return { success: true, deleted: true };
+    }
+
+    // ── edit_review ─────────────────────────────────────────────────────────
+    // Updates the family's own review. NOTE: the caregiver's aggregate rating is
+    // not recomputed here (onFeedbackSubmitted only runs on submit) — a rating
+    // edit refreshing the aggregate is a tracked follow-up.
+    if (name === "edit_review") {
+      const { clientId, reviewId, rating, comment } = input as Record<string, unknown>;
+      if (!clientId || !reviewId) return toolError("INVALID_INPUT", "clientId and reviewId are required");
+      if (rating === undefined && comment === undefined) return toolError("INVALID_INPUT", "Provide a new rating and/or comment.");
+      const ref = db.collection("reviews").doc(reviewId as string);
+      const snap = await ref.get();
+      if (!snap.exists) return toolError("NOT_FOUND", "Review not found.");
+      if (snap.data()?.clientId !== clientId) return toolError("PERMISSION_DENIED", "You can only edit your own review.");
+      const update: Record<string, unknown> = { updatedAt: nowIso };
+      if (rating !== undefined) {
+        const r = Number(rating);
+        if (!Number.isFinite(r) || r < 1 || r > 5) return toolError("INVALID_INPUT", "rating must be between 1 and 5");
+        update.rating = r;
+      }
+      if (comment !== undefined) update.comment = String(comment).slice(0, 2000);
+      await ref.update(update);
+      logAudit({ eventType: "review_edited", userId: clientId as string, data: { source: "mcp:edit_review", reviewId } }).catch(() => {});
+      return { success: true, updated: true };
+    }
+
+    // ── cancel_followup ─────────────────────────────────────────────────────
+    if (name === "cancel_followup") {
+      const { triggerId, userId } = input as Record<string, unknown>;
+      if (!triggerId) return toolError("INVALID_INPUT", "triggerId is required");
+      const ref = db.collection("proactive_triggers").doc(triggerId as string);
+      const snap = await ref.get();
+      if (!snap.exists) return toolError("NOT_FOUND", "Follow-up not found — it may have already fired or been cancelled.");
+      if (userId && snap.data()?.userId && snap.data()?.userId !== userId) {
+        return toolError("PERMISSION_DENIED", "Not authorized to cancel this follow-up.");
+      }
+      await ref.delete();
+      logAudit({ eventType: "followup_cancelled", userId: (userId as string) ?? "", data: { source: "mcp:cancel_followup", triggerId } }).catch(() => {});
+      return { success: true, cancelled: true };
     }
 
     return toolError("INVALID_INPUT", `Unknown tool: ${name}`);

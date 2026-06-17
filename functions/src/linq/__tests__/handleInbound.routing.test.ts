@@ -147,9 +147,11 @@ vi.mock("../../agents/onboardingConversation", () => ({
 
 const detectCrisis      = vi.fn((..._a: any[]): string | null => null);
 const isLikelyRealCrisis = vi.fn(async (..._a: any[]) => true);
+const classifyCrisisMultilingual = vi.fn(async (..._a: any[]): Promise<string | null> => null);
 vi.mock("../../safety/crisisDetector", () => ({
   detectCrisis:       (...a: any[]) => detectCrisis(...a),
   isLikelyRealCrisis: (...a: any[]) => isLikelyRealCrisis(...a),
+  classifyCrisisMultilingual: (...a: any[]) => classifyCrisisMultilingual(...a),
 }));
 
 const quickComplete = vi.fn(async (..._a: any[]) => "NONE");
@@ -305,6 +307,7 @@ beforeEach(() => {
   handleShiftOfferReply.mockResolvedValue("fallthrough");
   detectCrisis.mockReturnValue(null);
   isLikelyRealCrisis.mockResolvedValue(true);
+  classifyCrisisMultilingual.mockResolvedValue(null);
   quickComplete.mockResolvedValue("NONE");
   handleToolCall.mockResolvedValue({ success: true, notification: { sent: true } });
   sendMessage.mockResolvedValue({ message_id: "m1" });
@@ -383,6 +386,45 @@ describe("safety + account gates", () => {
     isLikelyRealCrisis.mockResolvedValue(false);
     await handleInbound(makeEvent("the movie was to die for"));
     expect(runQaAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("verified emotional crisis sends 988 + consent offer and arms an EMOTIONAL NOTIFY (U3)", async () => {
+    seedSession();
+    detectCrisis.mockReturnValue("emotional");
+    isLikelyRealCrisis.mockResolvedValue(true);
+    await handleInbound(makeEvent("I don't want to be here anymore"));
+    // 988 message + the consent-aware escalation offer.
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingCrisisNotify)
+      .toMatchObject({ kind: "emotional" });
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("emotional NOTIFY reply pages the care team with an emotional alert (U3)", async () => {
+    seedSession({ pendingCrisisNotify: { text: "struggling", detectedAt: "now", kind: "emotional" } });
+    await handleInbound(makeEvent("NOTIFY"));
+    expect(hoisted.docState.get("admin_alerts/auto-add"))
+      .toMatchObject({ type: "crisis_notify_requested", severity: "critical", crisisKind: "emotional" });
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("non-English no-keyword message runs the multilingual classifier; emotional → escalation (U2/U3)", async () => {
+    seedSession({ preferredLanguage: "es" });
+    detectCrisis.mockReturnValue(null);
+    classifyCrisisMultilingual.mockResolvedValue("emotional");
+    // Accented chars make the non-English gate fire deterministically.
+    await handleInbound(makeEvent("siento que ya no puedo más"));
+    expect(classifyCrisisMultilingual).toHaveBeenCalledTimes(1);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingCrisisNotify)
+      .toMatchObject({ kind: "emotional" });
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("English no-keyword message does NOT invoke the multilingual classifier (cost gate)", async () => {
+    seedSession();
+    detectCrisis.mockReturnValue(null);
+    await handleInbound(makeEvent("can you book someone for next tuesday"));
+    expect(classifyCrisisMultilingual).not.toHaveBeenCalled();
   });
 
   it("caregiver RENEW keyword re-issues the bg-check link (terminal)", async () => {

@@ -47,7 +47,7 @@ import { extractMediaPart, downloadMedia, storeInboundMedia, InboundMediaPart } 
 import { classifyMedia } from "../utils/visionVerify";
 import { detectPersonaShift } from "../utils/personaShiftDetector";
 import { collectKnownNames } from "../utils/knownNames";
-import { detectLanguage, languageFromSession, t as tr, flowLabel } from "../utils/language";
+import { detectLanguage, languageFromSession, t as tr, flowLabel, type Language } from "../utils/language";
 
 const db = admin.firestore();
 
@@ -160,14 +160,16 @@ async function handleTypingStarted(event: unknown): Promise<void> {
   });
 }
 
-// Family replied "NOTIFY" after a medical-crisis message. Alert the care team:
+// User replied "NOTIFY" after a crisis message. Alert the care team:
 // a guaranteed critical admin alert, plus best-effort SMS to family-group members
-// and the senior's assigned caregiver(s).
+// and the senior's assigned caregiver(s). Copy is tailored by crisis `kind`:
+// medical emergencies say "call 911"; emotional crises use supportive,
+// non-clinical wording (the person opted in to this escalation).
 async function handleCrisisNotify(
   phone:   string,
   chatId:  string,
   session: AgentSession,
-  pending: { text?: string; detectedAt?: string },
+  pending: { text?: string; detectedAt?: string; kind?: "medical" | "emotional" },
 ): Promise<void> {
   // Clear the armed flag first so a repeat NOTIFY doesn't double-fire.
   await db.collection("agent_sessions").doc(phone).update({
@@ -176,14 +178,23 @@ async function handleCrisisNotify(
 
   const lang       = languageFromSession(session as unknown as Record<string, unknown>);
   const userId     = session.userId ?? phone;
+  const kind       = pending?.kind ?? "medical";
   const seniorName = (session as any).seniorName
     ?? (session as any).onboardingData?.seniorName
     ?? "your loved one";
+
+  const familyMsg = kind === "emotional"
+    ? `💙 Someone in your care circle reached out for emotional support and asked me to let you know. Please check in with them when you can. If you believe they're in immediate danger, call 988 or 911.`
+    : `⚠️ A medical emergency was just reported for ${seniorName}. If you can help, please reach out now. Call 911 if it's life-threatening.`;
+  const caregiverMsg = kind === "emotional"
+    ? `💙 Your care client reached out for emotional support and asked us to notify their care circle. A gentle check-in would mean a lot. Call 988 or 911 if there's immediate danger.`
+    : `⚠️ A medical emergency was just reported for ${seniorName}, your care client. Please check in if you're able. Call 911 if it's life-threatening.`;
 
   // 1) GUARANTEED: critical admin alert so support staff is paged.
   await db.collection("admin_alerts").add({
     type:       "crisis_notify_requested",
     severity:   "critical",
+    crisisKind: kind,
     phone,
     userId,
     seniorName,
@@ -199,7 +210,7 @@ async function handleCrisisNotify(
       const mPhone = d.data().memberPhone as string | undefined;
       if (!mPhone) return Promise.resolve();
       return sendViaInteractionAgent(mPhone, {
-        content:     `⚠️ A medical emergency was just reported for ${seniorName}. If you can help, please reach out now. Call 911 if it's life-threatening.`,
+        content:     familyMsg,
         urgency:     "immediate",
         sourceAgent: "crisis_notify",
         canDrop:     false,
@@ -225,7 +236,7 @@ async function handleCrisisNotify(
     }
     await Promise.all([...caregiverPhones].map((cgPhone) =>
       sendViaInteractionAgent(cgPhone, {
-        content:     `⚠️ A medical emergency was just reported for ${seniorName}, your care client. Please check in if you're able. Call 911 if it's life-threatening.`,
+        content:     caregiverMsg,
         urgency:     "immediate",
         sourceAgent: "crisis_notify",
         canDrop:     false,
@@ -235,8 +246,28 @@ async function handleCrisisNotify(
     console.error("[handleCrisisNotify] caregiver notify failed:", err);
   }
 
-  // 4) Confirm to the family.
-  await sendMessage(chatId, tr.crisis_notify_sent(lang));
+  // 4) Confirm to the user.
+  await sendMessage(chatId, kind === "emotional"
+    ? tr.crisis_emotional_notify_sent(lang)
+    : tr.crisis_notify_sent(lang));
+}
+
+// Respond to a confirmed emotional crisis: send the 988 message, log it, then
+// OFFER (consent-aware) to notify the care circle and arm the NOTIFY follow-up
+// so a "NOTIFY" reply routes through handleCrisisNotify with emotional copy.
+// Unlike medical, we never auto-page anyone — escalation is opt-in.
+async function sendEmotionalCrisisResponse(
+  phone:   string,
+  chatId:  string,
+  lang:    Language,
+  text:    string,
+): Promise<void> {
+  await sendMessage(chatId, tr.crisis_emotional(lang));
+  await sendMessage(chatId, tr.crisis_emotional_notify_offer(lang));
+  logCrisisDetected(phone, "emotional", text).catch(() => {});
+  await db.collection("agent_sessions").doc(phone).update({
+    pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "emotional" },
+  }).catch(() => {});
 }
 
 // ── Post-visit feedback sentiment classifier ──────────────────────────────────
@@ -851,7 +882,7 @@ export async function handleInbound(event: unknown): Promise<void> {
   // team. Catch that reply here (strict keyword protocol — allowed without an LLM)
   // before crisis re-detection, so it isn't routed to the generic QA agent.
   {
-    const pendingNotify = (session as any).pendingCrisisNotify as { text?: string; detectedAt?: string } | undefined;
+    const pendingNotify = (session as any).pendingCrisisNotify as { text?: string; detectedAt?: string; kind?: "medical" | "emotional" } | undefined;
     const normNotify = text.trim().toUpperCase();
     if (pendingNotify && (normNotify.includes("NOTIFY") || normNotify.includes("NOTIFICAR"))) {
       await handleCrisisNotify(phone, chatId, session, pendingNotify);
@@ -879,7 +910,7 @@ export async function handleInbound(event: unknown): Promise<void> {
       logCrisisDetected(phone, "medical", text).catch(() => {});
       // Arm the NOTIFY follow-up so the family's "NOTIFY" reply reaches the care team.
       await db.collection("agent_sessions").doc(phone).update({
-        pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString() },
+        pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "medical" },
       }).catch(() => {});
       return;
     }
@@ -887,8 +918,7 @@ export async function handleInbound(event: unknown): Promise<void> {
   }
   if (crisis === "emotional") {
     if (await isLikelyRealCrisis(text, "emotional")) {
-      await sendMessage(chatId, tr.crisis_emotional(sessionLang));
-      logCrisisDetected(phone, "emotional", text).catch(() => {});
+      await sendEmotionalCrisisResponse(phone, chatId, sessionLang, text);
       return;
     }
     console.info("crisisDetector: emotional keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
@@ -909,13 +939,12 @@ export async function handleInbound(event: unknown): Promise<void> {
         await sendMessage(chatId, tr.crisis_medical(sessionLang));
         logCrisisDetected(phone, "medical", text).catch(() => {});
         await db.collection("agent_sessions").doc(phone).update({
-          pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString() },
+          pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "medical" },
         }).catch(() => {});
         return;
       }
       if (llmCrisis === "emotional") {
-        await sendMessage(chatId, tr.crisis_emotional(sessionLang));
-        logCrisisDetected(phone, "emotional", text).catch(() => {});
+        await sendEmotionalCrisisResponse(phone, chatId, sessionLang, text);
         return;
       }
     }

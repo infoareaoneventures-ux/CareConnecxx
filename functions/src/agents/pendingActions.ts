@@ -85,10 +85,13 @@ const CONDITIONAL_CONFIRM: Record<string, (input: Record<string, unknown>) => bo
   update_care_plan: (input) => !CARE_PLAN_NOTE_FIELDS.has(String(input.field)),
   // Real-world healthcare browser actions: booking an appointment or requesting
   // a refill submits on a third-party portal and is irreversible — gate it.
-  // insurance_check is a read-only lookup (account-holder-scoped in the handler,
-  // KTD-8) and is NOT gated.
+  // Appointment booking is two-pass (H-U3): the FIRST call (no chosenSlot) is
+  // read-only discovery and stays ungated; only the COMMIT call (carrying the
+  // approved chosenSlot) is gated. Refill is single-pass → always gated.
+  // insurance_check is read-only (account-holder-scoped, KTD-8) → NOT gated.
   perform_web_action: (input) =>
-    input.loginAction === "schedule_appointment" || input.loginAction === "pharmacy_refill",
+    input.loginAction === "pharmacy_refill" ||
+    (input.loginAction === "schedule_appointment" && !!input.chosenSlot),
 };
 
 export function isHighRisk(toolName: string, toolInput: Record<string, unknown>): boolean {

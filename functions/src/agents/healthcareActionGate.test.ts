@@ -5,8 +5,14 @@ vi.mock("firebase-admin", () => ({ __esModule: true, default: { firestore: () =>
 import { isHighRisk, buildActionPreview } from "./pendingActions";
 
 describe("healthcare action gating (H-U1)", () => {
-  it("gates appointment booking", () => {
-    expect(isHighRisk("perform_web_action", { loginAction: "schedule_appointment" })).toBe(true);
+  it("gates the appointment COMMIT (with chosenSlot) but not read-only discovery", () => {
+    // Two-pass (H-U3): discovery is read-only/ungated; only the commit carrying
+    // the approved slot is gated.
+    expect(isHighRisk("perform_web_action", { loginAction: "schedule_appointment" })).toBe(false);
+    expect(isHighRisk("perform_web_action", {
+      loginAction: "schedule_appointment",
+      chosenSlot: { provider: "Dr. Lee", datetime: "2026-06-23T14:30" },
+    })).toBe(true);
   });
   it("gates pharmacy refill", () => {
     expect(isHighRisk("perform_web_action", { loginAction: "pharmacy_refill" })).toBe(true);

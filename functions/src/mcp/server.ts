@@ -2447,7 +2447,8 @@ export async function handleToolCall(
           searchHealthcareProvider,
           fetchHealthcarePage,
           performBrowserAction,
-          scheduleDoctorAppointment,
+          findAppointmentSlots,
+          bookAppointmentSlot,
           requestPharmacyRefill,
           checkInsuranceAuthorization,
         } = await import("../browser/careWebActions");
@@ -2467,16 +2468,28 @@ export async function handleToolCall(
             switch (loginAction) {
               case "schedule_appointment": {
                 const portalSvc = (input.portalService as string | undefined ?? "mychart") as import("../browser/credentialVault").PortalService;
-                const result = await scheduleDoctorAppointment({
-                  userId:          userId2,
-                  phone:           phone2,
-                  doctorName:      input.doctorName      as string ?? task,
-                  specialty:       input.specialty       as string | undefined,
-                  preferredDate:   input.preferredDate   as string | undefined,
-                  appointmentType: input.appointmentType as string | undefined,
-                  portalService:   portalSvc,
+                const chosenSlot = input.chosenSlot as { provider: string; datetime: string; location?: string } | undefined;
+
+                // PASS 2 (H-U3): commit the APPROVED slot. Reached only on the
+                // confirmed re-run, which carries chosenSlot — the gate (keyed on
+                // chosenSlot) already round-tripped the family's approval.
+                if (chosenSlot) {
+                  return await bookAppointmentSlot({
+                    userId: userId2, phone: phone2, chosenSlot, portalService: portalSvc,
+                  });
+                }
+
+                // PASS 1 (H-U3): read-only discovery (ungated). Returns a concrete
+                // slot for the agent to propose; nothing is committed here.
+                const found = await findAppointmentSlots({
+                  userId:        userId2,
+                  phone:         phone2,
+                  doctorName:    input.doctorName    as string ?? task,
+                  specialty:     input.specialty     as string | undefined,
+                  preferredDate: input.preferredDate as string | undefined,
+                  portalService: portalSvc,
                 });
-                if (result.needsCredentials) {
+                if (found.needsCredentials) {
                   await startCredentialCollection({
                     phone:   phone2,
                     userId:  userId2,
@@ -2485,7 +2498,7 @@ export async function handleToolCall(
                   });
                   return { status: "collecting_credentials" };
                 }
-                return result;
+                return found;
               }
 
               case "pharmacy_refill": {

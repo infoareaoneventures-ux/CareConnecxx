@@ -67,6 +67,31 @@ export async function closeBrowserSession(session: BrowserSession): Promise<void
   }
 }
 
+// Bound a session's work with a hard wall-clock cap (H-U6). On timeout the
+// session is force-closed (so it can't hang an invocation) and the work rejects
+// with `browser_session_timeout` — callers surface that as a failure, never a
+// silent success. Uses Promise.race + Playwright's per-op default timeout, NOT
+// fetchWithTimeout (which can't attach to Stagehand act/extract over CDP).
+export async function withSessionTimeout<T>(
+  session: BrowserSession,
+  work: () => Promise<T>,
+  timeoutMs = 90_000,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      closeBrowserSession(session).catch(() => {});
+      reject(new Error("browser_session_timeout"));
+    }, timeoutMs);
+  });
+  try {
+    (session.page as { setDefaultTimeout?: (ms: number) => void }).setDefaultTimeout?.(30_000);
+    return await Promise.race([work(), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 // ── Search API ────────────────────────────────────────────────────────────────
 // Fast web search — up to 25 results. Use before spinning up a browser session.
 

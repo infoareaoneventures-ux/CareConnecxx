@@ -2,11 +2,34 @@ import { z } from "zod";
 import {
   createBrowserSession,
   closeBrowserSession,
+  withSessionTimeout,
   searchWeb,
   fetchPage,
   logBrowserSession,
   BrowserSession,
 } from "./browserbaseClient";
+
+// Field-fill login (H-U10): the password NEVER enters a Stagehand act()
+// instruction (which is sent to the model and can surface in session
+// recordings). We locate the fields with best-effort selectors and fill them
+// via Playwright directly, then submit without echoing the secret. Per-portal
+// selector tuning is expected (see the healthcare-action runbook).
+async function loginWithFieldFill(
+  session: BrowserSession,
+  credentials: { username: string; password: string },
+): Promise<void> {
+  const page = session.page as unknown as {
+    fill: (sel: string, val: string) => Promise<void>;
+  };
+  const userSel =
+    'input[autocomplete="username"], input[type="email"], input[name*="user" i], ' +
+    'input[id*="user" i], input[name*="email" i], input[id*="email" i]';
+  const passSel = 'input[type="password"], input[autocomplete="current-password"]';
+  await page.fill(userSel, credentials.username);
+  await page.fill(passSel, credentials.password);
+  // Submit semantically — no credential values in the instruction.
+  await session.stagehand.act("Submit the login form");
+}
 import {
   getCredential,
   markCredentialUsed,
@@ -291,109 +314,185 @@ const DOCTOR_PORTAL_URLS: Record<string, string> = {
   followmyhealth: "https://www.followmyhealth.com",
 };
 
-export async function scheduleDoctorAppointment(params: {
+export interface AppointmentSlot {
+  provider: string;
+  datetime: string; // ISO or portal-native date/time string
+  location?: string;
+}
+
+// PASS 1 (H-U3): read-only discovery. Log in, navigate, find the doctor, and
+// extract a concrete candidate slot — WITHOUT submitting. The returned slot is
+// what the family approves; nothing is committed here. Stops cleanly before any
+// step that could soft-hold a slot.
+export async function findAppointmentSlots(params: {
   userId:          string;
   phone:           string;
   doctorName:      string;
   specialty?:      string;
   preferredDate?:  string;
-  appointmentType?: string;
   portalService?:  PortalService;
   portalUrl?:      string;
 }): Promise<{
-  success:            boolean;
-  result:             string;
-  needsCredentials?:  boolean;
-  appointmentDetails?: {
-    date:                string;
-    time:                string;
-    doctor?:             string;
-    location?:           string;
-    confirmationNumber?: string;
-  };
-  sessionId?: string;
+  success:          boolean;
+  needsCredentials?: boolean;
+  slot?:            AppointmentSlot;
+  ambiguous?:       boolean;
+  result:           string;
+  sessionId?:       string;
 }> {
   const startTime = Date.now();
   let session: BrowserSession | null = null;
   const service = params.portalService ?? "mychart";
 
   const credentials = await getCredential(params.userId, service);
-  if (!credentials) {
-    return { success: false, result: "credentials_required", needsCredentials: true };
-  }
+  if (!credentials) return { success: false, needsCredentials: true, result: "credentials_required" };
 
   try {
     session = await createBrowserSession({ proxies: true, solveCaptchas: true });
-    const page      = session.page;
+    const sess = session;
     const portalUrl = params.portalUrl ?? credentials.portalUrl ?? DOCTOR_PORTAL_URLS[service] ?? "https://mychart.com";
 
-    await page.goto(portalUrl, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(2000);
-
-    await session.stagehand.act(
-      `Log in with username "${credentials.username}" and password "${credentials.password}"`
-    );
-    await page.waitForTimeout(3000);
-
-    await session.stagehand.act("Navigate to the appointments or scheduling section");
-    await page.waitForTimeout(2000);
-
-    await session.stagehand.act(
-      `Find and select ${params.doctorName}${params.specialty ? ` (${params.specialty})` : ""}`
-    );
-    await page.waitForTimeout(2000);
-
-    if (params.appointmentType) {
-      await session.stagehand.act(`Select appointment type: ${params.appointmentType}`);
-      await page.waitForTimeout(2000);
-    }
-
-    const dateContext = params.preferredDate ? `closest to ${params.preferredDate}` : "as soon as possible";
-    await session.stagehand.act(`Find and select an available appointment slot ${dateContext}`);
-    await page.waitForTimeout(2000);
-
-    await session.stagehand.act("Confirm and submit the appointment");
-    await page.waitForTimeout(3000);
-
-    const details = await session.stagehand.extract(
-      "Extract the appointment confirmation: date, time, doctor name, location, and confirmation number",
-      z.object({
-        date:               z.string(),
-        time:               z.string(),
-        doctor:             z.string().optional(),
-        location:           z.string().optional(),
-        confirmationNumber: z.string().optional(),
-      })
-    );
+    const slot = await withSessionTimeout(sess, async () => {
+      await sess.page.goto(portalUrl, { waitUntil: "domcontentloaded" });
+      await sess.page.waitForTimeout(2000);
+      await loginWithFieldFill(sess, credentials);
+      await sess.page.waitForTimeout(3000);
+      await sess.stagehand.act("Navigate to the appointments or scheduling section");
+      await sess.page.waitForTimeout(2000);
+      await sess.stagehand.act(`Find and select ${params.doctorName}${params.specialty ? ` (${params.specialty})` : ""}`);
+      await sess.page.waitForTimeout(2000);
+      const dateContext = params.preferredDate ? `closest to ${params.preferredDate}` : "the soonest available";
+      // Extract a concrete candidate slot WITHOUT selecting/submitting.
+      return sess.stagehand.extract(
+        `List the single best available appointment slot for ${params.doctorName} ${dateContext}. ` +
+          "Do NOT select or book anything. Return provider, an ISO-like datetime, and location.",
+        z.object({ provider: z.string(), datetime: z.string(), location: z.string().optional() }),
+      );
+    });
 
     await markCredentialUsed(params.userId, service, true);
     await logBrowserSession({
-      userId: params.userId, phone: params.phone, sessionId: session.sessionId,
-      action: "schedule_doctor_appointment", success: true,
-      result: `Scheduled with ${params.doctorName} on ${details?.date ?? "unknown date"}`,
+      userId: params.userId, phone: params.phone, sessionId: sess.sessionId,
+      action: "find_appointment_slots", success: !!slot?.datetime,
+      result: slot?.datetime ? `Found ${slot.provider} ${slot.datetime}` : "no slot",
       durationMs: Date.now() - startTime,
     });
 
+    if (!slot?.datetime) return { success: false, result: "no_slots_available", sessionId: sess.sessionId };
+    return { success: true, slot, result: "slot_found", sessionId: sess.sessionId };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    await markCredentialUsed(params.userId, service, false);
+    await logBrowserSession({
+      userId: params.userId, phone: params.phone, sessionId: session?.sessionId ?? "error",
+      action: "find_appointment_slots", success: false, error: message, durationMs: Date.now() - startTime,
+    });
     return {
-      success:            true,
-      result:             `Appointment scheduled with ${params.doctorName}`,
-      appointmentDetails: details ?? undefined,
-      sessionId:          session.sessionId,
+      success: false,
+      result: `I couldn't reach the ${service} scheduling page. Reply "update my ${service} login" if your password changed.`,
+      sessionId: session?.sessionId,
+    };
+  } finally {
+    if (session) await closeBrowserSession(session);
+  }
+}
+
+// PASS 2 (H-U3 + H-U6): commit the APPROVED slot. Re-locate it, extract-verify
+// EXACTLY ONE slot matches {provider, datetime, location} (0 → slot_unavailable,
+// >1 → slot_ambiguous, never a silent re-pick), submit, then verification
+// read-back. Never reports "booked" without a confirmation/accepted state.
+export async function bookAppointmentSlot(params: {
+  userId:         string;
+  phone:          string;
+  chosenSlot:     AppointmentSlot;
+  portalService?: PortalService;
+  portalUrl?:     string;
+}): Promise<{
+  status:             "verified_success" | "unverified" | "failed" | "slot_unavailable" | "slot_ambiguous";
+  result:             string;
+  confirmationNumber?: string;
+  sessionId?:         string;
+}> {
+  const startTime = Date.now();
+  let session: BrowserSession | null = null;
+  const service = params.portalService ?? "mychart";
+  const { provider, datetime, location } = params.chosenSlot;
+
+  const credentials = await getCredential(params.userId, service);
+  if (!credentials) return { status: "failed", result: "credentials_required" };
+
+  try {
+    session = await createBrowserSession({ proxies: true, solveCaptchas: true });
+    const sess = session;
+    const portalUrl = params.portalUrl ?? credentials.portalUrl ?? DOCTOR_PORTAL_URLS[service] ?? "https://mychart.com";
+
+    const outcome = await withSessionTimeout(sess, async () => {
+      await sess.page.goto(portalUrl, { waitUntil: "domcontentloaded" });
+      await sess.page.waitForTimeout(2000);
+      await loginWithFieldFill(sess, credentials);
+      await sess.page.waitForTimeout(3000);
+      await sess.stagehand.act("Navigate to the appointments or scheduling section");
+      await sess.page.waitForTimeout(2000);
+      await sess.stagehand.act(`Find ${provider}'s available appointment slots`);
+      await sess.page.waitForTimeout(2000);
+
+      // Re-identify the approved slot — a rendered slot is NOT a stable handle.
+      const match = await sess.stagehand.extract(
+        `Count how many available slots EXACTLY match provider "${provider}", datetime "${datetime}"` +
+          (location ? `, location "${location}"` : "") + ". Return the integer count.",
+        z.object({ matchCount: z.number() }),
+      );
+      const count = match?.matchCount ?? 0;
+      if (count === 0) return { status: "slot_unavailable" as const };
+      if (count > 1) return { status: "slot_ambiguous" as const };
+
+      await sess.stagehand.act(`Select the slot for ${provider} at ${datetime}${location ? ` (${location})` : ""}`);
+      await sess.page.waitForTimeout(2000);
+      await sess.stagehand.act("Confirm and submit the appointment");
+      await sess.page.waitForTimeout(3000);
+
+      // Verification read-back — proof of commit before we claim success.
+      const confirm = await sess.stagehand.extract(
+        "Extract the booking confirmation number and confirmed status, if shown.",
+        z.object({ confirmationNumber: z.string().optional(), confirmed: z.boolean().optional() }),
+      );
+      if (confirm?.confirmationNumber) {
+        return { status: "verified_success" as const, confirmationNumber: confirm.confirmationNumber };
+      }
+      return { status: "unverified" as const };
+    });
+
+    const success = outcome.status === "verified_success" || outcome.status === "unverified";
+    await markCredentialUsed(params.userId, service, success);
+    await logBrowserSession({
+      userId: params.userId, phone: params.phone, sessionId: sess.sessionId,
+      action: "book_appointment_slot", success, result: outcome.status,
+      durationMs: Date.now() - startTime,
+    });
+
+    const messages: Record<string, string> = {
+      verified_success: `Booked with ${provider} for ${datetime}${outcome.status === "verified_success" && "confirmationNumber" in outcome ? ` — confirmation #${outcome.confirmationNumber}` : ""}.`,
+      unverified:       `Submitted the appointment with ${provider} for ${datetime} — awaiting the portal's confirmation.`,
+      slot_unavailable: `That ${datetime} slot with ${provider} is no longer available. Want me to find another?`,
+      slot_ambiguous:   `I found more than one slot matching that time with ${provider}, so I didn't book — want me to re-check the options?`,
+      failed:           `I couldn't complete the booking with ${provider}. Reply "update my ${service} login" if your password changed.`,
+    };
+    return {
+      status:             outcome.status,
+      result:             messages[outcome.status],
+      confirmationNumber: "confirmationNumber" in outcome ? outcome.confirmationNumber : undefined,
+      sessionId:          sess.sessionId,
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await markCredentialUsed(params.userId, service, false);
     await logBrowserSession({
       userId: params.userId, phone: params.phone, sessionId: session?.sessionId ?? "error",
-      action: "schedule_doctor_appointment", success: false,
-      error: message, durationMs: Date.now() - startTime,
+      action: "book_appointment_slot", success: false, error: message, durationMs: Date.now() - startTime,
     });
     return {
-      success: false,
-      result:
-        `I ran into a problem scheduling with ${params.doctorName}. ` +
-        `The portal may have changed or your login may need updating. ` +
-        `Reply "update my ${service} login" to refresh your credentials.`,
+      status: "failed",
+      result: `I ran into a problem booking with ${provider}. Reply "update my ${service} login" if your password changed.`,
       sessionId: session?.sessionId,
     };
   } finally {
@@ -445,9 +544,7 @@ export async function requestPharmacyRefill(params: {
     await page.goto(portalUrl, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
 
-    await session.stagehand.act(
-      `Log in with email "${credentials.username}" and password "${credentials.password}"`
-    );
+    await loginWithFieldFill(session, credentials); // H-U10: no password in act()
     await page.waitForTimeout(3000);
 
     await session.stagehand.act("Navigate to prescriptions or refill section");
@@ -553,9 +650,7 @@ export async function checkInsuranceAuthorization(params: {
     await page.goto(portalUrl, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
 
-    await session.stagehand.act(
-      `Log in with username "${credentials.username}" and password "${credentials.password}"`
-    );
+    await loginWithFieldFill(session, credentials); // H-U10: no password in act()
     await page.waitForTimeout(3000);
 
     const navTarget: Record<string, string> = {

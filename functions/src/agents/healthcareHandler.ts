@@ -4,11 +4,48 @@ import { safeParseJson } from "../utils/jsonUtils";
 import { generateCaraMessage } from "../utils/caraMessage";
 import {
   searchHealthcareProvider,
-  scheduleDoctorAppointment,
-  requestPharmacyRefill,
+  findAppointmentSlots,
 } from "../browser/careWebActions";
 import { hasCredential } from "../browser/credentialVault";
+import { proposePendingAction } from "./pendingActions";
 import type { AgentSession } from "../linq/client";
+
+// Route a healthcare write action through the SAME propose→confirm→execute gate
+// the MCP path uses (R1: NEVER auto-commit from this conversational flow). Builds
+// a pending action keyed to the account holder and sends them the confirmation;
+// their YES is handled by the inbound approvalHandler, which dispatches the gated
+// commit (bookAppointmentSlot / requestPharmacyRefill). Fails closed.
+async function proposeHealthcareAction(params: {
+  phone: string;
+  userId: string;
+  sendMessage: (msg: string) => Promise<unknown>;
+  toolInput: Record<string, unknown>;
+}): Promise<void> {
+  let action;
+  try {
+    action = await proposePendingAction({
+      phone: params.phone, userId: params.userId,
+      toolName: "perform_web_action", toolInput: params.toolInput,
+    });
+  } catch {
+    await params.sendMessage(
+      "I couldn't verify the primary account holder for this, so I can't proceed. " +
+      "Please have the account holder text me directly.",
+    );
+    return;
+  }
+  const approver = action.approverPhone ?? params.phone;
+  const confirmMsg = `${action.preview}? Reply YES to approve or NO to decline.`;
+  if (approver === params.phone) {
+    await params.sendMessage(confirmMsg);
+  } else {
+    const { sendViaInteractionAgent } = await import("./caraAgent");
+    await sendViaInteractionAgent(approver, {
+      content: confirmMsg, urgency: "immediate", sourceAgent: "healthcare_approval", canDrop: false,
+    }).catch(() => {});
+    await params.sendMessage("I've sent this to the primary account holder to approve — I'll let you know once it's confirmed.");
+  }
+}
 
 const db = admin.firestore();
 
@@ -159,37 +196,32 @@ async function executeAppointmentBooking(
     return;
   }
 
-  await sendMessage(
-    `Booking your ${data.appointmentType ?? "appointment"} with ${data.doctorName} — ` +
-    `give me a minute...`
-  );
+  await sendMessage(`Finding an appointment with ${data.doctorName ?? "your doctor"} — give me a minute...`);
 
-  const result = await scheduleDoctorAppointment({
+  // PASS 1 (H-U3): read-only discovery — find a concrete slot. We do NOT book.
+  const found = await findAppointmentSlots({
     userId,
     phone,
-    doctorName:      data.doctorName ?? "your doctor",
-    appointmentType: data.appointmentType,
-    preferredDate:   data.preferredDate,
-    portalService:   portal,
+    doctorName:    data.doctorName ?? "your doctor",
+    preferredDate: data.preferredDate,
+    portalService: portal,
   });
-
   await clearFlowState(phone);
 
-  if (result.success && result.appointmentDetails) {
-    const d = result.appointmentDetails;
-    let msg = `Done! Your appointment is booked:\n\n📅 ${d.date} at ${d.time}`;
-    if (d.doctor)             msg += `\nWith ${d.doctor}`;
-    if (d.location)           msg += `\n📍 ${d.location}`;
-    if (d.confirmationNumber) msg += `\nConfirmation #: ${d.confirmationNumber}`;
-    await sendMessage(msg);
-  } else if (result.needsCredentials) {
-    await sendMessage(
-      `I need your ${portal} portal login to book for you. ` +
-      `Reply "save my ${portal} login" to set it up.`
-    );
-  } else {
-    await sendMessage(result.result);
+  if (found.needsCredentials) {
+    await sendMessage(`I need your ${portal} portal login to book for you. Reply "save my ${portal} login" to set it up.`);
+    return;
   }
+  if (!found.success || !found.slot) {
+    await sendMessage(`I couldn't find an available slot with ${data.doctorName ?? "your doctor"}. Want me to try a different date?`);
+    return;
+  }
+
+  // Propose the discovered slot for the account holder's approval (R1).
+  await proposeHealthcareAction({
+    phone, userId, sendMessage,
+    toolInput: { loginAction: "schedule_appointment", chosenSlot: found.slot, portalService: portal, doctorName: data.doctorName },
+  });
 }
 
 // ── Prescription refill execution ─────────────────────────────────────────────
@@ -212,33 +244,14 @@ async function executePharmacyRefill(
     return;
   }
 
-  await sendMessage(`Requesting the refill at ${pharmacy.toUpperCase()} — give me a moment...`);
-
-  const result = await requestPharmacyRefill({
-    userId,
-    phone,
-    pharmacyService: pharmacy,
-    medicationName:  data.medicationName,
-    rxNumber:        data.rxNumber,
-  });
-
   await clearFlowState(phone);
 
-  if (result.success && result.refillDetails) {
-    const r = result.refillDetails;
-    let msg = `Refill requested for ${r.medication}!`;
-    if (r.estimatedReady) msg += `\n\nEstimated ready: ${r.estimatedReady}`;
-    if (r.pickupLocation) msg += `\nPickup: ${r.pickupLocation}`;
-    if (r.rxNumber)       msg += `\nRx #: ${r.rxNumber}`;
-    await sendMessage(msg);
-  } else if (result.needsCredentials) {
-    await sendMessage(
-      `I need your ${pharmacy.toUpperCase()} login to request refills. ` +
-      `Reply "save my ${pharmacy} login" to set it up.`
-    );
-  } else {
-    await sendMessage(result.result);
-  }
+  // Propose for the account holder's approval (R1) — never auto-submit. The
+  // gated commit (requestPharmacyRefill) runs on their YES via approvalHandler.
+  await proposeHealthcareAction({
+    phone, userId, sendMessage,
+    toolInput: { loginAction: "pharmacy_refill", pharmacyService: pharmacy, medicationName: data.medicationName, rxNumber: data.rxNumber },
+  });
 }
 
 // ── Entry: start a new healthcare flow ────────────────────────────────────────

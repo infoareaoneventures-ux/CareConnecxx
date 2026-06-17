@@ -128,6 +128,33 @@ async function handlePreShiftUpdate(
   }
 }
 
+// Extract a contact's name + phone from free-form prose. Deciding which token
+// is the name is intent parsing → use the LLM, not a regex split. Phone-format
+// detection (digits) is still fine for validation.
+export async function extractContactNameAndPhone(
+  text: string,
+): Promise<{ name: string | null; phone: string | null }> {
+  const raw = await quickComplete(
+    "Extract the contact's name and phone number from this message. " +
+      'Reply with JSON only: {"name":"...","phone":"..."}. ' +
+      "name=null if no name is present; phone=null if no phone is present. Keep the phone digits as written.",
+    text,
+    { maxTokens: 60 },
+  ).catch(() => "{}");
+  try {
+    const parsed = JSON.parse(raw || "{}");
+    const name = typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : null;
+    const phoneRaw = typeof parsed.phone === "string" ? parsed.phone : "";
+    const digits = phoneRaw.replace(/[^\d+]/g, "");
+    const phone = digits.replace(/\D/g, "").length >= 10 ? digits : null;
+    return { name, phone };
+  } catch {
+    const trimmed = text.trim();
+    const looksPhone = /^[+(]?[\d\s().+-]{10,}$/.test(trimmed) && trimmed.replace(/\D/g, "").length >= 10;
+    return { name: null, phone: looksPhone ? trimmed.replace(/[^\d+]/g, "") : null };
+  }
+}
+
 // ── Client-side pre-intent state machines — extracted verbatim from webhooks.ts
 // handleInbound. Returns "handled" when the message was fully handled
 // (handleInbound must return), or "fallthrough" when no state machine matched
@@ -157,10 +184,10 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
     await db.collection("agent_sessions").doc(phone).update({
       awaitingEmergencyContactUpdate: admin.firestore.FieldValue.delete(),
     });
-    // Try to extract a phone number from the reply
-    const ecPhoneMatch = text.match(/\+?[\d\s\-().]{10,}/);
-    const ecPhone      = ecPhoneMatch ? ecPhoneMatch[0].replace(/[\s\-().]/g, "") : null;
-    const ecName       = text.replace(/\+?[\d\s\-().]{10,}/g, "").trim().replace(/^[,;]+|[,;]+$/g, "").trim();
+    // Extract name + phone with the LLM rather than regex-splitting which token
+    // is the name (parsing meaning from prose). Phone-FORMAT detection is still
+    // fine for validation, but deciding "which part is the name" is intent.
+    const { name: ecName, phone: ecPhone } = await extractContactNameAndPhone(text);
     const seniorId     = (session as any).seniorId ?? session.userId ?? "";
     if (ecPhone && seniorId) {
       await db.collection("senior_profiles").doc(seniorId).set(

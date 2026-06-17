@@ -915,7 +915,13 @@ async function handleInboundInner(event: unknown): Promise<void> {
   {
     const pendingNotify = (session as any).pendingCrisisNotify as { text?: string; detectedAt?: string; kind?: "medical" | "emotional" } | undefined;
     const normNotify = text.trim().toUpperCase();
-    if (pendingNotify && (normNotify.includes("NOTIFY") || normNotify.includes("NOTIFICAR"))) {
+    // Word-START match, not substring: the crisis message instructs "reply
+    // NOTIFY", so this matches "NOTIFY" / "NOTIFY THEM" but NOT "do not notify
+    // anyone" (which a substring .includes("NOTIFY") wrongly paged the team on).
+    const isNotifyKeyword =
+      normNotify === "NOTIFY" || normNotify.startsWith("NOTIFY ") ||
+      normNotify === "NOTIFICAR" || normNotify.startsWith("NOTIFICAR ");
+    if (pendingNotify && isNotifyKeyword) {
       await handleCrisisNotify(phone, chatId, session, pendingNotify);
       return;
     }

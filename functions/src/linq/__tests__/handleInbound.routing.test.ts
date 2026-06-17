@@ -411,6 +411,19 @@ describe("safety + account gates", () => {
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
+  it("NOTIFY keyword (armed) pages the care team (U11)", async () => {
+    seedSession({ pendingCrisisNotify: { text: "x", detectedAt: "now", kind: "medical" } });
+    await handleInbound(makeEvent("NOTIFY please"));
+    expect(hoisted.docState.get("admin_alerts/auto-add"))
+      .toMatchObject({ type: "crisis_notify_requested" });
+  });
+
+  it("'do not notify anyone' does NOT page the care team — no substring misfire (U11)", async () => {
+    seedSession({ pendingCrisisNotify: { text: "x", detectedAt: "now", kind: "medical" } });
+    await handleInbound(makeEvent("do not notify anyone"));
+    expect(hoisted.docState.get("admin_alerts/auto-add")?.type).not.toBe("crisis_notify_requested");
+  });
+
   it("non-English no-keyword message runs the multilingual classifier; emotional → escalation (U2/U3)", async () => {
     seedSession({ preferredLanguage: "es" });
     detectCrisis.mockReturnValue(null);

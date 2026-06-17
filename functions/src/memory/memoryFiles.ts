@@ -328,6 +328,47 @@ export async function handleMemoryQuery(
 
 // Consolidate last 7 days of actual conversation messages into memory files.
 // `phone` is optional — if omitted, we look it up from agent_sessions using userId.
+// Memory consolidation only ever APPENDS, so over time a file accumulates
+// duplicates and stale facts (an old medication sitting next to its replacement).
+// In eldercare a contradictory health fact is a safety + trust risk. This pass
+// dedupes and supersedes: a newer fact wins over the older one it replaces, every
+// distinct still-true fact is preserved, and the file is capped. Idempotent — a
+// second run on an already-clean file returns the same content and writes nothing.
+const RECONCILE_MIN_CHARS = 800;
+
+export async function reconcileMemoryFile(
+  userId: string,
+  file: CanonicalMemoryFile,
+): Promise<boolean> {
+  const content = await readMemoryFile(userId, file);
+  // Below the threshold there's nothing worth spending an LLM call to reconcile.
+  if (content.trim().length < RECONCILE_MIN_CHARS) return false;
+  try {
+    const result = await getSharedClient().messages.create({
+      model:      "claude-haiku-4-5-20251001",
+      max_tokens: 700,
+      system:
+        `You are reconciling a memory file of type "${file}" for one care recipient. ` +
+        "Remove duplicate facts. When a newer fact supersedes an older one (a changed " +
+        "medication, dose, address, phone, or age), keep ONLY the current fact and drop the " +
+        "stale one. Preserve every distinct fact that is still true — do not drop or invent " +
+        "anything else. Keep it concise. Reply with ONLY the revised markdown content.",
+      messages: [{ role: "user", content }],
+    });
+    const revised = ((result.content[0] as { text: string }).text ?? "").trim();
+    // No-op when the model returns nothing or the file is already clean.
+    if (!revised || revised === content.trim()) return false;
+    await writeMemoryFile(userId, file, revised);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Files worth reconciling — the long-lived fact stores. recent_episodes has its
+// own time-based trim; procedural rarely accumulates contradictions.
+const RECONCILABLE_FILES: CanonicalMemoryFile[] = ["profile", "health", "family"];
+
 export async function consolidateMemoryForUser(userId: string, phone?: string): Promise<void> {
   // Resolve phone → agent_conversations doc key
   let conversationKey = phone ?? userId;
@@ -408,6 +449,13 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
         data_source: "cara_memory_consolidation",
       },
     }).catch(() => {});
+  }
+
+  // Reconcile the long-lived fact files that received updates this run, so the
+  // append above can't leave a stale fact sitting next to its replacement.
+  const touched = new Set(appliedUpdates.map((u) => String(u.file)));
+  for (const file of RECONCILABLE_FILES) {
+    if (touched.has(file)) await reconcileMemoryFile(userId, file).catch(() => {});
   }
 
   // Trim recent_episodes.md if it exceeds 8000 chars

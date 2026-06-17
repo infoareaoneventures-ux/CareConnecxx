@@ -7,6 +7,7 @@ import { getPreferences, isInDND, isActiveHour, CaraPreferences } from "../memor
 import { supervise } from "../safety/supervisor";
 import { logAudit } from "../observability/auditLog";
 import { classifyIntent, Intent } from "./intentClassifier";
+import { claimOutboundSend } from "../utils/outboundLedger";
 
 const db = admin.firestore();
 
@@ -204,6 +205,20 @@ export async function sendViaInteractionAgent(
       }).catch(() => {});
       return;
     }
+  }
+
+  // Content-hash dedup: a redelivered inbound can drive an identical outbound.
+  // Suppress an exact duplicate to the same chat within a short window (all
+  // urgencies — a doubled critical message is a redelivery artifact). Distinct
+  // content, or the same content sent later, still goes out.
+  if (!(await claimOutboundSend(phone, targetChatId, output.content))) {
+    logAudit({
+      eventType: "message_sent",
+      userId:    phone,
+      phone,
+      data: { suppressed: true, reason: "duplicate", sourceAgent: output.sourceAgent, preview: output.content.slice(0, 50) },
+    }).catch(() => {});
+    return;
   }
 
   // Run through supervisor (which also lints internally). If supervisor throws

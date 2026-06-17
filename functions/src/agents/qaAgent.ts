@@ -1289,9 +1289,15 @@ export async function runQaAgent(params: {
     let recoveryFired              = false;
     const toolErrorTrail: { tool: string; preview: string }[] = [];
     for (let iteration = 0; iteration < 5; iteration++) {
-      if (Date.now() - turnStart > TURN_BUDGET_MS) {
-        console.warn("qaAgent: turn budget exceeded, exiting tool loop", { userId, iteration });
-        break;
+      // On the final allowed iteration, or once the wall-clock budget is spent,
+      // force a text-only completion (tool_choice:none) so the model MUST emit a
+      // user-facing reply instead of calling another tool and leaving us in the
+      // exhausted "Give me a moment" + 30s-retry fallback. Deterministic
+      // completion beats the fragile no-text heuristic.
+      const budgetExceeded = Date.now() - turnStart > TURN_BUDGET_MS;
+      const forceTextReply = budgetExceeded || iteration === 4;
+      if (budgetExceeded) {
+        console.warn("qaAgent: turn budget exceeded — forcing final text reply", { userId, iteration });
       }
       // Clip oversized tool_use args in older messages — the result is what
       // matters past the first turn or two, and full args bloat every cached
@@ -1316,7 +1322,7 @@ export async function runQaAgent(params: {
         max_tokens:  1024,
         system:      cachedSystem as any,
         tools:       cachedTools as any,
-        tool_choice: { type: "auto" },
+        tool_choice: forceTextReply ? { type: "none" } : { type: "auto" },
         messages,
       }, { timeoutMs: 15_000, maxAttempts: 1 });
 

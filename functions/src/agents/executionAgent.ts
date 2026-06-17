@@ -1,8 +1,18 @@
 import * as admin from "firebase-admin";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getSharedClient } from "../utils/claudeClient";
+import { callClaudeWithRetry } from "../utils/claudeRetry";
 
 const db = admin.firestore();
+
+// A long-lived agent's conversationHistory grows every turn and is stored in a
+// single Firestore doc (1MB hard limit). Cap it to the most recent N messages
+// so the doc can never blow the limit and wedge the agent.
+const MAX_HISTORY_MESSAGES = 24;
+
+export function capConversationHistory<T>(history: T[], max = MAX_HISTORY_MESSAGES): T[] {
+  return history.length > max ? history.slice(-max) : history;
+}
 
 export type ExecutionAgentType = "matching" | "emergency_replacement" | "care_research";
 
@@ -87,12 +97,14 @@ export async function runExecutionAgentTurn(
     { role: "user", content: input },
   ];
 
-  const response = await getSharedClient().messages.create({
+  // Route through the retry wrapper (per-attempt timeout + backoff) so a
+  // long-lived agent is as resilient to transient API errors as the main loop.
+  const response = await callClaudeWithRetry(getSharedClient(), {
     model:      "claude-sonnet-4-6",
     max_tokens: 800,
     system:     agent.systemPrompt,
     messages:   history,
-  });
+  }, { timeoutMs: 20_000, maxAttempts: 2 });
 
   const replyText = response.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -100,10 +112,11 @@ export async function runExecutionAgentTurn(
     .join("").trim();
 
   const now = new Date().toISOString();
-  const updatedHistory = [
+  // Cap before persisting so the doc stays well under the 1MB Firestore limit.
+  const updatedHistory = capConversationHistory([
     ...history,
     { role: "assistant" as const, content: replyText },
-  ];
+  ]);
 
   await agentRef.update({
     conversationHistory: updatedHistory,

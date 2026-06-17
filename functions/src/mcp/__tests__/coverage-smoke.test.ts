@@ -448,6 +448,28 @@ describe("MCP tool smoke coverage", () => {
     });
   });
 
+  describe("find_replacement_caregivers filters (U17)", () => {
+    it("accepts optional filters and echoes them back", async () => {
+      hoisted.docState.set("agent_sessions/+15555550000", { zipCode: "10001" });
+      hoisted.docState.set("users/c1", { name: "Fam" });
+      const r = await handleToolCall("find_replacement_caregivers", {
+        phone: "+15555550000", chatId: "chat1", clientId: "c1",
+        needs: "dementia care", nearZip: "95020", availabilityWindow: "weekday mornings", radiusMiles: 15,
+      }) as any;
+      expect(r.success).toBe(true);
+      expect(r.triggered).toBe(true);
+      expect(r.filtersApplied).toMatchObject({ needs: "dementia care", nearZip: "95020", availabilityWindow: "weekday mornings", radiusMiles: 15 });
+    });
+
+    it("still works with no filters (defaults preserved)", async () => {
+      hoisted.docState.set("agent_sessions/+15555550000", { zipCode: "10001" });
+      hoisted.docState.set("users/c1", { name: "Fam" });
+      const r = await handleToolCall("find_replacement_caregivers", { phone: "+15555550000", chatId: "chat1", clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.filtersApplied).toMatchObject({ needs: null, nearZip: null });
+    });
+  });
+
   describe("notification surfacing invariant", () => {
     it("refactored tools always return a notification field with sent boolean", async () => {
       // cancel_appointment (high-risk — _confirmedActionId bypasses HITL gate;

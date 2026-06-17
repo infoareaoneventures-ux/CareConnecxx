@@ -124,10 +124,15 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "find_replacement_caregivers",
-    description: "Search for available caregivers matching the client's care needs. Session context (phone, chatId, clientId) is injected automatically — do NOT ask the user for these.",
+    description: "Search for available caregivers matching the client's care needs. Session context (phone, chatId, clientId) is injected automatically — do NOT ask the user for these. Optionally narrow the search with the filters below when the family is specific (e.g. 'find someone available mornings near 95020 who can do dementia care').",
     input_schema: {
       type: "object",
-      properties: {},
+      properties: {
+        needs:              { type: "string", description: "Specific care needs to bias matching, e.g. 'dementia care, mobility assistance' (optional)" },
+        nearZip:            { type: "string", description: "ZIP code to center the search on, overriding the profile default (optional)" },
+        availabilityWindow: { type: "string", description: "Desired availability, e.g. 'weekday mornings', 'overnights' (optional)" },
+        radiusMiles:        { type: "number", description: "Search radius in miles (optional)" },
+      },
       required: [],
     },
   },
@@ -1999,15 +2004,33 @@ export async function handleToolCall(
       }
 
       case "find_replacement_caregivers": {
-        const { phone, chatId, clientId } = input;
+        const { phone, chatId, clientId, needs, nearZip, availabilityWindow, radiusMiles } = input;
         if (!phone || !chatId || !clientId) return toolError("INVALID_INPUT", "phone, chatId, and clientId are required");
         logAudit({ eventType: "caregiver_matched", userId: clientId as string, data: { source: "mcp:find_replacement_caregivers" } }).catch(() => {});
         const sessionSnap    = await db.collection("agent_sessions").doc(phone as string).get();
         const session        = sessionSnap.data() ?? {};
         const clientSnap     = await db.collection("users").doc(clientId as string).get();
         const clientProfile  = clientSnap.data() ?? {};
-        await runMatchingForClient(phone as string, chatId as string, session, clientProfile);
-        return { success: true, triggered: true };
+        // Apply optional agent-supplied filters as overrides on the matching
+        // intake (the object runMatchingForClient reads zipCode/careNeeds from),
+        // so the agent can parameterize the search instead of an opaque zero-arg
+        // call. Omitted filters leave the profile defaults untouched.
+        const matchIntake: Record<string, unknown> = { ...session };
+        if (typeof nearZip === "string" && nearZip) matchIntake.zipCode = nearZip;
+        if (typeof needs === "string" && needs) matchIntake.careNeeds = needs;
+        if (typeof availabilityWindow === "string" && availabilityWindow) matchIntake.availabilityWindow = availabilityWindow;
+        if (typeof radiusMiles === "number") matchIntake.radiusMiles = radiusMiles;
+        await runMatchingForClient(phone as string, chatId as string, matchIntake, clientProfile);
+        return {
+          success: true,
+          triggered: true,
+          filtersApplied: {
+            needs:              (needs as string) ?? null,
+            nearZip:            (nearZip as string) ?? null,
+            availabilityWindow: (availabilityWindow as string) ?? null,
+            radiusMiles:        radiusMiles ?? null,
+          },
+        };
       }
 
       case "request_booking": {

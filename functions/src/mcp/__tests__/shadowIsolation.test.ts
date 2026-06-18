@@ -1,0 +1,77 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const hoisted = vi.hoisted(() => {
+  const docState  = new Map<string, any>();
+  const collState = new Map<string, any[]>();
+  const writes: Array<{ path: string; op: string }> = [];
+
+  const makeDocRef = (path: string) => ({
+    id: path.split("/").pop(), path,
+    get: vi.fn(async () => ({ exists: docState.has(path), data: () => docState.get(path), ref: makeDocRef(path) })),
+    set: vi.fn(async (d: any) => { writes.push({ path, op: "set" }); docState.set(path, d); }),
+    update: vi.fn(async () => { writes.push({ path, op: "update" }); }),
+  });
+  const makeCollRef = (path: string): any => {
+    const ref: any = {};
+    ref.doc = (id?: string) => makeDocRef(`${path}/${id ?? "auto"}`);
+    ref.where = () => ref; ref.orderBy = () => ref; ref.limit = () => ref;
+    ref.add = vi.fn(async (d: any) => { writes.push({ path, op: "add" }); return { id: "auto" }; });
+    ref.get = vi.fn(async () => ({ empty: true, size: 0, docs: [] }));
+    return ref;
+  };
+  return {
+    docState, collState, writes,
+    collectionMock: vi.fn((p: string) => makeCollRef(p)),
+    reset: () => { docState.clear(); collState.clear(); writes.length = 0; },
+  };
+});
+
+vi.mock("firebase-admin", () => ({
+  __esModule: true,
+  default: { firestore: () => ({ collection: hoisted.collectionMock }) },
+  firestore: Object.assign(() => ({ collection: hoisted.collectionMock }), {
+    FieldValue: { arrayUnion: () => ({}), arrayRemove: () => ({}), increment: () => ({}), delete: () => ({ __delete: true }) },
+  }),
+}));
+vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn().mockResolvedValue(undefined), logHealthDataAccessed: vi.fn().mockResolvedValue(undefined), logBookingCreated: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../../memory/memoryFiles", () => ({ readMemoryFile: vi.fn().mockResolvedValue(""), writeMemoryFile: vi.fn().mockResolvedValue(undefined), MemoryFile: {} }));
+vi.mock("../../memory/preferences", () => ({ getPreferences: vi.fn().mockResolvedValue(null) }));
+vi.mock("../../agents/matchingAgent", () => ({ runMatchingForClient: vi.fn().mockResolvedValue(undefined) }));
+
+import { handleToolCall, isReadOnlyTool } from "../server";
+
+describe("shadow/dry-run isolation (U11)", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("synthesizes a mutating tool under shadowMode with NO write", async () => {
+    const r = await handleToolCall("create_reminder", { phone: "+1", text: "x", userId: "u1" }, true) as any;
+    expect(r._shadow).toBe(true);
+    expect(r.simulated).toBe("create_reminder");
+    expect(hoisted.writes.length).toBe(0);
+  });
+
+  it("synthesizes a high-risk gated tool under shadowMode (gate never reached, no pending_actions write)", async () => {
+    const r = await handleToolCall("cancel_appointment", { phone: "+1", appointmentId: "a1" }, true) as any;
+    expect(r._shadow).toBe(true);
+    expect(hoisted.writes.find(w => w.path.startsWith("pending_actions"))).toBeUndefined();
+  });
+
+  it("does NOT synthesize a read-only tool under shadowMode (still runs for real)", async () => {
+    const r = await handleToolCall("get_billing_summary", { phone: "+1", clientId: "c1", userId: "c1" }, true) as any;
+    expect(r?._shadow).toBeUndefined();
+  });
+
+  it("executes mutating tools normally when shadowMode is off (regression)", async () => {
+    const r = await handleToolCall("create_reminder", { phone: "+1", text: "x", userId: "u1" }, false) as any;
+    expect(r?._shadow).toBeUndefined();
+  });
+
+  it("classifies tools conservatively (mutating tools are not read-only)", () => {
+    expect(isReadOnlyTool("get_billing_summary")).toBe(true);
+    expect(isReadOnlyTool("find_replacement_caregivers")).toBe(true);
+    expect(isReadOnlyTool("create_reminder")).toBe(false);
+    expect(isReadOnlyTool("cancel_appointment")).toBe(false);
+    expect(isReadOnlyTool("pause_account")).toBe(false);
+    expect(isReadOnlyTool("perform_web_action")).toBe(false);
+  });
+});

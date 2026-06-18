@@ -779,8 +779,12 @@ export async function runQaAgent(params: {
   // capability-relevant subset. Optional: when absent (web callable, agent
   // callers), the full tool list is bound.
   intent?:        Intent | null;
+  // U11: when true, tool dispatch runs in shadow/dry-run mode — non-read-only
+  // tools are synthesized, never executed. The shadow harness (U6) sets this
+  // together with skipSend so a parallel comparison run has zero side effects.
+  shadowMode?:    boolean;
 }): Promise<string> {
-  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, sourceChannel, intent } = params;
+  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, sourceChannel, intent, shadowMode = false } = params;
 
   // Tag the input so Claude can apply different judgment per channel.
   // [USER] messages may require a reply; [TRIGGER] / [AGENT] inputs may not.
@@ -1431,7 +1435,7 @@ export async function runQaAgent(params: {
               ...(userType === "caregiver" && caregiverId ? { caregiverId } : {}),
             };
             const toolStart = Date.now();
-            const result = await toolHandler(block.name, enrichedInput)
+            const result = await toolHandler(block.name, enrichedInput, shadowMode)
               .catch((err) => {
                 console.error(`qaAgent: tool call failed [${block.name}]`, err);
                 return {

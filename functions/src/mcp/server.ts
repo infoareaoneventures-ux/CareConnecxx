@@ -1670,12 +1670,13 @@ export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_N
 
 export async function handleToolCallForCaregiver(
   name: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  shadowMode = false,
 ): Promise<unknown> {
   if (name === "perform_web_action" && input.loginAction) {
     return { _toolError: true, message: "Login-required web actions are not available for caregivers." };
   }
-  return handleToolCall(name, input);
+  return handleToolCall(name, input, shadowMode);
 }
 
 // ── MCP Resources ─────────────────────────────────────────────────────────────
@@ -1859,10 +1860,42 @@ async function assertSeniorAccess(seniorId: string, sessionClientId: unknown) {
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
+// U11: shadow/dry-run isolation. When the shadow harness (U6) runs runQaAgent
+// in parallel with a live handler, its tool calls must have ZERO side effects.
+// This is the structural guarantee (KTD-9): only explicitly read-only tools run
+// for real under shadowMode; EVERYTHING ELSE is synthesized (fail-closed), so a
+// mutating tool — or the pending-action gate it would hit — can never execute.
+// Conservative allowlist: a tool omitted here is treated as mutating (safe); a
+// mutating tool must never be added here.
+const READ_ONLY_TOOLS = new Set<string>([
+  "get_senior_profile", "list_household_seniors", "get_pending_tasks",
+  "suggest_upcoming_care", "get_care_team", "cara_knows",
+  "get_upcoming_appointments", "get_caregiver_appointments", "get_caregiver_info",
+  "get_caregiver_reviews", "find_replacement_caregivers", "list_saved_caregivers",
+  "get_recurring_schedule", "list_user_reminders",
+  "get_billing_summary", "get_invoice_history", "get_invoice_details",
+  "get_payout_history", "get_caregiver_earnings", "get_pending_timesheets", "get_tax_summary",
+  "get_care_journal", "get_care_journal_client", "get_care_plan", "get_care_plan_history",
+  "get_health_signals", "get_recent_messages", "get_family_group",
+  "read_memory_file", "search_memory", "search_web",
+  "list_client_jobs", "list_job_applicants", "browse_job_board",
+  "get_job_recommendations", "get_my_applications", "get_background_check_status",
+]);
+
+export function isReadOnlyTool(name: string): boolean {
+  return READ_ONLY_TOOLS.has(name);
+}
+
 export async function handleToolCall(
   name: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  shadowMode = false,
 ): Promise<unknown> {
+  // U11: under shadow, never execute a non-read-only tool — return a synthetic
+  // "would-have-run" result the harness records as the shadow end-state.
+  if (shadowMode && !READ_ONLY_TOOLS.has(name)) {
+    return { _shadow: true, simulated: name, wouldRun: true, input };
+  }
   // Runtime-enforced confirmation gate. High-risk tool calls (cancel_appointment,
   // remove_family_member, cancel_subscription, etc.) are intercepted on the
   // first call and turned into a pending-action stub for Claude to read.

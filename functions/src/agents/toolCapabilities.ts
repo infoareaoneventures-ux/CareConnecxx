@@ -91,6 +91,10 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   edit_review:               ["booking"],
   cancel_followup:           ["scheduling"],
   update_caregiver_profile:  ["care_plan"],
+  pause_account:             ["scheduling"],
+  reactivate_account:        ["scheduling"],
+  accept_shift:              ["booking", "scheduling"],
+  decline_shift:             ["booking", "scheduling"],
   update_senior_profile:     ["care_plan"],
   update_user_profile:       ["care_plan"],
   submit_gps_checkin:        ["care_plan"],
@@ -139,6 +143,9 @@ const CORE_TOOL_NAMES = new Set<string>([
   "write_todos",
   "cara_knows",
   "task",
+  // U4: loop-control completion signal — must be available on every turn so the
+  // agent can always end intentionally, never filtered out by intent.
+  "complete_task",
   // Cross-cutting onboarding helper: "send me my payment / identity / photo /
   // document / background-check / payout link" arrives under many filtered
   // intents (UPDATE_PAYMENT_METHOD, UPDATE_PHOTO, …). It must never be filtered

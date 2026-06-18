@@ -30,3 +30,18 @@ export function routingShadowFlows(): ReadonlySet<string> {
 export function isRoutingShadowEnabled(flow: string): boolean {
   return routingShadowFlows().has(flow);
 }
+
+// U10: the convergence flip switch. CONVERGENCE_FLIPPED is a comma-separated list
+// of flow keys whose LIVE handling has been flipped from the cascade state machine
+// to the MCP tool loop — done per flow ONLY after its shadow data (U6/U7) shows
+// parity. Off by default: a flow stays on its state machine until explicitly
+// flipped. Retiring (deleting) the dead state machine is a later, post-flip cleanup
+// — the flip is reversible by clearing the flag; deletion is not.
+export function convergenceFlippedFlows(): ReadonlySet<string> {
+  const raw = process.env.CONVERGENCE_FLIPPED ?? "";
+  return new Set(raw.split(",").map(s => s.trim()).filter(Boolean));
+}
+
+export function isConvergenceFlipped(flow: string): boolean {
+  return convergenceFlippedFlows().has(flow);
+}

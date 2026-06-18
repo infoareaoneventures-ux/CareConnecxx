@@ -2,6 +2,8 @@ import * as admin from "firebase-admin";
 import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
 import { classifyIntentDetailed } from "../agents/intentClassifier";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
+import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
+import { isConvergenceFlipped } from "../config/featureFlags";
 import { handleTaskApproval } from "../agents/taskApprovalHandler";
 import { updatePermissionFromText, getPermissions } from "../agents/permissionsConversation";
 import {
@@ -286,6 +288,23 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // intentDegraded = the classifier errored/timed out and "QUESTION" is a
     // guess — when set, skip the quick-reply bypass and take the full QA path.
     const { intent, degraded: intentDegraded } = await classifyIntentDetailed(text, !!pendingTask);
+
+    // ── U7/U8/U9: convergence shadow tap ─────────────────────────────────────
+    // Dark unless this flow is enabled in ROUTING_CONVERGENCE_SHADOW. Fire-and-
+    // forget so the live turn's latency is unaffected; runs the MCP loop in shadow
+    // mode (U11 → zero side effects, nothing sent) and records the loop's outcome
+    // to routing_shadow for the convergence pilot. Never shadows safety/onboarding
+    // intents (they're absent from the intent→flow map).
+    const shadowFlow = intentToShadowFlow(intent);
+    if (shadowFlow) {
+      void shadowTap({
+        flow: shadowFlow, intent, text, phone, chatId,
+        userId:   session.userId as string | undefined,
+        seniorId: session.seniorId as string | undefined,
+        userType: (session.userType as "client" | "caregiver") ?? "client",
+        session:  session as unknown as Record<string, unknown>,
+      }).catch(() => {});
+    }
 
     // ── Emergency replacement: 1/2/3 ─────────────────────────────────────────
     if (intent === "TASK_REPLY" && pendingTask && ["1", "2", "3"].includes(text.trim())) {
@@ -1210,6 +1229,26 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
     // ── Trigger management — view or cancel personal reminders ───────────────
     if (intent === "TRIGGER_MANAGEMENT") {
+      // U10: convergence flip — when "reminder_management" is flipped (only after
+      // its shadow data shows parity), the live path runs through the MCP tool loop
+      // instead of the cascade state machine. Dark by default (flag off → the state
+      // machine below, unchanged). Reversible by clearing CONVERGENCE_FLIPPED; the
+      // state machine is retained until a later post-flip cleanup deletes it.
+      if (isConvergenceFlipped("reminder_management")) {
+        const qaReplyReminder = await runQaAgent({
+          text, phone, chatId,
+          userId:      session.userId ?? "",
+          seniorId:    session.seniorId ?? session.userId ?? "",
+          userType:    (session.userType as "client" | "caregiver") ?? "client",
+          caregiverId: session.caregiverId,
+          session:     session as unknown as Record<string, unknown>,
+          intent,
+        });
+        await sendViaInteractionAgent(phone, {
+          content: qaReplyReminder, urgency: "standard", sourceAgent: "qa_reminder", canDrop: false,
+        });
+        return;
+      }
       const { handleTriggerManagement } = await import("../agents/schedulingHandler");
       await handleTriggerManagement(phone, text, session as unknown as Record<string, unknown>);
       return;

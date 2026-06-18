@@ -88,3 +88,29 @@ export async function maybeShadow(params: {
     console.warn("routingShadow: shadow run failed (non-fatal)", { flow: params.flow, err });
   }
 }
+
+/**
+ * Solo capture (U7 central tap): record a shadow run on its own when the live
+ * handler's structured end-state isn't cheaply available at the tap site (the
+ * cascade classifies intent internally and early-returns per branch). Records the
+ * shadow outcome + tool/latency signal with agree=null for offline review;
+ * per-handler taps that DO have a live outcome use maybeShadow for a real verdict.
+ * Dark by default — no-op (and no shadow run) unless the flow's flag is on.
+ */
+export async function maybeRecordShadowRun(params: {
+  flow: string;
+  phone: string;
+  intent?: string;
+  runShadow: () => Promise<ShadowRun>;
+}): Promise<void> {
+  if (!isRoutingShadowEnabled(params.flow)) return; // dark — no-op, no overhead
+  try {
+    const shadow = await params.runShadow();
+    await db.collection("routing_shadow").add({
+      flow: params.flow, phone: params.phone, intent: params.intent ?? null,
+      agree: null, shadow, capturedAt: new Date().toISOString(),
+    }).catch((err) => console.warn("routingShadow: solo capture failed (non-fatal)", err));
+  } catch (err) {
+    console.warn("routingShadow: shadow run failed (non-fatal)", { flow: params.flow, err });
+  }
+}

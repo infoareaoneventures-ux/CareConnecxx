@@ -12,6 +12,7 @@ import {
 } from "../memory/memoryFiles";
 import { getPreferences } from "../memory/preferences";
 import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingActionById, isConfirmedActionValid } from "../agents/pendingActions";
+import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
 import { getAppUrl } from "../config/appUrl";
@@ -610,6 +611,63 @@ export const MCP_TOOLS: McpTool[] = [
         weeklyAvailability: { type: "object",  description: "Object mapping day abbreviations to time windows" },
       },
       required: ["caregiverId"],
+    },
+  },
+  {
+    name: "pause_account",
+    description:
+      "Pause your own caregiver account so you stop receiving job matches (e.g. vacation, a break). " +
+      "Reversible at any time with reactivate_account. Only you can pause your own account.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "Your caregiver Firestore document ID" },
+        until:       { type: "string", description: "When to pause until: an ISO date 'YYYY-MM-DD', or 'indefinite' for an open-ended pause" },
+        phone:       { type: "string", description: "The acting caregiver's phone — auto-injected; used to verify you own this account" },
+      },
+      required: ["caregiverId", "until"],
+    },
+  },
+  {
+    name: "reactivate_account",
+    description:
+      "Reactivate your own paused caregiver account so you start receiving job matches again. " +
+      "Only you can reactivate your own account.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "Your caregiver Firestore document ID" },
+        phone:       { type: "string", description: "The acting caregiver's phone — auto-injected; used to verify you own this account" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "accept_shift",
+    description:
+      "Accept the shift offer the family or system just sent you — confirms the visit. " +
+      "Use when you agree to take your current pending offer. There's nothing to pass; it resolves your active offer.",
+    input_schema: {
+      type: "object",
+      properties: {
+        phone:  { type: "string", description: "The acting caregiver's phone — auto-injected" },
+        chatId: { type: "string", description: "The caregiver's chat id — auto-injected" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "decline_shift",
+    description:
+      "Decline the shift offer the family or system just sent you. " +
+      "Use when you can't take your current pending offer; the system will line up a replacement.",
+    input_schema: {
+      type: "object",
+      properties: {
+        phone:  { type: "string", description: "The acting caregiver's phone — auto-injected" },
+        chatId: { type: "string", description: "The caregiver's chat id — auto-injected" },
+      },
+      required: [],
     },
   },
   {
@@ -1563,6 +1621,10 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "delete_reminder",
   "get_billing_summary",
   "update_caregiver_profile",
+  "pause_account",
+  "reactivate_account",
+  "accept_shift",
+  "decline_shift",
   "create_care_journal_entry",
   "apply_to_job",
   "request_instant_payout",
@@ -2714,6 +2776,49 @@ export async function handleToolCall(
       await db.collection("caregivers").doc(caregiverId as string).set(patch, { merge: true });
       logAudit({ eventType: "profile_updated", userId: caregiverId as string, data: { source: "mcp:update_caregiver_profile", fields: Object.keys(patch).filter(k => k !== "updatedAt") } }).catch(() => {});
       return { success: true, updated: Object.keys(patch).filter(k => k !== "updatedAt") };
+    }
+
+    if (name === "pause_account") {
+      const { caregiverId, until, phone: actingPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      if (!until || typeof until !== "string") return toolError("INVALID_INPUT", "until is required ('YYYY-MM-DD' or 'indefinite')");
+      const snap = await db.collection("caregivers").doc(caregiverId as string).get();
+      if (!snap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      const ownerPhone = snap.data()?.phone;
+      // Ownership: the acting phone must own this caregiver doc. Fail closed if the
+      // acting phone is missing — do NOT trust a model-supplied caregiverId alone.
+      if (!actingPhone || (ownerPhone && ownerPhone !== actingPhone)) {
+        return toolError("PERMISSION_DENIED", "You can only pause your own account");
+      }
+      await pauseCaregiver(caregiverId as string, until);
+      logAudit({ eventType: "profile_updated", userId: caregiverId as string, data: { source: "mcp:pause_account", until } }).catch(() => {});
+      return { success: true, paused: true, until };
+    }
+
+    if (name === "reactivate_account") {
+      const { caregiverId, phone: actingPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const snap = await db.collection("caregivers").doc(caregiverId as string).get();
+      if (!snap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      const ownerPhone = snap.data()?.phone;
+      if (!actingPhone || (ownerPhone && ownerPhone !== actingPhone)) {
+        return toolError("PERMISSION_DENIED", "You can only reactivate your own account");
+      }
+      await reactivateCaregiver(caregiverId as string);
+      logAudit({ eventType: "profile_updated", userId: caregiverId as string, data: { source: "mcp:reactivate_account" } }).catch(() => {});
+      return { success: true, reactivated: true };
+    }
+
+    if (name === "accept_shift" || name === "decline_shift") {
+      const { phone: actingPhone, chatId } = input as Record<string, unknown>;
+      if (!actingPhone || !chatId) return toolError("INVALID_INPUT", "phone and chatId are required (auto-injected)");
+      const { acceptCaregiverShiftOffer, declineCaregiverShiftOffer } = await import("../agents/shiftOffer");
+      const res = name === "accept_shift"
+        ? await acceptCaregiverShiftOffer(actingPhone as string, chatId as string)
+        : await declineCaregiverShiftOffer(actingPhone as string, chatId as string);
+      if (res.status === "no_pending_offer") return { success: false, reason: "no_pending_offer", message: "There's no pending shift offer to act on right now." };
+      if (res.status === "not_pending" || res.status === "already_closed") return { success: false, reason: res.status, message: "That offer is no longer open." };
+      return { success: true, resolution: res.status };
     }
 
     if (name === "add_family_member") {

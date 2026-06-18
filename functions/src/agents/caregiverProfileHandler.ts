@@ -5,6 +5,7 @@ import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { generateToken } from "./tokenService";
 import { getAppUrl } from "../config/appUrl";
+import { pauseCaregiver, reactivateCaregiver } from "./pauseAccount";
 
 const db = admin.firestore();
 
@@ -412,13 +413,7 @@ async function handlePauseAccount(
   );
   await clearProfileFlow(phone);
   if (decision === "YES") {
-    const pausedUntil = until === "indefinite"
-      ? "2099-12-31"
-      : until;
-    await db.collection("caregivers").doc(caregiverId).update({
-      pausedUntil:      pausedUntil,
-      pausedAt:         new Date().toISOString(),
-    });
+    await pauseCaregiver(caregiverId, until);
     const backWhen = until === "indefinite" ? "Text REACTIVATE whenever you're ready to come back." : `You'll be reactivated on ${until}. Text REACTIVATE sooner if your plans change.`;
     await sendMessage(chatId, `Done — your account is paused. ${backWhen}`);
   } else {
@@ -432,10 +427,7 @@ async function handleReactivate(
   caregiverId: string, phone: string,
   _session: Record<string, unknown>, chatId: string,
 ): Promise<void> {
-  await db.collection("caregivers").doc(caregiverId).update({
-    pausedUntil:      admin.firestore.FieldValue.delete(),
-    reactivatedAt:    new Date().toISOString(),
-  });
+  await reactivateCaregiver(caregiverId);
   await clearProfileFlow(phone);
   const msg = await generateCaraMessage({
     audience: "caregiver",

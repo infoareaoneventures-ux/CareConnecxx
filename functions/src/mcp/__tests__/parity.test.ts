@@ -45,7 +45,7 @@ const PROMPT_EXEMPT = new Set<string>([
   "morning-caregiver-briefing", "weekly-care-summary",
 ]);
 
-const NEW_AGENT_NATIVE_TOOLS = ["pause_account", "reactivate_account", "accept_shift", "decline_shift"];
+const NEW_AGENT_NATIVE_TOOLS = ["pause_account", "reactivate_account", "accept_shift", "decline_shift", "complete_task"];
 
 describe("action parity (U3)", () => {
   it("registers the new agent-native tools in MCP_TOOLS and the caregiver subset", () => {

@@ -22,6 +22,8 @@ import { callClaudeWithRetry } from "../utils/claudeRetry";
 import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent } from "./toolCapabilities";
 import { withToolsCacheControl } from "./toolCache";
+import { getLatestPending } from "./pendingActions";
+import { resolveLoopBudget, MAX_TOOL_CALLS_PER_TURN } from "./loopBudget";
 import type { Intent } from "./intentClassifier";
 import { MEMORY_GUIDELINES } from "./memoryGuidelines";
 import { VOICE_EXEMPLARS } from "./voiceExemplars";
@@ -327,6 +329,7 @@ function buildClientSystemPrompt(
     `  · cancel_subscription — cancel the CareConnex membership at end of billing period. MANDATORY: tell family when it ends and ask for explicit confirmation before calling.`,
     `  · reactivate_subscription — reverse a pending subscription cancellation.`,
     `  · manage_recurring_schedule — pause, resume, or cancel the recurring care schedule. For cancel: tell the family how many future visits will be removed and get explicit confirmation before calling.`,
+    `  · complete_task — when you've finished the request (or are blocked), call this with a status (done/blocked/needs_user) and your reply message instead of a plain text reply. Never mark 'done' while an action is still awaiting the family's YES/NO confirmation.`,
     `  · respond_to_job_application — accept or reject a caregiver's application. Confirm accept before calling.`,
     `  · submit_interview_feedback — record fit level (strong/maybe/no) after a caregiver interview. If strong, a hire request is automatically created.`,
     `  · schedule_interview — schedule a video/phone interview with a caregiver. Ask the family for their preferred date and time, then call. Notifies the caregiver automatically.`,
@@ -503,6 +506,7 @@ function buildCaregiverSystemPrompt(
     `- pause_account: pause your account so you stop getting job matches (vacation, a break). Pass until as 'YYYY-MM-DD' or 'indefinite'`,
     `- reactivate_account: come back from a pause and start receiving job matches again`,
     `- accept_shift / decline_shift: accept or decline the shift offer you were just sent (resolves your current pending offer)`,
+    `- complete_task: when you've finished (or are blocked), call this with a status and your reply message instead of plain text. Never mark 'done' while an action is still awaiting a YES/NO confirmation.`,
     `- create_care_journal_entry: log notes, mood, and medications for a completed visit`,
     `- apply_to_job: apply to an open job post with optional rate and cover note`,
     `- browse_job_board: see open jobs available to apply to`,
@@ -1291,16 +1295,24 @@ export async function runQaAgent(params: {
     let consecutiveErrorIterations = 0;
     let recoveryFired              = false;
     const toolErrorTrail: { tool: string; preview: string }[] = [];
-    for (let iteration = 0; iteration < 5; iteration++) {
+    // U5: resolve the iteration budget from the flow class of this turn's intent.
+    const { maxIterations, flowClass } = resolveLoopBudget(intent);
+    let totalToolCalls = 0;
+    console.info("qaAgent.loopBudget", { userId, flowClass, maxIterations });
+    for (let iteration = 0; iteration < maxIterations; iteration++) {
       // On the final allowed iteration, or once the wall-clock budget is spent,
       // force a text-only completion (tool_choice:none) so the model MUST emit a
       // user-facing reply instead of calling another tool and leaving us in the
       // exhausted "Give me a moment" + 30s-retry fallback. Deterministic
       // completion beats the fragile no-text heuristic.
-      const budgetExceeded = Date.now() - turnStart > TURN_BUDGET_MS;
-      const forceTextReply = budgetExceeded || iteration === 4;
+      const budgetExceeded   = Date.now() - turnStart > TURN_BUDGET_MS;
+      const toolCapExceeded  = totalToolCalls >= MAX_TOOL_CALLS_PER_TURN;
+      const forceTextReply   = budgetExceeded || toolCapExceeded || iteration === maxIterations - 1;
       if (budgetExceeded) {
         console.warn("qaAgent: turn budget exceeded — forcing final text reply", { userId, iteration });
+      }
+      if (toolCapExceeded) {
+        console.warn("qaAgent: per-turn tool-call cap reached — forcing final text reply", { userId, totalToolCalls });
       }
       // Clip oversized tool_use args in older messages — the result is what
       // matters past the first turn or two, and full args bloat every cached
@@ -1353,6 +1365,35 @@ export async function runQaAgent(params: {
       }
 
       if (response.stop_reason === "tool_use") {
+        // U4: complete_task is a loop-control signal, not a data tool — intercept
+        // it before dispatch. It ends the turn with a structured status. Guard:
+        // the agent may NOT declare `done` while a committing action is still
+        // awaiting the user's confirmation (else the user gets a false "done" and
+        // the pending action silently expires).
+        const completeBlock = response.content.find(
+          (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "complete_task",
+        );
+        if (completeBlock) {
+          const ci = (completeBlock.input ?? {}) as { status?: string; message?: string };
+          const status = ci.status === "blocked" || ci.status === "needs_user" ? ci.status : "done";
+          const message = typeof ci.message === "string" ? ci.message.trim() : "";
+          if (status === "done") {
+            const pending = await getLatestPending(phone).catch(() => null);
+            if (pending && (pending.status === "awaiting" || pending.status === "executing")) {
+              messages.push({ role: "assistant", content: response.content });
+              messages.push({ role: "user", content: [{
+                type: "tool_result", tool_use_id: completeBlock.id, is_error: true,
+                content: "Cannot complete yet — an action is still awaiting the user's YES/NO confirmation. Wait for their reply before completing.",
+              }] });
+              console.info("qaAgent.completeTaskRejected", { userId, reason: "pending_awaiting" });
+              continue;
+            }
+          }
+          if (message) reply = message;
+          console.info("qaAgent.completeTask", { userId, status, hasMessage: !!message });
+          break;
+        }
+
         // Execute all tool calls in this turn
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
         let iterationToolCalls = 0;
@@ -1360,6 +1401,7 @@ export async function runQaAgent(params: {
         for (const block of response.content) {
           if (block.type === "tool_use") {
             _toolCallsOut?.push(block.name);
+            totalToolCalls++;
             // For browser actions that take 15-30s: send a brief acknowledgment so
             // the family knows something is happening and doesn't think Cara went silent.
             if (

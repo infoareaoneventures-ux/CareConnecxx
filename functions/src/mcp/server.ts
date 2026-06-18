@@ -671,6 +671,23 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "complete_task",
+    description:
+      "Signal that you've finished this turn — call this INSTEAD of a plain text reply when you've " +
+      "achieved the outcome or are blocked. The message you pass is sent to the user as your reply. " +
+      "status: 'done' (outcome achieved), 'blocked' (can't proceed — say why in the message), or " +
+      "'needs_user' (waiting on the user). Do NOT use status 'done' while an action is still awaiting " +
+      "the user's YES/NO confirmation.",
+    input_schema: {
+      type: "object",
+      properties: {
+        status:  { type: "string", enum: ["done", "blocked", "needs_user"], description: "Completion status" },
+        message: { type: "string", description: "The user-facing message to send as your final reply this turn" },
+      },
+      required: ["status", "message"],
+    },
+  },
+  {
     name: "add_family_member",
     description:
       "Add a new family member to this care group. They receive a welcome SMS and start getting updates. " +
@@ -1625,6 +1642,7 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "reactivate_account",
   "accept_shift",
   "decline_shift",
+  "complete_task",
   "create_care_journal_entry",
   "apply_to_job",
   "request_instant_payout",

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => {
   const docs = new Map<string, Record<string, unknown>>();
+  const logAgentAction = vi.fn(async () => {});
   let autoId = 0;
   const tx = {
     get: async (ref: { id: string }) => ({ exists: docs.has(ref.id), data: () => docs.get(ref.id) }),
@@ -12,17 +13,27 @@ const h = vi.hoisted(() => {
     doc: (id: string) => ({ id, get: async () => ({ exists: docs.has(id), data: () => docs.get(id) }) }),
   });
   const db = { collection, runTransaction: async (fn: (t: typeof tx) => unknown) => fn(tx) };
-  return { docs, db, reset: () => { docs.clear(); autoId = 0; } };
+  return { docs, db, logAgentAction, reset: () => { docs.clear(); autoId = 0; } };
 });
 
-vi.mock("firebase-admin", () => ({ __esModule: true, default: { firestore: () => h.db }, firestore: () => h.db }));
+vi.mock("firebase-admin", () => ({
+  __esModule: true,
+  default: {
+    firestore: Object.assign(() => h.db, {
+      Timestamp: { fromMillis: (ms: number) => ({ __timestampMs: ms }) },
+    }),
+  },
+  firestore: Object.assign(() => h.db, {
+    Timestamp: { fromMillis: (ms: number) => ({ __timestampMs: ms }) },
+  }),
+}));
 const resolvePrimaryPhone = vi.fn();
 vi.mock("./familyGroupManager", () => ({ resolvePrimaryPhone: (...a: unknown[]) => resolvePrimaryPhone(...a) }));
-vi.mock("../observability/actionLedger", () => ({ logAgentAction: vi.fn(async () => {}) }));
+vi.mock("../observability/actionLedger", () => ({ logAgentAction: (...a: unknown[]) => h.logAgentAction(...a) }));
 
 import { proposePendingAction, claimPendingAction } from "./pendingActions";
 
-beforeEach(() => { h.reset(); resolvePrimaryPhone.mockReset(); });
+beforeEach(() => { h.reset(); resolvePrimaryPhone.mockReset(); h.logAgentAction.mockClear(); });
 
 describe("proposePendingAction — healthcare approver keying (H-U4)", () => {
   it("keys the doc under the account holder's phone and records the requester", async () => {
@@ -34,6 +45,12 @@ describe("proposePendingAction — healthcare approver keying (H-U4)", () => {
     expect(action.phone).toBe("+1approver");          // getAllPending(approver) will match
     expect(action.approverPhone).toBe("+1approver");
     expect(action.triggeredByPhone).toBe("+1requester");
+    await vi.waitFor(() => expect(h.logAgentAction).toHaveBeenCalledWith(expect.objectContaining({
+      actionType: "healthcare_action",
+      status: "proposed",
+      userId: "u1",
+      toolName: "perform_web_action",
+    })));
   });
 
   it("fails closed when there is no userId to resolve the account holder", async () => {

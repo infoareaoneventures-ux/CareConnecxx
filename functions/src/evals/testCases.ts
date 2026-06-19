@@ -1,3 +1,5 @@
+import { CARA_TRAINING_EVAL_CASES } from "./caraTrainingDataset";
+
 export interface EvalCase {
   id: string;
   category: string;
@@ -1434,4 +1436,5 @@ export const TEST_CASES: EvalCase[] = [
     expectedBehavior: "Returns most recent journal summary",
     mustNotContain: ["error"],
   },
+  ...CARA_TRAINING_EVAL_CASES,
 ];

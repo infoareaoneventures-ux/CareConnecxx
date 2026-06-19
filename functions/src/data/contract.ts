@@ -186,6 +186,13 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: true,
     notes: "Durable status ledger for consequential Cara actions; admin audit surfaces read it.",
   },
+  pending_actions: {
+    path: "pending_actions",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Runtime confirmation queue for high-risk Cara actions; AdminCaraControlRoom reads stuck and awaiting approvals.",
+  },
 };
 
 /** Collection names (top-level segment only) that Cara writes. */

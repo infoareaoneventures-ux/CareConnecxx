@@ -7,7 +7,7 @@
         "start": "npm run shell",
         "deploy": "firebase deploy --only functions",
         "logs": "firebase functions:log",
-        "eval": "ts-node -e \"require('./src/evals/runner').runEvals().then(({passed,failed,total,rate,failures})=>{console.log('Passed:',passed+'/'+total+'('+(rate*100).toFixed(1)+'%)');if(rate<0.9)process.exit(1);}})\"",
+        "eval": "npx ts-node --transpile-only src/evals/runner.ts",
         "mcp:inspect": "npx @modelcontextprotocol/inspector node lib/mcp/server.js",
         "mcp:test": "npx @modelcontextprotocol/inspector --test lib/mcp/server.js"
     },

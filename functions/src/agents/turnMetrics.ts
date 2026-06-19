@@ -57,6 +57,8 @@ export interface TurnMetrics {
   // MODIFIED. postProcessModified is now derived = grounding||format||supervisor.
   groundingRewriteApplied?:   boolean;
   formatRewriteApplied?:      boolean;
+  conversationRepairTriggered?: boolean;
+  conversationRepairApplied?:   boolean;
   supervisorRewriteApplied?:  boolean;
 
   // Conversational state
@@ -64,11 +66,14 @@ export interface TurnMetrics {
   emotionalTopic?:   "health" | "logistics" | "general"; // Sprint 8
   skill?:            string;  // name of the Agent Skill injected this turn, if any
 
-  // Sprint 8: log-only conversational-quality detectors. No reply rewriting
-  // attached to these flags; we measure baseline rates first, then decide
-  // whether the false-positive rate is low enough to add an auto-rewrite.
+  // Conversational-quality detectors. These record whether chatbot-like or
+  // unsafe patterns remained visible around the final repair/supervision path.
   confidenceClaimDetected?:  boolean; // unattributed proper-name + factual claim
   promiseWithoutToolCall?:   boolean; // "let me check" with metrics.toolCalls === 0
+  multiQuestionDataCollection?: boolean; // asks for multiple intake fields in one reply
+  supportDeflectionDetected?:   boolean; // punts to support/team/Cara instead of acting
+  genericHelpAskDetected?:      boolean; // "what can I help with" style generic prompt
+  medicationInstructionDetected?: boolean; // gives medication/dosing instruction instead of redirecting
 
   // Sprint 8: tone-warmth-v1 adherence proxy. True when the reply opens with an
   // empathy reflection AND the turn was non-calm. Lets us measure whether the

@@ -4,7 +4,7 @@ import {
   ChevronLeft, AlertCircle, MessageSquare, Search,
   FileText, TrendingUp, UserCheck, X, HeartHandshake,
   Heart, Users, Phone, Filter, Download, Shield,
-  Star, ClipboardList, BookOpen, ShieldCheck, BellRing,
+  Star, ClipboardList, BookOpen, ShieldCheck, BellRing, Sparkles,
 } from 'lucide-react';
 import { SupportTicket, AdminUser, JobPost, Caregiver, ClientIntakeData } from '../types';
 import { dbService } from '../services/api';
@@ -24,6 +24,7 @@ import { AdminBlogManager } from './admin/AdminBlogManager';
 import { AuditTrail } from './admin/AuditTrail';
 import { ProactiveReflectionDashboard } from './admin/ProactiveReflectionDashboard';
 import { AdminAlertsPanel } from './admin/AdminAlertsPanel';
+import { AdminCaraControlRoom } from './admin/AdminCaraControlRoom';
 
 interface AdminViewProps {
   onBack: () => void;
@@ -33,7 +34,7 @@ type TabId =
   | 'overview' | 'clients' | 'caregivers' | 'verification' | 'coordinators'
   | 'appointments' | 'reviews' | 'intakes' | 'matching' | 'assignments'
   | 'finance' | 'disputes' | 'tickets' | 'messages' | 'blog' | 'audit'
-  | 'proactive_drafts' | 'alerts';
+  | 'cara_control' | 'proactive_drafts' | 'alerts';
 
 const StatCard = ({ icon: Icon, label, value, trend, color, onClick }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -123,7 +124,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
     return () => unsub();
   }, []);
 
-  const showToast = (msg: string) => {
+  // `type` is accepted to satisfy the onShowToast contract used by child panels
+  // (success/error/info) but intentionally ignored — all toasts share styling.
+  const showToast = (msg: string, _type: 'success' | 'error' | 'info' = 'info') => {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(null), 3000);
   };
@@ -185,6 +188,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
     {
       label: 'AI Review',
       items: [
+        { id: 'cara_control' as TabId, label: 'Cara Control', icon: Sparkles, badge: openAlertsCount },
         { id: 'proactive_drafts' as TabId, label: 'Cara Drafts', icon: HeartHandshake },
       ],
     },
@@ -200,7 +204,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   const currentLabel = allNavItems.find(n => n.id === activeTab)?.label ?? '';
 
   // Tabs that fill the full content area without internal padding
-  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog', 'proactive_drafts'];
+  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog', 'cara_control', 'proactive_drafts'];
   const isFullBleed = fullBleedTabs.includes(activeTab);
 
   return (
@@ -295,6 +299,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {activeTab === 'disputes'     && <AdminShiftHoursMediation />}
             {activeTab === 'messages'     && <AdminMessages />}
             {activeTab === 'blog'         && <AdminBlogManager />}
+            {activeTab === 'cara_control' && <AdminCaraControlRoom onShowToast={(msg, type) => showToast(msg)} onNavigate={(tab) => setActiveTab(tab as TabId)} />}
             {activeTab === 'proactive_drafts' && <ProactiveReflectionDashboard onShowToast={(msg) => showToast(msg)} />}
           </div>
         ) : (

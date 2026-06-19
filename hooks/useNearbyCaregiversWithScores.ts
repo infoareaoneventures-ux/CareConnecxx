@@ -215,25 +215,18 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
         caregiversSnap?.forEach(pushDoc);
         usersSnap.forEach(pushDoc);
 
-        // ── 5. Hard filter: verified ──
-        const verified = caregiverList.filter(c => {
-          const cg = c as any;
-          return cg.verified === true ||
-            cg.verificationStatus === 'approved' ||
-            cg.backgroundCheckStatus === 'clear';
-        });
-
-        // ── 6. Hard filter: distance ──
+        // Bookability was already enforced by approvedIds in pushDoc.
+        // ── 5. Hard filter: distance ──
         const withinRange = locs.length > 0
-          ? verified.filter(c => (c as any).latitude != null ? c.distance <= maxDistance : true)
-          : verified;
+          ? caregiverList.filter(c => (c as any).latitude != null ? c.distance <= maxDistance : true)
+          : caregiverList;
 
-        // ── 7. Hard filter: transportation if needed ──
+        // ── 6. Hard filter: transportation if needed ──
         const filtered = needsTransportation
           ? withinRange.filter(c => hasValidTransportDocs(c as any))
           : withinRange;
 
-        // ── 8. Sort: skills overlap → availability overlap → rating → distance ──
+        // ── 7. Sort: skills overlap → availability overlap → rating → distance ──
         const sorted = filtered
           .sort((a, b) => {
             const skillsDiff = (b as any)._skillsScore - (a as any)._skillsScore;

@@ -948,7 +948,40 @@ service cloud.firestore {
     // Written server-side only; admin reads failure/risk state.
     match /agent_action_ledger/{entryId} {
       allow read: if isAdmin();
-      allow write: if false;
+      allow update: if isAdmin() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'assignedTo',
+          'assignedAt',
+          'handledBy',
+          'handledAt',
+          'handledReason',
+          'operatorNotes',
+          'retryCount',
+          'lastRetryAt',
+          'recoveryAction',
+          'status',
+          'updatedAt'
+        ]);
+      allow create, delete: if false;
+    }
+
+    // Pending Cara confirmations: admin read only, server write only.
+    match /pending_actions/{actionId} {
+      allow read: if isAdmin();
+      allow update: if isAdmin() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'proposedAt',
+          'expiresAt',
+          'resolvedAt',
+          'cancelledAt',
+          'cancelledBy',
+          'reProposedAt',
+          'reProposedBy',
+          'operatorNotes',
+          'recoveryAction'
+        ]);
+      allow create, delete: if false;
     }
 
     // Referrals — users can read their own referral rows; writes are server/web-service controlled.

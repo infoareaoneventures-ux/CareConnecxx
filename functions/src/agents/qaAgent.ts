@@ -17,6 +17,7 @@ import {
   truncateOldToolCallArgs,
 } from "./contextManagement";
 import { createTurnMetrics, emitTurnMetrics, type TurnMetrics } from "./turnMetrics";
+import { formatCaraOperationalContext, loadCaraOperationalContext } from "./operationalContext";
 import { MCP_TOOLS, CAREGIVER_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
 import { callClaudeWithRetry } from "../utils/claudeRetry";
 import { getActiveAgentForUser } from "./executionAgent";
@@ -641,6 +642,75 @@ export function detectPromiseWithoutToolCall(reply: string, toolCalls: number): 
   return PROMISE_PATTERNS.test(reply);
 }
 
+const DATA_COLLECTION_FIELDS: Array<[string, RegExp]> = [
+  ["name", /\b(name|called)\b/i],
+  ["phone", /\b(phone|number|cell|mobile)\b/i],
+  ["email", /\b(email)\b/i],
+  ["address", /\b(address|street)\b/i],
+  ["city", /\b(city|town)\b/i],
+  ["zip", /\b(zip|zipcode|postal)\b/i],
+  ["age", /\b(age|old|birthdate|birthday)\b/i],
+  ["careNeeds", /\b(care needs?|help with|needs day to day)\b/i],
+  ["medications", /\b(meds?|medications?|prescriptions?)\b/i],
+  ["allergies", /\b(allerg(?:y|ies))\b/i],
+  ["doctor", /\b(doctor|physician|clinician)\b/i],
+  ["date", /\b(date|day)\b/i],
+  ["time", /\b(time|hour)\b/i],
+];
+
+export function detectMultiQuestionDataCollection(reply: string): boolean {
+  const compact = reply.replace(/\s+/g, " ").trim();
+
+  const questionCount = compact.match(/\?/g)?.length ?? 0;
+  if (questionCount >= 2) return true;
+
+  const asksForData = /\b(what(?:'s| is)|who(?:'s| is)|when|where|can i get|could you send|please send|send me|tell me|share|i need|confirm)\b/i.test(compact);
+  if (!asksForData) return false;
+
+  const fields = new Set<string>();
+  for (const [field, pattern] of DATA_COLLECTION_FIELDS) {
+    if (pattern.test(compact)) fields.add(field);
+  }
+
+  if (fields.size < 2) return false;
+  if (fields.size === 2 && fields.has("date") && fields.has("time")) return false;
+
+  return /\b(and|also|plus|,|\/)\b/i.test(compact);
+}
+
+export function detectSupportDeflection(reply: string): boolean {
+  return [
+    /\b(?:contact|reach(?:ing)? out to|message)\s+(?:support|cara|the team|our team)\b/i,
+    /\b(?:the|our|careconnex|cara)\s+team\s+(?:will|can|should|would)\s+(?:follow up|help|reach out|assist|take care)/i,
+    /\b(?:i'?d recommend|you should)\s+(?:contact|reach(?:ing)? out to|message)\b/i,
+  ].some((pattern) => pattern.test(reply));
+}
+
+export function detectGenericHelpAsk(reply: string): boolean {
+  return /\b(what can i help you with|how can i help|what do you need|anything else i can help|is there anything else)\b/i.test(reply);
+}
+
+export function detectMedicationInstruction(reply: string): boolean {
+  const lower = reply.toLowerCase();
+  const mentionsMedication = /\b(med|meds|medication|medicine|pill|prescription|dose|dosage|mg|insulin|lisinopril)\b/.test(lower);
+  if (!mentionsMedication) return false;
+
+  const directsDose = /\b(give|take|start|stop|skip|double|increase|decrease|change)\b.{0,50}\b(med|meds|medication|medicine|pill|prescription|dose|dosage|mg|insulin|lisinopril)\b/.test(lower);
+  if (!directsDose) return false;
+
+  const redirectsToClinician = /\b(call|ask|check with|talk to|contact)\b.{0,90}\b(doctor|pharmacist|clinician|nurse|911|emergency)\b/.test(lower);
+  return !redirectsToClinician;
+}
+
+function getConversationRepairReasons(reply: string): string[] {
+  const reasons: string[] = [];
+  if (detectMultiQuestionDataCollection(reply)) reasons.push("asks_for_too_much_at_once");
+  if (detectSupportDeflection(reply)) reasons.push("support_or_team_deflection");
+  if (detectGenericHelpAsk(reply)) reasons.push("generic_chatbot_prompt");
+  if (detectMedicationInstruction(reply)) reasons.push("unsafe_medication_instruction");
+  return reasons;
+}
+
 // Sprint 8: empathy-opener detector for tone-warmth-v1 adherence. Matches the
 // reflection patterns the experiment's treatment arm asks for ("That sounds…",
 // "I hear you", "That fear makes sense", etc.) on the first sentence of the
@@ -1161,6 +1231,18 @@ export async function runQaAgent(params: {
   // context — they may reference work on behalf of a different linked person.
   const skipCrossEntity = !!(session as any)?.__unconfirmedIdentity;
 
+  if (!skipCrossEntity) {
+    const operationalContext = await loadCaraOperationalContext({ phone, userId })
+      .then(formatCaraOperationalContext)
+      .catch((err) => {
+        console.warn("qaAgent: operational context unavailable", err instanceof Error ? err.message : err);
+        return "";
+      });
+    if (operationalContext) {
+      systemPrompt += `\n\n${operationalContext}`;
+    }
+  }
+
   // Inject active goal context if present
   if (session && !skipCrossEntity) {
     const { goalContext } = await resumeActiveGoal(phone, session);
@@ -1643,15 +1725,68 @@ export async function runQaAgent(params: {
       }).catch(() => { /* non-critical — TTL guard in build handles stale flags */ });
     }
 
-    // Sprint 8: log-only conversational-quality detectors. Run on the final
-    // reply BEFORE supervise() rewrites it so the metrics reflect what Claude
-    // actually produced, not the post-processed version. Pure observation —
-    // no reply text changes.
+    const repairReasons = getConversationRepairReasons(reply);
+    if (repairReasons.length > 0) {
+      console.warn("qaAgent: conversation repair triggered", { userId, reasons: repairReasons, preview: reply.slice(0, 120) });
+      metrics.conversationRepairTriggered = true;
+      db.collection("agent_uncertainty_log").add({
+        userId, phone,
+        question: text.slice(0, 200),
+        reply:    reply.slice(0, 500),
+        detectedAt: new Date().toISOString(),
+        conversationRepairTriggered: true,
+        repairReasons,
+      }).catch(() => {});
+      try {
+        const repairController = new AbortController();
+        const repairTimer = setTimeout(() => repairController.abort(), 8_000);
+        const repaired = await quickComplete(
+          [
+            "You are a human conversation repair editor for Cara, a senior-care SMS assistant.",
+            "Rewrite the draft so it sounds like a capable, caring person texting, not a generic chatbot.",
+            "Rules:",
+            "- Keep only facts already in the draft. Do not invent names, dates, medical facts, or promises.",
+            "- Keep concrete completed actions and tool results.",
+            "- Remove generic helper lines like 'how can I help' or 'anything else I can help with'.",
+            "- Do not punt to support/the team/Cara when Cara can act. Say what Cara did or ask one concrete next question.",
+            "- If the draft asks for multiple pieces of information, keep only the first missing item.",
+            "- If the draft gives medication/dosing advice, replace it with: 'I can’t advise on changing meds. Please call her doctor or pharmacist. If this feels urgent, call 911 now.'",
+            "- One short SMS. No lists, headers, markdown, corporate language, or third-person Cara references.",
+            `Repair reasons: ${repairReasons.join(", ")}`,
+            `User message: ${text.slice(0, 500)}`,
+          ].join("\n"),
+          reply,
+          { maxTokens: 220, signal: repairController.signal },
+        );
+        clearTimeout(repairTimer);
+        if (repaired.trim() && repaired.trim() !== reply) {
+          reply = repaired.trim();
+          metrics.conversationRepairApplied = true;
+        }
+      } catch {
+        // Non-critical — proceed to supervisor with the original reply.
+      }
+    }
+
+    // Conversational-quality detectors. Run after repair and before supervise
+    // so metrics record any issues that remain in the draft supervisor sees.
     if (detectConfidenceClaim(reply)) {
       metrics.confidenceClaimDetected = true;
     }
     if (detectPromiseWithoutToolCall(reply, metrics.toolCalls ?? 0)) {
       metrics.promiseWithoutToolCall = true;
+    }
+    if (detectMultiQuestionDataCollection(reply)) {
+      metrics.multiQuestionDataCollection = true;
+    }
+    if (detectSupportDeflection(reply)) {
+      metrics.supportDeflectionDetected = true;
+    }
+    if (detectGenericHelpAsk(reply)) {
+      metrics.genericHelpAskDetected = true;
+    }
+    if (detectMedicationInstruction(reply)) {
+      metrics.medicationInstructionDetected = true;
     }
 
     const preSuperviseReply = reply;
@@ -1681,6 +1816,7 @@ export async function runQaAgent(params: {
     metrics.postProcessModified =
       !!metrics.groundingRewriteApplied ||
       !!metrics.formatRewriteApplied ||
+      !!metrics.conversationRepairApplied ||
       !!metrics.supervisorRewriteApplied;
 
     // Sprint 8: tone-warmth-v1 adherence proxy. Did Cara open with an empathy

@@ -137,10 +137,30 @@ vi.mock("../utils/claudeRetry", () => ({
   }),
 }));
 
-// OpenAI stub. quickComplete returns its input unchanged so any internal
-// "rewrite the reply" passes don't mutate the assertion target.
+// OpenAI stub. Most quickComplete calls return input unchanged so internal
+// rewrite passes don't mutate normal transcript assertions. The human
+// conversation repair pass is intentionally simulated so transcripts can prove
+// chatbot-like drafts are repaired before send.
 vi.mock("../utils/openaiClient", () => ({
-  quickComplete:   vi.fn(async (_sys: string, user: string) => user),
+  quickComplete:   vi.fn(async (sys: string, user: string) => {
+    if (sys.includes("human conversation repair editor")) {
+      const lower = user.toLowerCase();
+      if (lower.includes("name, age") || lower.includes("city") || lower.includes("zip")) {
+        return "What's her name?";
+      }
+      if (lower.includes("contact support") || lower.includes("the team will")) {
+        return "I can handle that here. What happened?";
+      }
+      if (lower.includes("what can i help") || lower.includes("how can i help") || lower.includes("anything else i can help")) {
+        return "Hey - I'm here with you. Tell me what's going on.";
+      }
+      if (lower.includes("extra dose") || lower.includes("increase the medication") || lower.includes("skip the pill")) {
+        return "I can't advise on changing meds. Please call her doctor or pharmacist. If this feels urgent, call 911 now.";
+      }
+      return user;
+    }
+    return user;
+  }),
   getOpenAIClient: () => ({ chat: { completions: { create: vi.fn() } } }),
 }));
 
@@ -222,7 +242,14 @@ vi.mock("./turnCheckpoint", () => ({
 
 // ── Import qaAgent AFTER mocks are declared ──────────────────────────────────
 
-import { runQaAgent, hasListShape } from "./qaAgent";
+import {
+  runQaAgent,
+  hasListShape,
+  detectGenericHelpAsk,
+  detectMedicationInstruction,
+  detectMultiQuestionDataCollection,
+  detectSupportDeflection,
+} from "./qaAgent";
 
 // ── Transcript schema ────────────────────────────────────────────────────────
 
@@ -248,6 +275,11 @@ interface GoldenTranscript {
     noListShape?:      boolean;
     // Metric keys that must appear in the cara.turn log line for this turn.
     experimentsContains?: string[];
+    conversationRepairApplied?: boolean;
+    oneQuestionAtATime?: boolean;
+    noSupportDeflection?: boolean;
+    noGenericHelpAsk?: boolean;
+    noMedicationInstruction?: boolean;
   };
 }
 
@@ -546,6 +578,274 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
       noListShape:      true,
     },
   },
+
+  {
+    name:        "messy-family-add-name-phone-acts",
+    description: "Family asks in messy SMS shorthand to add a sister and provides name + phone. Cara acts instead of re-asking.",
+    toolMocks: {
+      add_family_member: { success: true, added: true, name: "Jess", phone: "+15552223333", notification: { sent: true } },
+    },
+    claudeScript: [
+      { tools: [{ name: "add_family_member", input: { clientId: "u-1", seniorId: "s-1", name: "Jess", memberPhone: "+15552223333" } }] },
+      { text: "Done - I added Jess and texted her so she'll get Mom's updates too." },
+    ],
+    input: { text: "hey can u add my sis jess 555-222-3333 to moms updates pls" },
+    expect: {
+      replyContains:         ["Jess", "texted"],
+      replyNotContains:      ["what's her phone", "contact support"],
+      toolsCalled:           ["add_family_member"],
+      noListShape:           true,
+      noSupportDeflection:   true,
+      noGenericHelpAsk:      true,
+      oneQuestionAtATime:    true,
+    },
+  },
+
+  {
+    name:        "messy-family-add-missing-phone-one-question",
+    description: "Family asks to add a brother without a phone number. Cara asks only for the missing phone number.",
+    claudeScript: [
+      { text: "Sure - what's Mike's phone number?" },
+    ],
+    input: { text: "can u add my brother mike to updates idk his number rn" },
+    expect: {
+      replyContains:       ["Mike", "phone"],
+      replyNotContains:    ["name and phone", "city", "anything else"],
+      toolsCalled:         [],
+      noListShape:         true,
+      oneQuestionAtATime:  true,
+      noGenericHelpAsk:    true,
+    },
+  },
+
+  {
+    name:        "messy-worried-how-is-mom-uses-journal",
+    description: "Family asks vaguely and anxiously how Mom is doing. Cara reads care journal instead of guessing.",
+    toolMocks: {
+      get_care_journal_client: {
+        entries: [{ summary: "Maria noted that Anita ate soup and took a short walk after lunch." }],
+      },
+    },
+    claudeScript: [
+      { tools: [{ name: "get_care_journal_client", input: { clientId: "u-1" } }] },
+      { text: "Maria noted that Mom ate soup and took a short walk after lunch. I don't see anything alarming in the notes - want me to ask Maria for a quick update?" },
+    ],
+    input: { text: "how's mom?? did she eat? im kinda worried" },
+    expect: {
+      replyContains:            ["Maria noted", "soup"],
+      replyNotContains:         ["probably", "likely", "diagnosis"],
+      toolsCalled:              ["get_care_journal_client"],
+      noListShape:              true,
+      noMedicationInstruction:  true,
+      noGenericHelpAsk:         true,
+    },
+  },
+
+  {
+    name:        "messy-medication-question-refuses-advice",
+    description: "Family asks for dosing guidance. Cara does not give medication instructions.",
+    claudeScript: [
+      { text: "I can't advise on changing meds. Please call her doctor or pharmacist before giving anything extra. If she seems in danger, call 911 now." },
+    ],
+    input: { text: "mom is dizzy and her meds seem off should i give extra??" },
+    expect: {
+      replyContains:            ["doctor", "pharmacist"],
+      replyNotContains:         ["give extra", "increase", "double"],
+      toolsCalled:              [],
+      noListShape:              true,
+      noMedicationInstruction:  true,
+    },
+  },
+
+  {
+    name:        "angry-no-show-acts-without-support-punt",
+    description: "Family is angry about a no-show. Cara owns it and starts resolving coverage instead of punting to support.",
+    toolMocks: {
+      get_upcoming_appointments: { appointments: [{ id: "appt-1", caregiverName: "Maria", date: "today", startTime: "9:00" }] },
+      find_replacement_caregivers: { matches: [{ id: "cg-2", name: "Alex" }] },
+    },
+    claudeScript: [
+      { tools: [{ name: "get_upcoming_appointments", input: { clientId: "u-1" } }] },
+      { tools: [{ name: "find_replacement_caregivers", input: { clientId: "u-1" } }] },
+      { text: "You're right - that's not okay. I found Alex as backup coverage and I'm working from the missed 9am visit now." },
+    ],
+    input: { text: "wtf nobody came again fix this now" },
+    expect: {
+      replyContains:        ["not okay", "Alex"],
+      replyNotContains:     ["contact support", "the team will", "reach out"],
+      toolsCalled:          ["get_upcoming_appointments", "find_replacement_caregivers"],
+      noListShape:          true,
+      noSupportDeflection:  true,
+    },
+  },
+
+  {
+    name:        "messy-caregiver-pay-question-uses-payout-tool",
+    description: "Caregiver asks casually about pay after clock-out. Cara uses caregiver payout data.",
+    userType: "caregiver",
+    toolMocks: {
+      get_payout_history: { payouts: [{ amountCents: 9600, status: "pending", expectedArrival: "Friday" }] },
+    },
+    claudeScript: [
+      { tools: [{ name: "get_payout_history", input: { caregiverId: "u-1" } }] },
+      { text: "That payout is pending and expected Friday." },
+    ],
+    input: { text: "when do i get paid for mrs lopez?? i clocked out yesterday" },
+    expect: {
+      replyContains:       ["pending", "Friday"],
+      replyNotContains:    ["support", "team will"],
+      toolsCalled:         ["get_payout_history"],
+      noListShape:         true,
+      noSupportDeflection: true,
+      noGenericHelpAsk:    true,
+    },
+  },
+
+  {
+    name:        "repairs-generic-chatbot-final-reply",
+    description: "If Claude produces a generic chatbot close, Cara repairs it before sending.",
+    claudeScript: [
+      { text: "Sure, I can help with that. What can I help you with today?" },
+    ],
+    input: { text: "hey" },
+    expect: {
+      replyContains:              ["I'm here with you"],
+      replyNotContains:           ["What can I help", "how can I help"],
+      toolsCalled:                [],
+      noListShape:                true,
+      noGenericHelpAsk:           true,
+      conversationRepairApplied:  true,
+    },
+  },
+
+  {
+    name:        "repairs-form-like-intake-final-reply",
+    description: "If Claude asks for a form's worth of data, Cara trims to one human question.",
+    claudeScript: [
+      { text: "Please send me her name, age, city, zip, and care needs." },
+    ],
+    input: { text: "i need to set up care for mom" },
+    expect: {
+      replyContains:              ["name"],
+      replyNotContains:           ["age", "city", "zip", "care needs"],
+      noListShape:                true,
+      oneQuestionAtATime:         true,
+      conversationRepairApplied:  true,
+    },
+  },
+
+  {
+    name:        "repairs-support-punt-final-reply",
+    description: "If Claude punts to support for something Cara should handle, Cara keeps ownership.",
+    claudeScript: [
+      { text: "Please contact support and the team will follow up." },
+    ],
+    input: { text: "my caregiver didn't show up" },
+    expect: {
+      replyContains:              ["I can handle"],
+      replyNotContains:           ["contact support", "team will"],
+      noSupportDeflection:        true,
+      conversationRepairApplied:  true,
+    },
+  },
+
+  {
+    name:        "repairs-unsafe-medication-final-reply",
+    description: "If Claude gives medication advice, Cara replaces it with a safe clinical boundary.",
+    claudeScript: [
+      { text: "Give her an extra dose tonight and call tomorrow if she still feels dizzy." },
+    ],
+    input: { text: "mom is dizzy should i give extra meds" },
+    expect: {
+      replyContains:              ["doctor", "pharmacist"],
+      replyNotContains:           ["extra dose"],
+      noMedicationInstruction:    true,
+      conversationRepairApplied:  true,
+    },
+  },
+
+  {
+    name:        "messy-emergency-fall-creates-alert",
+    description: "Family reports a fall in panic. Cara avoids medical advice, tells them to call emergency services if urgent, and creates an admin/safety alert.",
+    toolMocks: {
+      create_support_ticket: { success: true, ticketId: "tick-fall-1" },
+    },
+    claudeScript: [
+      { tools: [{ name: "create_support_ticket", input: { category: "safety", priority: "urgent", description: "Family reports mom fell and needs urgent guidance." } }] },
+      { text: "If Mom may be hurt or cannot get up safely, call 911 now. I flagged this as urgent here too - are you with her right now?" },
+    ],
+    input: { text: "mom fell omg what do i do???" },
+    expect: {
+      replyContains:           ["911", "urgent"],
+      replyNotContains:        ["take her medication", "diagnose", "probably"],
+      toolsCalled:             ["create_support_ticket"],
+      noMedicationInstruction: true,
+      noListShape:             true,
+      oneQuestionAtATime:      true,
+    },
+  },
+
+  {
+    name:        "messy-hours-dispute-asks-one-detail",
+    description: "Client disputes hours vaguely. Cara does not approve payment or ask a list; she asks for the one missing detail.",
+    claudeScript: [
+      { text: "I won't approve that yet. What looks wrong - the start time, end time, or total hours?" },
+    ],
+    input: { text: "these hours look wrong no way" },
+    expect: {
+      replyContains:       ["won't approve", "What looks wrong"],
+      replyNotContains:    ["approved", "paid", "contact support"],
+      toolsCalled:         [],
+      noSupportDeflection: true,
+      noListShape:         true,
+      oneQuestionAtATime:  true,
+    },
+  },
+
+  {
+    name:        "caregiver-approval-status-specific",
+    description: "Caregiver asks why they are not approved. Cara uses caregiver status data and does not give a generic support answer.",
+    userType: "caregiver",
+    toolMocks: {
+      get_background_check_status: {
+        verificationStatus: "submitted",
+        backgroundCheckStatus: "consider",
+        onboardingStatus: "profile_complete",
+      },
+    },
+    claudeScript: [
+      { tools: [{ name: "get_background_check_status", input: { caregiverId: "u-1" } }] },
+      { text: "Your profile is complete, but your background check is still in review. You are not bookable until Checkr clears it, and admin will review the exception." },
+    ],
+    input: { text: "why am i not approved yet??" },
+    expect: {
+      replyContains:       ["profile is complete", "background check", "not bookable"],
+      replyNotContains:    ["contact support", "team will"],
+      toolsCalled:         ["get_background_check_status"],
+      noSupportDeflection: true,
+      noGenericHelpAsk:    true,
+      noListShape:         true,
+    },
+  },
+
+  {
+    name:        "caregiver-referral-partial-info-one-question",
+    description: "Caregiver wants to refer someone but only gives a name. Cara asks for the missing phone only.",
+    userType: "caregiver",
+    claudeScript: [
+      { text: "I can invite Ana. What's her phone number?" },
+    ],
+    input: { text: "i wanna refer my friend Ana shes a great caregiver" },
+    expect: {
+      replyContains:       ["Ana", "phone number"],
+      replyNotContains:    ["name and phone", "email", "contact support"],
+      toolsCalled:         [],
+      noSupportDeflection: true,
+      noGenericHelpAsk:    true,
+      noListShape:         true,
+      oneQuestionAtATime:  true,
+    },
+  },
 ];
 
 // ── Replay driver ────────────────────────────────────────────────────────────
@@ -555,6 +855,7 @@ async function replayTranscript(t: GoldenTranscript): Promise<{
   toolCalls:    string[];
   sentChunks:   string[];
   experiments?: Record<string, string>;
+  metrics?: Record<string, unknown>;
 }> {
   resetState();
 
@@ -606,6 +907,7 @@ async function replayTranscript(t: GoldenTranscript): Promise<{
     toolCalls:   [...STATE.toolCalls],
     sentChunks:  [...STATE.sentChunks],
     experiments: lastTurn.experiments as Record<string, string> | undefined,
+    metrics:     lastTurn,
   };
 }
 
@@ -642,11 +944,26 @@ describe("golden transcripts", () => {
       if (t.expect.noListShape) {
         expect(hasListShape(out.reply), `reply has list shape: ${out.reply}`).toBe(false);
       }
+      if (t.expect.oneQuestionAtATime) {
+        expect(detectMultiQuestionDataCollection(out.reply), `reply asks for too much at once: ${out.reply}`).toBe(false);
+      }
+      if (t.expect.noSupportDeflection) {
+        expect(detectSupportDeflection(out.reply), `reply punts instead of acting: ${out.reply}`).toBe(false);
+      }
+      if (t.expect.noGenericHelpAsk) {
+        expect(detectGenericHelpAsk(out.reply), `reply uses generic helper prompt: ${out.reply}`).toBe(false);
+      }
+      if (t.expect.noMedicationInstruction) {
+        expect(detectMedicationInstruction(out.reply), `reply gives medication instruction: ${out.reply}`).toBe(false);
+      }
       if (t.expect.experimentsContains) {
         for (const key of t.expect.experimentsContains) {
           expect(out.experiments, `experiments missing — got ${JSON.stringify(out.experiments)}`).toBeDefined();
           expect(out.experiments).toHaveProperty(key);
         }
+      }
+      if (t.expect.conversationRepairApplied) {
+        expect(out.metrics?.conversationRepairApplied, `conversation repair did not apply: ${JSON.stringify(out.metrics)}`).toBe(true);
       }
     });
   }

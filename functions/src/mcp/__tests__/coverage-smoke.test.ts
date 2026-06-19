@@ -99,6 +99,7 @@ vi.mock("firebase-admin", () => ({
     },
     Timestamp: {
       now: () => ({ toDate: () => new Date(), seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 }),
+      fromMillis: (ms: number) => ({ toMillis: () => ms, seconds: Math.floor(ms / 1000), nanoseconds: 0 }),
     },
   }),
 }));
@@ -169,6 +170,8 @@ vi.mock("../../browser/careWebActions", () => ({
   searchHealthcareProvider: vi.fn().mockResolvedValue({ providers: [] }),
   fetchHealthcarePage:    vi.fn().mockResolvedValue({ content: "" }),
   performBrowserAction:   vi.fn().mockResolvedValue({ success: true, data: "ok" }),
+  findAppointmentSlots:   vi.fn().mockResolvedValue({ slots: [] }),
+  bookAppointmentSlot:    vi.fn().mockResolvedValue({ status: "scheduled" }),
   scheduleDoctorAppointment: vi.fn().mockResolvedValue({ status: "scheduled" }),
   requestPharmacyRefill:  vi.fn().mockResolvedValue({ status: "requested" }),
   checkInsuranceAuthorization: vi.fn().mockResolvedValue({ status: "verified" }),
@@ -484,6 +487,43 @@ describe("MCP tool smoke coverage", () => {
       hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
       const sendCg = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(typeof sendCg.notification.sent).toBe("boolean");
+    });
+  });
+
+  describe("consequential tool ledger", () => {
+    it("records proposed and executed ledger entries for non-read-only tools", async () => {
+      hoisted.docState.set("proactive_triggers/t1", { userId: "u1", message: "check in" });
+      const r = await handleToolCall("cancel_followup", {
+        triggerId: "t1",
+        userId: "u1",
+        phone: "+15555550000",
+        sourceMessageId: "msg-1",
+      }) as any;
+
+      expect(r.success).toBe(true);
+      await vi.waitFor(() => {
+        const ledgerAdds = hoisted.adds.filter((row) => row.path === "agent_action_ledger");
+        expect(ledgerAdds).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            data: expect.objectContaining({
+              actionType: "mcp_tool",
+              status: "proposed",
+              toolName: "cancel_followup",
+              phone: "+15555550000",
+              sourceMessageId: "msg-1",
+            }),
+          }),
+          expect.objectContaining({
+            data: expect.objectContaining({
+              actionType: "mcp_tool",
+              status: "executed",
+              toolName: "cancel_followup",
+              phone: "+15555550000",
+              sourceMessageId: "msg-1",
+            }),
+          }),
+        ]));
+      });
     });
   });
 });

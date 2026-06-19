@@ -245,6 +245,12 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
     const chatId: string = groupData.chatId;
 
     for (const phone of allPhones) {
+      await db.collection("agent_sessions").doc(phone)
+        .set({ groupChatId: chatId }, { merge: true })
+        .catch((err) => {
+          console.warn(`buildOrUpdateFamilyGroup: groupChatId backfill failed for ${phone} (chat ${chatId}):`, err);
+        });
+
       if (!existing.has(phone)) {
         let addedToLinq = true;
         await addParticipant(chatId, phone).catch((err) => {
@@ -271,6 +277,16 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
             userId: seniorId,
             phone,
             data: { seniorId, chatId, source: "buildOrUpdateFamilyGroup" },
+          }).catch(() => {});
+          logAgentAction({
+            actionType: "family_group_participant_add",
+            status: "executed",
+            userId: seniorId,
+            phone,
+            role: "family",
+            targetCollection: "family_groups",
+            targetDocId: groupDoc.id,
+            metadata: { seniorId, chatId, source: "buildOrUpdateFamilyGroup" },
           }).catch(() => {});
         }
       }

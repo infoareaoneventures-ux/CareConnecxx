@@ -27,6 +27,15 @@ export interface AgentActionLedgerEntry {
   metadata?: Record<string, unknown>;
 }
 
+function retentionTtl(): FirebaseFirestore.Timestamp | Date {
+  const expiresAtMs = Date.now() + SIX_YEARS_MS;
+  const timestampFactory = admin.firestore.Timestamp as typeof admin.firestore.Timestamp | undefined;
+  if (timestampFactory && typeof timestampFactory.fromMillis === "function") {
+    return timestampFactory.fromMillis(expiresAtMs);
+  }
+  return new Date(expiresAtMs);
+}
+
 export async function logAgentAction(
   entry: AgentActionLedgerEntry,
 ): Promise<void> {
@@ -36,7 +45,7 @@ export async function logAgentAction(
       ...entry,
       createdAt: now,
       updatedAt: now,
-      ttl: admin.firestore.Timestamp.fromMillis(Date.now() + SIX_YEARS_MS),
+      ttl: retentionTtl(),
     });
   } catch (err) {
     console.error("agent_action_ledger write error:", err);

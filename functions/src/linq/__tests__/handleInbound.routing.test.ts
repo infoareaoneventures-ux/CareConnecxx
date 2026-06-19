@@ -452,6 +452,30 @@ describe("safety + account gates", () => {
 });
 
 describe("onboarding + rate limit", () => {
+  it("new secondary family member session inherits the existing family group chat", async () => {
+    hoisted.collState.set("agent_sessions", [{
+      id: "+15550009999",
+      chatId: "primary-chat",
+      groupMembers: [PHONE],
+      userId: "u1",
+      seniorId: "senior1",
+      groupChatId: "family-group-chat",
+      onboardingData: { seniorName: "Jane" },
+    }]);
+
+    await handleInbound(makeEvent("hi"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
+      userId: "u1",
+      seniorId: "senior1",
+      primaryPhone: "+15550009999",
+      isSecondaryMember: true,
+      groupChatId: "family-group-chat",
+    });
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("care assistant"));
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
   it("mid-onboarding messages route to handleOnboardingStep, not intent routing", async () => {
     seedSession({ onboardingStep: "caregiver_name" });
     await handleInbound(makeEvent("Jane Doe"));

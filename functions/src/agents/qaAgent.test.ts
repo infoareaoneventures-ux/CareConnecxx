@@ -30,7 +30,16 @@ vi.mock("../linq/client",          () => ({ sendMessage: vi.fn(), startTyping: v
 vi.mock("./executionAgent",        () => ({ getActiveAgentForUser: vi.fn() }));
 vi.mock("./contextManagement",     () => ({ maybeRollUpHistory: vi.fn(), buildToolResultContent: vi.fn() }));
 
-import { hasListShape, detectConfidenceClaim, detectPromiseWithoutToolCall, WARMTH_REFLECTION_OPENERS } from "./qaAgent";
+import {
+  hasListShape,
+  detectConfidenceClaim,
+  detectPromiseWithoutToolCall,
+  detectGenericHelpAsk,
+  detectMedicationInstruction,
+  detectMultiQuestionDataCollection,
+  detectSupportDeflection,
+  WARMTH_REFLECTION_OPENERS,
+} from "./qaAgent";
 
 describe("hasListShape", () => {
   it.each([
@@ -92,6 +101,70 @@ describe("detectPromiseWithoutToolCall", () => {
   it("does NOT flag prose without promise phrasing", () => {
     expect(detectPromiseWithoutToolCall("Thursday 9am.", 0)).toBe(false);
     expect(detectPromiseWithoutToolCall("She's doing well today.", 0)).toBe(false);
+  });
+});
+
+describe("conversation quality detectors", () => {
+  it.each([
+    "What's your name? And what's your mom's name?",
+    "Can I get her name and phone number?",
+    "Please send me her name, age, city, zip, and care needs.",
+  ])("flags multi-question or form-like intake %p", (input) => {
+    expect(detectMultiQuestionDataCollection(input)).toBe(true);
+  });
+
+  it.each([
+    "What's her phone number?",
+    "What date and time works?",
+    "Can you confirm Thursday at 9?",
+    "Got it. And what's your mom's name?",
+  ])("allows one concrete ask %p", (input) => {
+    expect(detectMultiQuestionDataCollection(input)).toBe(false);
+  });
+
+  it.each([
+    "Please contact support for that.",
+    "The Cara team will follow up.",
+    "I'd recommend reaching out to our team.",
+  ])("flags support deflection %p", (input) => {
+    expect(detectSupportDeflection(input)).toBe(true);
+  });
+
+  it.each([
+    "I opened a support ticket with those details.",
+    "I can handle that here.",
+  ])("allows action-oriented support language %p", (input) => {
+    expect(detectSupportDeflection(input)).toBe(false);
+  });
+
+  it.each([
+    "What can I help you with?",
+    "How can I help today?",
+    "Is there anything else I can help with?",
+  ])("flags generic helper prompts %p", (input) => {
+    expect(detectGenericHelpAsk(input)).toBe(true);
+  });
+
+  it.each([
+    "Hey. Maria is coming at 9.",
+    "Anytime.",
+  ])("allows context-led short replies %p", (input) => {
+    expect(detectGenericHelpAsk(input)).toBe(false);
+  });
+
+  it.each([
+    "Give her an extra dose tonight.",
+    "Increase the medication to 20mg.",
+    "Skip the pill if she feels dizzy.",
+  ])("flags medication instructions %p", (input) => {
+    expect(detectMedicationInstruction(input)).toBe(true);
+  });
+
+  it.each([
+    "I can't advise on changing meds. Please call her doctor or pharmacist.",
+    "If this feels urgent, call 911 now.",
+  ])("allows clinical redirection %p", (input) => {
+    expect(detectMedicationInstruction(input)).toBe(false);
   });
 });
 

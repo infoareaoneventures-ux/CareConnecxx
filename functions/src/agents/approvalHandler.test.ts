@@ -8,6 +8,8 @@ const hoisted = vi.hoisted(() => ({
   resolvePendingMock:   vi.fn(async () => undefined),
   claimPendingMock:     vi.fn(async () => "claimed"),
   logHealthcareAuditMock: vi.fn(),
+  logAgentActionMock:   vi.fn(async () => undefined),
+  createCaraOpsAlertMock: vi.fn(async () => true),
 }));
 
 vi.mock("../utils/openaiClient", () => ({ quickComplete: hoisted.quickCompleteMock }));
@@ -21,6 +23,8 @@ vi.mock("./pendingActions", () => ({
   claimPendingAction:   hoisted.claimPendingMock,
   logHealthcareAudit:   hoisted.logHealthcareAuditMock,
 }));
+vi.mock("../observability/actionLedger", () => ({ logAgentAction: hoisted.logAgentActionMock }));
+vi.mock("../observability/caraOpsAlerts", () => ({ createCaraOpsAlert: hoisted.createCaraOpsAlertMock }));
 
 import { classifyApproval, handlePendingApproval, handlePendingApprovals } from "./approvalHandler";
 
@@ -44,6 +48,10 @@ beforeEach(() => {
   hoisted.handleToolCallForCaregiverMock.mockReset();
   hoisted.handleToolCallForCaregiverMock.mockResolvedValue({ success: true });
   hoisted.resolvePendingMock.mockClear();
+  hoisted.claimPendingMock.mockClear();
+  hoisted.claimPendingMock.mockResolvedValue("claimed");
+  hoisted.logAgentActionMock.mockClear();
+  hoisted.createCaraOpsAlertMock.mockClear();
 });
 
 describe("classifyApproval", () => {
@@ -120,7 +128,17 @@ describe("handlePendingApproval", () => {
       pending: makePending(),
     });
     expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_42", "failed", expect.any(Object));
-    expect(hoisted.sendMessageMock).toHaveBeenCalledWith("chat_1", expect.stringContaining("ran into a problem"));
+    expect(hoisted.createCaraOpsAlertMock).toHaveBeenCalledWith(expect.objectContaining({
+      type: "cara_pending_action_failed",
+      actionId: "pa_42",
+      toolName: "cancel_appointment",
+    }));
+    expect(hoisted.logAgentActionMock).toHaveBeenCalledWith(expect.objectContaining({
+      actionType: "pending_action",
+      status: "failed",
+      targetDocId: "pa_42",
+    }));
+    expect(hoisted.sendMessageMock).toHaveBeenCalledWith("chat_1", expect.stringContaining("flagged it for review"));
   });
 
   it("NO path (trivial fast match): marks rejected, sends reassurance, does NOT execute", async () => {
@@ -295,7 +313,8 @@ describe("handlePendingApprovals — batch confirmation", () => {
     expect(hoisted.handleToolCallMock).toHaveBeenCalledTimes(2);
     expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_1", "failed",   expect.any(Object));
     expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_2", "executed", expect.any(Object));
-    expect(hoisted.sendMessageMock).toHaveBeenCalledWith("chat_1", expect.stringContaining("ran into a problem"));
+    expect(hoisted.createCaraOpsAlertMock).toHaveBeenCalledTimes(1);
+    expect(hoisted.sendMessageMock).toHaveBeenCalledWith("chat_1", expect.stringContaining("flagged it for review"));
   });
 
   it("delegates to single-action handling when only one action is pending", async () => {

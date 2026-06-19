@@ -15,6 +15,8 @@ import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingAct
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
 import { getAppUrl } from "../config/appUrl";
+import { logAgentAction } from "../observability/actionLedger";
+import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
 
 const db = admin.firestore();
 
@@ -1777,6 +1779,93 @@ async function assertSeniorAccess(seniorId: string, sessionClientId: unknown) {
   return null;
 }
 
+function shouldTrackMcpTool(name: string): boolean {
+  if (/^(get|list|search|read)_/.test(name)) return false;
+  if (name === "find_replacement_caregivers") return false;
+  if (name === "resume_execution_agent") return false;
+  return true;
+}
+
+function stringInput(input: Record<string, unknown>, key: string): string | undefined {
+  const value = input[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function targetDocIdFromToolInput(input: Record<string, unknown>): string | undefined {
+  return stringInput(input, "appointmentId") ??
+    stringInput(input, "bookingRequestId") ??
+    stringInput(input, "shiftId") ??
+    stringInput(input, "seniorId") ??
+    stringInput(input, "caregiverId") ??
+    stringInput(input, "clientId") ??
+    stringInput(input, "referralId") ??
+    stringInput(input, "invoiceId") ??
+    stringInput(input, "ticketId");
+}
+
+function toolFailureReason(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const data = result as Record<string, unknown>;
+  // Some tools signal failure with a bare `{ error: true, message }` (e.g.
+  // perform_web_action's catch) rather than _toolError/success:false — treat
+  // that as a failure too, or it gets mis-recorded as "executed".
+  if (data._toolError !== true && data.success !== false && data.error !== true) return undefined;
+  const code = typeof data.code === "string" ? data.code : "TOOL_FAILED";
+  const message = typeof data.message === "string" ? data.message : "Tool returned failure";
+  return `${code}: ${message}`.slice(0, 200);
+}
+
+// Raw exception messages can carry PII or secrets (a failed credential/login
+// web action, a Stripe error echoing a customer email, a provider token in a
+// URL). These reasons are persisted to the ledger / admin alerts AND fed back
+// into Cara's operational context, so redact common sensitive patterns first.
+function sanitizeErrorReason(reason: string): string {
+  return reason
+    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "[email]")
+    .replace(/\bBearer\s+[A-Za-z0-9._-]+/gi, "Bearer [token]")
+    .replace(/\b(?:sk|pk|rk|whsec|xox[abprs]|gh[pousr]|AKIA)[-_]?[A-Za-z0-9][A-Za-z0-9_-]{7,}/g, "[secret]")
+    .replace(/\b(password|passwd|pwd|token|secret|api[_-]?key)\b(\s*[:=]\s*)\S+/gi, "$1$2[redacted]")
+    .replace(/\b[A-Za-z0-9_-]{40,}\b/g, "[token]")
+    .replace(/(?:\+?\d[\s().-]?){10,}/g, "[phone]")
+    .slice(0, 200);
+}
+
+function shouldAlertForToolFailure(reason: string | undefined): boolean {
+  if (!reason) return false;
+  return reason.startsWith("UNAVAILABLE") ||
+    reason.startsWith("CONFLICT") ||
+    reason.includes("temporarily unavailable") ||
+    reason.includes("linq_send_failed") ||
+    reason.includes("payment") ||
+    reason.includes("healthcare");
+}
+
+async function recordMcpToolStatus(params: {
+  name: string;
+  input: Record<string, unknown>;
+  status: "proposed" | "executed" | "failed";
+  errorReason?: string;
+}): Promise<void> {
+  const { name, input, status, errorReason } = params;
+  const phone = stringInput(input, "phone");
+  const userId = stringInput(input, "userId") ?? stringInput(input, "clientId") ?? stringInput(input, "caregiverId");
+  const role = stringInput(input, "userType") ?? stringInput(input, "role");
+  await logAgentAction({
+    actionType: "mcp_tool",
+    status,
+    userId,
+    phone,
+    role,
+    sourceMessageId: stringInput(input, "sourceMessageId"),
+    toolName: name,
+    targetDocId: targetDocIdFromToolInput(input),
+    ...(errorReason ? { errorReason } : {}),
+    metadata: {
+      trackedBy: "mcp_dispatcher",
+    },
+  });
+}
+
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
 export async function handleToolCall(
@@ -1865,8 +1954,15 @@ export async function handleToolCall(
   const nowIso = new Date().toISOString();
   const daysBack  = Math.min((input.daysBack as number) ?? 30, 90);
   const daysAgo   = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
+  const trackTool = shouldTrackMcpTool(name) && !confirmedActionId;
+  if (trackTool) {
+    recordMcpToolStatus({ name, input, status: "proposed" }).catch((err) => {
+      console.warn("MCP ledger proposed write failed", { name, err });
+    });
+  }
 
   try {
+    const result = await (async (): Promise<unknown> => {
     switch (name) {
       case "get_senior_profile": {
         if (!input.seniorId) return toolError("INVALID_INPUT", "seniorId is required");
@@ -4459,8 +4555,54 @@ export async function handleToolCall(
     }
 
     return toolError("INVALID_INPUT", `Unknown tool: ${name}`);
+    })();
+    if (trackTool) {
+      const errorReason = toolFailureReason(result);
+      await recordMcpToolStatus({
+        name,
+        input,
+        status: errorReason ? "failed" : "executed",
+        ...(errorReason ? { errorReason } : {}),
+      });
+      if (shouldAlertForToolFailure(errorReason)) {
+        await createCaraOpsAlert({
+          type: "cara_tool_failed",
+          severity: name === "perform_web_action" ? "high" : "medium",
+          phone: stringInput(input, "phone"),
+          userId: stringInput(input, "userId") ?? stringInput(input, "clientId") ?? stringInput(input, "caregiverId"),
+          role: stringInput(input, "userType") ?? stringInput(input, "role"),
+          source: "mcp_dispatcher",
+          toolName: name,
+          targetDocId: targetDocIdFromToolInput(input),
+          message: `Cara tool failed: ${name}`,
+          reason: errorReason,
+        });
+      }
+    }
+    return result;
   } catch (err) {
     console.error(`handleToolCall [${name}] error:`, err);
+    const errorReason = sanitizeErrorReason(err instanceof Error ? err.message : String(err));
+    if (trackTool) {
+      await recordMcpToolStatus({
+        name,
+        input,
+        status: "failed",
+        errorReason,
+      }).catch((ledgerErr) => console.warn("MCP ledger failure write failed", { name, ledgerErr }));
+      await createCaraOpsAlert({
+        type: "cara_tool_exception",
+        severity: name === "perform_web_action" ? "high" : "medium",
+        phone: stringInput(input, "phone"),
+        userId: stringInput(input, "userId") ?? stringInput(input, "clientId") ?? stringInput(input, "caregiverId"),
+        role: stringInput(input, "userType") ?? stringInput(input, "role"),
+        source: "mcp_dispatcher",
+        toolName: name,
+        targetDocId: targetDocIdFromToolInput(input),
+        message: `Cara tool threw: ${name}`,
+        reason: errorReason,
+      }).catch(() => {});
+    }
     return toolError("UNAVAILABLE", `Tool ${name} is temporarily unavailable`);
   }
 }

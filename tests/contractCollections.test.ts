@@ -55,7 +55,7 @@ describe('Cara ↔ Web collection contract', () => {
             'users', 'caregivers', 'clientIntakes', 'senior_profiles', 'carePlans',
             'job_postings', 'job_posts', 'appointments', 'shiftHours', 'threads',
             'support_tickets', 'admin_alerts', 'care_journal', 'proactive_drafts',
-            'agent_audit_log',
+            'agent_audit_log', 'agent_action_ledger', 'pending_actions',
         ]) {
             expect(names, `contract.ts is missing '${required}'`).toContain(required);
         }
@@ -108,6 +108,7 @@ describe('Cara ↔ Web collection contract', () => {
     it('Cara conversations are mirrored into the web threads model', () => {
         expect(backendSource).toContain('mirrorToWebThread');
         expect(backendSource).toMatch(/threads/);
+        expect(backendSource).toContain('groupChatId');
     });
 
     it('Checkr lookup stays on backgroundCheckData.checkrCandidateId', () => {

@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertCircle, CheckCircle, Clock, Info } from 'lucide-react';
 import type { Caregiver } from '../../types';
+import { isCaregiverBookable } from '../../utils/caregiverEligibility';
 
 interface ProfileApprovalBannerProps {
   profile: Partial<Caregiver> & {
@@ -14,9 +15,9 @@ interface ProfileApprovalBannerProps {
 }
 
 export const ProfileApprovalBanner: React.FC<ProfileApprovalBannerProps> = ({ profile, hasEngagement }) => {
-  // Canonical contract: approved state requires verificationStatus === 'approved'.
+  // Canonical contract: bookable requires profile_complete + verificationStatus approved.
   // `verified` alone is NOT sufficient (it's a secondary display signal only).
-  const isApproved = profile.verificationStatus === 'approved';
+  const isApproved = isCaregiverBookable(profile);
 
   if (isApproved && hasEngagement) return null;
 

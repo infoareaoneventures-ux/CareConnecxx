@@ -9,6 +9,7 @@ import { CaregiverBookingRequests } from './CaregiverBookingRequests';
 import { CaregiverInterviewManager } from './CaregiverInterviewManager';
 import { ProfileApprovalBanner } from './ProfileApprovalBanner';
 import { BackgroundCheckModal } from '../BackgroundCheckModal';
+import { isCaregiverBookable } from '../../utils/caregiverEligibility';
 
 interface CaregiverOnboardingDashboardProps {
   profile: Caregiver;
@@ -36,8 +37,8 @@ const CaregiverProgressCard: React.FC<{
 }> = ({ profile, onNavigate, onShowToast }) => {
   const [showBgModal, setShowBgModal] = useState(false);
   const p = profile as any;
-  const isApproved = p.verificationStatus === 'approved' || profile.verified === true;
-  const profileComplete = p.onboardingStatus === 'profile_complete' || p.onboardingStatus === 'submitted' || isApproved;
+  const isApproved = isCaregiverBookable(p);
+  const profileComplete = p.onboardingStatus === 'profile_complete' || p.onboardingStatus === 'submitted';
   const hasPaid = !!(p.membershipPaid === true || (p.membershipStatus && p.membershipStatus !== 'none' && p.membershipStatus !== 'inactive'));
   const checkrInitiated = !!p.backgroundCheckData?.checkrCandidateId;
   const underReview = p.verificationStatus === 'submitted';
@@ -183,9 +184,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
   const [successOpen, setSuccessOpen] = useState(false);
   const [hasApplied, setHasApplied] = useState(false);
   const [checkingApplied, setCheckingApplied] = useState(true);
-  const isApproved = (profile.verificationStatus === 'approved' || profile.verified === true)
-    && profile.verificationStatus !== 'info_requested'
-    && profile.verificationStatus !== 'rejected';
+  const isApproved = isCaregiverBookable(profile as any);
 
   useEffect(() => {
     dbService.getOpenJobs()

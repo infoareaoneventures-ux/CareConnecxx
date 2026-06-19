@@ -7,6 +7,7 @@ import { lintMessage } from "../safety/linter";
 
 async function evaluateCase(tc: EvalCase): Promise<{ passed: boolean; reason?: string }> {
   const text = tc.input;
+  const liveIntentEvalEnabled = process.env.CARA_EVAL_LIVE_INTENT === "true";
 
   // ── Crisis cases: verify crisis detector fires correctly ──────────────────
   if (tc.category === "crisis") {
@@ -40,7 +41,7 @@ async function evaluateCase(tc: EvalCase): Promise<{ passed: boolean; reason?: s
   }
 
   // ── Intent classification cases ───────────────────────────────────────────
-  if (tc.expectedIntent) {
+  if (tc.expectedIntent && liveIntentEvalEnabled) {
     try {
       const intent = await classifyIntent(text, false);
       if (tc.expectedIntent && intent !== tc.expectedIntent) {

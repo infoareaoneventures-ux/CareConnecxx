@@ -20,6 +20,8 @@ import {
   logHealthcareAudit,
 } from "./pendingActions";
 import { handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
+import { logAgentAction } from "../observability/actionLedger";
+import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
 
 export type ApprovalDecision = "YES" | "NO" | "QUESTION";
 
@@ -68,14 +70,16 @@ export type ApprovalResult =
 // transactional and single-fire, so a duplicate YES racing through here
 // can't double-resolve; the dispatch carries _confirmedActionId so the MCP
 // gate executes instead of re-proposing (see mcp/server.ts).
-// Returns true when the tool reported success.
+// Returns succeeded=true when the tool reported success. On failure,
+// alertFlagged reports whether the ops alert actually persisted, so the caller
+// only tells the user "I've flagged it for review" when that's true.
 async function executeConfirmedAction(params: {
   phone:    string;
   chatId:   string;
   userId?:  string;
   userType: "client" | "caregiver";
   pending:  PendingAction;
-}): Promise<boolean> {
+}): Promise<{ succeeded: boolean; alertFlagged: boolean }> {
   const { phone, chatId, userId, userType, pending } = params;
 
   console.info("approvalHandler.execute", {
@@ -90,9 +94,24 @@ async function executeConfirmedAction(params: {
   const claim = await claimPendingAction(pending.id);
   if (claim !== "claimed") {
     console.info("approvalHandler.execute: action not claimable (duplicate/expired) — skipping", { actionId: pending.id });
-    return false;
+    return { succeeded: false, alertFlagged: true };
   }
   logHealthcareAudit(pending, "confirmed");
+  logAgentAction({
+    actionType:       "pending_action",
+    status:           "confirmed",
+    userId:           userId ?? pending.userId ?? "",
+    phone,
+    role:             userType,
+    toolName:         pending.toolName,
+    targetCollection: "pending_actions",
+    targetDocId:      pending.id,
+    metadata: {
+      preview:          pending.preview,
+      triggeredByPhone: pending.triggeredByPhone ?? "",
+      approverPhone:    pending.approverPhone ?? "",
+    },
+  }).catch((err) => console.warn("approvalHandler: logAgentAction (confirmed) ledger write failed", { actionId: pending.id, err }));
 
   const dispatch = userType === "caregiver" ? handleToolCallForCaregiver : handleToolCall;
   // Strip any _confirmedActionId that rode in on the stored tool input (e.g.
@@ -127,6 +146,45 @@ async function executeConfirmedAction(params: {
     { executionPreview },
   );
   logHealthcareAudit(pending, succeeded ? "executed" : "failed", succeeded ? undefined : executionPreview);
+  logAgentAction({
+    actionType:       "pending_action",
+    status:           succeeded ? "executed" : "failed",
+    userId:           userId ?? pending.userId ?? "",
+    phone,
+    role:             userType,
+    toolName:         pending.toolName,
+    targetCollection: "pending_actions",
+    targetDocId:      pending.id,
+    ...(succeeded ? {} : { errorReason: executionPreview.slice(0, 200) }),
+    metadata: {
+      preview:          pending.preview,
+      triggeredByPhone: pending.triggeredByPhone ?? "",
+      approverPhone:    pending.approverPhone ?? "",
+    },
+  }).catch((err) => console.warn("approvalHandler: logAgentAction (executed/failed) ledger write failed", { actionId: pending.id, err }));
+
+  let alertFlagged = true; // irrelevant on success; set below on failure
+  if (!succeeded) {
+    alertFlagged = await createCaraOpsAlert({
+      type:             "cara_pending_action_failed",
+      severity:         "high",
+      phone,
+      userId:           userId ?? pending.userId,
+      role:             userType,
+      source:           "approvalHandler",
+      actionId:         pending.id,
+      toolName:         pending.toolName,
+      targetCollection: "pending_actions",
+      targetDocId:      pending.id,
+      message:          `Cara could not complete an approved action: ${pending.preview}`,
+      reason:           executionPreview,
+      context: {
+        preview:          pending.preview,
+        triggeredByPhone: pending.triggeredByPhone ?? "",
+        approverPhone:    pending.approverPhone ?? "",
+      },
+    });
+  }
 
   // H-U4: tell the requester (if a secondary member triggered it) the outcome.
   if (pending.triggeredByPhone && pending.triggeredByPhone !== phone) {
@@ -136,7 +194,7 @@ async function executeConfirmedAction(params: {
     ).catch(() => {});
   }
 
-  return succeeded;
+  return { succeeded, alertFlagged };
 }
 
 // Main entry point. Loads or accepts the pending action, classifies the
@@ -183,13 +241,16 @@ export async function handlePendingApproval(params: {
   }
 
   // decision === "YES" — execute the tool with the bypass flag set.
-  const succeeded = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
+  const { succeeded, alertFlagged } = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
 
   // Acknowledge to the family. Keep it short — the tool itself may have
-  // already sent richer downstream notifications (e.g. caregiver SMS).
+  // already sent richer downstream notifications (e.g. caregiver SMS). Only
+  // claim it was "flagged for review" when the ops alert actually persisted.
   const ackMessage = succeeded
     ? "Done."
-    : "I tried to do that but ran into a problem — give me a moment and I'll try again.";
+    : alertFlagged
+      ? "I tried, but it didn't go through. I've flagged it for review."
+      : "I tried, but it didn't go through, and I couldn't log it for review automatically. Please contact support and we'll help right away.";
   await sendMessage(chatId, ackMessage).catch((err) => {
     console.error("handlePendingApproval: sendMessage (YES) failed", err);
   });
@@ -245,14 +306,20 @@ export async function handlePendingApprovals(params: {
 
   // decision === "YES" — execute all sequentially.
   let failures = 0;
+  let unflagged = 0; // failures whose ops alert also failed to persist
   for (const pending of ordered) {
-    const succeeded = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
-    if (!succeeded) failures++;
+    const { succeeded, alertFlagged } = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
+    if (!succeeded) {
+      failures++;
+      if (!alertFlagged) unflagged++;
+    }
   }
 
   const ackMessage = failures === 0
     ? "Done — all set."
-    : "I took care of part of that but ran into a problem on the rest — give me a moment and I'll try again.";
+    : unflagged === 0
+      ? "I completed what I could, but one action didn't go through. I've flagged it for review."
+      : "I completed what I could, but one action didn't go through, and I couldn't log it for review automatically. Please contact support and we'll help right away.";
   await sendMessage(chatId, ackMessage).catch((err) => {
     console.error("handlePendingApprovals: sendMessage (YES) failed", err);
   });

@@ -30,7 +30,7 @@ interface AdminAlertsPanelProps {
   onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-type AlertFilter = 'open' | 'resolved' | 'all';
+type AlertFilter = 'open' | 'cara' | 'resolved' | 'all';
 
 // Bookkeeping fields not worth echoing in the context chips
 const META_FIELDS = new Set([
@@ -39,7 +39,23 @@ const META_FIELDS = new Set([
 ]);
 
 const severityBadgeVariant = (severity?: string): 'danger' | 'warning' | 'neutral' =>
-  severity === 'critical' ? 'danger' : severity === 'warning' ? 'warning' : 'neutral';
+  severity === 'critical' || severity === 'high'
+    ? 'danger'
+    : severity === 'warning' || severity === 'medium'
+      ? 'warning'
+      : 'neutral';
+
+const isCaraOpsAlert = (alert: AdminAlert): boolean => {
+  const type = String(alert.type ?? '');
+  const source = String(alert.source ?? '');
+  return source === 'cara' ||
+    type.startsWith('cara_') ||
+    type.startsWith('qa_') ||
+    type.startsWith('linq_') ||
+    type.includes('agent') ||
+    type.includes('conversation') ||
+    type.includes('pending_action');
+};
 
 export const AdminAlertsPanel: React.FC<AdminAlertsPanelProps> = ({ onShowToast }) => {
   const [alerts, setAlerts] = useState<AdminAlert[]>([]);
@@ -76,10 +92,14 @@ export const AdminAlertsPanel: React.FC<AdminAlertsPanelProps> = ({ onShowToast 
   };
 
   const openCount = alerts.filter(a => !a.resolved).length;
+  const caraCount = alerts.filter(a => !a.resolved && isCaraOpsAlert(a)).length;
   const resolvedCount = alerts.length - openCount;
 
   const filtered = alerts.filter(a =>
-    filter === 'all' ? true : filter === 'open' ? !a.resolved : !!a.resolved
+    filter === 'all' ? true
+      : filter === 'open' ? !a.resolved
+        : filter === 'cara' ? !a.resolved && isCaraOpsAlert(a)
+          : !!a.resolved
   );
 
   if (loading) {
@@ -94,7 +114,7 @@ export const AdminAlertsPanel: React.FC<AdminAlertsPanelProps> = ({ onShowToast 
     <div className="space-y-6">
       {/* Filter Tabs */}
       <div className="flex space-x-2 border-b border-slate-200">
-        {(['open', 'resolved', 'all'] as AlertFilter[]).map((f) => (
+        {(['open', 'cara', 'resolved', 'all'] as AlertFilter[]).map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -105,7 +125,7 @@ export const AdminAlertsPanel: React.FC<AdminAlertsPanelProps> = ({ onShowToast 
           >
             {f}
             <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-slate-100">
-              {f === 'all' ? alerts.length : f === 'open' ? openCount : resolvedCount}
+              {f === 'all' ? alerts.length : f === 'open' ? openCount : f === 'cara' ? caraCount : resolvedCount}
             </span>
           </button>
         ))}

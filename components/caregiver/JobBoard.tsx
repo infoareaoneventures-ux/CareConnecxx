@@ -5,6 +5,7 @@ import { Search, Loader2, Briefcase, MapPin, Calendar, Clock, Lock, X, FileText,
 import { Button } from '../ui/Button';
 import { JobPost, Caregiver, AddToastFunction } from '../../types';
 import { hasValidTransportDocs } from '../../utils/transportDocs';
+import { isCaregiverBookable } from '../../utils/caregiverEligibility';
 import { dbService } from '../../services/api';
 import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
@@ -1050,16 +1051,12 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
 
                                         {/* Footer: Details + Accept/Decline */}
                                         {(() => {
-                                            const isAdminApproved = (profile as any)?.verificationStatus === 'approved' || profile?.verified === true;
+                                            const isAdminApproved = isCaregiverBookable(profile as any);
                                             const hasPaid = !!(
                                                 (profile as any)?.membershipPaid === true ||
                                                 ((profile as any)?.membershipStatus && (profile as any)?.membershipStatus !== 'none' && (profile as any)?.membershipStatus !== 'inactive')
                                             );
-                                            const bgStatus = (profile as any)?.verificationStatus;
-                                            const bgOk = ['checkr_clear', 'approved'].includes(bgStatus) ||
-                                                (profile as any)?.backgroundCheckStatus === 'clear' ||
-                                                (profile as any)?.backgroundCheckComplete === true;
-                                            const canRespond = isAdminApproved || (hasPaid && bgOk);
+                                            const canRespond = isAdminApproved && hasPaid;
                                             return (
                                                 <div className="mt-3">
                                                     {iv.status === 'pending' && !canRespond ? (

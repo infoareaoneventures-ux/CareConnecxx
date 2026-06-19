@@ -552,6 +552,18 @@ async function handleInboundInner(event: unknown): Promise<void> {
       const secondaryCap = await checkCapability(phone);
       const secondaryService: LinqService = secondaryCap.iMessage ? "iMessage" : secondaryCap.RCS ? "RCS" : "SMS";
 
+      let groupChatId = (primarySession as any).groupChatId as string | undefined;
+      if (!groupChatId && primaryPhone) {
+        const groupForPrimary = await db.collection("family_groups")
+          .where("phones", "array-contains", primaryPhone)
+          .limit(1)
+          .get()
+          .catch(() => null);
+        groupChatId = groupForPrimary && !groupForPrimary.empty
+          ? (groupForPrimary.docs[0].data().chatId as string | undefined)
+          : undefined;
+      }
+
       // Create a lightweight session for this member pointing to the primary
       await db.collection("agent_sessions").doc(phone).set({
         chatId,
@@ -566,6 +578,7 @@ async function handleInboundInner(event: unknown): Promise<void> {
         primaryPhone,
         isSecondaryMember: true,
         createdAt:      new Date().toISOString(),
+        ...(groupChatId ? { groupChatId } : {}),
       });
 
       // Start Zep memory for this secondary member too — awaited so zepThreadId lands before

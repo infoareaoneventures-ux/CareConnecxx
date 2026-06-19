@@ -2436,6 +2436,126 @@ export const dbService = {
         });
     },
 
+    assignAgentAction: async (entryId: string, adminUid?: string): Promise<void> => {
+        if (!isConfigured || !db) throw new Error('Not connected');
+        const uid = adminUid || auth?.currentUser?.uid;
+        if (!uid) throw new Error('Admin user is required');
+        await db.collection('agent_action_ledger').doc(entryId).update({
+            assignedTo: uid,
+            assignedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        });
+    },
+
+    requestAgentActionRetry: async (entryId: string, reason: string, adminUid?: string): Promise<void> => {
+        if (!isConfigured || !db) throw new Error('Not connected');
+        const uid = adminUid || auth?.currentUser?.uid;
+        if (!uid) throw new Error('Admin user is required');
+        const cleanReason = reason.trim();
+        if (!cleanReason) throw new Error('Retry reason is required');
+        await db.collection('agent_action_ledger').doc(entryId).update({
+            recoveryAction: 'retry_requested',
+            operatorNotes: cleanReason.slice(0, 1000),
+            retryCount: firebase.firestore.FieldValue.increment(1),
+            lastRetryAt: new Date().toISOString(),
+            assignedTo: uid,
+            assignedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        });
+    },
+
+    markAgentActionHandled: async (entryId: string, handledReason: string, adminUid?: string): Promise<void> => {
+        if (!isConfigured || !db) throw new Error('Not connected');
+        const uid = adminUid || auth?.currentUser?.uid;
+        if (!uid) throw new Error('Admin user is required');
+        const cleanReason = handledReason.trim();
+        if (!cleanReason) throw new Error('Handled reason is required');
+        await db.collection('agent_action_ledger').doc(entryId).update({
+            status: 'cancelled',
+            handledBy: uid,
+            handledAt: new Date().toISOString(),
+            handledReason: cleanReason.slice(0, 1000),
+            updatedAt: new Date().toISOString(),
+        });
+    },
+
+    cancelPendingAction: async (actionId: string, reason: string, adminUid?: string): Promise<void> => {
+        if (!isConfigured || !db) throw new Error('Not connected');
+        const uid = adminUid || auth?.currentUser?.uid;
+        if (!uid) throw new Error('Admin user is required');
+        const cleanReason = reason.trim();
+        if (!cleanReason) throw new Error('Cancel reason is required');
+        await db.collection('pending_actions').doc(actionId).update({
+            status: 'rejected',
+            resolvedAt: new Date().toISOString(),
+            cancelledAt: new Date().toISOString(),
+            cancelledBy: uid,
+            operatorNotes: cleanReason.slice(0, 1000),
+            recoveryAction: 'admin_cancelled',
+        });
+    },
+
+    reproposePendingAction: async (actionId: string, reason: string, adminUid?: string): Promise<void> => {
+        if (!isConfigured || !db) throw new Error('Not connected');
+        const uid = adminUid || auth?.currentUser?.uid;
+        if (!uid) throw new Error('Admin user is required');
+        const cleanReason = reason.trim();
+        if (!cleanReason) throw new Error('Re-proposal reason is required');
+        const now = Date.now();
+        await db.collection('pending_actions').doc(actionId).update({
+            status: 'awaiting',
+            proposedAt: new Date(now).toISOString(),
+            expiresAt: new Date(now + 15 * 60 * 1000).toISOString(),
+            resolvedAt: null,
+            reProposedAt: new Date(now).toISOString(),
+            reProposedBy: uid,
+            operatorNotes: cleanReason.slice(0, 1000),
+            recoveryAction: 'admin_reproposed',
+        });
+    },
+
+    subscribeAgentActionLedger: (
+        cb: (entries: Array<Record<string, any>>) => void,
+        onError?: (err: Error) => void
+    ): (() => void) => {
+        if (!isConfigured || !db) {
+            cb([]);
+            return () => {};
+        }
+        return db.collection('agent_action_ledger')
+            .orderBy('updatedAt', 'desc')
+            .limit(250)
+            .onSnapshot(
+                (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+                (err) => {
+                    console.error('subscribeAgentActionLedger:', err);
+                    onError?.(err as unknown as Error);
+                    cb([]);
+                }
+            );
+    },
+
+    subscribePendingActions: (
+        cb: (actions: Array<Record<string, any>>) => void,
+        onError?: (err: Error) => void
+    ): (() => void) => {
+        if (!isConfigured || !db) {
+            cb([]);
+            return () => {};
+        }
+        return db.collection('pending_actions')
+            .orderBy('proposedAt', 'desc')
+            .limit(150)
+            .onSnapshot(
+                (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+                (err) => {
+                    console.error('subscribePendingActions:', err);
+                    onError?.(err as unknown as Error);
+                    cb([]);
+                }
+            );
+    },
+
     // ==================== COORDINATOR METHODS ====================
 
     getCareCoordinators: async (): Promise<any[]> => {

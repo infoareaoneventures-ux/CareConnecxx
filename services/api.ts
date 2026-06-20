@@ -2429,10 +2429,13 @@ export const dbService = {
 
     resolveAdminAlert: async (alertId: string, resolvedBy?: string): Promise<void> => {
         if (!isConfigured || !db) throw new Error('Not connected');
+        // Attribute to the signed-in operator (matches assignAgentAction et al.)
+        // unless an explicit actor is passed.
+        const resolver = resolvedBy || auth?.currentUser?.uid;
         await db.collection('admin_alerts').doc(alertId).update({
             resolved: true,
             resolvedAt: new Date().toISOString(),
-            ...(resolvedBy ? { resolvedBy } : {}),
+            ...(resolver ? { resolvedBy: resolver } : {}),
         });
     },
 
@@ -2507,6 +2510,12 @@ export const dbService = {
             proposedAt: new Date(now).toISOString(),
             expiresAt: new Date(now + 15 * 60 * 1000).toISOString(),
             resolvedAt: null,
+            // Clear terminal artifacts from the prior cancel/execution so the
+            // re-opened (awaiting) doc doesn't carry contradictory state.
+            cancelledAt: null,
+            cancelledBy: null,
+            executionPreview: null,
+            executingStartedAt: null,
             reProposedAt: new Date(now).toISOString(),
             reProposedBy: uid,
             operatorNotes: cleanReason.slice(0, 1000),

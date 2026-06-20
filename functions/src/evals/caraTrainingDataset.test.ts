@@ -34,7 +34,7 @@ describe("Cara training dataset", () => {
       expect(example.idealResponse.trim(), example.id).not.toBe("");
       expect(example.labels.intent.trim(), example.id).not.toBe("");
       expect(example.labels.forbidden.length, example.id).toBeGreaterThan(0);
-      expect(example.reviewer.pii, example.id).toMatch(/synthetic|redacted/);
+      expect(example.reviewer.pii, example.id).toMatch(/^(synthetic|redacted)$/);
     }
   });
 

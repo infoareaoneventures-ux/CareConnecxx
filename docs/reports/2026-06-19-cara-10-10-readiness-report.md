@@ -4,6 +4,9 @@ Date: 2026-06-19
 Scope: local implementation pass for `docs/plans/2026-06-19-001-feat-cara-10-10-readiness-plan.md`
 Deploy: no
 GitHub push: no
+Git branch: feat/cara-healthcare-handler
+Commit SHA: 2e70f6474f138f474536e5f9b9572783c0ded620
+Dirty tree: yes (uncommitted changes present at time of report)
 
 ## Current State
 

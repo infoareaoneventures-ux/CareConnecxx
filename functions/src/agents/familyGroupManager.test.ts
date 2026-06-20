@@ -138,4 +138,33 @@ describe("buildOrUpdateFamilyGroup", () => {
     });
     expect(sendMessage).toHaveBeenCalledWith("linq-group-1", expect.stringContaining("Welcome to the group"));
   });
+
+  it("backfills groupChatId when creating a new family group", async () => {
+    hoisted.docState.set("senior_profiles/client1", {
+      name: "Jane",
+      familyMembers: [{ phone: "+15550002222" }],
+    });
+    hoisted.docState.set("users/client1", { phone: "+15550001111" });
+    // No family_groups doc → exercises the new-group creation path.
+
+    await buildOrUpdateFamilyGroup("client1");
+
+    // A new Linq group chat is created and the family member is added to it.
+    expect(addParticipant).toHaveBeenCalledWith("new-group", "+15550002222");
+
+    // The new group is persisted.
+    const groups = hoisted.collState.get("family_groups") ?? [];
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ seniorId: "client1", chatId: "new-group" });
+
+    // groupChatId backfill must use update() (not set/merge) so phones that
+    // never onboarded don't get phantom agent_sessions docs.
+    for (const phone of ["+15550001111", "+15550002222"]) {
+      expect(hoisted.updates).toContainEqual({
+        path: `agent_sessions/${phone}`,
+        data: { groupChatId: "new-group" },
+      });
+    }
+    expect(hoisted.sets.filter((s) => s.path.startsWith("agent_sessions/"))).toHaveLength(0);
+  });
 });

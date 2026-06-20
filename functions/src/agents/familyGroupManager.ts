@@ -245,10 +245,15 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
     const chatId: string = groupData.chatId;
 
     for (const phone of allPhones) {
+      // update (not set/merge): only backfill groupChatId onto an EXISTING
+      // session. set/merge would create a placeholder agent_sessions doc for a
+      // phone that never onboarded, which later blocks proper secondary-member
+      // bootstrap. A missing doc makes update reject (NOT_FOUND) — absorbed by
+      // the catch — which is the intended no-op for un-onboarded phones.
       await db.collection("agent_sessions").doc(phone)
-        .set({ groupChatId: chatId }, { merge: true })
+        .update({ groupChatId: chatId })
         .catch((err) => {
-          console.warn(`buildOrUpdateFamilyGroup: groupChatId backfill failed for ${phone} (chat ${chatId}):`, err);
+          console.warn(`buildOrUpdateFamilyGroup: groupChatId backfill skipped/failed for ${phone} (chat ${chatId}):`, err);
         });
 
       if (!existing.has(phone)) {
@@ -341,12 +346,19 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
     metadata: { chatId, phones: allPhones },
   }).catch(() => {});
 
-  // Update each participant's agent_session with the group chatId
+  // Update each participant's agent_session with the group chatId. update (not
+  // set/merge): only backfill onto an EXISTING session so a phone that never
+  // onboarded doesn't get a placeholder doc that later blocks proper
+  // secondary-member bootstrap. Missing doc → update rejects (NOT_FOUND),
+  // absorbed by the catch as the intended no-op.
   for (const phone of allPhones) {
     await db
       .collection("agent_sessions")
       .doc(phone)
-      .set({ groupChatId: chatId }, { merge: true });
+      .update({ groupChatId: chatId })
+      .catch((err) => {
+        console.warn(`buildOrUpdateFamilyGroup: groupChatId backfill skipped/failed for ${phone} (chat ${chatId}):`, err);
+      });
   }
 }
 

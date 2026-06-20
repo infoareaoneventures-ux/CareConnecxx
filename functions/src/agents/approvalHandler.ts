@@ -70,16 +70,19 @@ export type ApprovalResult =
 // transactional and single-fire, so a duplicate YES racing through here
 // can't double-resolve; the dispatch carries _confirmedActionId so the MCP
 // gate executes instead of re-proposing (see mcp/server.ts).
-// Returns succeeded=true when the tool reported success. On failure,
-// alertFlagged reports whether the ops alert actually persisted, so the caller
-// only tells the user "I've flagged it for review" when that's true.
+// Returns succeeded=true when the tool reported success. `skipped` is true when
+// the action wasn't claimable (a duplicate/already-processed/expired confirmation)
+// — that is NOT an execution failure and must not be reported to the user as one.
+// On a real failure, alertFlagged reports whether the ops alert actually
+// persisted, so the caller only tells the user "I've flagged it for review" when
+// that's true.
 async function executeConfirmedAction(params: {
   phone:    string;
   chatId:   string;
   userId?:  string;
   userType: "client" | "caregiver";
   pending:  PendingAction;
-}): Promise<{ succeeded: boolean; alertFlagged: boolean }> {
+}): Promise<{ succeeded: boolean; alertFlagged: boolean; skipped: boolean }> {
   const { phone, chatId, userId, userType, pending } = params;
 
   console.info("approvalHandler.execute", {
@@ -94,7 +97,7 @@ async function executeConfirmedAction(params: {
   const claim = await claimPendingAction(pending.id);
   if (claim !== "claimed") {
     console.info("approvalHandler.execute: action not claimable (duplicate/expired) — skipping", { actionId: pending.id });
-    return { succeeded: false, alertFlagged: true };
+    return { succeeded: false, alertFlagged: true, skipped: true };
   }
   logHealthcareAudit(pending, "confirmed");
   logAgentAction({
@@ -194,7 +197,7 @@ async function executeConfirmedAction(params: {
     ).catch(() => {});
   }
 
-  return { succeeded, alertFlagged };
+  return { succeeded, alertFlagged, skipped: false };
 }
 
 // Main entry point. Loads or accepts the pending action, classifies the
@@ -241,16 +244,20 @@ export async function handlePendingApproval(params: {
   }
 
   // decision === "YES" — execute the tool with the bypass flag set.
-  const { succeeded, alertFlagged } = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
+  const { succeeded, alertFlagged, skipped } = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
 
   // Acknowledge to the family. Keep it short — the tool itself may have
-  // already sent richer downstream notifications (e.g. caregiver SMS). Only
-  // claim it was "flagged for review" when the ops alert actually persisted.
+  // already sent richer downstream notifications (e.g. caregiver SMS). A
+  // `skipped` result means a duplicate/already-handled confirmation, not a
+  // failure — never tell the user it "didn't go through". Only claim it was
+  // "flagged for review" when the ops alert actually persisted.
   const ackMessage = succeeded
     ? "Done."
-    : alertFlagged
-      ? "I tried, but it didn't go through. I've flagged it for review."
-      : "I tried, but it didn't go through, and I couldn't log it for review automatically. Please contact support and we'll help right away.";
+    : skipped
+      ? "That's already been taken care of — nothing more needed."
+      : alertFlagged
+        ? "I tried, but it didn't go through. I've flagged it for review."
+        : "I tried, but it didn't go through, and I couldn't log it for review automatically. Please contact support and we'll help right away.";
   await sendMessage(chatId, ackMessage).catch((err) => {
     console.error("handlePendingApproval: sendMessage (YES) failed", err);
   });
@@ -308,18 +315,19 @@ export async function handlePendingApprovals(params: {
   let failures = 0;
   let unflagged = 0; // failures whose ops alert also failed to persist
   for (const pending of ordered) {
-    const { succeeded, alertFlagged } = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
-    if (!succeeded) {
-      failures++;
-      if (!alertFlagged) unflagged++;
-    }
+    const { succeeded, alertFlagged, skipped } = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
+    // skipped = duplicate/already-handled confirmation; not an execution failure.
+    if (succeeded || skipped) continue;
+    failures++;
+    if (!alertFlagged) unflagged++;
   }
 
+  const failedText = failures === 1 ? "one action didn't go through" : `${failures} actions didn't go through`;
   const ackMessage = failures === 0
     ? "Done — all set."
     : unflagged === 0
-      ? "I completed what I could, but one action didn't go through. I've flagged it for review."
-      : "I completed what I could, but one action didn't go through, and I couldn't log it for review automatically. Please contact support and we'll help right away.";
+      ? `I completed what I could, but ${failedText}. I've flagged ${failures === 1 ? "it" : "them"} for review.`
+      : `I completed what I could, but ${failedText}, and I couldn't log ${unflagged === 1 ? "it" : "them"} for review automatically. Please contact support and we'll help right away.`;
   await sendMessage(chatId, ackMessage).catch((err) => {
     console.error("handlePendingApprovals: sendMessage (YES) failed", err);
   });

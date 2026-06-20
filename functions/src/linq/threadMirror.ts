@@ -97,9 +97,13 @@ export async function mirrorToWebThread(params: {
         isCaraThread:  true,
         lastMessage:   preview,
         lastMessageTime: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        // Only Cara's replies count as unread for the web user; their own
-        // inbound SMS messages are already read by definition.
-        unreadCount:   params.direction === "outbound" ? admin.firestore.FieldValue.increment(1) : 0,
+        // Only Cara's outbound replies add to the web-inbox unread badge. For
+        // inbound (user -> Cara) we OMIT unreadCount entirely so merge:true
+        // preserves any existing unread from earlier Cara replies the user
+        // hasn't opened in the web inbox — writing 0 here would wipe it.
+        ...(params.direction === "outbound"
+          ? { unreadCount: admin.firestore.FieldValue.increment(1) }
+          : {}),
       }, { merge: true });
 
       await threadRef.collection("messages").add({

@@ -27,13 +27,18 @@ export interface AgentActionLedgerEntry {
   metadata?: Record<string, unknown>;
 }
 
-function retentionTtl(): FirebaseFirestore.Timestamp | Date {
+function retentionTtl(): FirebaseFirestore.Timestamp {
   const expiresAtMs = Date.now() + SIX_YEARS_MS;
   const timestampFactory = admin.firestore.Timestamp as typeof admin.firestore.Timestamp | undefined;
-  if (timestampFactory && typeof timestampFactory.fromMillis === "function") {
-    return timestampFactory.fromMillis(expiresAtMs);
+  if (!timestampFactory || typeof timestampFactory.fromMillis !== "function") {
+    // Firestore's TTL policy only honors Firestore Timestamp fields — a plain
+    // Date is silently ignored, which would disable auto-deletion and retain
+    // these (PHI-adjacent) ledger docs indefinitely. Fail loud instead of
+    // writing a TTL-less doc that looks healthy; the throw is caught by
+    // logAgentAction's swallow-and-log so the best-effort flow is unaffected.
+    throw new Error("retentionTtl: admin.firestore.Timestamp.fromMillis unavailable — cannot set ledger TTL");
   }
-  return new Date(expiresAtMs);
+  return timestampFactory.fromMillis(expiresAtMs);
 }
 
 export async function logAgentAction(

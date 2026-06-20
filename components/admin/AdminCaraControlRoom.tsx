@@ -388,7 +388,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
     if (!rawId) return;
     setResolvingAlertId(rawId);
     try {
-      await dbService.resolveAdminAlert(rawId, 'admin');
+      await dbService.resolveAdminAlert(rawId);
       onShowToast('Cara alert marked resolved', 'success');
     } catch (err) {
       console.error('resolve Cara alert failed:', err);

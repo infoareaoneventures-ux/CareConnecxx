@@ -961,7 +961,11 @@ service cloud.firestore {
           'recoveryAction',
           'status',
           'updatedAt'
-        ]);
+        ]) &&
+        // If status is being changed, restrict it to the valid ledger enum so a
+        // mistyped/invalid value can't corrupt the queue state.
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+          request.resource.data.status in ['proposed', 'confirmed', 'executed', 'failed', 'cancelled']);
       allow create, delete: if false;
     }
 
@@ -980,7 +984,11 @@ service cloud.firestore {
           'reProposedBy',
           'operatorNotes',
           'recoveryAction'
-        ]);
+        ]) &&
+        // If status is being changed, restrict it to the valid PendingAction enum
+        // so a mistyped/invalid value can't corrupt the confirmation queue state.
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+          request.resource.data.status in ['awaiting', 'approved', 'executing', 'rejected', 'expired', 'executed', 'failed']);
       allow create, delete: if false;
     }
 

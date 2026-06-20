@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   LayoutDashboard, Calendar, DollarSign, Activity,
   ChevronLeft, AlertCircle, MessageSquare, Search,
@@ -117,19 +117,40 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   }, []);
 
   const [openAlertsCount, setOpenAlertsCount] = useState(0);
+  const [caraFailedCount, setCaraFailedCount] = useState(0);
+  const [caraPendingCount, setCaraPendingCount] = useState(0);
   useEffect(() => {
     const unsub = dbService.subscribeAdminAlerts((alerts) =>
       setOpenAlertsCount(alerts.filter(a => !a.resolved).length)
     );
     return () => unsub();
   }, []);
+  // Cara Control surfaces more than open alerts (failed actions + pending
+  // approvals too), so its badge needs its own count — not the plain alert count
+  // the Alerts tab uses. Mirrors AdminCaraControlRoom's queue composition.
+  useEffect(() => {
+    const unsub = dbService.subscribeAgentActionLedger((rows) =>
+      setCaraFailedCount(rows.filter(r => r.status === 'failed').length)
+    );
+    return () => unsub();
+  }, []);
+  useEffect(() => {
+    const unsub = dbService.subscribePendingActions((rows) =>
+      setCaraPendingCount(rows.filter(r => ['awaiting', 'executing', 'failed'].includes(String(r.status ?? 'awaiting'))).length)
+    );
+    return () => unsub();
+  }, []);
+  const caraOpsCount = openAlertsCount + caraFailedCount + caraPendingCount;
 
   // `type` is accepted to satisfy the onShowToast contract used by child panels
   // (success/error/info) but intentionally ignored — all toasts share styling.
-  const showToast = (msg: string, _type: 'success' | 'error' | 'info' = 'info') => {
+  // Memoized so children with onShowToast-keyed subscription effects (e.g.
+  // AdminCaraControlRoom) don't resubscribe their Firestore listeners on every
+  // AdminView render.
+  const showToast = useCallback((msg: string, _type: 'success' | 'error' | 'info' = 'info') => {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(null), 3000);
-  };
+  }, []);
 
   const handleMarkContacted = async (userId: string) => {
     try {
@@ -188,7 +209,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
     {
       label: 'AI Review',
       items: [
-        { id: 'cara_control' as TabId, label: 'Cara Control', icon: Sparkles, badge: openAlertsCount },
+        { id: 'cara_control' as TabId, label: 'Cara Control', icon: Sparkles, badge: caraOpsCount },
         { id: 'proactive_drafts' as TabId, label: 'Cara Drafts', icon: HeartHandshake },
       ],
     },
@@ -299,7 +320,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {activeTab === 'disputes'     && <AdminShiftHoursMediation />}
             {activeTab === 'messages'     && <AdminMessages />}
             {activeTab === 'blog'         && <AdminBlogManager />}
-            {activeTab === 'cara_control' && <AdminCaraControlRoom onShowToast={(msg, type) => showToast(msg)} onNavigate={(tab) => setActiveTab(tab as TabId)} />}
+            {activeTab === 'cara_control' && <AdminCaraControlRoom onShowToast={showToast} onNavigate={(tab) => setActiveTab(tab as TabId)} />}
             {activeTab === 'proactive_drafts' && <ProactiveReflectionDashboard onShowToast={(msg) => showToast(msg)} />}
           </div>
         ) : (

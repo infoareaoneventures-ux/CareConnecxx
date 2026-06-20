@@ -18,7 +18,28 @@ export interface CaraOpsAlertInput {
   targetCollection?: string;
   targetDocId?: string;
   error?: string;
+  /**
+   * Free-form diagnostic context. Kept small on purpose: it is bounded to
+   * ~4KB of serialized JSON before persistence (see boundContext) so an
+   * oversized payload can't trip the Firestore 1MB document limit or bloat
+   * storage. Pass only small, relevant key/values — not large blobs.
+   */
   context?: Record<string, unknown>;
+}
+
+// Other string fields are capped at 500 chars; `context` is structured, so we
+// bound its serialized size instead. Small contexts pass through unchanged;
+// oversized ones are replaced with a truncated string marker so the alert
+// still persists rather than failing the whole write.
+const MAX_CONTEXT_JSON = 4000;
+function boundContext(context: Record<string, unknown>): Record<string, unknown> | string {
+  try {
+    const json = JSON.stringify(context);
+    if (json.length <= MAX_CONTEXT_JSON) return context;
+    return `[context truncated] ${json.slice(0, MAX_CONTEXT_JSON)}...`;
+  } catch {
+    return "[context unserializable]";
+  }
 }
 
 // Best-effort alerting sink: never throws (a failed alert must not break the
@@ -44,7 +65,7 @@ export async function createCaraOpsAlert(input: CaraOpsAlertInput): Promise<bool
       ...(input.targetCollection ? { targetCollection: input.targetCollection } : {}),
       ...(input.targetDocId ? { targetDocId: input.targetDocId } : {}),
       ...(input.error ? { error: input.error.slice(0, 500) } : {}),
-      ...(input.context ? { context: input.context } : {}),
+      ...(input.context ? { context: boundContext(input.context) } : {}),
     });
     return true;
   } catch (err) {

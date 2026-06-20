@@ -1811,7 +1811,9 @@ function toolFailureReason(result: unknown): string | undefined {
   // that as a failure too, or it gets mis-recorded as "executed".
   if (data._toolError !== true && data.success !== false && data.error !== true) return undefined;
   const code = typeof data.code === "string" ? data.code : "TOOL_FAILED";
-  const message = typeof data.message === "string" ? data.message : "Tool returned failure";
+  // Sanitize the tool's message before it's persisted to the ledger/ops alerts
+  // (same redaction applied to thrown exceptions on the catch path).
+  const message = sanitizeErrorReason(typeof data.message === "string" ? data.message : "Tool returned failure");
   return `${code}: ${message}`.slice(0, 200);
 }
 
@@ -1832,12 +1834,15 @@ function sanitizeErrorReason(reason: string): string {
 
 function shouldAlertForToolFailure(reason: string | undefined): boolean {
   if (!reason) return false;
-  return reason.startsWith("UNAVAILABLE") ||
-    reason.startsWith("CONFLICT") ||
-    reason.includes("temporarily unavailable") ||
-    reason.includes("linq_send_failed") ||
-    reason.includes("payment") ||
-    reason.includes("healthcare");
+  // Case-insensitive so casing variations in tool messages (e.g. "Payment
+  // provider unavailable") still match the alert-worthy keywords.
+  const r = reason.toLowerCase();
+  return r.startsWith("unavailable") ||
+    r.startsWith("conflict") ||
+    r.includes("temporarily unavailable") ||
+    r.includes("linq_send_failed") ||
+    r.includes("payment") ||
+    r.includes("healthcare");
 }
 
 async function recordMcpToolStatus(params: {
@@ -1956,7 +1961,11 @@ export async function handleToolCall(
   const daysAgo   = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
   const trackTool = shouldTrackMcpTool(name) && !confirmedActionId;
   if (trackTool) {
-    recordMcpToolStatus({ name, input, status: "proposed" }).catch((err) => {
+    // Await so the "proposed" audit entry is durably persisted BEFORE the tool's
+    // (consequential, possibly non-idempotent) side effect runs — otherwise a
+    // crash/early-return after execution could leave an executed action with no
+    // preceding audit record. The .catch keeps a write failure non-blocking.
+    await recordMcpToolStatus({ name, input, status: "proposed" }).catch((err) => {
       console.warn("MCP ledger proposed write failed", { name, err });
     });
   }
@@ -4557,32 +4566,42 @@ export async function handleToolCall(
     return toolError("INVALID_INPUT", `Unknown tool: ${name}`);
     })();
     if (trackTool) {
-      const errorReason = toolFailureReason(result);
-      await recordMcpToolStatus({
-        name,
-        input,
-        status: errorReason ? "failed" : "executed",
-        ...(errorReason ? { errorReason } : {}),
-      });
-      if (shouldAlertForToolFailure(errorReason)) {
-        await createCaraOpsAlert({
-          type: "cara_tool_failed",
-          severity: name === "perform_web_action" ? "high" : "medium",
-          phone: stringInput(input, "phone"),
-          userId: stringInput(input, "userId") ?? stringInput(input, "clientId") ?? stringInput(input, "caregiverId"),
-          role: stringInput(input, "userType") ?? stringInput(input, "role"),
-          source: "mcp_dispatcher",
-          toolName: name,
-          targetDocId: targetDocIdFromToolInput(input),
-          message: `Cara tool failed: ${name}`,
-          reason: errorReason,
+      // Post-execution observability must never fail an already-successful tool
+      // call: a throw here would be caught by the outer catch and returned to
+      // the caller as UNAVAILABLE even though `result` is valid. Isolate it.
+      try {
+        const errorReason = toolFailureReason(result);
+        await recordMcpToolStatus({
+          name,
+          input,
+          status: errorReason ? "failed" : "executed",
+          ...(errorReason ? { errorReason } : {}),
         });
+        if (shouldAlertForToolFailure(errorReason)) {
+          await createCaraOpsAlert({
+            type: "cara_tool_failed",
+            severity: name === "perform_web_action" ? "high" : "medium",
+            phone: stringInput(input, "phone"),
+            userId: stringInput(input, "userId") ?? stringInput(input, "clientId") ?? stringInput(input, "caregiverId"),
+            role: stringInput(input, "userType") ?? stringInput(input, "role"),
+            source: "mcp_dispatcher",
+            toolName: name,
+            targetDocId: targetDocIdFromToolInput(input),
+            message: `Cara tool failed: ${name}`,
+            reason: errorReason,
+          });
+        }
+      } catch (ledgerErr) {
+        console.warn("MCP post-execution ledger/alert write failed (non-blocking)", { name, ledgerErr });
       }
     }
     return result;
   } catch (err) {
-    console.error(`handleToolCall [${name}] error:`, err);
+    // Sanitize before logging too — the raw error/stack can carry tokens, URLs,
+    // or PII that must not land in Cloud Logging (same redaction as the persisted
+    // errorReason below).
     const errorReason = sanitizeErrorReason(err instanceof Error ? err.message : String(err));
+    console.error(`handleToolCall [${name}] error:`, errorReason);
     if (trackTool) {
       await recordMcpToolStatus({
         name,

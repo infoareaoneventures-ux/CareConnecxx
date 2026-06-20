@@ -67,7 +67,16 @@ export type AuditEventType =
   | "invoice_approved"
   | "invoice_rejected"
   | "invoice_auto_approved"
-  | "invoice_deleted";
+  | "invoice_deleted"
+  // Admin execution callables (U3)
+  | "caregiver_exception_reviewed"
+  | "caregiver_document_reviewed"
+  | "user_suspended"
+  | "user_restored"
+  | "support_ticket_responded"
+  | "dispute_resolved"
+  | "invoice_exception_reviewed"
+  | "agent_action_retry_attempted";
 
 export interface AuditEvent {
   eventType: AuditEventType;

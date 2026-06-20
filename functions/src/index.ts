@@ -152,6 +152,12 @@ export { runTriggerEngine } from './triggers/triggerEngine';
 // Admin alerts API (list, resolve, stats)
 export { listAdminAlerts, resolveAdminAlert, getAlertStats } from './adminAlerts';
 
+// Admin execution callables (U3) — admin-gated exception handling
+export { admin_review_caregiver_exception, admin_review_document } from './admin/adminCaregiverActions';
+export { admin_suspend_user, admin_restore_user } from './admin/adminUserActions';
+export { admin_respond_support_ticket, admin_resolve_dispute, admin_review_invoice_exception } from './admin/adminSupportActions';
+export { admin_retry_agent_action } from './admin/adminLedgerActions';
+
 // Admin alert email notifier (Firestore trigger → admin_email_queue)
 export { onAdminAlertCreated } from './triggers/adminAlertNotifier';
 
@@ -300,7 +306,9 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
         status: terminalStatuses.has(String(referral.status ?? "")) ? referral.status : "started",
         referredUserId: authUid,
         signupPhone: phone,
-        startedAt: admin.firestore.Timestamp.fromDate(now),
+        // Preserve the original claim time — only stamp startedAt on the first
+        // claim so a re-opened onboarding session by the same user doesn't reset it.
+        startedAt: referral.startedAt ?? admin.firestore.Timestamp.fromDate(now),
         updatedAt: now.toISOString(),
       }, { merge: true });
     });
@@ -314,7 +322,12 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
         userId: authUid,
         createdAt: now.toISOString(),
         resolved: false,
-      }).catch(() => {});
+      }).catch((err) => {
+        console.error("createWebOnboardingSession: failed to write referral_phone_mismatch admin alert", {
+          referralId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
     }
   }
 

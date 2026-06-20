@@ -1,14 +1,14 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import { requireAdmin } from "./admin/requireAdmin";
 
 const db = admin.firestore();
 
 // ── listAdminAlerts — returns unresolved alerts, newest first ─────────────────
 
 export const listAdminAlerts = functions.https.onCall(async (_data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "Must be logged in");
-  }
+  // admin_alerts contain operational + payment exception detail — admin-only.
+  await requireAdmin(context);
 
   const snap = await db.collection("admin_alerts")
     .where("resolved", "==", false)
@@ -22,9 +22,7 @@ export const listAdminAlerts = functions.https.onCall(async (_data, context) => 
 // ── resolveAdminAlert — mark a single alert resolved ─────────────────────────
 
 export const resolveAdminAlert = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "Must be logged in");
-  }
+  const adminUid = await requireAdmin(context);
 
   const alertId: string = data.alertId;
   const note:    string = data.note ?? "";
@@ -42,7 +40,7 @@ export const resolveAdminAlert = functions.https.onCall(async (data, context) =>
   await ref.update({
     resolved:     true,
     resolvedAt:   new Date().toISOString(),
-    resolvedBy:   context.auth.uid,
+    resolvedBy:   adminUid,
     resolvedNote: note,
   });
 
@@ -52,9 +50,7 @@ export const resolveAdminAlert = functions.https.onCall(async (data, context) =>
 // ── getAlertStats — counts by type for the dashboard ─────────────────────────
 
 export const getAlertStats = functions.https.onCall(async (_data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "Must be logged in");
-  }
+  await requireAdmin(context);
 
   const [unresolvedSnap, last7dSnap] = await Promise.all([
     db.collection("admin_alerts").where("resolved", "==", false).get(),

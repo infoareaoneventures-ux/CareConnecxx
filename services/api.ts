@@ -2439,6 +2439,92 @@ export const dbService = {
         });
     },
 
+    // ==================== ADMIN EXECUTION CALLABLES (U3) ====================
+    // Admin-gated backend callables that make Control Room / verification /
+    // ticket / dispute / ledger exception handling executable (not note-only).
+    // Auth + admin-role is enforced server-side by requireAdmin.
+
+    adminReviewCaregiverException: async (
+        caregiverId: string,
+        decision: 'approve' | 'reject' | 'request_info',
+        note?: string
+    ): Promise<{ success: boolean; bookable: boolean; verificationStatus: string }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_review_caregiver_exception');
+        const result = await fn({ caregiverId, decision, note });
+        return result.data as any;
+    },
+
+    adminReviewDocument: async (
+        caregiverId: string,
+        documentType: string,
+        decision: 'approve' | 'reject',
+        note?: string
+    ): Promise<{ success: boolean; status: string }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_review_document');
+        const result = await fn({ caregiverId, documentType, decision, note });
+        return result.data as any;
+    },
+
+    adminSuspendUser: async (userId: string, reason: string): Promise<{ success: boolean }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_suspend_user');
+        const result = await fn({ userId, reason });
+        return result.data as any;
+    },
+
+    adminRestoreUser: async (userId: string, note?: string): Promise<{ success: boolean }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_restore_user');
+        const result = await fn({ userId, note });
+        return result.data as any;
+    },
+
+    adminRespondSupportTicket: async (
+        ticketId: string,
+        message: string,
+        resolve?: boolean
+    ): Promise<{ success: boolean; status: string }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_respond_support_ticket');
+        const result = await fn({ ticketId, message, resolve: !!resolve });
+        return result.data as any;
+    },
+
+    adminResolveDispute: async (
+        appointmentId: string,
+        outcome: 'approve' | 'reject',
+        opts?: { finalTotalHours?: number; note?: string }
+    ): Promise<{ success: boolean }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_resolve_dispute');
+        const result = await fn({ appointmentId, outcome, ...opts });
+        return result.data as any;
+    },
+
+    adminReviewInvoiceException: async (
+        alertId: string,
+        resolution: 'resolved' | 'writeoff' | 'retry_scheduled',
+        note?: string
+    ): Promise<{ success: boolean }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_review_invoice_exception');
+        const result = await fn({ alertId, resolution, note });
+        return result.data as any;
+    },
+
+    adminRetryAgentAction: async (
+        ledgerId: string,
+        idempotencyKey: string,
+        opts?: { replayToolName?: string; replayInput?: Record<string, unknown> }
+    ): Promise<{ success: boolean; error?: string }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_retry_agent_action');
+        const result = await fn({ ledgerId, idempotencyKey, ...opts });
+        return result.data as any;
+    },
+
     assignAgentAction: async (entryId: string, adminUid?: string): Promise<void> => {
         if (!isConfigured || !db) throw new Error('Not connected');
         const uid = adminUid || auth?.currentUser?.uid;

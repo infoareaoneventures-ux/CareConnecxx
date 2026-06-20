@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import * as fs from "fs";
+import * as path from "path";
 
 // Importing MCP_TOOLS pulls in firebase-admin via the broader server.ts module
 // graph (supervisor → firestore). Stub it out so the suite can load.
@@ -186,6 +188,18 @@ describe("TOOL_CAPABILITIES coverage", () => {
 describe("LAUNCH_ACTION_PARITY", () => {
   const realToolNames = new Set(MCP_TOOLS.map(t => t.name));
 
+  // Static text scan of index.ts (do NOT import it — it pulls in heavy
+  // firebase-admin/function deps). Mirrors tests/contractCollections.test.ts.
+  const indexSource = fs.readFileSync(
+    path.resolve(__dirname, "../index.ts"),
+    "utf8",
+  );
+  const isExportedCallable = (name: string): boolean =>
+    new RegExp(`export\\b[^\\n]*\\b${name}\\b`).test(indexSource);
+
+  // A shipped row is "callable-backed" when surface === "callable".
+  const isCallableRow = (r: { surface?: string }) => r.surface === "callable";
+
   // The core allowlist (CORE_TOOL_NAMES inside toolCapabilities.ts is not
   // exported). Keep in sync — same list the coverage test above whitelists.
   const coreToolNames = new Set([
@@ -202,11 +216,30 @@ describe("LAUNCH_ACTION_PARITY", () => {
     "send_onboarding_link",
   ]);
 
-  it("every shipped row points at a real MCP tool", () => {
+  it("every shipped MCP-surface row points at a real MCP tool", () => {
     const broken = LAUNCH_ACTION_PARITY.filter(
-      r => r.status === "shipped" && (r.tool === null || !realToolNames.has(r.tool)),
+      r =>
+        r.status === "shipped" &&
+        !isCallableRow(r) &&
+        (r.tool === null || !realToolNames.has(r.tool)),
     ).map(r => `${r.id} → ${r.tool}`);
-    expect(broken, `shipped rows must reference a real MCP_TOOLS tool`).toEqual([]);
+    expect(broken, `shipped MCP rows must reference a real MCP_TOOLS tool`).toEqual([]);
+  });
+
+  it("every shipped callable-surface row names a callable exported from index.ts", () => {
+    // Admin execution rows (U3) are Firebase callables, not MCP tools. The
+    // parity guarantee for them is that the named callable is actually wired
+    // into the functions entrypoint — a static text scan, no heavy import.
+    const broken = LAUNCH_ACTION_PARITY.filter(
+      r =>
+        r.status === "shipped" &&
+        isCallableRow(r) &&
+        (r.tool === null || !isExportedCallable(r.tool)),
+    ).map(r => `${r.id} → ${r.tool}`);
+    expect(
+      broken,
+      "shipped callable rows must name a callable exported from functions/src/index.ts",
+    ).toEqual([]);
   });
 
   it("every blocker row has tool: null (a gap must not claim a shipped tool)", () => {
@@ -256,6 +289,7 @@ describe("LAUNCH_ACTION_PARITY", () => {
     const unbindable = LAUNCH_ACTION_PARITY.filter(
       r =>
         r.status === "shipped" &&
+        !isCallableRow(r) &&
         r.tool !== null &&
         !coreToolNames.has(r.tool) &&
         !TOOL_CAPABILITIES[r.tool],

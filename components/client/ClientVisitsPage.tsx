@@ -1138,6 +1138,16 @@ export const ClientVisitsPage: React.FC = () => {
                 ? 'Bookings will appear here once a caregiver accepts your request.'
                 : 'Completed and cancelled bookings will appear here.'}
             </p>
+            {/* Contextual capability hint — tied to this surface (booking a visit). */}
+            {tab !== 'past' && (
+              <div className="mt-5 inline-flex items-start gap-2 text-left text-sm text-slate-500 bg-primary-50 border border-primary-100 rounded-xl px-4 py-3 max-w-md">
+                <MessageSquare className="w-4 h-4 mt-0.5 text-primary-500 shrink-0" />
+                <span>
+                  Try texting Cara <span className="font-medium text-slate-700">“book a visit for next Monday morning”</span> or{' '}
+                  <span className="font-medium text-slate-700">“find me a backup caregiver”</span> — she'll set it up for you.
+                </span>
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-4">

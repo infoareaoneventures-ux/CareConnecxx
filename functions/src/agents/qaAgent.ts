@@ -18,6 +18,7 @@ import {
 } from "./contextManagement";
 import { createTurnMetrics, emitTurnMetrics, type TurnMetrics } from "./turnMetrics";
 import { formatCaraOperationalContext, loadCaraOperationalContext } from "./operationalContext";
+import { buildCapabilityHint, DiscoveryRole } from "./capabilityDiscovery";
 import { MCP_TOOLS, CAREGIVER_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
 import { callClaudeWithRetry } from "../utils/claudeRetry";
 import { getActiveAgentForUser } from "./executionAgent";
@@ -675,7 +676,9 @@ const DATA_COLLECTION_FIELDS: Array<[string, RegExp]> = [
 export function detectMultiQuestionDataCollection(reply: string): boolean {
   const compact = reply.replace(/\s+/g, " ").trim();
 
-  const questionCount = compact.match(/\?/g)?.length ?? 0;
+  // Count distinct question groups, not raw `?` characters, so emphatic
+  // punctuation ("??", "?!?") reads as a single question rather than several.
+  const questionCount = compact.match(/\?[!?]*/g)?.length ?? 0;
   if (questionCount >= 2) return true;
 
   const asksForData = /\b(what(?:'s| is)|who(?:'s| is)|when|where|can i get|could you send|please send|send me|tell me|share|i need|confirm)\b/i.test(compact);
@@ -1256,6 +1259,7 @@ export async function runQaAgent(params: {
     "If the user asks about a pending, failed, or in-progress action, say you can't confirm its current status " +
     "right now and ask them to try again in a moment; do not claim any such action succeeded, failed, or is pending.";
 
+  let hasLiveOpsContext = false;
   if (!skipCrossEntity) {
     const operationalContext = await loadCaraOperationalContext({ phone, userId })
       .then(formatCaraOperationalContext)
@@ -1265,7 +1269,27 @@ export async function runQaAgent(params: {
       });
     if (operationalContext) {
       systemPrompt += `\n\n${operationalContext}`;
+      // Real ops state (pending action, visit, alert, etc.) — not the
+      // "unavailable" sentinel — means Cara has something to LEAD with when the
+      // user asks "what can you do?" instead of listing capabilities (R12).
+      hasLiveOpsContext = operationalContext !== OPS_CONTEXT_UNAVAILABLE_MARKER;
     }
+  }
+
+  // CAPABILITY DISCOVERY (U7 / R13) — inject a brief, role-aware hint so the LLM
+  // answers a natural-language "what can you do?" conversationally with
+  // role-relevant examples (derived from LAUNCH_ACTION_PARITY). This is the
+  // NATURAL-LANGUAGE path: no keyword matching — the model decides when it
+  // applies. The literal "HELP" SMS carrier keyword is handled separately in
+  // webhooks.ts. Secondary family members get the care-visibility hint with the
+  // payment-authority boundary (AE4) baked in.
+  {
+    const discoveryRole: DiscoveryRole = userType === "caregiver"
+      ? "caregiver"
+      : (session as any)?.isSecondaryMember
+        ? "family-secondary"
+        : "client";
+    systemPrompt += `\n\n${buildCapabilityHint(discoveryRole, hasLiveOpsContext)}`;
   }
 
   // Inject active goal context if present

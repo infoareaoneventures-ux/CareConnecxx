@@ -305,9 +305,13 @@ export function formatCaraOperationalContext(ctx: CaraOperationalContext): strin
 
   if (lines.length === 0) return "";
 
+  // Lines are appended in priority order above — pending confirmations, open
+  // admin alerts, and failed actions first, then caregiver/client state — so the
+  // cap keeps the highest-severity items. Raised from 8 to 16 so a busy account's
+  // critical items aren't silently dropped, while still bounding token cost.
   return [
     "CARA OPERATIONS CONTEXT:",
-    ...lines.slice(0, 8),
+    ...lines.slice(0, 16),
     "Use this silently. If the user asks about one of these items, acknowledge the current status accurately. Never claim a pending, failed, or admin-flagged action succeeded.",
   ].join("\n");
 }

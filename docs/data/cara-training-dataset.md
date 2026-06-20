@@ -26,6 +26,39 @@ The seed covers launch-critical Cara behavior:
 - unsubscribe
 - invoice explanation
 - caregiver safety reports
+- role-aware capability discovery ("what can you do?")
+
+## Capability Discovery Examples (U7 / R13)
+
+Discovery is role-aware and conversational — never a generic chatbot menu and
+never "what can I help you with?". The surfaced actions are DERIVED from
+`functions/src/agents/launchActionParity.ts` (shipped rows) via
+`functions/src/agents/capabilityDiscovery.ts`, so they stay in sync with what
+Cara can actually do. Two entry points:
+
+- **SMS `HELP` carrier keyword** (literal, allowed): handled in
+  `functions/src/linq/webhooks.ts` beside `STOP`. Returns a short, warm,
+  role-aware reply; leads with one contextual action when live ops context
+  exists.
+- **Natural language** ("what can you do?", "what can I ask you"): understood by
+  the LLM. `buildCapabilityHint(role, hasContext)` injects a brief role-aware
+  hint into the qaAgent system prompt. No keyword matching for this phrasing.
+
+Reviewed stable examples (assertions live in
+`functions/src/agents/goldenTranscripts.test.ts` and
+`functions/src/agents/capabilityDiscovery.test.ts`):
+
+| User role | Message | Cara surfaces | Must NOT say |
+|---|---|---|---|
+| client | "what can you do?" | book/reschedule a visit, update care plan, billing | "what can I help you with?" |
+| caregiver | "what can I ask you?" | find jobs, clock in/out, submit hours, earnings/payout | "what can I help you with?" |
+| family-secondary | "what can you help me with?" | how Mom's doing, last visit, add family to updates | any payment-approval authority (AE4) |
+
+**Authority boundary (AE4):** the secondary-family-member surface includes
+care-visibility only. It excludes every billing/timesheet/refund/payout action
+by an explicit allow-list plus a payment-authority phrase guard, and the
+system-prompt hint reminds Cara that only the primary account holder approves
+payments.
 
 ## Labeling Contract
 

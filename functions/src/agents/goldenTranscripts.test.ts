@@ -261,6 +261,8 @@ interface GoldenTranscript {
   seniorId?:   string;
   phone?:      string;
   chatId?:     string;
+  // Optional session overrides (e.g. isSecondaryMember for family-member tests).
+  session?:    Record<string, unknown>;
   // Per-transcript Firestore doc overrides: path → data
   docs?:       Record<string, Record<string, unknown>>;
   toolMocks?:  Record<string, unknown>;
@@ -846,6 +848,69 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
       oneQuestionAtATime:  true,
     },
   },
+
+  // ── U7 — capability discovery ("what can you do?") ──────────────────────────
+  // These prove the assertion machinery on role-aware discovery replies. The
+  // capability hint is injected into the system prompt; here Claude's reply is
+  // scripted to a role-relevant, conversational answer and we assert it is NOT a
+  // generic helper prompt and carries the right authority boundary.
+
+  {
+    name:        "client-what-can-you-do-role-relevant",
+    description: "Client asks what Cara can do. Reply names real client actions (booking/care-plan/billing), not a generic helper prompt.",
+    claudeScript: [
+      { text: "Lots — I can book a visit, reschedule one, update Mom's care plan, or pull up your billing. Just say the word." },
+    ],
+    input: { text: "what can you do?" },
+    expect: {
+      replyContains:    ["book a visit", "care plan"],
+      replyNotContains: ["what can I help you with", "how can I help", "here is a list"],
+      toolsCalled:      [],
+      noListShape:      true,
+      noGenericHelpAsk: true,
+    },
+  },
+
+  {
+    name:        "caregiver-what-can-you-do-schedule-pay-jobs",
+    description: "Caregiver asks what Cara can do. Reply surfaces schedule/pay/job capabilities.",
+    userType: "caregiver",
+    claudeScript: [
+      { text: "I can find open jobs near you, clock you in and out of shifts, submit your hours, and check your earnings. Just tell me." },
+    ],
+    input: { text: "what can i ask you?" },
+    expect: {
+      replyContains:    ["jobs", "earnings"],
+      replyNotContains: ["what can I help you with", "how can I help", "here is a list"],
+      toolsCalled:      [],
+      noListShape:      true,
+      noGenericHelpAsk: true,
+    },
+  },
+
+  {
+    name:        "secondary-family-what-can-you-do-no-payment-authority",
+    description: "Secondary family member asks what Cara can do. Reply surfaces care updates but NOT payment-approval authority (AE4).",
+    session: { isSecondaryMember: true },
+    claudeScript: [
+      { text: "I can keep you posted on how Mom's doing and what happened on the last visit, and add other family to the updates. Just ask me anytime." },
+    ],
+    input: { text: "what can you help me with?" },
+    expect: {
+      replyContains:    ["Mom", "visit"],
+      replyNotContains: [
+        "what can I help you with",
+        "how can I help",
+        "approve the payment",
+        "approve payments",
+        "approve a payment",
+        "approve the invoice",
+      ],
+      toolsCalled:      [],
+      noListShape:      true,
+      noGenericHelpAsk: true,
+    },
+  },
 ];
 
 // ── Replay driver ────────────────────────────────────────────────────────────
@@ -895,6 +960,7 @@ async function replayTranscript(t: GoldenTranscript): Promise<{
       userId:   t.userId   ?? "u-1",
       seniorId: t.seniorId ?? "s-1",
       userType: t.userType ?? "client",
+      session:  t.session,
       skipSend: false,
     });
   } finally {

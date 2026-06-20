@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileText, Clock4, CheckCircle, XCircle } from 'lucide-react';
+import { FileText, Clock4, CheckCircle, XCircle, MessageSquare } from 'lucide-react';
 import { useMyApplications } from '../../hooks/useJobApplications';
 import type { AddToastFunction } from '../../types';
 
@@ -64,6 +64,14 @@ export const MyApplicationsList: React.FC<MyApplicationsListProps> = ({
             {emptyCtaLabel}
           </button>
         )}
+        {/* Contextual capability hint — tied to this surface (finding/applying to jobs). */}
+        <div className="mt-5 inline-flex items-start gap-2 text-left text-sm text-slate-500 bg-primary-50 border border-primary-100 rounded-xl px-4 py-3 max-w-md mx-auto">
+          <MessageSquare className="w-4 h-4 mt-0.5 text-primary-500 shrink-0" />
+          <span>
+            Or just text Cara <span className="font-medium text-slate-700">“find open jobs near me”</span> or{' '}
+            <span className="font-medium text-slate-700">“apply to that overnight shift”</span> — she handles it over text.
+          </span>
+        </div>
       </div>
     );
   }

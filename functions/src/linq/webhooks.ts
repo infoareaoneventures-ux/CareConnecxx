@@ -12,6 +12,8 @@ import { handleTaskApproval } from "../agents/taskApprovalHandler";
 import { getAllPending } from "../agents/pendingActions";
 import { handlePendingApprovals } from "../agents/approvalHandler";
 import { optOutPhoneNumber, optInPhoneNumber, setupCaraContactCard } from "../sms";
+import { buildHelpSmsReply, DiscoveryRole } from "../agents/capabilityDiscovery";
+import { loadCaraOperationalContext } from "../agents/operationalContext";
 import {
   handleOnboardingStep,
 } from "../agents/onboardingConversation";
@@ -921,6 +923,39 @@ async function handleInboundInner(event: unknown): Promise<void> {
     return;
   }
 
+  // HELP — standard SMS carrier keyword (allowed as a literal keyword fast-path,
+  // per the SMS opt-out/HELP carrier protocol). This is NOT intent parsing: a
+  // natural-language "what can you do?" is understood by the LLM (capability hint
+  // injected into the qaAgent system prompt), never matched here as a keyword.
+  // U7 / R13: reply with a SHORT, warm, role-aware capability reply. When there's
+  // live context worth leading with, surface ONE relevant action instead of a list.
+  if (norm === "HELP" || norm === "AYUDA") {
+    const role: DiscoveryRole = session.userType === "caregiver"
+      ? "caregiver"
+      : (session as any).isSecondaryMember
+        ? "family-secondary"
+        : "client";
+
+    // Pull one contextual lead from the live operations context (best-effort —
+    // falls back to the no-context list reply if it fails or is empty).
+    let leadWith: string | undefined;
+    try {
+      const ctx = await loadCaraOperationalContext({ phone, userId: session.userId });
+      if (ctx.pendingActions[0]?.preview) {
+        leadWith = `You've got something waiting on your reply: ${ctx.pendingActions[0].preview}.`;
+      } else if (role === "client" && ctx.clientState?.nextAppointment) {
+        leadWith = `Your next visit is on the books.`;
+      } else if (role === "caregiver" && ctx.caregiverState?.pendingShiftHours) {
+        leadWith = `You've got shift hours in review.`;
+      }
+    } catch {
+      // best-effort — fall through to the no-context list reply.
+    }
+
+    await sendMessage(chatId, buildHelpSmsReply(role, leadWith));
+    return;
+  }
+
   // ── Subscription lapse — graceful degradation for clients with lapsed billing ─
   if (session.userType === "client" && session.onboardingStep === "complete") {
     const userId = session.userId ?? phone;
@@ -929,7 +964,7 @@ async function handleInboundInner(event: unknown): Promise<void> {
     if (subStatus === "past_due" || subStatus === "canceled" || subStatus === "unpaid") {
       await sendMessage(chatId,
         "Your Cara membership needs attention — there was an issue with your payment.\n\n" +
-        "To keep your care coordination active, please update your billing at cara.app/billing or reply HELP to reach our support team.",
+        "To keep your care coordination active, please update your billing at cara.app/billing. Reply SUPPORT and I'll connect you with our team.",
         { preferredService: "SMS" } // billing/legal notice — force SMS, never iMessage
       );
       return;

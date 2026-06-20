@@ -349,12 +349,6 @@ export const InboxView: React.FC<InboxViewProps> = ({
         {/* Header */}
         <div className="p-4 border-b border-slate-200 bg-white">
           <div className="flex items-center gap-2 mb-3">
-            <button
-              onClick={() => onNavigate(isClient ? 'client' : 'caregiver')}
-              className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-full transition-colors"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
             <h1 className="text-lg font-bold text-slate-900 flex-1">Messages</h1>
             {unreadTotal > 0 && (
               <span className="px-2 py-0.5 bg-primary-600 text-white text-xs font-bold rounded-full">{unreadTotal}</span>

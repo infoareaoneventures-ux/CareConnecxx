@@ -44,7 +44,6 @@ export const AdminCaregiverManager: React.FC = () => {
 
   // Verification
   const [rejectReason, setRejectReason] = useState('');
-  const [approveAccount, setApproveAccount] = useState(false);
   const [approveBackground, setApproveBackground] = useState(false);
   const [approveMembership, setApproveMembership] = useState(false);
   const [docExpiry, setDocExpiry] = useState<Record<string, string>>({});
@@ -148,18 +147,15 @@ export const AdminCaregiverManager: React.FC = () => {
     try {
       const updates: Partial<Caregiver> = {};
       if (status === 'approved') {
-        if (!approveAccount && !approveBackground && !approveMembership) {
+        if (!approveBackground && !approveMembership) {
           showToast('Select at least one item to approve', 'error');
           return;
-        }
-        if (approveAccount) {
-          (updates as any).verificationStatus = 'approved';
-          updates.verified = true;
-          updates.approvedAt = new Date().toISOString();
         }
         if (approveBackground) {
           (updates as any).backgroundCheckStatus = 'clear';
           (updates as any).backgroundCheckComplete = true;
+          (updates as any).verified = true;
+          (updates as any).verificationStatus = 'approved';
         }
         if (approveMembership) {
           (updates as any).membershipPaid = true;
@@ -678,20 +674,6 @@ export const AdminCaregiverManager: React.FC = () => {
                   <div className="bg-white rounded-xl border border-slate-200 p-4 mb-4">
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Field Overrides</p>
                     <div className="space-y-2">
-                      {/* Account verification */}
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-700">Account verification</span>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { verificationStatus: 'approved', verified: true, approvedAt: new Date().toISOString() } as any); setSelected(p => p ? { ...p, verificationStatus: 'approved', verified: true, approvedAt: new Date().toISOString() } as any : p); showToast('Account verified', 'success'); }}
-                            className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${selected.verificationStatus === 'approved' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'}`}
-                          >Approved</button>
-                          <button
-                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { verificationStatus: 'submitted', verified: false } as any); setSelected(p => p ? { ...p, verificationStatus: 'submitted', verified: false } as any : p); showToast('Account verification revoked', 'success'); }}
-                            className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${selected.verificationStatus !== 'approved' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}
-                          >Revoked</button>
-                        </div>
-                      </div>
                       {/* Membership */}
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-700">Membership payment</span>
@@ -711,11 +693,11 @@ export const AdminCaregiverManager: React.FC = () => {
                         <span className="text-sm text-slate-700">Background check</span>
                         <div className="flex gap-2">
                           <button
-                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { backgroundCheckStatus: 'clear', backgroundCheckComplete: true } as any); setSelected(p => p ? { ...p, backgroundCheckStatus: 'clear', backgroundCheckComplete: true } as any : p); showToast('Background check approved', 'success'); }}
+                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { backgroundCheckStatus: 'clear', backgroundCheckComplete: true, verified: true, verificationStatus: 'approved' } as any); setSelected(p => p ? { ...p, backgroundCheckStatus: 'clear', backgroundCheckComplete: true, verified: true, verificationStatus: 'approved' } as any : p); showToast('Background check approved', 'success'); }}
                             className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).backgroundCheckStatus === 'clear' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'}`}
                           >Approved</button>
                           <button
-                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { backgroundCheckStatus: 'pending', backgroundCheckComplete: false } as any); setSelected(p => p ? { ...p, backgroundCheckStatus: 'pending', backgroundCheckComplete: false } as any : p); showToast('Background check revoked', 'success'); }}
+                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'submitted' } as any); setSelected(p => p ? { ...p, backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'submitted' } as any : p); showToast('Background check revoked', 'success'); }}
                             className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).backgroundCheckStatus !== 'clear' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}
                           >Revoked</button>
                         </div>
@@ -926,10 +908,6 @@ export const AdminCaregiverManager: React.FC = () => {
                   />
                   <div className="space-y-2">
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Approve selected items</p>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={approveAccount} onChange={e => setApproveAccount(e.target.checked)} className="w-4 h-4 rounded accent-green-600" />
-                      <span className="text-sm text-slate-700">Account verification</span>
-                    </label>
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input type="checkbox" checked={approveBackground} onChange={e => setApproveBackground(e.target.checked)} className="w-4 h-4 rounded accent-green-600" />
                       <span className="text-sm text-slate-700">Background check</span>

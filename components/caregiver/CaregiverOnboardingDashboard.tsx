@@ -11,6 +11,7 @@ import { CaregiverCareRequestsCard } from './CaregiverCareRequestsCard';
 import { CaregiverBookingsCard } from './CaregiverBookingsCard';
 import { jobApplicationService } from '../../hooks/useJobApplications';
 import { hasValidTransportDocs } from '../../utils/transportDocs';
+import { openCaregiverBillingPortal } from '../../services/stripeService';
 
 interface CaregiverOnboardingDashboardProps {
   profile: Caregiver;
@@ -40,17 +41,14 @@ const CaregiverProgressCard: React.FC<{
 }> = ({ profile, onNavigate, onShowToast }) => {
   const [showBgModal, setShowBgModal] = useState(false);
   const p = profile as any;
-  const accountApproved = p.verificationStatus === 'approved' || profile.verified === true;
-  const membershipApproved = !!(p.membershipPaid === true || (p.membershipStatus && p.membershipStatus !== 'none' && p.membershipStatus !== 'inactive'));
-  const bgApprovedFull = p.backgroundCheckStatus === 'clear' || p.backgroundCheckComplete === true;
-  const isApproved = accountApproved && membershipApproved && bgApprovedFull;
+  const membershipActive = p.membershipStatus === 'active' || p.membershipStatus === 'trialing' || (!p.membershipStatus && p.membershipPaid === true);
+  const bgApprovedFull = profile.verified === true || p.backgroundCheckStatus === 'clear' || p.backgroundCheckComplete === true;
+  const isApproved = membershipActive && bgApprovedFull;
   const profileComplete = p.onboardingStatus === 'profile_complete' || p.onboardingStatus === 'submitted' || isApproved;
-  const hasPaid = membershipApproved;
+  const hasPaid = membershipActive;
   const checkrInitiated = !!p.backgroundCheckData?.checkrCandidateId;
-  const underReview = p.verificationStatus === 'submitted';
   const rejected = p.verificationStatus === 'rejected';
   const infoRequested = p.verificationStatus === 'info_requested';
-  const bgCheckDone = checkrInitiated || bgApprovedFull;
   const bgCheckInProgress = checkrInitiated && !bgApprovedFull;
 
   if (isApproved) return null;
@@ -80,24 +78,39 @@ const CaregiverProgressCard: React.FC<{
     cardDesc = 'Add your photo, availability, services, and bio.';
     cardCta = { label: 'Complete profile', onClick: () => onNavigate('caregiver-profile') };
   } else if (activeStep === 2) {
-    cardTitle = 'Activate your membership';
-    cardDesc = 'Unlock full access to jobs, messaging, and your caregiver profile.';
-    cardCta = {
-      label: 'Activate membership',
-      onClick: () => onNavigate('caregiver-membership'),
-    };
+    if (p.membershipStatus === 'payment_failed') {
+      cardTitle = 'Payment failed';
+      cardDesc = 'We couldn\'t process your last payment. Update your payment method to continue.';
+      cardVariant = 'warning';
+      cardCta = {
+        label: 'Update payment',
+        onClick: async () => {
+          try {
+            await openCaregiverBillingPortal(`${window.location.origin}/caregiver/dashboard`);
+          } catch {
+            onShowToast?.('Unable to open billing portal. Please try again.', 'error');
+          }
+        },
+      };
+    } else if (p.membershipStatus === 'canceled') {
+      cardTitle = 'Membership canceled';
+      cardDesc = 'Your membership has been canceled. Reactivate to regain access to jobs and messaging.';
+      cardCta = { label: 'Reactivate membership', onClick: () => onNavigate('caregiver-membership') };
+    } else {
+      cardTitle = 'Activate your membership';
+      cardDesc = '';
+      cardCta = { label: 'Activate membership', onClick: () => onNavigate('caregiver-membership') };
+    }
   } else if (activeStep === 3) {
     cardTitle = 'Start your background check';
-    cardDesc = 'Required before you can apply to families.';
+    cardDesc = '';
     cardCta = {
       label: 'Start background check',
       onClick: () => setShowBgModal(true),
     };
   } else if (activeStep === 4) {
-    cardTitle = underReview ? 'Profile under review' : 'Background check in progress';
-    cardDesc = underReview
-      ? 'Our team is reviewing your profile.'
-      : 'Your background check is underway. We\'ll notify you when complete.';
+    cardTitle = 'Background check in progress';
+    cardDesc = 'Your background check is underway — we\'ll notify you once it clears.';
     cardVariant = 'info';
   }
 
@@ -105,8 +118,7 @@ const CaregiverProgressCard: React.FC<{
     { label: 'Account', done: true, inProgress: false },
     { label: 'Profile', done: profileComplete, inProgress: !profileComplete },
     { label: 'Membership', done: hasPaid, inProgress: !hasPaid && profileComplete },
-    { label: 'Background Check', done: bgCheckDone, inProgress: bgCheckInProgress },
-    { label: 'Under Review', done: isApproved, inProgress: underReview && hasPaid && bgCheckDone },
+    { label: 'Background Check', done: bgApprovedFull, inProgress: bgCheckInProgress },
   ];
 
   return (

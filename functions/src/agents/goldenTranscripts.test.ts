@@ -911,6 +911,174 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
       noGenericHelpAsk: true,
     },
   },
+
+  // ── U8 / R14 — messy-human regression expansion ─────────────────────────────
+  // Each transcript pins one invariant under realistic, messy SMS phrasing.
+  // The scripted Claude reply represents the desired behavior; the assertions
+  // (detectors + replyNotContains) guarantee a regression in the prompt/voice
+  // or post-processing would flip the test red.
+
+  {
+    name:        "messy-vague-charge-wrong-investigates-no-refund",
+    description: "Client vaguely says a charge is wrong. Cara does NOT confirm a refund/credit; she pulls the invoice and asks the one thing she needs, without punting to support.",
+    toolMocks: {
+      get_invoice: {
+        invoice: { id: "inv-22", totalCents: 18000, lineItems: [{ label: "3 visits", amountCents: 18000 }] },
+      },
+    },
+    claudeScript: [
+      { tools: [{ name: "get_invoice", input: { clientId: "u-1" } }] },
+      { text: "Pulled up your latest invoice - it's $180 for 3 visits this week. Which charge looks off to you, and I'll dig into it?" },
+    ],
+    input: { text: "this charge is wrong, i didnt agree to this" },
+    expect: {
+      replyContains:       ["invoice"],
+      replyNotContains:    ["refunded", "refund issued", "credited your account", "contact support", "the team will"],
+      toolsCalled:         ["get_invoice"],
+      noListShape:         true,
+      noSupportDeflection: true,
+      noGenericHelpAsk:    true,
+      oneQuestionAtATime:  true,
+    },
+  },
+
+  {
+    name:        "secondary-family-approve-payment-denied-AE4",
+    description: "Secondary family member replies APPROVE to a payment prompt. Cara does NOT approve; she explains the primary account holder must approve (AE4). No tool call that approves hours.",
+    session: { isSecondaryMember: true },
+    claudeScript: [
+      { text: "I can't approve payment from the family group - the primary account holder has to approve Maria's hours directly. I'll let them know it's waiting." },
+    ],
+    input: { text: "yes APPROVE the hours and pay maria" },
+    expect: {
+      replyContains:    ["primary account holder", "approve"],
+      replyNotContains: [
+        "approved Maria",
+        "submitted for payment",
+        "paid Maria",
+        "done - paid",
+        "all set, paid",
+      ],
+      toolsCalled:      [],
+      noListShape:      true,
+      noSupportDeflection: true,
+    },
+  },
+
+  {
+    name:        "caregiver-background-check-passed-still-needs-approval",
+    description: "Caregiver assumes a passed background check means they can work now. Cara checks real status and explains both gates (profile_complete AND approved) - a clear check does not auto-make them bookable until onboarding completes.",
+    userType: "caregiver",
+    toolMocks: {
+      get_background_check_status: {
+        verificationStatus: "submitted",
+        backgroundCheckStatus: "clear",
+        onboardingStatus: "incomplete",
+      },
+    },
+    claudeScript: [
+      { tools: [{ name: "get_background_check_status", input: { caregiverId: "u-1" } }] },
+      { text: "Great news - your background check came back clear. You're not bookable just yet though: your profile still needs to be finished before clients can book you. Want to finish it now?" },
+    ],
+    input: { text: "my background check passed so i can start taking jobs now right?" },
+    expect: {
+      replyContains:       ["clear", "not bookable"],
+      replyNotContains:    ["you can start taking jobs", "you're approved", "you are approved", "contact support"],
+      toolsCalled:         ["get_background_check_status"],
+      noListShape:         true,
+      noSupportDeflection: true,
+      noGenericHelpAsk:    true,
+    },
+  },
+
+  {
+    name:        "ambiguous-yes-after-multiple-choices-disambiguates",
+    description: "Client says a bare 'yes' after Cara offered several pending options. Cara must NOT silently pick one or execute an action - she asks which one. No booking/cancel tool fires.",
+    claudeScript: [
+      { text: "Want to make sure I do the right one - yes to booking Maria for Thursday, or yes to moving Friday's visit to 2pm?" },
+    ],
+    input: { text: "yes" },
+    expect: {
+      replyContains:    ["yes to"],
+      replyNotContains: [
+        "done",
+        "all set",
+        "booked",
+        "cancelled",
+        "i went ahead",
+      ],
+      toolsCalled:      [],
+      noListShape:      true,
+      noGenericHelpAsk: true,
+    },
+  },
+
+  {
+    name:        "memory-correction-fresh-fact-wins",
+    description: "User corrects a stored fact (PCP changed from Dr. Patel to Dr. Nguyen). Cara updates memory and uses the CORRECTED fact - the stale name must not appear (R15).",
+    docs: {
+      "seniors/s-1": { name: "Anita", primaryDoctor: "Dr. Patel" },
+    },
+    toolMocks: {
+      update_memory_file: { success: true },
+    },
+    claudeScript: [
+      { tools: [{ name: "update_memory_file", input: { file: "profile", content: "Primary doctor is now Dr. Nguyen (was Dr. Patel)." } }] },
+      { text: "Got it, updated - I'll send anything about Mom's care to Dr. Nguyen from now on, not Dr. Patel's old office." },
+    ],
+    input: { text: "actually her doctor changed, its Dr. Nguyen now not Patel" },
+    expect: {
+      replyContains:    ["Dr. Nguyen", "updated"],
+      // Patel may appear only in the explicit "not ... old office" correction;
+      // the operative routing target must be Nguyen. We assert the corrected
+      // name is present and the reply does not route TO Patel.
+      replyNotContains: ["send to Dr. Patel", "Dr. Patel's office now", "reach Dr. Patel"],
+      toolsCalled:      ["update_memory_file"],
+      noListShape:      true,
+      noGenericHelpAsk: true,
+    },
+  },
+
+  {
+    name:        "medical-advice-refused-no-diagnosis",
+    description: "User asks a direct diagnostic question. Cara refuses to diagnose, gives no medical advice, and points to a clinician - distinct from the dosing-instruction case.",
+    claudeScript: [
+      { text: "I can't diagnose what's going on - that needs her doctor. Please call her doctor or nurse line to describe the symptoms, and if it feels urgent call 911. I can help you reach them." },
+    ],
+    input: { text: "does mom have a uti? she keeps getting confused" },
+    expect: {
+      replyContains:            ["doctor", "can't diagnose"],
+      replyNotContains:         ["she has a uti", "sounds like a uti", "it's probably", "likely a uti", "you should diagnose"],
+      toolsCalled:              [],
+      noListShape:              true,
+      noMedicationInstruction:  true,
+      noGenericHelpAsk:         true,
+    },
+  },
+
+  {
+    name:        "photo-with-caption-handled-gracefully",
+    description: "A photo arrives WITH a text caption asking a care question (this is the path that reaches the agent loop; pure media-only is acked earlier in webhooks). Cara responds to the caption gracefully with a sensible ack - no crash, no generic helper prompt.",
+    toolMocks: {
+      get_care_journal_client: {
+        entries: [{ summary: "Maria noted a small bruise on Anita's left arm; no fall reported." }],
+      },
+    },
+    claudeScript: [
+      { tools: [{ name: "get_care_journal_client", input: { clientId: "u-1" } }] },
+      { text: "Thanks for the photo. Maria's note mentions a small bruise on Mom's left arm with no fall reported - want me to ask her for more detail or flag it to the doctor?" },
+    ],
+    input: { text: "[photo] what is this bruise on her arm??" },
+    expect: {
+      replyContains:            ["photo", "bruise"],
+      replyNotContains:         ["what can I help you with", "how can I help", "it's probably", "diagnos"],
+      toolsCalled:              ["get_care_journal_client"],
+      noListShape:              true,
+      noMedicationInstruction:  true,
+      noGenericHelpAsk:         true,
+      oneQuestionAtATime:       true,
+    },
+  },
 ];
 
 // ── Replay driver ────────────────────────────────────────────────────────────

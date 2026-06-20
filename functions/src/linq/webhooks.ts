@@ -813,7 +813,7 @@ async function handleInboundInner(event: unknown): Promise<void> {
     const partTypes = inboundParts.map((p) => String(p.type ?? "").toLowerCase());
     const hasVoiceMemo = extractVoiceMemoPart(inboundParts) !== null;
     if (partTypes.includes("sticker")) {
-      await sendMessage(chatId, "Love it! 😊 What can I help you with today?");
+      await sendMessage(chatId, "Love it! 😊 I'm right here if you need anything for Mom.");
     } else if (hasVoiceMemo) {
       await sendMessage(
         chatId,

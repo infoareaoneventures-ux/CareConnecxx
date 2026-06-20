@@ -28,6 +28,8 @@ import {
   findUntaggedTools,
 } from "./toolCapabilities";
 import { MCP_TOOLS } from "../mcp/server";
+import { LAUNCH_ACTION_PARITY } from "./launchActionParity";
+import { CONTRACT_COLLECTIONS } from "../data/contract";
 
 // Helper — names only, easier to read assertions.
 const names = (tools: { name: string }[]) => new Set(tools.map(t => t.name));
@@ -178,5 +180,120 @@ describe("TOOL_CAPABILITIES coverage", () => {
     const realNames = new Set(MCP_TOOLS.map(t => t.name));
     const stale = Object.keys(TOOL_CAPABILITIES).filter(n => !realNames.has(n));
     expect(stale).toEqual([]);
+  });
+});
+
+describe("LAUNCH_ACTION_PARITY", () => {
+  const realToolNames = new Set(MCP_TOOLS.map(t => t.name));
+
+  // The core allowlist (CORE_TOOL_NAMES inside toolCapabilities.ts is not
+  // exported). Keep in sync — same list the coverage test above whitelists.
+  const coreToolNames = new Set([
+    "get_senior_profile",
+    "list_household_seniors",
+    "get_pending_tasks",
+    "suggest_upcoming_care",
+    "get_care_team",
+    "create_support_ticket",
+    "resume_execution_agent",
+    "write_todos",
+    "cara_knows",
+    "task",
+    "send_onboarding_link",
+  ]);
+
+  it("every shipped row points at a real MCP tool", () => {
+    const broken = LAUNCH_ACTION_PARITY.filter(
+      r => r.status === "shipped" && (r.tool === null || !realToolNames.has(r.tool)),
+    ).map(r => `${r.id} → ${r.tool}`);
+    expect(broken, `shipped rows must reference a real MCP_TOOLS tool`).toEqual([]);
+  });
+
+  it("every blocker row has tool: null (a gap must not claim a shipped tool)", () => {
+    const offenders = LAUNCH_ACTION_PARITY.filter(
+      r => r.status === "blocker" && r.tool !== null,
+    ).map(r => `${r.id} → ${r.tool}`);
+    expect(offenders).toEqual([]);
+  });
+
+  it("every collection is 'n/a' or a key in CONTRACT_COLLECTIONS", () => {
+    const valid = new Set(Object.keys(CONTRACT_COLLECTIONS));
+    const unregistered = LAUNCH_ACTION_PARITY.filter(
+      r => r.collection !== "n/a" && !valid.has(r.collection),
+    ).map(r => `${r.id} → ${r.collection}`);
+    expect(
+      unregistered,
+      `launch-critical collections must be registered in CONTRACT_COLLECTIONS`,
+    ).toEqual([]);
+  });
+
+  it("row ids are unique", () => {
+    const ids = LAUNCH_ACTION_PARITY.map(r => r.id);
+    expect(ids.length).toBe(new Set(ids).size);
+  });
+
+  it("shipped caregiver tools are reachable by the caregiver prompt filter", () => {
+    // A shipped caregiver action must be exposed to the caregiver prompt — i.e.
+    // tagged in TOOL_CAPABILITIES or in the core allowlist. A silently
+    // unreachable tool would make Cara claim parity it can't deliver.
+    const unreachable = LAUNCH_ACTION_PARITY.filter(
+      r =>
+        r.actor === "caregiver" &&
+        r.status === "shipped" &&
+        r.tool !== null &&
+        !TOOL_CAPABILITIES[r.tool] &&
+        !coreToolNames.has(r.tool),
+    ).map(r => `${r.id} → ${r.tool}`);
+    expect(unreachable).toEqual([]);
+  });
+
+  it("every shipped row's tool is exposed to its promptActor (core or capability-tagged)", () => {
+    // The general parity guarantee: any shipped row, for ANY actor, must name a
+    // tool that the prompt/tool-filter can actually surface — i.e. it is either
+    // a core tool (always bound) or tagged in TOOL_CAPABILITIES (bindable under
+    // an intent). A shipped row whose tool is neither would be unreachable in
+    // the agent loop, so the parity claim would be a lie.
+    const unbindable = LAUNCH_ACTION_PARITY.filter(
+      r =>
+        r.status === "shipped" &&
+        r.tool !== null &&
+        !coreToolNames.has(r.tool) &&
+        !TOOL_CAPABILITIES[r.tool],
+    ).map(r => `${r.id} → ${r.tool}`);
+    expect(
+      unbindable,
+      "shipped tools must be core or tagged in TOOL_CAPABILITIES so they are bindable",
+    ).toEqual([]);
+  });
+
+  it("every shipped row declares a promptActor; gap rows declare none", () => {
+    const shippedMissingActor = LAUNCH_ACTION_PARITY.filter(
+      r => r.status === "shipped" && r.promptActor === null,
+    ).map(r => r.id);
+    expect(
+      shippedMissingActor,
+      "shipped rows must declare which actor's prompt surfaces the tool",
+    ).toEqual([]);
+
+    // Caregiver-actor shipped rows must be exposed to a caregiver-facing prompt
+    // (its own actor or the cross-cutting "any" surface), never client-only.
+    const wrongActor = LAUNCH_ACTION_PARITY.filter(
+      r =>
+        r.actor === "caregiver" &&
+        r.status === "shipped" &&
+        r.promptActor !== "caregiver" &&
+        r.promptActor !== "any",
+    ).map(r => `${r.id} → ${r.promptActor}`);
+    expect(wrongActor).toEqual([]);
+  });
+
+  it("every non-shipped row has a non-empty note explaining the gap or non-goal", () => {
+    const missingNote = LAUNCH_ACTION_PARITY.filter(
+      r => r.status !== "shipped" && (!r.notes || r.notes.trim() === ""),
+    ).map(r => r.id);
+    expect(
+      missingNote,
+      "blocker/non-goal rows must explain why (and reference the U-id that fixes it)",
+    ).toEqual([]);
   });
 });

@@ -115,3 +115,24 @@ describe('Cara ↔ Web collection contract', () => {
         expect(backendSource).toContain('backgroundCheckData.checkrCandidateId');
     });
 });
+
+describe('Cara launch action-parity map (context/capability-map.md)', () => {
+    const mapPath = path.join(ROOT, 'context', 'capability-map.md');
+
+    it('the human-readable capability map exists', () => {
+        expect(
+            fs.existsSync(mapPath),
+            'context/capability-map.md is the human-readable mirror of launchActionParity.ts and must exist'
+        ).toBe(true);
+    });
+
+    it('groups parity rows by every actor (Client / Caregiver / Admin)', () => {
+        const md = fs.readFileSync(mapPath, 'utf8');
+        for (const heading of ['Client', 'Caregiver', 'Admin']) {
+            expect(
+                md.includes(heading),
+                `capability-map.md must list at least the '${heading}' actor section`
+            ).toBe(true);
+        }
+    });
+});

@@ -2450,7 +2450,7 @@ export const dbService = {
         note?: string
     ): Promise<{ success: boolean; bookable: boolean; verificationStatus: string }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_review_caregiver_exception');
+        const fn = functions.httpsCallable('v1-admin_review_caregiver_exception');
         const result = await fn({ caregiverId, decision, note });
         return result.data as any;
     },
@@ -2462,21 +2462,21 @@ export const dbService = {
         note?: string
     ): Promise<{ success: boolean; status: string }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_review_document');
+        const fn = functions.httpsCallable('v1-admin_review_document');
         const result = await fn({ caregiverId, documentType, decision, note });
         return result.data as any;
     },
 
     adminSuspendUser: async (userId: string, reason: string): Promise<{ success: boolean }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_suspend_user');
+        const fn = functions.httpsCallable('v1-admin_suspend_user');
         const result = await fn({ userId, reason });
         return result.data as any;
     },
 
     adminRestoreUser: async (userId: string, note?: string): Promise<{ success: boolean }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_restore_user');
+        const fn = functions.httpsCallable('v1-admin_restore_user');
         const result = await fn({ userId, note });
         return result.data as any;
     },
@@ -2487,7 +2487,7 @@ export const dbService = {
         resolve?: boolean
     ): Promise<{ success: boolean; status: string }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_respond_support_ticket');
+        const fn = functions.httpsCallable('v1-admin_respond_support_ticket');
         const result = await fn({ ticketId, message, resolve: !!resolve });
         return result.data as any;
     },
@@ -2498,7 +2498,7 @@ export const dbService = {
         opts?: { finalTotalHours?: number; note?: string }
     ): Promise<{ success: boolean }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_resolve_dispute');
+        const fn = functions.httpsCallable('v1-admin_resolve_dispute');
         const result = await fn({ appointmentId, outcome, ...opts });
         return result.data as any;
     },
@@ -2509,7 +2509,7 @@ export const dbService = {
         note?: string
     ): Promise<{ success: boolean }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_review_invoice_exception');
+        const fn = functions.httpsCallable('v1-admin_review_invoice_exception');
         const result = await fn({ alertId, resolution, note });
         return result.data as any;
     },
@@ -2520,7 +2520,7 @@ export const dbService = {
         opts?: { replayToolName?: string; replayInput?: Record<string, unknown> }
     ): Promise<{ success: boolean; error?: string }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_retry_agent_action');
+        const fn = functions.httpsCallable('v1-admin_retry_agent_action');
         const result = await fn({ ledgerId, idempotencyKey, ...opts });
         return result.data as any;
     },
@@ -2535,7 +2535,7 @@ export const dbService = {
         opts: { ledgerId?: string; chatId?: string; phone?: string; text?: string }
     ): Promise<{ success: boolean; error?: string }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_retry_linq_delivery');
+        const fn = functions.httpsCallable('v1-admin_retry_linq_delivery');
         const result = await fn({ idempotencyKey, ...opts });
         return result.data as any;
     },
@@ -2546,7 +2546,7 @@ export const dbService = {
         confirm: boolean
     ): Promise<{ success: boolean; error?: string }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_replay_pending_action');
+        const fn = functions.httpsCallable('v1-admin_replay_pending_action');
         const result = await fn({ pendingActionId, idempotencyKey, confirm });
         return result.data as any;
     },
@@ -2556,7 +2556,7 @@ export const dbService = {
         reason: string
     ): Promise<{ success: boolean; executed: boolean }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_cancel_pending_action');
+        const fn = functions.httpsCallable('v1-admin_cancel_pending_action');
         const result = await fn({ pendingActionId, reason });
         return result.data as any;
     },
@@ -2566,7 +2566,7 @@ export const dbService = {
         owner: { ownerUid?: string; ownerLabel?: string }
     ): Promise<{ success: boolean }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_assign_recovery_owner');
+        const fn = functions.httpsCallable('v1-admin_assign_recovery_owner');
         const result = await fn({ ...target, ...owner });
         return result.data as any;
     },
@@ -2576,7 +2576,7 @@ export const dbService = {
         reason: string
     ): Promise<{ success: boolean }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('admin_mark_recovery_complete');
+        const fn = functions.httpsCallable('v1-admin_mark_recovery_complete');
         const result = await fn({ ...target, reason });
         return result.data as any;
     },

@@ -23,7 +23,7 @@ export default function QuickConfirmPage() {
     try {
       // Token-scoped read via callable — the page never queries agent_tasks
       // directly, so the collection stays admin/server-scoped in rules.
-      const getTask = functions.httpsCallable('getAgentTaskByToken');
+      const getTask = functions.httpsCallable('v1-getAgentTaskByToken');
       const res: any = (await getTask({ token: t })).data;
 
       if (res?.status === 'completed') { setState('confirmed'); return; }
@@ -47,7 +47,7 @@ export default function QuickConfirmPage() {
       // Commit the confirmation server-side. The callable validates the token,
       // marks the task completed, and records the approval via the Admin SDK —
       // the web no longer writes agent_tasks / agent_approvals directly.
-      const confirm = functions.httpsCallable('confirmAgentTask');
+      const confirm = functions.httpsCallable('v1-confirmAgentTask');
       await confirm({ token });
       setState('confirmed');
     } catch {

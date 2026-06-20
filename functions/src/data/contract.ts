@@ -217,6 +217,130 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     notes:
       "Human-approval audit record for the quick-confirm flow. Was previously written DIRECTLY by QuickConfirmPage; now written server-side by the confirmAgentTask callable (Admin SDK). No web reader. Rules: deny all client access.",
   },
+
+  // ── Pre-registry collections backfilled in U10 ──────────────────────────────
+  // These predate the contract registry but are genuinely shared (or audit
+  // entities that must be lifecycle-governed). Registered here with accurate
+  // access classes; firestore.rules carries the matching match block.
+  chatRooms: {
+    path: "chatRooms",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "1:1 client↔caregiver messaging (services/chatService.ts). Cara touches via the pushNotifications onCreate trigger. Participant-scoped reads; admin can read all.",
+  },
+  customers: {
+    path: "customers",
+    docId: "uid",
+    caraWrites: true,
+    webReads: true,
+    notes: "Stripe customer + subscriptions subcollection (customers/{uid}/subscriptions). Web reads its own via stripeService.ts; Stripe webhooks (functions/src/stripe.ts) write. Client writes denied (webhook-only).",
+  },
+  disputes: {
+    path: "disputes",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes: "Payment/appointment dispute records with SLA escalation (functions/src/triggers/disputeResolution.ts). Server-only today; no web reader. Audit-sensitive: client-destructive delete is blocked.",
+  },
+  hire_requests: {
+    path: "hire_requests",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Formal hire request after interview (services/api.ts submitHireRequest; functions matching.ts + mcp/server.ts). Client/caregiver/admin read; coordinator approves.",
+  },
+  interview_requests: {
+    path: "interview_requests",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Caregiver interview scheduling + fit feedback. Web (api.ts, caregiver dashboards) and Cara (interviewAgent.ts) both write.",
+  },
+  interviews: {
+    path: "interviews",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Scheduled interview record with meeting link/ICS (functions/src/agents/interviewAgent.ts). Client reads pending interviews (InterviewConfirmation.tsx); writes server-side only.",
+  },
+  job_applications: {
+    path: "job_applications",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Caregiver applications to job posts. Caregiver creates; client accepts/rejects; caregiver can withdraw (status='withdrawn', U2). applicantCount maintained by jobApplicationTriggers.",
+  },
+  invoices: {
+    path: "invoices",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Billing invoices (functions/src/invoicing.ts; mcp/server.ts). Admin + owning client/caregiver read. Writes server-side only. Audit/payment entity: only admin may delete (audited via onInvoiceDeleted).",
+  },
+  payments: {
+    path: "payments",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes: "Stripe subscription payment ledger keyed by userId field (functions/src/stripe.ts webhooks; mcp/server.ts reads). No direct frontend reader today (rules permit owner read for a future surface). Payment entity: client-destructive delete is blocked.",
+  },
+  payouts: {
+    path: "payouts",
+    docId: "auto",
+    caraWrites: false,
+    webReads: true,
+    notes: "Caregiver payout ledger. Per-caregiver subcollection (caregivers/{uid}/payouts, PayoutHistory.tsx) AND a top-level admin mirror read by FinanceDashboard. Written via instantPayout/standardPayout (Admin SDK). Payment entity: client-destructive delete blocked.",
+  },
+  reports: {
+    path: "reports",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "User abuse/safety reports. Web users create their own (InboxView.tsx); Cara/mcp may file reports; admins review. Author-scoped create, admin read.",
+  },
+  reviews: {
+    path: "reviews",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Client→caregiver post-visit reviews (services/api.ts, ReviewSystem.tsx; Cara via mcp/server.ts submit_review). Public read; author-scoped write.",
+  },
+  seniors: {
+    path: "seniors",
+    docId: "auto",
+    caraWrites: false,
+    webReads: false,
+    notes: "Cara/QA-agent senior context records keyed by seniorId (functions qaAgent.ts, mcp/server.ts reads). NOT the web senior store — that is senior_profiles. Server-only; no web reader. Distinct from the UI plural label 'seniors'.",
+  },
+  shifts: {
+    path: "shifts",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "GPS clock-in/out shift instances generated from recurring bookings (shiftGenerator.ts) and touched by Cara (mcp/server.ts). Caregiver/client/admin participant-scoped.",
+  },
+  video_interviews: {
+    path: "video_interviews",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Twilio video interview scheduling (services/videoService.ts; Cara via mcp/server.ts). Client/caregiver participant-scoped.",
+  },
+  web_onboarding_sessions: {
+    path: "web_onboarding_sessions",
+    docId: "phone",
+    caraWrites: true,
+    webReads: true,
+    notes: "Bridge between web phone verification and SMS inbound (functions/src/linq/webhooks.ts). Web reads its own doc (hooks/useOnboardingSession.ts); writes server-side only (createWebOnboardingSession callable).",
+  },
+  notifications: {
+    path: "notifications",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Top-level user notifications (bookings, replies, alerts). Web reads own (userId field); Cara/admin write (admin/adminSupportActions.ts, services/api.ts). Distinct from the users/{uid}/notifications subcollection.",
+  },
 };
 
 /** Collection names (top-level segment only) that Cara writes. */

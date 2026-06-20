@@ -101,25 +101,29 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     'messages',          // threads/{id}/messages — covered by 'threads' entry
     'care_keepsakes', 'care_plans', 'appointment_care_plans', 'carePlanVersions',
     'shift_checkins', 'shift_hours', 'tax_summaries',
+    'responses',         // support_tickets/{id}/responses — covered by 'support_tickets' entry
+    'subscriptions',     // customers/{uid}/subscriptions — covered by 'customers' entry
 ]);
 
 // ── Tracked unregistered web-read collections (U10 backlog) ─────────────────
 //
-// HONESTY NOTE: these collections ARE read by the web app but predate the
-// Cara↔web contract registry. They are NOT runtime-only — putting them in
-// RUNTIME_ONLY_COLLECTIONS would be a lie ("web never reads"). They belong in
-// CONTRACT_COLLECTIONS, but adding accurate entries + rules audits for all of
-// them is the scope of plan unit U10 (Complete CRUD/lifecycle coverage), not
-// U5 (which closes the agent_* shared-workspace gap). This explicit set keeps
-// the scanner honest and green while documenting the remaining debt: the
-// scanner still FAILS if a *new* unregistered collection appears that is in
-// neither this set, RUNTIME_ONLY_COLLECTIONS, nor CONTRACT_COLLECTIONS.
-const UNREGISTERED_WEB_READ_COLLECTIONS = new Set<string>([
-    'chatRooms', 'customers', 'disputes', 'hire_requests', 'interview_requests',
-    'interviews', 'invoices', 'job_applications', 'notifications', 'payments',
-    'payouts', 'reports', 'responses', 'reviews', 'seniors', 'shifts',
-    'subscriptions', 'video_interviews', 'web_onboarding_sessions',
-]);
+// CLOSED in U10. The pre-registry collections that the web reads are now all
+// registered in CONTRACT_COLLECTIONS with accurate access classes and matching
+// firestore.rules blocks:
+//   chatRooms, customers, disputes, hire_requests, interview_requests,
+//   interviews, invoices, job_applications, notifications, payments, payouts,
+//   reports, reviews, seniors, shifts, video_interviews, web_onboarding_sessions
+// Two former entries were subcollection leaves, not top-level shared
+// collections, and moved to RUNTIME_ONLY_COLLECTIONS instead:
+//   responses      → support_tickets/{id}/responses
+//   subscriptions  → customers/{uid}/subscriptions
+// 'seniors' is the Cara/QA-agent context store (keyed by seniorId), distinct
+// from the web senior store senior_profiles; it is server-only (webReads:false).
+//
+// This set is now intentionally empty. The scanner still FAILS if a *new*
+// unregistered collection appears that is in neither this set,
+// RUNTIME_ONLY_COLLECTIONS, nor CONTRACT_COLLECTIONS.
+const UNREGISTERED_WEB_READ_COLLECTIONS = new Set<string>([]);
 
 describe('Cara ↔ Web collection contract', () => {
     const entries = Object.entries(CONTRACT_COLLECTIONS);

@@ -749,6 +749,8 @@ service cloud.firestore {
       // User can read their own payments
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow write: if false; // Only Stripe webhooks can write
+      // Payment entity: never client-deletable (audit/ledger integrity).
+      allow delete: if false;
     }
     
     // ==========================================
@@ -912,6 +914,8 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
       );
       allow write: if false;
+      // Health/care entity: visit journal is append-only audit; never client-deletable.
+      allow delete: if false;
     }
 
     // Post-visit feedback — admin + owning client read, functions write only
@@ -1079,6 +1083,67 @@ service cloud.firestore {
     // bypasses rules). No client should ever touch these, so deny outright.
     match /agent_turn_checkpoints/{phone} {
       allow read, write: if false;
+    }
+
+    // ==========================================
+    // INTERVIEWS — scheduled interview records (functions/agents/interviewAgent.ts)
+    // Written server-side (Admin SDK). The client reads their own pending
+    // interviews (components/InterviewConfirmation.tsx).
+    // ==========================================
+    match /interviews/{interviewId} {
+      allow read: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        isAdmin()
+      );
+      // Created/updated only via Cloud Functions (Admin SDK bypasses rules).
+      allow create, update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // REPORTS — user abuse/safety reports (components/InboxView.tsx, Cara/mcp)
+    // The reporting user creates their own row; only admins review them.
+    // Audit-sensitive: not client-deletable.
+    // ==========================================
+    match /reports/{reportId} {
+      allow read: if isAuthenticated() && (
+        resource.data.reportedBy == request.auth.uid || isAdmin()
+      );
+      allow create: if isAuthenticated() &&
+        request.resource.data.reportedBy == request.auth.uid;
+      // Triage happens admin-side; users cannot edit a filed report.
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // PAYOUTS (top-level admin mirror) — caregiver payout ledger.
+    // The per-caregiver history lives at caregivers/{uid}/payouts (separate
+    // block above). FinanceDashboard reads this top-level admin view.
+    // Written by Cloud Functions (instantPayout/standardPayout, Admin SDK).
+    // Payment entity: never client-deletable.
+    // ==========================================
+    match /payouts/{payoutId} {
+      allow read: if isAdmin() || (
+        isAuthenticated() && resource.data.caregiverId == request.auth.uid
+      );
+      allow write: if false; // Cloud Functions only (Admin SDK)
+      allow delete: if false;
+    }
+
+    // ==========================================
+    // DISPUTES — payment/appointment dispute records with SLA escalation
+    // (functions/triggers/disputeResolution.ts). Server-only today; no web
+    // reader. Audit/payment entity: client-destructive delete is blocked.
+    // ==========================================
+    match /disputes/{disputeId} {
+      allow read: if isAdmin() || (isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid
+      ));
+      allow create, update: if false; // server-side only (Admin SDK)
+      allow delete: if false;
     }
 
     // DENY ALL OTHER ACCESS BY DEFAULT

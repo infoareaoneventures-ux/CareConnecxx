@@ -22,6 +22,7 @@ import {
 import { detectCrisis, isLikelyRealCrisis, classifyCrisisMultilingual } from "../safety/crisisDetector";
 import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
 import { logCrisisDetected } from "../observability/auditLog";
+import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
 import { isBereavementTrigger, activateBereavementMode } from "../agents/bereavement";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import {
@@ -271,6 +272,23 @@ async function sendEmotionalCrisisResponse(
   }).catch(() => {});
 }
 
+// Raise an admin-visible safety alert for a confirmed MEDICAL emergency (R7).
+// This is the admin_alerts surface (Control Room) — distinct from the HIPAA
+// audit-log entry (logCrisisDetected → agent_audit_log). Best-effort and
+// non-blocking: a failed alert must never delay or replace the 911 guidance,
+// and we NEVER attempt a healthcare action on this path. PHI-minimized: only a
+// short, truncated text preview goes into the alert, like the audit log.
+function raiseMedicalCrisisAlert(phone: string, text: string): void {
+  void createCaraOpsAlert({
+    type:     "cara_medical_emergency",
+    severity: "critical",
+    phone,
+    source:   "crisisDetector",
+    message:  "Possible medical emergency reported over SMS — Cara directed the user to call 911.",
+    context:  { textPreview: text.slice(0, 200) },
+  }).catch(() => {});
+}
+
 // ── Post-visit feedback sentiment classifier ──────────────────────────────────
 
 async function classifyFeedbackSentiment(
@@ -370,21 +388,25 @@ export async function handleInbound(event: unknown): Promise<void> {
 
   // Wait briefly for an in-flight message from the same phone to finish. SMS
   // bursts arrive within a few seconds, so a short window catches the common
-  // race; if we still can't acquire (rare long-held lock), fail open and
-  // process rather than drop the message — the TTL bounds any stuck holder.
+  // race.
   let acquired = false;
   for (let attempt = 0; attempt < 6; attempt++) {
     if (await claimInboundProcessing(phone, db)) { acquired = true; break; }
     await new Promise((r) => setTimeout(r, 500));
   }
   if (!acquired) {
-    console.warn("handleInbound: per-phone lock busy after wait — proceeding fail-open", { phone });
+    // Fail closed: proceeding without the lock would let two handlers for the
+    // same phone run concurrently and clobber each other's session writes — the
+    // exact race this lock exists to prevent. Throw so the webhook settles the
+    // event "failed" and Linq's at-least-once retry re-drives the turn once the
+    // (TTL-bounded) lock frees, rather than processing unserialized.
+    throw new Error(`handleInbound: per-phone lock unavailable after retries for ${phone}`);
   }
 
   try {
     await handleInboundInner(event);
   } finally {
-    if (acquired) await releaseInboundProcessing(phone, db);
+    await releaseInboundProcessing(phone, db);
   }
 }
 
@@ -958,6 +980,7 @@ async function handleInboundInner(event: unknown): Promise<void> {
     if (await isLikelyRealCrisis(text, "medical")) {
       await sendMessage(chatId, tr.crisis_medical(sessionLang));
       logCrisisDetected(phone, "medical", text).catch(() => {});
+      raiseMedicalCrisisAlert(phone, text); // R7: admin-visible safety alert
       // Arm the NOTIFY follow-up so the family's "NOTIFY" reply reaches the care team.
       await db.collection("agent_sessions").doc(phone).update({
         pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "medical" },
@@ -988,6 +1011,7 @@ async function handleInboundInner(event: unknown): Promise<void> {
       if (llmCrisis === "medical") {
         await sendMessage(chatId, tr.crisis_medical(sessionLang));
         logCrisisDetected(phone, "medical", text).catch(() => {});
+        raiseMedicalCrisisAlert(phone, text); // R7: admin-visible safety alert
         await db.collection("agent_sessions").doc(phone).update({
           pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "medical" },
         }).catch(() => {});
@@ -1850,11 +1874,16 @@ export const linqWebhook = functions
       try {
         await handleInbound(event);
         if (eventId) await settleWebhookEvent(LINQ_EVENTS_COLLECTION, eventId, "processed");
+        sendOk();
       } catch (err) {
         console.error("linqWebhook handleInbound:", err);
+        // Settling "failed" deletes the claim so Linq's at-least-once retry can
+        // re-drive the turn — but that only happens if we DON'T ack 200 here.
+        // Return 500 so the provider retries instead of treating the failed
+        // turn as delivered (which would wedge the user with no recovery).
         if (eventId) await settleWebhookEvent(LINQ_EVENTS_COLLECTION, eventId, "failed");
+        if (!sent) { sent = true; res.status(500).send("processing failed"); }
       }
-      sendOk();
       return;
     }
 

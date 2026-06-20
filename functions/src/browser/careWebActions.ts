@@ -462,7 +462,11 @@ export async function bookAppointmentSlot(params: {
       return { status: "unverified" as const };
     });
 
-    const success = outcome.status === "verified_success" || outcome.status === "unverified";
+    // Only a verified confirmation read-back marks the credential as
+    // successfully used. "unverified" means we submitted but the portal never
+    // confirmed — the booking may have failed, so don't record it as a success
+    // (which would mask a credential/portal problem).
+    const success = outcome.status === "verified_success";
     await markCredentialUsed(params.userId, service, success);
     await logBrowserSession({
       userId: params.userId, phone: params.phone, sessionId: sess.sessionId,

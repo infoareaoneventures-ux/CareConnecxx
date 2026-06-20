@@ -383,6 +383,18 @@ describe("safety + account gates", () => {
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
+  it("verified medical crisis creates an admin-visible safety alert and runs no healthcare action (R7)", async () => {
+    seedSession();
+    detectCrisis.mockReturnValue("medical");
+    isLikelyRealCrisis.mockResolvedValue(true);
+    await handleInbound(makeEvent("he's having chest pain right now"));
+    // Admin_alerts safety alert is created (Control-Room-visible), critical severity.
+    expect(hoisted.docState.get("admin_alerts/auto-add"))
+      .toMatchObject({ type: "cara_medical_emergency", severity: "critical" });
+    // Never attempts a healthcare action / QA tool loop on the emergency path.
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
   it("crisis keyword judged NOT real falls through to the QA agent", async () => {
     seedSession();
     detectCrisis.mockReturnValue("medical");

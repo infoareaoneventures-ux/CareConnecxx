@@ -35,7 +35,11 @@ async function proposeHealthcareAction(params: {
       phone: params.phone, userId: params.userId,
       toolName: "perform_web_action", toolInput: params.toolInput,
     });
-  } catch {
+  } catch (err) {
+    console.error("healthcareHandler: proposePendingAction failed (fail-closed)", {
+      phone: params.phone,
+      err: err instanceof Error ? err.message : String(err),
+    });
     await params.sendMessage(
       "I couldn't verify the primary account holder for this, so I can't proceed. " +
       "Please have the account holder text me directly.",
@@ -207,14 +211,20 @@ async function executeAppointmentBooking(
   await sendMessage(`Finding an appointment with ${data.doctorName ?? "your doctor"} — give me a minute...`);
 
   // PASS 1 (H-U3): read-only discovery — find a concrete slot. We do NOT book.
-  const found = await findAppointmentSlots({
-    userId,
-    phone,
-    doctorName:    data.doctorName ?? "your doctor",
-    preferredDate: data.preferredDate,
-    portalService: portal,
-  });
-  await clearFlowState(phone);
+  // Always clear the flow state, even if discovery throws, so a failed lookup
+  // can't leave stale flow state stranded in the session.
+  let found;
+  try {
+    found = await findAppointmentSlots({
+      userId,
+      phone,
+      doctorName:    data.doctorName ?? "your doctor",
+      preferredDate: data.preferredDate,
+      portalService: portal,
+    });
+  } finally {
+    await clearFlowState(phone);
+  }
 
   if (found.needsCredentials) {
     await sendMessage(`I need your ${portal} portal login to book for you. Reply "save my ${portal} login" to set it up.`);

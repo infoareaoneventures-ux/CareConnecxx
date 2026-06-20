@@ -2525,6 +2525,62 @@ export const dbService = {
         return result.data as any;
     },
 
+    // ==================== CONTROL ROOM RECOVERY CALLABLES (U4) ====================
+    // Backend-executable recovery: each is admin-gated by requireAdmin, writes an
+    // audit record, transitions ledger/pending/alert state, is idempotency-keyed,
+    // and fails visibly (never false success). High-risk replays require confirm.
+
+    adminRetryLinqDelivery: async (
+        idempotencyKey: string,
+        opts: { ledgerId?: string; chatId?: string; phone?: string; text?: string }
+    ): Promise<{ success: boolean; error?: string }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_retry_linq_delivery');
+        const result = await fn({ idempotencyKey, ...opts });
+        return result.data as any;
+    },
+
+    adminReplayPendingAction: async (
+        pendingActionId: string,
+        idempotencyKey: string,
+        confirm: boolean
+    ): Promise<{ success: boolean; error?: string }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_replay_pending_action');
+        const result = await fn({ pendingActionId, idempotencyKey, confirm });
+        return result.data as any;
+    },
+
+    adminCancelPendingAction: async (
+        pendingActionId: string,
+        reason: string
+    ): Promise<{ success: boolean; executed: boolean }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_cancel_pending_action');
+        const result = await fn({ pendingActionId, reason });
+        return result.data as any;
+    },
+
+    adminAssignRecoveryOwner: async (
+        target: { ledgerId?: string; alertId?: string },
+        owner: { ownerUid?: string; ownerLabel?: string }
+    ): Promise<{ success: boolean }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_assign_recovery_owner');
+        const result = await fn({ ...target, ...owner });
+        return result.data as any;
+    },
+
+    adminMarkRecoveryComplete: async (
+        target: { ledgerId?: string; alertId?: string },
+        reason: string
+    ): Promise<{ success: boolean }> => {
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('admin_mark_recovery_complete');
+        const result = await fn({ ...target, reason });
+        return result.data as any;
+    },
+
     assignAgentAction: async (entryId: string, adminUid?: string): Promise<void> => {
         if (!isConfigured || !db) throw new Error('Not connected');
         const uid = adminUid || auth?.currentUser?.uid;

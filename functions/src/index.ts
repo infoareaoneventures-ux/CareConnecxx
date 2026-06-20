@@ -158,6 +158,10 @@ export { admin_suspend_user, admin_restore_user } from './admin/adminUserActions
 export { admin_respond_support_ticket, admin_resolve_dispute, admin_review_invoice_exception } from './admin/adminSupportActions';
 export { admin_retry_agent_action } from './admin/adminLedgerActions';
 
+// Control Room executable recovery callables (U4) — backend-backed retry,
+// replay (high-risk gated by confirm), cancel, assign owner, mark complete.
+export { admin_retry_linq_delivery, admin_replay_pending_action, admin_cancel_pending_action, admin_assign_recovery_owner, admin_mark_recovery_complete } from './admin/adminRecoveryActions';
+
 // Admin alert email notifier (Firestore trigger → admin_email_queue)
 export { onAdminAlertCreated } from './triggers/adminAlertNotifier';
 

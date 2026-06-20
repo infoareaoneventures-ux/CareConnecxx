@@ -317,6 +317,8 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [operatorNote, setOperatorNote] = useState('');
   const [handledReason, setHandledReason] = useState('');
+  const [recoveryOwner, setRecoveryOwner] = useState('');
+  const [highRiskConfirm, setHighRiskConfirm] = useState(false);
 
   useEffect(() => {
     const unsubscribers = [
@@ -372,7 +374,21 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
   useEffect(() => {
     setOperatorNote('');
     setHandledReason('');
+    setRecoveryOwner('');
+    setHighRiskConfirm(false);
   }, [selected?.id]);
+
+  // A fresh idempotency key per executable attempt — guards the backend against
+  // double-execution if the operator double-clicks or a retry is re-submitted.
+  function newIdempotencyKey(prefix: string, id: string): string {
+    return `${prefix}:${id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  // Healthcare write actions (perform_web_action) are always treated as
+  // high-risk for replay, matching the backend isHighRisk gate.
+  function isHighRiskReplay(item: QueueItem): boolean {
+    return item.toolName === 'perform_web_action';
+  }
 
   const stats = useMemo(() => {
     const critical = queueItems.filter((item) => item.severity === 'critical' || item.severity === 'high').length;
@@ -407,30 +423,38 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
     if (!id) return;
     setBusyAction(`assign:${id}`);
     try {
-      await dbService.assignAgentAction(id);
-      onShowToast('Cara action assigned', 'success');
+      const target = item.kind === 'failed_action' ? { ledgerId: id } : { alertId: id };
+      const owner = recoveryOwner.trim() ? { ownerLabel: recoveryOwner.trim() } : {};
+      await dbService.adminAssignRecoveryOwner(target, owner);
+      onShowToast('Recovery owner assigned', 'success');
     } catch (err) {
-      console.error('assign Cara action failed:', err);
-      onShowToast('Failed to assign Cara action', 'error');
+      console.error('assign recovery owner failed:', err);
+      onShowToast('Failed to assign recovery owner', 'error');
     } finally {
       setBusyAction(null);
     }
   }
 
+  // Executable retry (U4). Linq-category failures re-attempt the outbound send;
+  // every other failed tool action re-dispatches via the agent-action retry.
+  // Both run on the backend, are idempotency-keyed, and fail visibly.
   async function requestRetryForSelectedAction(item: QueueItem) {
     const id = rawId(item);
     if (!id) return;
-    if (!operatorNote.trim()) {
-      onShowToast('Add an operator note before requesting retry', 'error');
-      return;
-    }
     setBusyAction(`retry:${id}`);
     try {
-      await dbService.requestAgentActionRetry(id, operatorNote);
-      onShowToast('Retry request recorded for Cara action', 'success');
+      const key = newIdempotencyKey('retry', id);
+      const res = item.category === 'linq'
+        ? await dbService.adminRetryLinqDelivery(key, { ledgerId: id })
+        : await dbService.adminRetryAgentAction(id, key);
+      if (res?.success) {
+        onShowToast('Retry executed successfully', 'success');
+      } else {
+        onShowToast(`Retry failed: ${res?.error ?? 'see admin alerts'}`, 'error');
+      }
     } catch (err) {
-      console.error('request Cara action retry failed:', err);
-      onShowToast('Failed to record retry request', 'error');
+      console.error('execute Cara action retry failed:', err);
+      onShowToast(`Retry failed: ${(err as Error)?.message ?? 'backend error'}`, 'error');
     } finally {
       setBusyAction(null);
     }
@@ -445,16 +469,19 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
     }
     setBusyAction(`handled:${id}`);
     try {
-      await dbService.markAgentActionHandled(id, handledReason);
-      onShowToast('Cara action marked handled', 'success');
+      const target = item.kind === 'failed_action' ? { ledgerId: id } : { alertId: id };
+      await dbService.adminMarkRecoveryComplete(target, handledReason.trim());
+      onShowToast('Recovery marked complete', 'success');
     } catch (err) {
-      console.error('mark Cara action handled failed:', err);
-      onShowToast('Failed to mark action handled', 'error');
+      console.error('mark recovery complete failed:', err);
+      onShowToast(`Failed to mark complete: ${(err as Error)?.message ?? 'backend error'}`, 'error');
     } finally {
       setBusyAction(null);
     }
   }
 
+  // Executable cancel (U4). Transitions the pending action to a terminal
+  // cancelled state on the backend WITHOUT running the underlying tool.
   async function cancelSelectedPendingAction(item: QueueItem) {
     const id = rawId(item);
     if (!id) return;
@@ -464,30 +491,38 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
     }
     setBusyAction(`cancel:${id}`);
     try {
-      await dbService.cancelPendingAction(id, operatorNote);
-      onShowToast('Pending Cara approval cancelled', 'success');
+      await dbService.adminCancelPendingAction(id, operatorNote.trim());
+      onShowToast('Pending Cara approval cancelled (tool not executed)', 'success');
     } catch (err) {
       console.error('cancel pending Cara action failed:', err);
-      onShowToast('Failed to cancel pending approval', 'error');
+      onShowToast(`Failed to cancel: ${(err as Error)?.message ?? 'backend error'}`, 'error');
     } finally {
       setBusyAction(null);
     }
   }
 
-  async function reproposeSelectedPendingAction(item: QueueItem) {
+  // Executable replay (U4). Re-runs the pending action's tool on the backend.
+  // High-risk replays require the operator to tick the confirmation box.
+  async function replaySelectedPendingAction(item: QueueItem) {
     const id = rawId(item);
     if (!id) return;
-    if (!operatorNote.trim()) {
-      onShowToast('Add a re-proposal reason first', 'error');
+    const highRisk = isHighRiskReplay(item);
+    if (highRisk && !highRiskConfirm) {
+      onShowToast('High-risk replay needs explicit confirmation', 'error');
       return;
     }
-    setBusyAction(`repropose:${id}`);
+    setBusyAction(`replay:${id}`);
     try {
-      await dbService.reproposePendingAction(id, operatorNote);
-      onShowToast('Pending Cara approval record re-opened', 'success');
+      const key = newIdempotencyKey('replay', id);
+      const res = await dbService.adminReplayPendingAction(id, key, highRisk ? highRiskConfirm : false);
+      if (res?.success) {
+        onShowToast('Pending action replayed successfully', 'success');
+      } else {
+        onShowToast(`Replay failed: ${res?.error ?? 'see admin alerts'}`, 'error');
+      }
     } catch (err) {
-      console.error('re-propose pending Cara action failed:', err);
-      onShowToast('Failed to re-open pending approval record', 'error');
+      console.error('replay pending Cara action failed:', err);
+      onShowToast(`Replay failed: ${(err as Error)?.message ?? 'backend error'}`, 'error');
     } finally {
       setBusyAction(null);
     }
@@ -649,7 +684,13 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
                 <DetailBlock title="Recovery actions">
                   <div className="space-y-3">
                     <p className="text-xs text-slate-500">
-                      These controls update the operator recovery record. They do not resend Linq messages or re-run tools automatically.
+                      These controls <strong>execute on the backend</strong> through admin-gated callables — they really do
+                      retry failed Linq deliveries, replay pending actions, and cancel approvals. <strong>Retries and replays
+                      run for real</strong> (re-sending messages / re-running tools), high-risk replays (e.g. healthcare portal
+                      actions) require the explicit confirmation box below, every attempt is idempotency-keyed against
+                      double-execution, and a failed retry stays failed and raises a fresh admin alert rather than reporting
+                      success. <strong>Cancelling a pending approval never runs the underlying tool.</strong> Every action here
+                      is audit-logged to the operator.
                     </p>
                     <label className="block">
                       <span className="text-xs font-semibold text-slate-500 uppercase">Operator note</span>
@@ -657,21 +698,47 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
                         value={operatorNote}
                         onChange={(event) => setOperatorNote(event.target.value)}
                         rows={3}
-                        placeholder={selected.kind === 'pending_approval' ? 'Why are you cancelling or re-opening this approval?' : 'What should be retried or checked before retry?'}
+                        placeholder={selected.kind === 'pending_approval' ? 'Why are you cancelling this approval? (required to cancel)' : 'What was checked before retry? (optional)'}
                         className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
                       />
                     </label>
 
                     {selected.kind === 'failed_action' && (
-                      <label className="block">
-                        <span className="text-xs font-semibold text-slate-500 uppercase">Handled reason</span>
-                        <textarea
-                          value={handledReason}
-                          onChange={(event) => setHandledReason(event.target.value)}
-                          rows={2}
-                          placeholder="What was verified or resolved?"
-                          className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                      <>
+                        <label className="block">
+                          <span className="text-xs font-semibold text-slate-500 uppercase">Recovery owner (optional)</span>
+                          <input
+                            value={recoveryOwner}
+                            onChange={(event) => setRecoveryOwner(event.target.value)}
+                            placeholder="Name/label of the operator who owns this"
+                            className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-xs font-semibold text-slate-500 uppercase">Handled reason (required to mark complete)</span>
+                          <textarea
+                            value={handledReason}
+                            onChange={(event) => setHandledReason(event.target.value)}
+                            rows={2}
+                            placeholder="What was verified or resolved?"
+                            className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                          />
+                        </label>
+                      </>
+                    )}
+
+                    {selected.kind === 'pending_approval' && isHighRiskReplay(selected) && (
+                      <label className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={highRiskConfirm}
+                          onChange={(event) => setHighRiskConfirm(event.target.checked)}
+                          className="mt-0.5"
                         />
+                        <span className="text-xs text-red-700">
+                          <strong>High-risk replay.</strong> This re-runs a real healthcare/portal action. I confirm I want to
+                          execute it again.
+                        </span>
                       </label>
                     )}
 
@@ -684,7 +751,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
                             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                           >
                             <UserCheck className="w-4 h-4" />
-                            {busyAction === `assign:${rawId(selected)}` ? 'Assigning...' : 'Assign to me'}
+                            {busyAction === `assign:${rawId(selected)}` ? 'Assigning...' : 'Assign owner'}
                           </button>
                           <button
                             onClick={() => requestRetryForSelectedAction(selected)}
@@ -692,7 +759,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
                             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 disabled:opacity-50"
                           >
                             <RotateCcw className="w-4 h-4" />
-                            {busyAction === `retry:${rawId(selected)}` ? 'Recording...' : 'Request retry'}
+                            {busyAction === `retry:${rawId(selected)}` ? 'Retrying...' : selected.category === 'linq' ? 'Retry delivery' : 'Retry action'}
                           </button>
                           <button
                             onClick={() => markSelectedActionHandled(selected)}
@@ -700,7 +767,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
                             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50"
                           >
                             <Check className="w-4 h-4" />
-                            {busyAction === `handled:${rawId(selected)}` ? 'Saving...' : 'Mark handled'}
+                            {busyAction === `handled:${rawId(selected)}` ? 'Saving...' : 'Mark recovery complete'}
                           </button>
                         </>
                       )}
@@ -708,12 +775,12 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
                       {selected.kind === 'pending_approval' && (
                         <>
                           <button
-                            onClick={() => reproposeSelectedPendingAction(selected)}
-                            disabled={busyAction === `repropose:${rawId(selected)}`}
+                            onClick={() => replaySelectedPendingAction(selected)}
+                            disabled={busyAction === `replay:${rawId(selected)}` || (isHighRiskReplay(selected) && !highRiskConfirm)}
                             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 disabled:opacity-50"
                           >
                             <RotateCcw className="w-4 h-4" />
-                            {busyAction === `repropose:${rawId(selected)}` ? 'Re-opening...' : 'Re-open record'}
+                            {busyAction === `replay:${rawId(selected)}` ? 'Replaying...' : 'Replay action'}
                           </button>
                           <button
                             onClick={() => cancelSelectedPendingAction(selected)}

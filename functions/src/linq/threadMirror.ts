@@ -25,14 +25,20 @@ const chatUserCache = new Map<string, { userIds: string[]; cachedAt: number }>()
 async function resolveUserIds(params: { userId?: string; chatId?: string }): Promise<string[]> {
   if (params.userId) return [params.userId];
   if (!params.chatId) return [];
-  const cached = chatUserCache.get(params.chatId);
-  if (cached && Date.now() - cached.cachedAt < CHAT_USER_CACHE_TTL_MS) {
-    return cached.userIds;
-  }
-  if (cached) chatUserCache.delete(params.chatId); // expired — re-query below
 
+  // Resolve the direct lookup first; only fall back to group resolution when no
+  // direct session matches. Cache keys are namespaced by lookup type ("direct:"
+  // vs "group:") so a chatId that happens to equal some other session's
+  // groupChatId can never return the wrong branch's cached userIds.
   let userIds: string[] = [];
   try {
+    const directKey = `direct:${params.chatId}`;
+    const directCached = chatUserCache.get(directKey);
+    if (directCached && Date.now() - directCached.cachedAt < CHAT_USER_CACHE_TTL_MS) {
+      return directCached.userIds;
+    }
+    if (directCached) chatUserCache.delete(directKey); // expired — re-query below
+
     const directSnap = await db.collection("agent_sessions")
       .where("chatId", "==", params.chatId)
       .limit(1)
@@ -41,30 +47,40 @@ async function resolveUserIds(params: { userId?: string; chatId?: string }): Pro
     if (!directSnap.empty) {
       const userId = directSnap.docs[0].data().userId as string | undefined;
       if (userId) userIds = [userId];
-    } else {
-      // Mirror every member of a family group, bounded by a generous cap far
-      // above realistic family size to avoid an unbounded scan. If a group ever
-      // hits the cap we warn (rather than silently dropping members from their
-      // web inbox) so operators can investigate.
-      const GROUP_MIRROR_LIMIT = 50;
-      const groupSnap = await db.collection("agent_sessions")
-        .where("groupChatId", "==", params.chatId)
-        .limit(GROUP_MIRROR_LIMIT)
-        .get();
-      if (groupSnap.docs.length === GROUP_MIRROR_LIMIT) {
-        console.warn(`threadMirror: group ${params.chatId} hit the ${GROUP_MIRROR_LIMIT}-member mirror cap — some members may be missing from web-inbox mirroring; investigate.`);
-      }
-      userIds = [...new Set(groupSnap.docs
-        .map((doc) => doc.data().userId as string | undefined)
-        .filter((id): id is string => !!id))];
+      chatUserCache.set(directKey, { userIds, cachedAt: Date.now() });
+      return userIds;
     }
+
+    const groupKey = `group:${params.chatId}`;
+    const groupCached = chatUserCache.get(groupKey);
+    if (groupCached && Date.now() - groupCached.cachedAt < CHAT_USER_CACHE_TTL_MS) {
+      return groupCached.userIds;
+    }
+    if (groupCached) chatUserCache.delete(groupKey); // expired — re-query below
+
+    // Mirror every member of a family group, bounded by a generous cap far
+    // above realistic family size to avoid an unbounded scan. We query for one
+    // more than the cap so we can tell "exactly at cap" (complete) from "over
+    // cap" (truly truncated) and only warn — rather than silently dropping
+    // members from their web inbox — in the latter case.
+    const GROUP_MIRROR_LIMIT = 50;
+    const groupSnap = await db.collection("agent_sessions")
+      .where("groupChatId", "==", params.chatId)
+      .limit(GROUP_MIRROR_LIMIT + 1)
+      .get();
+    if (groupSnap.docs.length > GROUP_MIRROR_LIMIT) {
+      console.warn(`threadMirror: group ${params.chatId} exceeded the ${GROUP_MIRROR_LIMIT}-member mirror cap — some members may be missing from web-inbox mirroring; investigate.`);
+    }
+    userIds = [...new Set(groupSnap.docs
+      .slice(0, GROUP_MIRROR_LIMIT)
+      .map((doc) => doc.data().userId as string | undefined)
+      .filter((id): id is string => !!id))];
+    chatUserCache.set(groupKey, { userIds, cachedAt: Date.now() });
+    return userIds;
   } catch (err) {
     console.warn("threadMirror: chatId->userId lookup failed", err);
     return [];
   }
-
-  chatUserCache.set(params.chatId, { userIds, cachedAt: Date.now() });
-  return userIds;
 }
 
 export async function mirrorToWebThread(params: {

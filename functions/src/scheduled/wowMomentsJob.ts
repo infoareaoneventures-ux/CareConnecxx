@@ -49,11 +49,15 @@ export async function buildWowContextForClient(
   const completedSorted = [...completed].sort((a, b) => String(a.date ?? "").localeCompare(String(b.date ?? "")));
   const firstDate = completedSorted[0]?.date;
   const onboardingData = (session.onboardingData ?? {}) as Record<string, unknown>;
+  // These come from untyped Firestore docs — only treat them as the strings the
+  // WowContext expects when they actually are strings; otherwise leave undefined
+  // so a non-string value can't silently flow through as a bogus name/date.
+  const asString = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
   return {
-    clientName:         onboardingData.name as string | undefined,
-    seniorName:         (session.seniorName as string | undefined) ?? (onboardingData.seniorName as string | undefined),
-    clientJoinedAt:     session.createdAt as string | undefined,
+    clientName:         asString(onboardingData.name),
+    seniorName:         asString(session.seniorName) ?? asString(onboardingData.seniorName),
+    clientJoinedAt:     asString(session.createdAt),
     firstVisitAt:       firstDate ? new Date(String(firstDate)).toISOString() : undefined,
     completedVisits:    completed.length,
     recentEvents:       appts

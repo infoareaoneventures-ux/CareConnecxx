@@ -59,13 +59,15 @@ export function buildExperimentScorecard(records: TurnRecord[]): ExperimentScore
       avgDurationMs: s.turns ? Math.round(s.durSum / s.turns) : 0,
     })).sort((a, b) => b.turns - a.turns);
 
-    // Graduation gate: a non-control variant with enough sample whose error AND
-    // empty rates are no worse than control (or no control present) graduates.
+    // Graduation gate: a non-control variant graduates only when a control
+    // baseline EXISTS and the treatment has enough sample AND its error and
+    // empty rates are no worse than control's. Without a control there is no
+    // evidence the treatment is better, so it must not graduate.
     const control = variants.find((v) => v.variant === "control");
     const ready = variants.find((v) =>
       v.variant !== "control" &&
       v.turns >= MIN_SAMPLE &&
-      (!control || (v.errorRate <= control.errorRate && v.emptyRate <= control.emptyRate)),
+      !!control && v.errorRate <= control.errorRate && v.emptyRate <= control.emptyRate,
     );
     out.push({ experimentKey, variants, readyToGraduate: ready?.variant ?? null });
   }

@@ -355,7 +355,11 @@ export async function reconcileMemoryFile(
         "anything else. Keep it concise. Reply with ONLY the revised markdown content.",
       messages: [{ role: "user", content }],
     });
-    const revised = ((result.content[0] as { text: string }).text ?? "").trim();
+    const block = result.content[0];
+    // Anthropic content blocks are a discriminated union — only a "text" block
+    // carries `.text`. A non-text block (e.g. tool_use) would otherwise read as
+    // undefined and throw; treat anything else as nothing to reconcile.
+    const revised = (block?.type === "text" ? block.text : "").trim();
     // No-op when the model returns nothing or the file is already clean.
     if (!revised || revised === content.trim()) return false;
     await writeMemoryFile(userId, file, revised);

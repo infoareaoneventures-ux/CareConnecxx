@@ -19,6 +19,15 @@ const hoisted = vi.hoisted(() => {
       docState.set(path, opts?.merge ? { ...(docState.get(path) ?? {}), ...data } : data);
     }),
     update: vi.fn(async (data: any) => {
+      // Mirror Firestore: update() on a non-existent document rejects with
+      // NOT_FOUND (gRPC code 5) rather than creating it. This is what lets the
+      // tests verify the production .catch handlers around the groupChatId
+      // backfill actually swallow the missing-session case (no phantom docs).
+      if (!docState.has(path)) {
+        const err: any = new Error(`5 NOT_FOUND: no document to update: ${path}`);
+        err.code = 5;
+        throw err;
+      }
       updates.push({ path, data });
       docState.set(path, { ...(docState.get(path) ?? {}), ...data });
     }),
@@ -114,12 +123,18 @@ describe("buildOrUpdateFamilyGroup", () => {
     vi.clearAllMocks();
   });
 
-  it("backfills groupChatId when adding a phone to an existing family group", async () => {
+  it("backfills groupChatId onto existing sessions and skips phones with no session", async () => {
     hoisted.docState.set("senior_profiles/client1", {
       name: "Jane",
       familyMembers: [{ phone: "+15550002222" }],
     });
     hoisted.docState.set("users/client1", { phone: "+15550001111" });
+    // The group doc and the primary's session already exist. The family member
+    // (+15550002222) has NOT onboarded, so there is no agent_sessions doc for it.
+    hoisted.docState.set("family_groups/groupDoc", {
+      seniorId: "client1", chatId: "linq-group-1", phones: ["+15550001111"],
+    });
+    hoisted.docState.set("agent_sessions/+15550001111", { userId: "client1" });
     hoisted.collState.set("family_groups", [{
       id: "groupDoc",
       seniorId: "client1",
@@ -130,8 +145,11 @@ describe("buildOrUpdateFamilyGroup", () => {
     await buildOrUpdateFamilyGroup("client1");
 
     expect(addParticipant).toHaveBeenCalledWith("linq-group-1", "+15550002222");
+    // Existing session gets the backfill via update()...
     expect(hoisted.docState.get("agent_sessions/+15550001111")).toMatchObject({ groupChatId: "linq-group-1" });
-    expect(hoisted.docState.get("agent_sessions/+15550002222")).toMatchObject({ groupChatId: "linq-group-1" });
+    // ...the un-onboarded member's update rejects NOT_FOUND and is swallowed —
+    // no phantom session doc is created.
+    expect(hoisted.docState.has("agent_sessions/+15550002222")).toBe(false);
     expect(hoisted.updates).toContainEqual({
       path: "family_groups/groupDoc",
       data: { phones: { __arrayUnion: ["+15550002222"] } },
@@ -139,12 +157,14 @@ describe("buildOrUpdateFamilyGroup", () => {
     expect(sendMessage).toHaveBeenCalledWith("linq-group-1", expect.stringContaining("Welcome to the group"));
   });
 
-  it("backfills groupChatId when creating a new family group", async () => {
+  it("creates a new family group and backfills groupChatId via update (no phantom sessions)", async () => {
     hoisted.docState.set("senior_profiles/client1", {
       name: "Jane",
       familyMembers: [{ phone: "+15550002222" }],
     });
     hoisted.docState.set("users/client1", { phone: "+15550001111" });
+    // Primary has a session; the family member has not onboarded (no session).
+    hoisted.docState.set("agent_sessions/+15550001111", { userId: "client1" });
     // No family_groups doc → exercises the new-group creation path.
 
     await buildOrUpdateFamilyGroup("client1");
@@ -157,14 +177,15 @@ describe("buildOrUpdateFamilyGroup", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({ seniorId: "client1", chatId: "new-group" });
 
-    // groupChatId backfill must use update() (not set/merge) so phones that
-    // never onboarded don't get phantom agent_sessions docs.
-    for (const phone of ["+15550001111", "+15550002222"]) {
-      expect(hoisted.updates).toContainEqual({
-        path: `agent_sessions/${phone}`,
-        data: { groupChatId: "new-group" },
-      });
-    }
+    // Existing session is backfilled via update()...
+    expect(hoisted.updates).toContainEqual({
+      path: "agent_sessions/+15550001111",
+      data: { groupChatId: "new-group" },
+    });
+    // ...the un-onboarded member's update rejects NOT_FOUND and is swallowed —
+    // no phantom session doc...
+    expect(hoisted.docState.has("agent_sessions/+15550002222")).toBe(false);
+    // ...and set/merge is never used for sessions (that would create phantoms).
     expect(hoisted.sets.filter((s) => s.path.startsWith("agent_sessions/"))).toHaveLength(0);
   });
 });

@@ -44,6 +44,14 @@ describe("isConfirmedActionValid", () => {
     }
   });
 
+  it("accepts an approved action (user approval awaiting execution)", () => {
+    expect(isConfirmedActionValid({ ...base, status: "approved" }, "cancel_appointment", "+15550001111", NOW)).toBe(true);
+  });
+
+  it("rejects an executing action (already claimed for execution)", () => {
+    expect(isConfirmedActionValid({ ...base, status: "executing" }, "cancel_appointment", "+15550001111", NOW)).toBe(false);
+  });
+
   it("rejects when no phone is provided", () => {
     expect(isConfirmedActionValid(base, "cancel_appointment", undefined, NOW)).toBe(false);
   });

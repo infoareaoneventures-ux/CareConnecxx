@@ -211,7 +211,16 @@ export async function sendViaInteractionAgent(
   // Suppress an exact duplicate to the same chat within a short window (all
   // urgencies — a doubled critical message is a redelivery artifact). Distinct
   // content, or the same content sent later, still goes out.
-  if (!(await claimOutboundSend(phone, targetChatId, output.content))) {
+  // Fail open (like the supervisor call below): if the dedup claim throws
+  // (e.g. Firestore unavailable) we send anyway rather than letting Cara go
+  // dark — a rare duplicate is far less harmful than a dropped message.
+  let isDuplicate = false;
+  try {
+    isDuplicate = !(await claimOutboundSend(phone, targetChatId, output.content));
+  } catch (err) {
+    console.error("caraAgent: outbound dedup claim failed, sending anyway (fail-open)", err instanceof Error ? err.message : String(err));
+  }
+  if (isDuplicate) {
     logAudit({
       eventType: "message_sent",
       userId:    phone,

@@ -446,8 +446,9 @@ describe("MCP tool smoke coverage", () => {
     });
 
     it("cancel_followup returns NOT_FOUND for a missing follow-up", async () => {
-      const r = await handleToolCall("cancel_followup", { triggerId: "nope" }) as any;
+      const r = await handleToolCall("cancel_followup", { triggerId: "nope", userId: "u1" }) as any;
       expect(r._toolError).toBe(true);
+      expect(r.code).toBe("NOT_FOUND");
     });
   });
 
@@ -487,6 +488,18 @@ describe("MCP tool smoke coverage", () => {
       hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
       const sendCg = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(typeof sendCg.notification.sent).toBe("boolean");
+    });
+
+    it("rejects a _confirmedActionId pointing at an already-resolved pending action", async () => {
+      // U12 hardened gate: a _confirmedActionId must reference a still-valid
+      // (awaiting/approved, unexpired) pending doc. An "executed" doc is already
+      // resolved, so the gate must refuse with PERMISSION_DENIED rather than
+      // re-running the irreversible action.
+      hoisted.docState.set("pending_actions/done", { toolName: "cancel_appointment", status: "executed", expiresAt: "2999-01-01T00:00:00.000Z" });
+      hoisted.docState.set("appointments/a1", { clientId: "c1", status: "confirmed", caregiverId: "cg1" });
+      const r = await handleToolCall("cancel_appointment", { appointmentId: "a1", clientId: "c1", _confirmedActionId: "done" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("PERMISSION_DENIED");
     });
   });
 

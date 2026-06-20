@@ -107,4 +107,91 @@ describe("mirrorToWebThread", () => {
       });
     }
   });
+
+  it("mirrors a direct chatId (non-group) by resolving agent_sessions.chatId", async () => {
+    hoisted.collState.set("agent_sessions", [
+      { id: "primary", chatId: "direct-chat-A", groupChatId: "some-group", userId: "soloClient" },
+    ]);
+
+    await mirrorToWebThread({ chatId: "direct-chat-A", direction: "outbound", text: "Hi there" });
+
+    expect(hoisted.docState.get("threads/cara_soloClient")).toMatchObject({
+      participants: ["soloClient", "cara"],
+      lastMessage: "Hi there",
+      unreadCount: { __increment: 1 },
+    });
+    // The other group members must NOT be mirrored — the direct match wins.
+    expect(hoisted.adds).toHaveLength(1);
+  });
+
+  it("omits unreadCount for inbound messages and preserves any existing unread", async () => {
+    hoisted.collState.set("agent_sessions", [
+      { id: "primary", chatId: "direct-chat-B", userId: "inboundClient" },
+    ]);
+    // Pre-existing unread from earlier unopened Cara replies must survive a
+    // merge:true write that omits unreadCount.
+    hoisted.docState.set("threads/cara_inboundClient", { unreadCount: 3 });
+
+    await mirrorToWebThread({ chatId: "direct-chat-B", direction: "inbound", text: "Thanks!" });
+
+    const thread = hoisted.docState.get("threads/cara_inboundClient");
+    expect(thread.unreadCount).toBe(3); // not overwritten, not incremented
+    expect(hoisted.adds).toContainEqual({
+      path: "threads/cara_inboundClient/messages",
+      data: expect.objectContaining({
+        text: "Thanks!",
+        senderId: "inboundClient",
+        isRead: true,
+        source: "cara_sms",
+      }),
+    });
+  });
+
+  it("ignores empty/whitespace text without writing anything", async () => {
+    hoisted.collState.set("agent_sessions", [
+      { id: "primary", chatId: "direct-chat-C", userId: "c9" },
+    ]);
+
+    await mirrorToWebThread({ chatId: "direct-chat-C", direction: "outbound", text: "   " });
+
+    expect(hoisted.sets).toHaveLength(0);
+    expect(hoisted.adds).toHaveLength(0);
+  });
+
+  it("warns and truncates only when group members EXCEED the 50-member cap", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Exactly 50 members → complete, no warning.
+    const exactly50 = Array.from({ length: 50 }, (_, i) => ({ id: `m${i}`, groupChatId: "group-50", userId: `u50_${i}` }));
+    hoisted.collState.set("agent_sessions", exactly50);
+    await mirrorToWebThread({ chatId: "group-50", direction: "outbound", text: "cap-edge" });
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    warnSpy.mockClear();
+    hoisted.reset();
+
+    // 51 members → truncated, warning fires, and only 50 get mirrored.
+    const fiftyOne = Array.from({ length: 51 }, (_, i) => ({ id: `n${i}`, groupChatId: "group-51", userId: `u51_${i}` }));
+    hoisted.collState.set("agent_sessions", fiftyOne);
+    await mirrorToWebThread({ chatId: "group-51", direction: "outbound", text: "over-cap" });
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("exceeded the 50-member mirror cap"));
+    expect(hoisted.adds).toHaveLength(50);
+
+    warnSpy.mockRestore();
+  });
+
+  it("reuses cached userIds within the TTL (no re-query needed)", async () => {
+    hoisted.collState.set("agent_sessions", [
+      { id: "primary", chatId: "direct-chat-cache", userId: "cachedUser" },
+    ]);
+
+    await mirrorToWebThread({ chatId: "direct-chat-cache", direction: "outbound", text: "first" });
+    expect(hoisted.docState.get("threads/cara_cachedUser")).toBeDefined();
+
+    // Drop the session data — a cache hit must still resolve the same userId.
+    hoisted.collState.clear();
+    await mirrorToWebThread({ chatId: "direct-chat-cache", direction: "outbound", text: "second" });
+
+    expect(hoisted.docState.get("threads/cara_cachedUser").lastMessage).toBe("second");
+  });
 });

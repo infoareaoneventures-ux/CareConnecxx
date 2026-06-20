@@ -71,7 +71,7 @@ Current code posture:
 
 ## Residual Risks
 
-- Control Room retry/re-open currently records durable operator recovery intent. It does not resend Linq prompts or re-execute tools automatically; actual replay should be implemented server-side only for explicitly idempotent actions.
+- Control Room retry/re-open records durable operator recovery intent only. The operator UI now states explicitly that these controls record intent in the audit trail, do not resend Linq prompts or re-execute tools, and that actual replay must be performed manually on the backend — so operators can't mistake a recorded retry for an executed one. Automated server-side replay (for explicitly idempotent actions only) remains a tracked follow-up before this gap is fully closed.
 - Real Linq group behavior may differ from mocks.
 - Full Firestore rules unit coverage is still needed for client/caregiver/family/admin roles.
 - Bundle-size/minifier warnings are present during frontend build; they are warnings, not failures.

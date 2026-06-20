@@ -21,6 +21,9 @@ export interface LearnedFactWithId extends LearnedFact {
   _docId: string;
 }
 
+export const MEMORY_CORRECTION_PATTERN =
+  /actually|wait,?|sorry|i meant|meant to say|no,?\s*it'?s|that'?s wrong|wrong,?\s*it'?s|not\s+\d+|his\s+(doctor|nurse|med|name|age|condition)|her\s+(doctor|nurse|med|name|age|condition)|they?\s+(changed|switched|stopped|started|now\s+takes?|no\s+longer)|update|correction|forgot\s+to\s+mention|should\s+be|it'?s\s+actually|the\s+(new|correct|right)\s+(doctor|medication|med|number|address|diagnosis)|forget\s+(that|what i said|the old|about)|don'?t\s+(remember|save|store|keep)\s+(that|this|it)|remove\s+(that|this|it)\s+from\s+(memory|what you remember)|delete\s+(that|this|it)\s+from\s+(memory|what you remember)|stop\s+remembering/i;
+
 // Normalize a fact string for deduplication comparison
 function normalizeFact(fact: string): string {
   return fact.toLowerCase().replace(/\s+/g, " ").trim();
@@ -280,7 +283,7 @@ export async function detectAndApplyCorrection(
 ): Promise<boolean> {
   // Fast pre-filter — only run if message looks like a correction or an update to known information.
   // Deliberately broad: false positives are cheap (one Haiku call); false negatives silently corrupt memory.
-  if (!/actually|wait,?|sorry|i meant|meant to say|no,?\s*it'?s|that'?s wrong|wrong,?\s*it'?s|not\s+\d+|his\s+(doctor|nurse|med|name|age|condition)|her\s+(doctor|nurse|med|name|age|condition)|they?\s+(changed|switched|stopped|started|now\s+takes?|no\s+longer)|update|correction|forgot\s+to\s+mention|should\s+be|it'?s\s+actually|the\s+(new|correct|right)\s+(doctor|medication|med|number|address|diagnosis)/i.test(text)) {
+  if (!MEMORY_CORRECTION_PATTERN.test(text)) {
     return false;
   }
 
@@ -298,7 +301,9 @@ export async function detectAndApplyCorrection(
         "You are given a numbered list of known facts and the user's message. " +
         "If the message directly corrects one of the known facts, reply with JSON only (no markdown fences): " +
         "{\"corrects\": <index>, \"newFact\": \"<corrected text>\", \"category\": \"medical|preference|routine|family\"}. " +
-        "If the message retracts a fact without replacement: {\"corrects\": <index>, \"newFact\": null}. " +
+        "If the message asks you to forget, remove, stop remembering, delete from memory, or retract a fact without replacement, return: " +
+        "{\"corrects\": <index>, \"newFact\": null}. " +
+        "Only retract a fact the user clearly identifies; do not delete unrelated facts. " +
         "If this is NOT a correction of a known fact, reply with the single word: null",
       `Known facts:\n${factsJson}\n\nUser message: "${text}"`,
       { maxTokens: 200 },

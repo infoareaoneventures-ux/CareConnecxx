@@ -18,7 +18,20 @@ vi.mock("firebase-admin", () => {
     getFiles: async () => [[]],
   };
   const storage = () => ({ bucket: () => bucket });
-  const firestore = Object.assign(() => ({ collection: () => ({}) }), { FieldValue: {} });
+  const firestore = Object.assign(() => ({
+    collection: () => ({
+      doc: () => ({
+        collection: () => ({
+          where: () => ({ get: async () => ({ empty: true, docs: [] }) }),
+        }),
+      }),
+    }),
+    batch: () => ({
+      set: vi.fn(),
+      delete: vi.fn(),
+      commit: vi.fn(async () => undefined),
+    }),
+  }), { FieldValue: {} });
   return { __esModule: true, default: { storage, firestore }, storage, firestore };
 });
 

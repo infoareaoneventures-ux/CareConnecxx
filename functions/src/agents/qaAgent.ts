@@ -212,7 +212,19 @@ Never speculate about facts you have not verified. If the family references a sp
 After receiving tool results, carefully reflect on their quality and determine optimal next steps before proceeding. Use your reasoning to plan and iterate based on this new information, and then take the best next action.
 </tool_result_reflection>`;
 
-function buildClientSystemPrompt(
+export const MEMORY_SOURCE_PRIORITY_POLICY = [
+  "<memory_source_priority>",
+  "When sources disagree, use this order:",
+  "1. The user's latest message in this turn.",
+  "2. Fresh tool results or live Firestore state from this turn, including care plan, appointments, shiftHours, invoices, Checkr, and care journal reads.",
+  "3. Recent care journal entries and active visit context already loaded into this prompt.",
+  "4. Learned facts that are not superseded.",
+  "5. Memory files and Zep long-term context.",
+  "Never use older memory to override a newer user correction or a fresh tool result. If a memory fact conflicts with a tool result, trust the tool result, mention the current value only, and use edit_memory_file or update_memory_file when a memory tool is available. If the user asks you to forget or stop remembering a fact, retract or edit it instead of repeating it.",
+  "</memory_source_priority>",
+].join("\n");
+
+export function buildClientSystemPrompt(
   senior: any,
   journal: any[],
   nextAppt: any | null,
@@ -278,6 +290,8 @@ function buildClientSystemPrompt(
     `- BAD: "Let me check your next visit." (no tool call)`,
     `- GOOD: call get_upcoming_appointments, then reply with the actual answer.`,
     `If you need more info from the family before you can call the tool (e.g. you don't know what they want), ASK a concrete question — don't say "let me check" first.`,
+    ``,
+    MEMORY_SOURCE_PRIORITY_POLICY,
     ``,
     `CAREGIVER SEARCH — when the family asks for caregivers, options, or "give me names", call find_replacement_caregivers IMMEDIATELY. Do not re-ask about care needs if you already have them in the cached context above. The matching tool handles the search itself; you only need to invoke it. After invoking, your reply should briefly say what you're matching on ("I'm looking for caregivers near you who can help with bathing and meds — coming up.") — never "Let me pull up options" with no tool call.`,
     `When a family member expresses interest in a specific caregiver (e.g. "yes let's connect", "let's go with him", "I like her"), proactively call schedule_interview to set up an intro, or ask them for their preferred time if you don't have one yet. Do not punt them to a website or "team".`,
@@ -1231,12 +1245,23 @@ export async function runQaAgent(params: {
   // context — they may reference work on behalf of a different linked person.
   const skipCrossEntity = !!(session as any)?.__unconfirmedIdentity;
 
+  // Sentinel injected when the operations-context fetch FAILS — as opposed to a
+  // clean empty result (which means "nothing pending" and should add nothing).
+  // Mirrors ZEP_UNAVAILABLE_MARKER: tells Claude live operational state is
+  // missing this turn so it won't assert the status of any pending/failed/
+  // in-progress action.
+  const OPS_CONTEXT_UNAVAILABLE_MARKER =
+    "[SYSTEM: operations_context_unavailable] Cara's live operations context (pending confirmations, " +
+    "open admin alerts, recent failed actions, and account/visit/payment state) could not be loaded this turn. " +
+    "If the user asks about a pending, failed, or in-progress action, say you can't confirm its current status " +
+    "right now and ask them to try again in a moment; do not claim any such action succeeded, failed, or is pending.";
+
   if (!skipCrossEntity) {
     const operationalContext = await loadCaraOperationalContext({ phone, userId })
       .then(formatCaraOperationalContext)
       .catch((err) => {
         console.warn("qaAgent: operational context unavailable", err instanceof Error ? err.message : err);
-        return "";
+        return OPS_CONTEXT_UNAVAILABLE_MARKER;
       });
     if (operationalContext) {
       systemPrompt += `\n\n${operationalContext}`;

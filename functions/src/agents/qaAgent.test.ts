@@ -38,6 +38,8 @@ import {
   detectMedicationInstruction,
   detectMultiQuestionDataCollection,
   detectSupportDeflection,
+  buildClientSystemPrompt,
+  MEMORY_SOURCE_PRIORITY_POLICY,
   WARMTH_REFLECTION_OPENERS,
 } from "./qaAgent";
 
@@ -188,5 +190,27 @@ describe("WARMTH_REFLECTION_OPENERS", () => {
     "I've cancelled the visit.",
   ])("does NOT match transactional opener %p", (s) => {
     expect(WARMTH_REFLECTION_OPENERS.test(s)).toBe(false);
+  });
+});
+
+describe("memory source priority prompt", () => {
+  it("instructs Cara to prefer fresh tool/user facts over stale long-term memory", () => {
+    const prompt = buildClientSystemPrompt(
+      { name: "Anita", needs: ["companionship"] },
+      [],
+      null,
+      null,
+      "- Mom is 82 (profile)",
+      "Zep says Mom is 78",
+      "## profile\nMom is 78",
+      null,
+      "",
+    );
+
+    expect(prompt).toContain(MEMORY_SOURCE_PRIORITY_POLICY);
+    expect(prompt).toContain("The user's latest message");
+    expect(prompt).toContain("Fresh tool results or live Firestore state");
+    expect(prompt).toContain("Never use older memory to override a newer user correction");
+    expect(prompt).toContain("forget or stop remembering");
   });
 });

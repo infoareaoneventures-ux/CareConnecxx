@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
+import { SHIFT_PLATFORM_FEE_RATE, SHIFT_PLATFORM_FEE_MIN_DOLLARS } from './billing/config';
 
 const stripe = new Stripe(functions.config().stripe?.secret || process.env.STRIPE_SECRET_KEY, {
   timeout: 10_000, // cap SDK calls (default 80s) so a slow Stripe response can't run a payment handler to the function deadline
@@ -21,8 +22,8 @@ type ShiftHoursStatus =
   | 'payment_failed';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const PLATFORM_FEE_RATE = 0.015;       // 1.5%
-const PLATFORM_FEE_MIN = 0.50;         // $0.50 min
+const PLATFORM_FEE_RATE = SHIFT_PLATFORM_FEE_RATE;  // 1.5% — see billing/config.ts
+const PLATFORM_FEE_MIN = SHIFT_PLATFORM_FEE_MIN_DOLLARS;  // $0.50 min
 const MAX_PAYMENT_ATTEMPTS = 3;
 
 // ---------- helpers ----------

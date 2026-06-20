@@ -159,4 +159,43 @@ describe("U1 — charge-before-transfer settlement", () => {
     expect(hoisted.docState.get("shiftHours/a8")?.stripeChargeId).toBe("pi_retry");
     expect(hoisted.stripeApi.transfers.create).toHaveBeenCalledTimes(1);
   });
+
+  // U11 scenario 3 — a missing client payment method must move the shift to
+  // payment_failed (NOT mark it paid / report a false success), must not charge,
+  // and must not pay out the caregiver.
+  it("moves to payment_failed (not silent success) when the client has no default payment method", async () => {
+    hoisted.stripeApi.customers.retrieve.mockResolvedValueOnce({ invoice_settings: {} } as any); // no default_payment_method, no default_source
+    const r = await processShiftPayment("a9", { ...baseShift });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/default payment method/i);
+    expect(hoisted.stripeApi.paymentIntents.create).not.toHaveBeenCalled();
+    expect(hoisted.stripeApi.transfers.create).not.toHaveBeenCalled();
+    const shift = hoisted.docState.get("shiftHours/a9");
+    expect(shift?.status).toBe("payment_failed");
+    expect(shift?.status).not.toBe("paid");
+    expect(shift?.stripeFailureReason).toMatch(/default payment method/i);
+  });
+
+  // U11 scenario 4 (highest-value) — duplicate approval / re-fire of the
+  // payment path must NOT create a second charge or a second transfer. The
+  // hard idempotency short-circuit in processShiftPayment is the guard: once a
+  // shift is paid (charge + transfer recorded), a second invocation is a no-op.
+  it("duplicate approval does not double-charge or double-transfer (idempotency)", async () => {
+    hoisted.stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_dup", status: "succeeded" } as any);
+
+    // First approval → exactly one charge + one transfer, shift becomes paid.
+    const r1 = await processShiftPayment("a10", { ...baseShift });
+    expect(r1.ok).toBe(true);
+    expect(hoisted.stripeApi.paymentIntents.create).toHaveBeenCalledTimes(1);
+    expect(hoisted.stripeApi.transfers.create).toHaveBeenCalledTimes(1);
+    expect(hoisted.docState.get("shiftHours/a10")?.status).toBe("paid");
+
+    // Second approval reads the now-settled shift and must short-circuit —
+    // no new charge, no new transfer, still exactly one of each total.
+    const settled = hoisted.docState.get("shiftHours/a10");
+    const r2 = await processShiftPayment("a10", { ...settled });
+    expect(r2.ok).toBe(true);
+    expect(hoisted.stripeApi.paymentIntents.create).toHaveBeenCalledTimes(1);
+    expect(hoisted.stripeApi.transfers.create).toHaveBeenCalledTimes(1);
+  });
 });

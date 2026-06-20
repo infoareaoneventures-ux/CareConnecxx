@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { assertPayoutsReady } from "./payoutCommon";
+import { INSTANT_PAYOUT_FEE_RATE, INSTANT_PAYOUT_FEE_MIN_DOLLARS } from "./billing/config";
 const Stripe = require('stripe');
 
 if (!admin.apps.length) {
@@ -70,7 +71,7 @@ export const requestInstantPayout = functions.https.onCall(async (_data, context
                 throw new functions.https.HttpsError('failed-precondition', 'Minimum payout amount is $1.00');
             }
 
-            const fee = Math.max(totalEarnings * 0.015, 0.50);
+            const fee = Math.max(totalEarnings * INSTANT_PAYOUT_FEE_RATE, INSTANT_PAYOUT_FEE_MIN_DOLLARS);
             const netAmount = Math.round((totalEarnings - fee) * 100) / 100;
 
             shiftRefs.forEach((ref) => {

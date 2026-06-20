@@ -379,5 +379,86 @@ describe("U2 caregiver action tools", () => {
       expect(r._toolError).toBe(true);
       expect(payoutCreate).not.toHaveBeenCalled();
     });
+
+    // U11 scenario 6 — a payout that fails at Stripe must be ledgered and raise
+    // an admin_alert so it surfaces in the Cara Control Room (never a silent
+    // false success). The Stripe call throwing routes through the MCP
+    // dispatcher's catch, which writes admin_alerts via createCaraOpsAlert.
+    it("ledgers + admin-alerts a Stripe payout failure (Control Room visibility)", async () => {
+      hoisted.docState.set("caregivers/cg1", { stripeAccountId: "acct_1", payoutsEnabled: true });
+      payoutCreate.mockRejectedValueOnce(new Error("insufficient funds in Stripe balance"));
+      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
+      // Must NOT report success.
+      expect(r.success).not.toBe(true);
+      expect(r._toolError).toBe(true);
+      // An admin_alert was raised for the failed money-moving tool.
+      const alert = hoisted.adds.find(
+        (a) => a.path === "admin_alerts" && a.data.toolName === "request_standard_payout",
+      );
+      expect(alert).toBeTruthy();
+      expect(alert!.data.resolved).toBe(false);
+    });
+  });
+});
+
+// ── U11 — money-movement auditing / auth / idempotency / refund visibility ───
+describe("U11 payment auditing & safety", () => {
+  beforeEach(() => {
+    hoisted.reset();
+    trySend.mockClear(); trySend.mockResolvedValue({ sent: true });
+    payoutCreate.mockClear(); payoutCreate.mockResolvedValue({ id: "po_1", amount: 5000, status: "pending" });
+    balanceRetrieve.mockClear(); balanceRetrieve.mockResolvedValue({ available: [{ amount: 10000, currency: "usd" }] });
+  });
+
+  // Scenario 1 — a client may only review (approve/reject) shift hours they own.
+  describe("review_shift_hours auth + idempotency", () => {
+    it("denies a client reviewing another client's shift hours (PERMISSION_DENIED)", async () => {
+      hoisted.docState.set("shiftHours/a1", { clientId: "OTHER", caregiverId: "cg1", status: "pending_client_review" });
+      const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", decision: "approve" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("PERMISSION_DENIED");
+      // Status untouched — no approval, no charge can be triggered downstream.
+      expect(hoisted.docState.get("shiftHours/a1").status).toBe("pending_client_review");
+    });
+
+    it("approves shift hours the client owns", async () => {
+      hoisted.docState.set("shiftHours/a1", { clientId: "c1", caregiverId: "cg1", status: "pending_client_review" });
+      const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", decision: "approve" }) as any;
+      expect(r.success).toBe(true);
+      expect(hoisted.docState.get("shiftHours/a1").status).toBe("approved");
+    });
+
+    it("duplicate approval is rejected — already-approved hours cannot be re-approved (no second charge)", async () => {
+      hoisted.docState.set("shiftHours/a1", { clientId: "c1", caregiverId: "cg1", status: "approved" });
+      const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", decision: "approve" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.message).toMatch(/already reviewed/i);
+      // Still 'approved' — the second approval is a no-op, so onShiftHoursApproved
+      // (which fires only on the pending→approved transition) cannot re-run.
+      expect(hoisted.docState.get("shiftHours/a1").status).toBe("approved");
+    });
+  });
+
+  // Scenario 5 — a refund request creates admin-visible state and never auto-refunds.
+  describe("create_refund_request", () => {
+    it("writes a pending_review refundRequests record and does NOT auto-refund", async () => {
+      const r = await handleToolCall("create_refund_request", {
+        clientId: "c1", appointmentId: "a1", reason: "Visit was cut short",
+      }) as any;
+      expect(r.success).toBe(true);
+      expect(r.requestId).toBeTruthy();
+      const req = hoisted.adds.find((a) => a.path === "refundRequests");
+      expect(req).toBeTruthy();
+      expect(req!.data.status).toBe("pending_review");
+      expect(req!.data.clientId).toBe("c1");
+      // No Stripe refund was issued — admin review is required first.
+      expect(payoutCreate).not.toHaveBeenCalled();
+    });
+
+    it("requires clientId and appointmentId", async () => {
+      const r = await handleToolCall("create_refund_request", { clientId: "c1" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+    });
   });
 });

@@ -88,6 +88,10 @@ export { onShiftStatusChanged } from './triggers/shiftStatusTrigger';
 // Linq Sprint 3 — family group thread
 export { createFamilyGroup, addFamilyGroupMember } from './agents/familyGroupManager';
 
+// Token-scoped quick-confirm callable (replaces the QuickConfirmPage direct web
+// writes to agent_tasks / agent_approvals).
+export { confirmAgentTask, getAgentTaskByToken } from './agents/quickConfirm';
+
 // Linq Sprint 4 — weekly digest + monthly health trends
 export { sendWeeklyDigests, triggerWeeklyDigestNow } from './scheduled/weeklyDigest';
 export { sendMonthlyHealthTrends, triggerHealthTrendsNow } from './scheduled/healthTrends';

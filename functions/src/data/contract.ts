@@ -193,6 +193,30 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: true,
     notes: "Runtime confirmation queue for high-risk Cara actions; AdminCaraControlRoom reads stuck and awaiting approvals.",
   },
+  agent_tasks: {
+    path: "agent_tasks",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes:
+      "Booking/replacement task records written server-side across matchingAgent, replacementAgent, bookingExecutor, shiftOffer, triggers, etc. Two web readers: (1) the public QuickConfirmPage reads the SINGLE token-scoped doc via where('confirmToken','=='), (2) admin AuditDashboard reads awaiting tasks. Web writes are NOT allowed — confirmation is committed server-side via the confirmAgentTask callable. Rules: token-scoped reads for the public page + admin reads; writes denied.",
+  },
+  agent_tasks_active: {
+    path: "agent_tasks_active",
+    docId: "phone",
+    caraWrites: true,
+    webReads: false,
+    notes:
+      "Server-only single-active-task index keyed by clientPhone (replacementAgent/triggerEngine/qaAgent). No web reader — used only by backend routing to know if a replacement search is in-flight. No rules block required (default-deny is correct).",
+  },
+  agent_approvals: {
+    path: "agent_approvals",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes:
+      "Human-approval audit record for the quick-confirm flow. Was previously written DIRECTLY by QuickConfirmPage; now written server-side by the confirmAgentTask callable (Admin SDK). No web reader. Rules: deny all client access.",
+  },
 };
 
 /** Collection names (top-level segment only) that Cara writes. */

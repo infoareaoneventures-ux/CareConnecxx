@@ -46,6 +46,81 @@ const backendSource  = concatSources(['functions/src']);
 const frontendSource = concatSources(['services', 'components', 'hooks', 'context']);
 const rulesSource    = fs.readFileSync(path.join(ROOT, 'firestore.rules'), 'utf8');
 
+// ── Runtime-only collections allowlist ──────────────────────────────────────
+//
+// These collections are written by Cara (functions/src) but are INTENTIONALLY
+// not part of the Cara↔web data contract: the web app never reads them. They are
+// agent runtime state, server-only ledgers/queues, idempotency/lock/dedup docs,
+// rate-limit counters, subcollections, and internal observability streams.
+//
+// The scanner test below FAILS if Cara writes a top-level collection that is
+// neither registered in CONTRACT_COLLECTIONS nor listed here — that is the
+// signal to consciously decide: is this a new shared collection (add a contract
+// entry + rules block) or genuinely runtime-only (add it here)?
+const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
+    // Agent session / runtime state
+    'agent_sessions', 'agent_conversations', 'agent_turn_checkpoints',
+    'agent_prefetch', 'agent_dnd_queue', 'agent_permissions', 'agent_reactions',
+    'agent_read_receipts', 'agent_group_events', 'agent_imessage_retry',
+    // Observability / log streams (admin dashboards read some via direct
+    // collection() in AuditDashboard, but they are not part of the contract
+    // registry; they have their own rules and are server-write-only)
+    'agent_error_log', 'agent_event_log', 'agent_safety_log', 'agent_alerts_log',
+    'agent_uncertainty_log', 'agent_tool_metrics', 'cara_turn_metrics',
+    'caregiver_lateness_log', 'issue_log',
+    // Idempotency / lock / dedup / rate-limit docs
+    'agent_inbound_locks', 'agent_outbound_dedup', 'agent_rate', 'rate_limits',
+    'linq_pair_rate', 'linq_phone_health', 'smsThrottles',
+    'processed_stripe_events', 'processed_checkr_events',
+    // Internal queues / async work
+    'admin_email_queue', 'adminNotifications', 'job_notifications',
+    'health_alerts_pending', 'execution_agents', 'browser_sessions',
+    'credential_vault',
+    // Matching / scheduling internals (web reads the user-facing mirrors, not these)
+    'caregiver_booked_slots', 'replacement_candidates', 'recurring_schedules',
+    'booking_patterns', 'day_patterns', 'match_history', 'match_outcomes',
+    'clientMatches', 'match_assignments', 'memory_embeddings',
+    // Memory / facts (Zep + Firestore; web does not read these directly)
+    'facts', 'learned_facts',
+    // Triggers / engagement internals
+    'proactive_triggers', 'trigger_engagement', 'user_triggers',
+    // Health / wellbeing analytics streams
+    'health_signals', 'health_trends', 'health_summaries', 'wellbeing_checkins',
+    'post_visit_feedback',
+    // Billing / payment internals written server-side (web reads invoices/payments,
+    // not these intermediate/event records)
+    'billing_events', 'visit_billing', 'visit_payments', 'dispute_flags',
+    // Misc internal config / metrics
+    'system_config', 'experiment_scorecards', 'weekly_digests',
+    'user_preferences', 'wow_fires', '_meta',
+    // Server-only request/workflow records the web does not read directly
+    'blocks', 'comments', 'client_cancel_requests', 'email_change_requests',
+    'emergency_events', 'instant_payouts', 'refundRequests', 'shift_swap_requests',
+    // Subcollection leaf names that appear as bare collection("name") segments.
+    // Their parent docs are governed by the contract entry for the parent path.
+    'messages',          // threads/{id}/messages — covered by 'threads' entry
+    'care_keepsakes', 'care_plans', 'appointment_care_plans', 'carePlanVersions',
+    'shift_checkins', 'shift_hours', 'tax_summaries',
+]);
+
+// ── Tracked unregistered web-read collections (U10 backlog) ─────────────────
+//
+// HONESTY NOTE: these collections ARE read by the web app but predate the
+// Cara↔web contract registry. They are NOT runtime-only — putting them in
+// RUNTIME_ONLY_COLLECTIONS would be a lie ("web never reads"). They belong in
+// CONTRACT_COLLECTIONS, but adding accurate entries + rules audits for all of
+// them is the scope of plan unit U10 (Complete CRUD/lifecycle coverage), not
+// U5 (which closes the agent_* shared-workspace gap). This explicit set keeps
+// the scanner honest and green while documenting the remaining debt: the
+// scanner still FAILS if a *new* unregistered collection appears that is in
+// neither this set, RUNTIME_ONLY_COLLECTIONS, nor CONTRACT_COLLECTIONS.
+const UNREGISTERED_WEB_READ_COLLECTIONS = new Set<string>([
+    'chatRooms', 'customers', 'disputes', 'hire_requests', 'interview_requests',
+    'interviews', 'invoices', 'job_applications', 'notifications', 'payments',
+    'payouts', 'reports', 'responses', 'reviews', 'seniors', 'shifts',
+    'subscriptions', 'video_interviews', 'web_onboarding_sessions',
+]);
+
 describe('Cara ↔ Web collection contract', () => {
     const entries = Object.entries(CONTRACT_COLLECTIONS);
 
@@ -57,6 +132,49 @@ describe('Cara ↔ Web collection contract', () => {
             'support_tickets', 'admin_alerts', 'care_journal', 'proactive_drafts',
             'agent_audit_log', 'agent_action_ledger', 'pending_actions',
         ]) {
+            expect(names, `contract.ts is missing '${required}'`).toContain(required);
+        }
+    });
+
+    it('every Cara-written collection is registered in the contract or an explicit allowlist (U5)', () => {
+        // Scan functions/src for collection("name") / collection('name') /
+        // collection(db, "name") and extract the distinct top-level names Cara
+        // writes. (Subcollection leaves appear as bare segments too — they are
+        // covered by their parent path's contract entry or the allowlist.)
+        const re = /\.collection\(\s*["'`]([a-zA-Z_][a-zA-Z0-9_]*)["'`]\s*\)|collection\(\s*db\s*,\s*["'`]([a-zA-Z_][a-zA-Z0-9_]*)["'`]\s*\)/g;
+        const found = new Set<string>();
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(backendSource)) !== null) {
+            found.add(m[1] ?? m[2]);
+        }
+
+        // A scanned name is "known" if it is a contract key, a top-level segment
+        // of a contract path, or in one of the explicit allowlists.
+        const contractKeys = new Set(Object.keys(CONTRACT_COLLECTIONS));
+        const contractTops = new Set(
+            Object.values(CONTRACT_COLLECTIONS).map((c) => c.path.split('/')[0])
+        );
+        const known = (name: string) =>
+            contractKeys.has(name) ||
+            contractTops.has(name) ||
+            RUNTIME_ONLY_COLLECTIONS.has(name) ||
+            UNREGISTERED_WEB_READ_COLLECTIONS.has(name);
+
+        const unregistered = [...found].filter((n) => !known(n)).sort();
+
+        expect(
+            unregistered,
+            `Cara writes these collections but they are neither registered in ` +
+            `CONTRACT_COLLECTIONS nor allowlisted in tests/contractCollections.test.ts.\n` +
+            `Decide per collection: add a contract entry + firestore.rules block if the ` +
+            `web reads it, or add it to RUNTIME_ONLY_COLLECTIONS if it is server/runtime-only:\n` +
+            `  ${unregistered.join(', ')}`
+        ).toEqual([]);
+    });
+
+    it('the agent_* shared collections this unit owns are registered (U5)', () => {
+        const names = entries.map(([k]) => k);
+        for (const required of ['agent_tasks', 'agent_tasks_active', 'agent_approvals']) {
             expect(names, `contract.ts is missing '${required}'`).toContain(required);
         }
     });

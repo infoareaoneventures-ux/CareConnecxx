@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { CheckCircle, Clock, User, AlertCircle, Loader } from 'lucide-react';
-import { db } from '../../lib/firebase';
-import { collection, query, where, getDocs, doc, updateDoc, addDoc } from 'firebase/firestore';
+import { functions } from '../../lib/firebase';
 
 type PageState = 'loading' | 'ready' | 'confirming' | 'confirmed' | 'expired' | 'error';
 
@@ -12,7 +11,6 @@ export default function QuickConfirmPage() {
 
   const [state,    setState]    = useState<PageState>('loading');
   const [task,     setTask]     = useState<any>(null);
-  const [taskId,   setTaskId]   = useState<string>('');
   const [selected, setSelected] = useState<any>(null);
 
   useEffect(() => {
@@ -21,25 +19,19 @@ export default function QuickConfirmPage() {
   }, [token]);
 
   async function loadTask(t: string) {
-    if (!db) { setState('error'); return; }
+    if (!functions) { setState('error'); return; }
     try {
-      const q    = query(collection(db, 'agent_tasks'), where('confirmToken', '==', t));
-      const snap = await getDocs(q);
+      // Token-scoped read via callable — the page never queries agent_tasks
+      // directly, so the collection stays admin/server-scoped in rules.
+      const getTask = functions.httpsCallable('getAgentTaskByToken');
+      const res: any = (await getTask({ token: t })).data;
 
-      if (snap.empty) { setState('error'); return; }
+      if (res?.status === 'completed') { setState('confirmed'); return; }
+      if (res?.status === 'expired')   { setState('expired'); return; }
+      if (res?.status !== 'ready')     { setState('error'); return; }
 
-      const taskDoc  = snap.docs[0];
-      const taskData = taskDoc.data();
-
-      if (taskData.status === 'completed') { setState('confirmed'); return; }
-      if (new Date(taskData.expiresAt) < new Date()) { setState('expired'); return; }
-
-      const idx        = taskData.selectedIdx ?? 0;
-      const chosenOption = taskData.options?.[idx];
-
-      setTask(taskData);
-      setTaskId(taskDoc.id);
-      setSelected(chosenOption);
+      setTask({ time: res.time });
+      setSelected(res.selected);
       setState('ready');
     } catch {
       setState('error');
@@ -47,24 +39,16 @@ export default function QuickConfirmPage() {
   }
 
   async function confirmBooking() {
-    if (!task || !selected || !taskId) return;
-    const fdb = db;
-    if (!fdb) { setState('error'); return; }
+    if (!task || !selected || !token) return;
+    if (!functions) { setState('error'); return; }
     setState('confirming');
 
     try {
-      // Write approval
-      await addDoc(collection(fdb, 'agent_approvals'), {
-        taskId,
-        selectedCaregiverId: selected.caregiverId,
-        selectedCaregiver:   selected.name,
-        humanApproved:       true,
-        approvedAt:          new Date().toISOString(),
-      });
-
-      // Update task status
-      await updateDoc(doc(fdb, 'agent_tasks', taskId), { status: 'completed' });
-
+      // Commit the confirmation server-side. The callable validates the token,
+      // marks the task completed, and records the approval via the Admin SDK —
+      // the web no longer writes agent_tasks / agent_approvals directly.
+      const confirm = functions.httpsCallable('confirmAgentTask');
+      await confirm({ token });
       setState('confirmed');
     } catch {
       setState('error');

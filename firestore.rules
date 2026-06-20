@@ -983,7 +983,9 @@ service cloud.firestore {
           'reProposedAt',
           'reProposedBy',
           'operatorNotes',
-          'recoveryAction'
+          'recoveryAction',
+          'executionPreview',
+          'executingStartedAt'
         ]) &&
         // If status is being changed, restrict it to the valid PendingAction enum
         // so a mistyped/invalid value can't corrupt the confirmation queue state.
@@ -1031,6 +1033,31 @@ service cloud.firestore {
         )
       );
       allow delete: if false;
+    }
+
+    // Agent tasks — booking/replacement task records written server-side
+    // (matchingAgent, replacementAgent, bookingExecutor, shiftOffer, triggers).
+    // Admin AuditDashboard reads awaiting tasks. The public QuickConfirmPage
+    // does NOT read this collection directly — it goes through the
+    // getAgentTaskByToken / confirmAgentTask callables (Admin SDK, token-scoped),
+    // so no unauthenticated client access is granted here. Writes are
+    // server-only; the web never mutates task state directly.
+    match /agent_tasks/{taskId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Agent task approvals — human-approval audit records for the quick-confirm
+    // flow. Written exclusively server-side by the confirmAgentTask callable
+    // (Admin SDK). No client reads or writes.
+    match /agent_approvals/{approvalId} {
+      allow read, write: if false;
+    }
+
+    // Agent active-task index — server-only single-in-flight marker keyed by
+    // clientPhone (replacementAgent/triggerEngine). No web reader.
+    match /agent_tasks_active/{clientPhone} {
+      allow read, write: if false;
     }
 
     // Shift offers — caregiver YES/NO offer state machine (agents/shiftOffer.ts).

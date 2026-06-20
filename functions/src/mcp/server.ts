@@ -860,6 +860,131 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "withdraw_job_application",
+    description:
+      "Withdraw your own pending application to a job post. The client/admin views stop showing it as active. " +
+      "Only works while the application is still pending (not yet accepted, rejected, or interview-scheduled).",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:   { type: "string", description: "Your caregiver document ID" },
+        applicationId: { type: "string", description: "The job_applications document ID to withdraw" },
+        reason:        { type: "string", description: "Optional short reason for withdrawing" },
+      },
+      required: ["caregiverId", "applicationId"],
+    },
+  },
+  {
+    name: "respond_to_booking_request",
+    description:
+      "Accept or decline a booking request a family sent you (e.g. when you text 'I can do it' or 'I can't make that'). " +
+      "Accepting confirms the appointment and triggers the family's confirmation flow; declining frees it up for re-matching.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:   { type: "string", description: "Your caregiver document ID" },
+        appointmentId: { type: "string", description: "The appointment document ID for the pending booking request" },
+        decision:      { type: "string", enum: ["accept", "decline"], description: "accept or decline" },
+        message:       { type: "string", description: "Optional note to the family" },
+      },
+      required: ["caregiverId", "appointmentId", "decision"],
+    },
+  },
+  {
+    name: "start_shift",
+    description:
+      "Clock in / start a scheduled visit. Marks the visit in-progress and records the start time. " +
+      "Safe to call more than once — if the visit is already started it just confirms the existing start.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:   { type: "string", description: "Your caregiver document ID" },
+        appointmentId: { type: "string", description: "The appointment document ID (provide this or shiftId)" },
+        shiftId:       { type: "string", description: "The shifts document ID (provide this or appointmentId)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "complete_shift",
+    description:
+      "Clock out / complete a visit. Marks the visit completed and records the end time. " +
+      "Idempotent — calling it again after the visit is already completed will NOT create a second billable record.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:   { type: "string", description: "Your caregiver document ID" },
+        appointmentId: { type: "string", description: "The appointment document ID (provide this or shiftId)" },
+        shiftId:       { type: "string", description: "The shifts document ID (provide this or appointmentId)" },
+        notes:         { type: "string", description: "Optional completion notes" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "update_shift_task",
+    description:
+      "Mark a visit care task / checklist item complete (or undo it). Reflects on the family and caregiver visit views. " +
+      "Task keys follow the recipient_careNeed[_subtask] format the dashboard uses (e.g. '0_Medication' or '0_Bathing_Shower').",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string",  description: "Your caregiver document ID" },
+        shiftId:     { type: "string",  description: "The shifts document ID for the visit" },
+        taskKey:     { type: "string",  description: "The task key to toggle (recipient_careNeed[_subtask])" },
+        completed:   { type: "boolean", description: "true to mark complete, false to undo (default true)" },
+      },
+      required: ["caregiverId", "shiftId", "taskKey"],
+    },
+  },
+  {
+    name: "submit_media_update",
+    description:
+      "Send a photo / media care update to the family for a visit. Appears in the care journal and live updates feed. " +
+      "Use this when the caregiver shares a picture or video link of the senior during a shift.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:   { type: "string", description: "Your caregiver document ID" },
+        appointmentId: { type: "string", description: "The appointment document ID" },
+        mediaUrl:      { type: "string", description: "URL of the uploaded photo/video" },
+        caption:       { type: "string", description: "Optional caption / note for the family" },
+        mediaType:     { type: "string", enum: ["photo", "video"], description: "photo or video (default photo)" },
+      },
+      required: ["caregiverId", "appointmentId", "mediaUrl"],
+    },
+  },
+  {
+    name: "respond_to_shift_hour_correction",
+    description:
+      "Respond to a client/admin correction on your submitted shift hours: accept the corrected hours, or push back to dispute them. " +
+      "Only works when the shift hours are in a correction_requested or disputed state.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:   { type: "string", description: "Your caregiver document ID" },
+        appointmentId: { type: "string", description: "The appointment document ID (shiftHours doc id)" },
+        decision:      { type: "string", enum: ["accept", "pushback"], description: "accept the corrected hours, or pushback to dispute" },
+        message:       { type: "string", description: "Optional note (recommended when pushing back)" },
+      },
+      required: ["caregiverId", "appointmentId", "decision"],
+    },
+  },
+  {
+    name: "request_standard_payout",
+    description:
+      "Request a standard (free, 1-2 business day) payout of your earned balance via Stripe. " +
+      "Unlike an instant payout there is no processing fee. If no amount is specified, requests the full available balance.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string",  description: "Your caregiver document ID" },
+        amountCents: { type: "integer", description: "Amount in cents (optional — omit for full balance)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
     name: "create_support_ticket",
     description:
       "Create a support ticket for an issue that needs human team follow-up. " +
@@ -1541,7 +1666,7 @@ export const MCP_TOOLS: McpTool[] = [
         triggerId: { type: "string", description: "The follow-up triggerId returned by schedule_followup" },
         userId:    { type: "string", description: "The owning user (ownership check)" },
       },
-      required: ["triggerId"],
+      required: ["triggerId", "userId"],
     },
   },
 ];
@@ -1587,6 +1712,15 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "send_onboarding_link",
   "get_caregiver_reviews",
   "get_background_check_status",
+  // U2 — caregiver action parity
+  "withdraw_job_application",
+  "respond_to_booking_request",
+  "start_shift",
+  "complete_shift",
+  "update_shift_task",
+  "submit_media_update",
+  "respond_to_shift_hour_correction",
+  "request_standard_payout",
 ]);
 export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_NAMES.has(t.name));
 
@@ -1918,7 +2052,7 @@ export async function handleToolCall(
     } catch (err) {
       // Fail closed: a healthcare action with no resolvable account holder is
       // refused, never executed (H-U4). Never fall back to the triggering phone.
-      console.warn("MCP gate: proposePendingAction failed (fail-closed)", { name, err: (err as Error)?.message });
+      console.warn("MCP gate: proposePendingAction failed (fail-closed)", { name, err: sanitizeErrorReason(err instanceof Error ? err.message : String(err)) });
       return toolError("PERMISSION_DENIED",
         "I couldn't verify the primary account holder for this action, so I can't proceed. " +
         "Please have the account holder text me directly.");
@@ -1942,7 +2076,15 @@ export async function handleToolCall(
           canDrop:     false,
         });
       } catch (e) {
-        console.error("MCP gate: failed to send proposal to account holder", e);
+        // The approval prompt never reached the account holder, so this action
+        // is NOT actually routed. Surface the failure instead of returning a
+        // misleading routed_to_account_holder:true — otherwise the requester is
+        // told it's pending approval when nobody was ever asked.
+        console.error("MCP gate: failed to send proposal to account holder", sanitizeErrorReason(e instanceof Error ? e.message : String(e)));
+        return toolError(
+          "UNAVAILABLE",
+          "I couldn't reach the primary account holder to request approval just now. Please try again in a moment.",
+        );
       }
       return {
         _pending_action: true,
@@ -1966,7 +2108,7 @@ export async function handleToolCall(
     // crash/early-return after execution could leave an executed action with no
     // preceding audit record. The .catch keeps a write failure non-blocking.
     await recordMcpToolStatus({ name, input, status: "proposed" }).catch((err) => {
-      console.warn("MCP ledger proposed write failed", { name, err });
+      console.warn("MCP ledger proposed write failed", { name, err: sanitizeErrorReason(err instanceof Error ? err.message : String(err)) });
     });
   }
 
@@ -2162,10 +2304,12 @@ export async function handleToolCall(
         // so the agent can parameterize the search instead of an opaque zero-arg
         // call. Omitted filters leave the profile defaults untouched.
         const matchIntake: Record<string, unknown> = { ...session };
-        if (typeof nearZip === "string" && nearZip) matchIntake.zipCode = nearZip;
+        // Validate the agent-supplied overrides before applying them: a malformed
+        // ZIP or an out-of-range radius must not flow into the matching intake.
+        if (typeof nearZip === "string" && /^\d{5}(-\d{4})?$/.test(nearZip)) matchIntake.zipCode = nearZip;
         if (typeof needs === "string" && needs) matchIntake.careNeeds = needs;
         if (typeof availabilityWindow === "string" && availabilityWindow) matchIntake.availabilityWindow = availabilityWindow;
-        if (typeof radiusMiles === "number") matchIntake.radiusMiles = radiusMiles;
+        if (typeof radiusMiles === "number" && Number.isFinite(radiusMiles) && radiusMiles > 0 && radiusMiles <= 100) matchIntake.radiusMiles = radiusMiles;
         await runMatchingForClient(phone as string, chatId as string, matchIntake, clientProfile);
         return {
           success: true,
@@ -3264,6 +3408,250 @@ export async function handleToolCall(
       }
       logAudit({ eventType: "shift_hours_reviewed", userId: clientId as string, data: { source: "mcp:review_shift_hours", appointmentId, decision } }).catch(() => {});
       return { success: true, decision, appointmentId };
+    }
+
+    // ── withdraw_job_application (U2) ───────────────────────────────────────────
+    if (name === "withdraw_job_application") {
+      const { caregiverId, applicationId, reason } = input as Record<string, unknown>;
+      if (!caregiverId || !applicationId) return toolError("INVALID_INPUT", "caregiverId and applicationId are required");
+      const appSnap = await db.collection("job_applications").doc(applicationId as string).get();
+      if (!appSnap.exists) return toolError("NOT_FOUND", "Application not found");
+      const app = appSnap.data()!;
+      if (app.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Application does not belong to this caregiver");
+      // Idempotent: already withdrawn → success-shaped no-op.
+      if (app.status === "withdrawn") return { success: true, applicationId, status: "withdrawn", alreadyWithdrawn: true };
+      if (app.status !== "pending") return toolError("INVALID_INPUT", `Application can no longer be withdrawn (status: ${app.status})`);
+      await appSnap.ref.update({ status: "withdrawn", withdrawnAt: nowIso, withdrawReason: reason ?? "" });
+      logAudit({ eventType: "job_application_withdrawn", userId: caregiverId as string, data: { source: "mcp:withdraw_job_application", applicationId, jobId: app.jobId } }).catch(() => {});
+      return { success: true, applicationId, status: "withdrawn" };
+    }
+
+    // ── respond_to_booking_request (U2 — AE1) ───────────────────────────────────
+    if (name === "respond_to_booking_request") {
+      const { caregiverId, appointmentId, decision, message: brMsg } = input as Record<string, unknown>;
+      if (!caregiverId || !appointmentId || !decision) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and decision are required");
+      const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
+      if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
+      const appt = apptSnap.data()!;
+      if (appt.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
+      // Idempotent: already in the requested terminal state → success-shaped no-op.
+      if (decision === "accept" && (appt.status === "confirmed" || appt.caregiverConfirmed === true)) {
+        return { success: true, decision: "accept", appointmentId, status: "confirmed", alreadyResponded: true };
+      }
+      const declinedStates = ["declined_by_caregiver", "cancelled", "cancelled_by_client"];
+      if (decision === "decline" && declinedStates.includes(appt.status as string)) {
+        return { success: true, decision: "decline", appointmentId, status: appt.status, alreadyResponded: true };
+      }
+      const pendingStates = ["pending_caregiver_confirmation", "pending", "requested", "offered"];
+      if (!pendingStates.includes(appt.status as string)) {
+        return toolError("INVALID_INPUT", `This booking request is no longer awaiting a response (status: ${appt.status})`);
+      }
+      if (decision === "accept") {
+        // Drive the same confirmation path the web/shift-offer flow uses.
+        await apptSnap.ref.update({ status: "confirmed", caregiverConfirmed: true, caregiverConfirmedAt: nowIso });
+      } else {
+        await apptSnap.ref.update({ status: "declined_by_caregiver", caregiverConfirmed: false, cancellationReason: "declined_by_caregiver", declinedAt: nowIso, declineMessage: brMsg ?? "" });
+      }
+      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_client_session" };
+      if (appt.clientId) {
+        const clientSessSnap = await db.collection("agent_sessions").where("userId", "==", appt.clientId).limit(1).get();
+        if (!clientSessSnap.empty) {
+          const { trySend } = await import("../utils/toolNotify");
+          const cgData = (await db.collection("caregivers").doc(caregiverId as string).get()).data();
+          const cgName = cgData?.name ?? cgData?.firstName ?? "Your caregiver";
+          const msg = decision === "accept"
+            ? `Great news — ${cgName} accepted your booking request! The visit is confirmed.`
+            : `${cgName} isn't able to take that visit. I'm already lining up other options for you.`;
+          notification = await trySend(clientSessSnap.docs[0].id, msg, "mcp:respond_to_booking_request");
+        }
+      }
+      logAudit({ eventType: "booking_request_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_booking_request", appointmentId, decision, notificationSent: notification.sent } }).catch(() => {});
+      return { success: true, decision, appointmentId, status: decision === "accept" ? "confirmed" : "declined_by_caregiver", notification };
+    }
+
+    // ── start_shift (U2) ────────────────────────────────────────────────────────
+    if (name === "start_shift") {
+      const { caregiverId, appointmentId, shiftId } = input as Record<string, unknown>;
+      if (!caregiverId || (!appointmentId && !shiftId)) return toolError("INVALID_INPUT", "caregiverId and one of appointmentId or shiftId are required");
+      const coll = appointmentId ? "appointments" : "shifts";
+      const docId = (appointmentId ?? shiftId) as string;
+      const snap = await db.collection(coll).doc(docId).get();
+      if (!snap.exists) return toolError("NOT_FOUND", "Visit not found");
+      const visit = snap.data()!;
+      if (visit.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "This visit does not belong to this caregiver");
+      const inProgress = ["in_progress", "in-progress"];
+      // Idempotent: already started → confirm the existing start rather than re-stamping.
+      if (inProgress.includes(visit.status as string)) {
+        return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: visit.status, startedAt: visit.startedAt ?? null, alreadyStarted: true };
+      }
+      if (["completed", "cancelled", "cancelled_by_client"].includes(visit.status as string)) {
+        return toolError("INVALID_INPUT", `Cannot start a visit that is already ${visit.status}`);
+      }
+      // shifts dashboard reads "in-progress"; appointments use "in_progress".
+      const startedStatus = coll === "shifts" ? "in-progress" : "in_progress";
+      await snap.ref.update({ status: startedStatus, startedAt: nowIso });
+      logAudit({ eventType: "shift_started", userId: caregiverId as string, data: { source: "mcp:start_shift", collection: coll, docId } }).catch(() => {});
+      return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: startedStatus, startedAt: nowIso };
+    }
+
+    // ── complete_shift (U2 — AE7, idempotent) ───────────────────────────────────
+    if (name === "complete_shift") {
+      const { caregiverId, appointmentId, shiftId, notes: completeNotes } = input as Record<string, unknown>;
+      if (!caregiverId || (!appointmentId && !shiftId)) return toolError("INVALID_INPUT", "caregiverId and one of appointmentId or shiftId are required");
+      const coll = appointmentId ? "appointments" : "shifts";
+      const docId = (appointmentId ?? shiftId) as string;
+      const snap = await db.collection(coll).doc(docId).get();
+      if (!snap.exists) return toolError("NOT_FOUND", "Visit not found");
+      const visit = snap.data()!;
+      if (visit.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "This visit does not belong to this caregiver");
+      // AE7 idempotency: a billable shiftHours record keyed by the appointment is
+      // the source of truth. If the visit is already completed OR shift hours
+      // already exist, return a success-shaped no-op — never double-write/double-bill.
+      const billingKey = (appointmentId as string | undefined) ?? (visit.appointmentId as string | undefined);
+      if (billingKey) {
+        const existingShift = await db.collection("shiftHours").doc(billingKey).get();
+        if (existingShift.exists) {
+          return { success: true, appointmentId: billingKey, shiftId: shiftId ?? null, status: "completed", alreadyCompleted: true, billableRecordExists: true };
+        }
+      }
+      if (visit.status === "completed") {
+        return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: "completed", alreadyCompleted: true };
+      }
+      if (["cancelled", "cancelled_by_client"].includes(visit.status as string)) {
+        return toolError("INVALID_INPUT", `Cannot complete a visit that is ${visit.status}`);
+      }
+      await snap.ref.update({ status: "completed", completedAt: nowIso, ...(completeNotes ? { completionNotes: completeNotes } : {}) });
+      logAudit({ eventType: "shift_completed", userId: caregiverId as string, data: { source: "mcp:complete_shift", collection: coll, docId } }).catch(() => {});
+      return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: "completed", completedAt: nowIso };
+    }
+
+    // ── update_shift_task (U2) ──────────────────────────────────────────────────
+    if (name === "update_shift_task") {
+      const { caregiverId, shiftId, taskKey } = input as Record<string, unknown>;
+      const completed = input.completed == null ? true : Boolean(input.completed);
+      if (!caregiverId || !shiftId || !taskKey) return toolError("INVALID_INPUT", "caregiverId, shiftId, and taskKey are required");
+      const snap = await db.collection("shifts").doc(shiftId as string).get();
+      if (!snap.exists) return toolError("NOT_FOUND", "Shift not found");
+      const shift = snap.data()!;
+      if (shift.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "This shift does not belong to this caregiver");
+      const current: string[] = Array.isArray(shift.tasksCompleted) ? shift.tasksCompleted as string[] : [];
+      const already = current.includes(taskKey as string);
+      // Idempotent: the doc already reflects the desired state → no-op success.
+      if (completed && already) return { success: true, shiftId, taskKey, completed: true, alreadyInState: true };
+      if (!completed && !already) return { success: true, shiftId, taskKey, completed: false, alreadyInState: true };
+      await snap.ref.update({
+        tasksCompleted: completed
+          ? admin.firestore.FieldValue.arrayUnion(taskKey)
+          : admin.firestore.FieldValue.arrayRemove(taskKey),
+      });
+      logAudit({ eventType: "shift_task_updated", userId: caregiverId as string, data: { source: "mcp:update_shift_task", shiftId, taskKey, completed } }).catch(() => {});
+      return { success: true, shiftId, taskKey, completed };
+    }
+
+    // ── submit_media_update (U2) ────────────────────────────────────────────────
+    if (name === "submit_media_update") {
+      const { caregiverId, appointmentId, mediaUrl, caption, mediaType } = input as Record<string, unknown>;
+      if (!caregiverId || !appointmentId || !mediaUrl) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and mediaUrl are required");
+      const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
+      if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
+      const appt = apptSnap.data()!;
+      if (appt.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
+      const type = mediaType === "video" ? "video" : "photo";
+      const entryRef = await db.collection("care_journal").add({
+        seniorId: appt.seniorId ?? appt.clientId, caregiverId, appointmentId,
+        clientId: appt.clientId,
+        notes: (caption as string) ?? "",
+        entryType: "media", mediaUrl, mediaType: type,
+        media: [{ url: mediaUrl, type, caption: (caption as string) ?? "" }],
+        mood: null, medsGiven: null, activities: [],
+        source: "cara_sms", timestamp: nowIso,
+      });
+      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_client_session" };
+      if (appt.clientId) {
+        const clientSessSnap = await db.collection("agent_sessions").where("userId", "==", appt.clientId).limit(1).get();
+        if (!clientSessSnap.empty) {
+          const { trySend } = await import("../utils/toolNotify");
+          const cgData = (await db.collection("caregivers").doc(caregiverId as string).get()).data();
+          const cgName = cgData?.name ?? cgData?.firstName ?? "Your caregiver";
+          notification = await trySend(clientSessSnap.docs[0].id, `${cgName} shared a new ${type} update: ${(caption as string) || "tap to view in the care journal."}`, "mcp:submit_media_update");
+        }
+      }
+      logAudit({ eventType: "media_update_submitted", userId: caregiverId as string, data: { source: "mcp:submit_media_update", appointmentId, entryId: entryRef.id, mediaType: type } }).catch(() => {});
+      return { success: true, entryId: entryRef.id, mediaType: type, notification };
+    }
+
+    // ── respond_to_shift_hour_correction (U2) ───────────────────────────────────
+    if (name === "respond_to_shift_hour_correction") {
+      const { caregiverId, appointmentId, decision, message: corrMsg } = input as Record<string, unknown>;
+      if (!caregiverId || !appointmentId || !decision) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and decision are required");
+      const shiftSnap = await db.collection("shiftHours").doc(appointmentId as string).get();
+      if (!shiftSnap.exists) return toolError("NOT_FOUND", "Shift hours submission not found");
+      const shift = shiftSnap.data()!;
+      if (shift.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Shift hours do not belong to this caregiver");
+      const correctionStates = ["correction_requested", "disputed"];
+      if (!correctionStates.includes(shift.status as string)) {
+        return toolError("INVALID_INPUT", `These shift hours are not awaiting a correction response (status: ${shift.status})`);
+      }
+      const correctedHours = shift.correctedHours as number | null | undefined;
+      if (decision === "accept") {
+        // Accept the corrected hours: adopt them as the billable duration and
+        // re-submit for the standard client review (auto-approve window).
+        const upd: Record<string, unknown> = {
+          status: "pending_client_review",
+          caregiverCorrectionResponse: "accepted",
+          correctionRespondedAt: nowIso,
+          autoApproveAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        };
+        if (correctedHours != null) {
+          const rate = (shift.hourlyRate as number) ?? (shift.payRate as number) ?? 22;
+          upd.durationHours = correctedHours;
+          upd.submittedTotalHours = correctedHours;
+          upd.amountCents = Math.round(correctedHours * rate * 100);
+          upd.basePay = Math.round(correctedHours * rate * 100) / 100;
+          upd.grossPay = Math.round(correctedHours * rate * 100) / 100;
+        }
+        await shiftSnap.ref.update(upd);
+      } else {
+        // Pushback → keep it disputed for admin resolution.
+        await shiftSnap.ref.update({ status: "disputed", caregiverCorrectionResponse: "pushback", correctionRespondedAt: nowIso, caregiverDisputeNote: corrMsg ?? "" });
+        await db.collection("admin_alerts").add({ type: "shift_hour_dispute", appointmentId, caregiverId, clientId: shift.clientId ?? null, priority: "medium", resolved: false, createdAt: nowIso }).catch(() => {});
+      }
+      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_client_session" };
+      if (shift.clientId) {
+        const clientSessSnap = await db.collection("agent_sessions").where("userId", "==", shift.clientId).limit(1).get();
+        if (!clientSessSnap.empty) {
+          const { trySend } = await import("../utils/toolNotify");
+          const msg = decision === "accept"
+            ? `Your caregiver accepted the corrected hours${correctedHours != null ? ` (${correctedHours}h)` : ""}. Reply APPROVE to finalize payment.`
+            : `Your caregiver pushed back on the hour correction. ${(corrMsg as string) ?? "Our team will help resolve it."}`;
+          notification = await trySend(clientSessSnap.docs[0].id, msg, "mcp:respond_to_shift_hour_correction");
+        }
+      }
+      logAudit({ eventType: "shift_hour_correction_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_shift_hour_correction", appointmentId, decision, notificationSent: notification.sent } }).catch(() => {});
+      return { success: true, decision, appointmentId, status: decision === "accept" ? "pending_client_review" : "disputed", notification };
+    }
+
+    // ── request_standard_payout (U2 — must not bypass Stripe/eligibility) ────────
+    if (name === "request_standard_payout") {
+      const { caregiverId, amountCents } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
+      if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      const cg = cgSnap.data()!;
+      // Same eligibility gate as request_instant_payout — Stripe Connect required.
+      if (!cg.stripeAccountId) return toolError("INVALID_INPUT", "Stripe account not set up — complete onboarding first");
+      if (!cg.payoutsEnabled)  return toolError("INVALID_INPUT", "Payouts are not yet enabled on your account");
+      const { getStripeClient } = await import("../stripe");
+      const sc = getStripeClient();
+      const balance = await sc.balance.retrieve({ stripeAccount: cg.stripeAccountId as string });
+      const availableCents = balance.available[0]?.amount ?? 0;
+      if (availableCents <= 0) return toolError("INVALID_INPUT", "No available balance to pay out");
+      const payoutCents = amountCents != null ? Number(amountCents) : availableCents;
+      if (payoutCents > availableCents) return toolError("INVALID_INPUT", `Requested $${(payoutCents/100).toFixed(2)} exceeds available balance of $${(availableCents/100).toFixed(2)}`);
+      // Standard (free) payout — NOT instant. No processing fee.
+      await sc.payouts.create({ amount: payoutCents, currency: "usd", method: "standard" }, { stripeAccount: cg.stripeAccountId as string });
+      logAudit({ eventType: "standard_payout_requested", userId: caregiverId as string, data: { source: "mcp:request_standard_payout", amountCents: payoutCents } }).catch(() => {});
+      return { success: true, amountCents: payoutCents, amountDollars: `$${(payoutCents/100).toFixed(2)}`, method: "standard", estimatedArrival: "1–2 business days" };
     }
 
     if (name === "resume_execution_agent") {
@@ -4514,20 +4902,30 @@ export async function handleToolCall(
       const { userId, entryId, commentId } = input as Record<string, unknown>;
       if (!userId || !entryId || !commentId) return toolError("INVALID_INPUT", "userId, entryId, and commentId are required");
       const commentRef = db.collection("care_journal").doc(entryId as string).collection("comments").doc(commentId as string);
-      const snap = await commentRef.get();
-      if (!snap.exists) return toolError("NOT_FOUND", "Comment not found.");
-      if (snap.data()?.userId !== userId) return toolError("PERMISSION_DENIED", "You can only delete your own comments.");
-      await commentRef.delete();
-      await db.collection("care_journal").doc(entryId as string)
-        .set({ commentCount: admin.firestore.FieldValue.increment(-1) }, { merge: true }).catch(() => {});
+      const entryRef   = db.collection("care_journal").doc(entryId as string);
+      // Existence check, ownership check, delete, and the commentCount decrement
+      // run in one transaction so concurrent deletes of the same entry can't
+      // double-decrement (or drop the count) — they all commit or none do.
+      const outcome = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(commentRef);
+        if (!snap.exists) return { error: "NOT_FOUND" as const };
+        if (snap.data()?.userId !== userId) return { error: "PERMISSION_DENIED" as const };
+        tx.delete(commentRef);
+        tx.set(entryRef, { commentCount: admin.firestore.FieldValue.increment(-1) }, { merge: true });
+        return { error: null };
+      });
+      if (outcome.error === "NOT_FOUND") return toolError("NOT_FOUND", "Comment not found.");
+      if (outcome.error === "PERMISSION_DENIED") return toolError("PERMISSION_DENIED", "You can only delete your own comments.");
       logAudit({ eventType: "journal_comment_deleted", userId: userId as string, data: { source: "mcp:delete_comment", entryId, commentId } }).catch(() => {});
       return { success: true, deleted: true };
     }
 
     // ── edit_review ─────────────────────────────────────────────────────────
-    // Updates the family's own review. NOTE: the caregiver's aggregate rating is
-    // not recomputed here (onFeedbackSubmitted only runs on submit) — a rating
-    // edit refreshing the aggregate is a tracked follow-up.
+    // Updates the family's own review. The caregiver's aggregate rating is kept
+    // fresh by the `onReviewWritten` onWrite trigger (functions/src/index.ts),
+    // which recomputes rating/reviewCount/star-counts from all reviews on every
+    // write to `reviews/{id}` — including this update — so no inline recompute is
+    // needed here.
     if (name === "edit_review") {
       const { clientId, reviewId, rating, comment } = input as Record<string, unknown>;
       if (!clientId || !reviewId) return toolError("INVALID_INPUT", "clientId and reviewId are required");
@@ -4539,7 +4937,7 @@ export async function handleToolCall(
       const update: Record<string, unknown> = { updatedAt: nowIso };
       if (rating !== undefined) {
         const r = Number(rating);
-        if (!Number.isFinite(r) || r < 1 || r > 5) return toolError("INVALID_INPUT", "rating must be between 1 and 5");
+        if (!Number.isInteger(r) || r < 1 || r > 5) return toolError("INVALID_INPUT", "rating must be an integer from 1 to 5");
         update.rating = r;
       }
       if (comment !== undefined) update.comment = String(comment).slice(0, 2000);
@@ -4551,11 +4949,14 @@ export async function handleToolCall(
     // ── cancel_followup ─────────────────────────────────────────────────────
     if (name === "cancel_followup") {
       const { triggerId, userId } = input as Record<string, unknown>;
-      if (!triggerId) return toolError("INVALID_INPUT", "triggerId is required");
+      if (!triggerId || !userId) return toolError("INVALID_INPUT", "triggerId and userId are required");
       const ref = db.collection("proactive_triggers").doc(triggerId as string);
       const snap = await ref.get();
       if (!snap.exists) return toolError("NOT_FOUND", "Follow-up not found — it may have already fired or been cancelled.");
-      if (userId && snap.data()?.userId && snap.data()?.userId !== userId) {
+      // Always verify ownership and fail closed: a follow-up with no owner field,
+      // or one owned by someone else, cannot be cancelled by this caller. Omitting
+      // userId can no longer bypass the check (it is now required above).
+      if (snap.data()?.userId !== userId) {
         return toolError("PERMISSION_DENIED", "Not authorized to cancel this follow-up.");
       }
       await ref.delete();
@@ -4592,7 +4993,7 @@ export async function handleToolCall(
           });
         }
       } catch (ledgerErr) {
-        console.warn("MCP post-execution ledger/alert write failed (non-blocking)", { name, ledgerErr });
+        console.warn("MCP post-execution ledger/alert write failed (non-blocking)", { name, ledgerErr: sanitizeErrorReason(ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr)) });
       }
     }
     return result;

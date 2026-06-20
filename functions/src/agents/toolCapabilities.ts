@@ -47,6 +47,8 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   accept_shift_swap:            ["booking", "scheduling", "messaging"],
   cancel_shift_swap:            ["booking", "scheduling", "messaging"],
   initiate_client_swap:         ["booking", "scheduling", "messaging"],
+  withdraw_job_application:     ["booking"],
+  respond_to_booking_request:   ["booking", "messaging"],
 
   // ── scheduling ───────────────────────────────────────────────────────────
   get_recurring_schedule:        ["scheduling"],
@@ -67,6 +69,8 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   create_refund_request:    ["billing"],
   get_payment_update_link:  ["billing"],
   request_instant_payout:   ["billing"],
+  request_standard_payout:  ["billing"],
+  respond_to_shift_hour_correction: ["billing"],
   get_payout_history:       ["billing"],
   get_caregiver_earnings:   ["billing"],
   submit_shift_hours:       ["billing"],
@@ -94,6 +98,10 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   update_senior_profile:     ["care_plan"],
   update_user_profile:       ["care_plan"],
   submit_gps_checkin:        ["care_plan"],
+  start_shift:               ["care_plan", "scheduling"],
+  complete_shift:            ["care_plan", "scheduling"],
+  update_shift_task:         ["care_plan"],
+  submit_media_update:       ["care_plan", "messaging"],
   get_background_check_status: ["care_plan", "booking"],
 
   // ── messaging (family group, contact prefs, safety) ─────────────────────

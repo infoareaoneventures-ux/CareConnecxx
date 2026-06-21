@@ -27,6 +27,7 @@ import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
 import { getAppUrl } from "../config/appUrl";
 import { runStep, RunStepContext, StepDeps } from "./conversationStep";
 import { buildClientSteps } from "./onboardingSteps.client";
+import { buildCaregiverSteps } from "./onboardingSteps.caregiver";
 
 /** iMessage/RCS can share a location pin; plain SMS cannot. */
 function isRichService(service?: string): boolean {
@@ -691,6 +692,11 @@ const CLIENT_STEPS = buildClientSteps({
   buildIntakeSummary,
 });
 
+const CAREGIVER_STEPS = buildCaregiverSteps({
+  generateCaraMessage,
+  locationPrompt,
+});
+
 // Production side effects for `runStep`: the real mid-flow helpers plus an
 // ATOMIC merge+advance — one Firestore `.update()` using dotted field paths, so
 // a failure can't leave a user half-advanced (the old code did two writes).
@@ -1234,29 +1240,12 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
 }
 
 async function handleCaregiverAskName(phone: string, chatId: string, text: string, session?: AgentSession, service?: string): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session ?? ({ onboardingData: {} } as AgentSession));
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "What's your name?");
-    return;
-  }
-  const name = await parseWithClaude(
-    "Extract the full name from this message. Reply with just the name, nothing else.",
-    text
-  );
-  if (name === "__parse_error__" || !name) {
-    await sendMessage(chatId, "I didn't catch your name — could you share it?");
-    return;
-  }
-  await mergeOnboardingData(phone, { name });
-  await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
-  const msg9 = await generateCaraMessage({
-    audience: "caregiver",
-    context: `Cara just learned the caregiver's name is ${name}. Greet them by name and ask what city and zip code they work in.`,
-    fallback: `Hi ${name} — what city and zip code do you work in?`,
-    maxTokens: 80,
-  });
-  await sendMessage(chatId, locationPrompt(msg9, service));
+  // session is always supplied by the dispatcher; synthesize a minimal one for
+  // the vestigial optional. Carry the explicit `service` param onto the session
+  // so the step's location-prompt affordance matches the original handler.
+  const s = session ?? ({ onboardingData: {} } as AgentSession);
+  if (service !== undefined) s.service = service as AgentSession["service"];
+  return runStep(CAREGIVER_STEPS.caregiver_ask_name, clientStepCtx(phone, chatId, text, s), stepDeps);
 }
 
 /**
@@ -1350,62 +1339,11 @@ async function handleCaregiverAskLocation(phone: string, chatId: string, text: s
 }
 
 async function handleCaregiverAskExperience(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "How many years of caregiving experience do you have, and do you hold any certifications?");
-    return;
-  }
-  const raw = await parseWithClaude(
-    'Extract yearsExperience (number) and certifications (array of strings) from this message. Reply in JSON: {"yearsExperience":0,"certifications":[]}',
-    text
-  );
-  let yearsExperience = 0, certifications: string[] = [];
-  try { const p = JSON.parse(raw); yearsExperience = p.yearsExperience ?? 0; certifications = p.certifications ?? []; } catch { /* keep defaults */ }
-
-  await mergeOnboardingData(phone, { yearsExperience, certifications });
-  await updateSession(phone, { onboardingStep: "caregiver_ask_specialties" });
-  const msg11intro = await generateCaraMessage({
-    audience: "caregiver",
-    context:
-      `Cara is onboarding a caregiver who just told her they have ${yearsExperience || "some"} years of experience` +
-      `${certifications.length ? ` and these certifications: ${certifications.join(", ")}` : ""}. ` +
-      `Acknowledge that warmly in one short line (genuine, not flattery clichés), then ask what types of care they specialize in.`,
-    fallback: "What types of care do you specialize in?",
-    maxTokens: 80,
-  });
-  await sendMessage(chatId,
-    `${msg11intro}\n\nFor example: dementia, Alzheimer's, mobility assistance, post-surgery, companionship, medication management...`
-  );
+  return runStep(CAREGIVER_STEPS.caregiver_ask_experience, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
 async function handleCaregiverAskSpecialties(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "What types of care do you specialize in? (e.g. dementia, mobility, post-surgery, companionship)");
-    return;
-  }
-  const raw = await parseWithClaude(
-    "Extract a list of care specialties from this message. Reply in JSON: {\"specialties\":[\"...\",\"...\"]}",
-    text
-  );
-  let specialties: string[] = [];
-  try { const p = JSON.parse(raw); specialties = p.specialties ?? []; } catch { /* keep defaults */ }
-
-  await mergeOnboardingData(phone, { specialties });
-  await updateSession(phone, { onboardingStep: "caregiver_ask_profile" });
-  const msgProfile = await generateCaraMessage({
-    audience: "caregiver",
-    context:
-      `Cara is onboarding a caregiver who just shared their specialties${specialties.length ? `: ${specialties.join(", ")}` : ""}. ` +
-      `Acknowledge it warmly in one short line, then ask three quick profile details families use when matching: ` +
-      `whether they're male or female (some families have a preference), what languages they speak, and whether they can ` +
-      `drive clients to appointments. Keep it light and quick.`,
-    fallback: "A few quick details families use to match — are you male or female, what languages do you speak, and can you drive clients to appointments?",
-    maxTokens: 100,
-  });
-  await sendMessage(chatId, msgProfile);
+  return runStep(CAREGIVER_STEPS.caregiver_ask_specialties, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
 async function handleCaregiverAskProfile(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
@@ -1444,93 +1382,15 @@ async function handleCaregiverAskProfile(phone: string, chatId: string, text: st
 }
 
 async function handleCaregiverAskAvailability(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "What days and hours are you generally available to work?");
-    return;
-  }
-  const raw = await parseWithClaude(
-    "Extract availability days (array of strings) and hours (string) from this message. Reply in JSON: {\"days\":[\"Monday\",\"Tuesday\"],\"hours\":\"9am-5pm\"}",
-    text
-  );
-  let days: string[] = [], hours = "";
-  try { const p = JSON.parse(raw); days = p.days ?? []; hours = p.hours ?? ""; } catch { /* keep defaults */ }
-
-  await mergeOnboardingData(phone, { availability: { days, hours } });
-  await updateSession(phone, { onboardingStep: "caregiver_ask_job_type" });
-  const availIntro = await generateCaraMessage({
-    audience: "caregiver",
-    context:
-      `Cara is onboarding a caregiver who just shared their availability${hours ? ` (${hours})` : ""}. ` +
-      `Acknowledge it warmly in one short line, then ask whether they want occasional, part-time, or ` +
-      `full-time work. Phrase it as a natural either/or question, not a numbered menu.`,
-    fallback: "Got it, thanks!",
-    maxTokens: 60,
-  });
-  await sendMessage(chatId,
-    `${availIntro}\n\nAre you looking for occasional fill-in shifts, part-time (under 25 hrs/week), or full-time work?`
-  );
+  return runStep(CAREGIVER_STEPS.caregiver_ask_availability, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
 async function handleCaregiverAskRate(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "What's your hourly rate? Just a number works (e.g. \"22\").");
-    return;
-  }
-  const raw = await parseWithClaude(
-    "Extract the hourly rate as a number from this message. Reply with just the number (e.g. 22). No dollar sign.",
-    text
-  );
-  if (raw === "__parse_error__") {
-    await sendMessage(chatId, "Hmm, I didn't catch that. What's your hourly rate? Just a number works (e.g. \"22\")");
-    return;
-  }
-  const hourlyRate = parseFloat(raw);
-  if (isNaN(hourlyRate) || hourlyRate < 5 || hourlyRate > 200) {
-    await sendMessage(chatId, "Could you share your hourly rate as a number between $5 and $200? (e.g. \"22\")");
-    return;
-  }
-
-  await mergeOnboardingData(phone, { hourlyRate });
-  await updateSession(phone, { onboardingStep: "caregiver_ask_email" });
-  const rateIntro = await generateCaraMessage({
-    audience: "caregiver",
-    context:
-      `Cara is onboarding a caregiver who just set their rate at $${hourlyRate}/hr. Acknowledge it in one short, ` +
-      `genuine line (no flattery clichés), then ask for their email address, mentioning it's used to set up their payout account.`,
-    fallback: `$${hourlyRate}/hr works. What's your email address? I'll use it to set up your payout account.`,
-    maxTokens: 70,
-  });
-  await sendMessage(chatId, rateIntro);
+  return runStep(CAREGIVER_STEPS.caregiver_ask_rate, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
 async function handleCaregiverAskJobType(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "Are you looking for occasional, part-time, or full-time work?");
-    return;
-  }
-  const raw = await parseWithClaude(
-    '"1", occasional, fill-in, as-needed, flexible, sometimes → occasional. ' +
-    '"2", part-time, part time, a few days, some days → part_time. ' +
-    '"3", full-time, full time, every day, all week → full_time. ' +
-    'Reply with exactly one of: occasional, part_time, full_time',
-    text
-  );
-  const jobType = ["occasional", "part_time", "full_time"].includes(raw) ? raw : "part_time";
-  const jobTypeLabel: Record<string, string> = { occasional: "Occasional", part_time: "Part-time", full_time: "Full-time" };
-  await mergeOnboardingData(phone, { jobType });
-  await updateSession(phone, { onboardingStep: "caregiver_ask_rate" });
-  const d = session.onboardingData ?? {};
-  const city = (d.city as string) ?? "";
-  await sendMessage(chatId,
-    `${jobTypeLabel[jobType] ?? "Got it"}! What's your hourly rate?\n\n` +
-    (city ? `(Most caregivers in ${city} charge $18–28/hr)` : "(Most caregivers charge $18–28/hr)")
-  );
+  return runStep(CAREGIVER_STEPS.caregiver_ask_job_type, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
 async function handleCaregiverAskEmail(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {

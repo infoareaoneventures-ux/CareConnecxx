@@ -44,7 +44,9 @@ const BANNED_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /^I understand[,.]?\s*/i,         replacement: "" },
 ];
 
-export function lintMessage(text: string): string {
+// Apply the banned-pattern and banned-phrase replacements. Shared by both
+// lintMessage (collapses layout) and lintPreservingLayout (keeps layout).
+function applyBans(text: string): string {
   let result = text;
 
   for (const { pattern, replacement } of BANNED_PATTERNS) {
@@ -57,6 +59,12 @@ export function lintMessage(text: string): string {
     result = result.replace(new RegExp(safePhrase, "gi"), "");
   }
 
+  return result;
+}
+
+export function lintMessage(text: string): string {
+  let result = applyBans(text);
+
   // Clean up double spaces and leading/trailing whitespace left by replacements
   result = result.replace(/  +/g, " ").trim();
 
@@ -66,6 +74,34 @@ export function lintMessage(text: string): string {
     .map((l) => l.trim())
     .filter((l) => l.length > 0)
     .join("\n");
+
+  return result;
+}
+
+/**
+ * Layout-preserving variant of lintMessage. Applies the same em-dash and
+ * banned-phrase cleanup, but KEEPS intentional blank lines (\n\n) instead of
+ * collapsing them. Use this on multi-line transactional / scripted messages
+ * (timesheets, OTP codes, intake summaries) where paragraph breaks carry
+ * meaning — collapsing them the way lintMessage does would make those messages
+ * cramped and harder to read.
+ *
+ * This is the function the outbound transport chokepoint uses so scripted /
+ * hardcoded sends get the same voice cleanup the QA-agent path already gets via
+ * supervise(), without flattening their formatting.
+ */
+export function lintPreservingLayout(text: string): string {
+  let result = applyBans(text);
+
+  // Per-line: collapse runs of spaces and trim trailing whitespace, but DON'T
+  // drop blank lines — they separate paragraphs.
+  result = result
+    .split("\n")
+    .map((l) => l.replace(/  +/g, " ").replace(/[ \t]+$/, ""))
+    .join("\n");
+
+  // Collapse 3+ consecutive newlines to a single blank line, then trim ends.
+  result = result.replace(/\n{3,}/g, "\n\n").trim();
 
   return result;
 }

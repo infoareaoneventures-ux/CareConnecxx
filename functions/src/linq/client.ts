@@ -2,6 +2,7 @@ import axios, { AxiosError, AxiosResponse } from "axios";
 import * as admin from "firebase-admin";
 import { v4 as uuidv4 } from "uuid";
 import { supervise, SuperviseContext } from "../safety/supervisor";
+import { lintPreservingLayout } from "../safety/linter";
 import { logMessageSent } from "../observability/auditLog";
 
 const db = admin.firestore();
@@ -180,6 +181,18 @@ const HTTP_URL_RE = /^https?:\/\//i;
 function normalizeParts(parts: LinqMessagePart[]): LinqMessagePart[] {
   if (!Array.isArray(parts)) return parts;
   return parts.map((p) => {
+    // Strip robotic tone (em-dashes → commas, banned phrases) from every
+    // outgoing text part. This is the single chokepoint both createChat and
+    // sendOneMessage funnel through, so scripted/hardcoded sends — which call
+    // sendMessage directly and never hit safeSend/supervise — get the same
+    // voice cleanup the QA-agent path already gets. Layout-preserving so
+    // multi-line messages (timesheets, OTP codes) keep their paragraph breaks.
+    // Falls back to the original if linting somehow empties the part (Linq
+    // rejects a message with no content).
+    if (p.type === "text" && typeof p.value === "string") {
+      const cleaned = lintPreservingLayout(p.value);
+      return { ...p, value: cleaned || p.value };
+    }
     if (p.type !== "link") return p;
     const url =
       p.url && HTTP_URL_RE.test(p.url)     ? p.url   :
@@ -347,7 +360,11 @@ export async function sendMessage(
   // Fire-and-forget — mirroring must never delay or block SMS delivery.
   try {
     const { mirrorToWebThread, extractMirrorText } = await import("./threadMirror");
-    const mirrorText = typeof textOrMessage === "string" ? textOrMessage : extractMirrorText(textOrMessage);
+    // Mirror the cleaned text so the web inbox matches what actually went out
+    // over SMS/iMessage (which is linted in normalizeParts below).
+    const mirrorText = typeof textOrMessage === "string"
+      ? lintPreservingLayout(textOrMessage)
+      : extractMirrorText(textOrMessage);
     void mirrorToWebThread({ chatId, direction: "outbound", text: mirrorText });
   } catch { /* non-critical */ }
 

@@ -134,6 +134,22 @@ describe("sendMessage protocol selection", () => {
   });
 });
 
+describe("outbound tone linting", () => {
+  it("strips em-dashes from outgoing text parts", async () => {
+    const { sendMessage } = await import("./client");
+    await sendMessage("chat-1", "Got it — I've let the family know.");
+    expect(messageBodies()[0].message.parts[0].value).toBe("Got it, I've let the family know.");
+  });
+
+  it("preserves blank lines in multi-line sends while cleaning em-dashes", async () => {
+    const { sendMessage } = await import("./client");
+    await sendMessage("chat-1", "Hours for today:\n\nMaria R. — 4 hrs\nAmount: $96");
+    expect(messageBodies()[0].message.parts[0].value).toBe(
+      "Hours for today:\n\nMaria R., 4 hrs\nAmount: $96",
+    );
+  });
+});
+
 describe("sendToPhone protocol selection (new chat)", () => {
   it("forces the protocol at chat creation and stores the response service", async () => {
     // createChat reports the actual service used was SMS (per Linq's response).

@@ -25,6 +25,8 @@ import { downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/med
 import { addKnownNames } from "../utils/knownNames";
 import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
 import { getAppUrl } from "../config/appUrl";
+import { runStep, RunStepContext, StepDeps } from "./conversationStep";
+import { buildClientSteps } from "./onboardingSteps.client";
 
 /** iMessage/RCS can share a location pin; plain SMS cannot. */
 function isRichService(service?: string): boolean {
@@ -677,101 +679,52 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
   await sendMessage(chatId, msg);
 }
 
+// The linear client question steps, expressed as data and driven by `runStep`
+// (see conversationStep.ts). Every user-visible string lives in
+// onboardingSteps.client.ts, copied verbatim from the former handlers. The
+// helpers each step needs are injected here so the table file stays free of an
+// import cycle. (`locationPrompt` and `buildIntakeSummary` are hoisted function
+// declarations, so referencing them at module-init time is safe.)
+const CLIENT_STEPS = buildClientSteps({
+  generateCaraMessage,
+  locationPrompt,
+  buildIntakeSummary,
+});
+
+// Production side effects for `runStep`: the real mid-flow helpers plus an
+// ATOMIC merge+advance — one Firestore `.update()` using dotted field paths, so
+// a failure can't leave a user half-advanced (the old code did two writes).
+const stepDeps: StepDeps = {
+  isQuestionOrOther,
+  answerQuestionMidFlow,
+  parseWithClaude,
+  sendMessage,
+  async mergeAndAdvance(phone, fields, nextStep) {
+    // Dotted paths update individual onboardingData keys without overwriting
+    // siblings, so this preserves everything collected on earlier steps.
+    const update: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fields)) update[`onboardingData.${k}`] = v;
+    if (nextStep) update.onboardingStep = nextStep;
+    await db.collection("agent_sessions").doc(phone).update(update);
+  },
+};
+
+function clientStepCtx(phone: string, chatId: string, text: string, session: AgentSession): RunStepContext {
+  return { phone, chatId, text, session };
+}
+
 async function handleClientAskName(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "What's your name?");
-    return;
-  }
-  const firstName = await parseWithClaude(
-    "Extract only the first name from this message. Reply with just the first name, nothing else. If you cannot find a name, reply: unknown",
-    text
-  );
-  const safeName = (!firstName || firstName === "__parse_error__" || firstName === "unknown") ? "there" : firstName;
-  if (safeName === "there") {
-    await sendMessage(chatId, "I didn't catch your name — could you share it?");
-    return;
-  }
-  await mergeOnboardingData(phone, { firstName: safeName });
-  await updateSession(phone, { onboardingStep: "client_ask_senior" });
-  const msg3 = await generateCaraMessage({
-    audience: "family",
-    context: `Cara just learned the client's name is ${safeName}. Greet them warmly by name and ask who they're looking for care for (name and relationship to them, e.g. "my mom Dorothy").`,
-    fallback: `Nice to meet you, ${safeName}. Who are we caring for?`,
-    maxTokens: 80,
-  });
-  await sendMessage(chatId, msg3);
+  return runStep(CLIENT_STEPS.client_ask_name, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
 async function handleClientAskSenior(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "Now, who are you looking for care for? (Their name and your relationship, e.g. 'my mom Dorothy')");
-    return;
-  }
-  const raw = await parseWithClaude(
-    'Extract the senior\'s first name and the user\'s relationship to them from this message. Reply in JSON format: {"seniorName":"...","relationship":"..."}',
-    text
-  );
-  let seniorName = "your loved one", relationship = "family member";
-  try {
-    const parsed = JSON.parse(raw);
-    seniorName   = parsed.seniorName   || seniorName;
-    relationship = parsed.relationship || relationship;
-  } catch { /* keep defaults */ }
-
-  await mergeOnboardingData(phone, { seniorName, relationship });
-  await updateSession(phone, { onboardingStep: "client_ask_needs" });
-  const msg4 = await generateCaraMessage({
-    audience: "family",
-    context: `Cara is onboarding a family. They just said they're looking for care for ${seniorName} (their ${relationship}). Ask how old ${seniorName} is and what kind of help they need these days.`,
-    fallback: `Got it. How old is ${seniorName}, and what do they need help with these days?`,
-    maxTokens: 80,
-  });
-  await sendMessage(chatId, msg4);
+  return runStep(CLIENT_STEPS.client_ask_senior, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
-async function handleClientAskNeeds(phone: string, chatId: string, text: string, session: AgentSession, service?: string): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    const d = session.onboardingData ?? {};
-    await sendMessage(chatId, `How old is ${d.seniorName ?? "your loved one"}, and what kind of help do they need?`);
-    return;
-  }
-  const raw = await parseWithClaude(
-    'Extract age (as number), careNeeds (array of strings), and conditions (array of strings) from this message. Reply in JSON: {"age":0,"careNeeds":[],"conditions":[]}',
-    text
-  );
-  let age = 0;
-  let careNeeds: string[] = [];
-  let conditions: string[] = [];
-  try {
-    const parsed = JSON.parse(raw);
-    age        = parsed.age        ?? 0;
-    careNeeds  = parsed.careNeeds  ?? [];
-    conditions = parsed.conditions ?? [];
-  } catch { /* keep defaults */ }
-
-  await mergeOnboardingData(phone, { age, careNeeds, conditions });
-  await updateSession(phone, { onboardingStep: "client_ask_location" });
-  const seniorName = session.onboardingData?.seniorName;
-  const condLabel = conditions.length > 0 ? conditions.join(", ") : (careNeeds.length > 0 ? careNeeds.join(", ") : "");
-  const msg5 = await generateCaraMessage({
-    audience: "family",
-    context:
-      `Cara is collecting onboarding info for a family caring for ${seniorName ?? "their loved one"}. ` +
-      `They just shared the care situation${condLabel ? ` (${condLabel})` : ""}. ` +
-      `If the situation is emotionally heavy (memory care, a serious diagnosis, or the family sounds worried), ` +
-      `acknowledge that weight warmly in one short sentence first — no platitudes, no clinical hedging. ` +
-      `Then ask what city and zip code ${seniorName ?? "they"} lives in so you can find specialists nearby.`,
-    fallback: `And where does ${seniorName ?? "they"} live?`,
-    emotionalDirective: (session as any)._emotionalDirective,
-    maxTokens: 120,
-  });
-  await sendMessage(chatId, locationPrompt(msg5, service));
+async function handleClientAskNeeds(phone: string, chatId: string, text: string, session: AgentSession, _service?: string): Promise<void> {
+  // `_service` retained for call-site compatibility; the step's nextQuestion now
+  // reads session.service for the location prompt (same iMessage/RCS/SMS value).
+  return runStep(CLIENT_STEPS.client_ask_needs, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
 async function handleClientAskLocation(phone: string, chatId: string, text: string, session: AgentSession, opts: OnboardingStepOptions = {}): Promise<void> {
@@ -836,127 +789,23 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
 }
 
 async function handleClientAskSchedule(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    const d = session.onboardingData ?? {};
-    await sendMessage(chatId, `How often does ${d.seniorName ?? "they"} need someone, and what times of day work best?`);
-    return;
-  }
-  const raw = await parseWithClaude(
-    'Extract daysPerWeek (number), timeOfDay (morning/afternoon/evening/all-day), and hoursPerDay (number) from this message. Reply in JSON: {"daysPerWeek":0,"timeOfDay":"","hoursPerDay":0}',
-    text
-  );
-  if (raw === "__parse_error__") {
-    await sendMessage(chatId, "Hmm, I didn't catch that. What days and hours do you need care? (e.g. \"Mon–Fri, 9am to 3pm\" or \"3 days a week, mornings\")");
-    return;
-  }
-  let daysPerWeek = 3, timeOfDay = "mornings", hoursPerDay = 4;
-  try {
-    const parsed = JSON.parse(raw);
-    daysPerWeek = parsed.daysPerWeek ?? daysPerWeek;
-    timeOfDay   = parsed.timeOfDay   ?? timeOfDay;
-    hoursPerDay = parsed.hoursPerDay ?? hoursPerDay;
-  } catch { /* keep defaults */ }
-
-  await mergeOnboardingData(phone, { daysPerWeek, timeOfDay, hoursPerDay });
-  await updateSession(phone, { onboardingStep: "client_ask_start" });
-  const dSched = session.onboardingData ?? {};
-  const seniorSched = (dSched.seniorName as string) ?? "your loved one";
-  const startMsg = await generateCaraMessage({
-    audience: "family",
-    context: `Cara is onboarding a family for ${seniorSched}. They just gave their schedule. Acknowledge it in one short line, then ask when they'd like care to start — right away, or a specific date.`,
-    fallback: `Got it. And when would you like care to start for ${seniorSched} — right away, or a specific date?`,
-    emotionalDirective: (session as any)._emotionalDirective,
-    maxTokens: 90,
-  });
-  await sendMessage(chatId, startMsg);
+  return runStep(CLIENT_STEPS.client_ask_schedule, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
 // ── New intake steps: start date → preferences → budget → playback confirm ─────
 
 async function handleClientAskStart(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "When would you like care to start — right away, or a specific date?");
-    return;
-  }
-  const parsed = await parseWithClaude(
-    "Extract when the family wants care to start. Reply with a short phrase: \"asap\" if they want it right away/" +
-    "urgently, the specific date in their own words if they gave one, or \"flexible\" if they're unsure. Just the phrase.",
-    text
-  );
-  const startDate = (!parsed || parsed === "__parse_error__") ? "flexible" : parsed;
-  await mergeOnboardingData(phone, { startDate });
-  await updateSession(phone, { onboardingStep: "client_ask_preferences" });
-  const prefMsg = await generateCaraMessage({
-    audience: "family",
-    context: `Cara is onboarding a family; care should start "${startDate}". Acknowledge briefly, then ask if they have any preferences for the caregiver — gender, language, or whether they need someone who can drive. Make clear it's optional and they can just say "no preference".`,
-    fallback: "Any preferences for the caregiver — gender, language, or someone who can drive? Totally optional — just say \"no preference\" if not.",
-    emotionalDirective: (session as any)._emotionalDirective,
-    maxTokens: 90,
-  });
-  await sendMessage(chatId, prefMsg);
+  return runStep(CLIENT_STEPS.client_ask_start, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
 async function handleClientAskPreferences(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "Any preferences for the caregiver — gender, language, driving? (or \"no preference\")");
-    return;
-  }
-  const raw = await parseWithClaude(
-    "Extract caregiver preferences. Reply in JSON: {\"gender\":\"\",\"language\":\"\",\"driving\":false,\"other\":\"\"}. " +
-    "gender: \"female\"/\"male\" or \"\" if none. language: a language name or \"\". driving: true only if they need " +
-    "someone who can drive. other: any other preference (pets, smoking, non-smoker, etc.) or \"\". If they say no " +
-    "preference, return all empty/false.",
-    text
-  );
-  let prefs: { gender?: string; language?: string; driving?: boolean; other?: string } = {};
-  try { prefs = JSON.parse(raw); } catch { /* none */ }
-  await mergeOnboardingData(phone, {
-    caregiverPreferences: prefs,
-    // Top-level keys the matching engine reads directly (matchingAgent + claudeMatching).
-    genderPreference:   prefs.gender   ?? "",
-    languagePreference: prefs.language ?? "",
-    needsDriving:       prefs.driving === true,
-    otherPreference:    prefs.other    ?? "",
-  });
-  await updateSession(phone, { onboardingStep: "client_ask_budget" });
-  const d = session.onboardingData ?? {};
-  const city = (d.city as string) ?? "";
-  const rangeHint = city ? `Caregivers near ${city} typically run $18–28/hr` : "Caregivers typically run $18–28/hr";
-  const budgetMsg = await generateCaraMessage({
-    audience: "family",
-    context: `Cara is onboarding a family. They just shared caregiver preferences. Now ask about budget. In one line make clear the caregiver's hourly pay is SEPARATE from the CareConnex membership, include this hint verbatim: "${rangeHint}", and ask if they have an hourly budget in mind (they can say "not sure"). Warm and brief.`,
-    fallback: `One more — caregivers are paid hourly, separate from your CareConnex membership. ${rangeHint}. Do you have an hourly budget in mind? ("not sure" is totally fine)`,
-    maxTokens: 110,
-  });
-  await sendMessage(chatId, budgetMsg);
+  return runStep(CLIENT_STEPS.client_ask_preferences, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
 async function handleClientAskBudget(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "Do you have an hourly budget in mind? (\"not sure\" is fine)");
-    return;
-  }
-  const raw = await parseWithClaude(
-    "Extract the family's hourly budget. Reply in JSON: {\"min\":0,\"max\":0}. If one number, set both to it. " +
-    "If a range, set min and max. If they're not sure / no budget, return {\"min\":0,\"max\":0}.",
-    text
-  );
-  let budget = { min: 0, max: 0 };
-  try { const p = JSON.parse(raw); budget = { min: Number(p.min) || 0, max: Number(p.max) || 0 }; } catch { /* none */ }
-  // Store budgetMax top-level too — the matching engine reads it directly.
-  await mergeOnboardingData(phone, { budget, budgetMin: budget.min, budgetMax: budget.max });
-  await updateSession(phone, { onboardingStep: "client_confirm_intake" });
-  const refreshed = await db.collection("agent_sessions").doc(phone).get();
-  const rs = refreshed.data() as AgentSession;
-  await sendClientIntakeSummary(chatId, rs);
+  // runStep advances to client_confirm_intake and sends the intake summary via
+  // the step's nextQuestion (buildIntakeSummary over the merged in-memory data).
+  return runStep(CLIENT_STEPS.client_ask_budget, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
 // Plain-text playback of everything Cara captured — a confirmation gate before

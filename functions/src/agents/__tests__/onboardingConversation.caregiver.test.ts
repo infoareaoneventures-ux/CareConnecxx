@@ -270,8 +270,8 @@ describe("caregiver onboarding steps — characterization", () => {
       const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
       expect(stored.onboardingData.availability).toEqual({ days: ["Monday", "Tuesday"], hours: "9am-5pm" });
       expect(stored.onboardingStep).toBe("caregiver_ask_job_type");
-      // The job-type numbered options are appended on the next line.
-      expect(sentMessages.some(m => m.text.includes("Reply 1 for Occasional"))).toBe(true);
+      // Natural either/or job-type question (no numbered menu).
+      expect(sentMessages.some(m => m.text.includes("occasional fill-in shifts, part-time (under 25 hrs/week), or full-time work?"))).toBe(true);
     });
 
     it("mid-flow question re-asks without advancing", async () => {
@@ -315,7 +315,7 @@ describe("caregiver onboarding steps — characterization", () => {
 
       const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
       expect(stored.onboardingStep).toBe("caregiver_ask_job_type");
-      expect(sentMessages.some(m => m.text === "Are you looking for occasional, part-time, or full-time work? Reply 1, 2, or 3.")).toBe(true);
+      expect(sentMessages.some(m => m.text === "Are you looking for occasional, part-time, or full-time work?")).toBe(true);
     });
   });
 

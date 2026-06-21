@@ -5,7 +5,8 @@ import * as admin from "firebase-admin";
 import { startTyping, sendMessage } from "../linq/client";
 import { buildClickableMessage } from "./caraAgent";
 import { supervise } from "../safety/supervisor";
-import { guardOutbound } from "../utils/outboundGuard";
+import { redactPii } from "../safety/redactPii";
+import { lintMessage } from "../safety/linter";
 import { getPreferences, isInDND } from "../memory/preferences";
 import { getRelevantFacts } from "../memory/learnedFacts";
 import { getZepContext } from "../memory/zepClient";
@@ -2069,13 +2070,10 @@ export async function runQuickReply(params: {
   if (!reply) reply = "Hey! How's everything going?";
 
   // Quick replies bypass the full supervisor (lint + constitution check) that
-  // runQaAgent runs — guardOutbound is the lightweight stand-in: PII redaction
-  // plus the same lint pass, no extra LLM latency. Fails open for normal text.
-  const guarded = await guardOutbound(reply, {
-    audience: userType === "caregiver" ? "caregiver" : "family",
-    phone,
-  });
-  reply = guarded.text || "Hey! How's everything going?";
+  // runQaAgent runs. Redact PII + lint here so the SAVED turn never holds PII
+  // (the transport also redacts on send — U10 — but history is saved below).
+  // No extra LLM latency. Fails open for normal text.
+  reply = lintMessage(redactPii(reply).text) || "Hey! How's everything going?";
 
   await saveConversationTurn(phone, text, reply);
   await sendMessage(chatId, buildClickableMessage(reply)).catch(() => {});

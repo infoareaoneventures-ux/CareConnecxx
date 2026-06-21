@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { v4 as uuidv4 } from "uuid";
 import { supervise, SuperviseContext } from "../safety/supervisor";
 import { lintPreservingLayout } from "../safety/linter";
+import { redactPii } from "../safety/redactPii";
 import { logMessageSent } from "../observability/auditLog";
 
 const db = admin.firestore();
@@ -190,7 +191,11 @@ function normalizeParts(parts: LinqMessagePart[]): LinqMessagePart[] {
     // Falls back to the original if linting somehow empties the part (Linq
     // rejects a message with no content).
     if (p.type === "text" && typeof p.value === "string") {
-      const cleaned = lintPreservingLayout(p.value);
+      // Voice cleanup AND PII redaction at the one chokepoint every send
+      // crosses (U10), so scripted sends and sendToPhone-initiated chats are
+      // scrubbed of SSNs / card numbers / cross-user emails too — not just the
+      // runQuickReply path the old outboundGuard covered. Fail open.
+      const cleaned = redactPii(lintPreservingLayout(p.value)).text;
       return { ...p, value: cleaned || p.value };
     }
     if (p.type !== "link") return p;

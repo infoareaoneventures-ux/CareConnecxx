@@ -12,7 +12,20 @@ import {
 } from "../memory/memoryFiles";
 import { getPreferences } from "../memory/preferences";
 import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingActionById, isConfirmedActionValid } from "../agents/pendingActions";
+import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
+
+// U6 — money-moving tools whose side effect must fire at most once per
+// confirmation. When one of these runs as a CONFIRMED action, its execution is
+// keyed in the tool_execution_ledger (mcp/toolExecutionLedger.ts) so a replay
+// (duplicate "YES", Linq redelivery, approvalHandler re-invoke) returns the
+// cached result instead of charging/paying out twice. Naturally-idempotent
+// writes (status flips, cancels) are deliberately NOT here — they don't need it.
+const IDEMPOTENT_CONFIRMED_TOOLS = new Set<string>([
+  "request_instant_payout",
+  "request_standard_payout",
+  "submit_shift_hours",
+]);
 import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
 import { getAppUrl } from "../config/appUrl";
 import { logAgentAction } from "../observability/actionLedger";
@@ -2098,6 +2111,36 @@ export async function handleToolCall(
     return buildPendingActionStub(action);
   }
 
+  // U6: confirmed money-moving tools execute at most once per confirmation. A
+  // replay returns the cached result instead of re-firing the charge/payout.
+  // (The full ToolHandler/runTool descriptor migration of every tool is the
+  // deferred long tail; the production money-safety guarantee lands here.)
+  if (confirmedActionId && IDEMPOTENT_CONFIRMED_TOOLS.has(name)) {
+    const idemKey = toolExecutionKey(confirmedActionId, name, input);
+    const claim = await claimToolExecution(idemKey);
+    if (claim.cached) return claim.result;
+    try {
+      const r = await executeToolCall(name, input, confirmedActionId);
+      const isErr = !!(r && typeof r === "object" && (r as { _toolError?: boolean })._toolError);
+      await settleToolExecution(idemKey, isErr ? { ok: false } : { ok: true, result: r });
+      return r;
+    } catch (e) {
+      await settleToolExecution(idemKey, { ok: false });
+      throw e;
+    }
+  }
+  return executeToolCall(name, input, confirmedActionId);
+}
+
+// The tool-execution body (the ~3,000-line switch), split from the confirmation
+// gate so the gate + idempotency wrap live in handleToolCall and this stays a
+// pure executor. `confirmedActionId` is threaded only to suppress the duplicate
+// "proposed" audit entry on a confirmed re-run.
+async function executeToolCall(
+  name: string,
+  input: Record<string, unknown>,
+  confirmedActionId?: string,
+): Promise<unknown> {
   const nowIso = new Date().toISOString();
   const daysBack  = Math.min((input.daysBack as number) ?? 30, 90);
   const daysAgo   = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();

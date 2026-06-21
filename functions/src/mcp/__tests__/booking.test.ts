@@ -103,6 +103,27 @@ vi.mock("../../utils/caraMessage", () => ({
   generateCaraMessage: vi.fn(async ({ fallback }: { fallback: string }) => fallback),
 }));
 
+// Control the idempotency ledger so we can assert the handleToolCall wiring (U6)
+// without a real Firestore round-trip. `claimToolExecution` returning {cached}
+// short-circuits before executeToolCall, so no tool body runs.
+const ledger = vi.hoisted(() => ({
+  claimToolExecution: vi.fn(async (_key: string) => ({ cached: false as const })),
+  settleToolExecution: vi.fn(async () => {}),
+  toolExecutionKey: (id: string, name: string) => `${id}:${name}:hash`,
+}));
+vi.mock("../toolExecutionLedger", () => ledger);
+
+// Make the confirmation gate accept our _confirmedActionId so the confirmed path
+// (where idempotency applies) is reached.
+vi.mock("../../agents/pendingActions", async (orig) => {
+  const actual = await (orig as () => Promise<Record<string, unknown>>)();
+  return {
+    ...actual,
+    getPendingActionById: vi.fn(async () => ({ status: "awaiting", toolName: "any", phone: "+15125550123" })),
+    isConfirmedActionValid: vi.fn(() => true),
+  };
+});
+
 import { handleToolCall } from "../server";
 
 describe("booking tools", () => {
@@ -213,6 +234,38 @@ describe("booking tools", () => {
       expect(r.status).toBe("applied_directly");
       expect(hoisted.docState.get("appointments/a1").date).toBe("2026-06-02");
       expect(hoisted.adds.some((a) => a.path === "admin_alerts" && a.data.type === "time_change_unconfirmed")).toBe(true);
+    });
+  });
+
+  // U6: confirmed money-moving tools route through the idempotency ledger; a
+  // cached claim short-circuits before the tool body runs.
+  describe("confirmed-action idempotency wiring", () => {
+    beforeEach(() => {
+      ledger.claimToolExecution.mockClear();
+      ledger.claimToolExecution.mockResolvedValue({ cached: false } as any);
+    });
+
+    it("a confirmed money tool (request_instant_payout) consults the ledger", async () => {
+      await handleToolCall("request_instant_payout", {
+        _confirmedActionId: "pa_1", phone: "+15125550123", caregiverId: "cg1", amountCents: 5000,
+      });
+      expect(ledger.claimToolExecution).toHaveBeenCalledTimes(1);
+      expect(ledger.claimToolExecution.mock.calls[0][0]).toContain("request_instant_payout");
+    });
+
+    it("a cached claim short-circuits — returns the cached result, tool body never runs", async () => {
+      ledger.claimToolExecution.mockResolvedValue({ cached: true, result: { success: true, cached: true } } as any);
+      const result = await handleToolCall("request_instant_payout", {
+        _confirmedActionId: "pa_1", phone: "+15125550123", caregiverId: "cg1", amountCents: 5000,
+      });
+      expect(result).toEqual({ success: true, cached: true });
+    });
+
+    it("a non-idempotent confirmed tool (cancel_appointment) does NOT consult the ledger", async () => {
+      await handleToolCall("cancel_appointment", {
+        _confirmedActionId: "pa_2", phone: "+15125550123", appointmentId: "a1", clientId: "c1",
+      }).catch(() => {});
+      expect(ledger.claimToolExecution).not.toHaveBeenCalled();
     });
   });
 });

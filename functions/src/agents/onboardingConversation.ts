@@ -267,10 +267,8 @@ export async function handleOnboardingStep(
   if (norm === "START OVER" || norm === "RESTART") {
     await updateSession(phone, { onboardingStep: "ask_role", onboardingData: {} });
     await sendMessage(chatId,
-      "No problem — let's start fresh.\n\n" +
-      "Are you looking for care for a loved one, or are you a caregiver?\n\n" +
-      "1️⃣  I need care for someone\n" +
-      "2️⃣  I'm a caregiver looking for work"
+      "No problem, let's start fresh.\n\n" +
+      "Are you looking for care for a loved one, or are you a caregiver looking for work?"
     );
     return;
   }
@@ -375,8 +373,8 @@ export async function handleOnboardingStep(
       });
       await sendMessage(chatId,
         switchTo === "caregiver"
-          ? "Got it — switching you over. You're a caregiver looking for work, right? Reply 2 to confirm, or 1 if you actually meant client."
-          : "Got it — switching you over. You need care for someone, right? Reply 1 to confirm, or 2 if you actually meant caregiver."
+          ? "Got it, let's switch you over. Just to be sure I've got it right — are you a caregiver looking for work, or did you mean you need care for a loved one?"
+          : "Got it, let's switch you over. Just to be sure I've got it right — do you need care for a loved one, or did you mean you're a caregiver looking for work?"
       );
       return;
     }
@@ -606,8 +604,7 @@ async function handleAskRole(phone: string, chatId: string, text: string): Promi
     return;
   }
   await sendMessage(chatId,
-    "I want to make sure I help you with the right thing!\n\n" +
-    "Reply 1 if you need care for a loved one, or 2 if you're a caregiver looking for work."
+    "Just so I point you the right way, are you looking for care for a loved one, or are you a caregiver looking for work?"
   );
 }
 
@@ -1617,14 +1614,13 @@ async function handleCaregiverAskAvailability(phone: string, chatId: string, tex
     audience: "caregiver",
     context:
       `Cara is onboarding a caregiver who just shared their availability${hours ? ` (${hours})` : ""}. ` +
-      `Acknowledge it warmly in one short line, then lead into asking whether they want occasional, part-time, or ` +
-      `full-time work. Do NOT list the numbered options yourself — Cara appends those on the next line.`,
+      `Acknowledge it warmly in one short line, then ask whether they want occasional, part-time, or ` +
+      `full-time work. Phrase it as a natural either/or question, not a numbered menu.`,
     fallback: "Got it, thanks!",
     maxTokens: 60,
   });
   await sendMessage(chatId,
-    `${availIntro}\n\nAre you looking for occasional fill-in shifts, part-time (less than 25 hrs/week), or full-time work?\n\n` +
-    "Reply 1 for Occasional, 2 for Part-time, or 3 for Full-time."
+    `${availIntro}\n\nAre you looking for occasional fill-in shifts, part-time (under 25 hrs/week), or full-time work?`
   );
 }
 
@@ -1666,7 +1662,7 @@ async function handleCaregiverAskJobType(phone: string, chatId: string, text: st
   if (await isQuestionOrOther(text)) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, "Are you looking for occasional, part-time, or full-time work? Reply 1, 2, or 3.");
+    await sendMessage(chatId, "Are you looking for occasional, part-time, or full-time work?");
     return;
   }
   const raw = await parseWithClaude(

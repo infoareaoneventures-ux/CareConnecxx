@@ -89,6 +89,8 @@ export const STATE_MACHINE_FLAGS = [
   // Onboarding resume checkpoint (NOT cleared — intentionally kept for resume)
 ] as const;
 
+export type StateFlag = typeof STATE_MACHINE_FLAGS[number];
+
 export async function clearAllStateFlags(
   phone: string,
   db: admin.firestore.Firestore
@@ -97,6 +99,68 @@ export async function clearAllStateFlags(
   for (const flag of STATE_MACHINE_FLAGS) {
     update[flag] = admin.firestore.FieldValue.delete();
   }
+  await db.collection("agent_sessions").doc(phone).update(update);
+}
+
+// ── Validated flag access (U8) ───────────────────────────────────────────────
+// The routing spine reads session flags through `(session as any).flag` and
+// destructures the result without a shape guard — so a malformed flag
+// (`pendingCancelConfirm` present but missing `appointmentId`) crashes or
+// silently produces `undefined.doc(undefined)`. These helpers give the routers
+// ONE validated, typed door to the session, replacing the unguarded casts.
+
+/**
+ * Read a session flag with an optional shape guard. Returns the typed value, or
+ * `null` if the flag is absent OR fails validation — never a half-formed object
+ * the caller will blindly destructure. Pure: no Firestore access.
+ */
+export function readFlag<T = unknown>(
+  session: Record<string, unknown> | undefined | null,
+  name: StateFlag,
+  validate?: (v: unknown) => boolean,
+): T | null {
+  const v = session?.[name];
+  if (v === undefined || v === null) return null;
+  if (validate && !validate(v)) return null;
+  return v as T;
+}
+
+/**
+ * True when the session's current state machine has passed its `stateExpiresAt`
+ * deadline (stored as an ISO string). Centralizes the
+ * `new Date(stateExpiresAt) < new Date()` check copied across the routers. Pure.
+ */
+export function isStateExpired(
+  session: Record<string, unknown> | undefined | null,
+  now: Date = new Date(),
+): boolean {
+  const exp = session?.stateExpiresAt;
+  if (typeof exp !== "string" || exp === "") return false; // no deadline set → not expired
+  const when = new Date(exp);
+  return !isNaN(when.getTime()) && when < now;
+}
+
+/** Write one or more flags in a single update. */
+export async function setFlags(
+  phone: string,
+  db: admin.firestore.Firestore,
+  updates: Partial<Record<StateFlag, unknown>>,
+): Promise<void> {
+  await db.collection("agent_sessions").doc(phone).update(updates as Record<string, unknown>);
+}
+
+/**
+ * Delete a SUBSET of state flags in one update (vs. clearAllStateFlags which
+ * wipes everything). Collapses the copy-pasted
+ * `{ flagA: delete(), stateExpiresAt: delete() }` expiry-cleanup blocks.
+ */
+export async function clearFlags(
+  phone: string,
+  db: admin.firestore.Firestore,
+  names: StateFlag[],
+): Promise<void> {
+  const update: Record<string, admin.firestore.FieldValue> = {};
+  for (const n of names) update[n] = admin.firestore.FieldValue.delete();
   await db.collection("agent_sessions").doc(phone).update(update);
 }
 

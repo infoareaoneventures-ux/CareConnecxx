@@ -12,6 +12,7 @@ import {
   StoredEmotionalContext,
 } from "./emotionalContext";
 import { generateToken } from "./tokenService";
+import { summarizeFrontload } from "./frontloadSummary";
 import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../notifications";
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
 import { pushOnboardingDataToZep, addBusinessDataToZep, getZepUserId } from "../memory/zepClient";
@@ -301,6 +302,7 @@ export async function handleOnboardingStep(
   // first still-unfilled step.
   const isClientStep = step === "ask_role" || step.startsWith("client_ask_");
   if (isClientStep && step !== "ask_role" && session.userType !== "caregiver") {
+    const originalStep = step;
     const existing = (session.onboardingData ?? {}) as Record<string, unknown>;
     const absorbed = await absorbClientFields(text, existing).catch(() => ({}));
     if (Object.keys(absorbed).length > 0) {
@@ -324,6 +326,35 @@ export async function handleOnboardingStep(
     if (step !== session.onboardingStep) {
       await updateSession(phone, { onboardingStep: step });
       session.onboardingStep = step;
+    }
+
+    // If the family front-loaded several answers at once and we skipped ahead,
+    // acknowledge what we captured before the landing handler asks the next
+    // question — otherwise it reads as if Cara ignored everything they said.
+    // Gated to genuine multi-question front-loads (summarizeFrontload returns
+    // null otherwise) and only when the landing step still needs an answer, so
+    // normal one-answer-at-a-time turns are untouched.
+    const data = (session.onboardingData ?? {}) as Record<string, unknown>;
+    const recap = summarizeFrontload(absorbed, data);
+    const landingField = CLIENT_STEP_FIELD[step];
+    if (
+      recap &&
+      step !== originalStep &&
+      landingField &&
+      !isFieldFilled(data[landingField])
+    ) {
+      const firstName = typeof data.firstName === "string" ? data.firstName : "";
+      const ack = await generateCaraMessage({
+        audience: "family",
+        context:
+          `The family just shared several things in one message${firstName ? ` (you're talking to ${firstName})` : ""}. ` +
+          `Here's what you now have: ${recap}. In ONE short, warm sentence, let them know you've got it — ` +
+          `naturally, by name if you can, not as a checklist. Do NOT ask a question; the next question comes right after.`,
+        fallback: `Got it${firstName ? `, ${firstName}` : ""} — ${recap}.`,
+        maxTokens: 80,
+        emotionalDirective: (session as any)._emotionalDirective,
+      });
+      await sendMessage(chatId, ack);
     }
   }
 

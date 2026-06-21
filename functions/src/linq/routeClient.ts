@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
+import { isStateExpired, clearFlags } from "../utils/sessionState";
 import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { handleJobPostingStep } from "../agents/jobPostingFlow";
@@ -167,12 +168,8 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
 
   // ── Pre-shift family task check-in reply ────────────────────────────────────
   if ((session as any).awaitingPreShiftUpdate) {
-    const psExpiry = (session as any).stateExpiresAt as string | undefined;
-    if (psExpiry && new Date(psExpiry) < new Date()) {
-      await db.collection("agent_sessions").doc(phone).update({
-        awaitingPreShiftUpdate: admin.firestore.FieldValue.delete(),
-        stateExpiresAt:         admin.firestore.FieldValue.delete(),
-      }).catch(() => {});
+    if (isStateExpired(session)) {
+      await clearFlags(phone, db, ["awaitingPreShiftUpdate", "stateExpiresAt"]).catch(() => {});
     } else {
       await handlePreShiftUpdate(phone, chatId, text, session);
       return "handled";
@@ -308,13 +305,8 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
 
   // ── Job posting flow — multi-step state machine for returning clients ───────
   if ((session as any).jobPostingStep) {
-    const jpExpiry = (session as any).stateExpiresAt as string | undefined;
-    if (jpExpiry && new Date(jpExpiry) < new Date()) {
-      await db.collection("agent_sessions").doc(phone).update({
-        jobPostingStep: admin.firestore.FieldValue.delete(),
-        jobPostingData:  admin.firestore.FieldValue.delete(),
-        stateExpiresAt: admin.firestore.FieldValue.delete(),
-      });
+    if (isStateExpired(session)) {
+      await clearFlags(phone, db, ["jobPostingStep", "jobPostingData", "stateExpiresAt"]);
       await sendMessage(chatId, "Your job posting session timed out. Text me anytime to start a new one!");
       return "handled";
     }

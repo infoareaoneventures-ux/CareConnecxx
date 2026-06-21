@@ -115,11 +115,13 @@ export async function clearAllStateFlags(
  * the caller will blindly destructure. Pure: no Firestore access.
  */
 export function readFlag<T = unknown>(
-  session: Record<string, unknown> | undefined | null,
+  // `object` so both AgentSession (an interface, no index signature) and plain
+  // records pass without a call-site cast.
+  session: object | undefined | null,
   name: StateFlag,
   validate?: (v: unknown) => boolean,
 ): T | null {
-  const v = session?.[name];
+  const v = (session as Record<string, unknown> | null | undefined)?.[name];
   if (v === undefined || v === null) return null;
   if (validate && !validate(v)) return null;
   return v as T;
@@ -131,10 +133,10 @@ export function readFlag<T = unknown>(
  * `new Date(stateExpiresAt) < new Date()` check copied across the routers. Pure.
  */
 export function isStateExpired(
-  session: Record<string, unknown> | undefined | null,
+  session: object | undefined | null,
   now: Date = new Date(),
 ): boolean {
-  const exp = session?.stateExpiresAt;
+  const exp = (session as Record<string, unknown> | null | undefined)?.stateExpiresAt;
   if (typeof exp !== "string" || exp === "") return false; // no deadline set → not expired
   const when = new Date(exp);
   return !isNaN(when.getTime()) && when < now;

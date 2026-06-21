@@ -1,6 +1,11 @@
 import * as admin from "firebase-admin";
 import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
+import { readFlag } from "../utils/sessionState";
 import { classifyIntentDetailed } from "../agents/intentClassifier";
+
+/** Shape guard for pendingCancelConfirm — must carry a usable appointmentId. */
+const hasAppointmentId = (v: unknown): boolean =>
+  !!v && typeof v === "object" && typeof (v as { appointmentId?: unknown }).appointmentId === "string";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { handleTaskApproval } from "../agents/taskApprovalHandler";
 import { updatePermissionFromText, getPermissions } from "../agents/permissionsConversation";
@@ -300,8 +305,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         await handleInterviewConfirm(phone, chatId, session);
         return;
       }
-      if ((session as any).pendingCancelConfirm) {
-        const { appointmentId } = (session as any).pendingCancelConfirm as { appointmentId: string };
+      const cancelConfirm303 = readFlag<{ appointmentId: string }>(session, "pendingCancelConfirm", hasAppointmentId);
+      if (cancelConfirm303) {
+        const { appointmentId } = cancelConfirm303;
         const apptRef  = db.collection("appointments").doc(appointmentId);
         const apptSnap = await apptRef.get();
         if (apptSnap.exists) {
@@ -461,8 +467,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         await handleInterviewConfirm(phone, chatId, session);
         return;
       }
-      if ((session as any).pendingCancelConfirm) {
-        const { appointmentId } = (session as any).pendingCancelConfirm as { appointmentId: string };
+      const cancelConfirm470 = readFlag<{ appointmentId: string }>(session, "pendingCancelConfirm", hasAppointmentId);
+      if (cancelConfirm470) {
+        const { appointmentId } = cancelConfirm470;
         const apptRef = db.collection("appointments").doc(appointmentId);
         const apptSnap = await apptRef.get();
         if (apptSnap.exists) {

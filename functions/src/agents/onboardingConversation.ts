@@ -360,6 +360,10 @@ export async function handleOnboardingStep(
       && !step.endsWith("_send_stripe_connect") && !step.endsWith("_awaiting_stripe")
       && !step.endsWith("_send_membership") && !step.endsWith("_awaiting_membership")
       && step !== "client_confirm_intake"
+      // Name-confirmation steps own their own yes/correction parsing — don't let the
+      // generic mid-flow correction detector pre-empt the confirm handler.
+      && step !== "client_confirm_name"
+      && step !== "caregiver_confirm_name"
       && !step.startsWith("job_")) {
     const correction = await detectCorrection(text);
     if (correction) {
@@ -393,6 +397,7 @@ export async function handleOnboardingStep(
   switch (step) {
     case "verify_phone":          return handleVerifyPhone(phone, chatId, text, session);
     case "ask_role":              return handleAskRole(phone, chatId, text);
+    case "client_confirm_name":   return handleClientConfirmName(phone, chatId, text, session);
     case "client_ask_name":       return handleClientAskName(phone, chatId, text, session);
     case "client_ask_senior":     return handleClientAskSenior(phone, chatId, text, session);
     case "client_ask_needs":      return handleClientAskNeeds(phone, chatId, text, session, service);
@@ -429,6 +434,7 @@ export async function handleOnboardingStep(
     case "job_ask_pay_method":   return handleJobAskPayMethod(phone, chatId, text, session);
     case "job_ask_description":  return handleJobAskDescription(phone, chatId, text, session);
     case "job_confirm_post":     return handleJobConfirmPost(phone, chatId, text, session);
+    case "caregiver_confirm_name":    return handleCaregiverConfirmName(phone, chatId, text, session, service);
     case "caregiver_ask_name":        return handleCaregiverAskName(phone, chatId, text, session, service);
     case "caregiver_ask_location":    return handleCaregiverAskLocation(phone, chatId, text, session, opts);
     case "caregiver_ask_experience":  return handleCaregiverAskExperience(phone, chatId, text, session);
@@ -575,6 +581,73 @@ async function handleAskRole(phone: string, chatId: string, text: string): Promi
 }
 
 // ── CLIENT FLOW ───────────────────────────────────────────────────────────────
+
+// Web-onboarding entry point: the client already typed their name on /start, so it's
+// pre-seeded in onboardingData.firstName and Cara opened by greeting + asking them to
+// confirm it. This handler resolves that confirmation: a "yes" advances to the senior
+// question; a different name is captured as a correction; a bare "no" routes back to
+// the normal ask-name step. Only reached when a name rode in on the web bridge.
+async function handleClientConfirmName(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    const current = (session.onboardingData?.firstName as string | undefined) ?? "there";
+    await sendMessage(chatId, `Just to confirm — should I call you ${current}? (Reply yes, or send the name you'd prefer.)`);
+    return;
+  }
+  const seeded = (session.onboardingData?.firstName as string | undefined) ?? "";
+  const raw = await parseWithClaude(
+    `The user was greeted with the name "${seeded}" and asked to confirm it. Decide whether they confirmed it or gave a different name. ` +
+      'Reply ONLY JSON: {"confirmed": true|false, "correctedName": "<first name>" or null}. ' +
+      'Affirmations (yes, yep, correct, that\'s right, that\'s me) → confirmed=true, correctedName=null. ' +
+      'A different first name (with or without "no") → confirmed=false, correctedName=that name. ' +
+      'A denial with no name (no, nope, wrong) → confirmed=false, correctedName=null.',
+    text
+  );
+  let confirmed = true;
+  let correctedName: string | null = null;
+  try {
+    const parsed = JSON.parse(raw);
+    confirmed = parsed.confirmed !== false;
+    correctedName = typeof parsed.correctedName === "string" && parsed.correctedName.trim()
+      ? parsed.correctedName.trim() : null;
+  } catch {
+    // Parse failure → re-ask rather than guessing.
+    await sendMessage(chatId, `Sorry — should I call you ${seeded || "by the name you gave"}? Reply yes, or send the name you'd prefer.`);
+    return;
+  }
+
+  if (correctedName) {
+    await mergeOnboardingData(phone, { firstName: correctedName });
+    await updateSession(phone, { onboardingStep: "client_ask_senior" });
+    const msg = await generateCaraMessage({
+      audience: "family",
+      context: `Cara just corrected the client's name to ${correctedName}. Briefly acknowledge the fix, then ask who they're looking for care for (name and relationship, e.g. "my mom Dorothy").`,
+      fallback: `Got it — thanks, ${correctedName}. Who are we caring for?`,
+      maxTokens: 80,
+    });
+    await sendMessage(chatId, msg);
+    return;
+  }
+
+  if (!confirmed) {
+    // Denied without offering a name — fall back to the standard ask-name step.
+    await updateSession(phone, { onboardingStep: "client_ask_name" });
+    await sendMessage(chatId, "No problem — what name should I use?");
+    return;
+  }
+
+  // Confirmed — keep the seeded name and move to the senior question.
+  const name = seeded || "there";
+  await updateSession(phone, { onboardingStep: "client_ask_senior" });
+  const msg = await generateCaraMessage({
+    audience: "family",
+    context: `The client confirmed their name is ${name}. Greet them warmly by name and ask who they're looking for care for (name and relationship, e.g. "my mom Dorothy").`,
+    fallback: `Lovely to meet you, ${name}. Who are we caring for?`,
+    maxTokens: 80,
+  });
+  await sendMessage(chatId, msg);
+}
 
 async function handleClientAskName(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
   if (await isQuestionOrOther(text)) {
@@ -1218,6 +1291,70 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
 }
 
 // ── CAREGIVER FLOW ────────────────────────────────────────────────────────────
+
+// Caregiver counterpart to handleClientConfirmName. The caregiver typed their name on
+// /start (seeded in onboardingData.name); Cara greeted + asked to confirm. A "yes"
+// advances to the location question; a different name is a correction; a bare "no"
+// routes back to the standard ask-name step. Only reached when a name rode in on the bridge.
+async function handleCaregiverConfirmName(phone: string, chatId: string, text: string, session?: AgentSession, service?: string): Promise<void> {
+  const sess = session ?? ({ onboardingData: {} } as AgentSession);
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, sess);
+    await sendMessage(chatId, answer);
+    const current = (sess.onboardingData?.name as string | undefined) ?? "there";
+    await sendMessage(chatId, `Just to confirm — should I call you ${current}? (Reply yes, or send the name you'd prefer.)`);
+    return;
+  }
+  const seeded = (sess.onboardingData?.name as string | undefined) ?? "";
+  const raw = await parseWithClaude(
+    `The user was greeted with the name "${seeded}" and asked to confirm it. Decide whether they confirmed it or gave a different name. ` +
+      'Reply ONLY JSON: {"confirmed": true|false, "correctedName": "<name>" or null}. ' +
+      'Affirmations (yes, yep, correct, that\'s right, that\'s me) → confirmed=true, correctedName=null. ' +
+      'A different name (with or without "no") → confirmed=false, correctedName=that name. ' +
+      'A denial with no name (no, nope, wrong) → confirmed=false, correctedName=null.',
+    text
+  );
+  let confirmed = true;
+  let correctedName: string | null = null;
+  try {
+    const parsed = JSON.parse(raw);
+    confirmed = parsed.confirmed !== false;
+    correctedName = typeof parsed.correctedName === "string" && parsed.correctedName.trim()
+      ? parsed.correctedName.trim() : null;
+  } catch {
+    await sendMessage(chatId, `Sorry — should I call you ${seeded || "by the name you gave"}? Reply yes, or send the name you'd prefer.`);
+    return;
+  }
+
+  if (correctedName) {
+    await mergeOnboardingData(phone, { name: correctedName });
+    await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
+    const msg = await generateCaraMessage({
+      audience: "caregiver",
+      context: `Cara just corrected the caregiver's name to ${correctedName}. Briefly acknowledge the fix, then ask what city and zip code they work in.`,
+      fallback: `Got it — thanks, ${correctedName}. What city and zip code do you work in?`,
+      maxTokens: 80,
+    });
+    await sendMessage(chatId, locationPrompt(msg, service));
+    return;
+  }
+
+  if (!confirmed) {
+    await updateSession(phone, { onboardingStep: "caregiver_ask_name" });
+    await sendMessage(chatId, "No problem — what name should I use?");
+    return;
+  }
+
+  const name = seeded || "there";
+  await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
+  const msg = await generateCaraMessage({
+    audience: "caregiver",
+    context: `The caregiver confirmed their name is ${name}. Greet them by name and ask what city and zip code they work in.`,
+    fallback: `Great to meet you, ${name}. What city and zip code do you work in?`,
+    maxTokens: 80,
+  });
+  await sendMessage(chatId, locationPrompt(msg, service));
+}
 
 async function handleCaregiverAskName(phone: string, chatId: string, text: string, session?: AgentSession, service?: string): Promise<void> {
   if (await isQuestionOrOther(text)) {

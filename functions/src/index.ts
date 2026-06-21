@@ -1,4 +1,4 @@
-import * as admin from "firebase-admin";
+﻿import * as admin from "firebase-admin";
 import * as functions from "firebase-functions/v1";
 
 // Initialize Admin globally if not already done
@@ -252,6 +252,16 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
   const role    = (data.role    as string | undefined) === "caregiver" ? "caregiver" : "client";
   const consent = (data.consentText as string | undefined) ?? "v1.0";
   const referralId = (data.referralId as string | undefined)?.trim();
+  const rawName = (data.name as string | undefined) ?? "";
+  // Keep printable chars only, collapse whitespace, bound length. Empty/blank →
+  // undefined so the webhook's name-present check (and the legacy "ask name"
+  // fallback) stays clean. Safe to persist and to interpolate into a greeting.
+  const name = Array.from(rawName)
+    .filter((ch) => { const code = ch.charCodeAt(0); return code >= 32 && code !== 127; })
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80) || undefined;
 
   if (!phone || !/^\+1\d{10}$/.test(phone)) {
     throw new functions.https.HttpsError("invalid-argument", "A valid US/CA phone number is required.");
@@ -283,6 +293,7 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
     role,
     phone,
     consentText: consent,
+    ...(name ? { name } : {}),
     ...(referralId && role === "caregiver" ? { referralId } : {}),
     status:      "awaiting_inbound",
     createdAt:   admin.firestore.Timestamp.fromDate(now),

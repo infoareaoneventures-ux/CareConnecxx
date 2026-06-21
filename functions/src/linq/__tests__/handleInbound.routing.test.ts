@@ -65,6 +65,10 @@ const hoisted = vi.hoisted(() => {
       increment:  (n: number) => ({ __increment: n }),
       serverTimestamp: () => ({ __serverTimestamp: true }),
     },
+    Timestamp: {
+      now:      () => ({ __ts: "now" }),
+      fromDate: (d: Date) => ({ __ts: d }),
+    },
   });
 
   return {
@@ -587,5 +591,46 @@ describe("QA tail (quick-reply bypass vs full agent)", () => {
     seedSession();
     await handleInbound(makeEvent("how do I add my sister to the account?"));
     expect(runQaAgent).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Web-onboarding bridge: name capture from /start (U2/U3) ──────────────────
+// When the user typed their name on /start, the createWebOnboardingSession
+// callable stored it on the web_onboarding_sessions bridge doc. The FIRST inbound
+// "Hey Cara" must seed that name into the new agent_sessions doc, route to the
+// *_confirm_name step (not *_ask_name), and greet by name. No name → legacy path.
+describe("web-onboarding name bridge", () => {
+  // Seed a bridge doc + leave agent_sessions empty so the first-contact branch fires.
+  function seedWebSession(data: Record<string, unknown>) {
+    hoisted.docState.set(`web_onboarding_sessions/${PHONE}`, {
+      status: "awaiting_inbound",
+      uid: "web-uid",
+      ...data,
+    });
+  }
+  const session = () => hoisted.docState.get(`agent_sessions/${PHONE}`);
+  const greeting = () => (sendMessage.mock.calls.find((c) => typeof c[1] === "string")?.[1] ?? "") as string;
+
+  it("client with a name → confirm step, seeded firstName, greeted by name", async () => {
+    seedWebSession({ role: "client", name: "Sarah" });
+    await handleInbound(makeEvent("Hey Cara"));
+    expect(session()?.onboardingStep).toBe("client_confirm_name");
+    expect(session()?.onboardingData?.firstName).toBe("Sarah");
+    expect(greeting()).toContain("Sarah");
+  });
+
+  it("caregiver with a name → confirm step, seeded name, greeted by name", async () => {
+    seedWebSession({ role: "caregiver", name: "Maria" });
+    await handleInbound(makeEvent("Hey Cara"));
+    expect(session()?.onboardingStep).toBe("caregiver_confirm_name");
+    expect(session()?.onboardingData?.name).toBe("Maria");
+    expect(greeting()).toContain("Maria");
+  });
+
+  it("no name on the bridge doc → legacy ask-name step, no seeded onboardingData", async () => {
+    seedWebSession({ role: "client" });
+    await handleInbound(makeEvent("Hey Cara"));
+    expect(session()?.onboardingStep).toBe("client_ask_name");
+    expect(session()?.onboardingData).toBeUndefined();
   });
 });

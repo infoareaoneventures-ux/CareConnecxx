@@ -7,9 +7,10 @@ import { useDeviceClass } from '../../../hooks/useDeviceClass';
 import { useOnboardingSession } from '../../../hooks/useOnboardingSession';
 import { QRHandoff } from './QRHandoff';
 import { MobileHandoff } from './MobileHandoff';
+import { sanitizeName } from '../../../utils/sanitize';
 
 export type OnboardingRole = 'client' | 'caregiver';
-type Step = 'role' | 'consent' | 'phone' | 'verify' | 'handoff' | 'connected';
+type Step = 'role' | 'consent' | 'name' | 'phone' | 'verify' | 'handoff' | 'connected';
 
 interface Props {
   initialRole?: OnboardingRole | null;
@@ -38,6 +39,7 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
   const [role, setRole] = useState<OnboardingRole | null>(initialRole ?? null);
   const [step, setStep] = useState<Step>(initialRole ? 'consent' : 'role');
   const [agreed, setAgreed] = useState(false);
+  const [name, setName] = useState('');
   const [countryCode, setCountryCode] = useState('+1');
   const [phoneInput, setPhoneInput] = useState('');
   const [e164, setE164] = useState<string | null>(null);
@@ -110,7 +112,8 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
       await confirmationRef.current.confirm(code);
       // Phone Auth succeeded — caller now has a Firebase token bound to this phone.
       const create = functions.httpsCallable('v1-createWebOnboardingSession');
-      const resp = await create({ phone: e164, role, consentText: CONSENT_VERSION, referralId });
+      const cleanName = sanitizeName(name).slice(0, 80);
+      const resp = await create({ phone: e164, role, name: cleanName, consentText: CONSENT_VERSION, referralId });
       const data = resp.data as { linqPhone?: string };
       if (!data?.linqPhone) throw new Error('No LINQ number returned');
       setLinqPhone(data.linqPhone);
@@ -161,7 +164,19 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
           agreed={agreed}
           setAgreed={setAgreed}
           onBack={initialRole ? undefined : () => setStep('role')}
-          onContinue={() => setStep('phone')}
+          onContinue={() => setStep('name')}
+        />
+      );
+    }
+    if (step === 'name') {
+      return (
+        <NameEntry
+          role={role!}
+          tone={tone}
+          name={name}
+          setName={setName}
+          onSubmit={() => setStep('phone')}
+          onBack={() => setStep('consent')}
         />
       );
     }
@@ -178,7 +193,7 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
           loading={loading}
           error={error}
           onSubmit={() => sendCode(false)}
-          onBack={() => setStep('consent')}
+          onBack={() => setStep('name')}
         />
       );
     }
@@ -433,6 +448,77 @@ const ConsentScreen: React.FC<{
         </button>
       )}
     </div>
+  );
+};
+
+const NameEntry: React.FC<{
+  role: OnboardingRole;
+  tone: 'dark' | 'light';
+  name: string;
+  setName: (v: string) => void;
+  onSubmit: () => void;
+  onBack: () => void;
+}> = ({ role, tone, name, setName, onSubmit, onBack }) => {
+  const trimmed = name.trim();
+  const isValid = trimmed.length > 0;
+  const onSubmitForm = (e: React.FormEvent) => { e.preventDefault(); if (isValid) onSubmit(); };
+  if (tone === 'dark') {
+    return (
+      <form onSubmit={onSubmitForm} className="space-y-5">
+        <div className="space-y-1">
+          <h2 className="text-xl font-semibold text-center">What&rsquo;s your name?</h2>
+          <p className="text-white/40 text-sm text-center">So Cara knows who she&rsquo;s talking to.</p>
+        </div>
+        <input
+          type="text"
+          autoFocus
+          maxLength={80}
+          autoComplete="given-name"
+          placeholder="Your first name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-white placeholder-white/20 focus:outline-none focus:border-blue-500 text-sm"
+        />
+        <button
+          type="submit"
+          disabled={!isValid}
+          className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed transition font-semibold text-sm"
+        >
+          Continue
+        </button>
+        <button type="button" onClick={onBack} className="w-full text-sm text-white/30 hover:text-white/50 transition">← Back</button>
+      </form>
+    );
+  }
+  return (
+    <form onSubmit={onSubmitForm} className="space-y-5">
+      <div className="space-y-1.5">
+        <h2 className="text-2xl font-semibold text-slate-900">What&rsquo;s your name?</h2>
+        <p className="text-slate-600 text-base">
+          {role === 'caregiver'
+            ? "So Cara can greet you properly when you text her."
+            : "So Cara knows who she’s helping when you text her."}
+        </p>
+      </div>
+      <input
+        type="text"
+        autoFocus
+        maxLength={80}
+        autoComplete="given-name"
+        placeholder="Your first name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-500 text-lg"
+      />
+      <button
+        type="submit"
+        disabled={!isValid}
+        className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:bg-slate-300 disabled:cursor-not-allowed transition font-semibold text-base text-white shadow-md shadow-emerald-200"
+      >
+        Continue
+      </button>
+      <button type="button" onClick={onBack} className="w-full text-sm text-slate-500 hover:text-slate-700 transition">← Back</button>
+    </form>
   );
 };
 

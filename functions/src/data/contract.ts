@@ -332,7 +332,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "phone",
     caraWrites: true,
     webReads: true,
-    notes: "Bridge between web phone verification and SMS inbound (functions/src/linq/webhooks.ts). Web reads its own doc (hooks/useOnboardingSession.ts); writes server-side only (createWebOnboardingSession callable).",
+    notes: "Bridge between web phone verification and SMS inbound (functions/src/linq/webhooks.ts). Carries role + (optional) name typed on /start; the inbound webhook seeds name into agent_sessions.onboardingData (firstName for client, name for caregiver) and routes to the *_confirm_name step so Cara greets by name. Web reads its own doc (hooks/useOnboardingSession.ts); writes server-side only (createWebOnboardingSession callable).",
   },
   notifications: {
     path: "notifications",

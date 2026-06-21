@@ -640,7 +640,18 @@ async function handleInboundInner(event: unknown): Promise<void> {
       const webSessionData = webSessionSnap.data() ?? {};
       const webRole  = (webSessionData.role as string | undefined) === "caregiver" ? "caregiver" : "client";
       const referralId = webRole === "caregiver" ? (webSessionData.referralId as string | undefined) : undefined;
-      const firstStep = webRole === "caregiver" ? "caregiver_ask_name" : "client_ask_name";
+      // Name typed on the /start web form (if any). When present, we pre-seed it into
+      // onboardingData and route to the confirm step so Cara greets by name and asks
+      // them to confirm — instead of asking "What's your name?" from scratch.
+      const webName = (webSessionData.name as string | undefined)?.trim() || "";
+      const firstStep = webName
+        ? (webRole === "caregiver" ? "caregiver_confirm_name" : "client_confirm_name")
+        : (webRole === "caregiver" ? "caregiver_ask_name" : "client_ask_name");
+      // Caregiver flow keys the name as `name`; client flow keys it as `firstName`
+      // (matches the fields the respective ask-name handlers write).
+      const seededOnboardingData = webName
+        ? (webRole === "caregiver" ? { name: webName } : { firstName: webName })
+        : undefined;
 
       // Returning user — phone already linked to an account. Skip re-onboarding;
       // restore their account context and greet them as a known user. Without
@@ -682,6 +693,7 @@ async function handleInboundInner(event: unknown): Promise<void> {
           preferredLanguage,
           createdAt:      new Date().toISOString(),
           webOnboardingUid: webSessionData.uid ?? null,
+          ...(seededOnboardingData ? { onboardingData: seededOnboardingData } : {}),
           ...(referralId ? { referralId } : {}),
         });
       }
@@ -705,6 +717,17 @@ async function handleInboundInner(event: unknown): Promise<void> {
         welcome = preferredLanguage === "es"
           ? "¡Hola otra vez! Soy Cara. Me alegra verte de nuevo — ¿en qué te puedo ayudar hoy?"
           : "Welcome back! It's Cara. Good to hear from you again — how can I help today?";
+      } else if (webName) {
+        // Name came in from the web form — greet by name and ask them to confirm it
+        // (the confirm step handler resolves yes / correction). Mirrors the tone of
+        // the ask-name welcome but skips re-asking for something we already have.
+        welcome = webRole === "caregiver"
+          ? (preferredLanguage === "es"
+              ? `¡Hola ${webName}! Soy Cara — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Te llamo ${webName}, verdad? (Responde sí, o envíame el nombre que prefieras.)`
+              : `Hi ${webName}! I'm Cara — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and everything happens right here.\n\nShould I call you ${webName}? (Reply yes, or send the name you'd prefer.)`)
+          : (preferredLanguage === "es"
+              ? `¡Hola ${webName}! Soy Cara, tu coordinadora de cuidados. Me encantaría ayudarte.\n\n¿Te llamo ${webName}, verdad? (Responde sí, o envíame el nombre que prefieras.)`
+              : `Hi ${webName}! I'm Cara, your care coordinator. I'd love to help.\n\nShould I call you ${webName}? (Reply yes, or send the name you'd prefer.)`);
       } else {
         // Role-aware welcome — mirrors what handleAskRole sends so the user
         // experiences the same conversational onboarding from message #1.

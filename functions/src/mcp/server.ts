@@ -15,16 +15,23 @@ import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingAct
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 
-// U6 — money-moving tools whose side effect must fire at most once per
-// confirmation. When one of these runs as a CONFIRMED action, its execution is
-// keyed in the tool_execution_ledger (mcp/toolExecutionLedger.ts) so a replay
-// (duplicate "YES", Linq redelivery, approvalHandler re-invoke) returns the
-// cached result instead of charging/paying out twice. Naturally-idempotent
-// writes (status flips, cancels) are deliberately NOT here — they don't need it.
-const IDEMPOTENT_CONFIRMED_TOOLS = new Set<string>([
-  "request_instant_payout",
-  "request_standard_payout",
-  "submit_shift_hours",
+// U6/U7 — CONFIRMED, externally-irreversible tools whose side effect must fire
+// at most once per confirmation. When one runs as a confirmed action, its
+// execution is keyed in the tool_execution_ledger (mcp/toolExecutionLedger.ts)
+// so a replay (duplicate "YES", Linq redelivery, approvalHandler re-invoke)
+// returns the cached result instead of re-submitting.
+//
+// INVARIANT (enforced by toolCapabilities.test.ts): every entry MUST be a real
+// MCP tool AND high-risk — otherwise it never receives a _confirmedActionId and
+// this guard is dead code. That guard caught the original mis-wiring: payouts
+// and submit_shift_hours are NOT confirmation-gated (they carry their own
+// idempotency — Stripe keys, appointmentId dedup), so keying them here did
+// nothing. The genuine confirmed-and-irreversible action is the real-world web
+// submit (pharmacy refill / appointment commit), where a double-fire hits a
+// third party. This ledger is defense-in-depth layered over claimPendingAction's
+// single-fire claim.
+export const IDEMPOTENT_CONFIRMED_TOOLS = new Set<string>([
+  "perform_web_action",
 ]);
 import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
 import { getAppUrl } from "../config/appUrl";

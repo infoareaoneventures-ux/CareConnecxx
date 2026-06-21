@@ -29,9 +29,10 @@ import {
   INTENT_CAPABILITIES,
   findUntaggedTools,
 } from "./toolCapabilities";
-import { MCP_TOOLS } from "../mcp/server";
+import { MCP_TOOLS, IDEMPOTENT_CONFIRMED_TOOLS } from "../mcp/server";
 import { LAUNCH_ACTION_PARITY } from "./launchActionParity";
 import { CONTRACT_COLLECTIONS } from "../data/contract";
+import { isHighRisk } from "./pendingActions";
 
 // Helper — names only, easier to read assertions.
 const names = (tools: { name: string }[]) => new Set(tools.map(t => t.name));
@@ -329,5 +330,30 @@ describe("LAUNCH_ACTION_PARITY", () => {
       missingNote,
       "blocker/non-goal rows must explain why (and reference the U-id that fixes it)",
     ).toEqual([]);
+  });
+});
+
+describe("IDEMPOTENT_CONFIRMED_TOOLS (U7 guard)", () => {
+  // Representative input that puts each conditionally-high-risk tool into its
+  // gated state. A tool whose risk is unconditional needs no entry here.
+  const HIGH_RISK_INPUT: Record<string, Record<string, unknown>> = {
+    perform_web_action: { loginAction: "pharmacy_refill" },
+  };
+
+  it("every entry is a real MCP tool", () => {
+    const realNames = new Set(MCP_TOOLS.map(t => t.name));
+    const unknown = [...IDEMPOTENT_CONFIRMED_TOOLS].filter(n => !realNames.has(n));
+    expect(unknown, "idempotent-confirmed set references tools that don't exist").toEqual([]);
+  });
+
+  it("every entry is actually high-risk — otherwise the idempotency wrap is dead code", () => {
+    // The ledger only engages on a CONFIRMED action. A tool that is never
+    // high-risk never receives a _confirmedActionId, so listing it here would
+    // silently do nothing. This guard is what caught the original mis-wiring
+    // (payouts / submit_shift_hours are not confirmation-gated).
+    const notGated = [...IDEMPOTENT_CONFIRMED_TOOLS].filter(
+      n => !isHighRisk(n, HIGH_RISK_INPUT[n] ?? {}),
+    );
+    expect(notGated, "idempotent-confirmed tools must be high-risk (confirmation-gated)").toEqual([]);
   });
 });

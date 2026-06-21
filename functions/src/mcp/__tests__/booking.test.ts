@@ -245,19 +245,16 @@ describe("booking tools", () => {
       ledger.claimToolExecution.mockResolvedValue({ cached: false } as any);
     });
 
-    it("a confirmed money tool (request_instant_payout) consults the ledger", async () => {
-      await handleToolCall("request_instant_payout", {
-        _confirmedActionId: "pa_1", phone: "+15125550123", caregiverId: "cg1", amountCents: 5000,
+    it("a confirmed irreversible tool routes through the ledger; a cached claim short-circuits the body", async () => {
+      // cached:true so the (slow, real) web-action body never runs — we assert
+      // the wiring: the ledger is consulted with a tool-scoped key, and its
+      // cached result is returned verbatim.
+      ledger.claimToolExecution.mockResolvedValue({ cached: true, result: { success: true, cached: true } } as any);
+      const result = await handleToolCall("perform_web_action", {
+        _confirmedActionId: "pa_1", phone: "+15125550123", userId: "u1", loginAction: "pharmacy_refill",
       });
       expect(ledger.claimToolExecution).toHaveBeenCalledTimes(1);
-      expect(ledger.claimToolExecution.mock.calls[0][0]).toContain("request_instant_payout");
-    });
-
-    it("a cached claim short-circuits — returns the cached result, tool body never runs", async () => {
-      ledger.claimToolExecution.mockResolvedValue({ cached: true, result: { success: true, cached: true } } as any);
-      const result = await handleToolCall("request_instant_payout", {
-        _confirmedActionId: "pa_1", phone: "+15125550123", caregiverId: "cg1", amountCents: 5000,
-      });
+      expect(ledger.claimToolExecution.mock.calls[0][0]).toContain("perform_web_action");
       expect(result).toEqual({ success: true, cached: true });
     });
 

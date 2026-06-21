@@ -1,4 +1,5 @@
 import { isHighRisk, proposePendingAction, buildPendingActionStub } from "../agents/pendingActions";
+import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 
 /**
  * runTool — the deep module behind Cara's tool execution.
@@ -60,6 +61,15 @@ export interface ToolHandler {
    * allow. Runs AFTER injection and BEFORE the confirmation gate.
    */
   ownership?: (input: Record<string, unknown>, ctx: RunToolContext) => Promise<ReturnType<typeof toolError> | null>;
+  /**
+   * Set on tools whose side effect must fire at most once per confirmation
+   * (anything that moves money or is otherwise non-idempotent). When a CONFIRMED
+   * action runs, the runner claims a ledger key (confirmedActionId + name +
+   * input hash); a replay of the same confirmed action returns the cached result
+   * instead of re-running. Read tools and naturally-idempotent writes leave this
+   * unset and skip the ledger entirely.
+   */
+  idempotent?: boolean;
   /** The actual tool work. Receives the injected input. */
   run: (input: Record<string, unknown>, ctx: RunToolContext) => Promise<unknown>;
   /** Fired best-effort after a successful run. Never blocks or throws into the result. */
@@ -123,8 +133,26 @@ export async function runTool(
     return buildPendingActionStub(action);
   }
 
-  // 4. Run the actual tool body.
-  const result = await handler.run(input, ctx);
+  // 4. Run the actual tool body — idempotently for confirmed, money-moving tools.
+  //    A confirmed action keyed on (confirmedActionId + name + input hash) runs
+  //    at most once: a replay returns the cached result instead of re-firing.
+  let result: unknown;
+  if (confirmedActionId && handler.idempotent) {
+    const key = toolExecutionKey(confirmedActionId, handler.name, input);
+    const claim = await claimToolExecution(key);
+    if (claim.cached) return claim.result; // exact replay — do NOT re-run the side effect
+    try {
+      result = await handler.run(input, ctx);
+    } catch (err) {
+      await settleToolExecution(key, { ok: false }); // failed → clear claim so a retry can re-drive
+      throw err;
+    }
+    // A tool that returns an error shape is retryable; only cache real successes.
+    const isErr = !!(result && typeof result === "object" && (result as { _toolError?: boolean })._toolError);
+    await settleToolExecution(key, isErr ? { ok: false } : { ok: true, result });
+  } else {
+    result = await handler.run(input, ctx);
+  }
 
   // 5. Audit, best-effort (never affects the result or throws out).
   if (handler.audit) {

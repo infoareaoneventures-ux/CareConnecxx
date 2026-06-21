@@ -1077,6 +1077,10 @@ service cloud.firestore {
     match /processed_checkr_events/{eventId} {
       allow read, write: if false;
     }
+    // Confirmed-action idempotency ledger (mcp/toolExecutionLedger.ts) — server-only.
+    match /tool_execution_ledger/{key} {
+      allow read, write: if false;
+    }
 
     // Turn checkpoints — server-only resume state for in-flight qaAgent turns.
     // Written/read exclusively by Cloud Functions via the Admin SDK (which

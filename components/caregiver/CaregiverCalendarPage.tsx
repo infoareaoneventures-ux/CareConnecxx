@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   Calendar as CalendarIcon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, X,
-  Video, Phone, Home, Loader2, User, MapPin, CheckCircle,
+  Video, Phone, Home, Loader2, User, MapPin, CheckCircle, Lock,
 } from 'lucide-react';
 import firebase from 'firebase/compat/app';
 import { auth, db } from '../../lib/firebase';
 import { CaregiverTopNav } from './CaregiverTopNav';
+import { useCaregiverGate } from '../../hooks/useCaregiverGate';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../../services/availabilityService';
 import { shiftDisplayStatus, shiftStatusBlockClass, shiftStatusBadgeClass, shiftStatusDotClass, shiftStatusLabel } from '../../utils/shiftUtils';
 
@@ -140,6 +141,7 @@ interface CaregiverCalendarPageProps {
 
 export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ onNavigate: _onNavigate }) => {
   const navigate = useNavigate();
+  const { blockReason } = useCaregiverGate();
   const [view,       setView]       = useState<'week' | 'month' | 'day' | 'list'>('week');
   const [dateFilter, setDateFilter] = useState<'upcoming' | 'this-week' | 'this-month' | 'last-30' | 'all'>('upcoming');
   const [weekOffset, setWeekOffset] = useState(0);
@@ -720,13 +722,23 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
 
           {/* Scheduled + within 15 min of start (or past start but not ended): Start Shift */}
           {canStart && (
-            <button
-              onClick={() => handleStartShift(shift.id)}
-              className="w-full py-2.5 bg-accent-500 hover:bg-accent-600 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
-            >
-              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-              Start Shift
-            </button>
+            blockReason === 'membership' ? (
+              <button onClick={() => navigate('/caregiver/membership')} className="w-full py-2.5 bg-slate-100 border border-slate-200 text-slate-500 text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors hover:bg-slate-200">
+                <Lock className="w-4 h-4" /> Activate Membership
+              </button>
+            ) : blockReason === 'background' ? (
+              <button onClick={() => navigate('/caregiver/dashboard')} className="w-full py-2.5 bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors hover:bg-amber-100">
+                <Lock className="w-4 h-4" /> Complete Verification
+              </button>
+            ) : (
+              <button
+                onClick={() => handleStartShift(shift.id)}
+                className="w-full py-2.5 bg-accent-500 hover:bg-accent-600 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                Start Shift
+              </button>
+            )
           )}
 
           {/* In Progress: End Shift (two-step with notes) */}
@@ -1073,6 +1085,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
   );
 
   return (
+  <>
     <div className="min-h-screen bg-slate-50 pb-24">
       <CaregiverTopNav />
 
@@ -1662,5 +1675,6 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         document.body
       )}
     </div>
+  </>
   );
 };

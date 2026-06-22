@@ -378,7 +378,7 @@ export default function ClientCaregiverProfile({
             {/* About */}
             <Section title={`About ${caregiver.firstName}`}>
               {caregiver.bio
-                ? <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{caregiver.bio}</p>
+                ? <p className="text-sm text-slate-700 leading-relaxed break-all">{caregiver.bio}</p>
                 : <p className="text-sm text-slate-400 italic">No bio yet.</p>
               }
               {caregiver.languages.length > 0 && (

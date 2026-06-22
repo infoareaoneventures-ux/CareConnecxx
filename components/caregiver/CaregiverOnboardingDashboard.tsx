@@ -12,6 +12,8 @@ import { CaregiverBookingsCard } from './CaregiverBookingsCard';
 import { jobApplicationService } from '../../hooks/useJobApplications';
 import { hasValidTransportDocs } from '../../utils/transportDocs';
 import { openCaregiverBillingPortal } from '../../services/stripeService';
+import { useCaregiverGate } from '../../hooks/useCaregiverGate';
+import { useNavigate } from 'react-router-dom';
 
 interface CaregiverOnboardingDashboardProps {
   profile: Caregiver;
@@ -34,16 +36,20 @@ function getFirstName(name: string): string {
 
 // ── Progress Card ─────────────────────────────────────────────────────────────
 
-const CaregiverProgressCard: React.FC<{
+export const CaregiverProgressCard: React.FC<{
   profile: Caregiver;
   onNavigate: (view: any) => void;
   onShowToast?: AddToastFunction;
-}> = ({ profile, onNavigate, onShowToast }) => {
+  compactMode?: boolean;
+}> = ({ profile, onNavigate, onShowToast, compactMode = false }) => {
   const [showBgModal, setShowBgModal] = useState(false);
   const p = profile as any;
   const membershipActive = p.membershipStatus === 'active' || p.membershipStatus === 'trialing' || (!p.membershipStatus && p.membershipPaid === true);
   const bgApprovedFull = profile.verified === true || p.backgroundCheckStatus === 'clear' || p.backgroundCheckComplete === true;
-  const isApproved = membershipActive && bgApprovedFull;
+  const services: string[] = (p.services || p.skills || []) as string[];
+  const needsTransportDocs = services.includes('Transportation');
+  const transportDocsValid = needsTransportDocs ? hasValidTransportDocs(profile) : false;
+  const isApproved = membershipActive && bgApprovedFull && (!needsTransportDocs || transportDocsValid);
   const profileComplete = p.onboardingStatus === 'profile_complete' || p.onboardingStatus === 'submitted' || isApproved;
   const hasPaid = membershipActive;
   const checkrInitiated = !!p.backgroundCheckData?.checkrCandidateId;
@@ -53,10 +59,17 @@ const CaregiverProgressCard: React.FC<{
 
   if (isApproved) return null;
 
+  const docs = p.documents || {};
+  const getDocStatus = (key: string) => { const d = docs[key]; return d?.url ? (d.status || 'pending') : 'missing'; };
+  const transportDocStatuses = needsTransportDocs ? ['driversLicense', 'insurance', 'registration'].map(k => getDocStatus(k)) : [];
+  const transportNeedsAction = needsTransportDocs && (transportDocStatuses.includes('missing') || transportDocStatuses.includes('rejected'));
+
   const activeStep = !profileComplete ? 1
     : !hasPaid ? 2
-    : !checkrInitiated ? 3
-    : 4;
+    : (!checkrInitiated && !bgApprovedFull) ? 3
+    : transportNeedsAction ? 5
+    : !bgApprovedFull ? 4
+    : 5;
 
   // CTA card content
   let cardTitle = '';
@@ -110,8 +123,27 @@ const CaregiverProgressCard: React.FC<{
     };
   } else if (activeStep === 4) {
     cardTitle = 'Background check in progress';
-    cardDesc = 'Your background check is underway — we\'ll notify you once it clears.';
+    cardDesc = needsTransportDocs
+      ? 'Your background check and transport document review are both underway. We\'ll notify you once everything clears.'
+      : 'Your background check is underway — we\'ll notify you once it clears.';
     cardVariant = 'info';
+  } else if (activeStep === 5) {
+    const anyDocRejected = transportDocStatuses.includes('rejected');
+    const anyDocMissing = transportDocStatuses.includes('missing');
+    if (anyDocRejected) {
+      cardTitle = 'Documents rejected';
+      cardDesc = 'Some transport documents were rejected. Please re-upload to continue.';
+      cardVariant = 'warning';
+      cardCta = { label: 'Re-upload documents', onClick: () => onNavigate('caregiver-settings') };
+    } else if (anyDocMissing) {
+      cardTitle = 'Upload transport documents';
+      cardDesc = "Upload your driver's license, vehicle insurance, and registration to earn your transportation badge.";
+      cardCta = { label: 'Upload documents', onClick: () => onNavigate('caregiver-settings') };
+    } else {
+      cardTitle = 'Documents under review';
+      cardDesc = 'Our team will review your transport documents and notify you.';
+      cardVariant = 'info';
+    }
   }
 
   const steps = [
@@ -119,6 +151,7 @@ const CaregiverProgressCard: React.FC<{
     { label: 'Profile', done: profileComplete, inProgress: !profileComplete },
     { label: 'Membership', done: hasPaid, inProgress: !hasPaid && profileComplete },
     { label: 'Background Check', done: bgApprovedFull, inProgress: bgCheckInProgress },
+    ...(needsTransportDocs ? [{ label: 'Transport Docs', done: transportDocsValid, inProgress: !transportDocsValid && !transportDocStatuses.includes('missing') }] : []),
   ];
 
   return (
@@ -131,33 +164,40 @@ const CaregiverProgressCard: React.FC<{
         />
       )}
     <div className="bg-white border border-slate-100 rounded-[2rem] p-6 mb-8 shadow-sm">
-      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-5">Your progress</p>
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-5">
+        {compactMode ? 'Action required' : 'Your progress'}
+      </p>
 
       {/* Horizontal stepper */}
-      <div className="flex items-start mb-5">
-        {steps.map((step, i) => (
-          <React.Fragment key={i}>
-            <div className="flex flex-col items-center flex-1 min-w-0">
-              <div className={`w-9 h-9 rounded-full flex items-center justify-center mb-2 flex-shrink-0 ${
-                step.done ? 'bg-teal-500 shadow-sm' : step.inProgress ? 'bg-indigo-600 shadow-sm' : 'bg-slate-100'
-              }`}>
-                {step.done
-                  ? <CheckCircle className="w-5 h-5 text-white" />
-                  : step.inProgress
-                  ? <Clock className="w-4 h-4 text-white" />
-                  : <Lock className="w-4 h-4 text-slate-400" />
-                }
-              </div>
-              <span className={`text-xs font-semibold text-center px-1 leading-tight ${
-                step.done ? 'text-teal-600' : step.inProgress ? 'text-indigo-700' : 'text-slate-400'
-              }`}>{step.label}</span>
-            </div>
-            {i < steps.length - 1 && (
-              <div className={`h-0.5 flex-1 mt-[18px] mx-1 ${step.done ? 'bg-teal-200' : 'bg-slate-100'}`} />
-            )}
-          </React.Fragment>
-        ))}
-      </div>
+      {(() => {
+        const visibleSteps = compactMode ? steps.filter(s => !s.done) : steps;
+        return (
+          <div className="flex items-start mb-5">
+            {visibleSteps.map((step, i) => (
+              <React.Fragment key={i}>
+                <div className="flex flex-col items-center flex-1 min-w-0">
+                  <div className={`w-9 h-9 rounded-full flex items-center justify-center mb-2 flex-shrink-0 ${
+                    step.done ? 'bg-teal-500 shadow-sm' : step.inProgress ? 'bg-indigo-600 shadow-sm' : 'bg-slate-100'
+                  }`}>
+                    {step.done
+                      ? <CheckCircle className="w-5 h-5 text-white" />
+                      : step.inProgress
+                      ? <Clock className="w-4 h-4 text-white" />
+                      : <Lock className="w-4 h-4 text-slate-400" />
+                    }
+                  </div>
+                  <span className={`text-xs font-semibold text-center px-1 leading-tight ${
+                    step.done ? 'text-teal-600' : step.inProgress ? 'text-indigo-700' : 'text-slate-400'
+                  }`}>{step.label}</span>
+                </div>
+                {!compactMode && i < visibleSteps.length - 1 && (
+                  <div className={`h-0.5 flex-1 mt-[18px] mx-1 ${step.done ? 'bg-teal-200' : 'bg-slate-100'}`} />
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Active step CTA card */}
       <div className={`rounded-2xl p-4 ${
@@ -199,6 +239,8 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
   jobs: prefetchedJobs,
   jobsLoaded: prefetchedJobsLoaded,
 }) => {
+  const { blockReason, transportBlockReason } = useCaregiverGate();
+  const navigate = useNavigate();
   const [jobs, setJobs] = useState<JobPost[]>(prefetchedJobs ?? []);
   const loadingJobs = !prefetchedJobsLoaded;
 
@@ -213,16 +255,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
 
   const handleApplyToJob = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile?.verified) {
-      onShowToast?.('Background check required. Please complete verification to apply.', 'error');
-      return;
-    }
-    if (!applyingJob) return;
-    const requiresTransport = applyingJob.careTypes?.includes('Transportation') || (applyingJob as any).requirements?.includes('Driving');
-    if (requiresTransport && !hasValidTransportDocs(profile)) {
-      onShowToast?.('This job requires transportation. Your transport documents are not verified.', 'error');
-      return;
-    }
+    if (!applyingJob || !profile) return;
     setSubmitting(true);
     try {
       await jobApplicationService.applyToJob(
@@ -242,6 +275,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
   };
 
   return (
+  <>
     <div className="max-w-5xl mx-auto px-4 py-6 pb-24">
 
       {/* ── Greeting ── */}
@@ -363,7 +397,26 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
 
                       {/* Buttons */}
                       <div className="flex gap-2">
-                        <button onClick={() => setApplyingJob(job)} className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold rounded-xl transition-colors">Apply Now</button>
+                        {(() => {
+                          const jobRequiresTransport = job.careTypes?.includes('Transportation') || (job as any).requirements?.includes('Driving');
+                          const reason = jobRequiresTransport ? transportBlockReason : blockReason;
+                          if (reason === 'membership') return (
+                            <button onClick={() => navigate('/caregiver/membership')} className="flex-1 py-2 bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                              <Lock className="w-3 h-3" /> Activate Membership
+                            </button>
+                          );
+                          if (reason === 'background') return (
+                            <button onClick={() => navigate('/caregiver/dashboard')} className="flex-1 py-2 bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                              <Lock className="w-3 h-3" /> Complete Verification
+                            </button>
+                          );
+                          if (reason === 'transport') return (
+                            <button onClick={() => navigate('/caregiver/settings')} className="flex-1 py-2 bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                              <Car className="w-3 h-3" /> Transportation Badge Required
+                            </button>
+                          );
+                          return <button onClick={() => setApplyingJob(job)} className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold rounded-xl transition-colors">Apply Now</button>;
+                        })()}
                         <button onClick={() => setViewingJob(job)} className="px-4 py-2 border border-slate-200 hover:border-slate-300 text-slate-700 text-xs font-semibold rounded-xl transition-colors">Details</button>
                       </div>
                     </div>
@@ -465,7 +518,26 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
             {/* Actions */}
             <div className="flex gap-3 pt-2">
               <button onClick={() => setViewingJob(null)} className="flex-1 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-semibold rounded-xl transition-colors">Close</button>
-              <button onClick={() => { setApplyingJob(viewingJob); setViewingJob(null); }} className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-bold rounded-xl transition-colors">Apply Now</button>
+              {(() => {
+                const jobRequiresTransport = viewingJob?.careTypes?.includes('Transportation') || (viewingJob as any)?.requirements?.includes('Driving');
+                const reason = jobRequiresTransport ? transportBlockReason : blockReason;
+                if (reason === 'membership') return (
+                  <button onClick={() => navigate('/caregiver/membership')} className="flex-1 py-2.5 bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5" /> Activate Membership
+                  </button>
+                );
+                if (reason === 'background') return (
+                  <button onClick={() => navigate('/caregiver/dashboard')} className="flex-1 py-2.5 bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5" /> Complete Verification
+                  </button>
+                );
+                if (reason === 'transport') return (
+                  <button onClick={() => navigate('/caregiver/settings')} className="flex-1 py-2.5 bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                    <Car className="w-3.5 h-3.5" /> Transportation Badge Required
+                  </button>
+                );
+                return <button onClick={() => { setApplyingJob(viewingJob); setViewingJob(null); }} className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-bold rounded-xl transition-colors">Apply Now</button>;
+              })()}
             </div>
           </div>
         </div>,
@@ -528,5 +600,6 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
         document.body
       )}
     </div>
+  </>
   );
 };

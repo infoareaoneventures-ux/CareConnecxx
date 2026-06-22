@@ -2231,7 +2231,7 @@ const MembershipCard: React.FC<MembershipCardProps> = ({
           onClick={onGetMembership}
           className="px-6 py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-xl transition-colors"
         >
-          Get membership · $24.95/year
+          Activate Membership
         </button>
       </div>
     );

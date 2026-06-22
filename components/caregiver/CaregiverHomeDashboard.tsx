@@ -4,17 +4,18 @@ import {
   CalendarDays, Clock, CheckCircle,
   MapPin, MessageSquare, DollarSign, Users,
   TrendingUp, FileText, Heart, Loader2, ChevronRight,
-  Banknote, CreditCard,
+  Banknote, CreditCard, Lock,
 } from 'lucide-react';
 import type { Caregiver, AddToastFunction } from '../../types';
 import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
 import { authService, shiftHoursService, dbService } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
+import { useCaregiverGate } from '../../hooks/useCaregiverGate';
 import { CaregiverCareRequestsCard } from './CaregiverCareRequestsCard';
 import { CaregiverBookingsCard } from './CaregiverBookingsCard';
 import { shiftDisplayStatus } from '../../utils/shiftUtils';
-import { CaregiverOnboardingDashboard } from './CaregiverOnboardingDashboard';
+import { CaregiverOnboardingDashboard, CaregiverProgressCard } from './CaregiverOnboardingDashboard';
 
 interface CaregiverHomeDashboardProps {
   profile: Caregiver;
@@ -69,6 +70,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
 }) => {
   const navigate = useNavigate();
   const { blockedIds } = useCareConnex();
+  const { blockReason } = useCaregiverGate();
   const currentUser = authService.getCurrentUser();
   const uid = profile.uid || profile.id || currentUser?.uid || '';
 
@@ -231,6 +233,9 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
         <p className="text-sm text-slate-500 mt-0.5">{today}</p>
       </div>
 
+      {/* Progress card — only renders when membership/bgc/transport is incomplete */}
+      <CaregiverProgressCard profile={profile} onNavigate={onNavigate} onShowToast={onShowToast} compactMode />
+
       {/* Row 1 — Care Requests | Today's Schedule | My Families */}
       <div className="grid lg:grid-cols-3 gap-4 mb-4">
 
@@ -390,7 +395,15 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                         if (ds === 'overdue') return null;
                         const minsUntil = (new Date(`${s.date}T${s.startTime}`).getTime() - Date.now()) / 60000;
                         if (minsUntil > 15) return null;
-                        return (
+                        return blockReason === 'membership' ? (
+                          <button onClick={() => navigate('/caregiver/membership')} className="mt-2 w-full py-1.5 bg-slate-100 border border-slate-200 text-slate-500 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors hover:bg-slate-200">
+                            <Lock className="w-3 h-3" /> Activate Membership
+                          </button>
+                        ) : blockReason === 'background' ? (
+                          <button onClick={() => navigate('/caregiver/dashboard')} className="mt-2 w-full py-1.5 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors hover:bg-amber-100">
+                            <Lock className="w-3 h-3" /> Complete Verification
+                          </button>
+                        ) : (
                           <button
                             onClick={async () => {
                               if (!db || startingShift) return;

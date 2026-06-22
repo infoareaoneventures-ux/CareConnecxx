@@ -3,7 +3,6 @@ import { Star, Heart, MapPin, MessageSquare, DollarSign, CheckCircle, Briefcase 
 import { Caregiver } from '../../types';
 import { CreditCardBadge } from '../shared/CreditCardBadge';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
-import { TrustBadge } from '../shared/TrustBadge';
 
 interface CaregiverMatchCardProps {
   caregiver: Caregiver;
@@ -90,7 +89,6 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
                 verified={(caregiver as any).verified}
                 backgroundCheckStatus={(caregiver as any).backgroundCheckStatus}
               />
-              <TrustBadge caregiver={caregiver} />
             </div>
           </div>
         </div>

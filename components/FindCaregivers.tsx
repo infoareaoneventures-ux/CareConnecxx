@@ -418,10 +418,7 @@ export default function FindCaregivers() {
       if (showFavoritesOnly && !favorites.includes(cg.id)) return false;
       // Distance filter — only applied when client has locations AND caregiver has coords
       if (clientLocations.length > 0 && cg.lat != null && cg.lng != null) {
-        // Client's max distance slider
         if (cg.distance > maxDistance) return false;
-        // Caregiver's own service radius cross-check
-        if (cg.serviceRadius != null && cg.distance > cg.serviceRadius) return false;
       }
       if (nameQuery) {
         const q = nameQuery.toLowerCase();

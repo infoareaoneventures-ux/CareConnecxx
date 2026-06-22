@@ -1780,7 +1780,7 @@ export const MCP_TOOLS: McpTool[] = [
         entryId:     { type: "string", description: "The care_journal document ID to update" },
         notes:       { type: "string", description: "Corrected notes text (optional)" },
         mood:        { type: "string", description: "Corrected mood (optional)" },
-        medsGiven:   { type: "string", description: "Corrected medications-given note (optional)" },
+        medsGiven:   { type: "boolean", description: "Whether medications were administered (optional)" },
         activities:  { type: "array", items: { type: "string" }, description: "Corrected activities list (optional)" },
       },
       required: ["caregiverId", "entryId"],
@@ -2148,7 +2148,9 @@ export async function handleToolCall(
     // The legit re-run (approvalHandler) dispatches BEFORE resolving, so the
     // doc is still "awaiting" at this point.
     const pending = await getPendingActionById(confirmedActionId);
-    const valid = isConfirmedActionValid(pending, name, input.phone as string | undefined);
+    // Pass the current input so a valid confirmation id can't be reused to commit
+    // a DIFFERENT action than the one that was proposed/approved.
+    const valid = isConfirmedActionValid(pending, name, input.phone as string | undefined, Date.now(), input);
     if (!valid) {
       console.warn("MCP gate: rejected invalid _confirmedActionId", {
         name, confirmedActionId, status: pending?.status,
@@ -2459,19 +2461,25 @@ async function executeToolCall(
         const matchIntake: Record<string, unknown> = { ...session };
         // Validate the agent-supplied overrides before applying them: a malformed
         // ZIP or an out-of-range radius must not flow into the matching intake.
-        if (typeof nearZip === "string" && /^\d{5}(-\d{4})?$/.test(nearZip)) matchIntake.zipCode = nearZip;
-        if (typeof needs === "string" && needs) matchIntake.careNeeds = needs;
-        if (typeof availabilityWindow === "string" && availabilityWindow) matchIntake.availabilityWindow = availabilityWindow;
-        if (typeof radiusMiles === "number" && Number.isFinite(radiusMiles) && radiusMiles > 0 && radiusMiles <= 100) matchIntake.radiusMiles = radiusMiles;
+        const needsOk  = typeof needs === "string" && !!needs;
+        const zipOk    = typeof nearZip === "string" && /^\d{5}(-\d{4})?$/.test(nearZip);
+        const availOk  = typeof availabilityWindow === "string" && !!availabilityWindow;
+        const radiusOk = typeof radiusMiles === "number" && Number.isFinite(radiusMiles) && radiusMiles > 0 && radiusMiles <= 100;
+        if (zipOk)    matchIntake.zipCode            = nearZip;
+        if (needsOk)  matchIntake.careNeeds          = needs;
+        if (availOk)  matchIntake.availabilityWindow = availabilityWindow;
+        if (radiusOk) matchIntake.radiusMiles        = radiusMiles;
         await runMatchingForClient(phone as string, chatId as string, matchIntake, clientProfile);
         return {
           success: true,
           triggered: true,
+          // Report only the filters that actually passed validation and were
+          // applied — not the raw input (a malformed nearZip is reported as null).
           filtersApplied: {
-            needs:              (needs as string) ?? null,
-            nearZip:            (nearZip as string) ?? null,
-            availabilityWindow: (availabilityWindow as string) ?? null,
-            radiusMiles:        radiusMiles ?? null,
+            needs:              needsOk  ? (needs as string) : null,
+            nearZip:            zipOk    ? (nearZip as string) : null,
+            availabilityWindow: availOk  ? (availabilityWindow as string) : null,
+            radiusMiles:        radiusOk ? (radiusMiles as number) : null,
           },
         };
       }
@@ -3583,6 +3591,7 @@ async function executeToolCall(
     if (name === "respond_to_booking_request") {
       const { caregiverId, appointmentId, decision, message: brMsg } = input as Record<string, unknown>;
       if (!caregiverId || !appointmentId || !decision) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and decision are required");
+      if (decision !== "accept" && decision !== "decline") return toolError("INVALID_INPUT", "decision must be 'accept' or 'decline'");
       const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
       if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
       const appt = apptSnap.data()!;
@@ -3640,6 +3649,11 @@ async function executeToolCall(
       if (["completed", "cancelled", "cancelled_by_client"].includes(visit.status as string)) {
         return toolError("INVALID_INPUT", `Cannot start a visit that is already ${visit.status}`);
       }
+      // A visit must be confirmed before it can be started — never let an
+      // unconfirmed (pending/requested/offered) visit be marked as worked.
+      if (["pending", "requested", "offered", "pending_caregiver_confirmation"].includes(visit.status as string)) {
+        return toolError("INVALID_INPUT", `Cannot start a visit that hasn't been confirmed yet (status: ${visit.status})`);
+      }
       // shifts dashboard reads "in-progress"; appointments use "in_progress".
       const startedStatus = coll === "shifts" ? "in-progress" : "in_progress";
       await snap.ref.update({ status: startedStatus, startedAt: nowIso });
@@ -3672,6 +3686,11 @@ async function executeToolCall(
       }
       if (["cancelled", "cancelled_by_client"].includes(visit.status as string)) {
         return toolError("INVALID_INPUT", `Cannot complete a visit that is ${visit.status}`);
+      }
+      // Never bill for an unconfirmed visit: a pending/requested/offered visit
+      // can't be completed (it was never confirmed, let alone worked).
+      if (["pending", "requested", "offered", "pending_caregiver_confirmation"].includes(visit.status as string)) {
+        return toolError("INVALID_INPUT", `Cannot complete a visit that hasn't been confirmed or started (status: ${visit.status})`);
       }
       await snap.ref.update({ status: "completed", completedAt: nowIso, ...(completeNotes ? { completionNotes: completeNotes } : {}) });
       logAudit({ eventType: "shift_completed", userId: caregiverId as string, data: { source: "mcp:complete_shift", collection: coll, docId } }).catch(() => {});
@@ -3737,6 +3756,7 @@ async function executeToolCall(
     if (name === "respond_to_shift_hour_correction") {
       const { caregiverId, appointmentId, decision, message: corrMsg } = input as Record<string, unknown>;
       if (!caregiverId || !appointmentId || !decision) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and decision are required");
+      if (decision !== "accept" && decision !== "pushback") return toolError("INVALID_INPUT", "decision must be 'accept' or 'pushback'");
       const shiftSnap = await db.collection("shiftHours").doc(appointmentId as string).get();
       if (!shiftSnap.exists) return toolError("NOT_FOUND", "Shift hours submission not found");
       const shift = shiftSnap.data()!;

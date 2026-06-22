@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Activity, ArrowLeft, ShieldCheck, Check, Loader2 } from 'lucide-react';
 import { Input } from './ui/Input';
 import { Button } from './ui/Button';
@@ -43,6 +43,11 @@ export const CaregiverApply: React.FC<CaregiverApplyProps> = ({ onNavigate, onSh
   const [emailChecking, setEmailChecking] = useState(false);
   const [emailExists, setEmailExists] = useState(false);
 
+  // Mirror the latest form values so the debounced async callbacks can drop
+  // stale (out-of-order) responses instead of clobbering newer user input.
+  const formDataRef = useRef(formData);
+  formDataRef.current = formData;
+
   const passwordRequirements = [
     { label: 'At least 8 characters', met: formData.password.length >= 8 },
     { label: 'Contains uppercase letter', met: /[A-Z]/.test(formData.password) },
@@ -56,6 +61,8 @@ export const CaregiverApply: React.FC<CaregiverApplyProps> = ({ onNavigate, onSh
       setEmailChecking(true);
       try {
         const exists = await authService.checkEmailExists(email);
+        // Drop stale results: only apply if the email hasn't changed since this call started.
+        if (formDataRef.current.email !== email) return;
         setEmailExists(exists);
         if (exists) {
           setFieldErrors(prev => ({ ...prev, email: 'This email is already registered. Please sign in instead.' }));
@@ -77,6 +84,8 @@ export const CaregiverApply: React.FC<CaregiverApplyProps> = ({ onNavigate, onSh
         const res = await fetch(`https://api.zippopotam.us/us/${zip}`);
         if (!res.ok) { setZipLookingUp(false); return; }
         const data = await res.json();
+        // Drop stale results: only apply if the zip hasn't changed since this call started.
+        if (formDataRef.current.zipCode !== zip) return;
         const place = data.places?.[0];
         if (place) {
           setFormData(prev => ({

@@ -697,7 +697,7 @@ export const AdminCaregiverManager: React.FC = () => {
                             className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).backgroundCheckStatus === 'clear' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'}`}
                           >Approved</button>
                           <button
-                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'submitted' } as any); setSelected(p => p ? { ...p, backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'submitted' } as any : p); showToast('Background check revoked', 'success'); }}
+                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'pending' } as any); setSelected(p => p ? { ...p, backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'pending' } as any : p); showToast('Background check revoked', 'success'); }}
                             className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).backgroundCheckStatus !== 'clear' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}
                           >Revoked</button>
                         </div>

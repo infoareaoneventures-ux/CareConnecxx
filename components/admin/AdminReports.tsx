@@ -1,18 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Flag, CheckCircle, Trash2, ChevronDown, ChevronUp, User } from 'lucide-react';
-import { db } from '../../lib/firebase';
-
-interface Report {
-  id: string;
-  reportedBy: string;
-  reportedUser: string;
-  reportedUserName: string;
-  reason: string;
-  details?: string | null;
-  createdAt: any;
-  status?: 'new' | 'reviewed';
-  reporterName?: string;
-}
+import { useAdminReports } from '../../hooks/useAdminReports';
 
 function formatDate(ts: any): string {
   if (!ts) return '—';
@@ -21,8 +9,7 @@ function formatDate(ts: any): string {
 }
 
 export const AdminReports: React.FC = () => {
-  const [reports, setReports] = useState<Report[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { reports, loading, markReviewed, dismiss } = useAdminReports();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'new' | 'reviewed'>('all');
   const [toast, setToast] = useState<string | null>(null);
@@ -32,47 +19,13 @@ export const AdminReports: React.FC = () => {
     setTimeout(() => setToast(null), 3000);
   };
 
-  useEffect(() => {
-    if (!db) return;
-    const unsub = db.collection('reports')
-      .orderBy('createdAt', 'desc')
-      .onSnapshot(async snap => {
-        const raw: Report[] = snap.docs.map(d => ({
-          id: d.id,
-          ...(d.data() as Omit<Report, 'id'>),
-          status: (d.data() as any).status || 'new',
-        }));
-
-        // Batch-fetch reporter display names
-        const uniqueReporterIds = [...new Set(raw.map(r => r.reportedBy).filter(Boolean))];
-        const nameMap: Record<string, string> = {};
-        await Promise.all(
-          uniqueReporterIds.map(async uid => {
-            try {
-              const snap = await db!.collection('users').doc(uid).get();
-              const data = snap.data() as any;
-              nameMap[uid] = data?.displayName || data?.name || data?.email?.split('@')[0] || uid.slice(0, 8);
-            } catch {
-              nameMap[uid] = uid.slice(0, 8);
-            }
-          })
-        );
-
-        setReports(raw.map(r => ({ ...r, reporterName: nameMap[r.reportedBy] || r.reportedBy?.slice(0, 8) })));
-        setLoading(false);
-      }, () => setLoading(false));
-    return unsub;
-  }, []);
-
-  const markReviewed = async (id: string) => {
-    if (!db) return;
-    await db.collection('reports').doc(id).update({ status: 'reviewed' });
+  const handleMarkReviewed = async (id: string) => {
+    await markReviewed(id);
     showToast('Marked as reviewed');
   };
 
-  const dismiss = async (id: string) => {
-    if (!db) return;
-    await db.collection('reports').doc(id).delete();
+  const handleDismiss = async (id: string) => {
+    await dismiss(id);
     showToast('Report dismissed');
   };
 
@@ -147,7 +100,7 @@ export const AdminReports: React.FC = () => {
                 <div className="flex items-center gap-1 flex-shrink-0">
                   {report.status === 'new' && (
                     <button
-                      onClick={() => markReviewed(report.id)}
+                      onClick={() => handleMarkReviewed(report.id)}
                       title="Mark reviewed"
                       className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
                     >
@@ -155,7 +108,7 @@ export const AdminReports: React.FC = () => {
                     </button>
                   )}
                   <button
-                    onClick={() => dismiss(report.id)}
+                    onClick={() => handleDismiss(report.id)}
                     title="Dismiss report"
                     className="p-2 text-slate-400 hover:bg-red-50 hover:text-red-500 rounded-lg transition-colors"
                   >

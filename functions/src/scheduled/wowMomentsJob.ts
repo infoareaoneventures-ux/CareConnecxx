@@ -54,11 +54,19 @@ export async function buildWowContextForClient(
   // so a non-string value can't silently flow through as a bogus name/date.
   const asString = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
+  // An unparseable firstDate would make new Date(...).toISOString() throw a
+  // RangeError and crash the whole job for this client — fall back to undefined.
+  let firstVisitAt: string | undefined;
+  if (firstDate) {
+    try { firstVisitAt = new Date(String(firstDate)).toISOString(); }
+    catch { firstVisitAt = undefined; }
+  }
+
   return {
     clientName:         asString(onboardingData.name),
     seniorName:         asString(session.seniorName) ?? asString(onboardingData.seniorName),
     clientJoinedAt:     asString(session.createdAt),
-    firstVisitAt:       firstDate ? new Date(String(firstDate)).toISOString() : undefined,
+    firstVisitAt,
     completedVisits:    completed.length,
     recentEvents:       appts
       .filter((a) => a.status === "confirmed" || a.status === "completed")

@@ -65,7 +65,9 @@ function deleteConditions(block: string): string[] {
     while ((m = allowRe.exec(block)) !== null) {
         const verbs = m[1].split(',').map((v) => v.trim());
         if (verbs.includes('delete') || verbs.includes('write')) {
-            conds.push(m[2].trim().replace(/\s+/g, ' '));
+            // Strip ALL whitespace (including inside calls/parens) so conditions
+            // like `isAdmin( )` normalize to `isAdmin()` and match the SAFE set.
+            conds.push(m[2].replace(/\s+/g, ''));
         }
     }
     return conds;

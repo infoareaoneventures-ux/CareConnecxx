@@ -52,9 +52,11 @@ async function proposeHealthcareAction(params: {
     await params.sendMessage(confirmMsg);
   } else {
     const { sendViaInteractionAgent } = await import("./caraAgent");
+    // Fail closed: if the approver notification doesn't go out, let the error
+    // propagate so we DON'T tell the requester it was sent when it wasn't.
     await sendViaInteractionAgent(approver, {
       content: confirmMsg, urgency: "immediate", sourceAgent: "healthcare_approval", canDrop: false,
-    }).catch(() => {});
+    });
     await params.sendMessage("I've sent this to the primary account holder to approve — I'll let you know once it's confirmed.");
   }
 }

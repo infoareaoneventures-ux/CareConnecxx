@@ -470,7 +470,7 @@ export default function FindCaregivers() {
         break;
     }
     return sorted;
-  }, [caregivers, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, verifiedOnly, transportationOnly, selectedSpecialties, selectedLanguages, sortBy]);
+  }, [caregivers, blockedIds, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, verifiedOnly, transportationOnly, selectedSpecialties, selectedLanguages, sortBy]);
 
   if (loading) {
     return (

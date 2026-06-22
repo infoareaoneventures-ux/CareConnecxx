@@ -299,7 +299,15 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         try {
             const doc = await fdb.collection('job_posts').doc(jobId).get();
             if (doc.exists) {
-                setViewingJob({ id: doc.id, ...doc.data() } as JobPost);
+                const job = { id: doc.id, ...doc.data() } as JobPost;
+                // Apply the same blocked-client / inactive-client filters the job list
+                // uses, so a ?job= deep-link (or an Interviews/Applications "Details"
+                // link) can't open a job from a blocked or deactivated client.
+                if (blockedIds.has(job.clientId) || (job as any).clientActive === false) {
+                    onShowToast('This job is no longer available', 'info');
+                    return;
+                }
+                setViewingJob(job);
             } else {
                 onShowToast('Job details not available', 'info');
             }
@@ -443,6 +451,10 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         }
         return true;
     });
+
+    // Drop interviews from blocked clients once, up front, so counts, badges,
+    // filter chips, empty states, and the rendered list all stay consistent.
+    const visibleInterviews = interviews.filter(iv => !blockedIds.has(iv.clientId));
 
 
     // Reusable filter panel content (shared between sidebar and mobile drawer)
@@ -595,7 +607,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                     return isNaN(ms) ? 0 : ms;
                 };
                 const newApps = applications.filter(a => tsMs(a.appliedAt) > lastCheckedApps).length;
-                const newIvs  = interviews.filter(iv => tsMs(iv.createdAt || iv.scheduledAt) > lastCheckedIvs).length;
+                const newIvs  = visibleInterviews.filter(iv => tsMs(iv.createdAt || iv.scheduledAt) > lastCheckedIvs).length;
 
                 const markApps = () => {
                     const now = Date.now();
@@ -826,7 +838,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             {activeTab === 'my-applications' && (() => {
                 // Build a map: jobId → interview (so we can show interview status on the card)
                 const interviewByJobId = new Map(
-                    interviews.filter(iv => iv.jobId).map(iv => [iv.jobId!, iv])
+                    visibleInterviews.filter(iv => iv.jobId).map(iv => [iv.jobId!, iv])
                 );
                 const baseApps = applications;
                 const visibleApps = appFilter === 'pending'
@@ -961,7 +973,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                 <div className="space-y-3">
                     {interviewsLoading ? (
                         <><JobCardSkeleton /><JobCardSkeleton /></>
-                    ) : interviews.length === 0 ? (
+                    ) : visibleInterviews.length === 0 ? (
                         <div className="text-center p-8 text-slate-400 bg-slate-50 rounded-2xl">
                             <Video className="w-12 h-12 mx-auto mb-2 opacity-30" />
                             <p>No interviews yet.</p>
@@ -971,9 +983,9 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                         {/* Filter chips */}
                         <div className="flex gap-2 flex-wrap mb-3">
                             {(['all', 'pending', 'accepted', 'completed', 'declined', 'cancelled'] as const).map(f => {
-                                const total = f === 'all' ? interviews.length : interviews.filter(iv => iv.status === f).length;
+                                const total = f === 'all' ? visibleInterviews.length : visibleInterviews.filter(iv => iv.status === f).length;
                                 if (f !== 'all' && total === 0) return null;
-                                const newCount = f === 'all' ? 0 : interviews.filter(iv => {
+                                const newCount = f === 'all' ? 0 : visibleInterviews.filter(iv => {
                                     if (iv.status !== f) return false;
                                     const tsMs = (v: any): number => {
                                         if (!v) return 0;
@@ -1002,7 +1014,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                             })}
                         </div>
                         <div className="space-y-3">
-                            {interviews.filter(iv => !blockedIds.has(iv.clientId) && (ivFilter === 'all' || iv.status === ivFilter)).map(iv => {
+                            {visibleInterviews.filter(iv => ivFilter === 'all' || iv.status === ivFilter).map(iv => {
                                 const date = new Date(iv.scheduledAt);
                                 const app = iv.jobId ? applications.find(a => a.jobId === iv.jobId) : undefined;
                                 const ivStatusColor = iv.status === 'pending' ? 'bg-yellow-50 text-yellow-700' : iv.status === 'accepted' || iv.status === 'confirmed' ? 'bg-green-50 text-green-700' : iv.status === 'completed' ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-600';

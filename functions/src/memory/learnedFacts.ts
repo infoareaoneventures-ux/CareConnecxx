@@ -21,9 +21,6 @@ export interface LearnedFactWithId extends LearnedFact {
   _docId: string;
 }
 
-export const MEMORY_CORRECTION_PATTERN =
-  /actually|wait,?|sorry|i meant|meant to say|no,?\s*it'?s|that'?s wrong|wrong,?\s*it'?s|not\s+\d+|his\s+(doctor|nurse|med|name|age|condition)|her\s+(doctor|nurse|med|name|age|condition)|they?\s+(changed|switched|stopped|started|now\s+takes?|no\s+longer)|update|correction|forgot\s+to\s+mention|should\s+be|it'?s\s+actually|the\s+(new|correct|right)\s+(doctor|medication|med|number|address|diagnosis)|forget\s+(that|what i said|the old|about)|don'?t\s+(remember|save|store|keep)\s+(that|this|it)|remove\s+(that|this|it)\s+from\s+(memory|what you remember)|delete\s+(that|this|it)\s+from\s+(memory|what you remember)|stop\s+remembering/i;
-
 // Normalize a fact string for deduplication comparison
 function normalizeFact(fact: string): string {
   return fact.toLowerCase().replace(/\s+/g, " ").trim();
@@ -281,12 +278,9 @@ export async function detectAndApplyCorrection(
   text:       string,
   zepUserId?: string
 ): Promise<boolean> {
-  // Fast pre-filter — only run if message looks like a correction or an update to known information.
-  // Deliberately broad: false positives are cheap (one Haiku call); false negatives silently corrupt memory.
-  if (!MEMORY_CORRECTION_PATTERN.test(text)) {
-    return false;
-  }
-
+  // Per CLAUDE.md, intent (is this a correction/retraction?) must be judged by an
+  // LLM, never a regex. We fetch the user's known facts and let the LLM below
+  // decide; if there's nothing stored, there's nothing to correct, so bail early.
   const currentFacts = await getRelevantFacts(userId).catch(() => [] as LearnedFactWithId[]);
   if (currentFacts.length === 0) return false;
 

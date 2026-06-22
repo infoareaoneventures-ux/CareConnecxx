@@ -74,19 +74,11 @@ vi.mock("./embeddings", () => ({
   EMBED_MODEL: "test-embedding",
 }));
 
-import { detectAndApplyCorrection, MEMORY_CORRECTION_PATTERN } from "./learnedFacts";
+import { detectAndApplyCorrection } from "./learnedFacts";
 
 beforeEach(() => {
   h.facts.clear();
   h.quickComplete.mockReset();
-});
-
-describe("MEMORY_CORRECTION_PATTERN", () => {
-  it("catches explicit forget and delete-memory requests", () => {
-    expect(MEMORY_CORRECTION_PATTERN.test("forget what I said about the allergy")).toBe(true);
-    expect(MEMORY_CORRECTION_PATTERN.test("delete that from memory")).toBe(true);
-    expect(MEMORY_CORRECTION_PATTERN.test("don't remember this")).toBe(true);
-  });
 });
 
 describe("detectAndApplyCorrection", () => {
@@ -108,7 +100,7 @@ describe("detectAndApplyCorrection", () => {
     expect(h.facts.get("fact-1")?.supersededBy).toBeUndefined();
   });
 
-  it("ignores unrelated ordinary messages without calling the model", async () => {
+  it("leaves facts untouched when the model judges the message is not a correction", async () => {
     h.facts.set("fact-1", {
       userId: "u1",
       fact: "Mom prefers morning visits",
@@ -117,10 +109,13 @@ describe("detectAndApplyCorrection", () => {
       createdAt: "2026-06-01T00:00:00.000Z",
       lastMentionedAt: "2026-06-10T00:00:00.000Z",
     });
+    // Intent is judged by the LLM (no regex pre-filter); for an ordinary
+    // message it returns "null" and no fact is changed.
+    h.quickComplete.mockResolvedValueOnce("null");
 
     const applied = await detectAndApplyCorrection("u1", "thanks that sounds good");
 
     expect(applied).toBe(false);
-    expect(h.quickComplete).not.toHaveBeenCalled();
+    expect(h.facts.get("fact-1")?.supersededAt).toBeUndefined();
   });
 });

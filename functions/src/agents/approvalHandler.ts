@@ -99,7 +99,7 @@ async function executeConfirmedAction(params: {
     console.info("approvalHandler.execute: action not claimable (duplicate/expired) — skipping", { actionId: pending.id });
     return { succeeded: false, alertFlagged: true, skipped: true };
   }
-  logHealthcareAudit(pending, "confirmed");
+  await logHealthcareAudit(pending, "confirmed");
   logAgentAction({
     actionType:       "pending_action",
     status:           "confirmed",
@@ -148,7 +148,7 @@ async function executeConfirmedAction(params: {
     succeeded ? "executed" : "failed",
     { executionPreview },
   );
-  logHealthcareAudit(pending, succeeded ? "executed" : "failed", succeeded ? undefined : executionPreview);
+  await logHealthcareAudit(pending, succeeded ? "executed" : "failed", succeeded ? undefined : executionPreview);
   logAgentAction({
     actionType:       "pending_action",
     status:           succeeded ? "executed" : "failed",

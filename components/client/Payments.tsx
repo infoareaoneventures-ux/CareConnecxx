@@ -713,15 +713,16 @@ export const Payments: React.FC = () => {
         {/* ── Timesheets ── */}
         {tab === 'timesheets' && (
           <div className="space-y-4">
-            {/* Pending alert */}
-            {pendingReviewCount > 0 && (
+            {/* Pending alert — counts both pending_client_review and caregiver_counter_proposed,
+                since both require the client to review and respond (see needs-review filter). */}
+            {pendingCount > 0 && (
               <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4">
                 <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
                   <Clock className="w-5 h-5 text-amber-600" />
                 </div>
                 <div className="flex-1">
                   <p className="font-semibold text-amber-800 text-sm">
-                    {pendingReviewCount} shift{pendingReviewCount > 1 ? 's' : ''} to review
+                    {pendingCount} shift{pendingCount > 1 ? 's' : ''} to review
                   </p>
                   <p className="text-xs text-amber-600 mt-0.5">
                     Approve or propose a correction. Shifts auto-approve after 24 hours.

@@ -199,7 +199,8 @@ export async function proposePendingAction(params: {
   const created = { id: ref.id, ...action };
 
   // Audit: proposed (H-U8) — PHI-minimized (no provider/medication names).
-  logHealthcareAudit(created, "proposed");
+  // Awaited so the audit write isn't dropped when the Cloud Function returns.
+  await logHealthcareAudit(created, "proposed");
   return created;
 }
 
@@ -227,29 +228,27 @@ export async function claimPendingAction(id: string): Promise<"claimed" | "not_c
 // PHI-minimized audit emitter for the healthcare action lifecycle (H-U8/KTD-9):
 // only non-identifying codes (loginAction, pharmacy/portal key, pending id) —
 // never provider or medication names (those stay in browser_sessions).
-function logHealthcareAudit(
+async function logHealthcareAudit(
   action: Pick<PendingAction, "id" | "toolName" | "toolInput" | "userId">,
   status: "proposed" | "confirmed" | "executed" | "failed",
   errorReason?: string,
-): void {
+): Promise<void> {
   if (action.toolName !== "perform_web_action") return;
-  void (async () => {
-    try {
-      const { logAgentAction } = await import("../observability/actionLedger");
-      await logAgentAction({
-        actionType:  "healthcare_action",
-        status,
-        userId:      action.userId ?? "",
-        toolName:    action.toolName,
-        targetDocId: action.id,
-        ...(errorReason ? { errorReason: errorReason.slice(0, 200) } : {}),
-        metadata: {
-          loginAction: String(action.toolInput.loginAction ?? ""),
-          portal:      String(action.toolInput.pharmacyService ?? action.toolInput.portalService ?? ""),
-        },
-      });
-    } catch { /* non-fatal */ }
-  })();
+  try {
+    const { logAgentAction } = await import("../observability/actionLedger");
+    await logAgentAction({
+      actionType:  "healthcare_action",
+      status,
+      userId:      action.userId ?? "",
+      toolName:    action.toolName,
+      targetDocId: action.id,
+      ...(errorReason ? { errorReason: errorReason.slice(0, 200) } : {}),
+      metadata: {
+        loginAction: String(action.toolInput.loginAction ?? ""),
+        portal:      String(action.toolInput.pharmacyService ?? action.toolInput.portalService ?? ""),
+      },
+    });
+  } catch { /* non-fatal */ }
 }
 
 export { logHealthcareAudit };
@@ -311,23 +310,64 @@ export async function getPendingActionById(id: string): Promise<PendingAction | 
   return { id: snap.id, ...(snap.data() as Omit<PendingAction, "id">) };
 }
 
+// Transport/identity fields the dispatcher re-injects on every call — they are
+// NOT part of the semantic action and must be excluded when comparing the
+// confirmed input against the stored pending input (approvalHandler rebuilds
+// these from the authenticated approver, so they legitimately differ/repeat).
+const NON_SEMANTIC_INPUT_FIELDS = new Set([
+  "_confirmedActionId", "phone", "chatId", "clientId", "userId", "sourceMessageId", "role",
+]);
+
+// Stable canonical JSON of the semantic tool input (sorted keys, transport
+// fields stripped) so two inputs that differ only in field order or transport
+// metadata compare equal — but a changed appointmentId / decision / etc. does not.
+function canonicalizeToolInput(input: unknown): string {
+  const seen = new WeakSet<object>();
+  const norm = (v: unknown): unknown => {
+    if (v === null || typeof v !== "object") return v;
+    if (seen.has(v as object)) return null;
+    seen.add(v as object);
+    if (Array.isArray(v)) return v.map(norm);
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+      if (NON_SEMANTIC_INPUT_FIELDS.has(k)) continue;
+      const val = (v as Record<string, unknown>)[k];
+      if (val === undefined) continue;
+      out[k] = norm(val);
+    }
+    return out;
+  };
+  return JSON.stringify(norm(input));
+}
+
 // Validate a _confirmedActionId at the MCP gate so the gate's safety lives in
 // CODE, not in caller discipline: the confirmation must reference a real,
 // still-awaiting (the legit re-run dispatches before resolving), unexpired
-// action for the SAME phone and tool. A forged/expired/mismatched id is refused.
+// action for the SAME phone and tool — AND, when the current input is supplied,
+// the same semantic parameters as the stored proposal. This stops a valid
+// confirmation id from being reused to commit a DIFFERENT action.
 export function isConfirmedActionValid(
-  pending:  PendingAction | null,
-  toolName: string,
-  phone:    string | undefined,
-  nowMs:    number = Date.now(),
+  pending:      PendingAction | null,
+  toolName:     string,
+  phone:        string | undefined,
+  nowMs:        number = Date.now(),
+  currentInput?: Record<string, unknown>,
 ): boolean {
-  return (
-    pending !== null &&
-    (pending.status === "awaiting" || pending.status === "approved") &&
-    new Date(pending.expiresAt).getTime() > nowMs &&
-    pending.toolName === toolName &&
-    pending.phone === phone
-  );
+  if (
+    !(pending !== null &&
+      (pending.status === "awaiting" || pending.status === "approved") &&
+      new Date(pending.expiresAt).getTime() > nowMs &&
+      pending.toolName === toolName &&
+      pending.phone === phone)
+  ) {
+    return false;
+  }
+  // Compare semantic params only when we have both the current input and a
+  // stored toolInput to compare against (real proposals always store one).
+  if (currentInput && pending.toolInput && typeof pending.toolInput === "object") {
+    return canonicalizeToolInput(currentInput) === canonicalizeToolInput(pending.toolInput);
+  }
+  return true;
 }
 
 // Mark resolved with the given status. Idempotent — calling twice with the

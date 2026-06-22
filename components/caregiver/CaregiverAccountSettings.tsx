@@ -582,7 +582,9 @@ export const CaregiverAccountSettings: React.FC = () => {
                       <span className="text-sm font-medium text-slate-800">{p.name}</span>
                     </div>
                     <button
-                      onClick={() => unblockUser(p.id).then(() => addToast(`${p.name} unblocked.`, 'success'))}
+                      onClick={() => unblockUser(p.id)
+                        .then(() => addToast(`${p.name} unblocked.`, 'success'))
+                        .catch(() => addToast(`Couldn't unblock ${p.name}. Please try again.`, 'error'))}
                       className="text-xs text-primary-600 hover:text-primary-700 font-medium border border-primary-200 hover:border-primary-400 px-3 py-1 rounded-lg transition-colors"
                     >
                       Unblock

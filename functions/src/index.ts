@@ -1,4 +1,4 @@
-﻿import * as admin from "firebase-admin";
+import * as admin from "firebase-admin";
 import * as functions from "firebase-functions/v1";
 
 // Initialize Admin globally if not already done

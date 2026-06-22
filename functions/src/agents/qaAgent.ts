@@ -723,11 +723,11 @@ export function detectMedicationInstruction(reply: string): boolean {
   const mentionsMedication = /\b(med|meds|medication|medicine|pill|prescription|dose|dosage|mg|insulin|lisinopril)\b/.test(lower);
   if (!mentionsMedication) return false;
 
+  // Dose directions are unsafe regardless of whether the reply also tells the
+  // family to call a clinician — "double her dose tonight and call the doctor
+  // tomorrow" still hands out dosing advice and must be flagged.
   const directsDose = /\b(give|take|start|stop|skip|double|increase|decrease|change)\b.{0,50}\b(med|meds|medication|medicine|pill|prescription|dose|dosage|mg|insulin|lisinopril)\b/.test(lower);
-  if (!directsDose) return false;
-
-  const redirectsToClinician = /\b(call|ask|check with|talk to|contact)\b.{0,90}\b(doctor|pharmacist|clinician|nurse|911|emergency)\b/.test(lower);
-  return !redirectsToClinician;
+  return directsDose;
 }
 
 function getConversationRepairReasons(reply: string): string[] {
@@ -1684,15 +1684,6 @@ export async function runQaAgent(params: {
       }
     }
 
-    // Sprint 8: checkpoint the raw reply now that the tool loop is done. If the
-    // post-process phase below (grounding/format/supervise) or the send crashes,
-    // a retry resumes from here instead of re-running the whole tool loop. Fire-
-    // and-forget (no-op unless CARA_CHECKPOINT_RESUME is on). Only genuine loop
-    // replies — never the exhausted fallback stubs.
-    if (loopProducedReply && !skipSend) {
-      writeCheckpoint(phone, "loop_complete", turnTextHash, reply).catch(() => {});
-    }
-
     // Grounding revision — when medical claims + hedging co-occur, ask Claude to strip speculation
     const MEDICAL_CLAIM = /\b(doctor|diagnosis|medication|dosage|mg|ml|blood pressure|heart rate|fall|injury|hospital|symptom|condition)\b/i;
     if (detectLowConfidence(reply) && MEDICAL_CLAIM.test(reply)) {
@@ -1826,6 +1817,16 @@ export async function runQaAgent(params: {
       } catch {
         // Non-critical — proceed to supervisor with the original reply.
       }
+    }
+
+    // Sprint 8: checkpoint the reply now that the tool loop AND post-loop reply
+    // rewrites (grounding revision, conversation repair) are done. If the
+    // remaining post-process (format/supervise) or the send crashes, a retry
+    // resumes from here with the REPAIRED draft — not the raw loop output.
+    // Fire-and-forget (no-op unless CARA_CHECKPOINT_RESUME is on). Only genuine
+    // loop replies — never the exhausted fallback stubs.
+    if (loopProducedReply && !skipSend) {
+      writeCheckpoint(phone, "loop_complete", turnTextHash, reply).catch(() => {});
     }
 
     // Conversational-quality detectors. Run after repair and before supervise

@@ -366,10 +366,14 @@ export async function sendMessage(
   try {
     const { mirrorToWebThread, extractMirrorText } = await import("./threadMirror");
     // Mirror the cleaned text so the web inbox matches what actually went out
-    // over SMS/iMessage (which is linted in normalizeParts below).
-    const mirrorText = typeof textOrMessage === "string"
+    // over SMS/iMessage. normalizeParts applies BOTH lintPreservingLayout AND
+    // redactPii to every sent part, so the mirror must apply both too — otherwise
+    // the web inbox would show SSNs / card numbers / cross-user emails that were
+    // redacted before sending.
+    const rawMirror = typeof textOrMessage === "string"
       ? lintPreservingLayout(textOrMessage)
       : extractMirrorText(textOrMessage);
+    const mirrorText = redactPii(rawMirror).text;
     void mirrorToWebThread({ chatId, direction: "outbound", text: mirrorText });
   } catch { /* non-critical */ }
 

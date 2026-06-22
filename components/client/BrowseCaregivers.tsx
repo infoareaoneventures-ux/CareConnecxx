@@ -97,7 +97,9 @@ export const BrowseCaregivers: React.FC = () => {
           };
         });
         setCaregivers(list);
-        setFilteredCaregivers(list);
+        // Apply the block filter from the moment the list is set so blocked
+        // caregivers never flash before the filtering effect runs.
+        setFilteredCaregivers(list.filter(cg => !blockedIds.has(cg.id)));
       } catch (err) {
         console.error('Error loading caregivers:', err);
         if (isMounted) addToast('Could not load caregivers. Please try again.', 'error');

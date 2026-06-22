@@ -218,7 +218,7 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
         // Bookability was already enforced by approvedIds in pushDoc.
         // ── 5. Hard filter: distance ──
         const withinRange = locs.length > 0
-          ? caregiverList.filter(c => (c as any).latitude != null ? c.distance <= maxDistance : true)
+          ? caregiverList.filter(c => ((c as any).latitude != null && (c as any).longitude != null) ? c.distance <= maxDistance : true)
           : caregiverList;
 
         // ── 6. Hard filter: transportation if needed ──

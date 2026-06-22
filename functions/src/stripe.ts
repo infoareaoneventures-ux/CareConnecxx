@@ -491,8 +491,13 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
 
     const invOk = invRes.ok;
     if (!invOk) {
+      // The invitation failed, so DON'T reset the caregiver's verification state —
+      // doing so would strip their verified status while leaving no valid pending
+      // background check, stranding them in an un-verifiable limbo. Leave the
+      // existing state intact and surface the failure for retry.
       const errText = await invRes.text().catch(() => '');
-      console.error(`Checkr renewal invitation failed for ${userId}: ${invRes.status} ${errText}`);
+      console.error(`Checkr renewal invitation failed for ${userId}: ${invRes.status} ${errText} — leaving verification state unchanged`);
+      return;
     }
 
     await admin.firestore().collection('caregivers').doc(userId).set({
@@ -504,7 +509,7 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
         ...bgData,
         submittedAt: new Date().toISOString(),
         status: 'pending',
-        invitationStatus: invOk ? 'sent' : 'error',
+        invitationStatus: 'sent',
         initiatedVia: 'annual_renewal',
         checkrClearedAt: null,
       },

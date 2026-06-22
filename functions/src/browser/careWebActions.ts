@@ -451,15 +451,23 @@ export async function bookAppointmentSlot(params: {
       await sess.stagehand.act("Confirm and submit the appointment");
       await sess.page.waitForTimeout(3000);
 
-      // Verification read-back — proof of commit before we claim success.
-      const confirm = await sess.stagehand.extract(
-        "Extract the booking confirmation number and confirmed status, if shown.",
-        z.object({ confirmationNumber: z.string().optional(), confirmed: z.boolean().optional() }),
-      );
-      if (confirm?.confirmationNumber) {
-        return { status: "verified_success" as const, confirmationNumber: confirm.confirmationNumber };
+      // Verification read-back — proof of commit before we claim success. The
+      // submission already happened above; if this extract throws or times out
+      // we must NOT treat it as a failed booking (which would risk a duplicate
+      // attempt) — fall through to "unverified" so the caller awaits portal
+      // confirmation rather than re-booking.
+      try {
+        const confirm = await sess.stagehand.extract(
+          "Extract the booking confirmation number and confirmed status, if shown.",
+          z.object({ confirmationNumber: z.string().optional(), confirmed: z.boolean().optional() }),
+        );
+        if (confirm?.confirmationNumber) {
+          return { status: "verified_success" as const, confirmationNumber: confirm.confirmationNumber };
+        }
+        return { status: "unverified" as const };
+      } catch {
+        return { status: "unverified" as const };
       }
-      return { status: "unverified" as const };
     });
 
     // Only a verified confirmation read-back marks the credential as

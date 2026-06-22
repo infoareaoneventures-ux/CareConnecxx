@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Calendar, CalendarDays, Clock, MapPin } from 'lucide-react';
-import { db } from '../../lib/firebase';
+import { useCaregiverBookings } from '../../hooks/useCaregiverBookings';
 
 function fmtTime(t?: string): string {
   if (!t) return '';
@@ -18,31 +18,13 @@ interface Props { caregiverId: string; pendingOnly?: boolean; }
 
 export const CaregiverBookingsCard: React.FC<Props> = ({ caregiverId, pendingOnly = false }) => {
   const navigate = useNavigate();
-  const [bookingRequests, setBookingRequests] = useState<any[]>([]);
-  const [pendingAmendments, setPendingAmendments] = useState<any[]>([]);
-  const [allShifts, setAllShifts] = useState<any[]>([]);
+  const { bookingRequests, pendingAmendments, allShifts } = useCaregiverBookings(caregiverId);
   const [bookingTab, setBookingTab] = useState<'pending' | 'upcoming'>('pending');
 
   const todayStr = (() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   })();
-
-  useEffect(() => {
-    if (!caregiverId || !db) return;
-    const unsubs: (() => void)[] = [];
-
-    unsubs.push(db.collection('booking_requests').where('caregiverId', '==', caregiverId)
-      .onSnapshot(snap => setBookingRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {}));
-
-    unsubs.push(db.collection('shifts').where('caregiverId', '==', caregiverId)
-      .onSnapshot(snap => setAllShifts(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {}));
-
-    unsubs.push(db.collection('booking_amendments').where('caregiverId', '==', caregiverId).where('status', '==', 'pending')
-      .onSnapshot(snap => setPendingAmendments(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {}));
-
-    return () => unsubs.forEach(u => { try { u(); } catch {} });
-  }, [caregiverId]);
 
   const pendingBookings = bookingRequests.filter(b => b.status === 'pending');
   const upcomingShifts = allShifts

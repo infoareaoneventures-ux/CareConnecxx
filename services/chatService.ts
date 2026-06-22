@@ -200,6 +200,13 @@ export const chatService = {
     const roomSnap = await getDoc(roomRef);
     const roomData = roomSnap.data();
 
+    // A non-existent room can only be created when room metadata is supplied;
+    // without it we can't populate participants, and the batch.update below would
+    // fail on a missing document. Fail fast with a clear error instead.
+    if (!roomData && !roomMeta) {
+      throw new Error('Chat room does not exist and no room metadata was provided to create it');
+    }
+
     // If room doesn't exist yet, create it first so message security rules can verify participants
     if (!roomData && roomMeta) {
       const newUnreadCount = { ...roomMeta.unreadCount };

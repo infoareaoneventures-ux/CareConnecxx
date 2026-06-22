@@ -1689,6 +1689,103 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["triggerId", "userId"],
     },
   },
+  {
+    name: "get_support_tickets",
+    description:
+      "List the support tickets a user has opened (via create_support_ticket or the web app). " +
+      "Use when the user asks 'what's the status of my ticket?' or 'did anyone get back to me?'. " +
+      "By default only open tickets are returned; pass includeResolved to also show closed ones.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:          { type: "string",  description: "The user's Firestore document ID" },
+        includeResolved: { type: "boolean", description: "Include resolved/closed tickets (default false)" },
+      },
+      required: ["userId"],
+    },
+  },
+  {
+    name: "get_refund_requests",
+    description:
+      "List the refund requests a client has submitted and their review status. " +
+      "Use when the family asks 'what happened with my refund?' or 'is my refund approved yet?'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string", description: "The client's Firestore document ID" },
+      },
+      required: ["clientId"],
+    },
+  },
+  {
+    name: "get_shifts",
+    description:
+      "List submitted shift-hour / timesheet records and their status (pending review, approved, paid, correction requested). " +
+      "Pass caregiverId to see a caregiver's shifts, or clientId to see shifts logged against a family's account. " +
+      "Use when someone asks 'did my hours go through?', 'which timesheets are still pending?', or 'what did I get paid for last week?'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (provide this OR clientId)" },
+        clientId:    { type: "string", description: "The client's Firestore document ID (provide this OR caregiverId)" },
+        status:      { type: "string", description: "Optional filter, e.g. 'pending_client_review', 'approved', 'paid'" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_caregiver_availability",
+    description:
+      "Read a caregiver's current weekly availability before proposing changes — the day list, the weeklyAvailability time-window map, and preferred time of day. " +
+      "Use this to confirm what's already set before calling update_caregiver_availability, so you don't re-ask for days the caregiver already has.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "update_reminder",
+    description:
+      "Edit an existing personal reminder in place — change its time, day, recurrence, label, or message — without deleting and recreating it. " +
+      "Use when the user says 'move my medication reminder to 9am' or 'make that weekly instead of daily'. " +
+      "Pass only the fields that change. Confirm the new schedule with the user before calling.",
+    input_schema: {
+      type: "object",
+      properties: {
+        phone:      { type: "string", description: "The user's phone number (ownership check)" },
+        triggerId:  { type: "string", description: "The Firestore document ID of the user_triggers doc to update" },
+        label:      { type: "string", description: "New short name (optional)" },
+        recurrence: { type: "string", description: "New recurrence: daily, weekly, monthly, once (optional)" },
+        dayOfWeek:  { type: "number", description: "New day for weekly recurrence, 0=Sun … 6=Sat (optional)" },
+        hour:       { type: "number", description: "New hour, 24-hour 0–23 (optional)" },
+        minute:     { type: "number", description: "New minute, 0–59 (optional)" },
+        message:    { type: "string", description: "New reminder text (optional)" },
+      },
+      required: ["phone", "triggerId"],
+    },
+  },
+  {
+    name: "update_care_journal_entry",
+    description:
+      "Correct an existing care journal entry the caregiver already logged — fix the notes, mood, meds given, or activities. " +
+      "Use when the caregiver says 'I made a mistake on that entry' or 'add that I also gave her the evening dose'. " +
+      "Only the caregiver who wrote the entry can edit it. Pass only the fields that change.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver who authored the entry (ownership check)" },
+        entryId:     { type: "string", description: "The care_journal document ID to update" },
+        notes:       { type: "string", description: "Corrected notes text (optional)" },
+        mood:        { type: "string", description: "Corrected mood (optional)" },
+        medsGiven:   { type: "string", description: "Corrected medications-given note (optional)" },
+        activities:  { type: "array", items: { type: "string" }, description: "Corrected activities list (optional)" },
+      },
+      required: ["caregiverId", "entryId"],
+    },
+  },
 ];
 
 // Tools available to caregivers — scoped to what's relevant to their role
@@ -1741,6 +1838,12 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "submit_media_update",
   "respond_to_shift_hour_correction",
   "request_standard_payout",
+  // Missing CRUD tools — reads + in-place updates
+  "get_support_tickets",
+  "get_shifts",
+  "get_caregiver_availability",
+  "update_reminder",
+  "update_care_journal_entry",
 ]);
 export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_NAMES.has(t.name));
 
@@ -5012,6 +5115,120 @@ async function executeToolCall(
       await ref.delete();
       logAudit({ eventType: "followup_cancelled", userId: (userId as string) ?? "", data: { source: "mcp:cancel_followup", triggerId } }).catch(() => {});
       return { success: true, cancelled: true };
+    }
+
+    // ── get_support_tickets ─────────────────────────────────────────────────
+    if (name === "get_support_tickets") {
+      const { userId: stUserId, includeResolved } = input as Record<string, unknown>;
+      if (!stUserId) return toolError("INVALID_INPUT", "userId is required");
+      const stSnap = await db.collection("support_tickets").where("userId", "==", stUserId).get();
+      let tickets: Record<string, unknown>[] = stSnap.docs.map(d => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
+      if (!includeResolved) {
+        tickets = tickets.filter(t => t.resolved !== true && t.status !== "closed" && t.status !== "resolved");
+      }
+      tickets = tickets
+        .sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))
+        .slice(0, 20);
+      return { success: true, tickets, count: tickets.length };
+    }
+
+    // ── get_refund_requests ─────────────────────────────────────────────────
+    if (name === "get_refund_requests") {
+      const { clientId: rrClientId } = input as Record<string, unknown>;
+      if (!rrClientId) return toolError("INVALID_INPUT", "clientId is required");
+      const rrSnap = await db.collection("refundRequests").where("clientId", "==", rrClientId).get();
+      const requests: Record<string, unknown>[] = rrSnap.docs
+        .map((d): Record<string, unknown> => ({ id: d.id, ...(d.data() as Record<string, unknown>) }))
+        .sort((a, b) => String(b.requestedAt ?? "").localeCompare(String(a.requestedAt ?? "")))
+        .slice(0, 20);
+      return { success: true, requests, count: requests.length };
+    }
+
+    // ── get_shifts ──────────────────────────────────────────────────────────
+    if (name === "get_shifts") {
+      const { caregiverId: gsCgId, clientId: gsClientId, status: gsStatus } = input as Record<string, unknown>;
+      if (!gsCgId && !gsClientId) return toolError("INVALID_INPUT", "Provide caregiverId or clientId");
+      const gsField = gsCgId ? "caregiverId" : "clientId";
+      const gsValue = gsCgId ?? gsClientId;
+      const gsSnap = await db.collection("shiftHours").where(gsField, "==", gsValue).get();
+      let shifts = gsSnap.docs.map(d => {
+        const s = d.data() as Record<string, unknown>;
+        return {
+          appointmentId: d.id,
+          date:          s.date ?? null,
+          status:        s.status ?? null,
+          durationHours: s.durationHours ?? s.submittedTotalHours ?? null,
+          amountCents:   s.amountCents ?? null,
+          amountDollars: s.amountCents != null ? `$${(Number(s.amountCents) / 100).toFixed(2)}` : null,
+          clockInTime:   s.clockInTime ?? null,
+          clockOutTime:  s.clockOutTime ?? null,
+          caregiverName: s.caregiverName ?? null,
+          clientName:    s.clientName ?? null,
+        };
+      });
+      if (gsStatus) shifts = shifts.filter(s => s.status === gsStatus);
+      shifts = shifts
+        .sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")))
+        .slice(0, 20);
+      return { success: true, shifts, count: shifts.length };
+    }
+
+    // ── get_caregiver_availability ──────────────────────────────────────────
+    if (name === "get_caregiver_availability") {
+      const { caregiverId: gaCgId } = input as Record<string, unknown>;
+      if (!gaCgId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const gaSnap = await db.collection("caregivers").doc(gaCgId as string).get();
+      if (!gaSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      const ga = gaSnap.data()!;
+      return {
+        success:            true,
+        availability:       ga.availability ?? [],
+        weeklyAvailability: ga.weeklyAvailability ?? {},
+        preferredTimeOfDay: ga.preferredTimeOfDay ?? null,
+      };
+    }
+
+    // ── update_reminder ─────────────────────────────────────────────────────
+    if (name === "update_reminder") {
+      const { phone: urPhone, triggerId: urTriggerId, label, recurrence, dayOfWeek, hour, minute, message: urMsg } =
+        input as Record<string, unknown>;
+      if (!urPhone || !urTriggerId) return toolError("INVALID_INPUT", "phone and triggerId are required");
+      const patch: Record<string, unknown> = {};
+      if (label      !== undefined) patch.label = label;
+      if (recurrence !== undefined) patch.recurrence = recurrence;
+      if (dayOfWeek  !== undefined) patch.dayOfWeek = dayOfWeek;
+      if (hour       !== undefined) patch.hour = hour;
+      if (minute     !== undefined) patch.minute = minute;
+      if (urMsg      !== undefined) patch.message = urMsg;
+      if (Object.keys(patch).length === 0) {
+        return toolError("INVALID_INPUT", "Provide at least one field to update (label, recurrence, dayOfWeek, hour, minute, or message).");
+      }
+      const { updateUserTrigger } = await import("../triggers/userTriggerManager");
+      const updated = await updateUserTrigger(urPhone as string, urTriggerId as string, patch as Parameters<typeof updateUserTrigger>[2]);
+      if (!updated) return toolError("NOT_FOUND", "Reminder not found or does not belong to this user");
+      return { success: true, updated: true, triggerId: urTriggerId };
+    }
+
+    // ── update_care_journal_entry ───────────────────────────────────────────
+    if (name === "update_care_journal_entry") {
+      const { caregiverId: ujCgId, entryId: ujEntryId, notes, mood, medsGiven, activities } =
+        input as Record<string, unknown>;
+      if (!ujCgId || !ujEntryId) return toolError("INVALID_INPUT", "caregiverId and entryId are required");
+      const ujRef  = db.collection("care_journal").doc(ujEntryId as string);
+      const ujSnap = await ujRef.get();
+      if (!ujSnap.exists) return toolError("NOT_FOUND", "Care journal entry not found");
+      if (ujSnap.data()?.caregiverId !== ujCgId) return toolError("PERMISSION_DENIED", "You can only edit entries you wrote");
+      const ujUpdate: Record<string, unknown> = { updatedAt: nowIso };
+      if (notes      !== undefined) ujUpdate.notes = notes;
+      if (mood       !== undefined) ujUpdate.mood = mood;
+      if (medsGiven  !== undefined) ujUpdate.medsGiven = medsGiven;
+      if (activities !== undefined) ujUpdate.activities = activities;
+      if (Object.keys(ujUpdate).length === 1) {
+        return toolError("INVALID_INPUT", "Provide at least one field to update (notes, mood, medsGiven, or activities).");
+      }
+      await ujRef.update(ujUpdate);
+      logAudit({ eventType: "care_journal_updated", userId: ujCgId as string, data: { source: "mcp:update_care_journal_entry", entryId: ujEntryId, fields: Object.keys(ujUpdate).filter(k => k !== "updatedAt") } }).catch(() => {});
+      return { success: true, updated: true, entryId: ujEntryId };
     }
 
     return toolError("INVALID_INPUT", `Unknown tool: ${name}`);

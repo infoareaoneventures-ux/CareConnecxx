@@ -56,9 +56,11 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   manage_recurring_schedule:     ["scheduling"],
   list_user_reminders:           ["scheduling"],
   create_reminder:               ["scheduling"],
+  update_reminder:               ["scheduling"],
   delete_reminder:               ["scheduling"],
   schedule_followup:             ["scheduling"],
   update_caregiver_availability: ["scheduling"],
+  get_caregiver_availability:    ["scheduling"],
 
   // ── billing ──────────────────────────────────────────────────────────────
   get_billing_summary:      ["billing"],
@@ -67,6 +69,8 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_invoice_history:      ["billing"],
   get_invoice_details:      ["billing"],
   create_refund_request:    ["billing"],
+  get_refund_requests:      ["billing"],
+  get_shifts:               ["billing"],
   get_payment_update_link:  ["billing"],
   request_instant_payout:   ["billing"],
   request_standard_payout:  ["billing"],
@@ -82,6 +86,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_care_journal:          ["care_plan"],
   get_care_journal_client:   ["care_plan"],
   create_care_journal_entry: ["care_plan"],
+  update_care_journal_entry: ["care_plan"],
   get_care_plan:             ["care_plan"],
   update_care_plan:          ["care_plan"],
   get_care_plan_history:     ["care_plan"],
@@ -117,6 +122,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   block_user:                       ["messaging"],
   unblock_user:                     ["messaging"],
   report_user:                      ["messaging"],
+  get_support_tickets:              ["messaging"],
 
   // ── memory_search (memory files, web actions, credentials) ──────────────
   read_memory_file:   ["memory_search"],

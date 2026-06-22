@@ -77,6 +77,32 @@ export async function listUserTriggers(phone: string): Promise<Array<UserTrigger
   return snap.docs.map(d => ({ id: d.id, ...(d.data() as UserTrigger) }));
 }
 
+export async function updateUserTrigger(
+  phone:     string,
+  triggerId: string,
+  patch:     Partial<Pick<UserTrigger, "label" | "recurrence" | "dayOfWeek" | "hour" | "minute" | "message">>
+): Promise<boolean> {
+  const ref  = db.collection("user_triggers").doc(triggerId);
+  const snap = await ref.get();
+  if (!snap.exists || snap.data()?.phone !== phone) return false;
+  const current = snap.data() as UserTrigger;
+  const update: Record<string, unknown> = { ...patch, updatedAt: new Date().toISOString() };
+  // Recompute the next fire time only when a scheduling field actually changed.
+  const scheduleChanged =
+    patch.recurrence !== undefined || patch.dayOfWeek !== undefined ||
+    patch.hour       !== undefined || patch.minute    !== undefined;
+  if (scheduleChanged) {
+    update.nextFireAt = calculateNextFireAt(
+      patch.recurrence ?? current.recurrence,
+      patch.dayOfWeek  ?? current.dayOfWeek,
+      patch.hour       ?? current.hour,
+      patch.minute     ?? current.minute,
+    );
+  }
+  await ref.update(update);
+  return true;
+}
+
 export async function deleteUserTrigger(phone: string, triggerId: string): Promise<boolean> {
   const ref  = db.collection("user_triggers").doc(triggerId);
   const snap = await ref.get();

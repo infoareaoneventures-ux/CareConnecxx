@@ -36,6 +36,7 @@ export type AuditEventType =
   | "recurring_schedule_updated"
   | "appointment_rescheduled"
   | "care_journal_created"
+  | "care_journal_updated"
   | "job_application_submitted"
   | "job_application_responded"
   | "interview_feedback_submitted"

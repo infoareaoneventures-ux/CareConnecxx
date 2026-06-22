@@ -10,6 +10,7 @@ import { dbService } from '../../services/api';
 import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
 import { jobApplicationService, useMyApplications } from '../../hooks/useJobApplications';
+import { useCareConnex } from '../../context/CareConnexContext';
 import { Skeleton } from '../ui/Skeleton';
 
 // Pure math — no API calls. Jobs store lat/lng at creation time.
@@ -85,12 +86,13 @@ const CHIP = (selected: boolean) =>
     `px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${selected ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`;
 
 export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobAccepted, hideApplicationsTab = false }) => {
+    const { blockedIds } = useCareConnex();
     const [jobs, setJobs] = useState<JobPost[]>([]);
     const [jobsLoading, setJobsLoading] = useState(false);
     const [viewingJob, setViewingJob] = useState<JobPost | null>(null);
     const [applyingJob, setApplyingJob] = useState<JobPost | null>(null);
     const [acceptingGigId, setAcceptingGigId] = useState<string | null>(null);
-    const [searchParams] = useSearchParams();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [activeTab, setActiveTab] = useState<TabType>(() => {
         const t = searchParams.get('tab');
         if (t === 'applications' || t === 'my-applications') return 'my-applications';
@@ -188,7 +190,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                     const appliedJobIds = new Set(applications.map(a => a.jobId));
                     const hidden = new Set<string>(JSON.parse(localStorage.getItem('careconnex.hiddenJobs') || '[]'));
                     const allJobs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as JobPost[];
-                    setJobs(allJobs.filter(job => !appliedJobIds.has(job.id) && !hidden.has(job.id)));
+                    setJobs(allJobs.filter(job => !appliedJobIds.has(job.id) && !hidden.has(job.id) && (job as any).clientActive !== false));
                     setJobsLoading(false);
                 },
                 (error) => {
@@ -314,6 +316,16 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         }
     };
 
+    // Auto-open a specific job when navigated here with ?job=<id> (e.g. from dashboard cards)
+    useEffect(() => {
+        const jobId = searchParams.get('job');
+        if (!jobId) return;
+        handleViewJobDetails(jobId);
+        // Clear the param so the modal can be closed without it reopening
+        setSearchParams(prev => { const next = new URLSearchParams(prev); next.delete('job'); return next; }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const handleWithdrawApplication = async (applicationId: string) => {
         try {
             await withdrawApplication(applicationId);
@@ -398,6 +410,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     };
 
     const filteredJobs = jobs.filter(job => {
+        if (blockedIds.has(job.clientId)) return false;
         const q = searchQuery.toLowerCase();
         if (q && !(
             (job.title ?? '').toLowerCase().includes(q) ||
@@ -990,7 +1003,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                             })}
                         </div>
                         <div className="space-y-3">
-                            {interviews.filter(iv => ivFilter === 'all' || iv.status === ivFilter).map(iv => {
+                            {interviews.filter(iv => !blockedIds.has(iv.clientId) && (ivFilter === 'all' || iv.status === ivFilter)).map(iv => {
                                 const date = new Date(iv.scheduledAt);
                                 const app = iv.jobId ? applications.find(a => a.jobId === iv.jobId) : undefined;
                                 const ivStatusColor = iv.status === 'pending' ? 'bg-yellow-50 text-yellow-700' : iv.status === 'accepted' || iv.status === 'confirmed' ? 'bg-green-50 text-green-700' : iv.status === 'completed' ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-600';

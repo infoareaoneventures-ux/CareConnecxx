@@ -67,6 +67,7 @@ const AuthLoginPage       = lazy(() => import('./components/auth/LoginPage'));
 const UploadPage          = lazy(() => import('./components/pages/UploadPage'));
 const GenericSuccessPage  = lazy(() => import('./components/pages/GenericSuccessPage'));
 const ClientSignup = lazy(() => import('./components/ClientSignup').then(m => ({ default: m.ClientSignup })));
+const CaregiverApply = lazy(() => import('./components/CaregiverApply').then(m => ({ default: m.CaregiverApply })));
 const TermsOfServicePage  = lazy(() => import('./components/pages/TermsOfServicePage'));
 const PrivacyPolicyPage   = lazy(() => import('./components/pages/PrivacyPolicyPage'));
 
@@ -84,6 +85,7 @@ import { Home, Settings, MessageSquare, ClipboardList, Loader2 } from 'lucide-re
 
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CareConnexProvider, useCareConnex } from './context/CareConnexContext';
+
 
 // Push Notifications
 import { PushNotificationPrompt } from './components/PushNotificationPrompt';
@@ -212,7 +214,7 @@ const AppContent: React.FC = () => {
       case 'forgot-password-caregiver': navigate('/caregiver/forgot-password'); break;
       case 'caregiver-signup': navigate('/caregiver/signup'); break;
       case 'client-apply': navigate('/client/apply'); break;
-      case 'caregiver-apply': navigate('/start?role=caregiver'); break;
+      case 'caregiver-apply': navigate('/caregiver/apply-web'); break;
       case 'caregiver-login': navigate('/caregiver/login'); break;
       case 'client': navigate('/client/dashboard'); break;
       case 'client-profile': navigate('/client/profile'); break;
@@ -300,6 +302,7 @@ const AppContent: React.FC = () => {
 
           <Route path="/caregiver/signup" element={<Navigate to="/start?role=caregiver" replace />} />
           <Route path="/client/apply" element={<PublicOnlyRoute element={<ClientSignup onNavigate={handleNavigation} onShowToast={addToast} />} />} />
+          <Route path="/caregiver/apply-web" element={<PublicOnlyRoute element={<CaregiverApply onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           {/* Web caregiver signup retired — Cara SMS (/start) is the canonical onboarding. Redirect preserves any existing bookmarks/links. */}
           <Route path="/caregiver/apply" element={<Navigate to="/start?role=caregiver" replace />} />
           <Route path="/caregiver/login" element={<PublicOnlyRoute element={<CaregiverLogin onNavigate={handleNavigation} onShowToast={addToast} />} />} />
@@ -334,7 +337,6 @@ const AppContent: React.FC = () => {
             userType="client"
             onNavigate={handleNavigation}
             onShowToast={addToast}
-            onScheduleVideoCall={() => { /* V5: interviews scheduled via Cara iMessage */ }}
             onViewProfile={(caregiverId) => {
               navigate(`/client/caregiver/${caregiverId}`);
             }}
@@ -392,11 +394,6 @@ const AppContent: React.FC = () => {
         <PushNotificationPrompt
           userId={currentUser.uid}
         />
-      )}
-
-      {/* Floating onboarding helper — visible on all authenticated pages */}
-      {currentUser && currentUser.userType !== 'admin' && (
-        <FloatingOnboardingHelper />
       )}
 
       {/* PWA Install Prompt */}

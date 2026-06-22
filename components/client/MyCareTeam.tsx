@@ -8,7 +8,6 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { db } from '../../lib/firebase';
 import { authService } from '../../services/api';
 import { IdentityGateModal } from './IdentityGateModal';
-import { chatService } from '../../services/chatService';
 
 interface TeamCaregiver {
   id: string;
@@ -192,26 +191,26 @@ export const MyCareTeam: React.FC = () => {
 
   const bypass = import.meta.env.VITE_BYPASS_ONBOARDING === 'true';
 
-  const handleMessage = async (caregiverId: string, caregiverName: string) => {
+  const handleMessage = (caregiverId: string, caregiverName: string) => {
     if (!bypass && identityStatus !== 'verified') {
       setShowIdentityGate(true);
       return;
     }
-    try {
-      const currentUid = authService.getCurrentUser()?.uid;
-      const currentName =
-        authService.getCurrentUser()?.displayName ||
-        authService.getCurrentUser()?.email?.split('@')[0] ||
-        'Client';
-      if (currentUid) {
-        const roomId = await chatService.getOrCreateChatRoom(currentUid, currentName, caregiverId, caregiverName);
-        navigate(`/client/inbox?room=${roomId}`);
-      } else {
-        navigate('/client/inbox');
+    const currentUid = authService.getCurrentUser()?.uid;
+    if (!currentUid) { navigate('/client/inbox'); return; }
+    const currentName = authService.getCurrentUser()?.displayName || authService.getCurrentUser()?.email?.split('@')[0] || 'Client';
+    const sorted = [currentUid, caregiverId].sort();
+    const roomId = sorted.join('_');
+    const names = sorted.map(id => id === currentUid ? currentName : caregiverName);
+    navigate(`/client/inbox?room=${roomId}`, {
+      state: {
+        pendingRoom: {
+          id: roomId, participants: sorted, participantNames: names, participantAvatars: ['', ''],
+          unreadCount: { [currentUid]: 0, [caregiverId]: 0 },
+          lastMessage: '', lastMessageTime: '', lastMessageTimestamp: null, createdAt: null,
+        }
       }
-    } catch {
-      navigate('/client/inbox');
-    }
+    });
   };
 
 

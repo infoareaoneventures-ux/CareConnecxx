@@ -6,6 +6,7 @@ import {
   onSnapshot,
   addDoc,
   updateDoc,
+  setDoc,
   doc,
   getDoc,
   getDocs,
@@ -14,6 +15,7 @@ import {
   writeBatch,
   limit,
   startAfter,
+  deleteField,
   QueryDocumentSnapshot,
   DocumentSnapshot
 } from 'firebase/firestore';
@@ -36,6 +38,8 @@ export interface ChatRoom {
   appointmentId?: string;
   isSupport?: boolean;
   createdAt: any;
+  deletedAt?: { [uid: string]: any };
+  messagesCutoff?: { [uid: string]: any };
 }
 
 export interface Message {
@@ -176,7 +180,8 @@ export const chatService = {
     senderName: string,
     text: string,
     type: 'text' | 'image' = 'text',
-    imageUrl?: string
+    imageUrl?: string,
+    roomMeta?: { participants: string[], participantNames: string[], participantAvatars: string[], unreadCount: Record<string, number> }
   ): Promise<void> {
     // Validate inputs
     validators.id(chatRoomId, 'chatRoomId');
@@ -190,6 +195,27 @@ export const chatService = {
 
     const fdb = db;
     if (!fdb) throw new Error('Firestore not initialized');
+
+    const roomRef = doc(fdb, 'chatRooms', chatRoomId);
+    const roomSnap = await getDoc(roomRef);
+    const roomData = roomSnap.data();
+
+    // If room doesn't exist yet, create it first so message security rules can verify participants
+    if (!roomData && roomMeta) {
+      const newUnreadCount = { ...roomMeta.unreadCount };
+      const otherParticipant = roomMeta.participants.find(id => id !== senderId);
+      if (otherParticipant) newUnreadCount[otherParticipant] = 1;
+      await setDoc(roomRef, {
+        participants: roomMeta.participants,
+        participantNames: roomMeta.participantNames,
+        participantAvatars: roomMeta.participantAvatars,
+        lastMessage: '',
+        lastMessageTime: '',
+        lastMessageTimestamp: null,
+        unreadCount: newUnreadCount,
+        createdAt: serverTimestamp(),
+      });
+    }
 
     const batch = writeBatch(fdb);
 
@@ -208,23 +234,42 @@ export const chatService = {
       imageUrl: imageUrl || null
     });
 
-    // Update chat room with last message
-    const roomRef = doc(fdb, 'chatRooms', chatRoomId);
-    const roomSnap = await getDoc(roomRef);
-    const roomData = roomSnap.data();
-    
-    if (roomData) {
-      const otherParticipant = roomData.participants.find((id: string) => id !== senderId);
-      const newUnreadCount = { ...roomData.unreadCount };
-      newUnreadCount[otherParticipant] = (newUnreadCount[otherParticipant] || 0) + 1;
+    // Update room with last message metadata
+    const latestRoomData = roomData || {};
+    const otherParticipant = (latestRoomData as any).participants
+      ? (latestRoomData as any).participants.find((id: string) => id !== senderId)
+      : roomMeta?.participants.find(id => id !== senderId);
+    const newUnreadCount = { ...((latestRoomData as any).unreadCount || roomMeta?.unreadCount || {}) };
+    if (otherParticipant) newUnreadCount[otherParticipant] = (newUnreadCount[otherParticipant] || 0) + 1;
 
-      batch.update(roomRef, {
-        lastMessage: text,
-        lastMessageTime: new Date().toISOString(),
-        lastMessageTimestamp: serverTimestamp(),
-        unreadCount: newUnreadCount
-      });
+    // Clear deletedAt for both sender and recipient so new messages always resurface the conversation.
+    // Preserve any existing deletedAt value as messagesCutoff so pre-deletion messages stay hidden.
+    const existingDeletedAt = (latestRoomData as any).deletedAt || {};
+    const existingCutoff = (latestRoomData as any).messagesCutoff || {};
+
+    const roomUpdatePayload: Record<string, any> = {
+      lastMessage: text,
+      lastMessageTime: new Date().toISOString(),
+      lastMessageTimestamp: serverTimestamp(),
+      unreadCount: newUnreadCount,
+      [`deletedAt.${senderId}`]: deleteField(),
+    };
+    if (existingDeletedAt[senderId]) {
+      const toMs = (ts: any) => ts?.toMillis?.() ?? (ts?.seconds ? ts.seconds * 1000 : 0);
+      if (!existingCutoff[senderId] || toMs(existingDeletedAt[senderId]) > toMs(existingCutoff[senderId])) {
+        roomUpdatePayload[`messagesCutoff.${senderId}`] = existingDeletedAt[senderId];
+      }
     }
+    if (otherParticipant) {
+      roomUpdatePayload[`deletedAt.${otherParticipant}`] = deleteField();
+      if (existingDeletedAt[otherParticipant]) {
+        const toMs = (ts: any) => ts?.toMillis?.() ?? (ts?.seconds ? ts.seconds * 1000 : 0);
+        if (!existingCutoff[otherParticipant] || toMs(existingDeletedAt[otherParticipant]) > toMs(existingCutoff[otherParticipant])) {
+          roomUpdatePayload[`messagesCutoff.${otherParticipant}`] = existingDeletedAt[otherParticipant];
+        }
+      }
+    }
+    batch.update(roomRef, roomUpdatePayload);
 
     await batch.commit();
   },
@@ -289,12 +334,11 @@ export const chatService = {
       orderBy('lastMessageTimestamp', 'desc')
     );
 
-    return onSnapshot(q, 
+    return onSnapshot(q,
       (snapshot) => {
-        const rooms = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data()
-        })) as ChatRoom[];
+        const rooms = snapshot.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() }) as ChatRoom)
+          .filter(r => !r.deletedAt?.[userId]);
         callback(rooms);
       },
       (error) => {
@@ -302,11 +346,24 @@ export const chatService = {
         if (onError) {
           onError(error);
         } else {
-          // Default error handling - callback with empty array
           callback([]);
         }
       }
     );
+  },
+
+  /**
+   * Soft-delete a conversation for the current user only.
+   * Stores a timestamp; messages before this timestamp are hidden on their side.
+   */
+  async deleteConversation(chatRoomId: string, userId: string): Promise<void> {
+    validators.id(chatRoomId, 'chatRoomId');
+    validators.id(userId, 'userId');
+    const fdb = db;
+    if (!fdb) throw new Error('Firestore not initialized');
+    await updateDoc(doc(fdb, 'chatRooms', chatRoomId), {
+      [`deletedAt.${userId}`]: serverTimestamp(),
+    });
   },
 
   /**

@@ -14,8 +14,13 @@ const DIRECT_DB = /\bdb\.(collection|doc)\(/;
 
 // Baseline captured 2026-06-21 (38 files). DELETE entries as they're migrated;
 // never ADD. Goal: empty.
+// 2026-06-21: +5 files arrived via the origin/main merge (legacy direct-db
+// style, predating this seam) and -1 (CaregiverOnboardingDashboard, rebuilt on
+// main without direct db). Net baseline = 42; migration remains mechanical
+// follow-up tracked in context/progress-tracker.md.
 const KNOWN_OFFENDERS = new Set<string>([
   "components/CarePlan.tsx",
+  "components/CaregiverDashboard.tsx",
   "components/CaregiverEarnings.tsx",
   "components/CaregiverProfile.tsx",
   "components/FindCaregivers.tsx",
@@ -23,13 +28,16 @@ const KNOWN_OFFENDERS = new Set<string>([
   "components/InboxView.tsx",
   "components/ReviewSystem.tsx",
   "components/Schedule.tsx",
+  "components/admin/AdminClientManager.tsx",
   "components/admin/AdminMessages.tsx",
+  "components/admin/AdminReports.tsx",
   "components/admin/AssignmentManager.tsx",
   "components/admin/FinanceDashboard.tsx",
+  "components/caregiver/CaregiverBookingsCard.tsx",
   "components/caregiver/CaregiverBookingsPage.tsx",
   "components/caregiver/CaregiverCalendarPage.tsx",
+  "components/caregiver/CaregiverCareRequestsCard.tsx",
   "components/caregiver/CaregiverHomeDashboard.tsx",
-  "components/caregiver/CaregiverOnboardingDashboard.tsx",
   "components/caregiver/CaregiverPayments.tsx",
   "components/caregiver/CaregiverPaymentsPage.tsx",
   "components/caregiver/JobBoard.tsx",

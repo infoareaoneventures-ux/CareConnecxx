@@ -44,6 +44,8 @@ export const AdminCaregiverManager: React.FC = () => {
 
   // Verification
   const [rejectReason, setRejectReason] = useState('');
+  const [approveBackground, setApproveBackground] = useState(false);
+  const [approveMembership, setApproveMembership] = useState(false);
   const [docExpiry, setDocExpiry] = useState<Record<string, string>>({});
   const [docProcessing, setDocProcessing] = useState<Record<string, boolean>>({});
   const [docRejectNote, setDocRejectNote] = useState<Record<string, string>>({});
@@ -143,10 +145,25 @@ export const AdminCaregiverManager: React.FC = () => {
     if (!selected) return;
     if (status === 'rejected' && !rejectReason) { showToast('Enter a rejection reason', 'error'); return; }
     try {
-      const updates: Partial<Caregiver> = { verificationStatus: status };
-      if (status === 'approved') { updates.verified = true; updates.approvedAt = new Date().toISOString(); }
-      if (status === 'rejected') { updates.verified = false; (updates as any).rejectionReason = rejectReason; }
-      if (status === 'info_requested') { updates.verified = false; }
+      const updates: Partial<Caregiver> = {};
+      if (status === 'approved') {
+        if (!approveBackground && !approveMembership) {
+          showToast('Select at least one item to approve', 'error');
+          return;
+        }
+        if (approveBackground) {
+          (updates as any).backgroundCheckStatus = 'clear';
+          (updates as any).backgroundCheckComplete = true;
+          (updates as any).verified = true;
+          (updates as any).verificationStatus = 'approved';
+        }
+        if (approveMembership) {
+          (updates as any).membershipPaid = true;
+          (updates as any).membershipStatus = 'active';
+        }
+      }
+      if (status === 'rejected') { (updates as any).verificationStatus = 'rejected'; updates.verified = false; (updates as any).rejectionReason = rejectReason; }
+      if (status === 'info_requested') { (updates as any).verificationStatus = 'info_requested'; updates.verified = false; }
       await adminService.updateCaregiver(selected.uid, updates);
       setCaregivers(prev => prev.map(c => c.uid === selected.uid ? { ...c, ...updates } as Caregiver : c));
       setSelected(prev => prev ? { ...prev, ...updates } as Caregiver : prev);
@@ -652,6 +669,42 @@ export const AdminCaregiverManager: React.FC = () => {
                       <span>{(selected as any).rejectionReason}</span>
                     </div>
                   )}
+
+                  {/* Field overrides */}
+                  <div className="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Field Overrides</p>
+                    <div className="space-y-2">
+                      {/* Membership */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-slate-700">Membership payment</span>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { membershipPaid: true, membershipStatus: 'active' } as any); setSelected(p => p ? { ...p, membershipPaid: true, membershipStatus: 'active' } as any : p); showToast('Membership approved', 'success'); }}
+                            className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).membershipPaid ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'}`}
+                          >Approved</button>
+                          <button
+                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { membershipPaid: false, membershipStatus: 'inactive' } as any); setSelected(p => p ? { ...p, membershipPaid: false, membershipStatus: 'inactive' } as any : p); showToast('Membership revoked', 'success'); }}
+                            className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${!(selected as any).membershipPaid ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}
+                          >Revoked</button>
+                        </div>
+                      </div>
+                      {/* Background check */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-slate-700">Background check</span>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { backgroundCheckStatus: 'clear', backgroundCheckComplete: true, verified: true, verificationStatus: 'approved' } as any); setSelected(p => p ? { ...p, backgroundCheckStatus: 'clear', backgroundCheckComplete: true, verified: true, verificationStatus: 'approved' } as any : p); showToast('Background check approved', 'success'); }}
+                            className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).backgroundCheckStatus === 'clear' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'}`}
+                          >Approved</button>
+                          <button
+                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'submitted' } as any); setSelected(p => p ? { ...p, backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'submitted' } as any : p); showToast('Background check revoked', 'success'); }}
+                            className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).backgroundCheckStatus !== 'clear' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}
+                          >Revoked</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   {selected.backgroundCheckData && (
                     <div className="grid grid-cols-2 gap-3 bg-white rounded-xl p-4 text-sm">
                       {[
@@ -853,6 +906,17 @@ export const AdminCaregiverManager: React.FC = () => {
                     rows={3}
                     className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
                   />
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Approve selected items</p>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={approveBackground} onChange={e => setApproveBackground(e.target.checked)} className="w-4 h-4 rounded accent-green-600" />
+                      <span className="text-sm text-slate-700">Background check</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={approveMembership} onChange={e => setApproveMembership(e.target.checked)} className="w-4 h-4 rounded accent-green-600" />
+                      <span className="text-sm text-slate-700">Membership payment</span>
+                    </label>
+                  </div>
                   <div className="grid grid-cols-3 gap-3">
                     <button onClick={() => handleVerify('approved')} className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 transition-colors">
                       <CheckCircle className="w-4 h-4" /> Approve

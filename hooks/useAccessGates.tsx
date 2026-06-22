@@ -51,15 +51,15 @@ export function useAccessGates() {
   const membershipActiveGated = bypass || membershipActive;
 
   const gate = useCallback((action: GateAction, caregiverName: string | undefined, onPass: () => void) => {
-    // Payment FIRST — capture subscription intent at the moment it's hottest.
-    // Identity verification is deferred to after payment (handled next) so we
-    // don't stack two friction steps onto the same conversion moment. Identity
-    // still gates the action itself — it just no longer blocks the paywall.
+    // Identity first (Step 2), then Membership (Step 3) — matches the onboarding banner order.
+    if (!identityVerified) {
+      setPending({ action, caregiverName, onPass });
+      return;
+    }
     if (!membershipActiveGated) {
       setPending({ action, caregiverName, onPass });
       // Record a paywall-view signal so the daily win-back job can nudge this
-      // family (referencing the caregiver they tried to reach) if they don't
-      // convert. Fire-and-forget — never block the modal on this write.
+      // family (referencing the caregiver they tried to reach) if they don't convert.
       const uid = auth?.currentUser?.uid;
       const fdb = db;
       if (uid && fdb) {
@@ -68,10 +68,6 @@ export function useAccessGates() {
           paywallContext: { caregiverName: caregiverName ?? null, action },
         }, { merge: true }).catch(() => {});
       }
-      return;
-    }
-    if (!identityVerified) {
-      setPending({ action, caregiverName, onPass });
       return;
     }
     onPass();
@@ -94,23 +90,23 @@ export function useAccessGates() {
     if (!pending || bypass) return null;
 
     // Payment gate first (mirrors the reordering in `gate`)…
-    if (!membershipActive) {
-      return (
-        <PlanSelectModal
-          onClose={dismiss}
-          caregiverName={pending.caregiverName}
-          context={pending.action}
-        />
-      );
-    }
-
-    // …then identity verification before the action completes.
+    // Identity first (Step 2), then Membership (Step 3)
     if (!identityVerified) {
       return (
         <IdentityGateModal
           caregiverName={pending.caregiverName}
           onClose={dismiss}
           onGetVerified={handleGetVerified}
+        />
+      );
+    }
+
+    if (!membershipActive) {
+      return (
+        <PlanSelectModal
+          onClose={dismiss}
+          caregiverName={pending.caregiverName}
+          context={pending.action}
         />
       );
     }

@@ -4,7 +4,7 @@ import {
   Search, Calendar, MessageSquare, Heart,
   ChevronDown, LogOut, Settings, CreditCard, Crown,
   Users, FileText, Bell, CalendarCheck,
-  Briefcase, X, MoreHorizontal,
+  Briefcase, X, MoreHorizontal, HelpCircle, Mail,
 } from 'lucide-react';
 
 const FIND_CARE_ROUTES = ['/client/find-caregivers', '/client/browse-caregivers', '/client/posts', '/client/post-job'];
@@ -27,12 +27,14 @@ export const ClientNavigation: React.FC = () => {
   const [myCareOpen, setMyCareOpen] = React.useState(false);
   const [avatarOpen, setAvatarOpen] = React.useState(false);
   const [moreOpen, setMoreOpen] = React.useState(false);
+  const [helpOpen, setHelpOpen] = React.useState(false);
   const [currentUser, setCurrentUser] = React.useState<any>(null);
   const [profilePhotoUrl, setProfilePhotoUrl] = React.useState<string | null>(null);
 
   const findCareRef = React.useRef<HTMLDivElement>(null);
   const myCareRef = React.useRef<HTMLDivElement>(null);
   const avatarRef = React.useRef<HTMLDivElement>(null);
+  const helpRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     const user = authService.getCurrentUser();
@@ -58,6 +60,7 @@ export const ClientNavigation: React.FC = () => {
       if (findCareRef.current && !findCareRef.current.contains(t)) setFindCareOpen(false);
       if (myCareRef.current && !myCareRef.current.contains(t)) setMyCareOpen(false);
       if (avatarRef.current && !avatarRef.current.contains(t)) setAvatarOpen(false);
+      if (helpRef.current && !helpRef.current.contains(t)) setHelpOpen(false);
     };
     document.addEventListener('mousedown', handler);
     document.addEventListener('touchstart', handler);
@@ -176,6 +179,38 @@ export const ClientNavigation: React.FC = () => {
             <button className="flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors relative">
               <Bell className="w-5 h-5" />
             </button>
+
+            {/* Help */}
+            <div className="relative" ref={helpRef}>
+              <button onClick={() => setHelpOpen(o => !o)} aria-label="Help"
+                className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${helpOpen ? 'text-primary-600 bg-primary-50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'}`}>
+                <HelpCircle className="w-5 h-5" />
+              </button>
+              {helpOpen && (
+                <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-200 p-4 z-50">
+                  <p className="text-xs font-semibold text-slate-700 mb-3">Need Help?</p>
+                  <a href="mailto:support@careconnex.com"
+                    className="flex items-center gap-2 text-xs text-slate-600 hover:text-primary-600 mb-3">
+                    <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    support@careconnex.com
+                  </a>
+                  <button
+                    onClick={async () => {
+                      setHelpOpen(false);
+                      const user = authService.getCurrentUser();
+                      if (!user) { navigate('/client/inbox'); return; }
+                      try {
+                        const { chatService } = await import('../../services/chatService');
+                        const roomId = await chatService.createOrGetSupportRoom(user.uid, user.displayName || user.email?.split('@')[0] || 'Client');
+                        navigate(`/client/inbox?room=${roomId}`);
+                      } catch { navigate('/client/inbox'); }
+                    }}
+                    className="w-full flex items-center justify-center gap-1.5 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg transition-colors">
+                    <MessageSquare className="w-3.5 h-3.5" />Chat with Us
+                  </button>
+                </div>
+              )}
+            </div>
 
           {/* Avatar dropdown */}
           <div className="relative" ref={avatarRef}>
@@ -313,9 +348,10 @@ export const ClientNavigation: React.FC = () => {
                 { icon: <Settings className="w-4 h-4" />, label: 'Account Settings', path: '/client/account' },
                 { icon: <CreditCard className="w-4 h-4" />, label: 'Payments', path: '/client/payments' },
                 { icon: <Crown className="w-4 h-4" />, label: 'Membership', path: '/client/membership' },
+                { icon: <HelpCircle className="w-4 h-4" />, label: 'Help & Support', path: 'mailto:support@careconnex.com' },
               ].map(item => (
                 <button key={item.path}
-                  onClick={() => { setMoreOpen(false); navigate(item.path); }}
+                  onClick={() => { setMoreOpen(false); item.path.startsWith('mailto:') ? (window.location.href = item.path) : navigate(item.path); }}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
                     isActive(item.path) ? 'text-primary-600 bg-primary-50' : 'text-gray-700 hover:bg-gray-50'
                   }`}>

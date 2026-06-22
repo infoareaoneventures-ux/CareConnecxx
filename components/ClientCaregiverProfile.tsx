@@ -7,7 +7,6 @@ import {
 import { CaregiverVerificationBadges } from './shared/CaregiverVerificationBadges';
 import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import { auth, db } from '../lib/firebase';
-import { chatService } from '../services/chatService';
 import { useAccessGates } from '../hooks/useAccessGates';
 import { useCareConnex } from '../context/CareConnexContext';
 import { dbService } from '../services/api';
@@ -221,19 +220,23 @@ export default function ClientCaregiverProfile({
 
   const handleMessage = () => {
     if (!caregiver) return;
-    gate('message', fullName, async () => {
-      try {
-        const uid = auth!.currentUser?.uid;
-        const name = auth!.currentUser?.displayName || auth!.currentUser?.email?.split('@')[0] || 'Client';
-        if (uid) {
-          const roomId = await chatService.getOrCreateChatRoom(uid, name, caregiver.id, fullName);
-          navigate(`/client/inbox?room=${roomId}`);
-        } else {
-          navigate('/client/inbox');
+    gate('message', fullName, () => {
+      const uid = auth!.currentUser?.uid;
+      if (!uid) { navigate('/client/inbox'); return; }
+      const clientName = auth!.currentUser?.displayName || auth!.currentUser?.email?.split('@')[0] || 'Client';
+      const sorted = [uid, caregiver.id].sort();
+      const roomId = sorted.join('_');
+      const names = sorted.map(id => id === uid ? clientName : fullName);
+      const avatars = sorted.map(id => id === uid ? '' : ((caregiver as any).imageUrl || (caregiver as any).photo || ''));
+      navigate(`/client/inbox?room=${roomId}`, {
+        state: {
+          pendingRoom: {
+            id: roomId, participants: sorted, participantNames: names, participantAvatars: avatars,
+            unreadCount: { [uid]: 0, [caregiver.id]: 0 },
+            lastMessage: '', lastMessageTime: '', lastMessageTimestamp: null, createdAt: null,
+          }
         }
-      } catch {
-        navigate('/client/inbox');
-      }
+      });
     });
   };
 

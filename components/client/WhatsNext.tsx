@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   Check,
   Heart,
@@ -89,8 +89,6 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
   } = useOnboardingProgress(uid);
 
   const hasAutoPosted = useRef(false);
-  const storageKey = `onboarding_done_${uid}`;
-  const [dismissed] = useState(() => localStorage.getItem(storageKey) === 'true');
 
   useEffect(() => {
     if (loading || !identityVerified || !membershipActive) return;
@@ -128,11 +126,7 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
     }).catch(() => {});
   }, [uid, loading, identityVerified, membershipActive]);
 
-  if (loading) {
-    return (
-      <div className="mb-6 rounded-3xl bg-gradient-to-br from-primary-600 via-primary-500 to-primary-50 shadow-xl shadow-primary-600/20 p-6 md:p-8 h-48 animate-pulse" />
-    );
-  }
+  if (loading) return null;
 
   const firstName = (displayName || 'there').split(' ')[0];
   const hour = new Date().getHours();
@@ -140,7 +134,7 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
 
   const allDone = currentStep === 'all-done';
 
-  if (allDone && dismissed) {
+  if (allDone) {
     const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
     return (
       <div className="mb-6">
@@ -149,8 +143,6 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
       </div>
     );
   }
-
-  if (allDone && !dismissed) localStorage.setItem(storageKey, 'true');
   const activeDef = !allDone ? STEP_DEFS.find((s) => s.id === currentStep) : null;
 
   const triggerStep = (def: StepDef) => {

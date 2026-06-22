@@ -79,6 +79,19 @@ export const createCaregiverCheckoutSession = async (
   return url ?? null;
 };
 
+// Open the Stripe Billing Portal for a caregiver to update their payment method
+export const openCaregiverBillingPortal = async (returnUrl: string): Promise<void> => {
+  if (!auth) throw new Error('Auth not initialized');
+  const user = auth.currentUser;
+  if (!user) throw new Error('User must be logged in');
+  const functions = getFunctions();
+  const fn = httpsCallable(functions, 'v1-createCaregiverBillingPortalSession');
+  const result = await fn({ returnUrl });
+  const { url } = result.data as { url?: string };
+  if (!url) throw new Error('No billing portal URL returned');
+  window.location.href = url;
+};
+
 /**
  * Start a Stripe Identity verification. Creates a verification session server-side
  * and redirects the browser to Stripe's hosted flow. Stripe will return the user

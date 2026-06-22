@@ -44,12 +44,17 @@ function formatDob(raw: string): string {
 }
 
 export const CaregiverAccountSettings: React.FC = () => {
-  const { currentUser, addToast } = useCareConnex();
+  const { currentUser, addToast, blockedIds, blockedUserProfiles, unblockUser } = useCareConnex();
+  const blockedProfiles = [
+    ...Object.entries(blockedUserProfiles).map(([id, p]) => ({ id, ...p })),
+    ...Array.from(blockedIds).filter(id => !blockedUserProfiles[id]).map(id => ({ id, name: 'Blocked User', photo: '' })),
+  ];
   const [profile, setProfile] = useState<Caregiver | null>(null);
   const [prefs, setPrefs] = useState<Partial<UserProfile>>({});
   const [openAccount, setOpenAccount] = useState(true);
   const [openComm, setOpenComm] = useState(false);
   const [openTransport, setOpenTransport] = useState(false);
+  const [openBlocked, setOpenBlocked] = useState(false);
 
   // Personal info fields
   const [firstName, setFirstName] = useState('');
@@ -551,6 +556,38 @@ export const CaregiverAccountSettings: React.FC = () => {
                 Save changes
               </button>
             </div>
+          </div>
+        </Accordion>
+
+        {/* ── Blocked Users ── */}
+        <Accordion open={openBlocked} onToggle={() => setOpenBlocked(o => !o)} title="Blocked Users">
+          <div className="p-5">
+            {blockedProfiles.length === 0 ? (
+              <p className="text-sm text-slate-500">You haven't blocked anyone.</p>
+            ) : (
+              <div className="space-y-3">
+                {blockedProfiles.map(p => (
+                  <div key={p.id} className="flex items-center justify-between gap-3 py-2 border-b border-slate-100 last:border-0">
+                    <div className="flex items-center gap-3">
+                      {p.photo ? (
+                        <img src={p.photo} alt={p.name} className="w-9 h-9 rounded-full object-cover" />
+                      ) : (
+                        <div className="w-9 h-9 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 text-sm font-semibold">
+                          {p.name.charAt(0)}
+                        </div>
+                      )}
+                      <span className="text-sm font-medium text-slate-800">{p.name}</span>
+                    </div>
+                    <button
+                      onClick={() => unblockUser(p.id).then(() => addToast(`${p.name} unblocked.`, 'success'))}
+                      className="text-xs text-primary-600 hover:text-primary-700 font-medium border border-primary-200 hover:border-primary-400 px-3 py-1 rounded-lg transition-colors"
+                    >
+                      Unblock
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </Accordion>
 

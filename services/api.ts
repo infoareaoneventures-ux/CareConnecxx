@@ -2707,6 +2707,27 @@ export const dbService = {
             );
     },
 
+    // Count of unreviewed user reports — drives the admin Reports tab badge.
+    subscribeNewReportsCount: (
+        cb: (count: number) => void,
+        onError?: (err: Error) => void
+    ): (() => void) => {
+        if (!isConfigured || !db) {
+            cb(0);
+            return () => {};
+        }
+        return db.collection('reports')
+            .where('status', '==', 'new')
+            .onSnapshot(
+                (snap) => cb(snap.size),
+                (err) => {
+                    console.error('subscribeNewReportsCount:', err);
+                    onError?.(err as unknown as Error);
+                    cb(0);
+                }
+            );
+    },
+
     // ==================== COORDINATOR METHODS ====================
 
     getCareCoordinators: async (): Promise<any[]> => {

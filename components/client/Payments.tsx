@@ -305,10 +305,14 @@ const ShiftRow: React.FC<{
             <span>{row.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 flex-wrap ml-auto shrink-0">
-          {row.loggedManually && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 border-slate-200">Logged</span>}
-          {isCorrected && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-teal-50 text-teal-700 border-teal-200">Corrected</span>}
+        <div className="flex flex-col items-end gap-1 ml-auto shrink-0">
           <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>{cfg.label}</span>
+          {(isCorrected || row.loggedManually) && (
+            <div className="flex items-center gap-1 flex-wrap justify-end">
+              {isCorrected && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-teal-50 text-teal-700 border-teal-200">Corrected</span>}
+              {row.loggedManually && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 border-slate-200">Logged</span>}
+            </div>
+          )}
         </div>
         <div className="shrink-0 text-slate-400">{expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}</div>
       </div>
@@ -585,9 +589,8 @@ export const Payments: React.FC = () => {
   }, [user?.uid]);
 
   // Filter rows by date
-  const pendingCount = rows.filter(r =>
-    r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed'
-  ).length;
+  const pendingReviewCount = rows.filter(r => r.status === 'pending_client_review').length;
+  const pendingCount = pendingReviewCount + rows.filter(r => r.status === 'caregiver_counter_proposed').length;
 
   const historyRows = useMemo(() =>
     rows.filter(r => r.status === 'approved' || r.status === 'auto_approved' || r.status === 'paid'),
@@ -711,14 +714,14 @@ export const Payments: React.FC = () => {
         {tab === 'timesheets' && (
           <div className="space-y-4">
             {/* Pending alert */}
-            {pendingCount > 0 && (
+            {pendingReviewCount > 0 && (
               <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4">
                 <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
                   <Clock className="w-5 h-5 text-amber-600" />
                 </div>
                 <div className="flex-1">
                   <p className="font-semibold text-amber-800 text-sm">
-                    {pendingCount} shift{pendingCount > 1 ? 's' : ''} to review
+                    {pendingReviewCount} shift{pendingReviewCount > 1 ? 's' : ''} to review
                   </p>
                   <p className="text-xs text-amber-600 mt-0.5">
                     Approve or propose a correction. Shifts auto-approve after 24 hours.

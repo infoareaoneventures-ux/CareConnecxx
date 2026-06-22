@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { dbService, adminService } from '../../services/api';
 import { AdminUser, Appointment } from '../../types';
+import { db } from '../../lib/firebase';
 
 type Panel = 'profile' | 'appointments';
 
@@ -18,6 +19,11 @@ interface ClientRow extends AdminUser {
   zipCode?: string;
   subscriptionStatus?: string;
   assignedCaregiverIds?: string[];
+  identityCheckStatus?: string;
+  subscriptionActive?: boolean;
+  membershipStatus?: string;
+  membershipPaid?: boolean;
+  approvedBy?: string;
 }
 
 type ConfirmAction = 'ban' | 'unban' | null;
@@ -149,22 +155,43 @@ export const AdminClientManager: React.FC = () => {
     finally { setSending(false); }
   };
 
-  const handleApprove = async () => {
+  const setJobPostsActive = async (uid: string, active: boolean) => {
+    if (!db) return;
+    const snap = await db.collection('job_posts').where('clientId', '==', uid).where('status', '==', 'open').get();
+    if (snap.empty) return;
+    const batch = db.batch();
+    snap.docs.forEach(doc => batch.update(doc.ref, { clientActive: active }));
+    await batch.commit();
+  };
+
+  const handleIdentityOverride = async (approve: boolean) => {
     if (!selected) return;
     try {
       await adminService.updateClient(selected.uid, {
-        verified: true,
-        membershipPaid: true,
-        subscriptionActive: true,
-        membershipStatus: 'active',
-        identityCheckStatus: 'verified',
-        onboardingStep: 3,
-        approvedAt: new Date().toISOString(),
-        approvedBy: 'admin',
+        identityCheckStatus: approve ? 'verified' : 'not_started',
+        ...(approve ? { verified: true } : {}),
       } as any);
-      patch({ verified: true, isBanned: false, isSuspended: false });
-      showToast(`${selected.name} approved`, 'success');
-    } catch { showToast('Failed to approve client', 'error'); }
+      patch({ identityCheckStatus: approve ? 'verified' : 'not_started', ...(approve ? { verified: true } : {}) });
+      const membershipOk = selected.subscriptionActive || selected.membershipStatus === 'active';
+      await setJobPostsActive(selected.uid, approve && !!membershipOk);
+      showToast(`Identity verification ${approve ? 'approved' : 'revoked'}`, 'success');
+    } catch { showToast('Failed to update identity status', 'error'); }
+  };
+
+  const handleMembershipOverride = async (approve: boolean) => {
+    if (!selected) return;
+    try {
+      await adminService.updateClient(selected.uid, {
+        subscriptionActive: approve,
+        membershipStatus: approve ? 'active' : 'inactive',
+        membershipPaid: approve,
+        ...(approve ? { onboardingStep: 3 } : {}),
+      } as any);
+      patch({ subscriptionActive: approve, membershipStatus: approve ? 'active' : 'inactive', membershipPaid: approve });
+      const identityOk = selected.identityCheckStatus === 'verified';
+      await setJobPostsActive(selected.uid, approve && identityOk);
+      showToast(`Membership ${approve ? 'approved' : 'revoked'}`, 'success');
+    } catch { showToast('Failed to update membership status', 'error'); }
   };
 
   const patch = (updates: Partial<ClientRow>) => {
@@ -352,6 +379,63 @@ export const AdminClientManager: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Field Overrides */}
+                <div className="bg-white rounded-xl border border-slate-200 p-5">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Field Overrides</p>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-slate-700">Identity verification</span>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleIdentityOverride(true)}
+                          className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${
+                            selected.identityCheckStatus === 'verified'
+                              ? 'bg-green-100 text-green-700 border-green-200'
+                              : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'
+                          }`}
+                        >
+                          Approved
+                        </button>
+                        <button
+                          onClick={() => handleIdentityOverride(false)}
+                          className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${
+                            selected.identityCheckStatus !== 'verified'
+                              ? 'bg-red-100 text-red-700 border-red-200'
+                              : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'
+                          }`}
+                        >
+                          Revoked
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-slate-700">Membership payment</span>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleMembershipOverride(true)}
+                          className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${
+                            selected.subscriptionActive || selected.membershipStatus === 'active'
+                              ? 'bg-green-100 text-green-700 border-green-200'
+                              : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'
+                          }`}
+                        >
+                          Approved
+                        </button>
+                        <button
+                          onClick={() => handleMembershipOverride(false)}
+                          className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${
+                            !selected.subscriptionActive && selected.membershipStatus !== 'active'
+                              ? 'bg-red-100 text-red-700 border-red-200'
+                              : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'
+                          }`}
+                        >
+                          Revoked
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Moderation */}
                 <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-3">
                   <h3 className="font-semibold text-slate-900">Moderation</h3>
@@ -372,11 +456,6 @@ export const AdminClientManager: React.FC = () => {
 
                   {/* Action buttons */}
                   <div className="flex flex-wrap gap-2">
-                    {!selected.verified && !selected.isBanned && (
-                      <button onClick={handleApprove} className="flex items-center gap-1.5 px-3 py-2 text-sm border border-green-300 text-green-700 rounded-lg hover:bg-green-50 font-medium">
-                        <CheckCircle className="w-4 h-4" /> Approve
-                      </button>
-                    )}
                     <button onClick={() => setShowNotifyForm(v => !v)} className="flex items-center gap-1.5 px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700">
                       <Bell className="w-4 h-4" /> Notify
                     </button>

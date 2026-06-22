@@ -41,11 +41,14 @@ const qaSource = readFileSync(join(__dirname, "../../agents/qaAgent.ts"), "utf8"
 // Tools that are intentionally not surfaced as individual prompt lines (internal
 // helpers / scheduled-job markers / dynamically described tools).
 const PROMPT_EXEMPT = new Set<string>([
-  "task", "write_todos", "resume_execution_agent",
+  // `complete_task` is a U4 loop-control signal intercepted before dispatch in
+  // qaAgent.ts (it ends the turn), not a user-facing action — internal-only like
+  // `task`/`resume_execution_agent`, so it is not a capability-map row.
+  "task", "write_todos", "resume_execution_agent", "complete_task",
   "morning-caregiver-briefing", "weekly-care-summary",
 ]);
 
-const NEW_AGENT_NATIVE_TOOLS = ["pause_account", "reactivate_account", "accept_shift", "decline_shift", "complete_task"];
+const NEW_AGENT_NATIVE_TOOLS = ["pause_account", "reactivate_account", "accept_shift", "decline_shift"];
 
 describe("action parity (U3)", () => {
   it("registers the new agent-native tools in MCP_TOOLS and the caregiver subset", () => {
@@ -59,7 +62,10 @@ describe("action parity (U3)", () => {
 
   it("documents the new agent-native tools in the caregiver system prompt", () => {
     for (const name of NEW_AGENT_NATIVE_TOOLS) {
-      expect(qaSource.includes(name), `${name} not documented in qaAgent.ts system prompt`).toBe(true);
+      // Match the tool name as a whole word so it must appear as an actual token
+      // (e.g. a prompt line), not as a substring of an unrelated identifier.
+      const wordRe = new RegExp(`\\b${name}\\b`);
+      expect(wordRe.test(qaSource), `${name} not documented in qaAgent.ts system prompt`).toBe(true);
     }
   });
 

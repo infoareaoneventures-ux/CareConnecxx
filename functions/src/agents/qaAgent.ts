@@ -769,6 +769,9 @@ export async function runQaAgent(params: {
   skipSend?:     boolean;
   // Mutable array populated with MCP tool names called during this invocation (web caller reads this)
   _toolCallsOut?: string[];
+  // Mutable array the loop populates with the final tool-loop iteration count
+  // (shadow tap reads this — same out-param pattern as _toolCallsOut).
+  _iterationsOut?: number[];
   // Input channel tag — tells Claude what kind of input this is.
   // [USER] = family/caregiver texted directly
   // [TRIGGER: type] = fired by the scheduled trigger engine
@@ -784,7 +787,7 @@ export async function runQaAgent(params: {
   // together with skipSend so a parallel comparison run has zero side effects.
   shadowMode?:    boolean;
 }): Promise<string> {
-  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, sourceChannel, intent, shadowMode = false } = params;
+  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, _iterationsOut, sourceChannel, intent, shadowMode = false } = params;
 
   // Tag the input so Claude can apply different judgment per channel.
   // [USER] messages may require a reply; [TRIGGER] / [AGENT] inputs may not.
@@ -1379,10 +1382,37 @@ export async function runQaAgent(params: {
         );
         if (completeBlock) {
           const ci = (completeBlock.input ?? {}) as { status?: string; message?: string };
-          const status = ci.status === "blocked" || ci.status === "needs_user" ? ci.status : "done";
+          // Validate the status rather than silently defaulting unknown values to
+          // "done" — a typo or unexpected value would otherwise mask a model error
+          // and falsely report success. Reject it and let the model correct itself.
+          if (ci.status !== "done" && ci.status !== "blocked" && ci.status !== "needs_user") {
+            messages.push({ role: "assistant", content: response.content });
+            messages.push({ role: "user", content: [{
+              type: "tool_result", tool_use_id: completeBlock.id, is_error: true,
+              content: `Invalid status "${String(ci.status)}". status must be one of: "done", "blocked", "needs_user".`,
+            }] });
+            console.warn("qaAgent.completeTaskRejected", { userId, reason: "invalid_status", status: String(ci.status) });
+            continue;
+          }
+          const status = ci.status;
           const message = typeof ci.message === "string" ? ci.message.trim() : "";
           if (status === "done") {
-            const pending = await getLatestPending(phone).catch(() => null);
+            // Fail CLOSED: if we can't verify whether a committing action is
+            // still awaiting confirmation, do NOT allow `done`. A transient
+            // Firestore read failure must not let the agent falsely report
+            // success while a pending action silently expires.
+            let pending: Awaited<ReturnType<typeof getLatestPending>>;
+            try {
+              pending = await getLatestPending(phone);
+            } catch (err) {
+              console.warn("qaAgent.completeTaskRejected", { userId, reason: "pending_fetch_failed", err: err instanceof Error ? err.message : String(err) });
+              messages.push({ role: "assistant", content: response.content });
+              messages.push({ role: "user", content: [{
+                type: "tool_result", tool_use_id: completeBlock.id, is_error: true,
+                content: "Cannot complete yet — could not verify whether an action is still awaiting confirmation. Do not report success; try completing again.",
+              }] });
+              continue;
+            }
             if (pending && (pending.status === "awaiting" || pending.status === "executing")) {
               messages.push({ role: "assistant", content: response.content });
               messages.push({ role: "user", content: [{
@@ -1404,6 +1434,20 @@ export async function runQaAgent(params: {
         let iterationToolErrors = 0;
         for (const block of response.content) {
           if (block.type === "tool_use") {
+            // Strict per-turn cap: a single Claude response can carry multiple
+            // tool_use blocks, so the iteration-start check alone can be
+            // overrun within one iteration. Reject (don't execute) any block
+            // beyond the cap so the mutation blast-radius bound holds.
+            if (totalToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
+              console.warn("qaAgent: per-turn tool-call cap reached mid-iteration — rejecting tool", { userId, tool: block.name, totalToolCalls });
+              toolResults.push({
+                type:        "tool_result",
+                tool_use_id: block.id,
+                is_error:    true,
+                content:     "Tool-call limit for this turn reached — do not call more tools; reply to the user now with what you have.",
+              });
+              continue;
+            }
             _toolCallsOut?.push(block.name);
             totalToolCalls++;
             // For browser actions that take 15-30s: send a brief acknowledgment so
@@ -1758,6 +1802,7 @@ export async function runQaAgent(params: {
     // conversations stay coherent without bloating the per-turn context.
     await maybeRollUpHistory(phone);
 
+    _iterationsOut?.push(metrics.iterations ?? 0);
     emitTurnMetrics(metrics, { reply });
     return reply;
   } catch (err) {

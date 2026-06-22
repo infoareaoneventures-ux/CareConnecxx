@@ -334,7 +334,7 @@ Units are grouped into phases. Phases A and B are independent of launch and can 
 - **Latency regression moving flows into the loop (C).** Mitigation: a state-machine step is one cheap parse; a loop turn is multiple Sonnet calls. The shadow measures latency before any flip; U14 caching narrows the gap; flip only on acceptable delta.
 - **Confirmation drift on financial flows (U9).** Mitigation: financial flows reuse the pending-action gate (not a parallel path), depend on U12 validation, and flip only when shadow end-states agree.
 - **Half-migrated cascade becomes debt (C).** Mitigation: KTD-7 makes retirement (U10) trail each flip one-PR-behind; un-migrated flows tracked.
-- **Parity test becomes brittle/ignored (U3).** Mitigation: test parses a human-maintained map and fails loud on `✅`-row drift only; `⚠️`/`🚫` rows are informational, so the test reflects intent rather than blocking legitimate gaps.
+- **Parity test becomes brittle/ignored (U3).** Mitigation: the test asserts directly against in-code data structures — every tool in `MCP_TOOLS`/`CAREGIVER_TOOLS` must be named in the `qaAgent.ts` system-prompt builders, with the new agent-native tools asserted hard and pre-existing undocumented tools soft-reported (`console.warn`) rather than failing the build. It does **not** parse `capability-map.md` (which would be brittle to formatting); that map stays as human-readable documentation only, so the test reflects code intent rather than blocking legitimate gaps.
 - **Mandatory Cara behaviors lost in migration (C).** Mitigation: mid-flow-question and acknowledgment parity is an explicit per-flow shadow check; characterization-first golden transcripts.
 
 ---

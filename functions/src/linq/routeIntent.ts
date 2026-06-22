@@ -320,7 +320,12 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         return;
       }
       if ((session as any).pendingCancelConfirm) {
-        const { appointmentId } = (session as any).pendingCancelConfirm as { appointmentId: string };
+        const pendingCancel = (session as any).pendingCancelConfirm as { appointmentId?: unknown };
+        const appointmentId = pendingCancel?.appointmentId;
+        if (typeof appointmentId !== "string" || !appointmentId) {
+          await sendMessage(chatId, "Sorry, I lost track of which visit you wanted to cancel. Could you tell me again?");
+          return;
+        }
         const apptRef  = db.collection("appointments").doc(appointmentId);
         const apptSnap = await apptRef.get();
         if (apptSnap.exists) {
@@ -481,7 +486,12 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         return;
       }
       if ((session as any).pendingCancelConfirm) {
-        const { appointmentId } = (session as any).pendingCancelConfirm as { appointmentId: string };
+        const pendingCancel = (session as any).pendingCancelConfirm as { appointmentId?: unknown };
+        const appointmentId = pendingCancel?.appointmentId;
+        if (typeof appointmentId !== "string" || !appointmentId) {
+          await sendMessage(chatId, "Sorry, I lost track of which visit you wanted to cancel. Could you tell me again?");
+          return;
+        }
         const apptRef = db.collection("appointments").doc(appointmentId);
         const apptSnap = await apptRef.get();
         if (apptSnap.exists) {

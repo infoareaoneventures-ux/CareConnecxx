@@ -51,6 +51,7 @@ export async function shadowTap(params: {
     intent: params.intent,
     runShadow: async () => {
       const toolNames: string[] = [];
+      const iterationsOut: number[] = [];
       const t0 = Date.now();
       const reply = await runQaAgent({
         text:        params.text,
@@ -64,8 +65,9 @@ export async function shadowTap(params: {
         skipSend:    true,   // never user-facing
         shadowMode:  true,   // U11 — never executes a mutating tool
         _toolCallsOut: toolNames,
+        _iterationsOut: iterationsOut,
       });
-      return { outcome: { reply, tools: toolNames.slice().sort() }, latencyMs: Date.now() - t0, reply, toolNames, iterations: 0 };
+      return { outcome: { reply, tools: toolNames.slice().sort() }, latencyMs: Date.now() - t0, reply, toolNames, iterations: iterationsOut[0] ?? 0 };
     },
   });
 }

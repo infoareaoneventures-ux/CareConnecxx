@@ -2836,9 +2836,10 @@ export async function handleToolCall(
       const snap = await db.collection("caregivers").doc(caregiverId as string).get();
       if (!snap.exists) return toolError("NOT_FOUND", "Caregiver not found");
       const ownerPhone = snap.data()?.phone;
-      // Ownership: the acting phone must own this caregiver doc. Fail closed if the
-      // acting phone is missing — do NOT trust a model-supplied caregiverId alone.
-      if (!actingPhone || (ownerPhone && ownerPhone !== actingPhone)) {
+      // Ownership: the acting phone must own this caregiver doc. Fail CLOSED unless
+      // BOTH phones exist and match — a missing/empty ownerPhone must not bypass the
+      // check, and we do NOT trust a model-supplied caregiverId alone.
+      if (!actingPhone || !ownerPhone || ownerPhone !== actingPhone) {
         return toolError("PERMISSION_DENIED", "You can only pause your own account");
       }
       await pauseCaregiver(caregiverId as string, until);
@@ -2852,7 +2853,8 @@ export async function handleToolCall(
       const snap = await db.collection("caregivers").doc(caregiverId as string).get();
       if (!snap.exists) return toolError("NOT_FOUND", "Caregiver not found");
       const ownerPhone = snap.data()?.phone;
-      if (!actingPhone || (ownerPhone && ownerPhone !== actingPhone)) {
+      // Fail CLOSED unless BOTH phones exist and match (see pause_account above).
+      if (!actingPhone || !ownerPhone || ownerPhone !== actingPhone) {
         return toolError("PERMISSION_DENIED", "You can only reactivate your own account");
       }
       await reactivateCaregiver(caregiverId as string);
@@ -4564,13 +4566,20 @@ export async function handleToolCall(
     if (name === "delete_comment") {
       const { userId, entryId, commentId } = input as Record<string, unknown>;
       if (!userId || !entryId || !commentId) return toolError("INVALID_INPUT", "userId, entryId, and commentId are required");
-      const commentRef = db.collection("care_journal").doc(entryId as string).collection("comments").doc(commentId as string);
-      const snap = await commentRef.get();
-      if (!snap.exists) return toolError("NOT_FOUND", "Comment not found.");
-      if (snap.data()?.userId !== userId) return toolError("PERMISSION_DENIED", "You can only delete your own comments.");
-      await commentRef.delete();
-      await db.collection("care_journal").doc(entryId as string)
-        .set({ commentCount: admin.firestore.FieldValue.increment(-1) }, { merge: true }).catch(() => {});
+      const entryRef = db.collection("care_journal").doc(entryId as string);
+      const commentRef = entryRef.collection("comments").doc(commentId as string);
+      // Atomic: verify existence + ownership, delete, and decrement the counter in
+      // one transaction so a failed delete can never decrement commentCount, and
+      // concurrent deletes can't double-decrement.
+      let abort: { code: string; message: string } | null = null;
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(commentRef);
+        if (!snap.exists) { abort = { code: "NOT_FOUND", message: "Comment not found." }; return; }
+        if (snap.data()?.userId !== userId) { abort = { code: "PERMISSION_DENIED", message: "You can only delete your own comments." }; return; }
+        tx.delete(commentRef);
+        tx.set(entryRef, { commentCount: admin.firestore.FieldValue.increment(-1) }, { merge: true });
+      });
+      if (abort) return toolError(abort.code, abort.message);
       logAudit({ eventType: "journal_comment_deleted", userId: userId as string, data: { source: "mcp:delete_comment", entryId, commentId } }).catch(() => {});
       return { success: true, deleted: true };
     }

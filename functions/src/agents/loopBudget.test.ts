@@ -11,7 +11,7 @@ describe("resolveLoopBudget (U5)", () => {
   });
 
   it("caps cheap read-only lookups low", () => {
-    for (const intent of ["MEMORY_QUERY", "VIEW_EARNINGS", "VIEW_INVOICE", "VIEW_JOURNAL"] as const) {
+    for (const intent of ["MEMORY_QUERY", "VIEW_MY_JOBS", "VIEW_APPLICANTS", "VIEW_JOURNAL", "VIEW_EARNINGS", "VIEW_INVOICE", "VIEW_CARE_PLAN_HISTORY"] as const) {
       const b = resolveLoopBudget(intent);
       expect(b.flowClass).toBe("quick");
       expect(b.maxIterations).toBe(3);

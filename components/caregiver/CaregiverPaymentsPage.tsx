@@ -1487,11 +1487,17 @@ export const CaregiverPaymentsPage: React.FC = () => {
   useEffect(() => {
     if (!uid) return;
     let active = true;
+    // Initial load gives the full merged profile (users + caregivers doc).
     (async () => {
       const p = await dbService.getUser(uid);
       if (active && p) setProfile(p as any);
     })();
-    return () => { active = false; };
+    // Live-patch the caregiver-doc fields (rate, payout/Stripe status, verification,
+    // background check) so Cara's writes reflect here without a manual refresh.
+    const unsub = dbService.subscribeCaregiverProfile(uid, (cg) => {
+      if (active && cg) setProfile(prev => ({ ...(prev as any), ...cg }));
+    });
+    return () => { active = false; try { (unsub as any)?.(); } catch {} };
   }, [uid]);
 
   // Load membership subscription details when tab opens

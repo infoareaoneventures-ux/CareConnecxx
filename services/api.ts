@@ -1742,6 +1742,30 @@ export const dbService = {
         return () => { };
     },
 
+    // Live caregiver-doc updates. Cara writes rate, payout status, verification,
+    // and background-check fields to the caregivers doc; without this the web UI
+    // shows stale values until a manual refresh (the "silent action" gap).
+    subscribeCaregiverProfile: (caregiverId: string, onUpdate: (profile: Record<string, any> | null) => void) => {
+        if (isConfigured && db) {
+            return db.collection('caregivers').doc(caregiverId).onSnapshot(doc => {
+                onUpdate(doc.exists ? ({ id: doc.id, ...doc.data() }) : null);
+            }, (error) => { if (error.code === 'permission-denied') return; });
+        }
+        return () => { };
+    },
+
+    // Fires whenever a caregiver enters or leaves the pending-verification states,
+    // so the admin verification dashboard can re-pull its queue live when a Checkr
+    // webhook or Cara/admin action changes a background-check / verification status.
+    subscribeCaregiverVerificationChanges: (onChange: () => void) => {
+        if (isConfigured && db) {
+            return db.collection('caregivers')
+                .where('verificationStatus', 'in', ['submitted', 'pending', 'info_requested', 'pre_adverse_action'])
+                .onSnapshot(() => onChange(), () => { });
+        }
+        return () => { };
+    },
+
     toggleRoutineTask: async (uid: string, taskIndex: number, currentPlan: CarePlan) => {
         const updatedPlan = { ...currentPlan };
         if (updatedPlan.dailyRoutine[taskIndex]) {

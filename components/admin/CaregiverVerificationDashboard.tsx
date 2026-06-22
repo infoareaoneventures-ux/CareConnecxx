@@ -86,6 +86,16 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
     loadVerificationQueue();
   }, [filter]);
 
+  // Live refresh: when a caregiver's verification status changes (Checkr webhook
+  // or a Cara/admin action), re-pull the queue so the dashboard reflects it
+  // without a manual reload. A doc entering OR leaving these pending states
+  // fires the listener, which covers the common "moved to approved" transition.
+  useEffect(() => {
+    const unsub = dbService.subscribeCaregiverVerificationChanges(() => { loadVerificationQueue(); });
+    return () => { try { (unsub as any)?.(); } catch {} };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
+
   const loadVerificationQueue = async () => {
     setLoading(true);
     try {

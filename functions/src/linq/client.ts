@@ -1,6 +1,6 @@
 import axios, { AxiosError, AxiosResponse } from "axios";
 import * as admin from "firebase-admin";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "crypto";
 import { supervise, SuperviseContext } from "../safety/supervisor";
 import { lintPreservingLayout } from "../safety/linter";
 import { redactPii } from "../safety/redactPii";
@@ -220,7 +220,7 @@ export async function createChat(
     message: {
       ...message,
       parts:           normalizeParts(message.parts),
-      idempotency_key: message.idempotency_key ?? uuidv4(),
+      idempotency_key: message.idempotency_key ?? randomUUID(),
     },
   };
   const res = await withRetry(() =>
@@ -300,7 +300,7 @@ async function sendOneMessage(
     message: {
       ...message,
       parts:           normalizeParts(message.parts),
-      idempotency_key: message.idempotency_key ?? uuidv4(),
+      idempotency_key: message.idempotency_key ?? randomUUID(),
     },
   };
 

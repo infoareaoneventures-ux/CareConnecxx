@@ -1,7 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import * as crypto from "crypto";
-import { v4 as uuidv4 } from "uuid";
 import { claimWebhookEvent, settleWebhookEvent, LINQ_EVENTS_COLLECTION } from "../utils/webhookLedger";
 import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability, markChatRead, AgentSession, LinqService } from "./client";
 import { routeCaregiverMessage } from "./routeCaregiver";
@@ -2074,7 +2073,7 @@ export const linqWebhook = functions
 
     case "chat.created":
       // Log new chat creation; check chat health on first contact
-      await db.collection("agent_event_log").doc(eventId ?? uuidv4()).set({
+      await db.collection("agent_event_log").doc(eventId ?? crypto.randomUUID()).set({
         type:      "chat.created",
         chatId:    event.data?.id,
         service:   event.data?.service,

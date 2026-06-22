@@ -10,7 +10,7 @@
 import { ZepClient } from "@getzep/zep-cloud";
 import type { Zep } from "@getzep/zep-cloud";
 import * as admin from "firebase-admin";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "crypto";
 
 const db = admin.firestore();
 
@@ -165,7 +165,7 @@ export async function initializeZepOnFirstContact(phone: string): Promise<void> 
   const existingSession = await db.collection("agent_sessions").doc(phone).get().catch(() => null);
   if (existingSession?.data()?.zepThreadId) return;
 
-  const threadId = uuidv4().replace(/-/g, "");
+  const threadId = randomUUID().replace(/-/g, "");
   try {
     await getZep().thread.create({ threadId, userId });
     await db.collection("agent_sessions").doc(phone).set({ zepThreadId: threadId }, { merge: true });

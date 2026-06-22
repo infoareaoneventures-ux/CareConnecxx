@@ -17,15 +17,11 @@
     "migrate:predictive:dry": "node --env-file=.env scripts/run-migration.mjs"
   },
   "dependencies": {
-    "@google/genai": "latest",
     "@sentry/react": "^10.50.0",
     "@stripe/react-stripe-js": "^6.1.0",
     "@stripe/stripe-js": "^9.1.0",
     "@tensorflow/tfjs": "^4.22.0",
-    "@types/dompurify": "^3.0.5",
     "@types/qrcode": "^1.5.6",
-    "axios": "^1.6.7",
-    "crypto-js": "^4.2.0",
     "dompurify": "^3.3.1",
     "firebase": "^10.8.0",
     "framer-motion": "^12.23.26",
@@ -35,14 +31,12 @@
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.22.1",
     "stripe": "^14.19.0",
-    "twilio-video": "^2.33.0",
-    "zod": "^4.3.6"
+    "twilio-video": "^2.33.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4.1.18",
     "@testing-library/react": "^16.3.0",
-    "@types/crypto-js": "^4.2.2",
     "@types/react": "^18.2.56",
     "@types/react-dom": "^18.2.19",
     "@vitejs/plugin-react": "^4.2.1",

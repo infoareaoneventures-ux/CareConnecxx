@@ -202,12 +202,11 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = () => {
                         </div>
                         <p className="text-xs text-slate-500 mt-0.5 leading-snug">{notif.body}</p>
                         <span className="text-[10px] text-slate-400 mt-2 block">
-                          {notif.createdAt && new Date(notif.createdAt).toLocaleDateString(undefined, {
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}
+                          {notif.createdAt && (() => {
+                            const raw = notif.createdAt as any;
+                            const d = raw?.toDate ? raw.toDate() : new Date(raw);
+                            return isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                          })()}
                         </span>
                       </div>
                       {!notif.isRead && (

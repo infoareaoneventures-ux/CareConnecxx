@@ -18,13 +18,13 @@ const DIRECT_DB = /\bdb\.(collection|doc)\(/;
 // style, predating this seam) and -1 (CaregiverOnboardingDashboard, rebuilt on
 // main without direct db). Net baseline = 42; migration remains mechanical
 // follow-up tracked in context/progress-tracker.md.
+// 2026-06-21 (cleanup pass): -2 (CaregiverEarnings, HireDecision) — deleted as
+// dead/orphaned top-level components, not migrated. Baseline now 40.
 const KNOWN_OFFENDERS = new Set<string>([
   "components/CarePlan.tsx",
   "components/CaregiverDashboard.tsx",
-  "components/CaregiverEarnings.tsx",
   "components/CaregiverProfile.tsx",
   "components/FindCaregivers.tsx",
-  "components/HireDecision.tsx",
   "components/InboxView.tsx",
   "components/ReviewSystem.tsx",
   "components/Schedule.tsx",

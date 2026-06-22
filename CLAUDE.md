@@ -47,9 +47,9 @@ npm --prefix functions ci && npm --prefix functions run build
 - **Video**: Twilio Video for live caregiver interviews
 - **Background checks**: Checkr via Cloud Functions webhooks
 - **Error tracking**: Sentry (dsn via `VITE_SENTRY_DSN`)
-- **Validation**: Zod schemas in `utils/validation.ts`
+- **Validation**: Hand-rolled runtime validators in `utils/validation.ts` (`ValidationError` + format/normalization helpers; not Zod). Zod is used only server-side in `functions/`.
 - **XSS protection**: DOMPurify in `utils/sanitize.ts`
-- **Encryption**: CryptoJS in `utils/encryption.ts` for sensitive stored data
+- **PII helpers**: `utils/encryption.ts` provides pure client-side masking helpers (e.g., `maskSSN`, `maskPhone`). It does NOT encrypt — the former CryptoJS-based wrappers were removed; real encryption, if needed, must be reintroduced as deployed Cloud Functions.
 
 ### Component Structure
 Components are domain-driven:
@@ -117,7 +117,7 @@ Firebase config is typically embedded via `lib/firebase.ts` (check for hardcoded
 ## Key Conventions
 
 - Geolocation (lat/lng) is stored on caregiver documents for proximity-based matching
-- Sensitive fields use CryptoJS encryption before Firestore storage
+- Sensitive fields (e.g., SSN, phone) are masked for display via `utils/encryption.ts` helpers; there is no client-side at-rest encryption today
 - All user input going to Firestore should be sanitized via `utils/sanitize.ts`
 - Stripe Connect is used for caregiver payouts; instant payouts are a separate flow via `components/caregiver/InstantPayoutModal.tsx`
 - `services/api.ts` is the authoritative place to add new Firestore operations — avoid direct `db` calls in components

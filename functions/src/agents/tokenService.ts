@@ -11,6 +11,7 @@ export type TokenTask =
   | "interview_confirm"
   | "booking_confirm"
   | "caregiver_membership"
+  | "mvr_payment"
   | "family_join";
 
 export interface TokenPayload {

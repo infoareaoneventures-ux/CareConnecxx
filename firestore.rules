@@ -146,6 +146,15 @@ service cloud.firestore {
                 'detailsSubmitted',
                 'stripeOnboardingComplete',
                 'stripeOnboardingCompletedAt',
+                // MVR / Approved Driver — webhook-only (top-level so affectedKeys() can
+                // actually block them; nested backgroundCheckData.* is reachable via the
+                // 'submitted' escape below, so the security-critical MVR signals must NOT
+                // live under backgroundCheckData). A caregiver must never self-grant the
+                // driver badge or fake having paid for an MVR check.
+                'isApprovedDriver',
+                'mvrPaid',
+                'mvrReportId',
+                'mvrStatus',
               ])
             || (
               request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verificationStatus', 'onboardingStep', 'backgroundCheckData'])

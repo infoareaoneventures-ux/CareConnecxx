@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { unwrapJson } from "../utils/jsonUtils";
+import { canChargeBundledMvr, canChargeStandaloneMvr, mvrPriceId } from "../mvrConfig";
 import axios from "axios";
 import Stripe from "stripe";
 import { sendMessage, signalThinking, AgentSession } from "../linq/client";
@@ -493,6 +494,10 @@ export async function handleOnboardingStep(
     case "caregiver_send_membership":  return handleCaregiverSendMembership(phone, chatId, session);
     case "caregiver_awaiting_membership":
       await handleCaregiverResendMembership(phone, chatId, session, text);
+      return;
+    case "caregiver_send_mvr":         return handleCaregiverSendMvr(phone, chatId, session);
+    case "caregiver_awaiting_mvr":
+      await handleCaregiverResendMvr(phone, chatId, session, text);
       return;
     case "caregiver_send_bgcheck":    return handleCaregiverSendBgcheck(phone, chatId, session);
     case "caregiver_awaiting_bgcheck": {
@@ -1459,17 +1464,32 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
   const token   = generateToken({ phone, task: "caregiver_membership" });
   let checkoutUrl = `${APP_URL}/done?task=caregiver_membership&t=${token}`;
 
+  // MVR is charged only when it can BOTH be charged (price) AND run (bundled
+  // package) — and `includeMVR` is derived from THIS, never from wantsMvr alone.
+  // Old bug: includeMVR was set from wantsMvr regardless of whether the line item
+  // was added, so a missing price flagged mvrPaid downstream with no charge.
+  const mvrCharged = wantsMvr && canChargeBundledMvr();
+  if (wantsMvr && !mvrCharged) {
+    console.error("Caregiver opted into MVR but it is not configured (price/package); proceeding membership-only.");
+    await db.collection("admin_alerts").add({
+      type:      "mvr_signup_misconfigured",
+      phone,
+      createdAt: new Date().toISOString(),
+      resolved:  false,
+      severity:  "high",
+    }).catch(() => {});
+  }
+
   await signalThinking(chatId, session.service);
   try {
     const membershipPriceId = process.env.STRIPE_CAREGIVER_ANNUAL_PRICE_ID ?? process.env.STRIPE_CAREGIVER_ANNUAL ?? process.env.VITE_STRIPE_CAREGIVER_ANNUAL ?? "";
-    const mvrPriceId        = (process.env.STRIPE_MVR_PRICE_ID ?? "").trim();
 
     if (membershipPriceId) {
       const lineItems: { price: string; quantity: number }[] = [
         { price: membershipPriceId, quantity: 1 },
       ];
-      if (wantsMvr && mvrPriceId && !mvrPriceId.startsWith("FILL_IN")) {
-        lineItems.push({ price: mvrPriceId, quantity: 1 });
+      if (mvrCharged) {
+        lineItems.push({ price: mvrPriceId(), quantity: 1 });
       }
 
       // Recurring annual membership (mode "subscription" → renews yearly).
@@ -1483,7 +1503,7 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
         line_items:           lineItems,
         success_url:          `${APP_URL}/done?task=caregiver_membership&t=${token}`,
         cancel_url:           `${APP_URL}/start`,
-        metadata:             { phone, task: "caregiver_membership", includeMVR: wantsMvr ? "true" : "false" },
+        metadata:             { phone, task: "caregiver_membership", includeMVR: mvrCharged ? "true" : "false" },
         subscription_data:    { metadata: { phone, kind: "caregiver_membership" } },
       });
       checkoutUrl = stripeSession.url ?? checkoutUrl;
@@ -1492,7 +1512,7 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
     console.error("handleCaregiverSendMembership stripe error:", err);
   }
 
-  const mvrLine = wantsMvr
+  const mvrLine = mvrCharged
     ? "\n\nYour order includes the $24.95/yr membership + MVR driver check."
     : "";
 
@@ -1531,6 +1551,65 @@ async function handleCaregiverResendMembership(phone: string, chatId: string, se
   } else {
     // Re-generate if URL was lost
     await handleCaregiverSendMembership(phone, chatId, session);
+  }
+}
+
+// ── Add-MVR-later (standalone "Approved Driver" upgrade over SMS) ─────────────
+// Bespoke handler (NOT a data-driven ConversationStep) because it creates a
+// one-time Stripe payment and triggers a side effect — mirrors
+// handleCaregiverSendMembership. On payment the webhook (task: 'mvr_payment')
+// initiates an MVR-only Checkr check whose result only affects the driver badge.
+async function handleCaregiverSendMvr(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  // Only offer when the add-on can be both charged and run, so a caregiver is
+  // never charged for an MVR that can't actually run (and vice versa).
+  if (!canChargeStandaloneMvr()) {
+    await sendMessage(chatId, "Sorry — the Approved Driver add-on isn't available right now. I've let our team know.");
+    await db.collection("admin_alerts").add({
+      type: "mvr_addon_unavailable", phone, createdAt: new Date().toISOString(), resolved: false, severity: "medium",
+    }).catch(() => {});
+    return;
+  }
+
+  const token = generateToken({ phone, task: "mvr_payment" });
+  let checkoutUrl = `${APP_URL}/done?task=mvr_payment&t=${token}`;
+  await signalThinking(chatId, session.service);
+  try {
+    const stripeSession = await getStripe().checkout.sessions.create({
+      mode:                "payment", // one-time, separate from the membership subscription
+      line_items:          [{ price: mvrPriceId(), quantity: 1 }],
+      success_url:         `${APP_URL}/done?task=mvr_payment&t=${token}`,
+      cancel_url:          `${APP_URL}/start`,
+      metadata:            { phone, task: "mvr_payment" },
+      payment_intent_data: { metadata: { phone, task: "mvr_payment" } },
+    });
+    checkoutUrl = stripeSession.url ?? checkoutUrl;
+  } catch (err) {
+    console.error("handleCaregiverSendMvr stripe error:", err);
+  }
+
+  // Save the prior step — an already-onboarded caregiver returns to it after payment.
+  await updateSession(phone, {
+    onboardingStep: "caregiver_awaiting_mvr",
+    mvrCheckoutUrl: checkoutUrl,
+    mvrPriorStep:   session.onboardingStep ?? null,
+  });
+  await sendMessage(chatId,
+    "Becoming an Approved Driver adds a Motor Vehicle Record (MVR) check to your profile, so families who need a driver can see your verified-driver badge. It's a one-time add-on and doesn't change your annual membership.\n\nTap to add it:"
+  );
+  await sendMessage(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
+}
+
+async function handleCaregiverResendMvr(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
+  if (text && await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+  }
+  const url = (session as any).mvrCheckoutUrl as string | undefined;
+  if (url) {
+    await sendMessage(chatId, "Tap the link below to add your Approved Driver check:");
+    await sendMessage(chatId, { parts: [{ type: "link", value: url }] });
+  } else {
+    await handleCaregiverSendMvr(phone, chatId, session);
   }
 }
 
@@ -1859,16 +1938,17 @@ export async function sendOnboardingLink(
       const membershipPriceId = process.env.STRIPE_CAREGIVER_ANNUAL_PRICE_ID ?? process.env.STRIPE_CAREGIVER_ANNUAL ?? process.env.VITE_STRIPE_CAREGIVER_ANNUAL ?? "";
       if (membershipPriceId) {
         const wantsMvr   = (d.wantsMvr as boolean | undefined) ?? false;
-        const mvrPriceId = (process.env.STRIPE_MVR_PRICE_ID ?? "").trim();
+        // includeMVR derived from the actual charge, not wantsMvr — see handleCaregiverSendMembership.
+        const mvrCharged = wantsMvr && canChargeBundledMvr();
         const lineItems: { price: string; quantity: number }[] = [{ price: membershipPriceId, quantity: 1 }];
-        if (wantsMvr && mvrPriceId && !mvrPriceId.startsWith("FILL_IN")) lineItems.push({ price: mvrPriceId, quantity: 1 });
+        if (mvrCharged) lineItems.push({ price: mvrPriceId(), quantity: 1 });
         const stripeSession = await getStripe().checkout.sessions.create({
           mode:                 "subscription",
           payment_method_types: ["card"],
           line_items:           lineItems,
           success_url:          `${APP_URL}/done?task=caregiver_membership&t=${token}`,
           cancel_url:           `${APP_URL}/start`,
-          metadata:             { phone, task: "caregiver_membership", includeMVR: wantsMvr ? "true" : "false" },
+          metadata:             { phone, task: "caregiver_membership", includeMVR: mvrCharged ? "true" : "false" },
           subscription_data:    { metadata: { phone, kind: "caregiver_membership" } },
         });
         url = stripeSession.url ?? url;
@@ -2228,6 +2308,20 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         "Tap to get started — usually takes about 5 minutes:"
       );
       await handleCaregiverSendBgcheck(phone, chatId, session);
+      break;
+    }
+
+    case "mvr_payment": {
+      await db.collection("agent_sessions").doc(phone).update({
+        processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
+      });
+      // Caregiver was already onboarded — restore their prior step so later
+      // messages route normally; the MVR-only check runs server-side.
+      const priorStep = (session as any).mvrPriorStep as string | undefined;
+      if (priorStep) await updateSession(phone, { onboardingStep: priorStep }).catch(() => {});
+      await sendMessage(chatId,
+        "Payment received — your driving record (MVR) check is underway. I'll text you the moment your Approved Driver badge is active. This doesn't change your existing caregiver approval."
+      );
       break;
     }
 

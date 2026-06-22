@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import * as crypto from "crypto";
 import { claimWebhookEvent, settleWebhookEvent, CHECKR_EVENTS_COLLECTION } from "./utils/webhookLedger";
 import { fetchWithTimeout } from "./utils/httpTimeout";
+import { assertMvrCheckConfig } from "./mvrConfig";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -10,7 +11,6 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 const CHECKR_PACKAGE = process.env.CHECKR_PACKAGE || "driver_pro";
-const CHECKR_PACKAGE_MVR = process.env.CHECKR_PACKAGE_MVR || CHECKR_PACKAGE;
 
 type CheckrStatus = "pending" | "clear" | "consider" | "suspended" | "canceled";
 
@@ -138,7 +138,9 @@ export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async 
     }
 
     const mvrPaid = caregiverData.mvrPaid === true;
-    const selectedPackage = mvrPaid ? CHECKR_PACKAGE_MVR : CHECKR_PACKAGE;
+    // assertMvrCheckConfig throws if the MVR package is unset or equals the base
+    // package — a loud failure beats silently running a non-MVR check after charging.
+    const selectedPackage = mvrPaid ? assertMvrCheckConfig("bundled") : CHECKR_PACKAGE;
     const invitationBody: Record<string, unknown> = {
       candidate_id: candidateId,
       package: selectedPackage,
@@ -207,6 +209,121 @@ async function findCaregiverUidByCandidateId(candidateId: string): Promise<strin
   return snap.docs[0].id;
 }
 
+/**
+ * Initiate a standalone MVR-only Checkr check for a caregiver who added the
+ * Approved Driver upgrade after signup. Reuses the caregiver's existing Checkr
+ * candidate and runs the MVR-only package. Idempotent: the `mvrCheckInitiated`
+ * precondition plus a dedicated `*-mvr-invitation-*` idempotency-key namespace
+ * mean a redelivered payment webhook never starts a second check. The resulting
+ * report is routed by handleMvrReportEvent to the driver badge ONLY.
+ *
+ * Called from the Stripe payment-success webhook (web add-on and Cara SMS).
+ */
+export async function initiateMvrOnlyCheck(caregiverUid: string): Promise<void> {
+  const snap = await db.collection("caregivers").doc(caregiverUid).get();
+  if (!snap.exists) {
+    console.error(`initiateMvrOnlyCheck: caregiver ${caregiverUid} not found`);
+    return;
+  }
+  const cg = snap.data() || {};
+  if (cg.mvrCheckInitiated === true) {
+    console.log(`initiateMvrOnlyCheck: already initiated for ${caregiverUid}, skipping`);
+    return;
+  }
+  const candidateId: string | undefined = cg.backgroundCheckData?.checkrCandidateId;
+  if (!candidateId) {
+    // Paid for MVR but no Checkr candidate exists yet — never silently lose the
+    // purchase; surface it for an admin to resolve.
+    await db.collection("admin_alerts").add({
+      type:        "mvr_no_candidate",
+      caregiverId: caregiverUid,
+      createdAt:   new Date().toISOString(),
+      resolved:    false,
+      severity:    "high",
+    }).catch(() => {});
+    console.error(`initiateMvrOnlyCheck: no Checkr candidate for ${caregiverUid}; raised admin alert`);
+    return;
+  }
+
+  // Validates config and throws if the MVR-only package is unset or equals the
+  // base package (would run a non-MVR check after charging).
+  const pkg = assertMvrCheckConfig("mvr_only");
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const workState: string = (cg.state || "").trim();
+  const workLocations = workState ? [{ country: "US", state: workState.toUpperCase() }] : [];
+  const invBody: Record<string, unknown> = { candidate_id: candidateId, package: pkg };
+  if (workLocations.length) invBody.work_locations = workLocations;
+
+  await checkrPost("/invitations", invBody, `${caregiverUid}-mvr-invitation-${dateKey}`);
+
+  await db.collection("caregivers").doc(caregiverUid).set({
+    mvrPaid:           true,
+    mvrCheckInitiated: true,
+    mvrStatus:         "pending",
+    mvrInitiatedAt:    new Date().toISOString(),
+  }, { merge: true });
+
+  console.log(`initiateMvrOnlyCheck: MVR-only invitation sent for ${caregiverUid}`);
+}
+
+/**
+ * Handle a Checkr report event that belongs to the standalone MVR-only check.
+ * THE WALL: writes ONLY `isApprovedDriver` / `mvrStatus` (+ report id / cleared
+ * timestamp). It must never write verified / verificationStatus / status /
+ * approvedAt / backgroundCheckStatus / backgroundCheckComplete — a driving
+ * result can never alter a caregiver's core approval.
+ */
+async function handleMvrReportEvent(
+  caregiverUid: string,
+  type: string,
+  payload: Record<string, any>,
+): Promise<void> {
+  const updates: Record<string, any> = {};
+  // Persist the report id so subsequent events for this report match by id even
+  // if a later payload omits the package slug.
+  if (payload.id) updates["mvrReportId"] = payload.id;
+
+  const status = mapCheckrResult(payload);
+  updates["mvrStatus"] = status;
+
+  if (status === "clear") {
+    updates["isApprovedDriver"] = true;
+    updates["mvrClearedAt"] = new Date().toISOString();
+  } else if (
+    status === "consider" ||
+    status === "suspended" ||
+    type === "report.pre_adverse_action" ||
+    type === "report.post_adverse_action" ||
+    type === "report.canceled"
+  ) {
+    // Any non-clear MVR outcome withholds/removes the badge — and nothing else.
+    updates["isApprovedDriver"] = false;
+  }
+  // pending / other → leave isApprovedDriver untouched.
+
+  await db.collection("caregivers").doc(caregiverUid).update(updates);
+
+  // Best-effort caregiver notification — scoped to the driver badge, never framed
+  // as affecting their core approval.
+  try {
+    if (status === "clear") {
+      await createCaregiverNotification(
+        caregiverUid,
+        "You're an Approved Driver! 🚗",
+        "Your driving record check came back clear — your Approved Driver badge is now active.",
+      );
+    } else if (status === "consider" || status === "suspended") {
+      await createCaregiverNotification(
+        caregiverUid,
+        "Driver check needs review",
+        "Your driving record check needs a closer look. This only affects the Approved Driver badge — your caregiver approval is unchanged.",
+      );
+    }
+  } catch {
+    /* notification is best-effort */
+  }
+}
+
 export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     res.status(405).send("Method not allowed");
@@ -266,6 +383,28 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
       await settle("processed");
       res.status(200).json({ received: true, ignored: "caregiver not found" });
       return;
+    }
+
+    // ── MVR wall ────────────────────────────────────────────────────────────
+    // A standalone MVR-only report governs ONLY the Approved Driver badge. Route
+    // it out before the core dispatch so a driving result can never touch
+    // verified / verificationStatus / status. Matched by the MVR-only package
+    // slug (present from report.created onward) or a previously stored
+    // mvrReportId. The signup bundled criminal+MVR report uses a DIFFERENT
+    // package and intentionally flows through the core handling below.
+    if (type.startsWith("report.")) {
+      const mvrOnlyPkg = (process.env.CHECKR_PACKAGE_MVR_ONLY || "").trim();
+      const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+      const storedMvrReportId: string | undefined = cgSnap.data()?.mvrReportId;
+      const isMvrReport =
+        (!!mvrOnlyPkg && typeof payload.package === "string" && payload.package === mvrOnlyPkg) ||
+        (!!storedMvrReportId && payload.id === storedMvrReportId);
+      if (isMvrReport) {
+        await handleMvrReportEvent(caregiverUid, type, payload);
+        await settle("processed");
+        res.status(200).json({ received: true, mvr: true });
+        return;
+      }
     }
 
     const updates: Record<string, any> = {};
@@ -370,7 +509,11 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
         try {
           const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
           const cgData = cgSnap.data();
-          if (cgData?.backgroundCheckData?.mvrIncluded === true) {
+          // Gate the badge on the top-level, webhook-only mvrPaid flag (locked in
+          // firestore.rules) rather than the client-reachable
+          // backgroundCheckData.mvrIncluded — otherwise a caregiver could smuggle
+          // mvrIncluded:true via the profile-submission write and self-grant the badge.
+          if (cgData?.mvrPaid === true) {
             updates["isApprovedDriver"] = true;
           }
           const cgPhone = cgData?.phone as string | undefined;

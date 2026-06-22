@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from './utils/webhookLedger';
 import { fetchWithTimeout } from './utils/httpTimeout';
 import { appLink } from './config/appUrl';
+import { assertMvrPaymentConfig, assertMvrCheckConfig } from './mvrConfig';
 
 // Initialize Stripe with secret key
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
@@ -108,6 +109,67 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
     const stripeMsg = error?.raw?.message || error?.message || String(error);
     console.error('Error creating checkout session:', stripeMsg, error);
     throw new functions.https.HttpsError('internal', `Failed to create checkout session: ${stripeMsg}`);
+  }
+});
+
+/**
+ * Create a one-time Stripe Checkout session for the standalone MVR ("Approved
+ * Driver") add-on purchased after signup. Unlike membership (subscription mode),
+ * this is a single one-time charge. On payment the webhook initiates an MVR-only
+ * Checkr check (see handleCheckoutSessionCompleted, task: 'mvr_addon').
+ *
+ * Eligibility: any signed-in caregiver, anytime after signup — no base-check-cleared gate.
+ */
+export const createMvrAddonCheckoutSession = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+  const userId = context.auth.uid;
+  const { successUrl, cancelUrl } = data || {};
+
+  // Loud config check: refuse rather than create a checkout that can't deliver MVR.
+  let mvrPriceId: string;
+  try {
+    mvrPriceId = assertMvrPaymentConfig();
+  } catch (err) {
+    console.error('createMvrAddonCheckoutSession: MVR not configured:', err);
+    throw new functions.https.HttpsError('failed-precondition', 'The Approved Driver add-on is not available right now.');
+  }
+
+  try {
+    // Get or create the Stripe customer (mirrors createCheckoutSession).
+    const userRef = admin.firestore().collection('customers').doc(userId);
+    const userDoc = await userRef.get();
+    let customerId = userDoc.data()?.stripeCustomerId;
+    if (!customerId) {
+      const user = await admin.auth().getUser(userId);
+      const customer = await stripe.customers.create({
+        email: user.email,
+        metadata: { firebaseUID: userId },
+      });
+      customerId = customer.id;
+      await userRef.set({
+        stripeCustomerId: customerId,
+        email: user.email,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      customer: customerId,
+      line_items: [{ price: mvrPriceId, quantity: 1 }],
+      mode: 'payment', // one-time charge, NOT a subscription
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      metadata: { firebaseUID: userId, task: 'mvr_addon' },
+      payment_intent_data: { metadata: { firebaseUID: userId, task: 'mvr_addon' } },
+    });
+
+    return { sessionId: session.id, url: session.url };
+  } catch (error: any) {
+    const stripeMsg = error?.raw?.message || error?.message || String(error);
+    console.error('Error creating MVR add-on checkout session:', stripeMsg, error);
+    throw new functions.https.HttpsError('internal', `Failed to create MVR checkout session: ${stripeMsg}`);
   }
 });
 
@@ -279,6 +341,64 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     return;
   }
 
+  // Cara SMS — standalone "add MVR later" one-time payment complete. Resolve the
+  // caregiver behind this phone and kick off an MVR-only check (idempotent).
+  if (session.metadata?.task === 'mvr_payment' && session.metadata?.phone) {
+    const phone = session.metadata.phone;
+    try {
+      const sessionSnap = await admin.firestore().collection('agent_sessions').doc(phone).get();
+      const caregiverUid = sessionSnap.data()?.caregiverId as string | undefined;
+      if (!caregiverUid) {
+        console.error(`mvr_payment: no caregiverId on agent_sessions/${phone}`);
+        await admin.firestore().collection('admin_alerts').add({
+          type: 'mvr_init_failed', phone, errorMessage: 'no caregiverId on session',
+          createdAt: new Date().toISOString(), resolved: false, severity: 'high',
+        }).catch(() => {});
+        return;
+      }
+      const { initiateMvrOnlyCheck } = await import('./checkr');
+      await initiateMvrOnlyCheck(caregiverUid);
+      const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
+      await advanceOnboardingStep(phone, 'mvr_payment', '');
+    } catch (err) {
+      console.error(`mvr_payment: failed to initiate MVR check for ${phone}:`, err);
+      await admin.firestore().collection('admin_alerts').add({
+        type: 'mvr_init_failed', phone, errorMessage: err instanceof Error ? err.message : String(err),
+        createdAt: new Date().toISOString(), resolved: false, severity: 'high',
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  // One-time MVR ("Approved Driver") add-on purchased after signup (web self-serve).
+  // On payment, kick off a standalone MVR-only Checkr check. initiateMvrOnlyCheck is
+  // idempotent (mvrCheckInitiated precondition), so a redelivered webhook is safe.
+  if (session.metadata?.task === 'mvr_addon') {
+    const caregiverUid = session.metadata?.firebaseUID;
+    if (!caregiverUid) {
+      console.error('mvr_addon checkout completed without firebaseUID');
+      return;
+    }
+    try {
+      const { initiateMvrOnlyCheck } = await import('./checkr');
+      await initiateMvrOnlyCheck(caregiverUid);
+    } catch (err) {
+      // assertMvrCheckConfig and Checkr errors surface here. Don't storm Stripe
+      // retries on a persistent config error — record the paid-but-uninitiated
+      // state for an admin and ack the webhook.
+      console.error(`mvr_addon: failed to initiate MVR check for ${caregiverUid}:`, err);
+      await admin.firestore().collection('admin_alerts').add({
+        type:         'mvr_init_failed',
+        caregiverId:  caregiverUid,
+        errorMessage: err instanceof Error ? err.message : String(err),
+        createdAt:    new Date().toISOString(),
+        resolved:     false,
+        severity:     'high',
+      }).catch(() => {});
+    }
+    return;
+  }
+
   const userId = session.metadata?.firebaseUID;
   if (!userId) return;
 
@@ -349,8 +469,26 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
   try {
     const CHECKR_BASE = process.env.CHECKR_API_URL || 'https://api.checkr.com/v1';
     const CHECKR_PKG_BASE = process.env.CHECKR_PACKAGE || 'driver_pro';
-    const CHECKR_PKG_MVR = process.env.CHECKR_PACKAGE_MVR || CHECKR_PKG_BASE;
-    const CHECKR_PKG = includeMVRFlag ? CHECKR_PKG_MVR : CHECKR_PKG_BASE;
+    let CHECKR_PKG = CHECKR_PKG_BASE;
+    if (includeMVRFlag) {
+      try {
+        // Validate the bundled MVR package is set and distinct from base.
+        CHECKR_PKG = assertMvrCheckConfig('bundled');
+      } catch (cfgErr) {
+        // Paid for MVR but the bundled package is misconfigured. Run the base
+        // criminal check (so the caregiver isn't blocked) and alert an admin to
+        // resolve the MVR portion — never silently run a non-MVR check as MVR.
+        console.error(`Bundled MVR package misconfigured for ${userId}:`, cfgErr);
+        await admin.firestore().collection('admin_alerts').add({
+          type:         'mvr_bundle_misconfigured',
+          caregiverId:  userId,
+          errorMessage: cfgErr instanceof Error ? cfgErr.message : String(cfgErr),
+          createdAt:    new Date().toISOString(),
+          resolved:     false,
+          severity:     'high',
+        }).catch(() => {});
+      }
+    }
     const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
     const dateKey = new Date().toISOString().slice(0, 10);
     const workLocations = state ? [{ country: 'US', state: state.toUpperCase() }] : [];

@@ -134,7 +134,7 @@ export const CaregiverAccountSettings: React.FC = () => {
           if (doc.status === 'rejected') return 'rejected';
           return 'done'; // uploaded, pending review
         };
-        const newStatus = {
+        const newStatus: Record<string, 'idle' | 'uploading' | 'done' | 'approved' | 'expired' | 'rejected' | 'error'> = {
           driversLicense: resolveDocStatus(docs.driversLicense),
           insurance: resolveDocStatus(docs.insurance),
           registration: resolveDocStatus(docs.registration),

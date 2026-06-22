@@ -3,10 +3,11 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays, Clock, MapPin, CheckCircle, XCircle,
   Loader2, MessageSquare, Star, Banknote, CreditCard, ChevronDown,
-  ChevronUp, Phone, AlertCircle, Repeat, FileText, ClipboardList,
+  ChevronUp, Phone, AlertCircle, Repeat, FileText, ClipboardList, Lock,
 } from 'lucide-react';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
+import { useCaregiverGate } from '../../hooks/useCaregiverGate';
 import { db } from '../../lib/firebase';
 import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
 import firebase from '../../lib/firebase';
@@ -244,7 +245,8 @@ const RequestCard: React.FC<{
   onAccept: (id: string) => void;
   onDecline: (id: string) => void;
   submitting: boolean;
-}> = ({ req, onAccept, onDecline, submitting }) => {
+  blockReason?: 'membership' | 'background' | null;
+}> = ({ req, onAccept, onDecline, submitting, blockReason }) => {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
 
@@ -555,14 +557,24 @@ const RequestCard: React.FC<{
               >
                 <XCircle className="w-4 h-4" /> Decline
               </button>
-              <button
-                onClick={() => onAccept(req.id)}
-                disabled={submitting}
-                className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors"
-              >
-                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                Accept
-              </button>
+              {blockReason === 'membership' ? (
+                <button onClick={() => navigate('/caregiver/membership')} className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 border border-slate-200 text-slate-500 rounded-xl text-sm font-semibold transition-colors hover:bg-slate-200">
+                  <Lock className="w-4 h-4" /> Activate Membership
+                </button>
+              ) : blockReason === 'background' ? (
+                <button onClick={() => navigate('/caregiver/dashboard')} className="flex items-center gap-1.5 px-4 py-2 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl text-sm font-semibold transition-colors hover:bg-amber-100">
+                  <Lock className="w-4 h-4" /> Complete Verification
+                </button>
+              ) : (
+                <button
+                  onClick={() => onAccept(req.id)}
+                  disabled={submitting}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors"
+                >
+                  {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                  Accept
+                </button>
+              )}
             </>
           )}
         </div>
@@ -580,6 +592,7 @@ const BookingGroupCard: React.FC<{
   onAcceptAmendment: (amendment: BookingAmendment) => Promise<void>;
 }> = ({ shifts, amendments, onCancel, onAcceptAmendment }) => {
   const navigate = useNavigate();
+  const { blockReason } = useCaregiverGate();
   const base = shifts[0];
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandedShift, setExpandedShift] = useState<string | null>(null);
@@ -659,6 +672,7 @@ const BookingGroupCard: React.FC<{
   const ec = base.emergencyContact;
 
   return (
+  <>
     <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
 
       {/* ── Header ── */}
@@ -1042,7 +1056,15 @@ const BookingGroupCard: React.FC<{
                     if (ds === 'overdue') return null;
                     const minsUntilStart = (new Date(`${shift.date}T${shift.startTime}`).getTime() - Date.now()) / 60000;
                     if (minsUntilStart > 15) return null;
-                    return (
+                    return blockReason === 'membership' ? (
+                      <button onClick={() => navigate('/caregiver/membership')} className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-100 border border-slate-200 text-slate-500 rounded-xl text-xs font-semibold transition-colors hover:bg-slate-200">
+                        <Lock className="w-3 h-3" /> Activate Membership
+                      </button>
+                    ) : blockReason === 'background' ? (
+                      <button onClick={() => navigate('/caregiver/dashboard')} className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl text-xs font-semibold transition-colors hover:bg-amber-100">
+                        <Lock className="w-3 h-3" /> Complete Verification
+                      </button>
+                    ) : (
                       <button
                         onClick={() => handleStart(shift.id)}
                         disabled={submitting === shift.id}
@@ -1199,12 +1221,13 @@ const BookingGroupCard: React.FC<{
       </div>
 
     </div>
+  </>
   );
 };
 
 // ── Past Booking Group Card ──────────────────────────────────────────────────
 
-const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shift) => void }> = ({ shifts, onLogHours }) => {
+const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shift) => void; blockReason?: 'membership' | 'background' | null }> = ({ shifts, onLogHours, blockReason }) => {
   const navigate = useNavigate();
   const base = shifts[0];
   const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
@@ -1286,12 +1309,22 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shi
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   {isMissed ? (
-                    <button
-                      onClick={e => { e.stopPropagation(); onLogHours?.(shift); }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 bg-primary-600 text-white text-xs font-semibold rounded-lg hover:bg-primary-700 transition-colors"
-                    >
-                      <ClipboardList className="w-3 h-3" /> Log Hours
-                    </button>
+                    blockReason === 'membership' ? (
+                      <button onClick={() => navigate('/caregiver/membership')} className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 border border-slate-200 text-slate-500 text-xs font-semibold rounded-lg transition-colors hover:bg-slate-200">
+                        <Lock className="w-3 h-3" /> Activate Membership
+                      </button>
+                    ) : blockReason === 'background' ? (
+                      <button onClick={() => navigate('/caregiver/dashboard')} className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-lg transition-colors hover:bg-amber-100">
+                        <Lock className="w-3 h-3" /> Complete Verification
+                      </button>
+                    ) : (
+                      <button
+                        onClick={e => { e.stopPropagation(); onLogHours?.(shift); }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-primary-600 text-white text-xs font-semibold rounded-lg hover:bg-primary-700 transition-colors"
+                      >
+                        <ClipboardList className="w-3 h-3" /> Log Hours
+                      </button>
+                    )
                   ) : (
                     <>
                       <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${shiftStatusBadgeClass(shiftDisplayStatus(shift))}`}>
@@ -1473,6 +1506,8 @@ const EmptyState: React.FC<{ icon: React.ReactNode; title: string; body: string 
 
 export const CaregiverBookingsPage: React.FC = () => {
   const { currentUser, addToast } = useCareConnex();
+  const { blockReason } = useCaregiverGate();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>(() => {
     const t = searchParams.get('tab');
@@ -1555,7 +1590,7 @@ export const CaregiverBookingsPage: React.FC = () => {
     return () => unsub();
   }, [uid]);
 
-  // Fetch overdue shifts (scheduled but date has passed)
+  // Fetch overdue shifts (scheduled but date+time has passed)
   useEffect(() => {
     if (!uid || !db) return;
     const n = new Date();
@@ -1563,9 +1598,13 @@ export const CaregiverBookingsPage: React.FC = () => {
     const unsub = db.collection('shifts')
       .where('caregiverId', '==', uid)
       .where('status', 'in', ['scheduled', 'pending'])
-      .where('date', '<', today)
+      .where('date', '<=', today)
       .onSnapshot(snap => {
-        setOverdueShifts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Shift)));
+        // Include previous days + today's shifts only if the scheduled time has already passed
+        setOverdueShifts(snap.docs
+          .map(d => ({ id: d.id, ...d.data() } as Shift))
+          .filter(s => shiftDisplayStatus(s) === 'overdue')
+        );
       }, () => {});
     return () => unsub();
   }, [uid]);
@@ -1814,6 +1853,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                     onAccept={handleAccept}
                     onDecline={handleDecline}
                     submitting={submitting}
+                    blockReason={blockReason}
                   />
                 ))}
                 {orphanAmendments.map(a => (
@@ -1848,12 +1888,22 @@ export const CaregiverBookingsPage: React.FC = () => {
                           {a.notes && <p className="text-xs text-slate-400 italic mt-0.5">{a.notes}</p>}
                         </div>
                         <div className="flex gap-2 shrink-0 mt-0.5">
-                          <button
-                            onClick={() => handleAcceptAmendment(a)}
-                            className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1 transition-colors"
-                          >
-                            <CheckCircle className="w-3.5 h-3.5" /> Accept
-                          </button>
+                          {blockReason === 'membership' ? (
+                            <button onClick={() => navigate('/caregiver/membership')} className="px-3 py-1.5 bg-slate-100 border border-slate-200 text-slate-500 text-xs font-semibold rounded-xl flex items-center gap-1 transition-colors hover:bg-slate-200">
+                              <Lock className="w-3.5 h-3.5" /> Activate Membership
+                            </button>
+                          ) : blockReason === 'background' ? (
+                            <button onClick={() => navigate('/caregiver/dashboard')} className="px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-xl flex items-center gap-1 transition-colors hover:bg-amber-100">
+                              <Lock className="w-3.5 h-3.5" /> Complete Verification
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleAcceptAmendment(a)}
+                              className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1 transition-colors"
+                            >
+                              <CheckCircle className="w-3.5 h-3.5" /> Accept
+                            </button>
+                          )}
                           <button
                             onClick={async () => {
                               if (!db) return;
@@ -1945,6 +1995,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                   <PastBookingGroupCard
                     key={key}
                     shifts={groupShifts}
+                    blockReason={blockReason}
                     onLogHours={shift => {
                       setLogHoursShift(shift);
                       setLogStartDate(shift.date || '');

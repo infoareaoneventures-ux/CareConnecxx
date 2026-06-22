@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Bell, MessageSquare, Home, Calendar, Briefcase,
+  MessageSquare, Home, Calendar, Briefcase,
   BookOpen, Settings, X, MoreHorizontal, LogOut, User,
   Users, Wallet, ChevronDown, HelpCircle, Mail,
 } from 'lucide-react';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { authService } from '../../services/api';
 import { CaregiverUserMenu } from './CaregiverUserMenu';
+import { NotificationDropdown } from '../ui/NotificationDropdown';
 import type { Caregiver } from '../../types';
 
 const BOOKINGS_ROUTES = ['/caregiver/bookings', '/caregiver/families'];
@@ -225,10 +226,7 @@ const DesktopNav: React.FC<{
           className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${isActive('/caregiver/inbox') ? 'text-primary-600 bg-primary-50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}>
           <MessageSquare className="w-4 h-4" />
         </button>
-        <button aria-label="Notifications"
-          className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors">
-          <Bell className="w-4 h-4" />
-        </button>
+        <NotificationDropdown />
         <div className="relative" ref={helpRef}>
           <button onClick={() => setHelpOpen(o => !o)} aria-label="Help"
             className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${helpOpen ? 'text-primary-600 bg-primary-50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}>

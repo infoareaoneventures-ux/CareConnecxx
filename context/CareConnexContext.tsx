@@ -124,6 +124,17 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         }
     };
 
+    // Real-time listener: keep caregiverProfile in sync with Firestore
+    // so admin changes (membership, bg check, docs) reflect immediately
+    useEffect(() => {
+        if (!currentUser?.uid || currentUser.userType !== 'caregiver' || !db) return;
+        const unsub = db.collection('caregivers').doc(currentUser.uid)
+            .onSnapshot(snap => {
+                if (snap.exists) setCaregiverProfile({ id: snap.id, ...snap.data() } as any);
+            }, () => {});
+        return unsub;
+    }, [currentUser?.uid, currentUser?.userType]);
+
     const addToast = (message: string, type: ToastType) => {
         const id = Math.random().toString(36).substr(2, 9);
         setToasts((prev) => [...prev, { id, message, type }]);

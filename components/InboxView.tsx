@@ -10,6 +10,7 @@ import firebase from 'firebase/compat/app';
 import { ClientNavigation } from './client/ClientNavigation';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 import { useAccessGates } from '../hooks/useAccessGates';
+import { useCaregiverGate } from '../hooks/useCaregiverGate';
 
 interface InboxViewProps {
   userType: 'client' | 'caregiver';
@@ -84,19 +85,8 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const { identityVerified, membershipActive, Modals: GateModals } = useAccessGates();
   const clientCanMessage = !isClient || (identityVerified && membershipActive);
 
-  // For caregivers: check if they have passed membership + background check
-  const [caregiverVerified, setCaregiverVerified] = useState(true);
-  useEffect(() => {
-    if (isClient || !currentUid || !db) return;
-    const unsub = db.collection('caregivers').doc(currentUid).onSnapshot(snap => {
-      const d = snap.data() as any;
-      if (!d) return;
-      const hasPaid = !!(d.membershipPaid === true || (d.membershipStatus && d.membershipStatus !== 'none' && d.membershipStatus !== 'inactive'));
-      const bgOk = ['checkr_clear', 'approved'].includes(d.verificationStatus) || d.backgroundCheckStatus === 'clear' || d.backgroundCheckComplete === true;
-      setCaregiverVerified(hasPaid && bgOk);
-    }, () => {});
-    return unsub;
-  }, [currentUid, isClient]);
+  const { gateMembership, membershipActive: caregiverMembershipActive, GateModal } = useCaregiverGate();
+  const caregiverCanMessage = caregiverMembershipActive;
 
   // Also track accepted booking_requests for care-team classification
   const [acceptedBookingPartnerIds, setAcceptedBookingPartnerIds] = useState<Set<string>>(new Set());
@@ -255,6 +245,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
   const handleSend = async () => {
     if (!inputText.trim() || !selectedRoomId || sending) return;
+    if (!isClient && !gateMembership()) return;
     const text = inputText.trim();
     setInputText('');
     setSending(true);
@@ -555,17 +546,17 @@ export const InboxView: React.FC<InboxViewProps> = ({
                     Complete setup →
                   </button>
                 </div>
-              ) : !isClient && !caregiverVerified ? (
-                <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-                  <div className="flex items-center gap-2 text-amber-700">
+              ) : !isClient && !caregiverCanMessage ? (
+                <div className="flex items-center justify-between gap-3 bg-slate-100 border border-slate-200 rounded-xl px-4 py-3">
+                  <div className="flex items-center gap-2 text-slate-500">
                     <Lock className="w-4 h-4 flex-shrink-0" />
-                    <span className="text-sm font-medium">Complete verification to send messages</span>
+                    <span className="text-sm font-medium">Activate your membership to send messages</span>
                   </div>
                   <button
-                    onClick={() => navigate('/caregiver/dashboard')}
-                    className="text-xs font-semibold text-amber-700 hover:text-amber-800 underline whitespace-nowrap"
+                    onClick={() => navigate('/caregiver/membership')}
+                    className="text-xs font-semibold text-slate-600 hover:text-slate-800 underline whitespace-nowrap"
                   >
-                    Go to dashboard →
+                    Activate Membership →
                   </button>
                 </div>
               ) : (
@@ -605,6 +596,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
       </div>
 
       {isClient && <GateModals />}
+      {!isClient && GateModal}
 
       {/* Report Modal */}
       {showReportModal && (

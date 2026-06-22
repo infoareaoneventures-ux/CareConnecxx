@@ -134,11 +134,14 @@ export const CaregiverAccountSettings: React.FC = () => {
           if (doc.status === 'rejected') return 'rejected';
           return 'done'; // uploaded, pending review
         };
-        setTransportStatus({
+        const newStatus: Record<string, 'idle' | 'uploading' | 'done' | 'approved' | 'expired' | 'rejected' | 'error'> = {
           driversLicense: resolveDocStatus(docs.driversLicense),
           insurance: resolveDocStatus(docs.insurance),
           registration: resolveDocStatus(docs.registration),
-        });
+        };
+        setTransportStatus(newStatus);
+        const allApproved = Object.values(newStatus).every(s => s === 'approved');
+        setOpenTransport(!allApproved);
         setTransportExpiry({
           driversLicense: docs.driversLicense?.expirationDate || null,
           insurance: docs.insurance?.expirationDate || null,

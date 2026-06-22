@@ -1,16 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Search, Loader2, Briefcase, MapPin, Calendar, Clock, Lock, X, FileText, CheckCircle, XCircle, Clock4, Sun, Moon, Users, CreditCard, Banknote, EyeOff, Eye, Car, SlidersHorizontal, Video, Phone, Home } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { JobPost, Caregiver, AddToastFunction } from '../../types';
-import { hasValidTransportDocs } from '../../utils/transportDocs';
-import { isCaregiverBookable } from '../../utils/caregiverEligibility';
 import { dbService } from '../../services/api';
 import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
 import { jobApplicationService, useMyApplications } from '../../hooks/useJobApplications';
 import { useCareConnex } from '../../context/CareConnexContext';
+import { useCaregiverGate } from '../../hooks/useCaregiverGate';
 import { Skeleton } from '../ui/Skeleton';
 
 // Pure math — no API calls. Jobs store lat/lng at creation time.
@@ -87,6 +86,8 @@ const CHIP = (selected: boolean) =>
 
 export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobAccepted, hideApplicationsTab = false }) => {
     const { blockedIds } = useCareConnex();
+    const { blockReason, transportBlockReason } = useCaregiverGate();
+    const navigate = useNavigate();
     const [jobs, setJobs] = useState<JobPost[]>([]);
     const [jobsLoading, setJobsLoading] = useState(false);
     const [viewingJob, setViewingJob] = useState<JobPost | null>(null);
@@ -271,17 +272,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
 
     const handleApplyToJob = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!profile?.verified) {
-            onShowToast("Background Check Required. Please complete verification to apply for jobs.", 'error');
-            return;
-        }
         if (!applyingJob) return;
-        const requiresTransport = applyingJob.careTypes?.includes('Transportation') || applyingJob.requirements?.includes('Driving');
-        if (requiresTransport && !hasValidTransportDocs(profile)) {
-            onShowToast("This job requires transportation. Your transportation documents are not verified or have expired.", 'error');
-            return;
-        }
-
+        if (!profile) return;
         setAcceptingGigId(applyingJob.id);
         try {
             await jobApplicationService.applyToJob(
@@ -591,6 +583,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     );
 
     return (
+    <>
         <div className="animate-slide-in">
             {/* Tabs */}
             {(() => {
@@ -786,15 +779,21 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                             <div className="flex gap-2">
                                                 {(() => {
                                                     const jobRequiresTransport = job.careTypes?.includes('Transportation') || job.requirements?.includes('Driving');
-                                                    if (!profile?.verified) return (
-                                                        <Button fullWidth size="sm" disabled className="bg-[var(--color-neutral-100)] text-[var(--color-neutral-400)] cursor-not-allowed border-[var(--color-neutral-200)]">
-                                                            <Lock className="w-3 h-3 mr-2" /> Verification Pending
-                                                        </Button>
+                                                    const reason = jobRequiresTransport ? transportBlockReason : blockReason;
+                                                    if (reason === 'membership') return (
+                                                        <button onClick={() => navigate('/caregiver/membership')} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-xs font-semibold transition-colors">
+                                                            <Lock className="w-3 h-3" /> Activate Membership
+                                                        </button>
                                                     );
-                                                    if (jobRequiresTransport && !hasValidTransportDocs(profile)) return (
-                                                        <Button fullWidth size="sm" disabled className="bg-orange-50 text-orange-500 cursor-not-allowed border border-orange-200">
-                                                            <Car className="w-3 h-3 mr-2" /> Transport Docs Required
-                                                        </Button>
+                                                    if (reason === 'background') return (
+                                                        <button onClick={() => navigate('/caregiver/dashboard')} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-xs font-semibold transition-colors">
+                                                            <Lock className="w-3 h-3" /> Complete Verification
+                                                        </button>
+                                                    );
+                                                    if (reason === 'transport') return (
+                                                        <button onClick={() => navigate('/caregiver/settings')} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-xs font-semibold transition-colors">
+                                                            <Car className="w-3 h-3" /> Transportation Badge Required
+                                                        </button>
                                                     );
                                                     return <Button fullWidth size="sm" onClick={() => setApplyingJob(job)}>Apply Now</Button>;
                                                 })()}
@@ -1064,28 +1063,35 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
 
                                         {/* Footer: Details + Accept/Decline */}
                                         {(() => {
-                                            const isAdminApproved = isCaregiverBookable(profile as any);
-                                            const hasPaid = !!(
-                                                (profile as any)?.membershipPaid === true ||
-                                                ((profile as any)?.membershipStatus && (profile as any)?.membershipStatus !== 'none' && (profile as any)?.membershipStatus !== 'inactive')
-                                            );
-                                            const canRespond = isAdminApproved && hasPaid;
                                             return (
                                                 <div className="mt-3">
-                                                    {iv.status === 'pending' && !canRespond ? (
+                                                    {iv.status === 'pending' && blockReason ? (
                                                         <div className="flex items-center justify-between">
                                                             {iv.jobId ? (
                                                                 <button onClick={() => handleViewJobDetails(iv.jobId!)} className="text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] font-medium text-sm">
                                                                     Details
                                                                 </button>
                                                             ) : <span />}
-                                                            <a
-                                                                href="/caregiver/dashboard"
-                                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors"
-                                                            >
-                                                                <Lock className="w-3 h-3" />
-                                                                Complete verification to respond
-                                                            </a>
+                                                            <div className="flex gap-2">
+                                                                <button
+                                                                    onClick={() => handleDeclineInterview(iv)}
+                                                                    disabled={submittingInterview === iv.id}
+                                                                    className="px-4 py-1.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50"
+                                                                >
+                                                                    {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Decline'}
+                                                                </button>
+                                                                {blockReason === 'membership' ? (
+                                                                    <button onClick={() => navigate('/caregiver/membership')} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 border border-slate-200 text-slate-500 rounded-lg text-xs font-semibold hover:bg-slate-200 transition-colors">
+                                                                        <Lock className="w-3 h-3" />
+                                                                        Activate Membership
+                                                                    </button>
+                                                                ) : (
+                                                                    <button onClick={() => navigate('/caregiver/dashboard')} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors">
+                                                                        <Lock className="w-3 h-3" />
+                                                                        Complete Verification
+                                                                    </button>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                     ) : (
                                                         <div className="flex items-center justify-between">
@@ -1263,12 +1269,25 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                             : 'bg-yellow-50 text-yellow-700 border-yellow-200';
                                         return <div className={`flex-1 flex items-center justify-center px-3 py-2 rounded-xl border text-sm font-medium ${color}`}>{label}</div>;
                                     }
-                                    return profile?.verified ? (
+                                    const jobRequiresTransport = viewingJob?.careTypes?.includes('Transportation') || viewingJob?.requirements?.includes('Driving');
+                                    const reason = jobRequiresTransport ? transportBlockReason : blockReason;
+                                    if (reason === 'membership') return (
+                                        <button onClick={() => navigate('/caregiver/membership')} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-sm font-semibold transition-colors">
+                                            <Lock className="w-3.5 h-3.5" /> Activate Membership
+                                        </button>
+                                    );
+                                    if (reason === 'background') return (
+                                        <button onClick={() => navigate('/caregiver/dashboard')} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-sm font-semibold transition-colors">
+                                            <Lock className="w-3.5 h-3.5" /> Complete Verification
+                                        </button>
+                                    );
+                                    if (reason === 'transport') return (
+                                        <button onClick={() => navigate('/caregiver/settings')} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-sm font-semibold transition-colors">
+                                            <Car className="w-3.5 h-3.5" /> Transportation Badge Required
+                                        </button>
+                                    );
+                                    return (
                                         <Button fullWidth onClick={() => { setApplyingJob(viewingJob); setViewingJob(null); }}>Apply Now</Button>
-                                    ) : (
-                                        <Button fullWidth disabled className="bg-[var(--color-neutral-100)] text-[var(--color-neutral-400)] cursor-not-allowed">
-                                            <Lock className="w-3 h-3 mr-2" /> Verify to Apply
-                                        </Button>
                                     );
                                 })()}
                             </div>
@@ -1358,5 +1377,6 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                 </div>
             )}
         </div>
+    </>
     );
 };

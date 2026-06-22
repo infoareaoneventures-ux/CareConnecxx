@@ -203,9 +203,6 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
             >
               Let's go
             </button>
-            <button onClick={onComplete} className="text-indigo-300 text-xs hover:text-indigo-100">
-              Skip for now
-            </button>
           </div>
         );
 
@@ -305,14 +302,6 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
                 style={{ width: `${progressPct}%` }}
               />
             </div>
-            {step < totalSteps && (
-              <button
-                onClick={onComplete}
-                className={`text-xs shrink-0 ${isColoredStep ? 'text-indigo-300 hover:text-indigo-100' : 'text-slate-400 hover:text-slate-600'}`}
-              >
-                Skip
-              </button>
-            )}
           </div>
         )}
 
@@ -772,16 +761,10 @@ const TransportDocStep: React.FC<{
         ))}
       </div>
 
-      <button onClick={onNext} disabled={uploadedCount < 3}
-        className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+      <button onClick={onNext}
+        className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors">
         Continue
       </button>
-
-      {uploadedCount < 3 && (
-        <p className="text-center text-xs text-amber-600 font-medium">
-          All three documents are required to continue.
-        </p>
-      )}
     </div>
   );
 };

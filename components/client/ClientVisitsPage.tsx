@@ -424,9 +424,23 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
   const handleCancelShift = async (shiftId: string) => {
     if (!db || !window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
     setCancellingShift(shiftId);
-    await db.collection('shifts').doc(shiftId).update({ status: 'cancelled' })
-      .catch(() => {})
-      .finally(() => setCancellingShift(null));
+    try {
+      await db.collection('shifts').doc(shiftId).update({ status: 'cancelled' });
+      if (base.caregiverId) {
+        await db.collection('users').doc(base.caregiverId).collection('notifications').add({
+          userId: base.caregiverId,
+          type: 'booking',
+          title: 'Shift Cancelled',
+          body: `A client cancelled one of your shifts.`,
+          isRead: false,
+          createdAt: new Date().toISOString(),
+        }).catch(() => {});
+      }
+    } catch {
+      // non-critical
+    } finally {
+      setCancellingShift(null);
+    }
   };
 
   return (
@@ -1045,6 +1059,7 @@ export const ClientVisitsPage: React.FC = () => {
     const shiftSnap = await db.collection('shifts').doc(shiftId).get();
     const shiftData = shiftSnap.data() as any;
     const bookingRequestId: string | undefined = shiftData?.bookingRequestId;
+    const caregiverId: string | undefined = shiftData?.caregiverId;
 
     const batch = db.batch();
     if (bookingRequestId) {
@@ -1060,11 +1075,34 @@ export const ClientVisitsPage: React.FC = () => {
       batch.update(db.collection('shifts').doc(shiftId), { status: 'cancelled' });
       await batch.commit();
     }
+
+    if (caregiverId) {
+      await db.collection('users').doc(caregiverId).collection('notifications').add({
+        userId: caregiverId,
+        type: 'booking',
+        title: 'Booking Cancelled',
+        body: `${user?.displayName || 'A client'} has cancelled their booking.`,
+        isRead: false,
+        createdAt: new Date().toISOString(),
+      }).catch(() => {});
+    }
   };
 
   const handleCancelPendingBooking = async (bookingId: string) => {
     if (!db) return;
+    const snap = await db.collection('booking_requests').doc(bookingId).get().catch(() => null);
+    const data = snap?.data() as any;
     await db.collection('booking_requests').doc(bookingId).update({ status: 'cancelled' });
+    if (data?.caregiverId) {
+      await db.collection('users').doc(data.caregiverId).collection('notifications').add({
+        userId: data.caregiverId,
+        type: 'booking',
+        title: 'Booking Request Cancelled',
+        body: `${user?.displayName || 'A client'} has cancelled their booking request.`,
+        isRead: false,
+        createdAt: new Date().toISOString(),
+      }).catch(() => {});
+    }
   };
 
   const activeShifts = shifts.filter(s => s.status === 'scheduled' || s.status === 'in-progress');

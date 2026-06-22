@@ -9,6 +9,7 @@ import { ViewType, AddToastFunction, Review, Caregiver } from '../types';
 import { hasValidTransportDocs } from '../utils/transportDocs';
 import { uploadDocument, DocumentType } from '../services/documentUpload';
 import { dbService, authService } from '../services/api';
+import { useCareConnex } from '../context/CareConnexContext';
 import { db } from '../lib/firebase';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../services/availabilityService';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
@@ -30,6 +31,7 @@ interface CaregiverProfileProps {
 const LANGUAGES = ['English', 'Spanish', 'French', 'Mandarin', 'Vietnamese', 'Tagalog'];
 
 export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, onShowToast }) => {
+  const { refreshCaregiverProfile } = useCareConnex();
   const [loading, setLoading] = useState(true);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [profile, setProfile] = useState<Partial<Caregiver> & Record<string, any>>({});
@@ -127,6 +129,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
       try {
         await dbService.updateUser('caregivers', currentUser.uid, data);
         setProfile(prev => ({ ...prev, ...data }));
+        refreshCaregiverProfile();
         onShowToast('Profile updated', 'success');
       } catch {
         onShowToast('Failed to update', 'error');
@@ -212,8 +215,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
           </button>
           <h1 className="text-2xl font-bold text-slate-900 ml-2">My Profile</h1>
         </div>
-
-        <ProfileApprovalBanner profile={profile as any} hasEngagement={hasEngagement} />
 
         {/* Hero card */}
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-6">

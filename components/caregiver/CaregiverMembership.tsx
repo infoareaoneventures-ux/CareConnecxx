@@ -8,6 +8,7 @@ import {
   CAREGIVER_ANNUAL_PRICE_ID,
 } from '../../services/stripeService';
 import { authService } from '../../services/api';
+import { useCareConnex } from '../../context/CareConnexContext';
 
 interface CaregiverMembershipProps {
   onNavigate: (view: any) => void;
@@ -41,9 +42,13 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
   onNavigate,
   onShowToast,
 }) => {
+  const { caregiverProfile } = useCareConnex();
+  const p = caregiverProfile as any;
+  const hasTransportation = (p?.services || p?.skills || []).includes('Transportation');
+  const includeMVR = hasTransportation;
+
   const [promoCode, setPromoCode] = useState('');
   const [promoApplied, setPromoApplied] = useState(false);
-  const [includeMVR, setIncludeMVR] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const annualPrice = 24.95;
@@ -163,12 +168,10 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
             </div>
           </div>
 
-          {/* MVR add-on */}
-          <div className="mb-6">
-            <button
-              type="button"
-              onClick={() => setIncludeMVR(v => !v)}
-              className={`w-full flex items-start gap-3 p-4 rounded-2xl border-2 text-left transition-colors ${includeMVR ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300 bg-white'}`}
+          {/* MVR add-on — only for caregivers with Transportation service */}
+          {hasTransportation && <div className="mb-6">
+            <div
+              className="w-full flex items-start gap-3 p-4 rounded-2xl border-2 text-left border-blue-500 bg-blue-50"
             >
               <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${includeMVR ? 'border-blue-500 bg-blue-500' : 'border-slate-300'}`}>
                 {includeMVR && <CheckCircle className="w-3.5 h-3.5 text-white" />}
@@ -185,8 +188,8 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
                   Includes a Motor Vehicle Report (MVR). Families that need a driver will be able to see your Approved Driver badge.
                 </p>
               </div>
-            </button>
-          </div>
+            </div>
+          </div>}
 
           {/* Promo code */}
           <div className="mb-6">

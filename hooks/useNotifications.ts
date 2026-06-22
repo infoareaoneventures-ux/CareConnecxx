@@ -34,10 +34,9 @@ export const useNotifications = (userId: string | null) => {
     setLoading(true);
     setError(null);
     
-    const notificationsRef = collection(db, 'notifications');
+    const notificationsRef = collection(db, 'users', userId, 'notifications');
     const q = query(
       notificationsRef,
-      where('userId', '==', userId),
       orderBy('createdAt', 'desc'),
       limit(50)
     );
@@ -49,6 +48,8 @@ export const useNotifications = (userId: string | null) => {
         snapshot.forEach((doc) => {
           notifs.push({ id: doc.id, ...doc.data() } as AppNotification);
         });
+        const toMs = (v: any) => v?.toDate ? v.toDate().getTime() : new Date(v).getTime();
+        notifs.sort((a, b) => toMs((b as any).createdAt) - toMs((a as any).createdAt));
         setNotifications(notifs);
         setUnreadCount(notifs.filter(n => !n.isRead).length);
         setLoading(false);
@@ -65,16 +66,16 @@ export const useNotifications = (userId: string | null) => {
   }, [userId]);
 
   const markAsRead = useCallback(async (notificationId: string) => {
-    if (!db) return;
+    if (!db || !userId) return;
     try {
-      await updateDoc(doc(db, 'notifications', notificationId), {
+      await updateDoc(doc(db, 'users', userId, 'notifications', notificationId), {
         isRead: true,
         readAt: serverTimestamp()
       });
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
-  }, []);
+  }, [userId]);
 
   const markAllAsRead = useCallback(async () => {
     const fdb = db;
@@ -84,7 +85,7 @@ export const useNotifications = (userId: string | null) => {
     notifications
       .filter(n => !n.isRead)
       .forEach(n => {
-        batch.update(doc(fdb, 'notifications', n.id), {
+        batch.update(doc(fdb, 'users', userId!, 'notifications', n.id), {
           isRead: true,
           readAt: serverTimestamp()
         });
@@ -95,20 +96,19 @@ export const useNotifications = (userId: string | null) => {
     } catch (error) {
       console.error('Error marking all notifications as read:', error);
     }
-  }, [notifications]);
+  }, [notifications, userId]);
 
   const deleteNotification = useCallback(async (notificationId: string) => {
-    if (!db) return;
+    if (!db || !userId) return;
     try {
-      // Soft delete by updating status
-      await updateDoc(doc(db, 'notifications', notificationId), {
+      await updateDoc(doc(db, 'users', userId, 'notifications', notificationId), {
         isDeleted: true,
         deletedAt: serverTimestamp()
       });
     } catch (error) {
       console.error('Error deleting notification:', error);
     }
-  }, []);
+  }, [userId]);
 
   return {
     notifications,
@@ -252,10 +252,9 @@ export const useUnreadNotificationCount = (userId: string | null) => {
   useEffect(() => {
     if (!userId || !db) return;
 
-    const notificationsRef = collection(db, 'notifications');
+    const notificationsRef = collection(db, 'users', userId, 'notifications');
     const q = query(
       notificationsRef,
-      where('userId', '==', userId),
       where('isRead', '==', false)
     );
 

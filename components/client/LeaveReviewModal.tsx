@@ -53,10 +53,18 @@ export const LeaveReviewModal: React.FC<LeaveReviewModalProps> = ({
         return;
       }
 
+      // Resolve client photo: Firebase Auth photoURL (OAuth) → Firestore users doc → null
+      let clientPhotoURL: string | null = user?.photoURL || null;
+      if (!clientPhotoURL && user?.uid) {
+        const userSnap = await db!.collection('users').doc(user.uid).get().catch(() => null);
+        const userData = userSnap?.data() as any;
+        clientPhotoURL = userData?.photoURL || userData?.photo || userData?.imageUrl || userData?.profilePhoto || null;
+      }
+
       await db!.collection('reviews').add({
         clientId:       user?.uid || '',
         clientName:     user?.displayName || 'Client',
-        clientPhotoURL: user?.photoURL || null,
+        clientPhotoURL,
         caregiverId,
         caregiverName,
         rating,

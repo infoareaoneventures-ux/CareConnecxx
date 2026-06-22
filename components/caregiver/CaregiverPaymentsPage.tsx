@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Zap, Landmark, CheckCircle2, AlertCircle, Lock,
   ExternalLink, Calendar, DollarSign, FileDown,
-  ShieldCheck, RefreshCw, XCircle, ChevronDown, ChevronUp, X, CheckCircle,
+  ShieldCheck, RefreshCw, XCircle, ChevronDown, ChevronUp, X, CheckCircle, Car,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { CaregiverTopNav } from './CaregiverTopNav';
@@ -12,7 +12,7 @@ import { InstantPayoutModal, PayoutMethod } from './InstantPayoutModal';
 import { CompletedShift, SubmitShiftHoursModal } from '../payroll/SubmitShiftHoursModal';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { shiftHoursService, dbService } from '../../services/api';
-import { checkOnboardingStatus, requestInstantPayout, requestStandardPayout, getSubscriptionStatus, getCaregiverBillingPortalUrl } from '../../services/stripeService';
+import { checkOnboardingStatus, requestInstantPayout, requestStandardPayout, getSubscriptionStatus, getCaregiverBillingPortalUrl, createMvrAddonCheckout } from '../../services/stripeService';
 import { db } from '../../lib/firebase';
 import type { Caregiver } from '../../types';
 
@@ -1463,6 +1463,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
   const [subLoading, setSubLoading] = useState(false);
   const [managing, setManaging] = useState(false);
+  const [becomingDriver, setBecomingDriver] = useState(false);
 
   // ── data subscriptions ──────────────────────────────────────────────────────
 
@@ -1695,6 +1696,24 @@ export const CaregiverPaymentsPage: React.FC = () => {
       addToast(msg, 'error');
     } finally {
       setManaging(false);
+    }
+  };
+
+  const handleBecomeApprovedDriver = async () => {
+    setBecomingDriver(true);
+    try {
+      const successUrl = `${window.location.origin}/caregiver/payments?mvr=success`;
+      const cancelUrl = `${window.location.origin}/caregiver/payments`;
+      const url = await createMvrAddonCheckout(successUrl, cancelUrl);
+      if (url) {
+        window.location.href = url;
+      } else {
+        addToast('Could not start the Approved Driver checkout. Please try again.', 'error');
+      }
+    } catch (e: any) {
+      addToast(e?.message || 'The Approved Driver add-on is unavailable right now. Please try again later.', 'error');
+    } finally {
+      setBecomingDriver(false);
     }
   };
 
@@ -2165,6 +2184,12 @@ export const CaregiverPaymentsPage: React.FC = () => {
               onManage={handleManageMembership}
               managing={managing}
             />
+            <ApprovedDriverCard
+              isApprovedDriver={(profile as any)?.isApprovedDriver === true}
+              mvrPending={(profile as any)?.mvrPaid === true && (profile as any)?.isApprovedDriver !== true}
+              onBecomeDriver={handleBecomeApprovedDriver}
+              busy={becomingDriver}
+            />
           </div>
         )}
       </div>
@@ -2178,6 +2203,76 @@ export const CaregiverPaymentsPage: React.FC = () => {
           onShowToast={addToast}
         />
       )}
+    </div>
+  );
+};
+
+// ── ApprovedDriverCard ─────────────────────────────────────────────────────────
+// Surfaces the caregiver's Approved Driver (MVR) status and the self-serve
+// "add MVR later" upgrade. isApprovedDriver was previously written by the backend
+// but shown nowhere — this is its first UI surface.
+
+interface ApprovedDriverCardProps {
+  isApprovedDriver: boolean;
+  mvrPending: boolean;
+  onBecomeDriver: () => void;
+  busy: boolean;
+}
+
+const ApprovedDriverCard: React.FC<ApprovedDriverCardProps> = ({
+  isApprovedDriver, mvrPending, onBecomeDriver, busy,
+}) => {
+  if (isApprovedDriver) {
+    return (
+      <div className="bg-white rounded-2xl border border-blue-200 p-5 flex items-center gap-3">
+        <div className="w-11 h-11 bg-blue-500 rounded-xl flex items-center justify-center flex-shrink-0">
+          <Car className="w-5 h-5 text-white" />
+        </div>
+        <div className="flex-1">
+          <p className="font-semibold text-slate-900 text-sm flex items-center gap-1.5">
+            Approved Driver <CheckCircle className="w-4 h-4 text-blue-600" />
+          </p>
+          <p className="text-xs text-slate-500">Families who need a driver can see your verified-driver badge.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (mvrPending) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
+        <div className="w-11 h-11 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0">
+          <Car className="w-5 h-5 text-slate-400" />
+        </div>
+        <div className="flex-1">
+          <p className="font-semibold text-slate-900 text-sm">Driver check in progress</p>
+          <p className="text-xs text-slate-500">Your Motor Vehicle Report is being reviewed. We'll activate your Approved Driver badge once it clears.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-5">
+      <div className="flex items-start gap-3 mb-4">
+        <div className="w-11 h-11 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+          <Car className="w-5 h-5 text-blue-600" />
+        </div>
+        <div className="flex-1">
+          <p className="font-semibold text-slate-900 text-sm">Become an Approved Driver</p>
+          <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+            Add a Motor Vehicle Report (MVR) check so families who need a driver can see your verified-driver badge. One-time add-on; doesn't change your membership.
+          </p>
+        </div>
+      </div>
+      <button
+        onClick={onBecomeDriver}
+        disabled={busy}
+        className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+      >
+        {busy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Car className="w-4 h-4" />}
+        {busy ? 'Starting checkout…' : 'Add Approved Driver status'}
+      </button>
     </div>
   );
 };

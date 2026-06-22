@@ -79,6 +79,24 @@ export const createCaregiverCheckoutSession = async (
   return url ?? null;
 };
 
+// Create a one-time checkout session for the standalone MVR ("Approved Driver")
+// add-on purchased after signup. On payment, the backend initiates an MVR-only
+// Checkr check; the result only affects the Approved Driver badge.
+export const createMvrAddonCheckout = async (
+  successUrl: string,
+  cancelUrl: string,
+): Promise<string | null> => {
+  if (!auth) throw new Error('Auth not initialized');
+  const user = auth.currentUser;
+  if (!user) throw new Error('User must be logged in');
+
+  const functions = getFunctions();
+  const fn = httpsCallable(functions, 'v1-createMvrAddonCheckoutSession');
+  const result = await fn({ successUrl, cancelUrl });
+  const { url } = (result.data as { url?: string }) ?? {};
+  return url ?? null;
+};
+
 // Open the Stripe Billing Portal for a caregiver to update their payment method
 export const openCaregiverBillingPortal = async (returnUrl: string): Promise<void> => {
   if (!auth) throw new Error('Auth not initialized');

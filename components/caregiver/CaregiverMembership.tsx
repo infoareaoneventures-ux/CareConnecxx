@@ -45,7 +45,10 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
   const { caregiverProfile } = useCareConnex();
   const p = caregiverProfile as any;
   const hasTransportation = (p?.services || p?.skills || []).includes('Transportation');
-  const includeMVR = hasTransportation;
+  // MVR is a real opt-in for every caregiver (default off), not auto-bundled with
+  // the Transportation service. Default it on for drivers as a helpful suggestion,
+  // but it remains fully toggleable.
+  const [includeMVR, setIncludeMVR] = useState<boolean>(false);
 
   const [promoCode, setPromoCode] = useState('');
   const [promoApplied, setPromoApplied] = useState(false);
@@ -168,10 +171,13 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
             </div>
           </div>
 
-          {/* MVR add-on — only for caregivers with Transportation service */}
-          {hasTransportation && <div className="mb-6">
-            <div
-              className="w-full flex items-start gap-3 p-4 rounded-2xl border-2 text-left border-blue-500 bg-blue-50"
+          {/* MVR add-on — a real opt-in offered to every caregiver */}
+          <div className="mb-6">
+            <button
+              type="button"
+              onClick={() => setIncludeMVR(v => !v)}
+              aria-pressed={includeMVR}
+              className={`w-full flex items-start gap-3 p-4 rounded-2xl border-2 text-left transition-colors ${includeMVR ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-300'}`}
             >
               <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${includeMVR ? 'border-blue-500 bg-blue-500' : 'border-slate-300'}`}>
                 {includeMVR && <CheckCircle className="w-3.5 h-3.5 text-white" />}
@@ -188,8 +194,8 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
                   Includes a Motor Vehicle Report (MVR). Families that need a driver will be able to see your Approved Driver badge.
                 </p>
               </div>
-            </div>
-          </div>}
+            </button>
+          </div>
 
           {/* Promo code */}
           <div className="mb-6">

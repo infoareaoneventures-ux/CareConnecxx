@@ -13,7 +13,7 @@ const cg = (over: Partial<Parameters<typeof formatCaregiverSnapshot>[0]> = {}) =
   });
 
 const client = (over: Partial<Parameters<typeof formatClientSnapshot>[0]> = {}) =>
-  formatClientSnapshot({ openJobs: 0, totalApplicants: 0, pendingTimesheets: 0, upcomingVisits: 0, ...over });
+  formatClientSnapshot({ openJobs: 0, totalApplicants: 0, pendingTimesheets: 0, upcomingVisits: 0, openJobTitle: null, ...over });
 
 describe("formatCaregiverSnapshot", () => {
   it("returns empty string when nothing needs attention", () => {
@@ -56,6 +56,17 @@ describe("formatClientSnapshot", () => {
 
   it("folds applicant total into the open-jobs line", () => {
     expect(client({ openJobs: 2, totalApplicants: 5 })).toContain("2 open job posts (5 applicants total)");
+  });
+
+  it("names the job when exactly one is open (connect-the-dots)", () => {
+    const out = client({ openJobs: 1, totalApplicants: 3, openJobTitle: "weekend coverage for Mom" });
+    expect(out).toContain("1 open job post for weekend coverage for Mom (3 applicants total)");
+  });
+
+  it("falls back to a count when several jobs are open even if a title is passed", () => {
+    const out = client({ openJobs: 3, totalApplicants: 4, openJobTitle: "ignored" });
+    expect(out).toContain("3 open job posts (4 applicants total)");
+    expect(out).not.toContain("ignored");
   });
 
   it("omits the applicant parenthetical when there are no applicants", () => {

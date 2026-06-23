@@ -37,6 +37,17 @@ export interface ClientSnapshotInput {
   totalApplicants:   number;
   pendingTimesheets: number;
   upcomingVisits:    number;
+  // When there's exactly one open job, its title — so Cara can name it ("3
+  // applicants on your weekend-coverage post") instead of an abstract count.
+  openJobTitle:      string | null;
+}
+
+/** A short, human label for a job post — mirrors list_client_jobs (mcp/server.ts). */
+function jobTitle(data: admin.firestore.DocumentData): string {
+  const raw = (data.summary as string) ||
+    `care — ${((data.careTypes as string[]) ?? []).slice(0, 2).join(", ")}`.trim();
+  const cleaned = raw.replace(/\s+/g, " ").trim() || "care";
+  return cleaned.length > 45 ? `${cleaned.slice(0, 44)}…` : cleaned;
 }
 
 const SNAPSHOT_HEADER =
@@ -71,7 +82,11 @@ export function formatClientSnapshot(s: ClientSnapshotInput): string {
     const applicants = s.totalApplicants > 0
       ? ` (${s.totalApplicants} applicant${s.totalApplicants === 1 ? "" : "s"} total)`
       : "";
-    lines.push(`- ${s.openJobs} open job post${s.openJobs === 1 ? "" : "s"}${applicants}.`);
+    if (s.openJobs === 1 && s.openJobTitle) {
+      lines.push(`- 1 open job post for ${s.openJobTitle}${applicants}.`);
+    } else {
+      lines.push(`- ${s.openJobs} open job posts${applicants}.`);
+    }
   }
   if (s.pendingTimesheets > 0)
     lines.push(`- ${s.pendingTimesheets} timesheet${s.pendingTimesheets === 1 ? "" : "s"} waiting for your approval.`);
@@ -173,11 +188,16 @@ export async function buildClientSnapshot(userId: string): Promise<string> {
     const totalApplicants = openJobDocs
       .reduce((sum, d) => sum + ((d.data().applicantCount as number) ?? 0), 0);
 
+    // Name the job only when there's exactly one open — naming it is the
+    // "connect the dots" win; with several, a count avoids picking the wrong one.
+    const openJobTitle = openJobDocs.length === 1 ? jobTitle(openJobDocs[0].data()) : null;
+
     return formatClientSnapshot({
       openJobs:          openJobDocs.length,
       totalApplicants,
       pendingTimesheets: tsSnap?.size ?? 0,
       upcomingVisits:    visitSnap?.size ?? 0,
+      openJobTitle,
     });
   } catch {
     return "";

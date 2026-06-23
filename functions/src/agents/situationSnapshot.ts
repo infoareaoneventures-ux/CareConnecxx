@@ -110,9 +110,13 @@ export async function buildCaregiverSnapshot(
     const today = new Date().toISOString().slice(0, 10);
     const weekAhead = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const [interviewSnap, appSnap, visitSnap] = await Promise.all([
+      // Statuses where the caregiver themselves must respond. Includes the SMS
+      // interview flow's "awaiting_caregiver_availability" (interviewAgent.ts) —
+      // previously missed. "pending_presentation" is excluded: it can mean
+      // awaiting presentation to the client, not the caregiver.
       db.collection("interview_requests")
         .where("caregiverId", "==", caregiverId)
-        .where("status", "in", ["pending_presentation", "awaiting_caregiver_response"])
+        .where("status", "in", ["awaiting_caregiver_availability", "awaiting_caregiver_response"])
         .limit(10).get().catch(() => null),
       db.collection("job_applications")
         .where("caregiverId", "==", caregiverId)

@@ -187,6 +187,9 @@ export { sendStaleApplicantNudges } from './scheduled/staleApplicantNudge';
 // PENDING TIMESHEET NUDGE (daily 5pm — reminds families to approve hours so caregivers get paid)
 export { sendPendingTimesheetNudges } from './scheduled/pendingTimesheetNudge';
 
+// INTERVIEW RESPONSE REMINDER (every 6h — nudges caregivers to respond before the request expires)
+export { sendInterviewResponseReminders } from './scheduled/interviewResponseReminder';
+
 // GPS CHECK-IN (callable — validates caregiver arrival within 200m, notifies family)
 export { submitGpsCheckin } from './agents/gpsCheckin';
 

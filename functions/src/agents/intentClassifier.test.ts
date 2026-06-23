@@ -117,3 +117,43 @@ describe("classifyIntentDetailed — degradation signal", () => {
     expect(await classifyIntent("I need a caregiver", false)).toBe("FIND_CAREGIVER");
   });
 });
+
+describe("classifyIntentDetailed — retry on transient failure (U4)", () => {
+  beforeEach(() => {
+    hoisted.quickComplete.mockReset();
+  });
+
+  it("recovers when the first attempt throws and the retry succeeds", async () => {
+    hoisted.quickComplete
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce("FIND_CAREGIVER");
+    const out = await classifyIntentDetailed("I need a caregiver", false);
+    expect(out).toEqual({ intent: "FIND_CAREGIVER", degraded: false });
+    expect(hoisted.quickComplete).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers when the first attempt returns garbage and the retry is valid", async () => {
+    hoisted.quickComplete
+      .mockResolvedValueOnce("NOT_AN_INTENT")
+      .mockResolvedValueOnce("CANCEL_REQUEST");
+    const out = await classifyIntentDetailed("cancel my Tuesday visit", false);
+    expect(out).toEqual({ intent: "CANCEL_REQUEST", degraded: false });
+    expect(hoisted.quickComplete).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT retry when the first attempt is already valid", async () => {
+    hoisted.quickComplete.mockResolvedValueOnce("FIND_CAREGIVER");
+    const out = await classifyIntentDetailed("I need a caregiver", false);
+    expect(out).toEqual({ intent: "FIND_CAREGIVER", degraded: false });
+    expect(hoisted.quickComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("degrades to QUESTION only after both attempts fail", async () => {
+    hoisted.quickComplete
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockRejectedValueOnce(new Error("timeout again"));
+    const out = await classifyIntentDetailed("hey", false);
+    expect(out).toEqual({ intent: "QUESTION", degraded: true });
+    expect(hoisted.quickComplete).toHaveBeenCalledTimes(2);
+  });
+});

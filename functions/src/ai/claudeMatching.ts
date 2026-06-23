@@ -71,6 +71,10 @@ export interface CandidateSignals {
   hasDementiaCert?: boolean;
   hasMedicalCred?: boolean;
   feedbackSummary?: string;
+  // Platform-wide reputation across all families (U6) — a bounded tie-breaker,
+  // present only when there's signal. Distinct from feedbackSummary, which is
+  // this one family's prior history.
+  reputationNote?: string;
   // Extra context from rule-based pre-scorer
   ruleScore?: number;
 }

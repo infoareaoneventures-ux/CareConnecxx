@@ -17,6 +17,7 @@ import {
   ClaudeScoredMatch,
 } from "../ai/claudeMatching";
 import { getOutcomePatternSummary } from "../ai/outcomeAnalytics";
+import { getReputationBoosts } from "../ai/caregiverReputation";
 import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
@@ -182,8 +183,27 @@ export async function runMatchingForClient(
       ...computeRuleSignals(c, intake),
     }));
 
-    // Step 2: take top 15 by rule score to send to Claude
-    const topCandidates = withSignals
+    // Step 2: take the strongest candidates by rule score, then fold in
+    // platform reputation (U6) as a bounded tie-breaker before the final
+    // top-15 cut. Pull a slightly wider pool so a strong-reputation caregiver
+    // can be promoted INTO the cut, not merely reordered within it. Reputation
+    // is capped so it tilts ties without overriding skills/proximity, and a
+    // caregiver with no outcomes scores neutral (boost 0).
+    const prelim = withSignals
+      .sort((a, b) => b.ruleScore - a.ruleScore)
+      .slice(0, 20);
+    const repBoosts = await getReputationBoosts(db, prelim.map(x => x.c.id))
+      .catch(() => new Map<string, number>());
+    for (const cand of prelim) {
+      const boost = repBoosts.get(cand.c.id) ?? 0;
+      if (boost === 0) continue;
+      cand.ruleScore = Math.max(0, cand.ruleScore + boost);
+      cand.signals.ruleScore = cand.ruleScore;
+      cand.signals.reputationNote = boost > 0
+        ? `platform reputation: positive — families across the platform tend to hire (+${boost.toFixed(1)})`
+        : `platform reputation: caution — families have tended to pass (${boost.toFixed(1)})`;
+    }
+    const topCandidates = prelim
       .sort((a, b) => b.ruleScore - a.ruleScore)
       .slice(0, 15);
 

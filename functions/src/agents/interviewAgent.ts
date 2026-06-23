@@ -478,12 +478,20 @@ export async function writeInterviewOutcomeSignal(
   caregiverId: string,
   outcome:     "hire" | "pass"
 ): Promise<void> {
+  // Per-CLIENT signal (re-ranks this family's future matches).
   await writeFeedbackSignal({
     clientId,
     caregiverId,
     signal: outcome === "hire" ? 3 : -2,
     source: outcome === "hire" ? "hire" : "pass",
   }).catch((err) => console.error("writeInterviewOutcomeSignal error:", err));
+
+  // Platform-wide per-caregiver reputation (U5) — lets a NEW family benefit
+  // from other families' outcomes. Independent of the per-client signal above;
+  // failure here must not block the per-client write, so it's fire-and-forget.
+  const { recordCaregiverOutcome } = await import("../ai/caregiverReputation");
+  recordCaregiverOutcome(db, caregiverId, outcome)
+    .catch((err) => console.error("writeInterviewOutcomeSignal reputation error:", err));
 }
 
 // ── Post-interview follow-up ──────────────────────────────────────────────────

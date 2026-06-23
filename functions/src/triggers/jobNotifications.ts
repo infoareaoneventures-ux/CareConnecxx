@@ -7,8 +7,12 @@ import { parseWithClaude } from "../utils/parseWithClaude";
 import { quickComplete } from "../utils/openaiClient";
 
 const MATCH_PUSH_THRESHOLD = 80; // push only when skill overlap is ≥ 80%
+// U11 — only INVITE caregivers whose profile actually fits the job, not every
+// active caregiver in range. Tunable; jobs with no stated care types score 50
+// and so still reach nearby caregivers.
+export const INVITE_MATCH_THRESHOLD = 34;
 
-function computeSimpleMatchScore(cgSkills: string[], jobCareTypes: string[]): number {
+export function computeSimpleMatchScore(cgSkills: string[], jobCareTypes: string[]): number {
   if (!jobCareTypes.length) return 50;
   const cgNorm = cgSkills.map(s => s.toLowerCase());
   const matches = jobCareTypes.filter(t => cgNorm.some(s => s.includes(t.toLowerCase()) || t.toLowerCase().includes(s)));
@@ -127,6 +131,17 @@ export async function notifyAreaCaregivers(
     const dist  = haversineMiles(clientLat, clientLng, cgLat, cgLng);
     if (dist === undefined || dist > NOTIFY_RADIUS_MILES) continue;
 
+    // Profile-fit gate (U11): a caregiver covering none of the job's care types
+    // is skipped rather than blasted "a job opened near you". The same score
+    // decides the FCM push below, so it's computed once here.
+    const cgSkills: string[] = [
+      ...(cg.specialties ?? []),
+      ...(cg.medicalSkills ?? []),
+      ...(cg.certifications ?? []),
+    ];
+    const matchScore = computeSimpleMatchScore(cgSkills, careTypes);
+    if (matchScore < INVITE_MATCH_THRESHOLD) continue;
+
     try {
       // Idempotency guard — don't text the same caregiver twice for the same job
       const existing = await db.collection("job_notifications")
@@ -169,19 +184,12 @@ export async function notifyAreaCaregivers(
 
       notifiedCount++;
 
-      // FCM push for high-match caregivers (cap at 50)
-      if (pushSentCount < 50) {
-        const cgSkills: string[] = [
-          ...(cg.specialties ?? []),
-          ...(cg.medicalSkills ?? []),
-          ...(cg.certifications ?? []),
-        ];
-        const matchScore = computeSimpleMatchScore(cgSkills, careTypes);
-        if (matchScore >= MATCH_PUSH_THRESHOLD) {
-          await sendJobMatchPush(doc.id, jobId, jobTitle, city || "your area", matchScore)
-            .catch(err => console.error(`[notifyAreaCaregivers] push failed for ${doc.id}:`, err));
-          pushSentCount++;
-        }
+      // FCM push for high-match caregivers (cap at 50). Reuses the matchScore
+      // computed above for the invite gate.
+      if (pushSentCount < 50 && matchScore >= MATCH_PUSH_THRESHOLD) {
+        await sendJobMatchPush(doc.id, jobId, jobTitle, city || "your area", matchScore)
+          .catch(err => console.error(`[notifyAreaCaregivers] push failed for ${doc.id}:`, err));
+        pushSentCount++;
       }
     } catch (err) {
       console.error(`[notifyAreaCaregivers] Failed for caregiver ${doc.id}:`, err);

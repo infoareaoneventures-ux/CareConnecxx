@@ -190,6 +190,9 @@ export { sendPendingTimesheetNudges } from './scheduled/pendingTimesheetNudge';
 // INTERVIEW RESPONSE REMINDER (every 6h — nudges caregivers to respond before the request expires)
 export { sendInterviewResponseReminders } from './scheduled/interviewResponseReminder';
 
+// FIRST-VISIT ACTIVATION (daily 3pm — offers to help families who onboarded but never booked)
+export { sendFirstVisitActivation } from './scheduled/firstVisitActivation';
+
 // GPS CHECK-IN (callable — validates caregiver arrival within 200m, notifies family)
 export { submitGpsCheckin } from './agents/gpsCheckin';
 

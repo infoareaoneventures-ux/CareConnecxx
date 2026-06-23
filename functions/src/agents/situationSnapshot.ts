@@ -43,7 +43,7 @@ export interface ClientSnapshotInput {
 }
 
 /** A short, human label for a job post — mirrors list_client_jobs (mcp/server.ts). */
-function jobTitle(data: admin.firestore.DocumentData): string {
+export function jobTitle(data: admin.firestore.DocumentData): string {
   const raw = (data.summary as string) ||
     `care — ${((data.careTypes as string[]) ?? []).slice(0, 2).join(", ")}`.trim();
   const cleaned = raw.replace(/\s+/g, " ").trim() || "care";

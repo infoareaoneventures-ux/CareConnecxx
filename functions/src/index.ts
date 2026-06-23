@@ -181,6 +181,9 @@ export const getMatchPatterns = functions.https.onCall(async (_data, context) =>
 // JOB MATCH NOTIFICATIONS (daily 10am — texts caregivers about high-match new jobs)
 export { sendJobMatchNotifications } from './scheduled/jobMatchNotifications';
 
+// STALE APPLICANT NUDGE (daily 4pm — follows up with families sitting on unreviewed applicants)
+export { sendStaleApplicantNudges } from './scheduled/staleApplicantNudge';
+
 // GPS CHECK-IN (callable — validates caregiver arrival within 200m, notifies family)
 export { submitGpsCheckin } from './agents/gpsCheckin';
 

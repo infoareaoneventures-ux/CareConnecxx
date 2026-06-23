@@ -8,6 +8,7 @@ import { supervise } from "../safety/supervisor";
 import { logAudit } from "../observability/auditLog";
 import { classifyIntent, Intent } from "./intentClassifier";
 import { claimOutboundSend } from "../utils/outboundLedger";
+import { evaluateProactiveCap, MAX_PROACTIVE_PER_DAY, type ProactiveTally } from "./proactiveCap";
 
 const db = admin.firestore();
 
@@ -193,6 +194,11 @@ export async function sendViaInteractionAgent(
 
   const prefs = await getPreferences(phone);
 
+  // When this send is an allowed proactive nudge, the tally to persist after it
+  // actually goes out (null = not subject to the daily cap). Written at the end
+  // alongside lastMessageSentAt so a later dedup/failure doesn't burn budget.
+  let proactiveTallyToPersist: ProactiveTally | null = null;
+
   // Wait tool judgment — may suppress non-critical messages
   if (output.canDrop) {
     const send = await shouldSend(output, phone, prefs, session as Record<string, unknown>);
@@ -204,6 +210,26 @@ export async function sendViaInteractionAgent(
         data: { suppressed: true, reason: "wait_tool", sourceAgent: output.sourceAgent, preview: output.content.slice(0, 50) },
       }).catch(() => {});
       return;
+    }
+
+    // Global per-user daily cap across ALL proactive sources. shouldSend judged
+    // "send now?"; this enforces "enough today?". Urgent/immediate bypasses.
+    if (output.urgency !== "immediate") {
+      const today = new Date().toISOString().slice(0, 10);
+      const cap = evaluateProactiveCap(
+        (session as Record<string, unknown>).proactiveSentToday as ProactiveTally | undefined,
+        today,
+      );
+      if (!cap.allowed) {
+        logAudit({
+          eventType: "message_sent",
+          userId:    phone,
+          phone,
+          data: { suppressed: true, reason: "daily_cap", cap: MAX_PROACTIVE_PER_DAY, sourceAgent: output.sourceAgent, preview: output.content.slice(0, 50) },
+        }).catch(() => {});
+        return;
+      }
+      proactiveTallyToPersist = cap.next;
     }
   }
 
@@ -253,10 +279,13 @@ export async function sendViaInteractionAgent(
     await sendMessage(targetChatId, buildClickableMessage(chunks[i]), sendOpts);
   }
 
-  // Update lastMessageSentAt
+  // Update lastMessageSentAt, and the proactive daily tally if this was a capped
+  // nudge that actually went out (incremented only on a real send).
+  const sessionUpdate: Record<string, unknown> = { lastMessageSentAt: new Date().toISOString() };
+  if (proactiveTallyToPersist) sessionUpdate.proactiveSentToday = proactiveTallyToPersist;
   db.collection("agent_sessions").doc(phone)
-    .update({ lastMessageSentAt: new Date().toISOString() })
-    .catch((err) => console.error("caraAgent: failed to update lastMessageSentAt", err));
+    .update(sessionUpdate)
+    .catch((err) => console.error("caraAgent: failed to update session send markers", err));
 
   // HIPAA audit log
   logAudit({

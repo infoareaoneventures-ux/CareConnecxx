@@ -29,6 +29,8 @@ import { MEMORY_GUIDELINES } from "./memoryGuidelines";
 import { VOICE_EXEMPLARS } from "./voiceExemplars";
 import { computeVoiceProfile, buildVoiceDirective } from "./voiceMirror";
 import { decideRecovery } from "./recoveryDecision";
+import { buildCaregiverSnapshot, buildClientSnapshot } from "./situationSnapshot";
+import { SMART_DEFAULTS_DIRECTIVE } from "./smartDefaults";
 import { runEphemeralSubAgent } from "./ephemeralSubAgents";
 import { pickSkill } from "./skillPicker";
 import { findSkill, buildSkillDirective } from "./skills";
@@ -404,6 +406,8 @@ function buildClientSystemPrompt(
     ``,
     `SMART DEFAULTS — when the family asks to book a visit or hire a caregiver, look at the "Booking history" section above first. If there's a clear pattern ("Monday 9am, 4h"), propose it as the default instead of asking open-ended ("Next Monday at your usual 9am?"). Only ask for date/time if there's no pattern or they explicitly want something different.`,
     ``,
+    SMART_DEFAULTS_DIRECTIVE,
+    ``,
     `Cara is a warm, direct care assistant who texts like a trusted family friend — someone who knows what they're talking about and always leads with the person before the information.`,
     ``,
     `She is not a chatbot. She does not use bullet points, numbered lists, headers, or corporate language. She keeps messages short because she respects people's time.`,
@@ -536,6 +540,8 @@ function buildCaregiverSystemPrompt(
     `She uses their first name. She keeps messages short. She gives them exactly what they need.`,
     `She never says "Keep up the great work!" or uses corporate encouragement language.`,
     `She never uses bullet points, numbered lists, or emoji in messages.`,
+    ``,
+    SMART_DEFAULTS_DIRECTIVE,
     ``,
     `TOOL USE (non-negotiable): Never announce tool usage. Never say "let me check", "looking that up", or any variation. Call the tool and respond as if you already knew. Your tools are invisible.`,
     ``,
@@ -891,7 +897,7 @@ export async function runQaAgent(params: {
     ]);
 
   if (userType === "caregiver" && caregiverId) {
-    const [caregiver, todayAppt, hist, cgZepContext] = await Promise.all([
+    const [caregiver, todayAppt, hist, cgZepContext, cgSnapshot] = await Promise.all([
       getCaregiverProfile(caregiverId),
       getCaregiverTodayAppointment(caregiverId),
       getConversationHistory(phone),
@@ -899,12 +905,16 @@ export async function runQaAgent(params: {
         console.warn("qaAgent: Zep context unavailable (caregiver)", err instanceof Error ? err.message : err);
         return ZEP_UNAVAILABLE_MARKER;
       }), "caregiver") : Promise.resolve(""),
+      // Situation snapshot — the caregiver standing context was nearly bare;
+      // this surfaces pending interviews/applications/offers so Cara can lead.
+      buildCaregiverSnapshot(caregiverId, session),
     ]);
     const contextFlags = session ? {
       pendingPayoutNotificationAck: (session as any).pendingPayoutNotificationAck as string | undefined,
       pendingBgCheckAck:            (session as any).pendingBgCheckAck            as string | undefined,
     } : undefined;
     systemPrompt = buildCaregiverSystemPrompt(caregiver, todayAppt, cgZepContext || undefined, contextFlags);
+    if (cgSnapshot) systemPrompt += `\n\n${cgSnapshot}`;
     history = hist;
 
     // Clear the context flags after a reply consumes them — they're one-shot context.
@@ -926,6 +936,14 @@ export async function runQaAgent(params: {
     // theirs. Conversation history with THIS phone stays — that's their own
     // SMS thread with Cara, not someone else's data.
     const unconfirmedIdentity = !!(session as any)?.__unconfirmedIdentity;
+
+    // Situation snapshot (open jobs + applicants, pending timesheets) — kicked
+    // off here so it runs in parallel with the rest of context assembly; awaited
+    // at injection time below. Suppressed for unconfirmed identity, same as the
+    // other cross-entity context, so we never surface another person's data.
+    const clientSnapshotPromise: Promise<string> = unconfirmedIdentity
+      ? Promise.resolve("")
+      : buildClientSnapshot(userId);
 
     const prefetched = unconfirmedIdentity ? null : await getPrefetchedContext(phone);
     metrics.prefetchHit = !!prefetched;
@@ -1033,6 +1051,9 @@ export async function runQaAgent(params: {
       activeVisit,
       bookingPatterns || undefined
     );
+
+    const clientSnapshot = await clientSnapshotPromise.catch(() => "");
+    if (clientSnapshot) systemPrompt += `\n\n${clientSnapshot}`;
 
     // If correction was applied, log it so caller knows (useful for debugging)
     if (correctionApplied) {

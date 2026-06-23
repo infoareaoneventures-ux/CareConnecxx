@@ -1013,16 +1013,30 @@ async function handlePaymentMethodAttached(pm: Stripe.PaymentMethod): Promise<vo
     if (!clientPhone) continue;
 
     try {
-      // Reset status so executeBookings can proceed
-      await taskDoc.ref.update({ status: "approved" });
-
-      const { executeBookings } = await import("./agents/bookingExecutor");
-      await executeBookings(taskDoc.id, clientPhone);
-
-      console.log(`[handlePaymentMethodAttached] Retried booking task ${taskDoc.id} for customer ${customerId}`);
+      // The appointments were already created and the family already heard
+      // "all booked" when the caregiver accepted — only the card was missing.
+      // Re-running executeBookings/finalizeAcceptedBooking would DUPLICATE the
+      // booking and the confirmation (executeBookings recreates appointments and
+      // re-offers the shift; finalizeAcceptedBooking re-sends "all booked").
+      // Also, executeBookings only proceeds on status "awaiting_approval", so the
+      // old reset-to-"approved" was a silent no-op. Just finalize the task and
+      // tell the family payment is active. Moving the status out of
+      // pending_payment_setup also makes a webhook redelivery a no-op.
+      await taskDoc.ref.update({
+        status:                  "payment_complete",
+        paymentSetupCompletedAt: new Date().toISOString(),
+      });
+      const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
+      if (sessionSnap.exists) {
+        const { sendMessage } = await import("./linq/client");
+        await sendMessage(
+          sessionSnap.data()!.chatId,
+          "Your card's on file — you're all set. I'll charge automatically after each visit.",
+        ).catch(() => {});
+      }
+      console.log(`[handlePaymentMethodAttached] finalized booking task ${taskDoc.id} for customer ${customerId}`);
     } catch (err) {
-      console.error(`[handlePaymentMethodAttached] retry failed for task ${taskDoc.id}:`, err);
-      await taskDoc.ref.update({ status: "pending_payment_setup" }); // revert
+      console.error(`[handlePaymentMethodAttached] finalize failed for task ${taskDoc.id}:`, err);
     }
   }
 }

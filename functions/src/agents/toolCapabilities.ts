@@ -231,6 +231,49 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
   NEW_PRESCRIPTION:        ["memory_search", "messaging"],
 };
 
+// ── High-stakes mutations ─────────────────────────────────────────────────
+// Tools where falsely reporting success is harmful: the user would believe a
+// booking / cancellation / charge / removal / profile change happened when it
+// did not. When one of these returns a tool error, the agent loop surfaces it
+// as an `is_error` tool_result with an explicit "do not claim success"
+// instruction (see qaAgent.ts), instead of the soft buildToolResultContent
+// path used for read-only lookups. Curated rather than prefix-derived so
+// adding a tool here is a deliberate decision; genuinely low-stakes writes
+// (journal likes/comments, memory notes Cara already echoes back) are
+// intentionally excluded.
+export const HIGH_STAKES_MUTATIONS = new Set<string>([
+  // bookings & visits
+  "request_booking", "reschedule_appointment", "cancel_appointment",
+  "manage_recurring_schedule", "modify_recurring_schedule", "initiate_client_swap",
+  // interviews, hiring, jobs
+  "schedule_interview", "respond_to_interview_request", "submit_interview_feedback",
+  "respond_to_job_application", "apply_to_job", "edit_job_post", "cancel_job_post",
+  // shifts
+  "accept_shift", "decline_shift", "submit_shift_hours", "review_shift_hours",
+  "request_shift_swap", "accept_shift_swap", "cancel_shift_swap", "submit_gps_checkin",
+  // money
+  "cancel_subscription", "reactivate_subscription", "create_refund_request",
+  "request_instant_payout",
+  // people & safety
+  "add_family_member", "remove_family_member", "block_user", "unblock_user", "report_user",
+  // care data
+  "update_senior_profile", "update_care_plan", "restore_care_plan_version",
+  "create_care_journal_entry", "log_health_flag",
+  // profiles & account
+  "update_user_profile", "update_communication_preferences",
+  "update_caregiver_profile", "update_caregiver_availability",
+  "pause_account", "reactivate_account",
+  // reminders & follow-ups
+  "create_reminder", "delete_reminder", "schedule_followup", "cancel_followup",
+  // message relays (family/caregiver believe a message was delivered)
+  "send_caregiver_message", "send_client_message",
+]);
+
+/** True when a failed call to this tool must NOT be reported to the user as success. */
+export function isHighStakesMutation(toolName: string): boolean {
+  return HIGH_STAKES_MUTATIONS.has(toolName);
+}
+
 /**
  * Filter a tool list by the capabilities required for the given intent.
  *

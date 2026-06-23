@@ -20,7 +20,7 @@ import { createTurnMetrics, emitTurnMetrics, type TurnMetrics } from "./turnMetr
 import { MCP_TOOLS, CAREGIVER_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
 import { callClaudeWithRetry } from "../utils/claudeRetry";
 import { getActiveAgentForUser } from "./executionAgent";
-import { selectToolsForIntent } from "./toolCapabilities";
+import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { withToolsCacheControl } from "./toolCache";
 import { getLatestPending } from "./pendingActions";
 import { resolveLoopBudget, MAX_TOOL_CALLS_PER_TURN } from "./loopBudget";
@@ -1532,11 +1532,28 @@ export async function runQaAgent(params: {
               }).catch(() => {/* non-critical */});
             }
 
-            toolResults.push({
-              type:        "tool_result",
-              tool_use_id: block.id,
-              content:     await buildToolResultContent(userId, block.name, result),
-            });
+            if (errored && isHighStakesMutation(block.name)) {
+              // A state-changing action failed. Never let Claude report success:
+              // surface the failure as an is_error result with an explicit
+              // instruction so it tells the user the action didn't go through
+              // and offers to retry — instead of the soft buildToolResultContent
+              // path, which a partially-successful turn could gloss over.
+              const failMsg = (result as { message?: unknown })?.message
+                ?? (result as { error?: unknown })?.error
+                ?? "the action did not complete";
+              toolResults.push({
+                type:        "tool_result",
+                tool_use_id: block.id,
+                is_error:    true,
+                content:     `${block.name} did NOT go through (${String(failMsg)}). This is a state-changing action — do not tell the user it succeeded. Tell them it didn't complete and offer to try again.`,
+              });
+            } else {
+              toolResults.push({
+                type:        "tool_result",
+                tool_use_id: block.id,
+                content:     await buildToolResultContent(userId, block.name, result),
+              });
+            }
           }
         }
         messages.push({ role: "assistant", content: response.content });

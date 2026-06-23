@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
 import { classifyIntentDetailed } from "../agents/intentClassifier";
+import { staleConfirmFlags } from "../utils/sessionState";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { isConvergenceFlipped } from "../config/featureFlags";
@@ -310,6 +311,29 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     if (intent === "TASK_REPLY" && pendingTask && ["1", "2", "3"].includes(text.trim())) {
       await handleTaskApproval(pendingTask, text.trim(), session, chatId);
       return;
+    }
+
+    // ── Stale high-stakes confirmation sweep ─────────────────────────────────
+    // pendingInterviewConfirm / pendingCancelConfirm / awaitingRecurringConfirmation
+    // are checked in a fixed order by the YES/NO branches below, so a stale flag
+    // (set long ago, never resolved) can intercept a YES meant for a newer
+    // question. The global stateExpiresAt sweep in webhooks.ts only fires when a
+    // stateExpiresAt is present — flags set without one never expire. Clear any
+    // confirm flag older than its TTL here (and any flag with no age stamp, the
+    // dangerous never-expires case), in DB and on the in-memory session, so the
+    // branches below only ever act on a fresh confirmation. Mirrors the
+    // pendingTaskConfirm staleness pattern further down.
+    {
+      const stale = staleConfirmFlags(session as unknown as Record<string, unknown>);
+      if (stale.length > 0) {
+        const expired: Record<string, admin.firestore.FieldValue> = {};
+        for (const flag of stale) {
+          expired[flag] = admin.firestore.FieldValue.delete();
+          expired[`${flag}SetAt`] = admin.firestore.FieldValue.delete();
+          (session as any)[flag] = undefined;
+        }
+        await db.collection("agent_sessions").doc(phone).update(expired).catch(() => {});
+      }
     }
 
     // ── BOOKING_CONFIRM — natural language YES ("sure", "sounds good", etc.) ──
@@ -1118,6 +1142,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       await db.collection("agent_sessions").doc(phone).update({
         pendingTimeSelection:   admin.firestore.FieldValue.delete(),
         pendingInterviewConfirm: { docId: sel.interviewRequestId, caregiverName: sel.caregiverName, mutualTime: chosen, formatted: chosen },
+        pendingInterviewConfirmSetAt: new Date().toISOString(),
       });
       await handleInterviewConfirm(phone, chatId, {
         ...session,
@@ -1140,6 +1165,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       const appt = upcoming.docs[0].data();
       await db.collection("agent_sessions").doc(phone).update({
         pendingCancelConfirm: { appointmentId: upcoming.docs[0].id },
+        pendingCancelConfirmSetAt: new Date().toISOString(),
         stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       });
       await sendMessage(chatId,

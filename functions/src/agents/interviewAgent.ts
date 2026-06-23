@@ -288,6 +288,7 @@ export async function handleCaregiverAvailabilityReply(
     // Store pending confirmation
     await db.collection("agent_sessions").doc(reqData.clientPhone).update({
       pendingInterviewConfirm: { docId: doc.id, caregiverName, mutualTime, formatted },
+      pendingInterviewConfirmSetAt: new Date().toISOString(),
     });
   }
 

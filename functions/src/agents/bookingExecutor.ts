@@ -332,6 +332,7 @@ export async function finalizeAcceptedBooking(taskId: string, clientPhone: strin
       // YES reply arrives before the Firestore write lands.
       await db.collection("agent_sessions").doc(clientPhone).update({
         awaitingRecurringConfirmation: true,
+        awaitingRecurringConfirmationSetAt: new Date().toISOString(),
         pendingRecurringSchedule: {
           caregiverId:   task.caregiverId,
           caregiverName: task.caregiverName,

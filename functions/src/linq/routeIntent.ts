@@ -1703,9 +1703,11 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         text,
         phone,
         chatId,
-        userId:   session.userId ?? "",
-        seniorId: session.seniorId ?? session.userId ?? "",
-        userType: session.userType ?? "client",
+        userId:      session.userId ?? "",
+        seniorId:    session.seniorId ?? session.userId ?? "",
+        userType:    session.userType ?? "client",
+        caregiverId: session.caregiverId,
+        session:     session as unknown as Record<string, unknown>,
       });
       if (zepThreadId && quickReply) {
         addAssistantMessageToZep({ threadId: zepThreadId, content: quickReply }).catch(console.error);

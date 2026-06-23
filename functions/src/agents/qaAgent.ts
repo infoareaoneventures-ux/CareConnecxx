@@ -1893,8 +1893,10 @@ export async function runQuickReply(params: {
   userId?:  string;
   seniorId?: string;
   userType?: "client" | "caregiver";
+  caregiverId?: string;
+  session?: Record<string, unknown>;
 }): Promise<string> {
-  const { text, phone, chatId, userId, seniorId, userType = "client" } = params;
+  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, session } = params;
 
   const metrics = createTurnMetrics({
     phone,
@@ -1906,7 +1908,7 @@ export async function runQuickReply(params: {
 
   // Pre-fetch lightweight context in parallel — used to make greetings smart.
   // Each loader is wrapped so a single failure doesn't break the reply.
-  const [history, nextAppt, pendingTask, pendingTimesheets, activeAgent, seniorProfile] = await Promise.all([
+  const [history, nextAppt, pendingTask, pendingTimesheets, activeAgent, seniorProfile, cgSnapshot] = await Promise.all([
     getConversationHistory(phone).catch(() => []),
     userType === "client" && userId ? getNextAppointment(userId).catch(() => null) : Promise.resolve(null),
     userType === "client"
@@ -1930,6 +1932,12 @@ export async function runQuickReply(params: {
       : Promise.resolve(0),
     getActiveAgentForUser(phone).catch(() => null),
     userType === "client" && seniorId ? getSeniorProfile(seniorId).catch(() => null) : Promise.resolve(null),
+    // Caregiver greeting context — the client path above is already proactive,
+    // but caregivers had nothing to lead with. Reuse the same snapshot so even a
+    // one-word "hi" opens with what's waiting (interview, application, shift).
+    userType === "caregiver" && caregiverId
+      ? buildCaregiverSnapshot(caregiverId, session).catch(() => "")
+      : Promise.resolve(""),
   ]);
 
   metrics.contextLoadMs = Date.now() - metrics.startedAt;
@@ -1961,9 +1969,15 @@ export async function runQuickReply(params: {
     ? `\n\nKnown context (use ONE of these naturally if relevant; do NOT list them; do NOT mention items you weren't asked about unless they directly help right now):\n${contextLines.map(l => `- ${l}`).join("\n")}`
     : "";
 
+  // Caregiver greeting context — surface what's waiting so "hi" gets a proactive
+  // lead instead of a generic hello, mirroring the client contextSection below.
+  const cgContextSection = cgSnapshot
+    ? `\n\nWhen the caregiver sends a pure greeting ("hi", "hey"), open with ONE relevant item below if there is one — naturally, like a coordinator who's on top of things. Don't list them all; don't fake details. If they want to act on it, say you're pulling it up.\n${cgSnapshot}`
+    : "";
+
   const persona =
     userType === "caregiver"
-      ? `You ARE Cara. Speak in first person. Never refer to yourself as "Cara" in the third person, and never tell the user to "reach out to Cara" or that "a Cara team member will help" — you are Cara. You are texting a caregiver as their care-team coordinator. Keep replies short (under 200 chars), conversational, no bullet points, no emoji unless they used one first. Acknowledge briefly and move forward. If they ask for something you can't handle in this quick reply (booking, schedule changes, payments), say you're pulling that up — don't fake an answer.`
+      ? `You ARE Cara. Speak in first person. Never refer to yourself as "Cara" in the third person, and never tell the user to "reach out to Cara" or that "a Cara team member will help" — you are Cara. You are texting a caregiver as their care-team coordinator. Keep replies short (under 200 chars), conversational, no bullet points, no emoji unless they used one first. Acknowledge briefly and move forward. If they ask for something you can't handle in this quick reply (booking, schedule changes, payments), say you're pulling that up — don't fake an answer.${cgContextSection}`
       : `You ARE Cara — an AI care assistant texting with a family caring for ${seniorName}. Speak in first person. Never refer to yourself as "Cara" in the third person, and never tell the user to "reach out to Cara" or that "a Cara team member will help" — you are Cara. Keep replies short (under 200 chars), conversational, warm. No bullet points, no headers, no markdown.\n\nWhen the family sends a pure greeting ("hi", "hey", "thanks"), DO NOT reply with "what can I help you with?" or any open-ended ask. Instead, open with the most relevant context item below if there is one — naturally, like a friend would. If there's no context to lead with, give a warm short hello like "Hey! How's everything?" — never a generic "what do you need?".\n\nExamples of good context-led greetings:\n- (after "hi" with NEXT VISIT context) "Hey! Maria's coming Thursday at 3 — anything you want me to pass along?"\n- (after "hi" with PENDING APPROVAL context) "Hey! Quick heads up — you still have that booking waiting for your yes/no. Want me to pull it up?"\n- (after "thanks" with no special context) "Anytime. 💙"${contextSection}`;
 
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [

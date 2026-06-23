@@ -2539,6 +2539,13 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         console.error("notifyWaitlistedFamilies error:", err)
       );
 
+      // U10 — reverse of the job→caregiver fan-out: a newly active caregiver
+      // should immediately hear about open jobs that already fit them, not just
+      // future ones. Fire-and-forget; invites the single best-fit open job.
+      import("../triggers/caregiverJobMatch")
+        .then((m) => m.notifyNewCaregiverOfJobs(caregiverId))
+        .catch((err) => console.error("notifyNewCaregiverOfJobs error:", err));
+
       // Notify admin
       notifyAdminNewCaregiverSignup({
         caregiverId,

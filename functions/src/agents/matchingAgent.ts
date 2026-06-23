@@ -56,6 +56,23 @@ interface MatchScoreResult {
   confidence:   "high" | "medium" | "low";
 }
 
+/**
+ * U7 — a caregiver is temporarily unavailable when they've paused their account
+ * (vacation / break) or opted out. The SMS matching flow matches on weekly
+ * pattern, not specific dates, so date-level conflicts are resolved downstream
+ * at interview/booking time; this filter just stops a paused or opted-out
+ * caregiver from being presented as if freshly available. Mirrors the same
+ * pausedUntil skip used by the job-notification fan-out.
+ */
+export function isTemporarilyUnavailable(
+  caregiver: { pausedUntil?: string; optedOut?: boolean },
+  nowIso: string = new Date().toISOString(),
+): boolean {
+  if (caregiver.optedOut === true) return true;
+  const pausedUntil = caregiver.pausedUntil;
+  return !!pausedUntil && pausedUntil > nowIso;
+}
+
 /** Compute rule-based signals as a pre-filter before calling Claude. */
 function computeRuleSignals(
   caregiver: CaregiverCandidate,
@@ -155,6 +172,7 @@ export async function runMatchingForClient(
       .limit(50)
       .get();
 
+    const nowIso = new Date().toISOString();
     let caregivers: CaregiverCandidate[] = snap.docs
       .map((d) => ({
         id:                     d.id,
@@ -164,17 +182,19 @@ export async function runMatchingForClient(
         ...d.data(),
       } as CaregiverCandidate))
       .filter((c) =>
-        !rejectedIds.includes(c.id) && (
+        !rejectedIds.includes(c.id) &&
+        !isTemporarilyUnavailable(c as any, nowIso) && (
           c.city?.toLowerCase() === city.toLowerCase() ||
           (c as any).zipCode?.startsWith(zip.slice(0, 3))
         )
       );
 
     if (caregivers.length === 0) {
-      // Broader search if local returns nothing (still respecting rejections)
+      // Broader search if local returns nothing (still respecting rejections
+      // and the paused/opted-out availability filter)
       caregivers = snap.docs
         .map((d) => ({ id: d.id, ...d.data() } as CaregiverCandidate))
-        .filter((c) => !rejectedIds.includes(c.id));
+        .filter((c) => !rejectedIds.includes(c.id) && !isTemporarilyUnavailable(c as any, nowIso));
     }
 
     // Step 1: compute rule-based signals for pre-filtering

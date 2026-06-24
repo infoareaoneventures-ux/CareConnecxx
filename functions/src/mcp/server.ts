@@ -3163,6 +3163,19 @@ export async function handleToolCall(
         source: "cara_sms", timestamp: nowIso,
       });
       await apptSnap.ref.update({ journalEntryLogged: true }).catch(() => {});
+      // U3: guarantee the family summary fires on this path too (previously only
+      // the SMS care-notes path notified the family). Reuses the shared,
+      // PHI-minimized sender so both write paths behave identically.
+      try {
+        const { sendFamilyShiftEndUpdate } = await import("../linq/routeCaregiver");
+        await sendFamilyShiftEndUpdate({
+          caregiverName: (appt.caregiverName as string) ?? "",
+          clientId: appt.clientId,
+          seniorId: (appt.seniorId ?? appt.clientId) as string,
+          apptData: { ...appt, id: appointmentId },
+          entry: { mood: mood ?? "", activities: activities ?? [], observations: notes, notes },
+        });
+      } catch (e) { console.error("[create_care_journal_entry] family summary failed", e); }
       logAudit({ eventType: "care_journal_created", userId: caregiverId as string, data: { source: "mcp:create_care_journal_entry", appointmentId, entryId: entryRef.id } }).catch(() => {});
       return { success: true, entryId: entryRef.id };
     }

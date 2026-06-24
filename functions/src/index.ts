@@ -125,6 +125,8 @@ export {
 // Cara scheduled jobs
 export { dailyContactCardShare } from './scheduled/dailyContactCardShare';
 export { sendMorningBriefings } from './scheduled/morningBriefing';
+export { sendNextDayFamilyFeedback } from './scheduled/nextDayFamilyFeedback';
+export { sendFamilySatisfactionCheckins } from './scheduled/familySatisfactionCheckin';
 export { sendStaleSessionNudges } from './scheduled/staleSessionNudge';
 export { familySilenceCheckinJob } from './scheduled/familySilenceCheckin';
 export { consolidateMemoryNightly } from './scheduled/nightlyMemory';

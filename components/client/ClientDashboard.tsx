@@ -179,16 +179,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     if (!currentUser?.uid || !db) return;
     const unsubs: (() => void)[] = [];
 
-    // Job posts — all statuses for Care Requests card; open-only meta for interview modal
-    db.collection('job_posts')
+    // Job posts — all statuses for Care Requests card; open-only meta for interview
+    // modal. Live (U6) so posts Cara creates/edits surface without a refresh.
+    const jobPostsUnsub = db.collection('job_posts')
       .where('clientId', '==', currentUser.uid)
-      .get()
-      .then(snap => {
+      .onSnapshot(snap => {
         const posts = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
         setClientAllPosts(posts);
         setClientOpenPosts(posts.filter(p => p.status === 'open').map(p => ({ id: p.id, title: p.title || 'Untitled post' })));
-      })
-      .catch(() => {});
+      }, () => {});
+    unsubs.push(jobPostsUnsub);
 
     // Active care team — real-time subscription
     const teamUnsub = db.collection('booking_requests')

@@ -713,7 +713,7 @@ export const dbService = {
 
     // Live variant of getJobPostsByClient (U6): agent-created/edited job posts
     // surface in the client UI without a manual refresh. Mirrors subscribeCareJournal.
-    subscribeJobPostsByClient: (clientId: string, onUpdate: (posts: JobPost[]) => void): (() => void) => {
+    subscribeJobPostsByClient: (clientId: string, onUpdate: (posts: JobPost[]) => void, onError?: (e: any) => void): (() => void) => {
         if (!isConfigured || !db || !clientId) { onUpdate([]); return () => {}; }
         return db.collection('job_posts')
             .where('clientId', '==', clientId)
@@ -726,7 +726,7 @@ export const dbService = {
                 },
                 (e: any) => {
                     if (e?.code !== 'permission-denied') console.warn("subscribeJobPostsByClient error:", e);
-                    onUpdate([]);
+                    if (onError) onError(e); else onUpdate([]);
                 }
             );
     },
@@ -773,19 +773,23 @@ export const dbService = {
         if (!isConfigured || !db || !clientId) { onUpdate([]); return () => {}; }
         let reqs: PendingSwap[] = [];
         let offers: PendingSwap[] = [];
-        const emit = () => onUpdate([...reqs, ...offers].filter(isActiveSwap));
+        let reqsFired = false;
+        let offersFired = false;
+        // Only emit once both listeners have reported at least once, so the UI
+        // doesn't briefly receive a half-populated (single-source) result.
+        const emit = () => { if (reqsFired && offersFired) onUpdate([...reqs, ...offers].filter(isActiveSwap)); };
         const u1 = db.collection('shift_swap_requests')
             .where('clientId', '==', clientId)
             .onSnapshot(
-                snap => { reqs = snap.docs.map(mapSwapRequestDoc); emit(); },
-                (e: any) => { if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForClient(requests) error:", e); reqs = []; emit(); }
+                snap => { reqs = snap.docs.map(mapSwapRequestDoc); reqsFired = true; emit(); },
+                (e: any) => { if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForClient(requests) error:", e); reqs = []; reqsFired = true; emit(); }
             );
         const u2 = db.collection('shift_offers')
             .where('clientId', '==', clientId)
             .where('kind', '==', 'swap')
             .onSnapshot(
-                snap => { offers = snap.docs.map(mapSwapOfferDoc); emit(); },
-                (e: any) => { if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForClient(offers) error:", e); offers = []; emit(); }
+                snap => { offers = snap.docs.map(mapSwapOfferDoc); offersFired = true; emit(); },
+                (e: any) => { if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForClient(offers) error:", e); offers = []; offersFired = true; emit(); }
             );
         return () => { try { u1(); } catch {} try { u2(); } catch {} };
     },

@@ -210,10 +210,11 @@ export const PostsPage: React.FC = () => {
   useEffect(() => {
     if (!currentUser?.uid) { setLoadingPosts(false); return; }
     setLoadingPosts(true);
-    const unsub = dbService.subscribeJobPostsByClient(currentUser.uid, list => {
-      setPosts(list);
-      setLoadingPosts(false);
-    });
+    const unsub = dbService.subscribeJobPostsByClient(
+      currentUser.uid,
+      list => { setPosts(list); setLoadingPosts(false); },
+      () => { addToast('Could not load your posts', 'error'); setLoadingPosts(false); },
+    );
     return () => { try { unsub(); } catch {} };
   }, [currentUser?.uid]);
 

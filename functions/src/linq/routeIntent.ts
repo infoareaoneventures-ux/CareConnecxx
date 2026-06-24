@@ -297,7 +297,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     if (intent === "HELP") {
       await sendMessage(
         chatId,
-        buildCapabilityMenu(session.userType, (session as any).preferredLanguage ?? "en")
+        buildCapabilityMenu(session.userType, session.preferredLanguage ?? "en")
       );
       return;
     }

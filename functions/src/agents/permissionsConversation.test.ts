@@ -31,7 +31,7 @@ vi.mock("../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async ({ fal
 vi.mock("../config/appUrl", () => ({ getAppUrl: () => "https://app.test" }));
 vi.mock("./matchingAgent", () => ({ runMatchingForClient: vi.fn(async () => {}) }));
 
-import { classifyPermissionReply, handleClientPermissionsReply } from "./permissionsConversation";
+import { classifyPermissionReply, handleClientPermissionsReply, handleCaregiverPermissionsReply } from "./permissionsConversation";
 
 const session = (step: string) => ({ onboardingStep: step, onboardingData: { seniorName: "Mom" } }) as never;
 
@@ -91,5 +91,15 @@ describe("handleClientPermissionsReply — capability menu on completion (U3)", 
     const texts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
     expect(texts.some((t) => t.includes("Here's what I can help you with"))).toBe(true);
     expect(texts.some((t) => t.includes("Find a caregiver"))).toBe(true);
+  });
+});
+
+describe("handleCaregiverPermissionsReply — capability menu on completion (U3)", () => {
+  it("sends the CAREGIVER capability menu after the final caregiver permissions step completes", async () => {
+    await handleCaregiverPermissionsReply("+1555", "chat1", "YES", session("caregiver_permissions_arrival"), "cg1");
+    const texts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
+    expect(texts.some((t) => t.includes("Find work"))).toBe(true);
+    // client-only capabilities must NOT appear in the caregiver menu
+    expect(texts.some((t) => t.includes("Find a caregiver"))).toBe(false);
   });
 });

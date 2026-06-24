@@ -229,7 +229,7 @@ export async function handleClientPermissionsReply(
 
     // Capability discovery: now that onboarding is complete, tell the family
     // what Cara can actually do for them (Track A / U3).
-    await sendMessage(chatId, buildCapabilityMenu("client", (session as any).preferredLanguage ?? "en"));
+    await sendMessage(chatId, buildCapabilityMenu("client", session.preferredLanguage ?? "en"));
 
     // Kick off matching
     const { runMatchingForClient } = await import("./matchingAgent");
@@ -322,7 +322,7 @@ export async function handleCaregiverPermissionsReply(
 
     // Capability discovery: onboarding is complete — tell the caregiver what
     // Cara can do for them (Track A / U3).
-    await sendMessage(chatId, buildCapabilityMenu("caregiver", (session as any).preferredLanguage ?? "en"));
+    await sendMessage(chatId, buildCapabilityMenu("caregiver", session.preferredLanguage ?? "en"));
 
     // Notify admin for final review
     await db.collection("admin_alerts").add({

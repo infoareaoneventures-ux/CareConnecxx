@@ -46,7 +46,11 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   booking_cancelled:          { included: true,  description: "Cara cancelled a visit." },
   caregiver_matched:          { included: true,  description: "Cara matched you with a caregiver." },
   interview_scheduled:        { included: true,  description: "Cara scheduled an interview." },
-  interview_responded:        { included: true,  description: "Cara handled an interview response." },
+  // interview_responded is logged keyed to the CAREGIVER (mcp/server.ts), not the
+  // family — it can never resolve to the family owner, so it is excluded (like the
+  // already-excluded caregiver-side interview_feedback_submitted). The projector's
+  // family-only gate would skip it anyway; excluding here is clearer.
+  interview_responded:        { included: false },
   appointment_rescheduled:    { included: true,  description: "Cara rescheduled a visit." },
   recurring_schedule_updated: { included: true,  description: "Cara updated your recurring schedule." },
   care_update_shared:         { included: true,  description: "Cara shared a care update with your family." },

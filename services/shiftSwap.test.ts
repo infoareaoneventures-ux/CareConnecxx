@@ -34,6 +34,11 @@ describe("mapSwapOfferDoc", () => {
     expect(out.status).toBe("pending");
     expect(out.appointmentId).toBe("apptA");
   });
+
+  it("falls back to a scalar appointmentId when no appointmentIds array is present", () => {
+    const out = mapSwapOfferDoc(docOf("o2", { kind: "swap", status: "pending", appointmentId: "apptZ" }));
+    expect(out.appointmentId).toBe("apptZ");
+  });
 });
 
 describe("isActiveSwap", () => {

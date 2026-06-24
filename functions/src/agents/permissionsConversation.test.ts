@@ -29,6 +29,7 @@ const sendMessage = vi.fn(async (..._a: any[]) => ({ message_id: "m" }));
 vi.mock("../linq/client", () => ({ sendMessage: (...a: any[]) => sendMessage(...a) }));
 vi.mock("../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async ({ fallback }: { fallback: string }) => fallback) }));
 vi.mock("../config/appUrl", () => ({ getAppUrl: () => "https://app.test" }));
+vi.mock("./matchingAgent", () => ({ runMatchingForClient: vi.fn(async () => {}) }));
 
 import { classifyPermissionReply, handleClientPermissionsReply } from "./permissionsConversation";
 
@@ -81,5 +82,14 @@ describe("handleClientPermissionsReply — mid-flow question guard", () => {
     await handleClientPermissionsReply("+1555", "chat1", "NO", session("client_permissions_contact"), "u1");
     const permWrite = h.sets.find((s) => s.coll === "agent_permissions");
     expect(permWrite?.data).toMatchObject({ canContactCaregivers: false });
+  });
+});
+
+describe("handleClientPermissionsReply — capability menu on completion (U3)", () => {
+  it("sends the client capability menu after the final permissions step completes", async () => {
+    await handleClientPermissionsReply("+1555", "chat1", "YES", session("client_permissions_autobook"), "u1");
+    const texts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
+    expect(texts.some((t) => t.includes("Here's what I can help you with"))).toBe(true);
+    expect(texts.some((t) => t.includes("Find a caregiver"))).toBe(true);
   });
 });

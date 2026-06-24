@@ -264,19 +264,20 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       }, () => {});
     unsubs.push(amendUnsub);
 
-    // Interviews — all statuses for Care Requests card + derived states
-    db.collection('video_interviews')
+    // Interviews — all statuses for Care Requests card + derived states.
+    // Live listener (U5): agent-written interview requests now surface without a
+    // manual refresh. Mirrors the booking_amendments onSnapshot pattern above.
+    const interviewUnsub = db.collection('video_interviews')
       .where('clientId', '==', currentUser.uid)
-      .get()
-      .then(snap => {
+      .onSnapshot(snap => {
         const all = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
         setAllInterviews(all);
         const activeStatuses = new Set(['requested', 'pending', 'scheduled']);
         const pending = all.filter((d: any) => activeStatuses.has(d.status));
 
         setRequestedCaregiverIds(new Set(pending.map((d: any) => d.caregiverId).filter(Boolean)));
-      })
-      .catch(() => {});
+      }, () => {});
+    unsubs.push(interviewUnsub);
 
     return () => unsubs.forEach(u => { try { u(); } catch {} });
   }, [currentUser?.uid]);

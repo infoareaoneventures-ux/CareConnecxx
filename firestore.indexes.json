@@ -1,6 +1,20 @@
 {
   "indexes": [
     {
+      "collectionGroup": "user_activity_feed",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ownerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "admin_alerts",
       "queryScope": "COLLECTION",
       "fields": [

@@ -85,6 +85,7 @@ export { onCheckinCreated } from './triggers/checkinAlert';
 export { triggerFamilyEmergency } from './triggers/familyEmergency';
 export { onShiftStatusChanged } from './triggers/shiftStatusTrigger';
 export { recomputeConfidenceScore } from './triggers/confidenceScoreTrigger';
+export { projectActivityFeed } from './triggers/projectActivityFeed';
 
 // Linq Sprint 3 — family group thread
 export { createFamilyGroup, addFamilyGroupMember } from './agents/familyGroupManager';

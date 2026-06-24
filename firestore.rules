@@ -947,6 +947,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Family-facing "Cara Activity" feed (U8) — a projection of allow-listed audit
+    // events, written ONLY by the projectActivityFeed trigger (Admin SDK) with a
+    // resolved family-owner uid and PII-free description. Owner reads their own
+    // feed; raw agent_audit_log above stays admin-only.
+    match /user_activity_feed/{entryId} {
+      allow read: if isAuthenticated() && (
+        resource.data.ownerUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow write: if false;
+    }
+
     // Agent action ledger — execution status for high-impact Cara actions.
     // Written server-side only; admin reads failure/risk state.
     match /agent_action_ledger/{entryId} {

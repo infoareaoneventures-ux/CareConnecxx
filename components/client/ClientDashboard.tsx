@@ -6,6 +6,7 @@ import { ViewType, Caregiver, ClientIntakeData, Senior } from '../../types';
 import { dbService, authService } from '../../services/api';
 import type { PendingSwap } from '../../services/shiftSwap';
 import { PendingSwapsPanel } from '../shared/PendingSwapsPanel';
+import { CaraActivityFeed } from './CaraActivityFeed';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { useAccessGates } from '../../hooks/useAccessGates';
 import { ClientNavigation } from './ClientNavigation';
@@ -919,6 +920,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 )}
               </div>
             </div>
+
+            {/* Cara Activity — transparency feed of what Cara did (U9) */}
+            {currentUser?.uid && <CaraActivityFeed ownerUid={currentUser.uid} />}
 
             {/* Pending care changes — live shift swaps (U7); hidden when none */}
             <PendingSwapsPanel

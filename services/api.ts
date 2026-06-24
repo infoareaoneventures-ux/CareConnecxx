@@ -11,6 +11,15 @@ import {
     mapSwapOfferDoc,
 } from './shiftSwap';
 
+// A family-facing "Cara Activity" entry (projection of an allow-listed audit
+// event; see functions/src/agents/activityFeedMap.ts). PII-free by construction.
+export interface AgentActivityItem {
+    id: string;
+    eventType: string;
+    description: string;
+    timestamp?: string;
+}
+
 // ==========================================
 // RATE LIMITING / DEBOUNCING UTILITIES
 // ==========================================
@@ -718,6 +727,27 @@ export const dbService = {
                 (e: any) => {
                     if (e?.code !== 'permission-denied') console.warn("subscribeJobPostsByClient error:", e);
                     onUpdate([]);
+                }
+            );
+    },
+
+    // Family-facing "Cara Activity" feed (U9). Live, owner-scoped, newest first.
+    // onError lets the UI distinguish a genuine failure from an empty feed.
+    subscribeAgentActivity: (
+        ownerUid: string,
+        onUpdate: (items: AgentActivityItem[]) => void,
+        onError?: (e: any) => void,
+    ): (() => void) => {
+        if (!isConfigured || !db || !ownerUid) { onUpdate([]); return () => {}; }
+        return db.collection('user_activity_feed')
+            .where('ownerUid', '==', ownerUid)
+            .orderBy('timestamp', 'desc')
+            .limit(50)
+            .onSnapshot(
+                snap => onUpdate(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) } as AgentActivityItem))),
+                (e: any) => {
+                    if (e?.code !== 'permission-denied') console.warn("subscribeAgentActivity error:", e);
+                    if (onError) onError(e); else onUpdate([]);
                 }
             );
     },

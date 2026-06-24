@@ -195,6 +195,27 @@ const CLIENT_STEP_FIELD: Record<string, string> = {
   client_ask_schedule: "schedule",
 };
 
+// Ordered caregiver steps the story step (idea #5) can auto-skip once its
+// narrative has satisfied them. Story extraction fills experience/specialties
+// in one turn; the story handler walks this order and lands on the first step
+// whose field is still empty (or `caregiver_ask_profile` if the story covered
+// both). Only these two are absorbable — everything after profile has prompts
+// (availability, rate, email) or side effects (uploads, payment) that the story
+// can't supply, so they are not in this list.
+const CAREGIVER_STORY_STEP_ORDER = [
+  "caregiver_ask_experience",
+  "caregiver_ask_specialties",
+  "caregiver_ask_profile",
+];
+
+// Maps an absorbable caregiver step to the onboardingData field it collects.
+// `caregiver_ask_profile` is intentionally absent — it's only the landing step
+// once both absorbable fields are filled, never itself skipped by the story.
+const CAREGIVER_STORY_STEP_FIELD: Record<string, string> = {
+  caregiver_ask_experience:  "yearsExperience",
+  caregiver_ask_specialties: "specialties",
+};
+
 function isFieldFilled(value: unknown): boolean {
   if (value === undefined || value === null) return false;
   if (typeof value === "string")  return value.trim().length > 0;
@@ -431,6 +452,7 @@ export async function handleOnboardingStep(
     case "job_confirm_post":     return handleJobConfirmPost(phone, chatId, text, session);
     case "caregiver_ask_name":        return handleCaregiverAskName(phone, chatId, text, session, service);
     case "caregiver_ask_location":    return handleCaregiverAskLocation(phone, chatId, text, session, opts);
+    case "caregiver_ask_story":       return handleCaregiverAskStory(phone, chatId, text, session);
     case "caregiver_ask_experience":  return handleCaregiverAskExperience(phone, chatId, text, session);
     case "caregiver_ask_specialties": return handleCaregiverAskSpecialties(phone, chatId, text, session);
     case "caregiver_ask_profile":      return handleCaregiverAskProfile(phone, chatId, text, session);
@@ -1322,17 +1344,145 @@ async function handleCaregiverAskLocation(phone: string, chatId: string, text: s
     }
   }
 
-  await updateSession(phone, { onboardingStep: "caregiver_ask_experience" });
+  await updateSession(phone, { onboardingStep: "caregiver_ask_story" });
   const d = session.onboardingData ?? {};
-  const msg10intro = await generateCaraMessage({
+  const msgStoryIntro = await generateCaraMessage({
     audience: "caregiver",
-    context: `Cara is onboarding caregiver ${d.name ?? ""}. They just shared their city and zip code. Ask how many years of caregiving experience they have and whether they hold any certifications. Keep it warm and encouraging.`,
-    fallback: `Great, ${d.name ?? ""}! How many years of caregiving experience do you have, and do you hold any certifications?`,
-    maxTokens: 80,
+    context: `Cara is onboarding caregiver ${d.name ?? ""}. They just shared their city and zip code. Instead of asking separate checkbox questions, invite them to tell their caregiving story in their own words — how long they've been doing it, the kinds of clients and conditions they've cared for, any certifications, and what they're good at. Keep it warm and encouraging.`,
+    fallback: `Great, ${d.name ?? ""}! Tell me a bit about your caregiving experience in your own words — how long you've been doing it, the kinds of clients you've worked with, any certifications, and what you're best at.`,
+    maxTokens: 100,
   });
   await sendMessage(chatId,
-    `${msg10intro}\n\nFor example: "5 years, CNA and CPR" or "2 years, no certifications".`
+    `${msgStoryIntro}\n\nFor example: "I've cared for seniors for about 6 years, mostly dementia clients. I'm a CNA and CPR-certified and I'm great with mobility assistance."`
   );
+}
+
+/**
+ * Story-based caregiver onboarding (idea #5). Instead of separate checkbox-style
+ * questions for experience, certifications, and specialties, the caregiver tells
+ * their story once and a single multi-field extraction pulls out everything we'd
+ * otherwise ask for across several steps. Mirrors the client flow's
+ * `absorbClientFields` technique.
+ *
+ * After extracting, we store the fields and auto-advance past any of the
+ * downstream experience/specialties steps the story already satisfied — landing
+ * on the first still-unfilled step (or the profile step if the story covered
+ * everything). Conservative: a missing field is left empty and its step still
+ * gets asked rather than fabricated.
+ */
+async function handleCaregiverAskStory(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  // 1. Mid-flow question guard — answer, then re-ask the story prompt; never store.
+  if (await isQuestionOrOther(text)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId,
+      "Tell me a bit about your caregiving experience in your own words — how long you've been doing it, " +
+      "the kinds of clients you've worked with, any certifications, and what you're best at."
+    );
+    return;
+  }
+
+  // 2. One multi-field extraction from the narrative. Conservative: omit anything
+  //    not clearly stated so we never invent a certification or a year count.
+  const raw = await parseWithClaude(
+    "A caregiver just described their caregiving experience in one free-form message. " +
+      "Extract structured fields from their story. Reply with raw JSON only, no markdown. " +
+      "Schema: " +
+      `{"yearsExperience":number,` +
+      `"specialties":["short care specialty like 'dementia' or 'mobility assistance'"],` +
+      `"certifications":["certification name like 'CNA' or 'CPR'"],` +
+      `"skills":["short skill phrase"]}. ` +
+      "Only include a field if it is clearly stated. Use 0 for yearsExperience if no duration is mentioned, " +
+      "and empty arrays for anything not mentioned. Do NOT guess or fabricate.",
+    text,
+  );
+
+  // 3. Validate / default — malformed output yields safe empties, never a crash.
+  let yearsExperience = 0;
+  let specialties: string[] = [];
+  let certifications: string[] = [];
+  let skills: string[] = [];
+  try {
+    const p = JSON.parse(raw);
+    yearsExperience = typeof p.yearsExperience === "number" && p.yearsExperience > 0 ? p.yearsExperience : 0;
+    specialties     = Array.isArray(p.specialties) ? p.specialties.filter((s: unknown) => typeof s === "string" && s.trim()) : [];
+    certifications  = Array.isArray(p.certifications) ? p.certifications.filter((s: unknown) => typeof s === "string" && s.trim()) : [];
+    skills          = Array.isArray(p.skills) ? p.skills.filter((s: unknown) => typeof s === "string" && s.trim()) : [];
+  } catch { /* keep safe defaults; downstream steps will ask explicitly */ }
+
+  // Persist whatever we confidently extracted.
+  const extracted: Record<string, unknown> = {};
+  if (yearsExperience > 0)        extracted.yearsExperience = yearsExperience;
+  if (specialties.length)         extracted.specialties = specialties;
+  if (certifications.length)      extracted.certifications = certifications;
+  if (skills.length)              extracted.skills = skills;
+  if (Object.keys(extracted).length > 0) {
+    await mergeOnboardingData(phone, extracted);
+  }
+  // Keep the in-memory session in sync so the auto-advance below sees the writes.
+  const merged = { ...(session.onboardingData ?? {}), ...extracted } as Record<string, unknown>;
+  session.onboardingData = merged;
+
+  // 4. Conversational acknowledgment of what they shared.
+  const ackBits: string[] = [];
+  if (yearsExperience > 0)   ackBits.push(`${yearsExperience} year${yearsExperience === 1 ? "" : "s"} of experience`);
+  if (specialties.length)    ackBits.push(`specializing in ${specialties.join(", ")}`);
+  if (certifications.length) ackBits.push(`certified in ${certifications.join(", ")}`);
+  const ack = await generateCaraMessage({
+    audience: "caregiver",
+    context:
+      `Cara is onboarding a caregiver who just told her their caregiving story` +
+      `${ackBits.length ? ` (${ackBits.join("; ")})` : ""}. ` +
+      `Acknowledge what they shared warmly in one short, genuine line (not flattery clichés).`,
+    fallback: "Thank you for sharing that — it really helps me match you well.",
+    maxTokens: 80,
+  });
+
+  // 5. Auto-advance past any experience/specialties step the story already
+  //    satisfied. CAREGIVER_STORY_STEP_FIELD maps each absorbable step to the
+  //    field it would otherwise collect; we stop on the first unfilled one and
+  //    ask only that. If the story covered both, we land on the profile step.
+  let nextStep = "caregiver_ask_experience";
+  while (CAREGIVER_STORY_STEP_FIELD[nextStep]) {
+    const field = CAREGIVER_STORY_STEP_FIELD[nextStep];
+    if (!isFieldFilled(merged[field])) break;
+    const idx = CAREGIVER_STORY_STEP_ORDER.indexOf(nextStep);
+    const after = idx >= 0 && idx < CAREGIVER_STORY_STEP_ORDER.length - 1
+      ? CAREGIVER_STORY_STEP_ORDER[idx + 1]
+      : null;
+    if (!after) break;
+    nextStep = after;
+  }
+
+  await updateSession(phone, { onboardingStep: nextStep });
+  session.onboardingStep = nextStep;
+
+  // Ask the landed step's question (mirrors each step's own outbound prompt),
+  // prefixed with the acknowledgment so the caregiver always gets a warm reply.
+  if (nextStep === "caregiver_ask_experience") {
+    await sendMessage(chatId,
+      `${ack}\n\nHow many years of caregiving experience do you have, and do you hold any certifications?\n\n` +
+      `For example: "5 years, CNA and CPR" or "2 years, no certifications".`
+    );
+  } else if (nextStep === "caregiver_ask_specialties") {
+    await sendMessage(chatId,
+      `${ack}\n\nWhat types of care do you specialize in?\n\n` +
+      `For example: dementia, Alzheimer's, mobility assistance, post-surgery, companionship, medication management...`
+    );
+  } else {
+    // Both experience and specialties satisfied — go straight to the profile step.
+    const msgProfile = await generateCaraMessage({
+      audience: "caregiver",
+      context:
+        `Cara just heard a caregiver's full story and has their experience and specialties. ` +
+        `In one short line, ask three quick profile details families use when matching: ` +
+        `whether they're male or female (some families have a preference), what languages they speak, and whether they can ` +
+        `drive clients to appointments. Keep it light and quick.`,
+      fallback: "A few quick details families use to match — are you male or female, what languages do you speak, and can you drive clients to appointments?",
+      maxTokens: 100,
+    });
+    await sendMessage(chatId, `${ack}\n\n${msgProfile}`);
+  }
 }
 
 async function handleCaregiverAskExperience(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {

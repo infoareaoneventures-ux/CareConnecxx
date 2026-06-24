@@ -6,6 +6,7 @@ import { executeBookings } from "./bookingExecutor";
 import { getPreferences, isInDND, isActiveHour, CaraPreferences } from "../memory/preferences";
 import { supervise } from "../safety/supervisor";
 import { logAudit } from "../observability/auditLog";
+import { buildConsentAuditRecord } from "../observability/consentAudit";
 import { classifyIntent, Intent } from "./intentClassifier";
 import { claimOutboundSend } from "../utils/outboundLedger";
 import { evaluateProactiveCap, MAX_PROACTIVE_PER_DAY, type ProactiveTally } from "./proactiveCap";
@@ -186,7 +187,14 @@ export async function sendViaInteractionAgent(
   if (!sessionSnap.exists) return;
 
   const session = sessionSnap.data() as AgentSession & Record<string, unknown>;
-  if (session.optedOut) return;
+  const consentSnapshot = { optedOut: session.optedOut, optedInAt: (session as any).optedInAt };
+  if (session.optedOut) {
+    // U6: record the suppressed send for TCPA consent auditing.
+    db.collection("consent_audit_log").add(
+      buildConsentAuditRecord(phone, output.sourceAgent, "suppressed_opted_out", consentSnapshot, new Date().toISOString()),
+    ).catch(() => {});
+    return;
+  }
 
   // Determine target chat (group thread for group-appropriate sources)
   const useGroup = GROUP_SOURCE_AGENTS.has(output.sourceAgent) && !!(session as any).groupChatId;
@@ -294,6 +302,12 @@ export async function sendViaInteractionAgent(
     phone,
     data: { preview: safe.slice(0, 100), urgency: output.urgency, sourceAgent: output.sourceAgent, chatId: targetChatId },
   }).catch((err) => console.error("caraAgent: audit log write failed", err));
+
+  // U6: TCPA consent audit — record that this proactive message went out and
+  // the consent state at send time.
+  db.collection("consent_audit_log").add(
+    buildConsentAuditRecord(phone, output.sourceAgent, "sent", consentSnapshot, new Date().toISOString()),
+  ).catch(() => {});
 }
 
 // ── Interaction Agent — NLU only, reads only ──────────────────────────────────

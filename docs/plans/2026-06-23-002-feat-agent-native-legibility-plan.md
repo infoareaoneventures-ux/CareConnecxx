@@ -167,6 +167,8 @@ Grouped by track. Tracks A and B are independent and can land in parallel; Track
 
 ### U4. In-chat discovery (suggestion chips, empty state, placeholder)
 
+> **Execution outcome (2026-06-24): OBSOLETED — not implemented.** This unit (and the audit it derived from) assumed `components/Chat.tsx` is the Cara surface. It is not: `Chat.tsx` is client↔caregiver **peer messaging** (only used by `ChatInbox`), and the in-app conversational Cara surface (`AiSearchAgent`, rendered in the client dashboard) already has quick-action chips. Putting "ask Cara to find a caregiver / check billing" chips inside a conversation with one's caregiver would mislead users. In-app discovery is already served by `AiSearchAgent`'s existing chips; SMS discovery — Cara's primary channel — is delivered by U2 (`/help`) and U3 (post-onboarding menu). The frontend mirror (`constants/caraCapabilities.ts`) from U1 is retained: it is harmless, drift-guarded, and available if a general in-app Cara chat is built later. Decision confirmed with the user during execution.
+
 - **Goal:** The chat UI shows new users what to ask: tappable suggestion chips, a guiding empty state, and a hint placeholder.
 - **Requirements:** R4.
 - **Dependencies:** U1 (frontend mirror).

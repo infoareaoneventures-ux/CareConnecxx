@@ -18,6 +18,7 @@ import {
 } from "../ai/claudeMatching";
 import { getOutcomePatternSummary } from "../ai/outcomeAnalytics";
 import { getReputationBoosts } from "../ai/caregiverReputation";
+import { computeConfidenceScoreFromFields } from "./confidenceScore";
 import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
@@ -390,21 +391,20 @@ export async function runMatchingForClient(
       ? `\n\n🧠 KNOWN PREFERENCES (learned from past conversations):\n${learnedFacts.map(f => `- ${f.fact}`).join("\n")}\nIf the top match aligns with a known preference, mention it naturally (e.g. "You mentioned preferring female caregivers — Maria fits that perfectly.").`
       : "";
 
-    // Compute a simple trust score (0-100) for each caregiver
+    // Confidence/trust score (0-100). Delegates to the shared bounded-additive
+    // scorer (U2) so the live match path stays aligned with the persisted
+    // `confidenceScore`. References are not a signal; MVR is driver-gated.
     function caregiversTrustScore(c: CaregiverCandidate): number {
-      let s = 0;
-      const bgStatus = (c as any).backgroundCheckStatus ?? (c.pendingBackgroundCheck ? "pending" : "clear");
-      if (bgStatus === "clear") s += 30;
-      const approvedAt = (c as any).approvedAt as string | undefined;
-      if (approvedAt) {
-        const months = Math.floor((Date.now() - new Date(approvedAt).getTime()) / (30 * 24 * 60 * 60 * 1000));
-        s += Math.min(months, 12) / 12 * 20;
-      }
-      if (c.rating != null) s += (c.rating / 5) * 20;
-      const vStatus = (c as any).verificationStatus as string | undefined;
-      if (vStatus === "approved" || vStatus === "checkr_clear") s += 15;
-      s += (Math.min(c.certifications?.length ?? 0, 3) / 3) * 15;
-      return Math.round(s);
+      return computeConfidenceScoreFromFields({
+        backgroundCheckStatus: (c as any).backgroundCheckStatus,
+        pendingBackgroundCheck: c.pendingBackgroundCheck,
+        approvedAt: (c as any).approvedAt,
+        rating: c.rating,
+        verificationStatus: (c as any).verificationStatus,
+        certifications: c.certifications,
+        isApprovedDriver: (c as any).isApprovedDriver,
+        backgroundCheckData: (c as any).backgroundCheckData,
+      }).score;
     }
 
     // Build structured match data for the execution agent's context

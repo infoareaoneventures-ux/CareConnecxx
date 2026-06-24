@@ -36,6 +36,31 @@ describe("classifyIntent — fast paths (no LLM)", () => {
     expect(out).toBe("TASK_REPLY");
     expect(hoisted.quickComplete).not.toHaveBeenCalled();
   });
+
+  it.each([
+    "help",
+    "Help",
+    "/help",
+    "capabilities",
+    "/capabilities",
+  ])("routes exact command %p to HELP without calling the LLM", async (input) => {
+    const out = await classifyIntent(input, false);
+    expect(out).toBe("HELP");
+    expect(hoisted.quickComplete).not.toHaveBeenCalled();
+  });
+
+  it("does NOT treat 'help me find a caregiver' as the HELP command (routes to the LLM)", async () => {
+    hoisted.quickComplete.mockResolvedValueOnce("FIND_CAREGIVER");
+    const out = await classifyIntent("help me find a caregiver", false);
+    expect(out).toBe("FIND_CAREGIVER");
+    expect(hoisted.quickComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes 'help' to HELP even when a task is pending (not TASK_REPLY)", async () => {
+    const out = await classifyIntent("help", true);
+    expect(out).toBe("HELP");
+    expect(hoisted.quickComplete).not.toHaveBeenCalled();
+  });
 });
 
 describe("classifyIntent — UPDATE_ONBOARDING routing", () => {

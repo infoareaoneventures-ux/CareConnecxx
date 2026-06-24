@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
 import { classifyIntentDetailed } from "../agents/intentClassifier";
+import { buildCapabilityMenu } from "../agents/caraCapabilities";
 import { staleConfirmFlags } from "../utils/sessionState";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
@@ -289,6 +290,17 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // intentDegraded = the classifier errored/timed out and "QUESTION" is a
     // guess — when set, skip the quick-reply bypass and take the full QA path.
     const { intent, degraded: intentDegraded } = await classifyIntentDetailed(text, !!pendingTask);
+
+    // ── /help: capability discovery ──────────────────────────────────────────
+    // Static, side-effect-free reply listing what Cara can do for this role.
+    // Reached only via the exact-string command bypass in classifyIntentDetailed.
+    if (intent === "HELP") {
+      await sendMessage(
+        chatId,
+        buildCapabilityMenu(session.userType, (session as any).preferredLanguage ?? "en")
+      );
+      return;
+    }
 
     // ── U7/U8/U9: convergence shadow tap ─────────────────────────────────────
     // Dark unless this flow is enabled in ROUTING_CONVERGENCE_SHADOW. Fire-and-

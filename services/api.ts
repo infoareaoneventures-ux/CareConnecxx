@@ -696,6 +696,26 @@ export const dbService = {
         return [];
     },
 
+    // Live variant of getJobPostsByClient (U6): agent-created/edited job posts
+    // surface in the client UI without a manual refresh. Mirrors subscribeCareJournal.
+    subscribeJobPostsByClient: (clientId: string, onUpdate: (posts: JobPost[]) => void): (() => void) => {
+        if (!isConfigured || !db || !clientId) { onUpdate([]); return () => {}; }
+        return db.collection('job_posts')
+            .where('clientId', '==', clientId)
+            .onSnapshot(
+                snap => {
+                    const jobs: JobPost[] = [];
+                    snap.forEach(doc => jobs.push({ id: doc.id, ...doc.data() } as JobPost));
+                    jobs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+                    onUpdate(jobs);
+                },
+                (e: any) => {
+                    if (e?.code !== 'permission-denied') console.warn("subscribeJobPostsByClient error:", e);
+                    onUpdate([]);
+                }
+            );
+    },
+
     cancelJobPost: async (jobId: string, clientId: string) => {
         if (!isConfigured || !db) throw new Error('Database not connected');
         const ref = db.collection('job_posts').doc(jobId);

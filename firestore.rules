@@ -318,9 +318,12 @@ service cloud.firestore {
     // JOB POSTS COLLECTION
     // ==========================================
     match /job_posts/{jobId} {
-      // Public read for open jobs
-      allow read: if true;
-      
+      // Authenticated read (U6): job posts carry sensitive care-recipient details,
+      // so they are no longer world-readable. All web readers (caregiver job board,
+      // a client's own posts, FindCaregivers) are logged in; server-side reads
+      // (browse_job_board and other MCP tools) use the Admin SDK and bypass rules.
+      allow read: if isAuthenticated();
+
       // Only client who created it or admin can update/delete
       allow update: if isAuthenticated() && (
         resource.data.clientId == request.auth.uid ||

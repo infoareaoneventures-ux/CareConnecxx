@@ -1,10 +1,10 @@
 // Pure helpers for the shift-swap visibility feature (U7).
 //
-// Two swap mechanisms exist: caregiver-initiated swaps live in
-// `shift_swap_requests`; client-initiated swaps go through `shift_offers`
-// (kind: 'swap'). These helpers normalize both into a single `PendingSwap`
-// view and filter out terminal/expired entries. Kept dependency-free so they
-// can be unit-tested without Firebase.
+// The UI reads the SANITIZED `shift_swap_summaries` collection (projected by the
+// projectSwapSummary Cloud Function from both swap sources — caregiver-initiated
+// shift_swap_requests and client-initiated shift_offers kind:'swap'). The raw
+// collections are server-only; summaries carry no phone/name/candidate PII.
+// Kept dependency-free so it can be unit-tested without Firebase.
 
 export interface PendingSwap {
     id: string;
@@ -18,7 +18,7 @@ export interface PendingSwap {
 
 export const SWAP_ACTIVE_STATUSES = new Set(['open', 'accepted', 'pending']);
 
-/** Minimal shape of a Firestore doc snapshot the mappers consume. */
+/** Minimal shape of a Firestore doc snapshot the mapper consumes. */
 export interface SwapDocLike {
     id: string;
     data: () => Record<string, any>;
@@ -31,28 +31,16 @@ export function isActiveSwap(s: PendingSwap, now: number = Date.now()): boolean 
     return true;
 }
 
-export function mapSwapRequestDoc(doc: SwapDocLike): PendingSwap {
+/** Map a sanitized shift_swap_summaries doc to the UI's PendingSwap shape. */
+export function mapSummaryDoc(doc: SwapDocLike): PendingSwap {
     const d = doc.data();
     return {
         id: doc.id,
-        source: 'swap_request',
+        source: d.source === 'offer' ? 'offer' : 'swap_request',
         status: d.status,
-        appointmentId: d.appointmentId,
-        expiresAt: d.expiresAt,
-        date: d.date,
-        time: d.time,
-    };
-}
-
-export function mapSwapOfferDoc(doc: SwapDocLike): PendingSwap {
-    const d = doc.data();
-    return {
-        id: doc.id,
-        source: 'offer',
-        status: d.status,
-        appointmentId: Array.isArray(d.appointmentIds) ? d.appointmentIds[0] : d.appointmentId,
-        expiresAt: d.expiresAt,
-        date: d.date,
-        time: d.time,
+        appointmentId: d.appointmentId ?? undefined,
+        expiresAt: d.expiresAt ?? undefined,
+        date: d.date ?? undefined,
+        time: d.time ?? undefined,
     };
 }

@@ -7,8 +7,7 @@ import { UNBOOKABLE_BG_STATUSES } from '../utils/caregiverEligibility';
 import {
     PendingSwap,
     isActiveSwap,
-    mapSwapRequestDoc,
-    mapSwapOfferDoc,
+    mapSummaryDoc,
 } from './shiftSwap';
 
 // A family-facing "Cara Activity" entry (projection of an allow-listed audit
@@ -752,13 +751,14 @@ export const dbService = {
             );
     },
 
-    // Caregiver-initiated swaps this caregiver is tracking (U7). Live.
+    // Caregiver-initiated swaps this caregiver is tracking (U7). Live, reads the
+    // sanitized shift_swap_summaries projection (raw collections are server-only).
     subscribeShiftSwapsForCaregiver: (caregiverId: string, onUpdate: (swaps: PendingSwap[]) => void): (() => void) => {
         if (!isConfigured || !db || !caregiverId) { onUpdate([]); return () => {}; }
-        return db.collection('shift_swap_requests')
+        return db.collection('shift_swap_summaries')
             .where('fromCaregiverId', '==', caregiverId)
             .onSnapshot(
-                snap => onUpdate(snap.docs.map(mapSwapRequestDoc).filter(isActiveSwap)),
+                snap => onUpdate(snap.docs.map(mapSummaryDoc).filter(isActiveSwap)),
                 (e: any) => {
                     if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForCaregiver error:", e);
                     onUpdate([]);
@@ -766,32 +766,20 @@ export const dbService = {
             );
     },
 
-    // Swaps affecting this client's appointments (U7) — merges BOTH swap sources:
-    // caregiver-initiated (shift_swap_requests) and client-initiated (shift_offers,
-    // kind 'swap'). Two listeners feed one merged, de-expired result.
+    // Swaps affecting this client's appointments (U7). Both swap sources are
+    // projected into shift_swap_summaries keyed by clientId, so a single
+    // owner-scoped listener covers caregiver- and client-initiated swaps.
     subscribeShiftSwapsForClient: (clientId: string, onUpdate: (swaps: PendingSwap[]) => void): (() => void) => {
         if (!isConfigured || !db || !clientId) { onUpdate([]); return () => {}; }
-        let reqs: PendingSwap[] = [];
-        let offers: PendingSwap[] = [];
-        let reqsFired = false;
-        let offersFired = false;
-        // Only emit once both listeners have reported at least once, so the UI
-        // doesn't briefly receive a half-populated (single-source) result.
-        const emit = () => { if (reqsFired && offersFired) onUpdate([...reqs, ...offers].filter(isActiveSwap)); };
-        const u1 = db.collection('shift_swap_requests')
+        return db.collection('shift_swap_summaries')
             .where('clientId', '==', clientId)
             .onSnapshot(
-                snap => { reqs = snap.docs.map(mapSwapRequestDoc); reqsFired = true; emit(); },
-                (e: any) => { if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForClient(requests) error:", e); reqs = []; reqsFired = true; emit(); }
+                snap => onUpdate(snap.docs.map(mapSummaryDoc).filter(isActiveSwap)),
+                (e: any) => {
+                    if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForClient error:", e);
+                    onUpdate([]);
+                }
             );
-        const u2 = db.collection('shift_offers')
-            .where('clientId', '==', clientId)
-            .where('kind', '==', 'swap')
-            .onSnapshot(
-                snap => { offers = snap.docs.map(mapSwapOfferDoc); offersFired = true; emit(); },
-                (e: any) => { if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForClient(offers) error:", e); offers = []; offersFired = true; emit(); }
-            );
-        return () => { try { u1(); } catch {} try { u2(); } catch {} };
     },
 
     cancelJobPost: async (jobId: string, clientId: string) => {

@@ -1008,26 +1008,28 @@ service cloud.firestore {
     }
 
     // Shift offers — caregiver YES/NO offer state machine (agents/shiftOffer.ts).
-    // Server-only: created and resolved exclusively via the Admin SDK.
+    // Server-only. The raw doc carries clientPhone/caregiverPhone/caregiverName,
+    // so the UI reads the sanitized shift_swap_summaries projection instead (U7).
     match /shift_offers/{offerId} {
-      // Owner-scoped read (U7): the caregiver the offer targets and the client
-      // whose appointment it concerns can see it (powers the client "Pending Care
-      // Changes" panel for client-initiated swaps). Writes stay server-only.
-      allow read: if isAuthenticated() && (
-        resource.data.caregiverId == request.auth.uid ||
-        resource.data.clientId == request.auth.uid ||
-        isAdmin()
-      );
-      allow write: if false;
+      allow read, write: if false;
     }
 
-    // Caregiver-initiated shift swaps (caregiverSwapHandler). Owner-scoped read
-    // for the originating caregiver and the affected client (U7). Writes are
-    // server-only — the swap lifecycle runs through Cloud Functions transactions.
+    // Caregiver-initiated shift swaps (caregiverSwapHandler). Server-only. The raw
+    // doc carries candidatesContacted/candidateResponses/fromCaregiverName, so the
+    // UI reads the sanitized shift_swap_summaries projection instead (U7).
     match /shift_swap_requests/{swapId} {
+      allow read, write: if false;
+    }
+
+    // Sanitized swap summaries (projectSwapSummary trigger) — the ONLY swap data
+    // the UI reads. Carries status/appointment/date/time + owner ids, never the
+    // phone/name/candidate fields from the raw collections. Owner-scoped read for
+    // the affected client and the involved caregiver; writes server-only.
+    match /shift_swap_summaries/{summaryId} {
       allow read: if isAuthenticated() && (
-        resource.data.fromCaregiverId == request.auth.uid ||
         resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        resource.data.fromCaregiverId == request.auth.uid ||
         isAdmin()
       );
       allow write: if false;

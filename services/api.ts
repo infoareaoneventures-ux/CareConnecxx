@@ -4,6 +4,12 @@ import { checkRateLimit, checkSignupRateLimit, RATE_LIMITS } from './rateLimit';
 import firebase, { auth, db, functions, isConfigured, googleProvider } from '../lib/firebase';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
 import { UNBOOKABLE_BG_STATUSES } from '../utils/caregiverEligibility';
+import {
+    PendingSwap,
+    isActiveSwap,
+    mapSwapRequestDoc,
+    mapSwapOfferDoc,
+} from './shiftSwap';
 
 // ==========================================
 // RATE LIMITING / DEBOUNCING UTILITIES
@@ -714,6 +720,44 @@ export const dbService = {
                     onUpdate([]);
                 }
             );
+    },
+
+    // Caregiver-initiated swaps this caregiver is tracking (U7). Live.
+    subscribeShiftSwapsForCaregiver: (caregiverId: string, onUpdate: (swaps: PendingSwap[]) => void): (() => void) => {
+        if (!isConfigured || !db || !caregiverId) { onUpdate([]); return () => {}; }
+        return db.collection('shift_swap_requests')
+            .where('fromCaregiverId', '==', caregiverId)
+            .onSnapshot(
+                snap => onUpdate(snap.docs.map(mapSwapRequestDoc).filter(isActiveSwap)),
+                (e: any) => {
+                    if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForCaregiver error:", e);
+                    onUpdate([]);
+                }
+            );
+    },
+
+    // Swaps affecting this client's appointments (U7) — merges BOTH swap sources:
+    // caregiver-initiated (shift_swap_requests) and client-initiated (shift_offers,
+    // kind 'swap'). Two listeners feed one merged, de-expired result.
+    subscribeShiftSwapsForClient: (clientId: string, onUpdate: (swaps: PendingSwap[]) => void): (() => void) => {
+        if (!isConfigured || !db || !clientId) { onUpdate([]); return () => {}; }
+        let reqs: PendingSwap[] = [];
+        let offers: PendingSwap[] = [];
+        const emit = () => onUpdate([...reqs, ...offers].filter(isActiveSwap));
+        const u1 = db.collection('shift_swap_requests')
+            .where('clientId', '==', clientId)
+            .onSnapshot(
+                snap => { reqs = snap.docs.map(mapSwapRequestDoc); emit(); },
+                (e: any) => { if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForClient(requests) error:", e); reqs = []; emit(); }
+            );
+        const u2 = db.collection('shift_offers')
+            .where('clientId', '==', clientId)
+            .where('kind', '==', 'swap')
+            .onSnapshot(
+                snap => { offers = snap.docs.map(mapSwapOfferDoc); emit(); },
+                (e: any) => { if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForClient(offers) error:", e); offers = []; emit(); }
+            );
+        return () => { try { u1(); } catch {} try { u2(); } catch {} };
     },
 
     cancelJobPost: async (jobId: string, clientId: string) => {

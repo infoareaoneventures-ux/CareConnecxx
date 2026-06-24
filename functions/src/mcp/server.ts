@@ -1612,9 +1612,9 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         triggerId: { type: "string", description: "The follow-up triggerId returned by schedule_followup" },
-        userId:    { type: "string", description: "The owning user (ownership check)" },
+        userId:    { type: "string", description: "The owning user — auto-injected; used to verify you own this follow-up" },
       },
-      required: ["triggerId"],
+      required: ["triggerId", "userId"],
     },
   },
 ];
@@ -2170,10 +2170,10 @@ export async function handleToolCall(
         // so the agent can parameterize the search instead of an opaque zero-arg
         // call. Omitted filters leave the profile defaults untouched.
         const matchIntake: Record<string, unknown> = { ...session };
-        if (typeof nearZip === "string" && nearZip) matchIntake.zipCode = nearZip;
+        if (typeof nearZip === "string" && /^\d{5}$/.test(nearZip)) matchIntake.zipCode = nearZip;
         if (typeof needs === "string" && needs) matchIntake.careNeeds = needs;
         if (typeof availabilityWindow === "string" && availabilityWindow) matchIntake.availabilityWindow = availabilityWindow;
-        if (typeof radiusMiles === "number") matchIntake.radiusMiles = radiusMiles;
+        if (typeof radiusMiles === "number" && Number.isFinite(radiusMiles) && radiusMiles > 0 && radiusMiles <= 100) matchIntake.radiusMiles = radiusMiles;
         await runMatchingForClient(phone as string, chatId as string, matchIntake, clientProfile);
         return {
           success: true,
@@ -4612,7 +4612,7 @@ export async function handleToolCall(
       const update: Record<string, unknown> = { updatedAt: nowIso };
       if (rating !== undefined) {
         const r = Number(rating);
-        if (!Number.isFinite(r) || r < 1 || r > 5) return toolError("INVALID_INPUT", "rating must be between 1 and 5");
+        if (!Number.isInteger(r) || r < 1 || r > 5) return toolError("INVALID_INPUT", "rating must be an integer from 1 to 5");
         update.rating = r;
       }
       if (comment !== undefined) update.comment = String(comment).slice(0, 2000);
@@ -4624,11 +4624,11 @@ export async function handleToolCall(
     // ── cancel_followup ─────────────────────────────────────────────────────
     if (name === "cancel_followup") {
       const { triggerId, userId } = input as Record<string, unknown>;
-      if (!triggerId) return toolError("INVALID_INPUT", "triggerId is required");
+      if (!triggerId || !userId) return toolError("INVALID_INPUT", "triggerId and userId are required");
       const ref = db.collection("proactive_triggers").doc(triggerId as string);
       const snap = await ref.get();
       if (!snap.exists) return toolError("NOT_FOUND", "Follow-up not found — it may have already fired or been cancelled.");
-      if (userId && snap.data()?.userId && snap.data()?.userId !== userId) {
+      if (snap.data()?.userId !== userId) {
         return toolError("PERMISSION_DENIED", "Not authorized to cancel this follow-up.");
       }
       await ref.delete();

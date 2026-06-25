@@ -246,6 +246,7 @@ Grouped into phases. Land Phase 1 first (additive, de-risks early score movement
 ### Phase 3 — Tools as Primitives (B6)
 
 #### U8. Extract `send_notification` primitive
+- **Resolution (execution-time, 2026-06-24): RE-SCOPED — do NOT add a generic `send_notification`.** Code inspection shows `send_client_message` and `send_caregiver_message` already ARE the composable notification primitives, and they carry deliberate IDOR-prevention auth (verify a real caregiver↔client engagement before sending, `server.ts:3731+`). A generic `send_notification(phone, message)` exposed to the LLM would bypass that auth and become a spam/IDOR hole. The `trySend` calls bundled inside `cancel_appointment`/`schedule_interview`/`submit_gps_checkin`/etc. each notify the *already-authorized counterparty for that action* — intentional safe design, not a workflow anti-pattern. **Action:** record this as an intentional design in `AGENT_NATIVE_EXCLUSIONS.md` (the directed-message tools satisfy the Tools-as-Primitives notification requirement; bundled action-notify is justified). No code change.
 - **Goal:** One composable notification tool; refactor the ~6 tools that bundle `trySend` inline to compose it.
 - **Requirements:** B6
 - **Dependencies:** none
@@ -261,6 +262,7 @@ Grouped into phases. Land Phase 1 first (additive, de-risks early score movement
 - **Verification:** Golden-transcript suite green; capability-map + parity test updated. **Note (KTD-6):** the golden-transcript harness *scripts* Claude's responses, so it proves handler/composition correctness but NOT that the real model selects/composes the changed tool surface correctly. Add at least one real-model smoke test/eval for the composing flow; do not treat the scripted suite alone as the regression gate.
 
 #### U9. Decompose `perform_web_action`
+- **Status (execution-time, 2026-06-24): NOT STARTED — blocked on the real-model eval harness.** Per KTD-6 this decomposition requires a non-mocked (real Claude) smoke test, because the scripted golden-transcript harness cannot prove the live Sonnet loop still selects/composes correctly over the changed, larger primitive surface — and `perform_web_action` handles stored portal credentials and irreversible healthcare commits. That eval harness cannot run in the current environment. Recommend a dedicated PR that (1) stands up the real-model eval, (2) decomposes into the named primitives, (3) registers `book_appointment_slot`/`request_pharmacy_refill` in the confirm-gate by name. Do NOT decompose blind.
 - **Goal:** Replace the ~147-line branching monolith with atomic primitives the model composes.
 - **Requirements:** B6
 - **Dependencies:** none (U8's `send_notification` is reusable if a decomposed primitive needs it, but `perform_web_action` contains no notification logic, so U8 is not a blocker — U8/U9 can run in parallel)
@@ -276,6 +278,7 @@ Grouped into phases. Land Phase 1 first (additive, de-risks early score movement
 - **Verification:** Feature-flag behavior preserved; confirm-gate covers new committing tools (add a `toolCapabilities.test.ts` assertion: every capability-map tool described as committing has a confirm-gate entry); golden-transcript suite green + real-model smoke test passes (KTD-6 — scripted suite alone is insufficient, same caveat as U8).
 
 #### U9b. Decompose orchestration tools (`find_replacement_caregivers`, `request_booking`)
+- **Status (execution-time, 2026-06-24): NOT STARTED — same real-model-eval blocker as U9, plus partial prior work.** `find_replacement_caregivers` was already parameterized (prior commit "parameterize find_replacement_caregivers (U17)"). Decomposing `request_booking` rewires the live booking flow (payment-adjacent, Sonnet-tuned) and needs the real-model eval harness (KTD-6) that can't run here. Bundle with U9 in the eval-backed PR. Do NOT decompose blind.
 - **Goal:** Replace these two workflow tools with composable read/filter/write primitives; move approval-gating to the outer loop.
 - **Requirements:** B6
 - **Dependencies:** none (parallel to U8/U9)

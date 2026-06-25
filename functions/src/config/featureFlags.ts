@@ -42,6 +42,27 @@ export function convergenceFlippedFlows(): ReadonlySet<string> {
   return new Set(raw.split(",").map(s => s.trim()).filter(Boolean));
 }
 
+// Flows cut over to the prompt-driven dispatcher BY DEFAULT (U13). These have NO
+// payment / Checkr / account-creation side effects, so the plan sanctions cutover
+// on conversational parity alone — which is proven by the resolver parity tests
+// (resolveJobStep / resolveScheduleStep mirror the legacy step order exactly).
+// Reversible per-flow via CONVERGENCE_UNFLIPPED (a kill switch), no redeploy needed.
+//
+// `onboarding` is deliberately NOT here: it is the sole signup path with real
+// Stripe/Checkr/auth, so its cutover requires the real-model eval (KTD-6) and an
+// explicit CONVERGENCE_FLIPPED opt-in. It stays dark until both are satisfied.
+const DEFAULT_FLIPPED_FLOWS: ReadonlySet<string> = new Set(["job_posting", "modify_schedule"]);
+
+function convergenceUnflippedFlows(): ReadonlySet<string> {
+  const raw = process.env.CONVERGENCE_UNFLIPPED ?? "";
+  return new Set(raw.split(",").map(s => s.trim()).filter(Boolean));
+}
+
 export function isConvergenceFlipped(flow: string): boolean {
+  // Kill switch wins: explicitly unflip a default-on flow if it ever misbehaves.
+  if (convergenceUnflippedFlows().has(flow)) return false;
+  // Default-on (conversational-parity-validated, no side effects).
+  if (DEFAULT_FLIPPED_FLOWS.has(flow)) return true;
+  // Everything else (incl. onboarding, reminder_management) stays opt-in via env.
   return convergenceFlippedFlows().has(flow);
 }

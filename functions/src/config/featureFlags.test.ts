@@ -39,3 +39,26 @@ describe("routing convergence flags (U6/U10)", () => {
     expect(isConvergenceFlipped("refund")).toBe(false);
   });
 });
+
+// U13 flip POLICY. Safety-critical assertion: onboarding (sole signup path)
+// stays DARK by default — only job_posting / modify_schedule cut over by default.
+describe("convergence flip policy (U13 default-flipped + kill switch)", () => {
+  afterEach(() => { delete process.env.CONVERGENCE_FLIPPED; delete process.env.CONVERGENCE_UNFLIPPED; });
+
+  it("flips job_posting and modify_schedule ON by default", () => {
+    expect(isConvergenceFlipped("job_posting")).toBe(true);
+    expect(isConvergenceFlipped("modify_schedule")).toBe(true);
+  });
+  it("keeps onboarding DARK by default (eval-gated signup path)", () => {
+    expect(isConvergenceFlipped("onboarding")).toBe(false);
+  });
+  it("onboarding flips only with an explicit env opt-in", () => {
+    process.env.CONVERGENCE_FLIPPED = "onboarding";
+    expect(isConvergenceFlipped("onboarding")).toBe(true);
+  });
+  it("CONVERGENCE_UNFLIPPED is a reversible kill switch for default-on flows", () => {
+    process.env.CONVERGENCE_UNFLIPPED = "job_posting";
+    expect(isConvergenceFlipped("job_posting")).toBe(false);
+    expect(isConvergenceFlipped("modify_schedule")).toBe(true);
+  });
+});

@@ -226,6 +226,32 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         return () => unsubscribe();
     }, [currentUser?.uid, currentUser?.userType]);
 
+    // U3: Live user-doc listener. Surfaces agent-driven changes to verification
+    // status / account state on currentUser without a reload (beyond the one-shot
+    // getUser at auth time). users/{uid} read rule already exists.
+    useEffect(() => {
+        if (!currentUser?.uid) return;
+
+        const unsubscribe = dbService.subscribeToUser(currentUser.uid, (data) => {
+            if (!data) return; // keep last-known if unavailable
+            setCurrentUser(prev => {
+                if (!prev) return prev;
+                const validUserTypes = ['client', 'caregiver', 'admin'] as const;
+                const nextType = typeof data.userType === 'string' && (validUserTypes as readonly string[]).includes(data.userType)
+                    ? (data.userType as AuthenticatedUser['userType'])
+                    : prev.userType;
+                return {
+                    ...prev,
+                    userType: nextType,
+                    isVerified: (data.verified as boolean | undefined) ?? prev.isVerified,
+                    phone: (data.phone as string | undefined) ?? prev.phone,
+                };
+            });
+        });
+
+        return () => unsubscribe();
+    }, [currentUser?.uid]);
+
     const bookAppointment = async (appointment: Appointment) => {
         try {
             setAppointments(prev => [...prev, appointment]); // Optimistic

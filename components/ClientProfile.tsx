@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User, Settings, CreditCard, LogOut, ChevronLeft, Shield, Home, Loader2, X, Plus, Lock, Trash2, Users } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -34,6 +34,14 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
 
   const currentUser = authService.getCurrentUser();
 
+  // U3: dirty-guard so the live senior-profile listener (below) never clobbers
+  // unsaved edits. Any field edit marks dirty; a successful save clears it.
+  const dirtyRef = useRef(false);
+  const editProfile = (patch: Partial<typeof profile>) => {
+    dirtyRef.current = true;
+    setProfile(prev => ({ ...prev, ...patch }));
+  };
+
   useEffect(() => {
     const fetchProfile = async () => {
       if (currentUser) {
@@ -42,7 +50,7 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
           setProfile({
             ...data,
             email: currentUser.email || '',
-            phone: (data as any).phone || '(555) 123-4567' 
+            phone: (data as any).phone || '(555) 123-4567'
           });
         }
       } else {
@@ -54,6 +62,23 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
 
     fetchProfile();
   }, [currentUser]);
+
+  // U3: Live senior-profile listener. Cara's intake writes (care needs,
+  // location, etc.) reflect here without a reload. Applies snapshots only when
+  // the form is not dirty, so unsaved edits are never overwritten (KTD-4).
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsubscribe = dbService.subscribeToSeniorProfile(currentUser.uid, (data) => {
+      if (!data || dirtyRef.current) return; // hold while editing / on unavailable
+      setProfile(prev => ({
+        ...prev,
+        ...(data as any),
+        email: currentUser.email || prev.email || '',
+        phone: (data as any).phone || prev.phone,
+      }));
+    });
+    return () => unsubscribe();
+  }, [currentUser?.uid]);
 
   const handleLogout = async () => {
     await authService.logout();
@@ -71,6 +96,7 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
            phone: profile.phone,
            imageUrl: profile.imageUrl
          });
+         dirtyRef.current = false; // saved — allow live snapshots to resume
          onShowToast("Profile changes saved to database", 'success');
        } catch (e) {
          onShowToast("Failed to save changes", 'error');
@@ -122,9 +148,10 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
 
   const addNeed = () => {
     if (newNeed.trim()) {
-      setProfile(prev => ({ 
-        ...prev, 
-        needs: [...(prev.needs || []), newNeed.trim()] 
+      dirtyRef.current = true;
+      setProfile(prev => ({
+        ...prev,
+        needs: [...(prev.needs || []), newNeed.trim()]
       }));
       setNewNeed('');
       setIsAddingNeed(false);
@@ -132,9 +159,10 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
   };
 
   const removeNeed = (index: number) => {
-    setProfile(prev => ({ 
-      ...prev, 
-      needs: (prev.needs || []).filter((_, i) => i !== index) 
+    dirtyRef.current = true;
+    setProfile(prev => ({
+      ...prev,
+      needs: (prev.needs || []).filter((_, i) => i !== index)
     }));
   };
 
@@ -208,15 +236,15 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
               
               <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Input 
-                      label="Full Name" 
-                      value={profile.name} 
-                      onChange={(e) => setProfile({...profile, name: e.target.value})} 
+                  <Input
+                      label="Full Name"
+                      value={profile.name}
+                      onChange={(e) => editProfile({ name: e.target.value })}
                   />
-                  <Input 
-                      label="Phone" 
+                  <Input
+                      label="Phone"
                       value={profile.phone}
-                      onChange={(e) => setProfile({...profile, phone: e.target.value})}
+                      onChange={(e) => editProfile({ phone: e.target.value })}
                   />
                 </div>
                 
@@ -227,10 +255,10 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
                     className="bg-slate-50 text-slate-500 cursor-not-allowed"
                 />
 
-                <Input 
-                    label="Location / Address" 
+                <Input
+                    label="Location / Address"
                     value={profile.location}
-                    onChange={(e) => setProfile({...profile, location: e.target.value})}
+                    onChange={(e) => editProfile({ location: e.target.value })}
                 />
                 
                 <div>

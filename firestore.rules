@@ -170,9 +170,11 @@ service cloud.firestore {
     // SENIOR PROFILES COLLECTION
     // ==========================================
     match /senior_profiles/{profileId} {
-      // Only the owner (client) or admin can read/write
-      allow read: if isOwner(profileId) || isAdmin();
-      allow write: if isOwner(profileId) || isAdmin();
+      // Owner = the client whose uid is the doc id (single-senior, legacy) OR
+      // additional household seniors keyed by random id but stamped with
+      // userId == the owning client's uid (multi-senior households, U6/KTD-10).
+      allow read: if isOwner(profileId) || resource.data.userId == request.auth.uid || isAdmin();
+      allow write: if isOwner(profileId) || resource.data.userId == request.auth.uid || isAdmin();
       allow create: if isAuthenticated();
       
       // Subcollection: care_plans

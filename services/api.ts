@@ -1847,6 +1847,39 @@ export const dbService = {
         return () => { };
     },
 
+    // U3: Live listener for a client's (primary) senior profile doc.
+    // Cara writes care needs/preferences during intake; this keeps the
+    // client's profile/intake view fresh without a reload. Mirrors getSeniorProfile
+    // (doc keyed by the client uid). The senior_profiles read rule was amended
+    // (KTD-10) so additional household seniors (userId-stamped) are also readable.
+    subscribeToSeniorProfile: (uid: string, onUpdate: (data: Record<string, unknown> | null) => void) => {
+        if (isConfigured && db) {
+            const docRef = db.collection('senior_profiles').doc(uid);
+            return docRef.onSnapshot((doc) => {
+                onUpdate(doc.exists ? (doc.data() as Record<string, unknown>) : null);
+            }, (error) => {
+                console.error('[subscribeToSeniorProfile] snapshot error:', error?.code || error);
+            });
+        }
+        return () => { };
+    },
+
+    // U3: Live listener for the user doc (users/{uid}). Surfaces agent-driven
+    // changes to verification status, account state, and aggregated fields
+    // live, beyond the one-shot getUser at auth time. users/{uid} read rule
+    // already exists (firestore.rules:79) — no rule change needed.
+    subscribeToUser: (uid: string, onUpdate: (data: Record<string, unknown> | null) => void) => {
+        if (isConfigured && db) {
+            const docRef = db.collection('users').doc(uid);
+            return docRef.onSnapshot((doc) => {
+                onUpdate(doc.exists ? (doc.data() as Record<string, unknown>) : null);
+            }, (error) => {
+                console.error('[subscribeToUser] snapshot error:', error?.code || error);
+            });
+        }
+        return () => { };
+    },
+
     toggleRoutineTask: async (uid: string, taskIndex: number, currentPlan: CarePlan) => {
         const updatedPlan = { ...currentPlan };
         if (updatedPlan.dailyRoutine[taskIndex]) {

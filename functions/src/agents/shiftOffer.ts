@@ -23,9 +23,13 @@ const db = admin.firestore();
 export type ShiftOfferKind = "booking" | "swap" | "time_change";
 export type ShiftOfferStatus = "pending" | "accepted" | "declined" | "expired" | "cancelled";
 
-// Centralized in config/slaConstants (U14). Re-exported here so existing
-// importers (`import { SHIFT_OFFER_TTL_MS } from "./shiftOffer"`) are unchanged.
-export { SHIFT_OFFER_TTL_MS } from "../config/slaConstants";
+// Centralized in config/slaConstants (U14). Imported locally (used in
+// createShiftOffer below) AND re-exported so existing importers
+// (`import { SHIFT_OFFER_TTL_MS } from "./shiftOffer"`) are unchanged.
+// NOTE: a bare `export { X } from "..."` re-export does NOT create a local
+// binding, so the local usage would throw ReferenceError — import + export.
+import { SHIFT_OFFER_TTL_MS } from "../config/slaConstants";
+export { SHIFT_OFFER_TTL_MS };
 
 export interface ShiftOffer {
   kind:            ShiftOfferKind;

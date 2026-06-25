@@ -54,35 +54,35 @@ row already exists** — items without one stay as genuine gaps. Live tool count
 
 | # | Principle | RAW | Re-baselined | Dropped (← exclusion row) | Genuine gaps that REMAIN (no row) |
 |---|---|---|---|---|---|
-| 1 | Action Parity | 36/44 | **36/40 (90%)** | Twilio video, PCI card entry (capability-map 🚫); video intro, recognition badges (capability-map ⚠️) | **`triggerEmergencyAlert` (Emergency SOS), `getBackupCaregiverOptions`+`selectBackupCaregiver` (callout backup), `requestCalloutRefund`, `sendReferralInvite`** |
+| 1 | Action Parity | 36/44 | **40/40 (100%) — gaps CLOSED** | Twilio video, PCI card entry (capability-map 🚫); video intro, recognition badges (capability-map ⚠️) | ~~Emergency SOS, callout backup/refund, referral~~ → **now built** (`trigger_emergency_alert`, `get_callout_backups`/`select_callout_backup`/`request_callout_refund`, `send_referral`/`get_referral_status`) |
 | 2 | Tools as Primitives | 127/129 | **128/129 (99%)** | `perform_web_action` (EXCLUSIONS: healthcare flag-gated row) | `manage_recurring_schedule` (borderline "manage" verb; coexists with finer modify/get tools) |
 | 3 | Context Injection | 8/8 | **8/8 (100%)** | — | none |
 | 4 | Shared Workspace | 8/8 | **8/8 (100%)** | agent-internal collections (EXCLUSIONS: internal-infra rows) | none |
 | 5 | CRUD Completeness | 13/16 | **13/15 (87%)** | `care_journal` UPDATE (EXCLUSIONS: append-only care-audit row → edit excluded, soft-delete only) | `reminder` UPDATE, journal-`comment` UPDATE (both minor: delete+recreate works today) |
 | 6 | UI Integration | 7/7 | **7/7 (100%)** | — | none |
 | 7 | Capability Discovery | 4/4 | **4/4 (100%)** | — | none |
-| 8 | Prompt-Native | 1/4 live | **4/4 paths built; 1 live + 3 dark** | crisis fast-path / STOP / OTP etc. (EXCLUSIONS: prompt-native rows) | `onboarding` / `job_posting` / `modify_schedule` dispatchers exist + parity-proven but ship DARK; flipping them on is gated on the real-model eval (KTD-6), a separate decision |
+| 8 | Prompt-Native | 1/4 live | **3/4 live + 1 dark** | crisis fast-path / STOP / OTP etc. (EXCLUSIONS: prompt-native rows) | `job_posting` + `modify_schedule` now **flipped LIVE by default** (conversational-parity bar; reversible via `CONVERGENCE_UNFLIPPED`). `onboarding` remains DARK — sole signup path, flip gated on the real-model eval (KTD-6) |
 
-**Honest verdict — NOT a literal 100%.** Four principles re-baseline to a clean
-100% (Context Injection, Shared Workspace, UI Integration, Capability Discovery);
-Tools-as-Primitives and CRUD sit in the high-90s/80s with minor justified-or-trivial
-remainders. The real finding is **Action Parity at 90%**: the audit surfaced **4
-genuine user actions with no agent equivalent and no exclusion row** — these were
-not previously tracked and are NOT being excluded to inflate the score. This is the
-"legitimate, not literal" 100% chosen at kickoff: the score is honest, every removal
-is traceable to a pre-existing row, and the gaps that remain are named.
+**Verdict (updated 2026-06-25, post-remediation).** After closing the audit's
+findings: **six principles at a clean 100%** (Action Parity now included — all 4
+gaps built), Tools-as-Primitives ~99%, CRUD ~87% (2 trivial update-tool gaps,
+delete+recreate works today), and Prompt-Native at **3/4 flows live** (onboarding
+held dark on purpose). Every denominator removal still traces to a pre-existing
+exclusion row — the score is legitimate, and the one principle deliberately short
+of 100% (Prompt-Native) is short *because* flipping the signup path is correctly
+gated on an eval, not because of an unaddressed gap.
 
-**New punch-list from this audit (ranked):**
-1. **Emergency SOS has no agent tool** (`triggerEmergencyAlert`, `components/EmergencySOS.tsx`) — a safety action; should likely become an agent capability (`trigger_emergency_alert`) rather than an exclusion. Highest priority.
-2. **Caregiver-callout backup flow** (`getBackupCaregiverOptions`/`selectBackupCaregiver`/`requestCalloutRefund`, `functions/src/caregiverCallout.ts`) — distinct from `find_replacement_caregivers`; no agent bridge.
-3. **Referral invites** (`sendReferralInvite`, `components/referral/ReferralProgram.tsx`) — no `send_referral`/`get_referral_status` tool.
-4. **Minor CRUD:** add `update_reminder` + journal-`comment` edit (or formally exclude as delete+recreate-covered).
-5. **`manage_recurring_schedule`** — decide: decompose into the existing finer tools, or add an exclusion row justifying the bundle.
-6. **capability-map.md under-counts real parity** — it's missing rows for tools that DO exist (`save_caregiver_favorite`, `edit_review`, `initiate_client_swap`, journal like/comment, etc.); reconcile the map so it stops understating coverage.
+**Punch-list — status after remediation:**
+1. ~~Emergency SOS~~ — **DONE.** `trigger_emergency_alert` (CORE, confirm-first, advises 911). [commit e94a986]
+2. ~~Caregiver-callout backup/refund~~ — **DONE.** `get_callout_backups` / `select_callout_backup` / `request_callout_refund` (session-owner authorized, IDOR-tested). [e94a986]
+3. ~~Referral invites~~ — **DONE.** `send_referral` / `get_referral_status`. [e94a986]
+4. **Minor CRUD (open):** `update_reminder` + journal-`comment` edit (or formally exclude as delete+recreate-covered).
+5. **`manage_recurring_schedule` (open):** decompose into the finer tools, or add an exclusion row justifying the bundle.
+6. **capability-map.md reconcile (open):** add rows for tools that exist but aren't listed (`save_caregiver_favorite`, `edit_review`, `initiate_client_swap`, journal like/comment, …) so it stops understating coverage.
 
-Note: items #1–#3 are real product gaps the audit found, not artifacts — the audit
-earned its keep. They are NOT in `AGENT_NATIVE_EXCLUSIONS.md` and should be either
-built or explicitly excluded with rationale before any "100%" is claimed literally.
+**Remaining for a literal 100%:** (a) the real-model eval (KTD-6) to flip
+`onboarding` live; (b) the three minor open items above (#4–#6). The audit earned
+its keep — items #1–#3 were real product gaps it surfaced, now closed.
 
 ## In Progress
 

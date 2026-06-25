@@ -130,6 +130,10 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   search_web:         ["memory_search"],
   perform_web_action: ["memory_search"],
   manage_credentials: ["memory_search"],
+  // U9: public web primitives decomposed from perform_web_action
+  search_healthcare_provider: ["memory_search"],
+  fetch_web_page:             ["memory_search"],
+  browse_web:                 ["memory_search"],
 
   // Note: untagged tools are "core" and always included.
   // Core tools:

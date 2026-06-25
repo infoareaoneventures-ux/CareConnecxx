@@ -74,7 +74,8 @@ Status legend:
 
 | Action | Where | Agent tool | Status |
 |--------|-------|------------|--------|
-| Book appointment / refill Rx / check insurance | `healthcareHandler`, `careWebActions` | `perform_web_action` (propose→confirm→execute) | ✅ behind `FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS` (on locally, not shipped) |
+| Public web lookup (search / fetch / browse, no login) | `careWebActions` | `search_healthcare_provider`, `fetch_web_page`, `browse_web` | ✅ (U9 — decomposed from perform_web_action) |
+| Book appointment / refill Rx / check insurance | `healthcareHandler`, `careWebActions` | `perform_web_action` (login-only; propose→confirm→execute) | ✅ behind `FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS` (on locally, not shipped) |
 
 ---
 

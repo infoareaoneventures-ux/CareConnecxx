@@ -536,32 +536,19 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "perform_web_action",
     description:
-      "Browse the web or take action on websites on behalf of the family. " +
-      "Handles both public web lookups AND login-required portal actions.\n\n" +
-      "PUBLIC (no login needed — always try search_web first, then these):\n" +
-      "- actionType 'search': find results matching a query\n" +
-      "- actionType 'fetch': get content from a specific URL\n" +
-      "- actionType 'browse': full AI browser session for complex navigation\n\n" +
-      "LOGIN-REQUIRED (set loginAction instead of actionType):\n" +
-      "- loginAction 'schedule_appointment': book a doctor appointment on MyChart etc.\n" +
-      "- loginAction 'pharmacy_refill': request a prescription refill on CVS/Walgreens\n" +
-      "- loginAction 'insurance_check': check authorization or coverage status\n\n" +
+      "Take a LOGIN-REQUIRED action on a healthcare portal on behalf of the family. " +
+      "For public web lookups use the dedicated primitives instead (search_healthcare_provider, fetch_web_page, browse_web), or search_web.\n\n" +
+      "Set loginAction to one of:\n" +
+      "- 'schedule_appointment': book a doctor appointment on MyChart etc.\n" +
+      "- 'pharmacy_refill': request a prescription refill on CVS/Walgreens\n" +
+      "- 'insurance_check': check authorization or coverage status\n\n" +
       "If credentials aren't stored yet, Cara will collect them securely via iMessage before proceeding.",
     input_schema: {
       type: "object",
       properties: {
         task: {
           type: "string",
-          description: "What to do or find, in plain English.",
-        },
-        url: {
-          type: "string",
-          description: "Optional starting URL if you already know the website.",
-        },
-        actionType: {
-          type: "string",
-          enum: ["search", "fetch", "browse"],
-          description: "For public web actions (no login). search = fastest, fetch = page content, browse = full AI navigation.",
+          description: "What to do, in plain English.",
         },
         loginAction: {
           type: "string",
@@ -592,7 +579,48 @@ export const MCP_TOOLS: McpTool[] = [
         referenceNumber: { type: "string", description: "Prior auth or claim reference number" },
         seniorName:      { type: "string", description: "Senior's name when account has multiple members" },
       },
-      required: ["task", "userId"],
+      required: ["task", "userId", "loginAction"],
+    },
+  },
+  {
+    name: "search_healthcare_provider",
+    description: "Public web search for healthcare providers/resources (no login). Use for 'find a cardiologist near me', 'urgent care in <city>'. Prefer search_web for general lookups.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query:  { type: "string", description: "What to search for, in plain English." },
+        city:   { type: "string", description: "City to scope the search to, if relevant." },
+        userId: { type: "string", description: "Injected automatically." },
+        phone:  { type: "string", description: "Injected automatically." },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "fetch_web_page",
+    description: "Fetch the content of a specific public URL (no login). Use when you already know the page to read.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url:    { type: "string", description: "The URL to fetch." },
+        userId: { type: "string", description: "Injected automatically." },
+        phone:  { type: "string", description: "Injected automatically." },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "browse_web",
+    description: "Run a public AI browser session for complex navigation that needs no login (multi-step lookups on public sites).",
+    input_schema: {
+      type: "object",
+      properties: {
+        task:   { type: "string", description: "What to do/find, in plain English." },
+        url:    { type: "string", description: "Optional starting URL." },
+        userId: { type: "string", description: "Injected automatically." },
+        phone:  { type: "string", description: "Injected automatically." },
+      },
+      required: ["task"],
     },
   },
   {
@@ -2621,10 +2649,9 @@ export async function handleToolCall(
       }
 
       case "perform_web_action": {
+        // Login-required healthcare-portal actions only. Public web reads were
+        // decomposed into search_healthcare_provider / fetch_web_page / browse_web (U9).
         const {
-          searchHealthcareProvider,
-          fetchHealthcarePage,
-          performBrowserAction,
           findAppointmentSlots,
           bookAppointmentSlot,
           requestPharmacyRefill,
@@ -2633,12 +2660,9 @@ export async function handleToolCall(
         const { startCredentialCollection } = await import("../browser/credentialCollector");
 
         const task        = input.task        as string;
-        const url         = input.url         as string | undefined;
-        const actionType  = input.actionType  as "search" | "fetch" | "browse" | undefined;
         const loginAction = input.loginAction as "schedule_appointment" | "pharmacy_refill" | "insurance_check" | undefined;
         const userId2     = input.userId      as string;
         const phone2      = (input.phone      as string | undefined) ?? "unknown";
-        const city        = input.city        as string | undefined;
 
         try {
           // ── Login-required portal actions ──────────────────────────────────
@@ -2742,30 +2766,57 @@ export async function handleToolCall(
             }
           }
 
-          // ── Public web actions ─────────────────────────────────────────────
-          switch (actionType) {
-            case "search": {
-              const result = await searchHealthcareProvider({ userId: userId2, phone: phone2, query: task, city });
-              return { found: result.found, summary: result.summary, results: result.results.slice(0, 3) };
-            }
-
-            case "fetch": {
-              if (!url) return toolError("INVALID_INPUT", "url is required for fetch action");
-              const result = await fetchHealthcarePage({ userId: userId2, phone: phone2, url });
-              return { statusCode: result.statusCode, content: result.content.slice(0, 1500) };
-            }
-
-            case "browse": {
-              const result = await performBrowserAction({ userId: userId2, phone: phone2, task, url, requiresLogin: false });
-              return { success: result.success, result: result.result, sessionId: result.sessionId };
-            }
-
-            default:
-              return toolError("INVALID_INPUT", "actionType or loginAction is required");
-          }
+          // No loginAction → this tool is login-only now; public reads moved out.
+          return toolError("INVALID_INPUT", "loginAction is required. For public web reads use search_healthcare_provider, fetch_web_page, or browse_web.");
         } catch (webErr) {
           console.error("[perform_web_action] error:", webErr);
           return { error: true, message: "I ran into a problem with that web action. Let me find the link for you instead." };
+        }
+      }
+
+      // ── Public web primitives (U9 — decomposed from perform_web_action) ──────
+      case "search_healthcare_provider": {
+        const { searchHealthcareProvider } = await import("../browser/careWebActions");
+        const userIdW = (input.userId as string | undefined) ?? "unknown";
+        const phoneW  = (input.phone  as string | undefined) ?? "unknown";
+        const query   = input.query as string | undefined;
+        if (!query) return toolError("INVALID_INPUT", "query is required");
+        try {
+          const result = await searchHealthcareProvider({ userId: userIdW, phone: phoneW, query, city: input.city as string | undefined });
+          return { found: result.found, summary: result.summary, results: result.results.slice(0, 3) };
+        } catch (e) {
+          console.error("[search_healthcare_provider] error:", e);
+          return { error: true, message: "I couldn't run that search just now." };
+        }
+      }
+
+      case "fetch_web_page": {
+        const { fetchHealthcarePage } = await import("../browser/careWebActions");
+        const userIdW = (input.userId as string | undefined) ?? "unknown";
+        const phoneW  = (input.phone  as string | undefined) ?? "unknown";
+        const url     = input.url as string | undefined;
+        if (!url) return toolError("INVALID_INPUT", "url is required");
+        try {
+          const result = await fetchHealthcarePage({ userId: userIdW, phone: phoneW, url });
+          return { statusCode: result.statusCode, content: result.content.slice(0, 1500) };
+        } catch (e) {
+          console.error("[fetch_web_page] error:", e);
+          return { error: true, message: "I couldn't fetch that page just now." };
+        }
+      }
+
+      case "browse_web": {
+        const { performBrowserAction } = await import("../browser/careWebActions");
+        const userIdW = (input.userId as string | undefined) ?? "unknown";
+        const phoneW  = (input.phone  as string | undefined) ?? "unknown";
+        const task    = input.task as string | undefined;
+        if (!task) return toolError("INVALID_INPUT", "task is required");
+        try {
+          const result = await performBrowserAction({ userId: userIdW, phone: phoneW, task, url: input.url as string | undefined, requiresLogin: false });
+          return { success: result.success, result: result.result, sessionId: result.sessionId };
+        } catch (e) {
+          console.error("[browse_web] error:", e);
+          return { error: true, message: "I ran into a problem browsing for that." };
         }
       }
 

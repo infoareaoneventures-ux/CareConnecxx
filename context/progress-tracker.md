@@ -50,12 +50,13 @@ re-baseline (Open Q1 resolved): raw numbers from an independent audit pass, then
 each item that leaves the denominator is traced to a specific `AGENT_NATIVE_EXCLUSIONS.md`
 or `context/capability-map.md` row. **An item may only be dropped if a matching
 row already exists** — items without one stay as genuine gaps. Live tool count:
-~129 tools in `MCP_TOOLS`.
+128 tools in `MCP_TOOLS` (verified `MCP_TOOLS.length` = 128, 2026-06-25; the
+earlier "~129" was an off-by-one estimate).
 
 | # | Principle | RAW | Re-baselined | Dropped (← exclusion row) | Genuine gaps that REMAIN (no row) |
 |---|---|---|---|---|---|
 | 1 | Action Parity | 36/44 | **40/40 (100%) — gaps CLOSED** | Twilio video, PCI card entry (capability-map 🚫); video intro, recognition badges (capability-map ⚠️) | ~~Emergency SOS, callout backup/refund, referral~~ → **now built** (`trigger_emergency_alert`, `get_callout_backups`/`select_callout_backup`/`request_callout_refund`, `send_referral`/`get_referral_status`) |
-| 2 | Tools as Primitives | 127/129 | **129/129 (100%)** | `perform_web_action` (healthcare flag-gated row); `manage_recurring_schedule` (action-discriminated-primitive row, U15) | none |
+| 2 | Tools as Primitives | 126/128 | **128/128 (100%)** | `perform_web_action` (healthcare flag-gated row); `manage_recurring_schedule` (action-discriminated-primitive row, U15) | none |
 | 3 | Context Injection | 8/8 | **8/8 (100%)** | — | none |
 | 4 | Shared Workspace | 8/8 | **8/8 (100%)** | agent-internal collections (EXCLUSIONS: internal-infra rows) | none |
 | 5 | CRUD Completeness | 13/16 | **15/15 (100%) — gaps CLOSED** | `care_journal` UPDATE (EXCLUSIONS: append-only care-audit row → edit excluded, soft-delete only) | ~~reminder UPDATE, comment UPDATE~~ → **now built** (`update_reminder`, `edit_comment`) |

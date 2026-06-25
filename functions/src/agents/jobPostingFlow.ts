@@ -2,8 +2,55 @@ import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { buildAndSaveJobPost } from "./buildJobPost";
+import { isConvergenceFlipped } from "../config/featureFlags";
 
 const db = admin.firestore();
+
+// ── Prompt-driven sequencing (U13) — DARK behind CONVERGENCE_FLIPPED="job_posting" ─
+// Same data-driven dispatch as the onboarding dispatcher (U12): the job-posting
+// flow is a clean linear field-collection machine, so the next step is derived
+// from which field is still missing rather than the stored cursor. The field
+// schema below is the contract; jp_confirm_post (the terminal write) is the
+// hand-off once every field is collected. Flag OFF (default) ⇒ live path unchanged.
+export const JOB_POSTING_CONVERGENCE_FLOW = "job_posting";
+
+const JP_STEP_ORDER: Array<{ step: string; field: string }> = [
+  { step: "jp_ask_start",       field: "jobStartDate" },
+  { step: "jp_ask_frequency",   field: "jobFrequency" },
+  { step: "jp_ask_days",        field: "jobDays" },
+  { step: "jp_ask_time",        field: "jobTimeOfDay" },
+  { step: "jp_ask_care_needs",  field: "jobCareNeeds" },
+  { step: "jp_ask_care_level",  field: "jobCareLevel" },
+  { step: "jp_ask_environment", field: "petsInHome" },
+  { step: "jp_ask_rate",        field: "jobHourlyRate" },
+  { step: "jp_ask_pay_method",  field: "jobPaymentMethod" },
+  { step: "jp_ask_description", field: "jobDescription" },
+];
+const JP_POST_COLLECTION_STEP = "jp_confirm_post";
+
+function jpFieldFilled(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value))      return value.length > 0;
+  return true; // numbers / booleans (incl. petsInHome:false) / objects count as set
+}
+
+// First step whose required field is still empty, else the terminal confirm step.
+export function resolveJobStep(jobData: Record<string, unknown> | undefined): string {
+  const data = jobData ?? {};
+  for (const { step, field } of JP_STEP_ORDER) {
+    if (!jpFieldFilled(data[field])) return step;
+  }
+  return JP_POST_COLLECTION_STEP;
+}
+
+export function isJobPostingDispatchEnabled(): boolean {
+  return isConvergenceFlipped(JOB_POSTING_CONVERGENCE_FLOW);
+}
+
+function isDispatchableJobStep(step: string): boolean {
+  return step === "" || JP_STEP_ORDER.some((s) => s.step === step);
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -91,7 +138,12 @@ export async function handleJobPostingStep(
   text:    string,
   session: AgentSession
 ): Promise<void> {
-  const step = (session as any).jobPostingStep as string ?? "";
+  let step = (session as any).jobPostingStep as string ?? "";
+  // U13 (DARK): derive the step from collected fields when the flag is on. Gate
+  // step (jp_confirm_post) + all handlers unchanged; flag OFF ⇒ no change.
+  if (isJobPostingDispatchEnabled() && isDispatchableJobStep(step)) {
+    step = resolveJobStep((session as any).jobPostingData as Record<string, unknown> | undefined);
+  }
   switch (step) {
     case "jp_ask_start":       return handleJpAskStart(phone, chatId, text, session);
     case "jp_ask_frequency":   return handleJpAskFrequency(phone, chatId, text, session);

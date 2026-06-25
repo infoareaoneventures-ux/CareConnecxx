@@ -22,6 +22,9 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   request_booking:              ["booking"],
   get_caregiver_booking_rate:   ["booking"],  // U9b: read-only rate lookup
   quote_booking:                ["booking"],  // U9b: read-only cost estimate (no write)
+  get_callout_backups:          ["booking"],            // parity: caregiver-callout backup options (read)
+  select_callout_backup:        ["booking"],            // parity: assign a callout backup
+  request_callout_refund:       ["booking", "billing"], // parity: callout refund request
   find_replacement_caregivers:  ["booking"],
   get_caregiver_info:           ["booking"],
   get_caregiver_reviews:        ["booking"],
@@ -171,6 +174,14 @@ const CORE_TOOL_NAMES = new Set<string>([
   // intents (UPDATE_PAYMENT_METHOD, UPDATE_PHOTO, …). It must never be filtered
   // out, or Cara falls back to deflecting instead of just sending the link.
   "send_onboarding_link",
+  // Parity: emergency alert is SAFETY-critical — it must be bound on every turn
+  // and never filtered out by intent, so a family reporting an urgent situation
+  // can always reach it.
+  "trigger_emergency_alert",
+  // Parity: referral send/status don't map to a logistics bucket and are
+  // low-risk; keep them always-available rather than guessing an intent.
+  "send_referral",
+  "get_referral_status",
 ]);
 
 // Intent → required capabilities. An empty array means "no filter — bind

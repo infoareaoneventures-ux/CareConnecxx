@@ -171,6 +171,9 @@ describe("TOOL_CAPABILITIES coverage", () => {
       "cara_knows",
       "task",
       "send_onboarding_link",
+      "trigger_emergency_alert",
+      "send_referral",
+      "get_referral_status",
     ]);
 
     const trulyUntagged = untagged.filter(n => !knownCore.has(n));

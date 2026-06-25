@@ -104,6 +104,15 @@ async function buildBookingQuote(input: {
   };
 }
 
+// Short referral code (mirrors the frontend dbService.generateReferralCode shape:
+// 6 uppercase alphanumerics). Used by send_referral / get_referral_status.
+function generateReferralCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous 0/O/1/I
+  let code = "";
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
 // ── Tool definitions (Anthropic tool_use format) ──────────────────────────────
 
 export interface McpTool {
@@ -260,6 +269,65 @@ export const MCP_TOOLS: McpTool[] = [
       },
       required: ["caregiverId", "dates", "startTime", "endTime"],
     },
+  },
+  {
+    name: "trigger_emergency_alert",
+    description: "Raise an emergency alert for the family/account when they report an urgent safety situation (a fall, medical emergency, caregiver no-show with the senior alone, etc.). Creates an active alert + notifies staff. clientId is injected automatically. Use ONLY for genuine urgent situations — confirm it's a real emergency first. For life-threatening events also tell them to call 911.",
+    input_schema: {
+      type: "object",
+      properties: {
+        note:     { type: "string", description: "Short description of the emergency (what's happening)" },
+        location: { type: "object", description: "Optional { lat, lng } if known", properties: { lat: { type: "number" }, lng: { type: "number" } } },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_callout_backups",
+    description: "List the backup caregiver options for an appointment whose caregiver called out. Read-only. clientId is injected automatically — only the appointment's owner may view its backups.",
+    input_schema: {
+      type: "object",
+      properties: { appointmentId: { type: "string" } },
+      required: ["appointmentId"],
+    },
+  },
+  {
+    name: "select_callout_backup",
+    description: "Assign a chosen backup caregiver to an appointment whose original caregiver called out. Reassigns the visit and notifies both parties. clientId is injected automatically — only the appointment's owner may select.",
+    input_schema: {
+      type: "object",
+      properties: {
+        appointmentId:     { type: "string" },
+        backupCaregiverId: { type: "string", description: "id of the backup caregiver to assign (from get_callout_backups)" },
+      },
+      required: ["appointmentId", "backupCaregiverId"],
+    },
+  },
+  {
+    name: "request_callout_refund",
+    description: "Request a refund for an appointment when the caregiver called out and no suitable backup is available. Cancels the visit and files a refund request for admin review. clientId is injected automatically — only the appointment's owner may request.",
+    input_schema: {
+      type: "object",
+      properties: {
+        appointmentId: { type: "string" },
+        reason:        { type: "string", description: "Optional reason for the refund" },
+      },
+      required: ["appointmentId"],
+    },
+  },
+  {
+    name: "send_referral",
+    description: "Send a referral invite to a friend/family member by email, sharing the user's referral code. userId is injected automatically.",
+    input_schema: {
+      type: "object",
+      properties: { email: { type: "string", description: "Email address to invite" } },
+      required: ["email"],
+    },
+  },
+  {
+    name: "get_referral_status",
+    description: "Get the user's referral code and how many people they've referred (and their statuses). Read-only. userId is injected automatically.",
+    input_schema: { type: "object", properties: {}, required: [] },
   },
   {
     name: "update_preferences",
@@ -2457,6 +2525,119 @@ export async function handleToolCall(
         }
         logBookingCreated(clientId as string, caregiverId as string, quote.dates).catch(() => {});
         return { success: true, taskId, status: "awaiting_approval", estimatedTotal: quote.totalEstimate };
+      }
+
+      case "trigger_emergency_alert": {
+        // Parity with the EmergencySOS UI (dbService.triggerEmergencyAlert). clientId
+        // is session-injected. Writes an active emergency_alerts doc + an admin_alert.
+        const { clientId, note, location } = input;
+        if (!clientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
+        const alertRef = await db.collection("emergency_alerts").add({
+          initiatorId:     clientId,
+          initiatorType:   "client",
+          timestamp:       nowIso,
+          ...(location ? { location } : {}),
+          ...(note ? { note: String(note).slice(0, 500) } : {}),
+          status:          "active",
+          notifiedContacts: [],
+          source:          "cara",
+        });
+        await db.collection("admin_alerts").add({
+          type: "emergency_alert", title: "🚨 Emergency alert raised via Cara",
+          clientId, alertId: alertRef.id, note: note ?? "", createdAt: nowIso, resolved: false,
+        }).catch(() => {});
+        logAudit({ eventType: "emergency_alert_raised", userId: clientId as string, data: { source: "mcp:trigger_emergency_alert", alertId: alertRef.id } }).catch(() => {});
+        return { success: true, alertId: alertRef.id, status: "active", advise911: true };
+      }
+
+      case "get_callout_backups": {
+        const { clientId, appointmentId } = input;
+        if (!clientId || !appointmentId) return toolError("INVALID_INPUT", "appointmentId is required");
+        const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
+        if (!apptSnap.exists) return toolError("NOT_FOUND", "appointment not found");
+        const appt = apptSnap.data() || {};
+        if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This appointment does not belong to this client");
+        const options = Array.isArray(appt.backupCaregiverOptions) ? appt.backupCaregiverOptions : [];
+        return { success: true, appointmentId, caregivers: options, count: options.length };
+      }
+
+      case "select_callout_backup": {
+        const { clientId, appointmentId, backupCaregiverId } = input;
+        if (!clientId || !appointmentId || !backupCaregiverId) return toolError("INVALID_INPUT", "appointmentId and backupCaregiverId are required");
+        const apptRef = db.collection("appointments").doc(appointmentId as string);
+        const apptSnap = await apptRef.get();
+        if (!apptSnap.exists) return toolError("NOT_FOUND", "appointment not found");
+        const appt = apptSnap.data() || {};
+        if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This appointment does not belong to this client");
+        const cgSnap = await db.collection("caregivers").doc(backupCaregiverId as string).get();
+        if (!cgSnap.exists) return toolError("NOT_FOUND", "caregiver not found");
+        const cg = cgSnap.data() || {};
+        const caregiverName = (cg.name ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "your caregiver";
+        await apptRef.update({
+          caregiverId:          backupCaregiverId,
+          caregiverName,
+          status:               "confirmed",
+          previousCaregiverId:  appt.caregiverId ?? null,
+          caregiverSwitchedAt:  nowIso,
+          needsBackup:          false,
+          backupCaregiverOptions: admin.firestore.FieldValue.delete(),
+        });
+        logAudit({ eventType: "callout_backup_selected", userId: clientId as string, data: { source: "mcp:select_callout_backup", appointmentId, backupCaregiverId } }).catch(() => {});
+        return { success: true, appointmentId, caregiverId: backupCaregiverId, caregiverName, status: "confirmed" };
+      }
+
+      case "request_callout_refund": {
+        const { clientId, appointmentId, reason } = input;
+        if (!clientId || !appointmentId) return toolError("INVALID_INPUT", "appointmentId is required");
+        const apptRef = db.collection("appointments").doc(appointmentId as string);
+        const apptSnap = await apptRef.get();
+        if (!apptSnap.exists) return toolError("NOT_FOUND", "appointment not found");
+        const appt = apptSnap.data() || {};
+        if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This appointment does not belong to this client");
+        const refundReason = (reason as string) || "Caregiver called out, no suitable backup available";
+        await apptRef.update({ status: "cancelled_refund_requested", refundRequestedAt: nowIso, refundReason, needsBackup: false });
+        const refundRef = await db.collection("refundRequests").add({
+          appointmentId, clientId, amount: appt.amount ?? 0, reason: refundReason, status: "pending", createdAt: nowIso, source: "cara",
+        });
+        await db.collection("admin_alerts").add({
+          type: "refund_request", title: "Refund request — caregiver callout (via Cara)",
+          clientId, appointmentId, refundRequestId: refundRef.id, createdAt: nowIso, resolved: false,
+        }).catch(() => {});
+        logAudit({ eventType: "callout_refund_requested", userId: clientId as string, data: { source: "mcp:request_callout_refund", appointmentId, refundRequestId: refundRef.id } }).catch(() => {});
+        return { success: true, refundRequestId: refundRef.id, status: "pending" };
+      }
+
+      case "send_referral": {
+        const { userId, email } = input;
+        if (!userId) return toolError("INVALID_INPUT", "userId is required (auto-injected from session)");
+        if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email))) return toolError("INVALID_INPUT", "a valid email is required");
+        const userSnap = await db.collection("users").doc(userId as string).get();
+        const userData = userSnap.data() || {};
+        let referralCode = userData.referralCode as string | undefined;
+        if (!referralCode) {
+          referralCode = generateReferralCode();
+          await db.collection("users").doc(userId as string).set({ referralCode }, { merge: true });
+        }
+        const userType = (userData.userType === "caregiver" ? "caregiver" : "client");
+        await db.collection("referrals").add({
+          referrerId: userId, referrerUserId: userId, referredEmail: String(email), status: "pending", referralCode, userType, createdAt: nowIso, source: "cara",
+        });
+        logAudit({ eventType: "referral_sent", userId: userId as string, data: { source: "mcp:send_referral" } }).catch(() => {});
+        return { success: true, referralCode, invited: String(email) };
+      }
+
+      case "get_referral_status": {
+        const { userId } = input;
+        if (!userId) return toolError("INVALID_INPUT", "userId is required (auto-injected from session)");
+        const userSnap = await db.collection("users").doc(userId as string).get();
+        let referralCode = (userSnap.data()?.referralCode as string | undefined);
+        if (!referralCode) {
+          referralCode = generateReferralCode();
+          await db.collection("users").doc(userId as string).set({ referralCode }, { merge: true });
+        }
+        const refSnap = await db.collection("referrals").where("referrerId", "==", userId).get();
+        const referrals = refSnap.docs.map((d) => ({ email: d.data().referredEmail, status: d.data().status }));
+        return { success: true, referralCode, totalReferred: referrals.length, referrals };
       }
 
       case "update_preferences": {

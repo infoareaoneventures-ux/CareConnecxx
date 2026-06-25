@@ -69,6 +69,11 @@ Status legend:
 | Manage reminders / follow-ups | reminder UI | `list_user_reminders`, `create_reminder`, `delete_reminder`, `schedule_followup`, `cancel_followup` | ✅ |
 | Cancel / reactivate subscription | `Subscription.tsx` | `cancel_subscription`, `reactivate_subscription` | ✅ |
 | Block / report / unblock a user | safety UI | `block_user`, `report_user`, `unblock_user` | ✅ |
+| Raise an emergency alert | `EmergencySOS.tsx` (`triggerEmergencyAlert`) | `trigger_emergency_alert` | ✅ (parity) |
+| View backup options after a caregiver callout | `CaregiverCalloutModal.tsx` (`getBackupCaregiverOptions`) | `get_callout_backups` | ✅ (parity) |
+| Assign a callout backup caregiver | `CaregiverCalloutModal.tsx` (`selectBackupCaregiver`) | `select_callout_backup` | ✅ (parity) |
+| Request a refund for a caregiver callout | `CaregiverCalloutModal.tsx` (`requestCalloutRefund`) | `request_callout_refund` | ✅ (parity) |
+| Send a referral invite / view referral status | `referral/ReferralProgram.tsx` (`sendReferralInvite`) | `send_referral`, `get_referral_status` | ✅ (parity) |
 | Twilio Video interview (live call) | `VideoInterviewRoom.tsx` | — | 🚫 Live video is a UI-only surface |
 
 ## Real-world (healthcare handler — flag-gated)

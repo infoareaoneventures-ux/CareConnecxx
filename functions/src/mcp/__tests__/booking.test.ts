@@ -353,4 +353,67 @@ describe("booking tools", () => {
       expect(createBookingTask).not.toHaveBeenCalled();
     });
   });
+
+  // ── Action-parity tools (Emergency SOS / caregiver callout / referral) ───────
+  describe("trigger_emergency_alert", () => {
+    it("writes an active emergency_alerts doc and advises 911", async () => {
+      const r = await handleToolCall("trigger_emergency_alert", { clientId: "c1", note: "Dad fell" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.status).toBe("active");
+      expect(r.advise911).toBe(true);
+      expect(hoisted.adds.some((a) => a.path === "emergency_alerts")).toBe(true);
+    });
+    it("requires session clientId", async () => {
+      const r = await handleToolCall("trigger_emergency_alert", {}) as any;
+      expect(r._toolError).toBe(true);
+    });
+  });
+
+  describe("caregiver-callout tools", () => {
+    it("get_callout_backups returns stored options for the owner", async () => {
+      hoisted.docState.set("appointments/a9", { clientId: "c1", backupCaregiverOptions: [{ id: "cg2", name: "Sam" }] });
+      const r = await handleToolCall("get_callout_backups", { clientId: "c1", appointmentId: "a9" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.count).toBe(1);
+    });
+    it("get_callout_backups rejects a non-owner (IDOR)", async () => {
+      hoisted.docState.set("appointments/a9", { clientId: "OTHER", backupCaregiverOptions: [] });
+      const r = await handleToolCall("get_callout_backups", { clientId: "c1", appointmentId: "a9" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("PERMISSION_DENIED");
+    });
+    it("select_callout_backup reassigns the appointment to the chosen caregiver", async () => {
+      hoisted.docState.set("appointments/a9", { clientId: "c1", caregiverId: "cg1" });
+      hoisted.docState.set("caregivers/cg2", { name: "Sam" });
+      const r = await handleToolCall("select_callout_backup", { clientId: "c1", appointmentId: "a9", backupCaregiverId: "cg2" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.caregiverId).toBe("cg2");
+      expect(hoisted.docState.get("appointments/a9").caregiverId).toBe("cg2");
+      expect(hoisted.docState.get("appointments/a9").status).toBe("confirmed");
+    });
+    it("request_callout_refund files a refund request for the owner", async () => {
+      hoisted.docState.set("appointments/a9", { clientId: "c1", amount: 120 });
+      const r = await handleToolCall("request_callout_refund", { clientId: "c1", appointmentId: "a9", reason: "no backup" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.status).toBe("pending");
+      expect(hoisted.adds.some((a) => a.path === "refundRequests")).toBe(true);
+      expect(hoisted.docState.get("appointments/a9").status).toBe("cancelled_refund_requested");
+    });
+  });
+
+  describe("referral tools", () => {
+    it("send_referral generates a code, persists it, and files a referral", async () => {
+      hoisted.docState.set("users/u1", { userType: "client" });
+      const r = await handleToolCall("send_referral", { userId: "u1", email: "friend@example.com" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.referralCode).toMatch(/^[A-Z0-9]{6}$/);
+      expect(hoisted.docState.get("users/u1").referralCode).toBe(r.referralCode); // persisted
+      expect(hoisted.adds.some((a) => a.path === "referrals")).toBe(true);
+    });
+    it("send_referral rejects an invalid email", async () => {
+      const r = await handleToolCall("send_referral", { userId: "u1", email: "not-an-email" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+    });
+  });
 });

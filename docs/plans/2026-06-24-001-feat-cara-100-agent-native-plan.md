@@ -211,6 +211,8 @@ Grouped into phases. Land Phase 1 first (additive, de-risks early score movement
 ### Phase 2 — CRUD & Action Parity tools (B4, B5)
 
 #### U6. Create-side CRUD tools
+- **Status (2026-06-24):** `create_senior_profile` SHIPPED (commit on `feat/cara-100-agent-native`). `create_recurring_schedule` DEFERRED to a focused, test-backed PR — see decision below.
+- **`create_recurring_schedule` decision (execution-time, resolved):** route through caregiver acceptance — nothing confirmed until the caregiver says YES. Integration spec for the follow-up: (1) write `recurring_schedules` doc as `status: 'pending_acceptance'`; (2) generate the first batch of appointments in an unconfirmed status; (3) add a `recurring` `ShiftOfferKind` and call `createShiftOffer` (`functions/src/agents/shiftOffer.ts`) with those appointmentIds + `payload: { scheduleId }`; (4) add a branch in the accept path (`handleShiftOfferReply`, ~`shiftOffer.ts:178`) that flips the schedule to `active` on YES so `extendRecurringSchedules` (`scheduled/recurringScheduler.ts`) takes over. Deferred because it modifies the production shift-offer state machine, whose test suite cannot be run in the current local env (firebase-functions stub lacks `https.onCall`) — it needs the offer-flow tests green in CI before merge.
 - **Goal:** `create_senior_profile` (multi-senior households) and `create_recurring_schedule` (currently only modify/pause/resume).
 - **Requirements:** B4
 - **Dependencies:** none

@@ -2417,40 +2417,23 @@ export async function handleToolCall(
 
       case "request_booking": {
         const { clientId, caregiverId, dates, startTime, endTime, phone } = input;
-        if (!clientId || !caregiverId || !dates || !startTime || !endTime) {
-          return toolError("INVALID_INPUT", "clientId, caregiverId, dates, startTime, endTime are required");
-        }
-        if (!phone) {
-          return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
-        }
-        const dateList = (Array.isArray(dates) ? dates : [dates]) as string[];
-        if (dateList.length === 0) return toolError("INVALID_INPUT", "at least one date is required");
+        // Session-injected ownership fields are checked here; the booking shape
+        // (caregiverId/dates/times) + caregiver lookup are validated by the shared
+        // quote primitive below, so the two paths can never diverge.
+        if (!clientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
+        if (!phone)    return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
 
-        // Compute duration (hours) from "HH:MM" start/end times.
-        const toMinutes = (t: string): number | null => {
-          const m = /^(\d{1,2}):(\d{2})$/.exec(String(t).trim());
-          if (!m) return null;
-          return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-        };
-        const startMin = toMinutes(startTime as string);
-        const endMin   = toMinutes(endTime as string);
-        if (startMin === null || endMin === null || endMin <= startMin) {
-          return toolError("INVALID_INPUT", "startTime/endTime must be 'HH:MM' with end after start");
-        }
-        const durationHours = Math.round(((endMin - startMin) / 60) * 100) / 100;
+        // Commit via the SAME primitive quote_booking exposes (U9b): the duration,
+        // rate, and caregiver name the family approved in the quote and the values
+        // we book are computed by one function — no duplicated parse/lookup logic.
+        const quote = await buildBookingQuote(input);
+        if (!quote.ok) return toolError(quote.code, quote.message);
 
-        // Resolve caregiver name + rate from the caregiver doc.
-        const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-        if (!cgSnap.exists) return toolError("NOT_FOUND", "caregiver not found");
-        const cg = cgSnap.data() || {};
-        const caregiverName = (cg.name ?? cg.fullName ?? "your caregiver") as string;
-        const hourlyRate    = (typeof cg.hourlyRate === "number" ? cg.hourlyRate : 20) as number;
-
-        const appointments = dateList.map((d) => ({
+        const appointments = quote.dates.map((d) => ({
           date:          d,
           startTime:     startTime as string,
           endTime:       endTime as string,
-          durationHours,
+          durationHours: quote.durationHours,
         }));
 
         // Route through the REAL booking path: createBookingTask writes an
@@ -2462,17 +2445,17 @@ export async function handleToolCall(
           clientPhone:   phone as string,
           clientId:      clientId as string,
           caregiverId:   caregiverId as string,
-          caregiverName,
+          caregiverName: quote.caregiverName,
           appointments,
-          hourlyRate,
+          hourlyRate:    quote.hourlyRate,
         });
         if (!taskId) {
           // createBookingTask returns "" when it blocks the booking (e.g. bgcheck pending)
           // and has already messaged the family. Surface that to the agent.
           return { success: false, blocked: true, reason: "booking_blocked_pending_background_check" };
         }
-        logBookingCreated(clientId as string, caregiverId as string, dateList).catch(() => {});
-        return { success: true, taskId, status: "awaiting_approval" };
+        logBookingCreated(clientId as string, caregiverId as string, quote.dates).catch(() => {});
+        return { success: true, taskId, status: "awaiting_approval", estimatedTotal: quote.totalEstimate };
       }
 
       case "update_preferences": {

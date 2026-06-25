@@ -85,6 +85,14 @@ vi.mock("../../agents/matchingAgent", () => ({
   runMatchingForClient: vi.fn().mockResolvedValue(undefined),
 }));
 
+// request_booking (U9b) delegates the actual write to createBookingTask via a
+// dynamic import. Mock it so the handler test exercises validation + the shared
+// quote + delegation, not the booking-executor internals (bgcheck guard etc.).
+const createBookingTask = vi.fn().mockResolvedValue("task-123");
+vi.mock("../../agents/bookingExecutor", () => ({
+  createBookingTask: (...args: unknown[]) => createBookingTask(...args),
+}));
+
 const trySend = vi.fn().mockResolvedValue({ sent: true });
 vi.mock("../../utils/toolNotify", () => ({
   trySend:        (...args: unknown[]) => trySend(...args),
@@ -108,6 +116,7 @@ import { handleToolCall } from "../server";
 describe("booking tools", () => {
   beforeEach(() => {
     hoisted.reset(); trySend.mockClear(); trySend.mockResolvedValue({ sent: true });
+    createBookingTask.mockClear(); createBookingTask.mockResolvedValue("task-123");
     // Confirmed-action gate (U12) now validates _confirmedActionId against a real
     // pending doc; seed one matching the cancel_appointment bypass calls below.
     hoisted.docState.set("pending_actions/test", { toolName: "cancel_appointment", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" });
@@ -294,6 +303,54 @@ describe("booking tools", () => {
       }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("NOT_FOUND");
+    });
+  });
+
+  // ── U9b: request_booking now commits via the SAME quote primitive ────────────
+  describe("request_booking (U9b — commit path shares buildBookingQuote)", () => {
+    const baseInput = {
+      clientId: "c1", phone: "+15555550100", caregiverId: "cg1",
+      dates: ["2026-07-01", "2026-07-02"], startTime: "09:00", endTime: "17:00", // 8h
+    };
+
+    it("commits the booking with the quote's computed rate/duration and returns the estimate", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      const r = await handleToolCall("request_booking", baseInput) as any;
+      expect(r.success).toBe(true);
+      expect(r.taskId).toBe("task-123");
+      expect(r.status).toBe("awaiting_approval");
+      expect(r.estimatedTotal).toBe(480); // 8h * $30 * 2 days — same math as quote_booking
+      // Delegated to createBookingTask with the quote-derived values.
+      expect(createBookingTask).toHaveBeenCalledTimes(1);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.caregiverName).toBe("Maria");
+      expect(arg.hourlyRate).toBe(30);
+      expect(arg.appointments).toHaveLength(2);
+      expect(arg.appointments[0].durationHours).toBe(8);
+    });
+
+    it("rejects an unknown caregiver BEFORE any booking write (shared NOT_FOUND)", async () => {
+      const r = await handleToolCall("request_booking", baseInput) as any; // no caregiver doc seeded
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("NOT_FOUND");
+      expect(createBookingTask).not.toHaveBeenCalled();
+    });
+
+    it("surfaces a blocked booking (e.g. pending background check) without erroring", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      createBookingTask.mockResolvedValueOnce(""); // executor blocked it + already messaged the family
+      const r = await handleToolCall("request_booking", baseInput) as any;
+      expect(r.success).toBe(false);
+      expect(r.blocked).toBe(true);
+      expect(r.reason).toBe("booking_blocked_pending_background_check");
+    });
+
+    it("requires session-injected clientId and phone", async () => {
+      const noClient = await handleToolCall("request_booking", { ...baseInput, clientId: "" }) as any;
+      expect(noClient._toolError).toBe(true);
+      const noPhone = await handleToolCall("request_booking", { ...baseInput, phone: "" }) as any;
+      expect(noPhone._toolError).toBe(true);
+      expect(createBookingTask).not.toHaveBeenCalled();
     });
   });
 });

@@ -16,6 +16,7 @@ import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
 import { getAppUrl } from "../config/appUrl";
+import { autoApproveAtIso } from "../config/slaConstants";
 
 const db = admin.firestore();
 
@@ -3692,7 +3693,7 @@ export async function handleToolCall(
         basePay: grossPay3, grossPay: grossPay3, currency: "usd",
         paymentMethod: String(appt3.paymentMethod ?? "").toLowerCase().trim() === "cash" ? "cash" : "credit",
         status: "pending_client_review", submittedAt: nowIso,
-        autoApproveAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        autoApproveAt: autoApproveAtIso(),
         paymentAttemptCount: 0,
       }, { merge: false });
       const clientSessSnap3 = await db.collection("agent_sessions").where("userId", "==", appt3.clientId).limit(1).get();

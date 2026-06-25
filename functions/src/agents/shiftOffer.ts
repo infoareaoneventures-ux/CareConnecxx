@@ -23,7 +23,9 @@ const db = admin.firestore();
 export type ShiftOfferKind = "booking" | "swap" | "time_change";
 export type ShiftOfferStatus = "pending" | "accepted" | "declined" | "expired" | "cancelled";
 
-export const SHIFT_OFFER_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours, matches booking task TTL
+// Centralized in config/slaConstants (U14). Re-exported here so existing
+// importers (`import { SHIFT_OFFER_TTL_MS } from "./shiftOffer"`) are unchanged.
+export { SHIFT_OFFER_TTL_MS } from "../config/slaConstants";
 
 export interface ShiftOffer {
   kind:            ShiftOfferKind;

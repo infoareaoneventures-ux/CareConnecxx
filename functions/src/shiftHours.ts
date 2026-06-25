@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
+import { autoApproveAtIso, TIMESHEET_AUTO_APPROVE_HOURS } from './config/slaConstants';
 
 const stripe = new Stripe(functions.config().stripe?.secret || process.env.STRIPE_SECRET_KEY, {
   timeout: 10_000, // cap SDK calls (default 80s) so a slow Stripe response can't run a payment handler to the function deadline
@@ -151,7 +152,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
   const payRate = shiftDoc.rate || caregiverData.hourlyRate || 25;
   const paymentMethod: PaymentMethod = (shiftDoc.paymentMethod || '').toLowerCase() === 'cash' ? 'cash' : 'credit';
   const submittedAt = nowIso();
-  const autoApproveAt = new Date(Date.now() + ONE_DAY_MS).toISOString();
+  const autoApproveAt = autoApproveAtIso();
   const basePay  = Math.round(totalHours * payRate * 100) / 100;
   const grossPay = Math.round((basePay + lineItemsTotal) * 100) / 100;
 
@@ -200,7 +201,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     shiftDoc.clientId,
     'shift_hours_submitted',
     'Hours submitted for your review',
-    `${caregiverData.name || 'Your caregiver'} submitted ${fmtHours(totalHours)} for review. Auto-approves in 24h.`,
+    `${caregiverData.name || 'Your caregiver'} submitted ${fmtHours(totalHours)} for review. Auto-approves in ${TIMESHEET_AUTO_APPROVE_HOURS}h.`,
     { appointmentId: shiftId, totalHours }
   );
 
@@ -688,8 +689,8 @@ export const autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').
       updatedAt: now,
     });
 
-    await pushNotification(shift.caregiverId, 'shift_hours_auto_approved', 'Hours auto-approved', `Client did not respond in 24h; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
-    await pushNotification(shift.clientId, 'shift_hours_auto_approved', 'Hours auto-approved', `The 24h review window closed; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
+    await pushNotification(shift.caregiverId, 'shift_hours_auto_approved', 'Hours auto-approved', `Client did not respond in ${TIMESHEET_AUTO_APPROVE_HOURS}h; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
+    await pushNotification(shift.clientId, 'shift_hours_auto_approved', 'Hours auto-approved', `The ${TIMESHEET_AUTO_APPROVE_HOURS}h review window closed; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
   }
 
   return null;

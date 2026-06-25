@@ -12,6 +12,7 @@ import { handleCaregiverAvailabilityReply } from "../agents/interviewAgent";
 import { logAudit } from "../observability/auditLog";
 import { logAgentAction } from "../observability/actionLedger";
 import { getAppUrl } from "../config/appUrl";
+import { autoApproveAtIso, TIMESHEET_AUTO_APPROVE_HOURS } from "../config/slaConstants";
 import { buildLayFallbackSummary } from "./shiftSummaryFallback";
 
 const db = admin.firestore();
@@ -1214,7 +1215,7 @@ async function handleCareNotes(
         submittedTotalHours: durationHours, finalTotalHours: durationHours, durationHours,
         basePay: grossPay, grossPay, amountCents: Math.round(grossPay * 100),
         date: apptDate, status: "pending_client_review", submittedAt,
-        autoApproveAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        autoApproveAt: autoApproveAtIso(),
         paymentAttemptCount: 0, createdAt: submittedAt, updatedAt: submittedAt,
       });
       created = true;
@@ -1326,8 +1327,8 @@ async function handleCareNotes(
   const paymentLine = !billingSubmitted
     ? `Thanks for the update.`
     : familyNotified
-      ? `I've sent your hours to the family to confirm — you'll be paid once they approve (auto-approves in 24h if they don't reply).`
-      : `Your hours are recorded — you'll be paid once they're approved (auto-approves in 24h).`;
+      ? `I've sent your hours to the family to confirm — you'll be paid once they approve (auto-approves in ${TIMESHEET_AUTO_APPROVE_HOURS}h if they don't reply).`
+      : `Your hours are recorded — you'll be paid once they're approved (auto-approves in ${TIMESHEET_AUTO_APPROVE_HOURS}h).`;
 
   await sendMessage(chatId,
     `Got it — notes saved.\n\n` +

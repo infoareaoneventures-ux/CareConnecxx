@@ -203,6 +203,29 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         };
     }, [currentUser?.uid, currentUser?.userType]); // Only re-subscribe when user changes
 
+    // U2: Live caregiver-profile listener. Cara writes to caregivers/{uid}
+    // during onboarding/profile edits/verification; this keeps the caregiver
+    // dashboard fresh without a logout/login. Per KTD-4, the listener updates
+    // context state unconditionally — consuming edit forms hold their in-progress
+    // state locally so a snapshot doesn't clobber unsaved input.
+    useEffect(() => {
+        if (!currentUser || currentUser.userType !== 'caregiver') return;
+
+        const unsubscribe = dbService.subscribeToCaregiverProfile(
+            currentUser.uid,
+            (caregiverData) => {
+                if (!caregiverData) return; // keep last-known if the doc/read is unavailable
+                setCaregiverProfile(prev => ({
+                    ...(prev as any),
+                    ...caregiverData,
+                    userType: 'caregiver',
+                }) as any);
+            }
+        );
+
+        return () => unsubscribe();
+    }, [currentUser?.uid, currentUser?.userType]);
+
     const bookAppointment = async (appointment: Appointment) => {
         try {
             setAppointments(prev => [...prev, appointment]); // Optimistic

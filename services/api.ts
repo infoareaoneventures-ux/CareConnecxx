@@ -1828,6 +1828,25 @@ export const dbService = {
         return () => { };
     },
 
+    // U2: Live listener for a caregiver's own profile doc (caregivers/{uid}).
+    // Cara's agent writes to this doc during onboarding, profile edits, and
+    // verification flips; without a listener the caregiver dashboard shows a
+    // stale profile until logout/login. Mirrors subscribeToCarePlan.
+    // Emits the raw caregiver doc data; the caller merges it over the cached
+    // users-doc fields (caregiver doc wins, matching getUser's merge order).
+    subscribeToCaregiverProfile: (uid: string, onUpdate: (caregiverData: Record<string, unknown> | null) => void) => {
+        if (isConfigured && db) {
+            const docRef = db.collection('caregivers').doc(uid);
+            return docRef.onSnapshot((doc) => {
+                onUpdate(doc.exists ? (doc.data() as Record<string, unknown>) : null);
+            }, (error) => {
+                // Best-effort surface: log for diagnosis, emit nothing (keep last-known), no toast.
+                console.error('[subscribeToCaregiverProfile] snapshot error:', error?.code || error);
+            });
+        }
+        return () => { };
+    },
+
     toggleRoutineTask: async (uid: string, taskIndex: number, currentPlan: CarePlan) => {
         const updatedPlan = { ...currentPlan };
         if (updatedPlan.dailyRoutine[taskIndex]) {

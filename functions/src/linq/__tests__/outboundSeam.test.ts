@@ -10,6 +10,15 @@ vi.mock("firebase-admin", () => {
   return { __esModule: true, default: { firestore }, firestore };
 });
 
+// client.ts → supervisor.ts → claudeClient.ts → langsmith/wrappers/anthropic.
+// That chain tries to initialize the Anthropic client (slow/hangs in tests).
+// Stub supervisor with a transparent pass-through so sendMessage still works.
+// NOTE: path must be relative from THIS file (__tests__/) to src/safety/, so
+// two levels up: "../../safety/supervisor".
+vi.mock("../../safety/supervisor", () => ({
+  supervise: async (_ctx: unknown, content: string) => content,
+}));
+
 // U11 — proves the outbound seam is REAL: every message to Linq crosses the one
 // chokepoint (normalizeParts in client.ts), so voice cleanup + PII redaction
 // can't be bypassed by a scripted send.
@@ -44,6 +53,15 @@ describe("outbound seam — behavioral", () => {
     process.env.LINQ_API_KEY = "test";
     process.env.LINQ_BASE_URL = "https://linq.test/v3";
     vi.resetModules();
+    // Re-register the heavy-chain mocks so they survive resetModules().
+    vi.doMock("firebase-admin", () => {
+      const fakeColl = () => ({ doc: () => ({ get: async () => ({ exists: false, data: () => undefined }), set: async () => {}, update: async () => {} }) });
+      const firestore = Object.assign(() => ({ collection: fakeColl }), { FieldValue: { delete: () => ({}), serverTimestamp: () => ({}) } });
+      return { __esModule: true, default: { firestore }, firestore };
+    });
+    vi.doMock("../../safety/supervisor", () => ({
+      supervise: async (_ctx: unknown, content: string) => content,
+    }));
   });
 
   it("sendMessage scrubs banned voice + PII before the bytes leave", async () => {

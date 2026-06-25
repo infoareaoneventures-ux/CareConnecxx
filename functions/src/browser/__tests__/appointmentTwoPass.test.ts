@@ -6,11 +6,11 @@ const extract = vi.fn();
 const fill = vi.fn(async () => {});
 const fakeSession = {
   sessionId: "sess1",
-  stagehand: { act: (...a: unknown[]) => act(...a), extract: (...a: unknown[]) => extract(...a) },
+  stagehand: { act: (...a: unknown[]) => (act as Function).apply(null, a as any[]), extract: (...a: unknown[]) => (extract as Function).apply(null, a as any[]) },
   page: {
     goto: vi.fn(async () => {}),
     waitForTimeout: vi.fn(async () => {}),
-    fill: (...a: unknown[]) => fill(...a),
+    fill: (...a: unknown[]) => (fill as Function).apply(null, a as any[]),
     setDefaultTimeout: vi.fn(),
   },
 };
@@ -40,7 +40,7 @@ describe("findAppointmentSlots — read-only discovery (H-U3)", () => {
     expect(r.success).toBe(true);
     expect(r.slot).toMatchObject({ provider: "Dr. Lee", datetime: "2026-06-23T14:30" });
     // No commit during discovery.
-    const actArgs = act.mock.calls.map((c) => String(c[0]).toLowerCase());
+    const actArgs = act.mock.calls.map((c: any[]) => String(c[0]).toLowerCase());
     expect(actArgs.some((a) => a.includes("submit the appointment"))).toBe(false);
   });
 });
@@ -50,11 +50,11 @@ describe("loginWithFieldFill — credential security (H-U10)", () => {
     extract.mockResolvedValueOnce({ provider: "Dr. Lee", datetime: "2026-06-23T14:30" });
     await findAppointmentSlots({ userId: "u1", phone: "+1", doctorName: "Dr. Lee" });
     // page.fill received the username and password.
-    const fillArgs = fill.mock.calls.map((c) => String(c[1]));
+    const fillArgs = fill.mock.calls.map((c: any[]) => String(c[1]));
     expect(fillArgs).toContain("user@x.com");
     expect(fillArgs).toContain("s3cret-PW");
     // The password NEVER appears in any act() instruction.
-    const everyActArg = act.mock.calls.map((c) => String(c[0])).join(" ");
+    const everyActArg = act.mock.calls.map((c: any[]) => String(c[0])).join(" ");
     expect(everyActArg).not.toContain("s3cret-PW");
   });
 });
@@ -80,7 +80,7 @@ describe("bookAppointmentSlot — verified commit (H-U3/H-U6)", () => {
     extract.mockResolvedValueOnce({ matchCount: 0 });
     const r = await bookAppointmentSlot({ userId: "u1", phone: "+1", chosenSlot: slot });
     expect(r.status).toBe("slot_unavailable");
-    const actArgs = act.mock.calls.map((c) => String(c[0]).toLowerCase());
+    const actArgs = act.mock.calls.map((c: any[]) => String(c[0]).toLowerCase());
     expect(actArgs.some((a) => a.includes("submit the appointment"))).toBe(false);
   });
 

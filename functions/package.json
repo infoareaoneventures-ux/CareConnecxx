@@ -27,6 +27,7 @@
         "firebase-admin": "^11.11.1",
         "firebase-functions": "^5.1.1",
         "googleapis": "^144.0.0",
+        "langsmith": "^0.7.10",
         "openai": "^6.39.0",
         "pdfkit": "^0.18.0",
         "playwright-core": "^1.60.0",

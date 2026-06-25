@@ -116,6 +116,12 @@ async function executeConfirmedAction(params: {
     },
   }).catch((err) => console.warn("approvalHandler: logAgentAction (confirmed) ledger write failed", { actionId: pending.id, err }));
 
+  // TODO(runTool-migration): Once all tools are migrated to ToolHandler descriptors,
+  // replace this dispatch with runTool() so confirmed actions get the
+  // toolExecutionLedger idempotency guarantee (U5). Until then, double-execution
+  // is prevented by claimPendingAction's single-fire Firestore transaction above
+  // (line ~97) — correct but a different mechanism than the ledger.
+  // See: functions/src/mcp/runTool.ts, functions/src/mcp/toolExecutionLedger.ts
   const dispatch = userType === "caregiver" ? handleToolCallForCaregiver : handleToolCall;
   // Strip any _confirmedActionId that rode in on the stored tool input (e.g.
   // injected via extracted portal text) — only THIS direct dispatch may set it.

@@ -20,7 +20,11 @@ const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 // Price ID for $29.95/month membership (legacy fallback)
 const MEMBERSHIP_PRICE_ID = process.env.STRIPE_MEMBERSHIP_PRICE_ID || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO';
 
-// Allowed price IDs for all three plans + caregiver membership
+// Allowed price IDs for all three plans + caregiver membership.
+// NOTE: STRIPE_MVR_PRICE_ID is intentionally NOT in this list — the MVR add-on
+// has its own dedicated callable (createMvrAddonCheckoutSession). If an MVR
+// priceId is passed to createCheckoutSession it falls back to MEMBERSHIP_PRICE_ID,
+// which is the correct safe default (silently ignores an unexpected priceId).
 const ALLOWED_PRICE_IDS = [
   process.env.STRIPE_PRICE_MONTHLY        || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO',
   process.env.STRIPE_PRICE_QUARTERLY      || '',

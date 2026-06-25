@@ -57,6 +57,11 @@ vi.mock("../utils/phoneVerification", () => ({
   generateOtp: vi.fn(), verifyOtp: vi.fn(), formatOtpForDisplay: vi.fn(), OtpState: {},
 }));
 vi.mock("../utils/language", () => ({ languageFromSession: () => "en", t: {} }));
+// supervisor.ts → claudeClient.ts → langsmith/wrappers/anthropic: heavy init.
+// Stub supervisor as a pass-through so onboardingConversation loads fast.
+vi.mock("../safety/supervisor", () => ({ supervise: async (_ctx: unknown, content: string) => content }));
+vi.mock("../utils/claudeClient", () => ({ getSharedClient: () => ({}) }));
+
 
 beforeEach(() => {
   vi.clearAllMocks();

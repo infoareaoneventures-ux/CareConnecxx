@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import * as crypto from "crypto";
+import { traceable } from "langsmith/traceable";
 import { claimWebhookEvent, settleWebhookEvent, LINQ_EVENTS_COLLECTION } from "../utils/webhookLedger";
 import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability, markChatRead, AgentSession, LinqService } from "./client";
 import { routeCaregiverMessage } from "./routeCaregiver";
@@ -411,7 +412,14 @@ export async function handleInbound(event: unknown): Promise<void> {
   }
 }
 
-async function handleInboundInner(event: unknown): Promise<void> {
+// One LangSmith trace per inbound message ("turn"). Every nested LLM call
+// (intent classification, the QA agent tool loop, supervisor, etc.) attaches to
+// this parent run automatically via the wrapped Anthropic/OpenAI clients, so a
+// turn shows up as a single tree instead of scattered calls. processInputs
+// strips the raw Linq payload down to a readable summary for the trace input.
+// No-op overhead when LANGSMITH_TRACING is unset.
+const handleInboundInner = traceable(
+  async function handleInboundTurn(event: unknown): Promise<void> {
   const ev      = event as any;
   const phone   = ev.data?.sender_handle?.handle as string | undefined;
   const chatId  = ev.data?.chat?.id as string | undefined;
@@ -1602,7 +1610,29 @@ async function handleInboundInner(event: unknown): Promise<void> {
   } finally {
     await stopTyping(chatId).catch(() => {});
   }
-}
+  },
+  {
+    name: "cara_turn",
+    run_type: "chain",
+    // Trace input = a compact, readable summary of the inbound turn rather than
+    // the full Linq webhook payload. The single object arg is passed straight to
+    // processInputs (see langsmith input-capture rules).
+    processInputs: (event: any) => {
+      const data = event?.data ?? {};
+      const text = (data?.parts ?? [])
+        .filter((p: any) => p?.type === "text" && p?.value)
+        .map((p: any) => String(p.value))
+        .join(" ")
+        .trim();
+      return {
+        phone:   data?.sender_handle?.handle,
+        chatId:  data?.chat?.id,
+        service: data?.service ?? data?.chat?.service ?? "SMS",
+        text:    text || "(non-text/media message)",
+      };
+    },
+  },
+);
 
 // ── message.failed handler ────────────────────────────────────────────────────
 

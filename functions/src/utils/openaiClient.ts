@@ -18,6 +18,7 @@
  */
 
 import OpenAI from "openai";
+import { wrapOpenAI } from "langsmith/wrappers/openai";
 import type Anthropic from "@anthropic-ai/sdk";
 import { callClaudeWithRetry } from "./claudeRetry";
 
@@ -33,7 +34,9 @@ export function getOpenAIClient(): OpenAI {
     if (!apiKey) {
       console.warn("openaiClient: OPENAI_API_KEY is not set — fast-path Claude calls will fail");
     }
-    _sharedClient = new OpenAI({ apiKey, timeout: 10_000, maxRetries: 0 });
+    // wrapOpenAI instruments every chat.completions call for LangSmith tracing
+    // when LANGSMITH_TRACING=true; transparent pass-through when disabled.
+    _sharedClient = wrapOpenAI(new OpenAI({ apiKey, timeout: 10_000, maxRetries: 0 }));
   }
   return _sharedClient;
 }

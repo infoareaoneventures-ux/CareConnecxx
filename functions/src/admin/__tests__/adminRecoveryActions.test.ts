@@ -102,27 +102,41 @@ vi.mock("firebase-functions/v1", () => {
 vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn(async () => {}) }));
 
 const handleToolCall = vi.fn();
-vi.mock("../../mcp/server", () => ({ handleToolCall: (...a: any[]) => handleToolCall(...a) }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+vi.mock("../../mcp/server", () => ({ handleToolCall: (...a: any[]) => (handleToolCall as Function).apply(null, a) }));
 
 const sendToPhone = vi.fn(async () => {});
 const sendMessage = vi.fn(async () => ({ message_id: "m1" }));
 vi.mock("../../linq/client", () => ({
-  sendToPhone: (...a: any[]) => sendToPhone(...a),
-  sendMessage: (...a: any[]) => sendMessage(...a),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sendToPhone: (...a: any[]) => (sendToPhone as Function).apply(null, a),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sendMessage: (...a: any[]) => (sendMessage as Function).apply(null, a),
 }));
 
 import { logAudit } from "../../observability/auditLog";
+// Callables are typed as Firebase HttpsFunction but vi.mock replaces onCall
+// with (fn) => fn — direct (data, context) functions at runtime. Cast to any.
 import {
-  admin_retry_linq_delivery,
-  admin_replay_pending_action,
-  admin_cancel_pending_action,
-  admin_assign_recovery_owner,
-  admin_mark_recovery_complete,
+  admin_retry_linq_delivery as _arld,
+  admin_replay_pending_action as _arpa,
+  admin_cancel_pending_action as _acpa,
+  admin_assign_recovery_owner as _aaro,
+  admin_mark_recovery_complete as _amrc,
 } from "../adminRecoveryActions";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const admin_retry_linq_delivery    = _arld  as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const admin_replay_pending_action  = _arpa  as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const admin_cancel_pending_action  = _acpa  as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const admin_assign_recovery_owner  = _aaro  as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const admin_mark_recovery_complete = _amrc  as any;
 
 const adminCtx = { auth: { uid: "admin-1" } } as any;
 const userCtx = { auth: { uid: "user-1" } } as any;
-const noAuthCtx = {} as any;
 
 function seedAdmin() {
   hoisted.docs.set("users/admin-1", { userType: "admin" });

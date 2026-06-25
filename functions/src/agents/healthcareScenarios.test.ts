@@ -30,11 +30,11 @@ const fill = vi.fn(async () => {});
 const goto = vi.fn(async () => {});
 const fakeSession = {
   sessionId: "sess1",
-  stagehand: { act: (...a: unknown[]) => act(...a), extract: (...a: unknown[]) => extract(...a) },
+  stagehand: { act: (...a: unknown[]) => (act as Function).apply(null, a as any[]), extract: (...a: unknown[]) => (extract as Function).apply(null, a as any[]) },
   page: {
-    goto: (...a: unknown[]) => goto(...a),
+    goto: (...a: unknown[]) => (goto as Function).apply(null, a as any[]),
     waitForTimeout: vi.fn(async () => {}),
-    fill: (...a: unknown[]) => fill(...a),
+    fill: (...a: unknown[]) => (fill as Function).apply(null, a as any[]),
     setDefaultTimeout: vi.fn(),
   },
 };
@@ -114,7 +114,7 @@ describe("scenario 2 — booking gated on the exact approved slot (R5/AE6)", () 
     expect(r.status).toBe("slot_unavailable");
     // The booking-commit step ("Confirm and submit the appointment") never ran.
     // (The login form submit is a separate, expected act and is excluded.)
-    const actArgs = act.mock.calls.map((c) => String(c[0]).toLowerCase());
+    const actArgs = act.mock.calls.map((c: any[]) => String(c[0]).toLowerCase());
     expect(actArgs.some((a) => a.includes("confirm and submit the appointment"))).toBe(false);
     expect(actArgs.some((a) => a.includes("select the slot"))).toBe(false);
   });

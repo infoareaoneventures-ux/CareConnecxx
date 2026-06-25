@@ -104,9 +104,11 @@ vi.mock("firebase-functions/v1", () => ({
 
 vi.mock("../linq/client", () => ({
   createChat: vi.fn(async () => ({ chat_id: "new-group" })),
-  sendMessage: (...args: any[]) => sendMessage(...args),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sendMessage: (...args: any[]) => (sendMessage as Function).apply(null, args),
   sendToPhone: vi.fn(async () => ({ message_id: "m2" })),
-  addParticipant: (...args: any[]) => addParticipant(...args),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  addParticipant: (...args: any[]) => (addParticipant as Function).apply(null, args),
   updateChatName: vi.fn(async () => {}),
   removeParticipant: vi.fn(async () => {}),
 }));

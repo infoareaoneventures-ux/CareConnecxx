@@ -203,16 +203,16 @@ export async function loadCaraOperationalContext(params: {
 
   const caregiverData = caregiverDoc?.exists ? caregiverDoc.data() : undefined;
   const pendingCaregiverShift = caregiverShiftDocs
-    .map((doc) => ({ id: doc.id, ...doc.data() as Record<string, unknown> }))
+    .map((doc): Record<string, unknown> & { id: string } => ({ id: doc.id, ...doc.data() as Record<string, unknown> }))
     .find((shift) => ["pending_client_review", "approved", "payment_failed", "disputed"].includes(String(shift.status ?? "")));
   const lastPayout = caregiverPayoutDocs[0]?.data();
 
   const nextClientAppointment = clientAppointmentDocs
-    .map((doc) => ({ id: doc.id, ...doc.data() as Record<string, unknown> }))
+    .map((doc): Record<string, unknown> & { id: string } => ({ id: doc.id, ...doc.data() as Record<string, unknown> }))
     .find((appt) => ["confirmed", "pending", "pending_caregiver_confirmation", "in-progress"].includes(String(appt.status ?? "")));
   const latestCare = clientCareDocs[0]?.data();
   const pendingInvoice = invoiceDocs
-    .map((doc) => ({ id: doc.id, ...doc.data() as Record<string, unknown> }))
+    .map((doc): Record<string, unknown> & { id: string } => ({ id: doc.id, ...doc.data() as Record<string, unknown> }))
     .find((invoice) => ["pending", "sent", "awaiting_approval", "payment_failed"].includes(String(invoice.status ?? "")));
 
   const caregiverState: CaregiverStateContext | undefined = caregiverData ? {

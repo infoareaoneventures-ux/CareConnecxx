@@ -20,6 +20,8 @@ const DIRECT_DB = /\bdb\.(collection|doc)\(/;
 // follow-up tracked in context/progress-tracker.md.
 // 2026-06-21 (cleanup pass): -2 (CaregiverEarnings, HireDecision) — deleted as
 // dead/orphaned top-level components, not migrated. Baseline now 40.
+// 2026-06-24 (migration pass): -2 (AdminReports, CaregiverBookingsCard) migrated
+// off direct db. Baseline now 38.
 const KNOWN_OFFENDERS = new Set<string>([
   "components/CarePlan.tsx",
   "components/CaregiverDashboard.tsx",
@@ -30,10 +32,8 @@ const KNOWN_OFFENDERS = new Set<string>([
   "components/Schedule.tsx",
   "components/admin/AdminClientManager.tsx",
   "components/admin/AdminMessages.tsx",
-  "components/admin/AdminReports.tsx",
   "components/admin/AssignmentManager.tsx",
   "components/admin/FinanceDashboard.tsx",
-  "components/caregiver/CaregiverBookingsCard.tsx",
   "components/caregiver/CaregiverBookingsPage.tsx",
   "components/caregiver/CaregiverCalendarPage.tsx",
   "components/caregiver/CaregiverCareRequestsCard.tsx",

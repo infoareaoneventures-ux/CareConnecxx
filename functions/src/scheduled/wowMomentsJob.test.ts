@@ -18,8 +18,12 @@ function firstBookingCtx(): WowContext {
   };
 }
 
-let send: ReturnType<typeof vi.fn>;
-let record: ReturnType<typeof vi.fn>;
+// Typed as vi.fn() to allow .mock.calls assertions; cast at call sites to satisfy
+// maybeSendWowMoment's typed send/record parameters.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let send: any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let record: any;
 beforeEach(() => { send = vi.fn(async () => {}); record = vi.fn(async () => {}); });
 
 describe("maybeSendWowMoment", () => {

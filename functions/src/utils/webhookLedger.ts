@@ -49,7 +49,12 @@ export async function claimWebhookEvent(
           return true;
         }
         const data = snap.data() ?? {};
-        // Legacy ledger docs (pre-claim era) carry only processedAt — settled.
+        // Legacy ledger docs (pre-claim era) carry only {processedAt: string} —
+        // no `status` field. Any doc whose status is not "processing" is treated
+        // as settled (either the legacy shape or a "processed" stamp) and returns
+        // "duplicate". Unknown future statuses are also conservatively treated as
+        // settled here — an unexpected status value that re-opens processing would
+        // be worse than a missed retry.
         if (data.status !== "processing") return false;
         const claimedAtMs = typeof data.claimedAtMs === "number" ? data.claimedAtMs : 0;
         if (Date.now() - claimedAtMs < STALE_CLAIM_MS) return false; // in-flight duplicate

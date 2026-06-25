@@ -77,7 +77,22 @@ export type AuditEventType =
   | "support_ticket_responded"
   | "dispute_resolved"
   | "invoice_exception_reviewed"
-  | "agent_action_retry_attempted";
+  | "agent_action_retry_attempted"
+  // Admin recovery callables (U4 / R6 / R16)
+  | "linq_delivery_retry_attempted"
+  | "pending_action_replay_attempted"
+  | "pending_action_cancelled"
+  | "recovery_owner_assigned"
+  | "recovery_marked_complete"
+  // Caregiver action events (mcp/server.ts)
+  | "job_application_withdrawn"
+  | "booking_request_responded"
+  | "shift_started"
+  | "shift_completed"
+  | "shift_task_updated"
+  | "media_update_submitted"
+  | "shift_hour_correction_responded"
+  | "standard_payout_requested";
 
 export interface AuditEvent {
   eventType: AuditEventType;

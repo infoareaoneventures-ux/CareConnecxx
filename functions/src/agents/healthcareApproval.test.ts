@@ -28,8 +28,10 @@ vi.mock("firebase-admin", () => ({
   }),
 }));
 const resolvePrimaryPhone = vi.fn();
-vi.mock("./familyGroupManager", () => ({ resolvePrimaryPhone: (...a: unknown[]) => resolvePrimaryPhone(...a) }));
-vi.mock("../observability/actionLedger", () => ({ logAgentAction: (...a: unknown[]) => h.logAgentAction(...a) }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+vi.mock("./familyGroupManager", () => ({ resolvePrimaryPhone: (...a: unknown[]) => (resolvePrimaryPhone as Function).apply(null, a as any[]) }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+vi.mock("../observability/actionLedger", () => ({ logAgentAction: (...a: unknown[]) => (h.logAgentAction as Function).apply(null, a as any[]) }));
 
 import { proposePendingAction, claimPendingAction } from "./pendingActions";
 

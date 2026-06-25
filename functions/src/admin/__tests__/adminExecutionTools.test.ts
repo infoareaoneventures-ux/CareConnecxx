@@ -118,16 +118,35 @@ vi.mock("firebase-functions/v1", () => {
 vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn(async () => {}) }));
 
 const handleToolCall = vi.fn();
-vi.mock("../../mcp/server", () => ({ handleToolCall: (...a: any[]) => handleToolCall(...a) }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+vi.mock("../../mcp/server", () => ({ handleToolCall: (...a: any[]) => (handleToolCall as Function).apply(null, a) }));
 
 const sendToPhone = vi.fn(async () => {});
-vi.mock("../../linq/client", () => ({ sendToPhone: (...a: any[]) => sendToPhone(...a) }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+vi.mock("../../linq/client", () => ({ sendToPhone: (...a: any[]) => (sendToPhone as Function).apply(null, a) }));
 
 import { logAudit } from "../../observability/auditLog";
-import { admin_review_caregiver_exception, admin_review_document } from "../adminCaregiverActions";
-import { admin_suspend_user, admin_restore_user } from "../adminUserActions";
-import { admin_respond_support_ticket, admin_resolve_dispute } from "../adminSupportActions";
-import { admin_retry_agent_action } from "../adminLedgerActions";
+// Callables are typed as Firebase HttpsFunction but the vi.mock replaces onCall
+// with (fn) => fn, so they are direct (data, context) => Promise functions at
+// runtime. Cast to any so TypeScript doesn’t check the Request/Response overload.
+import { admin_review_caregiver_exception as _arc, admin_review_document as _ard } from "../adminCaregiverActions";
+import { admin_suspend_user as _asu, admin_restore_user as _aru } from "../adminUserActions";
+import { admin_respond_support_ticket as _arst, admin_resolve_dispute as _ardp } from "../adminSupportActions";
+import { admin_retry_agent_action as _araa } from "../adminLedgerActions";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const admin_review_caregiver_exception = _arc as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const admin_review_document = _ard as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const admin_suspend_user = _asu as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const admin_restore_user = _aru as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const admin_respond_support_ticket = _arst as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const admin_resolve_dispute = _ardp as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const admin_retry_agent_action = _araa as any;
 
 // Helpers
 const adminCtx = { auth: { uid: "admin-1" } } as any;

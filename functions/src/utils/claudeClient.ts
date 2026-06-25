@@ -12,6 +12,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { wrapAnthropic } from "langsmith/wrappers/anthropic";
 
 export type AnthropicLike = Anthropic;
 
@@ -32,7 +33,11 @@ export function getSharedClient(): Anthropic {
     // its own AbortSignal will fail fast instead of hanging for the SDK's
     // 10-minute default. Caller-supplied AbortSignals (used by
     // callClaudeWithRetry) still override this per-call.
-    _sharedClient = new Anthropic({ apiKey, maxRetries: 0, timeout: 12_000 });
+    // wrapAnthropic instruments every .messages.create call for LangSmith
+    // tracing when LANGSMITH_TRACING=true. It is a transparent pass-through
+    // (same Anthropic type/behavior) when tracing is disabled, so it's safe to
+    // leave wrapped in all environments.
+    _sharedClient = wrapAnthropic(new Anthropic({ apiKey, maxRetries: 0, timeout: 12_000 }));
   }
   return _sharedClient;
 }

@@ -57,7 +57,8 @@ vi.mock("firebase-admin", () => ({
 }));
 
 vi.mock("../client", () => ({
-  sendMessage: (...a: any[]) => hoisted.sendMessage(...a),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sendMessage: (...a: any[]) => (hoisted.sendMessage as Function).apply(null, a),
   startTyping: vi.fn(async () => {}),
   stopTyping: vi.fn(async () => {}),
 }));
@@ -70,8 +71,10 @@ vi.mock("../../agents/timesheetHandler", () => ({ handleTimesheetApproval: vi.fn
 vi.mock("../../agents/availabilityHandler", () => ({ handleAvailabilityUpdate: vi.fn(async () => {}) }));
 vi.mock("../../agents/clientSwapRequestHandler", () => ({ handleClientSwapRequest: vi.fn(async () => {}) }));
 // Dynamically-imported modules in the APPROVE/DISPUTE branch:
-vi.mock("../../shiftHours", () => ({ approveShiftHoursForClient: (...a: any[]) => hoisted.approveShiftHoursForClient(...a) }));
-vi.mock("../../observability/actionLedger", () => ({ logAgentAction: (...a: any[]) => hoisted.logAgentAction(...a) }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+vi.mock("../../shiftHours", () => ({ approveShiftHoursForClient: (...a: any[]) => (hoisted.approveShiftHoursForClient as Function).apply(null, a) }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+vi.mock("../../observability/actionLedger", () => ({ logAgentAction: (...a: any[]) => (hoisted.logAgentAction as Function).apply(null, a) }));
 
 import { routeClientStateMachines } from "../routeClient";
 

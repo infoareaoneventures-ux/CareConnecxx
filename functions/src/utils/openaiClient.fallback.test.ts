@@ -9,24 +9,34 @@ vi.mock("openai", () => ({
   },
 }));
 
+// langsmith wraps the OpenAI client for tracing — pass it through unchanged so
+// the FakeOpenAI mock's chat.completions.create remains intact.
+vi.mock("langsmith/wrappers/openai", () => ({ wrapOpenAI: (client: unknown) => client }));
+
 const callClaudeWithRetry = vi.fn();
 vi.mock("./claudeRetry", () => ({
   callClaudeWithRetry: (...args: unknown[]) => callClaudeWithRetry(...args),
 }));
 
-import { quickComplete } from "./openaiClient";
+// quickComplete is imported lazily inside beforeEach (after vi.resetModules)
+// so the _sharedClient singleton in openaiClient.ts is rebuilt fresh each test.
+let quickComplete: (s: string, u: string, o?: { maxTokens?: number; model?: string; signal?: AbortSignal }) => Promise<string>;
 
 const OK_OPENAI = { choices: [{ message: { content: "  openai-result  " } }] };
 const OK_ANTHROPIC = { content: [{ type: "text", text: "anthropic-result" }] };
 
 describe("quickComplete cross-provider fallback", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     openaiCreate.mockReset();
     callClaudeWithRetry.mockReset();
     // Set both so getOpenAIClient never logs its missing-key warning, keeping
     // the fallback-log assertion below clean.
     process.env.OPENAI_API_KEY = "test-openai";
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
+    // Reset module registry so _sharedClient singleton is re-created with the
+    // current mock each test (avoids cross-test singleton contamination).
+    vi.resetModules();
+    ({ quickComplete } = await import("./openaiClient"));
   });
 
   it("returns the OpenAI result and never calls Anthropic on success", async () => {

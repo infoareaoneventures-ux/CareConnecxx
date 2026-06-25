@@ -19,10 +19,15 @@ import { createHash } from "crypto";
 //
 // Concurrency is already prevented upstream by the per-phone inbound lock
 // (sessionState.claimInboundProcessing), so the only races here are sequential
-// redeliveries. Ledger infrastructure errors fail OPEN (run anyway): at-least-
-// once beats dropping a confirmed action the user explicitly approved.
+// redeliveries. A "running" claim left by a crashed handler becomes reclaimable
+// after STALE_CLAIM_MS so a later replay is never permanently blocked. Ledger
+// infrastructure errors fail OPEN (run anyway): at-least-once beats dropping a
+// confirmed action the user explicitly approved.
 
 export const TOOL_EXECUTION_COLLECTION = "tool_execution_ledger";
+// Firebase Function v1 max execution is 9 min; 10 min is safely above that so
+// any live claim older than this must be from a crashed handler.
+const STALE_CLAIM_MS = 10 * 60 * 1000;
 
 /**
  * Deterministic idempotency key for a confirmed action: the confirmation id, the
@@ -38,22 +43,22 @@ export function toolExecutionKey(
   return `${confirmedActionId}:${toolName}:${stableHash(input)}`;
 }
 
-/** Stable JSON (sorted keys) → short sha1 hex, so key order in the input never matters. */
-function stableHash(input: Record<string, unknown>): string {
-  const json = JSON.stringify(input, Object.keys(flatten(input)).sort());
-  return createHash("sha1").update(json).digest("hex").slice(0, 16);
+/** Stable JSON (sorted keys recursively) → short sha1 hex. */
+function stableHash(input: unknown): string {
+  const sorted = sortObject(input);
+  return createHash("sha1").update(JSON.stringify(sorted)).digest("hex").slice(0, 16);
 }
 
-// JSON.stringify's replacer-array only sees top-level keys; flatten gathers all
-// nested keys so the sorted-key stringify is deterministic across re-orderings.
-function flatten(obj: unknown, prefix = "", acc: Record<string, true> = {}): Record<string, true> {
-  if (obj && typeof obj === "object" && !Array.isArray(obj)) {
-    for (const k of Object.keys(obj as Record<string, unknown>)) {
-      acc[k] = true;
-      flatten((obj as Record<string, unknown>)[k], `${prefix}${k}.`, acc);
-    }
+function sortObject(obj: unknown): unknown {
+  if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {
+    return obj;
   }
-  return acc;
+  return Object.keys(obj)
+    .sort()
+    .reduce((acc, key) => {
+      acc[key] = sortObject((obj as Record<string, unknown>)[key]);
+      return acc;
+    }, {} as Record<string, unknown>);
 }
 
 export type ToolClaim =
@@ -78,10 +83,18 @@ export async function claimToolExecution(key: string): Promise<ToolClaim> {
         if (data.status === "done") {
           return { cached: true, result: data.result ?? null };
         }
-        // status "running": a prior run crashed before settling, or the same turn
-        // is re-driving. The per-phone inbound lock rules out true concurrency, so
-        // reclaim and re-run safely under a fresh claim.
-        tx.update(ref, { status: "running", claimedAtMs: Date.now(), reclaimed: true });
+        // status "running": a prior run crashed before settling (or an extremely
+        // unlikely true concurrent call). The per-phone inbound lock prevents
+        // real concurrency, so any "running" claim past STALE_CLAIM_MS is a crash.
+        // Within the window, fail open anyway — at-least-once beats blocking.
+        const claimedAtMs = typeof data.claimedAtMs === "number" ? data.claimedAtMs : 0;
+        const isStale = Date.now() - claimedAtMs > STALE_CLAIM_MS;
+        tx.update(ref, {
+          status: "running",
+          claimedAtMs: Date.now(),
+          reclaimed: true,
+          ...(isStale && { staleClaim: true }),
+        });
         return { cached: false };
       });
     }

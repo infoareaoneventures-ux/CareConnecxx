@@ -132,13 +132,16 @@ vi.mock("../../agents/caregiverProfileHandler", () => ({ handleCaregiverProfileU
 const handleJobResponse = vi.fn(async () => {});
 const handleAvailabilityConfirmation = vi.fn(async () => {});
 vi.mock("../../triggers/jobNotifications", () => ({
-  handleJobResponse: (...a: any[]) => handleJobResponse(...a),
-  handleAvailabilityConfirmation: (...a: any[]) => handleAvailabilityConfirmation(...a),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handleJobResponse: (...a: any[]) => (handleJobResponse as Function).apply(null, a),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handleAvailabilityConfirmation: (...a: any[]) => (handleAvailabilityConfirmation as Function).apply(null, a),
 }));
 
 const handleCaregiverAvailabilityReply = vi.fn(async () => {});
 vi.mock("../../agents/interviewAgent", () => ({
-  handleCaregiverAvailabilityReply: (...a: any[]) => handleCaregiverAvailabilityReply(...a),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handleCaregiverAvailabilityReply: (...a: any[]) => (handleCaregiverAvailabilityReply as Function).apply(null, a),
 }));
 
 import { routeCaregiverMessage } from "../routeCaregiver";

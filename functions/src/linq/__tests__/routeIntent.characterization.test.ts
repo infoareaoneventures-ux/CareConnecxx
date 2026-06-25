@@ -111,16 +111,23 @@ vi.mock("../client", () => ({
 // per-test so we drive a specific coded branch deterministically.
 const classifyIntentDetailed = vi.fn(async () => ({ intent: "QUESTION", degraded: false }));
 vi.mock("../../agents/intentClassifier", () => ({
-  classifyIntentDetailed: (...a: any[]) => classifyIntentDetailed(...a),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  classifyIntentDetailed: (...a: any[]) => (classifyIntentDetailed as Function).apply(null, a),
 }));
 
 // `handleToolCall` is dynamically imported by the family add/remove branches.
 // Mock the whole mcp/server module so the real (heavy) registry never loads.
 const handleToolCall = vi.fn(async () => ({ success: true }));
-vi.mock("../../mcp/server", () => ({ handleToolCall: (...a: any[]) => handleToolCall(...a) }));
+vi.mock("../../mcp/server", () => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handleToolCall: (...a: any[]) => (handleToolCall as Function).apply(null, a),
+}));
 
 const quickComplete = vi.fn(async () => "");
-vi.mock("../../utils/openaiClient", () => ({ quickComplete: (...a: any[]) => quickComplete(...a) }));
+vi.mock("../../utils/openaiClient", () => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  quickComplete: (...a: any[]) => (quickComplete as Function).apply(null, a),
+}));
 
 // Remaining static imports — stubbed; none of these branches run in these tests.
 vi.mock("../../agents/qaAgent", () => ({
@@ -244,7 +251,8 @@ describe("characterization — REMOVE_FAMILY_MEMBER confirmation gate", () => {
     // Resolve a member by phone so the branch reaches the tool call.
     quickComplete.mockResolvedValue('{"name":"Sarah","phone":"+15552223333"}');
     // The remove tool gates the destructive action behind confirmation.
-    handleToolCall.mockResolvedValue({ _pending_action: true });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handleToolCall.mockResolvedValue({ _pending_action: true } as any);
 
     await routeIntentAndRespond(ctx("remove Sarah 555-222-3333"));
 

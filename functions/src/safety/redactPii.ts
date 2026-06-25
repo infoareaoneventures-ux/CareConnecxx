@@ -30,8 +30,9 @@ const SSN_PATTERN = /\b\d{3}-\d{2}-\d{4}\b/g;
 const CARD_CANDIDATE = /\b\d(?:[ -]?\d){12,15}\b/g;
 
 // Email detection is format validation, not intent parsing. Cara's own
-// addresses (support@careconnex.com etc.) are fine to send; anything else is a
-// potential cross-user leak.
+// addresses (support@careconnex.com etc.) are explicitly allowlisted below.
+// Edge case: "Meet @ 123 Main St" does NOT match (no .tld after the domain),
+// so shift addresses with "@" in them are safe. Only foo@host.tld shapes match.
 const EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
 const CARECONNEX_DOMAIN = /(^|\.)careconnex\.[a-z]+$/i;
 

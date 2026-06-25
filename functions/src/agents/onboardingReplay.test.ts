@@ -125,6 +125,7 @@ vi.mock("../utils/knownNames", () => ({ addKnownNames: vi.fn(async () => undefin
 
 import { handleOnboardingStep } from "./onboardingConversation";
 import { runOnboardingDryRun } from "./onboardingDryRun";
+import { resolveClientStep } from "./onboardingDispatcher";
 
 interface Turn { text: string; parses?: TurnParses; }
 
@@ -209,6 +210,44 @@ describe("onboarding replay — legacy parity oracle (U11)", () => {
     expect(data(final).firstName).toBe("Sarah");           // corrected
     expect(final.onboardingStep).toBe("client_ask_senior"); // stayed on current step
     expect(sentChunks.some((c) => /updated/i.test(c))).toBe(true);
+  });
+});
+
+describe("prompt-driven dispatcher (U12)", () => {
+  it("resolveClientStep derives the next step from missing fields (field-schema contract)", () => {
+    expect(resolveClientStep({})).toBe("client_ask_name");
+    expect(resolveClientStep({ firstName: "Sarah" })).toBe("client_ask_senior");
+    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy" })).toBe("client_ask_needs");
+    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy", age: 82 })).toBe("client_ask_location");
+    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy", age: 82, city: "Austin" })).toBe("client_ask_schedule");
+    // All absorbable fields collected → hands back to the legacy post-collection step.
+    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy", age: 82, city: "Austin", schedule: "3 mornings" })).toBe("client_ask_start");
+  });
+
+  describe("conversational parity: flag ON produces the same result as the legacy machine", () => {
+    const prev = process.env.CONVERGENCE_FLIPPED;
+    beforeEach(() => { process.env.CONVERGENCE_FLIPPED = "onboarding"; });
+    afterEach(()  => { if (prev === undefined) delete process.env.CONVERGENCE_FLIPPED; else process.env.CONVERGENCE_FLIPPED = prev; });
+
+    it("client happy path collects identical fields + lands on the same step with the dispatcher driving", async () => {
+      const final = await runTurns({ onboardingStep: "ask_role" }, [
+        { text: "1 — I need care for my mom",            parses: { role: "client" } },
+        { text: "I'm Sarah",                             parses: { parse: "Sarah" } },
+        { text: "my mom Dorothy",                        parses: { parse: '{"seniorName":"Dorothy","relationship":"mother"}' } },
+        { text: "she's 82, has dementia, needs bathing", parses: { parse: '{"age":82,"careNeeds":["bathing"],"conditions":["dementia"]}' } },
+        { text: "Austin, TX 78701",                      parses: { parse: '{"city":"Austin","zipCode":"78701"}' } },
+        { text: "3 mornings a week",                     parses: { parse: '{"daysPerWeek":3,"timeOfDay":"morning","hoursPerDay":4}' } },
+      ]);
+      // Identical field-collection + routing to the flag-OFF happy path above.
+      const d = data(final);
+      expect(d.firstName).toBe("Sarah");
+      expect(d.seniorName).toBe("Dorothy");
+      expect(d.age).toBe(82);
+      expect(d.city).toBe("Austin");
+      expect(d.zipCode).toBe("78701");
+      expect(d.daysPerWeek).toBe(3);
+      expect(final.onboardingStep).toBe("client_ask_start");
+    });
   });
 });
 

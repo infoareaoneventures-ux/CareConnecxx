@@ -25,6 +25,7 @@ import { addKnownNames } from "../utils/knownNames";
 import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
 import { getAppUrl } from "../config/appUrl";
 import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboardingDryRun";
+import { isOnboardingDispatchEnabled, isDispatchableClientStep, resolveClientStep } from "./onboardingDispatcher";
 
 /** iMessage/RCS can share a location pin; plain SMS cannot. */
 function isRichService(service?: string): boolean {
@@ -224,7 +225,10 @@ async function createFirebaseAuthAccount(phone: string, displayName: string): Pr
 // side effects (Stripe identity session, plan display) that can't be skipped
 // based on cached fields. Caregiver flow has document uploads + payment
 // redirects that can't be skipped, so we don't auto-skip caregiver steps either.
-const CLIENT_STEP_ORDER = [
+// Exported (U12) so the prompt-driven dispatcher derives sequencing from the
+// SAME field-schema contract the legacy absorption uses — no drift between the
+// two paths.
+export const CLIENT_STEP_ORDER = [
   "client_ask_name",
   "client_ask_senior",
   "client_ask_needs",
@@ -234,13 +238,17 @@ const CLIENT_STEP_ORDER = [
 
 // Maps a client step to the onboardingData field(s) it collects. If the
 // field is already present and non-empty, the step is skipped.
-const CLIENT_STEP_FIELD: Record<string, string> = {
+export const CLIENT_STEP_FIELD: Record<string, string> = {
   client_ask_name:     "firstName",
   client_ask_senior:   "seniorName",
   client_ask_needs:    "age",
   client_ask_location: "city",
   client_ask_schedule: "schedule",
 };
+
+// The step the client flow continues to once every absorbable field is
+// collected (the first non-absorbable step the legacy machine routes to).
+export const CLIENT_POST_COLLECTION_STEP = "client_ask_start";
 
 // Ordered caregiver steps the story step (idea #5) can auto-skip once its
 // narrative has satisfied them. Story extraction fills experience/specialties
@@ -263,7 +271,7 @@ const CAREGIVER_STORY_STEP_FIELD: Record<string, string> = {
   caregiver_ask_specialties: "specialties",
 };
 
-function isFieldFilled(value: unknown): boolean {
+export function isFieldFilled(value: unknown): boolean {
   if (value === undefined || value === null) return false;
   if (typeof value === "string")  return value.trim().length > 0;
   if (typeof value === "number")  return value > 0;
@@ -321,6 +329,15 @@ export async function handleOnboardingStep(
   let step = session.onboardingStep ?? "";
   const norm = text.trim().toUpperCase();
   const { service, inboundLocation, inboundMedia } = opts;
+
+  // U12 (DARK behind CONVERGENCE_FLIPPED="onboarding"): prompt-driven sequencing.
+  // For a client in the conversational field-collection phase, derive the step
+  // from which required fields are still missing rather than the stored cursor.
+  // Gate/awaiting/job steps and all handlers are untouched; flag OFF ⇒ no change.
+  if (isOnboardingDispatchEnabled() && session.userType === "client" && isDispatchableClientStep(step)) {
+    step = resolveClientStep(session.onboardingData as Record<string, unknown> | undefined);
+    if (step !== session.onboardingStep) session.onboardingStep = step;
+  }
 
   // ── Inbound image / document (vision-gated) ─────────────────────────────────
   // A texted photo/document with no text. Route by the current step before any

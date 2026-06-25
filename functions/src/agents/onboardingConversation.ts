@@ -24,6 +24,7 @@ import { downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/med
 import { addKnownNames } from "../utils/knownNames";
 import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
 import { getAppUrl } from "../config/appUrl";
+import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboardingDryRun";
 
 /** iMessage/RCS can share a location pin; plain SMS cannot. */
 function isRichService(service?: string): boolean {
@@ -52,19 +53,59 @@ const db = admin.firestore();
 
 let _stripe: Stripe | null = null;
 function getStripe(): Stripe {
+  // U10: in a dry-run, never touch Stripe — return a synthetic client that
+  // records each call and yields placeholder ids/urls so downstream parity
+  // logic still flows. Production (not dry-run) always gets the real client,
+  // so the live path is unchanged.
+  if (isOnboardingDryRun()) return DRY_RUN_STRIPE;
   if (!_stripe) _stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "", { apiVersion: "2023-10-16" as any });
   return _stripe;
 }
+
+// Synthetic Stripe used only under dry-run. Covers exactly the surface this file
+// calls (identity sessions, price reads, checkout sessions, Connect accounts +
+// account links). Each mutating call is recorded; reads return inert shapes.
+const DRY_RUN_STRIPE = {
+  identity: {
+    verificationSessions: {
+      create: async () => { recordSideEffect("stripe.identity.verificationSessions.create"); return { id: "vs_dryrun", url: "https://dryrun.local/identity" }; },
+    },
+  },
+  prices: {
+    retrieve: async () => ({ id: "price_dryrun", unit_amount: 0, recurring: null }),
+  },
+  checkout: {
+    sessions: {
+      create: async () => { recordSideEffect("stripe.checkout.sessions.create"); return { id: "cs_dryrun", url: "https://dryrun.local/checkout" }; },
+    },
+  },
+  accounts: {
+    create: async () => { recordSideEffect("stripe.accounts.create"); return { id: "acct_dryrun" }; },
+  },
+  accountLinks: {
+    create: async () => { recordSideEffect("stripe.accountLinks.create"); return { url: "https://dryrun.local/connect-onboarding" }; },
+  },
+} as unknown as Stripe;
 
 const APP_URL = getAppUrl();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function updateSession(phone: string, updates: Record<string, unknown>): Promise<void> {
+  // U10: in a shadow/dry-run, never mutate the live session doc — that would
+  // clobber the legacy machine's state mid-flow. Record the would-be write.
+  if (isOnboardingDryRun()) {
+    recordSideEffect("firestore.update:agent_sessions", { phone, keys: Object.keys(updates) });
+    return;
+  }
   await db.collection("agent_sessions").doc(phone).update(updates);
 }
 
 async function mergeOnboardingData(phone: string, data: Record<string, unknown>): Promise<void> {
+  if (isOnboardingDryRun()) {
+    recordSideEffect("firestore.update:agent_sessions.onboardingData", { phone, keys: Object.keys(data) });
+    return;
+  }
   const snap = await db.collection("agent_sessions").doc(phone).get();
   const existing = (snap.data()?.onboardingData ?? {}) as Record<string, unknown>;
   await db.collection("agent_sessions").doc(phone).update({
@@ -155,6 +196,12 @@ async function detectCorrection(text: string): Promise<{ field: string; value: s
 // uid — the canonical doc ID for caregivers/{uid} and users/{uid} (Cara/web
 // data contract: Cara must write where the web reads, and the web is uid-keyed).
 async function createFirebaseAuthAccount(phone: string, displayName: string): Promise<string | null> {
+  // U10: account creation is irreversible — never create a real Auth user in a
+  // dry-run. Return a synthetic uid so downstream parity logic still flows.
+  if (isOnboardingDryRun()) {
+    recordSideEffect("auth.createUser", { phone });
+    return "dryrun-uid";
+  }
   try {
     const user = await admin.auth().createUser({ phoneNumber: phone, displayName });
     return user.uid;
@@ -1945,14 +1992,18 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
       ? (process.env.CHECKR_PACKAGE_MVR ?? "tasker_standard")
       : (process.env.CHECKR_PACKAGE     ?? "tasker_standard");
 
-    const resp = await axios.post(
-      "https://api.checkr.com/v1/invitations",
-      {
-        package:    checkrPkg,
-        first_name: nameParts[0] ?? "",
-        last_name:  nameParts.slice(1).join(" ") ?? "",
-      },
-      { auth: { username: process.env.CHECKR_API_KEY ?? "", password: "" } }
+    const resp = await guardSideEffect(
+      "checkr.invitation.create",
+      () => axios.post(
+        "https://api.checkr.com/v1/invitations",
+        {
+          package:    checkrPkg,
+          first_name: nameParts[0] ?? "",
+          last_name:  nameParts.slice(1).join(" ") ?? "",
+        },
+        { auth: { username: process.env.CHECKR_API_KEY ?? "", password: "" } }
+      ),
+      { data: { invitation_url: "https://dryrun.local/checkr", candidate_id: "cand_dryrun", id: "cand_dryrun" } } as any,
     );
     inviteUrl = resp.data?.invitation_url ?? inviteUrl;
 
@@ -2019,10 +2070,14 @@ export async function sendBgCheckRenewalLink(phone: string, chatId: string, sess
     }
 
     const checkrPkg = process.env.CHECKR_PACKAGE ?? "tasker_standard";
-    const resp = await axios.post(
-      "https://api.checkr.com/v1/invitations",
-      { package: checkrPkg, first_name: firstName, last_name: lastName },
-      { auth: { username: process.env.CHECKR_API_KEY ?? "", password: "" } }
+    const resp = await guardSideEffect(
+      "checkr.invitation.create",
+      () => axios.post(
+        "https://api.checkr.com/v1/invitations",
+        { package: checkrPkg, first_name: firstName, last_name: lastName },
+        { auth: { username: process.env.CHECKR_API_KEY ?? "", password: "" } }
+      ),
+      { data: { invitation_url: "https://dryrun.local/checkr", candidate_id: "cand_dryrun", id: "cand_dryrun" } } as any,
     );
     inviteUrl = resp.data?.invitation_url ?? inviteUrl;
 
@@ -2173,10 +2228,14 @@ export async function sendOnboardingLink(
       const checkrPkg = mvrPaid
         ? (process.env.CHECKR_PACKAGE_MVR ?? "tasker_standard")
         : (process.env.CHECKR_PACKAGE     ?? "tasker_standard");
-      const resp = await axios.post(
-        "https://api.checkr.com/v1/invitations",
-        { package: checkrPkg, first_name: nameParts[0] ?? "", last_name: nameParts.slice(1).join(" ") ?? "" },
-        { auth: { username: process.env.CHECKR_API_KEY ?? "", password: "" } }
+      const resp = await guardSideEffect(
+        "checkr.invitation.create",
+        () => axios.post(
+          "https://api.checkr.com/v1/invitations",
+          { package: checkrPkg, first_name: nameParts[0] ?? "", last_name: nameParts.slice(1).join(" ") ?? "" },
+          { auth: { username: process.env.CHECKR_API_KEY ?? "", password: "" } }
+        ),
+        { data: { invitation_url: "https://dryrun.local/checkr", candidate_id: "cand_dryrun", id: "cand_dryrun" } } as any,
       );
       url = resp.data?.invitation_url ?? url;
       await updateSession(phone, { bgcheckInviteUrl: url });
@@ -2326,10 +2385,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           uid = userRecord.uid;
         } catch {
           try {
-            const newUser = await admin.auth().createUser({
-              phoneNumber: phone,
-              displayName: (d.firstName ?? "") as string,
-            });
+            const newUser = await guardSideEffect(
+              "auth.createUser",
+              () => admin.auth().createUser({ phoneNumber: phone, displayName: (d.firstName ?? "") as string }),
+              { uid: "dryrun-uid" } as any,
+            );
             uid = newUser.uid;
           } catch (err) {
             console.error("advanceOnboardingStep(payment) createUser error:", err);
@@ -2534,10 +2594,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           } catch {
             try {
               const d = session.onboardingData ?? {} as any;
-              const newUser = await admin.auth().createUser({
-                phoneNumber:  phone,
-                displayName:  (d.firstName ?? "") as string,
-              });
+              const newUser = await guardSideEffect(
+                "auth.createUser",
+                () => admin.auth().createUser({ phoneNumber: phone, displayName: (d.firstName ?? "") as string }),
+                { uid: "dryrun-uid" } as any,
+              );
               uid = newUser.uid;
             } catch (err) {
               console.error("advanceOnboardingStep(identity) createUser error:", err);

@@ -20,6 +20,8 @@ export type Capability =
 export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── booking ──────────────────────────────────────────────────────────────
   request_booking:              ["booking"],
+  get_caregiver_booking_rate:   ["booking"],  // U9b: read-only rate lookup
+  quote_booking:                ["booking"],  // U9b: read-only cost estimate (no write)
   find_replacement_caregivers:  ["booking"],
   get_caregiver_info:           ["booking"],
   get_caregiver_reviews:        ["booking"],

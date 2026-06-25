@@ -215,4 +215,85 @@ describe("booking tools", () => {
       expect(hoisted.adds.some((a) => a.path === "admin_alerts" && a.data.type === "time_change_unconfirmed")).toBe(true);
     });
   });
+
+  // ── U9b: read-only booking primitives extracted from request_booking ─────────
+  // These must NEVER write — the whole point is that Cara can look up a rate and
+  // quote a cost without committing. Each test asserts no booking task is created.
+  describe("get_caregiver_booking_rate (U9b)", () => {
+    it("returns the caregiver's name + hourly rate, writing nothing", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 25 });
+      const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "cg1", clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.caregiverName).toBe("Maria");
+      expect(r.hourlyRate).toBe(25);
+      // Pure read — no agent_tasks / booking writes.
+      expect(hoisted.adds.length).toBe(0);
+    });
+
+    it("falls back to $20 when the caregiver has no rate on file", async () => {
+      hoisted.docState.set("caregivers/cg2", { name: "Sam" });
+      const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "cg2" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.hourlyRate).toBe(20);
+    });
+
+    it("returns NOT_FOUND for an unknown caregiver", async () => {
+      const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "ghost" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("NOT_FOUND");
+    });
+
+    it("requires caregiverId", async () => {
+      const r = await handleToolCall("get_caregiver_booking_rate", {}) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+    });
+  });
+
+  describe("quote_booking (U9b)", () => {
+    it("computes per-visit hours, line items, and a multi-date total without booking", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      const r = await handleToolCall("quote_booking", {
+        caregiverId: "cg1",
+        clientId:    "c1",
+        dates:       ["2026-07-01", "2026-07-02"],
+        startTime:   "09:00",
+        endTime:     "17:00", // 8h
+      }) as any;
+      expect(r.success).toBe(true);
+      expect(r.committed).toBe(false);
+      expect(r.durationHours).toBe(8);
+      expect(r.lineItems).toHaveLength(2);
+      expect(r.lineItems[0]).toEqual({ date: "2026-07-01", hours: 8, amount: 240 });
+      expect(r.totalEstimate).toBe(480); // 8h * $30 * 2 days
+      // No write — quoting must not create a booking task.
+      expect(hoisted.adds.length).toBe(0);
+    });
+
+    it("accepts a single date (not wrapped in an array)", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 20 });
+      const r = await handleToolCall("quote_booking", {
+        caregiverId: "cg1", dates: "2026-07-01", startTime: "10:00", endTime: "12:00", // 2h
+      }) as any;
+      expect(r.success).toBe(true);
+      expect(r.totalEstimate).toBe(40);
+    });
+
+    it("rejects an end time at or before the start time", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 20 });
+      const r = await handleToolCall("quote_booking", {
+        caregiverId: "cg1", dates: ["2026-07-01"], startTime: "17:00", endTime: "09:00",
+      }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+    });
+
+    it("returns NOT_FOUND when the caregiver doesn't exist", async () => {
+      const r = await handleToolCall("quote_booking", {
+        caregiverId: "ghost", dates: ["2026-07-01"], startTime: "09:00", endTime: "10:00",
+      }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("NOT_FOUND");
+    });
+  });
 });

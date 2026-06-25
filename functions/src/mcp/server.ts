@@ -19,6 +19,90 @@ import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
 
+// ── Booking quote primitive (U9b) ─────────────────────────────────────────────
+// The read/compute concern extracted out of `request_booking` so the model can
+// reason about a booking in steps — look up the rate, quote the cost, THEN commit
+// — instead of one opaque all-or-nothing tool. This helper is pure (one Firestore
+// READ + arithmetic, no writes), shared by `get_caregiver_booking_rate`,
+// `quote_booking`, and reusable by the committing `request_booking` path.
+type BookingQuoteResult =
+  | { ok: false; code: string; message: string }
+  | {
+      ok: true;
+      caregiverId:   string;
+      caregiverName: string;
+      hourlyRate:    number;
+      durationHours: number;
+      dates:         string[];
+      // One line per visit date so the family sees exactly what they're paying for.
+      lineItems:     Array<{ date: string; hours: number; amount: number }>;
+      totalEstimate: number;
+    };
+
+// "HH:MM" → minutes since midnight, or null if malformed.
+function bookingTimeToMinutes(t: unknown): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(t).trim());
+  if (!m) return null;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+// Resolve caregiver name + hourly rate from the caregiver doc. Mirrors the
+// fallbacks used by the live `request_booking` path (name/fullName, rate→$20)
+// so a quote and the eventual booking agree.
+async function resolveCaregiverRate(
+  caregiverId: string,
+): Promise<{ ok: true; caregiverName: string; hourlyRate: number } | { ok: false; code: string; message: string }> {
+  if (!caregiverId) return { ok: false, code: "INVALID_INPUT", message: "caregiverId is required" };
+  const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
+  if (!cgSnap.exists) return { ok: false, code: "NOT_FOUND", message: "caregiver not found" };
+  const cg = cgSnap.data() || {};
+  return {
+    ok:            true,
+    caregiverName: (cg.name ?? cg.fullName ?? "your caregiver") as string,
+    hourlyRate:    (typeof cg.hourlyRate === "number" ? cg.hourlyRate : 20) as number,
+  };
+}
+
+// Build a full cost quote for a proposed booking. No write — safe to call freely.
+async function buildBookingQuote(input: {
+  caregiverId?: unknown;
+  dates?:       unknown;
+  startTime?:   unknown;
+  endTime?:     unknown;
+}): Promise<BookingQuoteResult> {
+  const caregiverId = String(input.caregiverId ?? "");
+  if (!caregiverId || !input.dates || !input.startTime || !input.endTime) {
+    return { ok: false, code: "INVALID_INPUT", message: "caregiverId, dates, startTime, endTime are required" };
+  }
+  const dateList = (Array.isArray(input.dates) ? input.dates : [input.dates]).map(String).filter(Boolean);
+  if (dateList.length === 0) return { ok: false, code: "INVALID_INPUT", message: "at least one date is required" };
+
+  const startMin = bookingTimeToMinutes(input.startTime);
+  const endMin   = bookingTimeToMinutes(input.endTime);
+  if (startMin === null || endMin === null || endMin <= startMin) {
+    return { ok: false, code: "INVALID_INPUT", message: "startTime/endTime must be 'HH:MM' with end after start" };
+  }
+  const durationHours = Math.round(((endMin - startMin) / 60) * 100) / 100;
+
+  const rate = await resolveCaregiverRate(caregiverId);
+  if (!rate.ok) return rate;
+
+  const perVisit  = Math.round(durationHours * rate.hourlyRate * 100) / 100;
+  const lineItems = dateList.map((date) => ({ date, hours: durationHours, amount: perVisit }));
+  const totalEstimate = Math.round(perVisit * dateList.length * 100) / 100;
+
+  return {
+    ok:            true,
+    caregiverId,
+    caregiverName: rate.caregiverName,
+    hourlyRate:    rate.hourlyRate,
+    durationHours,
+    dates:         dateList,
+    lineItems,
+    totalEstimate,
+  };
+}
+
 // ── Tool definitions (Anthropic tool_use format) ──────────────────────────────
 
 export interface McpTool {
@@ -138,8 +222,33 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "get_caregiver_booking_rate",
+    description: "Look up a caregiver's name and hourly rate. Read-only — books nothing. Use this when the family asks what a caregiver charges, before quoting or committing a booking.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "quote_booking",
+    description: "Estimate what a booking will COST without creating it: returns per-visit hours, the hourly rate, a line item per date, and the total estimate. Read-only — books nothing. Call this to tell the family the price first, then call request_booking to actually commit once they're happy. clientId is injected automatically.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string" },
+        dates:       { type: "array", items: { type: "string" }, description: "ISO date strings (YYYY-MM-DD)" },
+        startTime:   { type: "string", description: "e.g. '09:00'" },
+        endTime:     { type: "string", description: "e.g. '17:00'" },
+      },
+      required: ["caregiverId", "dates", "startTime", "endTime"],
+    },
+  },
+  {
     name: "request_booking",
-    description: "Create a booking request for a caregiver. Returns the booking task ID. clientId is injected automatically — do NOT ask the user for it.",
+    description: "Commit a booking request for a caregiver (the final step — this is the write). Returns the booking task ID; the family then approves it. Prefer calling quote_booking first so the family sees the cost before you commit. clientId is injected automatically — do NOT ask the user for it.",
     input_schema: {
       type: "object",
       properties: {
@@ -2277,6 +2386,32 @@ export async function handleToolCall(
             availabilityWindow: (availabilityWindow as string) ?? null,
             radiusMiles:        radiusMiles ?? null,
           },
+        };
+      }
+
+      case "get_caregiver_booking_rate": {
+        // U9b: read-only rate lookup extracted from request_booking. No write.
+        const rate = await resolveCaregiverRate(String(input.caregiverId ?? ""));
+        if (!rate.ok) return toolError(rate.code, rate.message);
+        return { success: true, caregiverId: String(input.caregiverId), caregiverName: rate.caregiverName, hourlyRate: rate.hourlyRate };
+      }
+
+      case "quote_booking": {
+        // U9b: pure cost estimate — lets Cara show the family the price before
+        // request_booking commits. No write; safe to call freely.
+        const quote = await buildBookingQuote(input);
+        if (!quote.ok) return toolError(quote.code, quote.message);
+        return {
+          success:       true,
+          caregiverId:   quote.caregiverId,
+          caregiverName: quote.caregiverName,
+          hourlyRate:    quote.hourlyRate,
+          durationHours: quote.durationHours,
+          dates:         quote.dates,
+          lineItems:     quote.lineItems,
+          totalEstimate: quote.totalEstimate,
+          committed:     false,
+          note:          "Estimate only — nothing has been booked. Call request_booking to commit.",
         };
       }
 

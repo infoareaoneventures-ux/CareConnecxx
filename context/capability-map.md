@@ -44,6 +44,7 @@ Status legend:
 | Action | Where (UI / handler) | Agent tool | Status |
 |--------|----------------------|------------|--------|
 | Find / match caregivers | `CaregiverSearch.tsx`, `matchingAgent` | `find_replacement_caregivers` | ✅ |
+| Quote a booking's cost before committing | `BookingModal.tsx` (price preview) | `quote_booking`, `get_caregiver_booking_rate` | ✅ (U9b — read-only primitives extracted from `request_booking`) |
 | Request a booking | `BookingModal.tsx` | `request_booking` | ✅ |
 | View / cancel / reschedule appointments | `ClientVisitsPage.tsx` | `get_upcoming_appointments`, `cancel_appointment`, `reschedule_appointment` | ✅ |
 | Manage recurring schedule | `modifyScheduleFlow` | `manage_recurring_schedule`, `modify_recurring_schedule`, `get_recurring_schedule` | ✅ |

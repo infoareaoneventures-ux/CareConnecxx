@@ -215,6 +215,93 @@ Never speculate about facts you have not verified. If the family references a sp
 After receiving tool results, carefully reflect on their quality and determine optimal next steps before proceeding. Use your reasoning to plan and iterate based on this new information, and then take the best next action.
 </tool_result_reflection>`;
 
+// U4: Build the pre-injected "core context" block for a client turn — identity,
+// location, account status, care-team roster, and the FULL care plan.
+//
+// PHI-IN-PROMPT POLICY (decision recorded 2026-06-24): the full care plan
+// (including diagnoses, medications, and doctor contacts) is pre-injected into
+// every client turn's system prompt by product decision, trading higher PHI
+// exposure in LLM payloads for richer default context and fewer tool round-trips.
+// Care-team phone numbers are intentionally NOT pre-injected (kept lazy via
+// get_care_team) to bound exposure. Re-record this in AGENT_NATIVE_EXCLUSIONS.md
+// when U1 lands. Honors KTD-8's latency budget: at most 3 extra parallel reads
+// (care_plans doc, users doc, one appointments query — no per-caregiver fetches).
+async function buildClientCoreContext(
+  userId: string,
+  senior: any,
+  session: any,
+): Promise<string> {
+  const parts: string[] = [];
+
+  // Identity — who Cara is talking to (the family member), from onboarding data.
+  const sd = (session as any)?.onboardingData ?? {};
+  const familyName = sd.firstName || sd.name;
+  const relationship = sd.relationship;
+  if (familyName) {
+    parts.push(`YOU ARE TALKING TO: ${familyName}${relationship ? ` (${relationship})` : ""} — the family member, not the senior.`);
+  }
+
+  // Location — never invent one; this is the authoritative source.
+  const loc = senior?.location || senior?.city;
+  if (loc) parts.push(`LOCATION: ${loc}.`);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const [planSnap, userSnap, apptSnap] = await Promise.all([
+    db.collection("care_plans").doc(userId).get().catch(() => null),
+    db.collection("users").doc(userId).get().catch(() => null),
+    db.collection("appointments")
+      .where("clientId", "==", userId)
+      .where("status", "in", ["confirmed", "completed", "in-progress"])
+      .orderBy("date", "desc")
+      .limit(50)
+      .get()
+      .catch(() => null),
+  ]);
+
+  // Account status — high-hit, non-clinical state.
+  const u = userSnap?.exists ? (userSnap.data() as Record<string, any>) : null;
+  if (u) {
+    const accountBits: string[] = [];
+    accountBits.push(`identity ${u.verified ? "verified" : "unverified"}`);
+    if (u.subscriptionStatus) accountBits.push(`subscription ${u.subscriptionStatus}`);
+    const onboardingComplete = (session as any)?.onboardingStep === "complete";
+    accountBits.push(`onboarding ${onboardingComplete ? "complete" : "in progress"}`);
+    if (accountBits.length) parts.push(`ACCOUNT STATUS: ${accountBits.join(", ")}.`);
+  }
+
+  // Care-team roster — names + next shift only, built from the appointments query
+  // (no per-caregiver doc reads; phones stay lazy via get_care_team).
+  if (apptSnap && !apptSnap.empty) {
+    const seen = new Map<string, string | null>(); // name -> next upcoming shift date
+    for (const d of apptSnap.docs) {
+      const a = d.data() as Record<string, any>;
+      const name = a.caregiverName || "Caregiver";
+      const nextShift = a.date >= today ? a.date : null;
+      if (!seen.has(name)) seen.set(name, nextShift);
+      else if (nextShift && !seen.get(name)) seen.set(name, nextShift);
+    }
+    const roster = [...seen.entries()].slice(0, 10)
+      .map(([name, next]) => (next ? `${name} (next ${next})` : name))
+      .join(", ");
+    if (roster) parts.push(`CARE TEAM: ${roster}.`);
+  }
+
+  // Full care plan (per PHI policy above).
+  const plan = planSnap?.exists ? (planSnap.data() as Record<string, any>) : null;
+  if (plan) {
+    const planLines: string[] = [];
+    const fmt = (v: unknown) => Array.isArray(v) ? v.join("; ") : String(v);
+    for (const field of ["medications", "careNeeds", "dietaryNotes", "doctorContacts", "specialInstructions", "notes"]) {
+      if (plan[field] && (!Array.isArray(plan[field]) || plan[field].length)) {
+        planLines.push(`  - ${field}: ${fmt(plan[field])}`);
+      }
+    }
+    if (planLines.length) parts.push(`CARE PLAN (full, on file):\n${planLines.join("\n")}`);
+  }
+
+  return parts.length ? parts.join("\n") : "";
+}
+
 function buildClientSystemPrompt(
   senior: any,
   journal: any[],
@@ -224,7 +311,8 @@ function buildClientSystemPrompt(
   zepContext?: string,
   memoryContext?: string,
   activeVisit?: any | null,
-  bookingPatterns?: string
+  bookingPatterns?: string,
+  coreContext?: string
 ): string {
   const seniorName = senior?.name ?? "your loved one";
   const needs: string[] = senior?.needs ?? [];
@@ -286,6 +374,7 @@ function buildClientSystemPrompt(
     `When a family member expresses interest in a specific caregiver (e.g. "yes let's connect", "let's go with him", "I like her"), proactively call schedule_interview to set up an intro, or ask them for their preferred time if you don't have one yet. Do not punt them to a website or "team".`,
     ``,
     `Care needs: ${needs.join(", ") || "none recorded"}.`,
+    coreContext ? `\n${coreContext}\n` : "",
     zepSection,
     factsSection,
     visitSection,
@@ -1044,12 +1133,23 @@ export async function runQaAgent(params: {
     metrics.memoryFactsRetrieved = facts.length;
     if (zepContext === ZEP_UNAVAILABLE_MARKER) metrics.zepUnavailable = true;
 
+    // U4: pre-injected core context (identity, location, account status,
+    // care-team roster, full care plan). Confirmed-identity only — never for
+    // unconfirmed sessions, matching the cross-entity suppression above.
+    const coreContext = unconfirmedIdentity
+      ? ""
+      : await buildClientCoreContext(userId, senior, session).catch((err) => {
+          console.warn("qaAgent: buildClientCoreContext failed", err instanceof Error ? err.message : err);
+          return "";
+        });
+
     systemPrompt = buildClientSystemPrompt(
       senior, journal, nextAppt, permissions, factsText,
       zepContext || undefined,
       memoryContext || undefined,
       activeVisit,
-      bookingPatterns || undefined
+      bookingPatterns || undefined,
+      coreContext || undefined
     );
 
     const clientSnapshot = await clientSnapshotPromise.catch(() => "");

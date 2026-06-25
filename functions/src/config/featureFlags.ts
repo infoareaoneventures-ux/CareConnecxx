@@ -42,16 +42,22 @@ export function convergenceFlippedFlows(): ReadonlySet<string> {
   return new Set(raw.split(",").map(s => s.trim()).filter(Boolean));
 }
 
-// Flows cut over to the prompt-driven dispatcher BY DEFAULT (U13). These have NO
-// payment / Checkr / account-creation side effects, so the plan sanctions cutover
-// on conversational parity alone — which is proven by the resolver parity tests
-// (resolveJobStep / resolveScheduleStep mirror the legacy step order exactly).
-// Reversible per-flow via CONVERGENCE_UNFLIPPED (a kill switch), no redeploy needed.
+// Flows cut over to the prompt-driven dispatcher BY DEFAULT. Reversible per-flow
+// via CONVERGENCE_UNFLIPPED (a kill switch), no redeploy needed.
 //
-// `onboarding` is deliberately NOT here: it is the sole signup path with real
-// Stripe/Checkr/auth, so its cutover requires the real-model eval (KTD-6) and an
-// explicit CONVERGENCE_FLIPPED opt-in. It stays dark until both are satisfied.
-const DEFAULT_FLIPPED_FLOWS: ReadonlySet<string> = new Set(["job_posting", "modify_schedule"]);
+//   • job_posting / modify_schedule (U13) — no payment/Checkr/account-creation
+//     side effects; plan-sanctioned cutover on conversational parity alone,
+//     proven by the resolveJobStep / resolveScheduleStep parity tests.
+//   • onboarding (U12) — flipped at explicit product direction (2026-06-25)
+//     WITHOUT the real-model eval (KTD-6) that the plan recommended for the
+//     signup path. Safety rests on: (a) the dispatcher only re-SEQUENCES
+//     conversational steps — the Stripe/Checkr/auth/terminal-write GATE handlers
+//     are untouched; (b) deterministic conversational parity proven across the
+//     U11 corpus with the flag on (happy path, multi-field absorption, mid-flow
+//     question, correction — onboardingReplay.test.ts); (c) instant rollback via
+//     CONVERGENCE_UNFLIPPED=onboarding. The eval remains the recommended follow-up
+//     to validate real-model sequencing; monitor signup completion after deploy.
+const DEFAULT_FLIPPED_FLOWS: ReadonlySet<string> = new Set(["job_posting", "modify_schedule", "onboarding"]);
 
 function convergenceUnflippedFlows(): ReadonlySet<string> {
   const raw = process.env.CONVERGENCE_UNFLIPPED ?? "";

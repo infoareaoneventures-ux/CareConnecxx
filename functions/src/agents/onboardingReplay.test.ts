@@ -18,7 +18,7 @@
 // question, correction) — authored against the legacy machine's behavior so the
 // oracle isn't circular with the future dispatcher.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const PHONE = "+15555550111";
 const CHAT  = "chat-onb";
@@ -154,6 +154,13 @@ beforeEach(() => {
 });
 
 describe("onboarding replay — legacy parity oracle (U11)", () => {
+  // Onboarding is now default-flipped (U12 live). Force the LEGACY machine here so
+  // this stays an INDEPENDENT oracle (testing the dispatcher against itself would
+  // be circular). The U12 describe below exercises the flipped dispatcher.
+  const prevUnflip = process.env.CONVERGENCE_UNFLIPPED;
+  beforeEach(() => { process.env.CONVERGENCE_UNFLIPPED = "onboarding"; });
+  afterEach(()  => { if (prevUnflip === undefined) delete process.env.CONVERGENCE_UNFLIPPED; else process.env.CONVERGENCE_UNFLIPPED = prevUnflip; });
+
   it("client happy path: collects every conversational field and walks the step order", async () => {
     const final = await runTurns({ onboardingStep: "ask_role" }, [
       { text: "1 — I need care for my mom",            parses: { role: "client" } },

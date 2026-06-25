@@ -550,6 +550,24 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "update_reminder",
+    description: "Update an existing personal reminder — change its time, schedule, label, or message. Use when the family says 'move my medication reminder to 8am' or 'change that reminder to weekdays'. Only the reminder's owner can update it; provide only the fields that change.",
+    input_schema: {
+      type: "object",
+      properties: {
+        phone:      { type: "string" },
+        triggerId:  { type: "string", description: "The reminder/trigger id (from list_user_reminders)" },
+        label:      { type: "string" },
+        recurrence: { type: "string", description: "One of: daily, weekly, monthly, once" },
+        dayOfWeek:  { type: "number", description: "0=Sun … 6=Sat — only for weekly recurrence" },
+        hour:       { type: "number", description: "24-hour format, 0–23" },
+        minute:     { type: "number", description: "0–59" },
+        message:    { type: "string" },
+      },
+      required: ["phone", "triggerId"],
+    },
+  },
+  {
     name: "create_senior_profile",
     description:
       "Create an ADDITIONAL care recipient (senior) for this family's household. Use when a family says they want to add another parent/relative they care for. " +
@@ -1863,6 +1881,20 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "edit_comment",
+    description: "Edit the text of a comment the user previously left on a care journal entry. Use when the family says 'fix my comment to say …'. Only the comment's author can edit it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:    { type: "string", description: "The user who left the comment" },
+        entryId:   { type: "string", description: "The care_journal entry ID" },
+        commentId: { type: "string", description: "The comment ID to edit" },
+        comment:   { type: "string", description: "The new comment text" },
+      },
+      required: ["userId", "entryId", "commentId", "comment"],
+    },
+  },
+  {
     name: "edit_review",
     description: "Update a review the family already submitted for a caregiver — change the rating and/or comment. Use when they say 'change my review to 5 stars' or 'update what I wrote'. Only the review's author can edit it.",
     input_schema: {
@@ -2893,6 +2925,23 @@ export async function handleToolCall(
         const deleted = await deleteUserTrigger(phone as string, triggerId as string);
         if (!deleted) return toolError("NOT_FOUND", "Reminder not found or does not belong to this user");
         return { success: true, deleted: true };
+      }
+
+      case "update_reminder": {
+        const { phone, triggerId, label, recurrence, dayOfWeek, hour, minute, message: msg } = input;
+        if (!phone || !triggerId) return toolError("INVALID_INPUT", "phone and triggerId are required");
+        const patch: Record<string, unknown> = {};
+        if (label      !== undefined) patch.label      = label;
+        if (recurrence !== undefined) patch.recurrence = recurrence;
+        if (dayOfWeek  !== undefined) patch.dayOfWeek  = dayOfWeek;
+        if (hour       !== undefined) patch.hour       = hour;
+        if (minute     !== undefined) patch.minute     = minute;
+        if (msg        !== undefined) patch.message    = msg;
+        if (Object.keys(patch).length === 0) return toolError("INVALID_INPUT", "provide at least one field to update");
+        const { updateUserTrigger } = await import("../triggers/userTriggerManager");
+        const updated = await updateUserTrigger(phone as string, triggerId as string, patch);
+        if (!updated) return toolError("NOT_FOUND", "Reminder not found or does not belong to this user");
+        return { success: true, updated: true, triggerId };
       }
 
       case "get_caregiver_appointments": {
@@ -5172,6 +5221,24 @@ export async function handleToolCall(
       if (abort) return toolError(abort.code, abort.message);
       logAudit({ eventType: "journal_comment_deleted", userId: userId as string, data: { source: "mcp:delete_comment", entryId, commentId } }).catch(() => {});
       return { success: true, deleted: true };
+    }
+
+    // ── edit_comment ──────────────────────────────────────────────────────────
+    if (name === "edit_comment") {
+      const { userId, entryId, commentId, comment } = input as Record<string, unknown>;
+      if (!userId || !entryId || !commentId || !comment) return toolError("INVALID_INPUT", "userId, entryId, commentId, and comment are required");
+      const commentRef = db.collection("care_journal").doc(entryId as string).collection("comments").doc(commentId as string);
+      // Verify existence + author ownership in a transaction, then update the text.
+      let abort: { code: string; message: string } | null = null;
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(commentRef);
+        if (!snap.exists) { abort = { code: "NOT_FOUND", message: "Comment not found." }; return; }
+        if (snap.data()?.userId !== userId) { abort = { code: "PERMISSION_DENIED", message: "You can only edit your own comments." }; return; }
+        tx.update(commentRef, { comment: (comment as string).slice(0, 2000), editedAt: nowIso });
+      });
+      if (abort) return toolError(abort.code, abort.message);
+      logAudit({ eventType: "journal_comment_edited", userId: userId as string, data: { source: "mcp:edit_comment", entryId, commentId } }).catch(() => {});
+      return { success: true, edited: true };
     }
 
     // ── edit_review ─────────────────────────────────────────────────────────

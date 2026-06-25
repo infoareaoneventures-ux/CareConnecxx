@@ -401,6 +401,27 @@ describe("booking tools", () => {
     });
   });
 
+  describe("update_reminder (CRUD)", () => {
+    it("updates an owned reminder's fields", async () => {
+      hoisted.docState.set("user_triggers/t1", { phone: "+15555550100", active: true, recurrence: "daily", hour: 9, minute: 0, label: "meds", message: "take meds" });
+      const r = await handleToolCall("update_reminder", { phone: "+15555550100", triggerId: "t1", hour: 8, label: "morning meds" }) as any;
+      expect(r.success).toBe(true);
+      expect(hoisted.docState.get("user_triggers/t1").hour).toBe(8);
+      expect(hoisted.docState.get("user_triggers/t1").label).toBe("morning meds");
+    });
+    it("rejects updating a reminder owned by another phone (NOT_FOUND)", async () => {
+      hoisted.docState.set("user_triggers/t1", { phone: "+1OTHER", active: true, recurrence: "daily", hour: 9, minute: 0 });
+      const r = await handleToolCall("update_reminder", { phone: "+15555550100", triggerId: "t1", hour: 8 }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("NOT_FOUND");
+    });
+    it("requires at least one field to update", async () => {
+      const r = await handleToolCall("update_reminder", { phone: "+15555550100", triggerId: "t1" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+    });
+  });
+
   describe("referral tools", () => {
     it("send_referral generates a code, persists it, and files a referral", async () => {
       hoisted.docState.set("users/u1", { userType: "client" });

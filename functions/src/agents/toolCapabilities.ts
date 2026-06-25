@@ -59,6 +59,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   manage_recurring_schedule:     ["scheduling"],
   list_user_reminders:           ["scheduling"],
   create_reminder:               ["scheduling"],
+  update_reminder:               ["scheduling"],  // CRUD: reminder UPDATE
   delete_reminder:               ["scheduling"],
   schedule_followup:             ["scheduling"],
   update_caregiver_availability: ["scheduling"],
@@ -100,6 +101,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   like_journal_entry:        ["care_plan", "messaging"],
   unlike_journal_entry:      ["care_plan", "messaging"],
   comment_on_journal_entry:  ["care_plan", "messaging"],
+  edit_comment:              ["care_plan", "messaging"],  // CRUD: journal-comment UPDATE
   delete_comment:            ["care_plan", "messaging"],
   edit_review:               ["booking"],
   cancel_followup:           ["scheduling"],

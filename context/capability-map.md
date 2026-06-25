@@ -52,7 +52,11 @@ Status legend:
 | Request a refund | `Payments.tsx`, `refundHandler` | `create_refund_request` | ✅ |
 | View invoices / billing summary | `Payments.tsx` | `get_invoice_history`, `get_invoice_details`, `get_billing_summary` | ✅ |
 | Update payment method (card) | `Payments.tsx` → Stripe portal | `get_payment_update_link` (link only) | 🚫 In-conversation card entry — PCI; link-only by design |
-| Leave a review | `LeaveReviewModal.tsx` | `submit_review` | ✅ |
+| Leave / edit a review | `LeaveReviewModal.tsx` | `submit_review`, `edit_review` | ✅ |
+| Save / unsave / list favorite caregivers | `FindCaregivers.tsx` (favorites) | `save_caregiver_favorite`, `unsave_caregiver_favorite`, `list_saved_caregivers` | ✅ (map reconcile, U15) |
+| Like / comment / edit-comment / delete-comment on a journal entry | `CareJournalFeed.tsx` | `like_journal_entry`, `comment_on_journal_entry`, `edit_comment`, `delete_comment` | ✅ (comment edit U15) |
+| Initiate a client-side caregiver swap | swap UI | `initiate_client_swap` | ✅ (map reconcile, U15) |
+| Update communication preferences / request email change | `AccountSettings.tsx` | `update_communication_preferences`, `request_email_change` | ✅ (map reconcile, U15) |
 | View care journal / care plan | `CareJournalFeed.tsx`, `CarePlan.tsx` | `get_care_journal`, `get_care_journal_client`, `get_care_plan` | ✅ |
 | Update care plan | `CarePlan.tsx` | `update_care_plan` | ✅ |
 | Add / remove family member | `AccountSettings.tsx` | `add_family_member`, `remove_family_member` | ✅ |
@@ -66,7 +70,7 @@ Status legend:
 | View / follow-up / reopen own support tickets | `SupportModal.tsx` | `get_support_ticket`, `list_support_tickets`, `update_support_ticket` | ✅ (U7) |
 | Log qualitative match feedback | match UI / `matchFeedback` | `log_match_feedback` | ✅ (U7) |
 | See / cancel Cara's pending proactive messages | (agent-managed) | `list_proactive_drafts`, `cancel_proactive_draft` | ✅ (U7) |
-| Manage reminders / follow-ups | reminder UI | `list_user_reminders`, `create_reminder`, `delete_reminder`, `schedule_followup`, `cancel_followup` | ✅ |
+| Manage reminders / follow-ups | reminder UI | `list_user_reminders`, `create_reminder`, `update_reminder`, `delete_reminder`, `schedule_followup`, `cancel_followup` | ✅ (update U15) |
 | Cancel / reactivate subscription | `Subscription.tsx` | `cancel_subscription`, `reactivate_subscription` | ✅ |
 | Block / report / unblock a user | safety UI | `block_user`, `report_user`, `unblock_user` | ✅ |
 | Raise an emergency alert | `EmergencySOS.tsx` (`triggerEmergencyAlert`) | `trigger_emergency_alert` | ✅ (parity) |

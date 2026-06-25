@@ -45,16 +45,16 @@ describe("routing convergence flags (U6/U10)", () => {
 describe("convergence flip policy (U13 default-flipped + kill switch)", () => {
   afterEach(() => { delete process.env.CONVERGENCE_FLIPPED; delete process.env.CONVERGENCE_UNFLIPPED; });
 
-  it("flips job_posting and modify_schedule ON by default", () => {
+  it("flips job_posting, modify_schedule, and onboarding ON by default", () => {
     expect(isConvergenceFlipped("job_posting")).toBe(true);
     expect(isConvergenceFlipped("modify_schedule")).toBe(true);
-  });
-  it("keeps onboarding DARK by default (eval-gated signup path)", () => {
-    expect(isConvergenceFlipped("onboarding")).toBe(false);
-  });
-  it("onboarding flips only with an explicit env opt-in", () => {
-    process.env.CONVERGENCE_FLIPPED = "onboarding";
+    // onboarding flipped at product direction (2026-06-25), kill switch is rollback.
     expect(isConvergenceFlipped("onboarding")).toBe(true);
+  });
+  it("CONVERGENCE_UNFLIPPED rolls back onboarding (and any default-on flow)", () => {
+    process.env.CONVERGENCE_UNFLIPPED = "onboarding";
+    expect(isConvergenceFlipped("onboarding")).toBe(false);     // rolled back
+    expect(isConvergenceFlipped("job_posting")).toBe(true);     // others unaffected
   });
   it("CONVERGENCE_UNFLIPPED is a reversible kill switch for default-on flows", () => {
     process.env.CONVERGENCE_UNFLIPPED = "job_posting";

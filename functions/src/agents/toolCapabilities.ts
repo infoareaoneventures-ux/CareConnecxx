@@ -84,6 +84,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   restore_care_plan_version: ["care_plan"],
   get_health_signals:        ["care_plan"],
   log_health_flag:           ["care_plan"],
+  create_senior_profile:     ["care_plan"],
   like_journal_entry:        ["care_plan", "messaging"],
   unlike_journal_entry:      ["care_plan", "messaging"],
   comment_on_journal_entry:  ["care_plan", "messaging"],

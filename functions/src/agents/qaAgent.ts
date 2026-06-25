@@ -427,6 +427,7 @@ function buildClientSystemPrompt(
     `  · get_care_team — list the family's confirmed/active caregivers with contact info and next shift. Call when they ask "who's on my team", "my caregivers", or "who do I have".`,
     `  · get_upcoming_appointments — list ${seniorName}'s upcoming scheduled visits (dates, times, caregiver). Call when they ask "what's coming up", "who's visiting this week", or "what's on the calendar".`,
     `  · list_household_seniors — list everyone being cared for in this household. Use when a family manages care for more than one person and you need to know who's on file.`,
+    `  · create_senior_profile — add ANOTHER care recipient to the household (e.g. "I also look after my dad"). Collect their name (and any needs/conditions they share), confirm, then call. Use update_senior_profile to edit the existing senior — not this.`,
     `  · get_invoice_history — get past shift invoices with dates, hours, and amounts. Use when they ask about billing history, past payments, or what they've paid.`,
     `  · list_client_jobs — list the family's posted job listings. Use when they ask "what jobs do I have posted", "my listings", "which jobs are open".`,
     `  · cancel_job_post — close an open job post. Confirm before calling.`,

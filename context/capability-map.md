@@ -56,6 +56,7 @@ Status legend:
 | Update care plan | `CarePlan.tsx` | `update_care_plan` | ✅ |
 | Add / remove family member | `AccountSettings.tsx` | `add_family_member`, `remove_family_member` | ✅ |
 | Update account profile (name/phone/address) | `AccountSettings.tsx` | `update_user_profile`, `update_senior_profile` | ✅ |
+| Add another care recipient (senior) to the household | `FamilyManager.tsx` / multi-senior intake | `create_senior_profile` | ✅ (U6) |
 | Schedule interview / submit feedback | `ScheduleInterviewModal.tsx` | `schedule_interview`, `submit_interview_feedback` | ✅ |
 | Respond to a job application | `ClientDashboard.tsx` | `respond_to_job_application` | ✅ |
 | Post / edit / cancel a job | `ClientJobPostingWizard.tsx`, `jobPostingFlow` | `list_client_jobs`, `edit_job_post`, `cancel_job_post` | ✅ |

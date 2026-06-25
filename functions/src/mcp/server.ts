@@ -372,6 +372,26 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "create_senior_profile",
+    description:
+      "Create an ADDITIONAL care recipient (senior) for this family's household. Use when a family says they want to add another parent/relative they care for. " +
+      "Do NOT use to edit the existing senior — use update_senior_profile for that. The new profile is linked to the family automatically.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:     { type: "string", description: "Injected automatically — the owning family account." },
+        userId:       { type: "string", description: "Injected automatically." },
+        name:         { type: "string", description: "The senior's name." },
+        relationship: { type: "string", description: "Relationship to the family member, e.g. 'mother', 'father'." },
+        age:          { type: "number", description: "The senior's age, if known." },
+        needs:        { type: "array", items: { type: "string" }, description: "Care needs, e.g. ['mobility','medication reminders']." },
+        conditions:   { type: "array", items: { type: "string" }, description: "Known conditions, if shared." },
+        location:     { type: "string", description: "City or address, if different from the family's." },
+      },
+      required: ["clientId", "name"],
+    },
+  },
+  {
     name: "schedule_followup",
     description:
       "Schedule a one-time proactive follow-up message to send to the family at a future time. " +
@@ -3178,6 +3198,29 @@ export async function handleToolCall(
       } catch (e) { console.error("[create_care_journal_entry] family summary failed", e); }
       logAudit({ eventType: "care_journal_created", userId: caregiverId as string, data: { source: "mcp:create_care_journal_entry", appointmentId, entryId: entryRef.id } }).catch(() => {});
       return { success: true, entryId: entryRef.id };
+    }
+
+    if (name === "create_senior_profile") {
+      // clientId is injected session-authoritatively (qaAgent enrichment overrides
+      // any model-supplied value), so ownership is bound to the caller (KTD-10).
+      const { clientId, name: seniorName, relationship, age, needs, conditions, location } = input as Record<string, unknown>;
+      if (!clientId || !seniorName) return toolError("INVALID_INPUT", "clientId and name are required");
+      // New household seniors are NOT keyed by the client uid (that doc is the
+      // primary senior); they get a random id stamped with userId == clientId so
+      // the amended senior_profiles rule lets the owning family read them (KTD-10).
+      const ref = await db.collection("senior_profiles").add({
+        userId:       clientId,
+        name:         seniorName,
+        relationship: relationship ?? null,
+        age:          age ?? null,
+        needs:        Array.isArray(needs) ? needs : [],
+        conditions:   Array.isArray(conditions) ? conditions : [],
+        location:     location ?? null,
+        createdAt:    nowIso,
+        source:       "cara_sms",
+      });
+      logAudit({ eventType: "senior_profile_created", userId: clientId as string, data: { source: "mcp:create_senior_profile", seniorProfileId: ref.id } }).catch(() => {});
+      return { success: true, seniorProfileId: ref.id, message: `Added ${seniorName} to the household.` };
     }
 
     if (name === "apply_to_job") {

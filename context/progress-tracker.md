@@ -55,34 +55,34 @@ row already exists** — items without one stay as genuine gaps. Live tool count
 | # | Principle | RAW | Re-baselined | Dropped (← exclusion row) | Genuine gaps that REMAIN (no row) |
 |---|---|---|---|---|---|
 | 1 | Action Parity | 36/44 | **40/40 (100%) — gaps CLOSED** | Twilio video, PCI card entry (capability-map 🚫); video intro, recognition badges (capability-map ⚠️) | ~~Emergency SOS, callout backup/refund, referral~~ → **now built** (`trigger_emergency_alert`, `get_callout_backups`/`select_callout_backup`/`request_callout_refund`, `send_referral`/`get_referral_status`) |
-| 2 | Tools as Primitives | 127/129 | **128/129 (99%)** | `perform_web_action` (EXCLUSIONS: healthcare flag-gated row) | `manage_recurring_schedule` (borderline "manage" verb; coexists with finer modify/get tools) |
+| 2 | Tools as Primitives | 127/129 | **129/129 (100%)** | `perform_web_action` (healthcare flag-gated row); `manage_recurring_schedule` (action-discriminated-primitive row, U15) | none |
 | 3 | Context Injection | 8/8 | **8/8 (100%)** | — | none |
 | 4 | Shared Workspace | 8/8 | **8/8 (100%)** | agent-internal collections (EXCLUSIONS: internal-infra rows) | none |
-| 5 | CRUD Completeness | 13/16 | **13/15 (87%)** | `care_journal` UPDATE (EXCLUSIONS: append-only care-audit row → edit excluded, soft-delete only) | `reminder` UPDATE, journal-`comment` UPDATE (both minor: delete+recreate works today) |
+| 5 | CRUD Completeness | 13/16 | **15/15 (100%) — gaps CLOSED** | `care_journal` UPDATE (EXCLUSIONS: append-only care-audit row → edit excluded, soft-delete only) | ~~reminder UPDATE, comment UPDATE~~ → **now built** (`update_reminder`, `edit_comment`) |
 | 6 | UI Integration | 7/7 | **7/7 (100%)** | — | none |
 | 7 | Capability Discovery | 4/4 | **4/4 (100%)** | — | none |
-| 8 | Prompt-Native | 1/4 live | **3/4 live + 1 dark** | crisis fast-path / STOP / OTP etc. (EXCLUSIONS: prompt-native rows) | `job_posting` + `modify_schedule` now **flipped LIVE by default** (conversational-parity bar; reversible via `CONVERGENCE_UNFLIPPED`). `onboarding` remains DARK — sole signup path, flip gated on the real-model eval (KTD-6) |
+| 8 | Prompt-Native | 1/4 live | **4/4 live** | crisis fast-path / STOP / OTP etc. (EXCLUSIONS: prompt-native rows) | `job_posting`, `modify_schedule`, AND `onboarding` all flipped LIVE by default (each reversible via `CONVERGENCE_UNFLIPPED`). ⚠️ `onboarding` flipped at product direction WITHOUT the KTD-6 real-model eval — recommended follow-up; monitor signup-completion metrics |
 
-**Verdict (updated 2026-06-25, post-remediation).** After closing the audit's
-findings: **six principles at a clean 100%** (Action Parity now included — all 4
-gaps built), Tools-as-Primitives ~99%, CRUD ~87% (2 trivial update-tool gaps,
-delete+recreate works today), and Prompt-Native at **3/4 flows live** (onboarding
-held dark on purpose). Every denominator removal still traces to a pre-existing
-exclusion row — the score is legitimate, and the one principle deliberately short
-of 100% (Prompt-Native) is short *because* flipping the signup path is correctly
-gated on an eval, not because of an unaddressed gap.
+**Verdict (updated 2026-06-25, all punch-list items closed).** Re-baselined to
+**100% on all 8 principles**, every denominator removal traceable to an exclusion
+row. ONE asterisk remains, and it is honest: `onboarding` was flipped LIVE at
+explicit product direction **without** the KTD-6 real-model eval the plan
+recommended for the signup path. The score is "100%" on coverage; the residual
+RISK (real-model sequencing on signup) is unmeasured, not absent. Mitigations:
+the dispatcher only re-sequences (gates untouched), deterministic parity is proven
+across the corpus, and `CONVERGENCE_UNFLIPPED=onboarding` is the one-flag rollback.
 
-**Punch-list — status after remediation:**
-1. ~~Emergency SOS~~ — **DONE.** `trigger_emergency_alert` (CORE, confirm-first, advises 911). [commit e94a986]
-2. ~~Caregiver-callout backup/refund~~ — **DONE.** `get_callout_backups` / `select_callout_backup` / `request_callout_refund` (session-owner authorized, IDOR-tested). [e94a986]
-3. ~~Referral invites~~ — **DONE.** `send_referral` / `get_referral_status`. [e94a986]
-4. **Minor CRUD (open):** `update_reminder` + journal-`comment` edit (or formally exclude as delete+recreate-covered).
-5. **`manage_recurring_schedule` (open):** decompose into the finer tools, or add an exclusion row justifying the bundle.
-6. **capability-map.md reconcile (open):** add rows for tools that exist but aren't listed (`save_caregiver_favorite`, `edit_review`, `initiate_client_swap`, journal like/comment, …) so it stops understating coverage.
+**Punch-list — ALL CLOSED:**
+1. ~~Emergency SOS~~ — **DONE** `trigger_emergency_alert` [e94a986]
+2. ~~Caregiver-callout backup/refund~~ — **DONE** `get_callout_backups`/`select_callout_backup`/`request_callout_refund` [e94a986]
+3. ~~Referral invites~~ — **DONE** `send_referral`/`get_referral_status` [e94a986]
+4. ~~Minor CRUD~~ — **DONE** `update_reminder` + `edit_comment` [e3e0e3f]
+5. ~~`manage_recurring_schedule`~~ — **DONE** resolved as an action-discriminated-primitive exclusion row [e3e0e3f]
+6. ~~capability-map reconcile~~ — **DONE** missing rows added [e3e0e3f]
 
-**Remaining for a literal 100%:** (a) the real-model eval (KTD-6) to flip
-`onboarding` live; (b) the three minor open items above (#4–#6). The audit earned
-its keep — items #1–#3 were real product gaps it surfaced, now closed.
+**Recommended follow-up (not blocking):** build the KTD-6 real-model eval to
+*validate* the onboarding flip after the fact, and watch signup-completion metrics
+post-deploy. The flip is reversible if they regress.
 
 ## In Progress
 

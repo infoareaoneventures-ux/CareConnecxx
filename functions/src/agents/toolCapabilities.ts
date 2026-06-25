@@ -85,6 +85,13 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_health_signals:        ["care_plan"],
   log_health_flag:           ["care_plan"],
   create_senior_profile:     ["care_plan"],
+  // U7
+  delete_care_journal_entry: ["care_plan"],
+  delete_review:             ["booking"],
+  log_match_feedback:        ["booking"],
+  create_job_post:           ["booking"],
+  list_proactive_drafts:     ["scheduling"],
+  cancel_proactive_draft:    ["scheduling"],
   like_journal_entry:        ["care_plan", "messaging"],
   unlike_journal_entry:      ["care_plan", "messaging"],
   comment_on_journal_entry:  ["care_plan", "messaging"],
@@ -140,6 +147,12 @@ const CORE_TOOL_NAMES = new Set<string>([
   "suggest_upcoming_care",
   "get_care_team",
   "create_support_ticket",
+  // U7: support-ticket read/lifecycle — like create_support_ticket, these can
+  // be needed under many intents (a status check mid-conversation), so they're
+  // core rather than bucket-filtered.
+  "get_support_ticket",
+  "list_support_tickets",
+  "update_support_ticket",
   "resume_execution_agent",
   "write_todos",
   "cara_knows",

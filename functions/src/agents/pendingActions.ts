@@ -65,6 +65,10 @@ const ALWAYS_CONFIRM = new Set<string>([
   // family-confirmed. (The cascade refundHandler has its own confirm step and does
   // not route through this gate.)
   "create_refund_request",
+  // U7: destructive CRUD — deleting a review or hiding a care-journal entry is
+  // family-visible and not casually reversible, so require explicit confirmation.
+  "delete_review",
+  "delete_care_journal_entry",
 ]);
 
 // Care-plan fields that are harmless note-like additions — free-text context

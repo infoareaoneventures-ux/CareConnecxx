@@ -59,7 +59,12 @@ Status legend:
 | Add another care recipient (senior) to the household | `FamilyManager.tsx` / multi-senior intake | `create_senior_profile` | ✅ (U6) |
 | Schedule interview / submit feedback | `ScheduleInterviewModal.tsx` | `schedule_interview`, `submit_interview_feedback` | ✅ |
 | Respond to a job application | `ClientDashboard.tsx` | `respond_to_job_application` | ✅ |
-| Post / edit / cancel a job | `ClientJobPostingWizard.tsx`, `jobPostingFlow` | `list_client_jobs`, `edit_job_post`, `cancel_job_post` | ✅ |
+| Post / edit / cancel a job | `ClientJobPostingWizard.tsx`, `jobPostingFlow` | `create_job_post`, `list_client_jobs`, `edit_job_post`, `cancel_job_post` | ✅ (create U7) |
+| Delete a review left for a caregiver | `Reviews` UI | `delete_review` | ✅ (U7) |
+| Remove an incorrect care-journal entry (soft-delete) | care journal UI | `delete_care_journal_entry` | ✅ (U7) |
+| View / follow-up / reopen own support tickets | `SupportModal.tsx` | `get_support_ticket`, `list_support_tickets`, `update_support_ticket` | ✅ (U7) |
+| Log qualitative match feedback | match UI / `matchFeedback` | `log_match_feedback` | ✅ (U7) |
+| See / cancel Cara's pending proactive messages | (agent-managed) | `list_proactive_drafts`, `cancel_proactive_draft` | ✅ (U7) |
 | Manage reminders / follow-ups | reminder UI | `list_user_reminders`, `create_reminder`, `delete_reminder`, `schedule_followup`, `cancel_followup` | ✅ |
 | Cancel / reactivate subscription | `Subscription.tsx` | `cancel_subscription`, `reactivate_subscription` | ✅ |
 | Block / report / unblock a user | safety UI | `block_user`, `report_user`, `unblock_user` | ✅ |

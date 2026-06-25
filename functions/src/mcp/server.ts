@@ -392,6 +392,51 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "delete_review",
+    description: "Delete a review the family previously left for a caregiver. Permanent — confirm before calling.",
+    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, reviewId: { type: "string", description: "The review document id." } }, required: ["clientId", "reviewId"] },
+  },
+  {
+    name: "delete_care_journal_entry",
+    description: "Hide an incorrect care journal entry from the family view (soft-delete — the entry is retained in the care record). Confirm before calling.",
+    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, entryId: { type: "string", description: "The care_journal document id." } }, required: ["clientId", "entryId"] },
+  },
+  {
+    name: "get_support_ticket",
+    description: "Get the status and details of one of the family's support tickets by id.",
+    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." }, ticketId: { type: "string" } }, required: ["userId", "ticketId"] },
+  },
+  {
+    name: "list_support_tickets",
+    description: "List the family's support tickets (most recent first) so Cara can give status updates instead of opening duplicates.",
+    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." } }, required: ["userId"] },
+  },
+  {
+    name: "update_support_ticket",
+    description: "Update one of the family's OWN support tickets: add a follow-up note ('add_response') or reopen a resolved ticket ('reopen'). Cannot set admin-only triage states.",
+    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." }, ticketId: { type: "string" }, action: { type: "string", description: "'add_response' or 'reopen'" }, message: { type: "string", description: "Follow-up note (required for add_response)." } }, required: ["userId", "ticketId", "action"] },
+  },
+  {
+    name: "log_match_feedback",
+    description: "Record the family's qualitative feedback about a caregiver match (e.g. 'great with mom but often late'). Feeds future matching. Distinct from submit_review (post-visit star rating).",
+    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, caregiverId: { type: "string" }, sentiment: { type: "string", description: "'positive', 'neutral', or 'negative'" }, note: { type: "string" } }, required: ["clientId", "caregiverId", "note"] },
+  },
+  {
+    name: "create_job_post",
+    description: "Post a new caregiver job for the family so nearby caregivers can apply. Collect care needs, schedule, and hourly rate; confirm, then call.",
+    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, careTypes: { type: "array", items: { type: "string" } }, frequency: { type: "string", description: "e.g. 'weekly', 'one-time'" }, days: { type: "array", items: { type: "string" } }, timeOfDay: { type: "array", items: { type: "string" } }, hourlyRate: { type: "number" }, paymentMethod: { type: "string" }, city: { type: "string" }, startDate: { type: "string", description: "YYYY-MM-DD" } }, required: ["clientId", "careTypes", "hourlyRate"] },
+  },
+  {
+    name: "list_proactive_drafts",
+    description: "List Cara's pending proactive message drafts queued for this family that haven't sent yet.",
+    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." } }, required: ["userId"] },
+  },
+  {
+    name: "cancel_proactive_draft",
+    description: "Cancel a pending proactive message draft so Cara doesn't send it. Only works on drafts that haven't already sent.",
+    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." }, draftId: { type: "string" } }, required: ["userId", "draftId"] },
+  },
+  {
     name: "schedule_followup",
     description:
       "Schedule a one-time proactive follow-up message to send to the family at a future time. " +
@@ -3221,6 +3266,144 @@ export async function handleToolCall(
       });
       logAudit({ eventType: "senior_profile_created", userId: clientId as string, data: { source: "mcp:create_senior_profile", seniorProfileId: ref.id } }).catch(() => {});
       return { success: true, seniorProfileId: ref.id, message: `Added ${seniorName} to the household.` };
+    }
+
+    if (name === "delete_review") {
+      const { clientId, reviewId } = input as Record<string, unknown>;
+      if (!clientId || !reviewId) return toolError("INVALID_INPUT", "clientId and reviewId are required");
+      const rSnap = await db.collection("reviews").doc(reviewId as string).get();
+      if (!rSnap.exists) return toolError("NOT_FOUND", "Review not found");
+      const review = rSnap.data()!;
+      if (review.clientId !== clientId) return toolError("PERMISSION_DENIED", "Review does not belong to this client");
+      await rSnap.ref.delete();
+      if (review.appointmentId) {
+        await db.collection("appointments").doc(review.appointmentId as string)
+          .update({ hasReview: false, reviewId: admin.firestore.FieldValue.delete() }).catch(() => {});
+      }
+      logAudit({ eventType: "review_deleted", userId: clientId as string, data: { source: "mcp:delete_review", reviewId, caregiverId: review.caregiverId } }).catch(() => {});
+      return { success: true, reviewId };
+    }
+
+    if (name === "delete_care_journal_entry") {
+      const { clientId, entryId } = input as Record<string, unknown>;
+      if (!clientId || !entryId) return toolError("INVALID_INPUT", "clientId and entryId are required");
+      const eSnap = await db.collection("care_journal").doc(entryId as string).get();
+      if (!eSnap.exists) return toolError("NOT_FOUND", "Journal entry not found");
+      const entry = eSnap.data()!;
+      if (entry.clientId !== clientId) return toolError("PERMISSION_DENIED", "Entry does not belong to this client");
+      // Soft-delete: care_journal is an append-only audit record (firestore.rules
+      // marks it never-client-deletable), so hide from the family view rather
+      // than hard-delete — preserves the audit trail (Success Criterion #2).
+      await eSnap.ref.update({ status: "hidden", hiddenAt: nowIso });
+      logAudit({ eventType: "care_journal_hidden", userId: clientId as string, data: { source: "mcp:delete_care_journal_entry", entryId } }).catch(() => {});
+      return { success: true, entryId, softDeleted: true };
+    }
+
+    if (name === "get_support_ticket") {
+      const { userId, ticketId } = input as Record<string, unknown>;
+      if (!userId || !ticketId) return toolError("INVALID_INPUT", "userId and ticketId are required");
+      const tSnap = await db.collection("support_tickets").doc(ticketId as string).get();
+      if (!tSnap.exists) return toolError("NOT_FOUND", "Support ticket not found");
+      const ticket = tSnap.data()!;
+      if (ticket.userId !== userId) return toolError("PERMISSION_DENIED", "Ticket does not belong to this user");
+      return { success: true, ticket: { id: tSnap.id, subject: ticket.subject, status: ticket.status, category: ticket.category, createdAt: ticket.createdAt, resolved: ticket.resolved ?? false } };
+    }
+
+    if (name === "list_support_tickets") {
+      const { userId } = input as Record<string, unknown>;
+      if (!userId) return toolError("INVALID_INPUT", "userId is required");
+      // where(userId) only + in-memory sort to avoid a composite index requirement.
+      const tSnap = await db.collection("support_tickets").where("userId", "==", userId).limit(25).get().catch(() => null);
+      if (!tSnap) return { success: true, tickets: [] };
+      const tickets = tSnap.docs
+        .map(d => { const t = d.data(); return { id: d.id, subject: t.subject, status: t.status, category: t.category, createdAt: t.createdAt as string, resolved: t.resolved ?? false }; })
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+        .slice(0, 10);
+      return { success: true, tickets, total: tickets.length };
+    }
+
+    if (name === "update_support_ticket") {
+      const { userId, ticketId, action, message } = input as Record<string, unknown>;
+      if (!userId || !ticketId || !action) return toolError("INVALID_INPUT", "userId, ticketId, and action are required");
+      const tSnap = await db.collection("support_tickets").doc(ticketId as string).get();
+      if (!tSnap.exists) return toolError("NOT_FOUND", "Support ticket not found");
+      const ticket = tSnap.data()!;
+      if (ticket.userId !== userId) return toolError("PERMISSION_DENIED", "Ticket does not belong to this user");
+      if (action === "reopen") {
+        await tSnap.ref.update({ status: "open", resolved: false, reopenedAt: nowIso });
+      } else if (action === "add_response") {
+        if (!message) return toolError("INVALID_INPUT", "message is required for add_response");
+        await tSnap.ref.update({ userResponses: admin.firestore.FieldValue.arrayUnion({ text: message, at: nowIso }) });
+      } else {
+        return toolError("INVALID_INPUT", "action must be 'reopen' or 'add_response' (admin-only states cannot be set here)");
+      }
+      logAudit({ eventType: "support_ticket_updated", userId: userId as string, data: { source: "mcp:update_support_ticket", ticketId, action } }).catch(() => {});
+      return { success: true, ticketId, action };
+    }
+
+    if (name === "log_match_feedback") {
+      const { clientId, caregiverId, sentiment, note } = input as Record<string, unknown>;
+      if (!clientId || !caregiverId || !note) return toolError("INVALID_INPUT", "clientId, caregiverId, and note are required");
+      await db.collection("users").doc(clientId as string).collection("match_history").add({
+        caregiverId, sentiment: sentiment ?? "neutral", note, source: "cara_sms", createdAt: nowIso,
+      });
+      logAudit({ eventType: "match_feedback_logged", userId: clientId as string, data: { source: "mcp:log_match_feedback", caregiverId, sentiment: sentiment ?? "neutral" } }).catch(() => {});
+      return { success: true };
+    }
+
+    if (name === "create_job_post") {
+      const { clientId, careTypes, frequency, days, timeOfDay, hourlyRate, paymentMethod, city, startDate } = input as Record<string, unknown>;
+      if (!clientId || !Array.isArray(careTypes) || careTypes.length === 0 || hourlyRate == null) {
+        return toolError("INVALID_INPUT", "clientId, careTypes (non-empty), and hourlyRate are required");
+      }
+      const daysArr = Array.isArray(days) ? (days as string[]) : [];
+      const todArr  = Array.isArray(timeOfDay) ? (timeOfDay as string[]) : [];
+      const ref = db.collection("job_posts").doc();
+      await ref.set({
+        intakeId:       ref.id,
+        clientId,
+        status:         "open",
+        careTypes,
+        schedule:       { frequency: frequency ?? "flexible", days: daysArr, timeOfDay: todArr },
+        startDate:      startDate ?? null,
+        location:       { city: city ?? null, lat: null, lng: null },
+        summary:        `New care job — ${(careTypes as string[]).slice(0, 2).join(", ")}`,
+        daysPerWeek:    daysArr.length,
+        timeOfDay:      todArr.join(", "),
+        hourlyRate,
+        paymentMethod:  paymentMethod ?? null,
+        applicantCount: 0,
+        notifiedCount:  0,
+        source:         "cara_sms",
+        createdAt:      nowIso,
+      });
+      logAudit({ eventType: "job_post_created", userId: clientId as string, data: { source: "mcp:create_job_post", jobId: ref.id } }).catch(() => {});
+      return { success: true, jobId: ref.id, message: "Your job is posted — caregivers nearby will see it." };
+    }
+
+    if (name === "list_proactive_drafts") {
+      const { userId } = input as Record<string, unknown>;
+      if (!userId) return toolError("INVALID_INPUT", "userId is required");
+      const dSnap = await db.collection("proactive_drafts").where("userId", "==", userId).limit(50).get().catch(() => null);
+      if (!dSnap) return { success: true, drafts: [] };
+      const PENDING = new Set(["pending", "scheduled", "queued", "draft"]);
+      const drafts = dSnap.docs
+        .map(d => { const x = d.data(); return { id: d.id, summary: x.summary ?? x.content ?? x.message ?? "(draft)", status: x.status as string, scheduledFor: x.scheduledFor ?? x.sendAt ?? null }; })
+        .filter(d => PENDING.has(String(d.status)));
+      return { success: true, drafts, total: drafts.length };
+    }
+
+    if (name === "cancel_proactive_draft") {
+      const { userId, draftId } = input as Record<string, unknown>;
+      if (!userId || !draftId) return toolError("INVALID_INPUT", "userId and draftId are required");
+      const dSnap = await db.collection("proactive_drafts").doc(draftId as string).get();
+      if (!dSnap.exists) return toolError("NOT_FOUND", "Draft not found");
+      const draft = dSnap.data()!;
+      if (draft.userId !== userId) return toolError("PERMISSION_DENIED", "Draft does not belong to this user");
+      if (draft.status === "sent") return toolError("INVALID_INPUT", "That message already went out — it can't be cancelled");
+      await dSnap.ref.update({ status: "cancelled", cancelledAt: nowIso });
+      logAudit({ eventType: "proactive_draft_cancelled", userId: userId as string, data: { source: "mcp:cancel_proactive_draft", draftId } }).catch(() => {});
+      return { success: true, draftId };
     }
 
     if (name === "apply_to_job") {

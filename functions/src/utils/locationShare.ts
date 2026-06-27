@@ -18,6 +18,25 @@
 
 import axios from "axios";
 
+/**
+ * Whether CARA can use Linq's native location-share prompt on this chat.
+ *
+ * The native request (`POST /chats/{id}/location/request`) works on 1:1 iMessage
+ * ONLY — SMS, RCS, and group chats return HTTP 409. Gating on the session's
+ * already-resolved `service` avoids an extra capability round-trip; a stale value
+ * that 409s is caught by `requestLocation`'s fallback, so a wrong guess costs one
+ * harmless failed call rather than a user-visible error.
+ *
+ * Param is intentionally structural (not the full `AgentSession`) so callers can
+ * pass a raw Firestore session doc without a type import; `service === "iMessage"`
+ * plus the absence of a `groupChatId` (group chats 409) is the whole gate.
+ */
+export function canRequestNativeLocation(
+  session: { service?: string; groupChatId?: string | null } | null | undefined
+): boolean {
+  return session?.service === "iMessage" && !session.groupChatId;
+}
+
 export interface SharedLocation {
   lat:    number;
   lng:    number;

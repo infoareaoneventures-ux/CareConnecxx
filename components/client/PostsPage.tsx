@@ -658,6 +658,7 @@ export const PostsPage: React.FC = () => {
   const handleSendBooking = async (interview: Interview, _unused: string) => {
     const user = auth?.currentUser;
     if (!user || !db) return;
+    gate('booking', interview.caregiverName, async () => {
     setSendingBooking(true);
     try {
       const post = interview.jobId ? posts.find(p => p.id === interview.jobId) : undefined;
@@ -813,6 +814,7 @@ export const PostsPage: React.FC = () => {
     } finally {
       setSendingBooking(false);
     }
+    }); // end gate callback
   };
 
   const handleCancelBooking = async (bookingId: string) => {
@@ -1281,7 +1283,7 @@ export const PostsPage: React.FC = () => {
                                   // All shifts completed — offer to re-book
                                   return (
                                     <button
-                                      onClick={() => openSendBookingModal(interview)}
+                                      onClick={() => gate('booking', interview.caregiverName, () => openSendBookingModal(interview))}
                                       className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700"
                                     >
                                       <RefreshCw className="w-3.5 h-3.5" /> Re-book
@@ -1294,7 +1296,7 @@ export const PostsPage: React.FC = () => {
                                       <XCircle className="w-3.5 h-3.5" /> {booking.status === 'cancelled' ? 'Visit cancelled' : 'Caregiver declined'}
                                     </span>
                                     <button
-                                      onClick={() => openSendBookingModal(interview)}
+                                      onClick={() => gate('booking', interview.caregiverName, () => openSendBookingModal(interview))}
                                       className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700"
                                     >
                                       <Send className="w-3.5 h-3.5" /> Resend
@@ -1311,7 +1313,7 @@ export const PostsPage: React.FC = () => {
                                     <button onClick={() => handleDecision(interview, 'decline')} disabled={submitting} className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
                                       {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />} Not Selected
                                     </button>
-                                    <button onClick={() => openSendBookingModal(interview)} disabled={submitting} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700 disabled:opacity-50">
+                                    <button onClick={() => gate('booking', interview.caregiverName, () => openSendBookingModal(interview))} disabled={submitting} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700 disabled:opacity-50">
                                       <Send className="w-3.5 h-3.5" /> Send Booking
                                     </button>
                                   </>

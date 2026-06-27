@@ -908,7 +908,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           {/* Actions */}
                           <div className="flex gap-2">
                             <button
-                              onClick={() => booking.caregiverId && handleChatClick({ id: booking.caregiverId, name: booking.caregiverName } as any)}
+                              onClick={() => booking.caregiverId && handleGatedMessage({ id: booking.caregiverId, name: booking.caregiverName } as any)}
                               className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
                             >
                               <MessageSquare className="w-3.5 h-3.5" /> Message

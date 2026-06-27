@@ -82,7 +82,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const isClient = userType === 'client';
 
   // Gate: clients must complete identity + membership before messaging
-  const { identityVerified, membershipActive, Modals: GateModals } = useAccessGates();
+  const { identityVerified, membershipActive, gate, Modals: GateModals } = useAccessGates();
   const clientCanMessage = !isClient || (identityVerified && membershipActive);
 
   const { gateMembership, membershipActive: caregiverMembershipActive, GateModal } = useCaregiverGate();
@@ -534,16 +534,20 @@ export const InboxView: React.FC<InboxViewProps> = ({
             {/* Input */}
             <div className="px-4 py-3 bg-white border-t border-slate-100">
               {isClient && !clientCanMessage ? (
-                <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-                  <div className="flex items-center gap-2 text-amber-700">
+                <div className="flex items-center justify-between gap-3 bg-slate-100 border border-slate-200 rounded-xl px-4 py-3">
+                  <div className="flex items-center gap-2 text-slate-500">
                     <Lock className="w-4 h-4 flex-shrink-0" />
-                    <span className="text-sm font-medium">Verify your identity &amp; activate membership to send messages</span>
+                    <span className="text-sm font-medium">
+                      {!identityVerified
+                        ? 'Verify your identity to send messages'
+                        : 'Activate your membership to send messages'}
+                    </span>
                   </div>
                   <button
-                    onClick={() => navigate('/client/dashboard')}
-                    className="text-xs font-semibold text-amber-700 hover:text-amber-800 underline whitespace-nowrap"
+                    onClick={() => gate('message', contact?.name, () => {})}
+                    className="text-xs font-semibold text-slate-600 hover:text-slate-800 underline whitespace-nowrap"
                   >
-                    Complete setup →
+                    {!identityVerified ? 'Verify identity →' : 'Activate Membership →'}
                   </button>
                 </div>
               ) : !isClient && !caregiverCanMessage ? (

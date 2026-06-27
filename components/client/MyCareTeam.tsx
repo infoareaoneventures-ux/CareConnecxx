@@ -7,7 +7,7 @@ import { ClientNavigation } from './ClientNavigation';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { db } from '../../lib/firebase';
 import { authService } from '../../services/api';
-import { IdentityGateModal } from './IdentityGateModal';
+import { useAccessGates } from '../../hooks/useAccessGates';
 
 interface TeamCaregiver {
   id: string;
@@ -37,8 +37,7 @@ export const MyCareTeam: React.FC = () => {
   const [activeCaregivers, setActiveCaregivers] = useState<TeamCaregiver[]>([]);
   const [pastCaregivers, setPastCaregivers] = useState<TeamCaregiver[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [showIdentityGate, setShowIdentityGate] = useState(false);
-  const [identityStatus, setIdentityStatus] = useState<string>('not_started');
+  const { gate, Modals: GateModals } = useAccessGates();
 
   useEffect(() => {
     let isMounted = true;
@@ -175,27 +174,8 @@ export const MyCareTeam: React.FC = () => {
     return () => { isMounted = false; };
   }, []);
 
-  // Load identity check status
-  useEffect(() => {
-    const uid = authService.getCurrentUser()?.uid;
-    if (!uid || !db) return;
-    let isMounted = true;
-    db.collection('users').doc(uid).get()
-      .then(doc => {
-        if (!isMounted) return;
-        setIdentityStatus((doc.data() as any)?.identityCheckStatus || 'not_started');
-      })
-      .catch(() => {});
-    return () => { isMounted = false; };
-  }, []);
-
-  const bypass = import.meta.env.VITE_BYPASS_ONBOARDING === 'true';
-
   const handleMessage = (caregiverId: string, caregiverName: string) => {
-    if (!bypass && identityStatus !== 'verified') {
-      setShowIdentityGate(true);
-      return;
-    }
+    gate('message', caregiverName, () => {
     const currentUid = authService.getCurrentUser()?.uid;
     if (!currentUid) { navigate('/client/inbox'); return; }
     const currentName = authService.getCurrentUser()?.displayName || authService.getCurrentUser()?.email?.split('@')[0] || 'Client';
@@ -211,6 +191,7 @@ export const MyCareTeam: React.FC = () => {
         }
       }
     });
+    }); // end gate callback
   };
 
 
@@ -469,16 +450,7 @@ export const MyCareTeam: React.FC = () => {
 
 
 
-        {showIdentityGate && (
-          <IdentityGateModal
-            onClose={() => { setShowIdentityGate(false); }}
-            onGetVerified={() => {
-              setShowIdentityGate(false);
-              navigate('/client/account');
-              addToast('Complete identity verification in Account Settings', 'info');
-            }}
-          />
-        )}
+        <GateModals />
       </main>
     </div>
   );

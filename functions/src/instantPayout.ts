@@ -152,6 +152,15 @@ export const requestInstantPayout = functions.https.onCall(async (_data, context
         });
         await batch.commit();
 
+        await db.collection('users').doc(uid).collection('notifications').add({
+            userId: uid,
+            type: 'payout_initiated',
+            title: 'Instant Payout Initiated',
+            body: `Your instant payout of $${claim.netAmount.toFixed(2)} has been initiated.`,
+            isRead: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
         return {
             success: true,
             amount: claim.netAmount,

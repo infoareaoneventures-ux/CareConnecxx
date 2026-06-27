@@ -118,7 +118,7 @@ async function buildSeniorProfile(
 
 export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) => {
   const navigate = useNavigate();
-  const { appointments, addToast: onShowToast } = useCareConnex();
+  const { appointments, addToast: onShowToast, blockedIds } = useCareConnex();
   
   // Modal states
   const [scheduleInterviewCaregiver, setScheduleInterviewCaregiver] = useState<Caregiver | null>(null);
@@ -165,7 +165,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [bookingTab, setBookingTab] = useState<'pending' | 'upcoming'>('pending');
 
   const currentUser = authService.getCurrentUser();
-  const { gate, Modals: GateModals } = useAccessGates();
+  const { gate, Modals: GateModals, membershipActive, identityVerified } = useAccessGates();
   const hasActiveBooking = activeCareTeam.length > 0;
 
   // Nearby caregivers — uses same logic as Browse Caregivers (distance-filtered, AI-scored)
@@ -196,7 +196,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       .where('status', '==', 'accepted')
       .onSnapshot(async snap => {
         const docs = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-        setActiveCareTeam(docs);
+        const seen = new Set<string>();
+        const deduped = docs.filter((d: any) => d.caregiverId && !seen.has(d.caregiverId) && seen.add(d.caregiverId));
+        setActiveCareTeam(deduped);
         setBookedCaregiverIds(new Set(docs.map((d: any) => d.caregiverId).filter(Boolean)));
         // Fetch caregiver profiles for rating + verification badges
         const profiles: Record<string, { rating?: number; verified?: boolean; backgroundCheckStatus?: string }> = {};
@@ -454,13 +456,30 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   };
 
   const handleChatClick = async (caregiver: Caregiver) => {
+    const clientUid = currentUser?.uid;
+    if (!clientUid) { onShowToast?.('Could not start chat', 'error'); return; }
     try {
-      await dbService.createThread(
-        caregiver.id.toString(),
-        caregiver.name || 'Caregiver',
-        caregiver.imageUrl || (caregiver as any).photo || ''
-      );
-      navigate('/client/inbox');
+      const caregiverId = caregiver.id.toString();
+      const sorted = [clientUid, caregiverId].sort();
+      const roomId = sorted.join('_');
+      const clientName = (currentUser as any)?.displayName || 'Client';
+      const names = sorted.map(id => id === clientUid ? clientName : (caregiver.name || 'Caregiver'));
+      const avatars = sorted.map(id => id === clientUid ? '' : (caregiver.imageUrl || (caregiver as any).photo || ''));
+      navigate(`/client/inbox?room=${roomId}`, {
+        state: {
+          pendingRoom: {
+            id: roomId,
+            participants: sorted,
+            participantNames: names,
+            participantAvatars: avatars,
+            unreadCount: { [clientUid]: 0, [caregiverId]: 0 },
+            lastMessage: '',
+            lastMessageTime: '',
+            lastMessageTimestamp: null,
+            createdAt: null,
+          }
+        }
+      });
     } catch {
       onShowToast?.('Could not start chat', 'error');
     }
@@ -468,6 +487,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
   const handleGatedMessage = (caregiver: Caregiver) =>
     gate('message', caregiver.name, () => handleChatClick(caregiver));
+
+  const handleGatedInterview = (caregiver: Caregiver) =>
+    gate('interview', caregiver.name, () => setScheduleInterviewCaregiver(caregiver));
 
   // Match score per caregiver. When the matching engine produced a personalized,
   // proximity-aware score, use it verbatim. Otherwise (generic fallback list) fall
@@ -513,6 +535,53 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             onScrollToMatches={scrollToMatches}
           />
         )}
+
+        {/* Action required banner — returning client missing identity and/or membership */}
+        {hasActiveBooking && (!identityVerified || !membershipActive) && (() => {
+          const needsIdentity = !identityVerified;
+          const needsMembership = !membershipActive;
+          const bothNeeded = needsIdentity && needsMembership;
+          return (
+            <div className="mb-6 bg-white border border-slate-100 rounded-[2rem] shadow-sm p-6">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-5">Action required</p>
+              <div className="flex items-start mb-5">
+                {needsIdentity && (
+                  <div className="flex flex-col items-center flex-1 min-w-0">
+                    <div className="w-9 h-9 rounded-full bg-primary-600 flex items-center justify-center mb-2 shadow-sm">
+                      <User className="w-4 h-4 text-white" />
+                    </div>
+                    <span className="text-xs font-semibold text-primary-600 text-center">Identity</span>
+                  </div>
+                )}
+                {bothNeeded && <div className="flex-1 h-px bg-slate-200 mt-4 mx-1" />}
+                {needsMembership && (
+                  <div className="flex flex-col items-center flex-1 min-w-0">
+                    <div className="w-9 h-9 rounded-full bg-primary-600 flex items-center justify-center mb-2 shadow-sm">
+                      <CreditCard className="w-4 h-4 text-white" />
+                    </div>
+                    <span className="text-xs font-semibold text-primary-600 text-center">Membership</span>
+                  </div>
+                )}
+              </div>
+              <div className="bg-slate-50 rounded-2xl p-4">
+                <p className="font-semibold text-slate-900 mb-3">
+                  {needsIdentity && !needsMembership
+                    ? 'Verify your identity'
+                    : needsMembership && !needsIdentity
+                    ? 'Activate your membership'
+                    : 'Verify your identity & activate membership'}
+                </p>
+                <button
+                  onClick={() => gate('booking', undefined, () => {})}
+                  className="inline-flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-5 py-2.5 rounded-full transition-colors"
+                >
+                  {needsIdentity ? 'Verify identity' : 'Activate membership'}
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Live shift check-ins — shown when there is an active appointment today */}
         {currentUser?.uid && (() => {
@@ -901,7 +970,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           {/* Actions */}
                           <div className="flex gap-2">
                             <button
-                              onClick={() => booking.caregiverId && handleChatClick({ id: booking.caregiverId, name: booking.caregiverName } as any)}
+                              onClick={() => booking.caregiverId && handleGatedMessage({ id: booking.caregiverId, name: booking.caregiverName } as any)}
                               className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
                             >
                               <MessageSquare className="w-3.5 h-3.5" /> Message
@@ -1209,12 +1278,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           </div>
                         );
                       })}
-                      {shiftsToReview.length > 2 && (
-                        <p className="text-xs text-center text-slate-400 pt-1">
-                          +{shiftsToReview.length - 2} more —{' '}
-                          <button onClick={() => navigate('/client/payments')} className="text-primary-600 hover:underline">View all</button>
-                        </p>
-                      )}
                     </>
                   ) : (
                     <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg">
@@ -1267,7 +1330,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                         {/* Summary rows */}
                         <div className="bg-slate-50 rounded-xl p-4 space-y-3">
                           <div className="flex items-center justify-between">
-                            <span className="text-sm text-slate-500">Open invoices</span>
+                            <span className="text-sm text-slate-500">Outstanding</span>
                             <span className="text-sm font-semibold text-slate-900">{unpaidShifts.length} shift{unpaidShifts.length !== 1 ? 's' : ''}</span>
                           </div>
                           {needsActionCount > 0 && (
@@ -1306,14 +1369,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           </div>
                         </div>
 
-                        {needsActionCount > 0 && (
-                          <button
-                            onClick={() => navigate('/client/payments?filter=needs-review')}
-                            className="w-full py-2 text-xs font-semibold bg-accent-500 text-white rounded-lg hover:bg-accent-600 transition-colors"
-                          >
-                            Review {needsActionCount} pending shift{needsActionCount !== 1 ? 's' : ''}
-                          </button>
-                        )}
                       </div>
                     )}
                   </div>
@@ -1333,7 +1388,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
               <div className="lg:col-span-2 space-y-6 min-w-0">
 
                 {(() => {
-                  const discoveryCaregivers = matchedCaregivers.filter(c => !bookedCaregiverIds.has(c.id));
+                  const discoveryCaregivers = matchedCaregivers.filter(c => !bookedCaregiverIds.has(c.id) && !blockedIds.has(c.id));
                   return discoveryCaregivers.length > 0 ? (
                     <div id="caregiver-matches" className="grid sm:grid-cols-2 gap-4">
                       {discoveryCaregivers.slice(0, 4).map((caregiver) => (
@@ -1342,7 +1397,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           caregiver={caregiver}
                           matchScore={0}
                           matchReasons={[]}
-                          onBook={(cg) => setScheduleInterviewCaregiver(cg)}
+                          onBook={handleGatedInterview}
                           onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}
                           onMessage={handleGatedMessage}
                           isSaved={savedIds.includes(caregiver.id)}
@@ -1374,38 +1429,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 {matchedCaregivers.length > 0 && (
                   <div className="text-center pt-1 pb-2">
                     <button onClick={() => navigate('/client/find-caregivers')} className="inline-flex items-center gap-1.5 text-sm text-primary-600 font-medium hover:text-primary-700 hover:underline transition-colors">
-                      See more results →
+                      See more →
                     </button>
                   </div>
                 )}
 
-                {topRatedCaregivers.length > 0 && appointments.filter(a => a.status === 'confirmed').length === 0 && (() => {
-                  const deduped = topRatedCaregivers.filter(c => !matchedCaregivers.find(m => m.id === c.id)).slice(0, 4);
-                  if (!deduped.length) return null;
-                  return (
-                    <section>
-                      <div className="flex items-center justify-between mb-3">
-                        <h2 className="text-lg font-bold text-slate-900">Top Rated Near You</h2>
-                        <button onClick={() => navigate('/client/find-caregivers')} className="text-sm text-primary-600 font-medium hover:underline">See more →</button>
-                      </div>
-                      <div className="grid sm:grid-cols-2 gap-4">
-                        {deduped.map(caregiver => (
-                          <CaregiverMatchCard
-                            key={caregiver.id}
-                            caregiver={caregiver}
-                            matchScore={0}
-                            matchReasons={[]}
-                            onBook={(cg) => setScheduleInterviewCaregiver(cg)}
-                            onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}
-                            isSaved={savedIds.includes(caregiver.id)}
-                            onToggleSave={handleToggleSave}
-                            isRequested={requestedCaregiverIds.has(caregiver.id)}
-                          />
-                        ))}
-                      </div>
-                    </section>
-                  );
-                })()}
 
                 {appointments.filter(a => a.status === 'pending_caregiver_confirmation').length > 0 && (
                   <section>

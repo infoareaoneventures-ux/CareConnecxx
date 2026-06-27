@@ -4,10 +4,11 @@ import {
   ChevronLeft, AlertCircle, MessageSquare, Search,
   FileText, TrendingUp, UserCheck, X, HeartHandshake,
   Heart, Users, Phone, Filter, Download, Shield,
-  Star, ClipboardList, BookOpen, ShieldCheck, BellRing,
+  Star, ClipboardList, BookOpen, ShieldCheck, BellRing, Flag,
 } from 'lucide-react';
 import { SupportTicket, AdminUser, JobPost, Caregiver, ClientIntakeData } from '../types';
 import { dbService } from '../services/api';
+import { db } from '../lib/firebase';
 import { TicketManager } from './admin/TicketManager';
 import { AdminShiftHoursMediation } from './payroll/AdminShiftHoursMediation';
 import { MatchingDashboard } from './admin/MatchingDashboard';
@@ -24,6 +25,7 @@ import { AdminBlogManager } from './admin/AdminBlogManager';
 import { AuditTrail } from './admin/AuditTrail';
 import { ProactiveReflectionDashboard } from './admin/ProactiveReflectionDashboard';
 import { AdminAlertsPanel } from './admin/AdminAlertsPanel';
+import { AdminReports } from './admin/AdminReports';
 
 interface AdminViewProps {
   onBack: () => void;
@@ -33,7 +35,7 @@ type TabId =
   | 'overview' | 'clients' | 'caregivers' | 'verification' | 'coordinators'
   | 'appointments' | 'reviews' | 'intakes' | 'matching' | 'assignments'
   | 'finance' | 'disputes' | 'tickets' | 'messages' | 'blog' | 'audit'
-  | 'proactive_drafts' | 'alerts';
+  | 'proactive_drafts' | 'alerts' | 'reports';
 
 const StatCard = ({ icon: Icon, label, value, trend, color, onClick }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -89,6 +91,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   const [selectedLead, setSelectedLead] = useState<ClientIntakeData | null>(null);
   const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [newReportsCount, setNewReportsCount] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -121,6 +124,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
       setOpenAlertsCount(alerts.filter(a => !a.resolved).length)
     );
     return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (!db) return;
+    const unsub = db.collection('reports')
+      .where('status', '==', 'new')
+      .onSnapshot(snap => setNewReportsCount(snap.size), () => {});
+    return unsub;
   }, []);
 
   const showToast = (msg: string) => {
@@ -191,6 +202,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
     {
       label: 'Security',
       items: [
+        { id: 'reports' as TabId, label: 'Reports', icon: Flag, badge: newReportsCount },
         { id: 'audit' as TabId, label: 'Audit Log', icon: Shield },
       ],
     },
@@ -200,7 +212,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   const currentLabel = allNavItems.find(n => n.id === activeTab)?.label ?? '';
 
   // Tabs that fill the full content area without internal padding
-  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog', 'proactive_drafts'];
+  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog', 'proactive_drafts', 'reports'];
   const isFullBleed = fullBleedTabs.includes(activeTab);
 
   return (
@@ -296,6 +308,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {activeTab === 'messages'     && <AdminMessages />}
             {activeTab === 'blog'         && <AdminBlogManager />}
             {activeTab === 'proactive_drafts' && <ProactiveReflectionDashboard onShowToast={(msg) => showToast(msg)} />}
+            {activeTab === 'reports'      && <AdminReports />}
           </div>
         ) : (
           <div className="flex-1 overflow-auto p-6 space-y-6">

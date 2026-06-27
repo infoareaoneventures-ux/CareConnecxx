@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  ShieldCheck, CheckCircle, Loader2, ChevronLeft,
+  ShieldCheck, CheckCircle, Loader2, ChevronLeft, X,
   DollarSign, MessageCircle, Briefcase, Car,
 } from 'lucide-react';
 import {
@@ -8,10 +8,12 @@ import {
   CAREGIVER_ANNUAL_PRICE_ID,
 } from '../../services/stripeService';
 import { authService } from '../../services/api';
+import { useCareConnex } from '../../context/CareConnexContext';
 
 interface CaregiverMembershipProps {
   onNavigate: (view: any) => void;
   onShowToast?: (msg: string, type: 'success' | 'error' | 'info') => void;
+  onClose?: () => void;
 }
 
 const BENEFITS = [
@@ -40,10 +42,15 @@ const BENEFITS = [
 export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
   onNavigate,
   onShowToast,
+  onClose,
 }) => {
+  const { caregiverProfile } = useCareConnex();
+  const p = caregiverProfile as any;
+  const hasTransportation = (p?.services || p?.skills || []).includes('Transportation');
+  const includeMVR = hasTransportation;
+
   const [promoCode, setPromoCode] = useState('');
   const [promoApplied, setPromoApplied] = useState(false);
-  const [includeMVR, setIncludeMVR] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const annualPrice = 24.95;
@@ -86,20 +93,22 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
     }
   };
 
-  return (
-    <div className="min-h-screen flex flex-col lg:flex-row">
+  const inner = (
+    <div className={onClose ? 'flex flex-col lg:flex-row rounded-2xl overflow-hidden' : 'min-h-screen flex flex-col lg:flex-row'}>
 
       {/* ── Left: Hero / Benefits ── */}
       <div className="lg:w-[55%] bg-gradient-to-br from-primary-500 to-blue-700 text-white px-8 py-10 lg:py-16 flex flex-col">
 
-        {/* Back button */}
-        <button
-          onClick={() => onNavigate('caregiver')}
-          className="flex items-center gap-1.5 text-white/70 hover:text-white text-sm font-medium mb-10 w-fit transition-colors"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          Back to Dashboard
-        </button>
+        {/* Back button — page mode only */}
+        {!onClose && (
+          <button
+            onClick={() => onNavigate('caregiver')}
+            className="flex items-center gap-1.5 text-white/70 hover:text-white text-sm font-medium mb-10 w-fit transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Back to Dashboard
+          </button>
+        )}
 
         {/* Icon + headline */}
         <div className="flex-1 flex flex-col justify-center max-w-lg">
@@ -163,12 +172,10 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
             </div>
           </div>
 
-          {/* MVR add-on */}
-          <div className="mb-6">
-            <button
-              type="button"
-              onClick={() => setIncludeMVR(v => !v)}
-              className={`w-full flex items-start gap-3 p-4 rounded-2xl border-2 text-left transition-colors ${includeMVR ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300 bg-white'}`}
+          {/* MVR add-on — only for caregivers with Transportation service */}
+          {hasTransportation && <div className="mb-6">
+            <div
+              className="w-full flex items-start gap-3 p-4 rounded-2xl border-2 text-left border-blue-500 bg-blue-50"
             >
               <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${includeMVR ? 'border-blue-500 bg-blue-500' : 'border-slate-300'}`}>
                 {includeMVR && <CheckCircle className="w-3.5 h-3.5 text-white" />}
@@ -185,8 +192,8 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
                   Includes a Motor Vehicle Report (MVR). Families that need a driver will be able to see your Approved Driver badge.
                 </p>
               </div>
-            </button>
-          </div>
+            </div>
+          </div>}
 
           {/* Promo code */}
           <div className="mb-6">
@@ -248,4 +255,23 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
       </div>
     </div>
   );
+
+  if (onClose) {
+    return (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+        <div className="relative w-full max-w-4xl my-auto">
+          <button
+            onClick={onClose}
+            className="absolute top-3 right-3 z-10 w-8 h-8 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow-md transition-colors"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4 text-slate-600" />
+          </button>
+          {inner}
+        </div>
+      </div>
+    );
+  }
+
+  return inner;
 };

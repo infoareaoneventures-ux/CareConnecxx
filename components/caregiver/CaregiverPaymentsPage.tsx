@@ -1440,12 +1440,12 @@ const SubmittableShiftCard: React.FC<{
 // ── main page ─────────────────────────────────────────────────────────────────
 
 export const CaregiverPaymentsPage: React.FC = () => {
-  const { currentUser, addToast } = useCareConnex();
+  const { currentUser, addToast, setMembershipModalOpen } = useCareConnex();
   const navigate = useNavigate();
   const uid = currentUser?.uid ?? '';
 
   const [tab, setTab] = useState<Tab>('timesheets');
-  const [tsFilter, setTsFilter] = useState<'all' | 'unsubmitted' | 'pending' | 'history'>('all');
+  const [tsFilter, setTsFilter] = useState<'unsubmitted' | 'pending' | 'history'>('unsubmitted');
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const toggleGroup = (key: string) => setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
   const [showReport, setShowReport] = useState(false);
@@ -1752,10 +1752,9 @@ export const CaregiverPaymentsPage: React.FC = () => {
             {/* Filter chips + Report button */}
             <div className="flex items-center gap-2 flex-wrap">
               {([
-                { id: 'all',         label: 'All',         count: submittableShifts.length + shiftRows.length, alert: false },
-                { id: 'unsubmitted', label: 'Unsubmitted', count: submittableShifts.length,                    alert: true  },
-                { id: 'pending',     label: 'Pending',     count: pendingRows.length,                          alert: true  },
-                { id: 'history',     label: 'History',     count: historyRows.length,                          alert: false },
+                { id: 'unsubmitted', label: 'Unsubmitted', count: submittableShifts.length, alert: true  },
+                { id: 'pending',     label: 'Pending',     count: pendingRows.length,        alert: true  },
+                { id: 'history',     label: 'History',     count: historyRows.length,        alert: false },
               ] as { id: typeof tsFilter; label: string; count: number; alert: boolean }[]).map(f => (
                 <button
                   key={f.id}
@@ -1863,7 +1862,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
             {/* Unified filtered list — grouped by client */}
             <div className="space-y-4">
               {/* Unsubmitted */}
-              {(tsFilter === 'all' || tsFilter === 'unsubmitted') && (() => {
+              {tsFilter === 'unsubmitted' && (() => {
                 const grouped = submittableShifts.reduce((acc, shift) => {
                   const key = shift.clientId || shift.clientName || 'unknown';
                   if (!acc[key]) acc[key] = { name: shift.clientName ?? 'Client', photo: shift.clientPhotoURL ?? undefined, shifts: [] };
@@ -1907,7 +1906,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
               })()}
 
               {/* Pending */}
-              {(tsFilter === 'all' || tsFilter === 'pending') && (() => {
+              {tsFilter === 'pending' && (() => {
                 const grouped = pendingRows.reduce((acc, row) => {
                   const key = (row as any).clientId || row.clientName || 'unknown';
                   if (!acc[key]) acc[key] = { name: row.clientName ?? 'Client', photo: row.clientPhotoURL ?? undefined, rows: [] };
@@ -2006,47 +2005,13 @@ export const CaregiverPaymentsPage: React.FC = () => {
                 });
               })()}
 
-              {/* History — flat client grouping when in All filter */}
-              {tsFilter === 'all' && reportedRows.length > 0 && (() => {
-                const grouped = reportedRows.reduce((acc, row) => {
-                  const key = (row as any).clientId || row.clientName || 'unknown';
-                  if (!acc[key]) acc[key] = { name: row.clientName ?? 'Client', photo: row.clientPhotoURL ?? undefined, rows: [] };
-                  acc[key].rows.push(row);
-                  return acc;
-                }, {} as Record<string, { name: string; photo?: string; rows: typeof reportedRows }>);
-                return Object.entries(grouped).map(([key, group]) => {
-                  const gkey = `h_${key}`;
-                  const isExpanded = !!expandedGroups[gkey];
-                  const visible = isExpanded ? group.rows : group.rows.slice(0, 2);
-                  const hidden = group.rows.length - 2;
-                  return (
-                    <div key={key}>
-                      <div className="flex items-center gap-2 mb-2 px-1">
-                        <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-xs shrink-0">
-                          {group.photo ? <img src={group.photo} className="w-full h-full object-cover" alt="" /> : group.name.charAt(0).toUpperCase()}
-                        </div>
-                        <span className="text-sm font-semibold text-slate-700">{group.name}</span>
-                        <span className="text-xs text-slate-400">{group.rows.length} shift{group.rows.length !== 1 ? 's' : ''}</span>
-                      </div>
-                      <div className="space-y-2">
-                        {visible.map(row => <HistoryShiftRow key={row.id} row={row} />)}
-                      </div>
-                      {hidden > 0 && !isExpanded && <button onClick={() => toggleGroup(gkey)} className="w-full text-xs text-primary-600 hover:text-primary-800 font-medium py-1.5 text-center">Show more</button>}
-                      {isExpanded && group.rows.length > 2 && <button onClick={() => toggleGroup(gkey)} className="w-full text-xs text-slate-400 hover:text-slate-600 font-medium py-1.5 text-center">Show less</button>}
-                    </div>
-                  );
-                });
-              })()}
-
               {/* Empty state */}
-              {((tsFilter === 'all'         && submittableShifts.length === 0 && shiftRows.length === 0) ||
-                (tsFilter === 'unsubmitted' && submittableShifts.length === 0) ||
+              {((tsFilter === 'unsubmitted' && submittableShifts.length === 0) ||
                 (tsFilter === 'pending'     && pendingRows.length === 0) ||
                 (tsFilter === 'history'     && reportedRows.length === 0)) && (
                 <div className="bg-white rounded-2xl border border-slate-200 p-6 text-sm text-slate-400 text-center">
-                  {tsFilter === 'all'         ? 'No shifts yet.'                               :
-                   tsFilter === 'unsubmitted' ? 'No shifts waiting on you to submit hours.'    :
-                   tsFilter === 'pending'     ? 'Nothing pending.'                             :
+                  {tsFilter === 'unsubmitted' ? 'No shifts waiting on you to submit hours.' :
+                   tsFilter === 'pending'     ? 'Nothing pending.'                          :
                                                'No completed shifts yet.'}
                 </div>
               )}
@@ -2190,7 +2155,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
               subscription={subscription}
               loading={subLoading}
               onRefresh={() => { setSubscription(null); }}
-              onGetMembership={() => navigate('/caregiver/membership')}
+              onGetMembership={() => setMembershipModalOpen(true)}
               onManage={handleManageMembership}
               managing={managing}
             />
@@ -2266,7 +2231,7 @@ const MembershipCard: React.FC<MembershipCardProps> = ({
           onClick={onGetMembership}
           className="px-6 py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-xl transition-colors"
         >
-          Get membership · $24.95/year
+          Activate Membership
         </button>
       </div>
     );

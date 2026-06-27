@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   ChevronLeft, Star, Loader2,
-  CheckCircle, MapPin, Copy, Car, AlertCircle
+  CheckCircle, MapPin, Car, AlertCircle
 } from 'lucide-react';
 import { AvatarUpload } from './ui/AvatarUpload';
 import { Badge } from './ui/Badge';
@@ -9,6 +9,7 @@ import { ViewType, AddToastFunction, Review, Caregiver } from '../types';
 import { hasValidTransportDocs } from '../utils/transportDocs';
 import { uploadDocument, DocumentType } from '../services/documentUpload';
 import { dbService, authService } from '../services/api';
+import { useCareConnex } from '../context/CareConnexContext';
 import { db } from '../lib/firebase';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../services/availabilityService';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
@@ -30,6 +31,7 @@ interface CaregiverProfileProps {
 const LANGUAGES = ['English', 'Spanish', 'French', 'Mandarin', 'Vietnamese', 'Tagalog'];
 
 export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, onShowToast }) => {
+  const { refreshCaregiverProfile } = useCareConnex();
   const [loading, setLoading] = useState(true);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [profile, setProfile] = useState<Partial<Caregiver> & Record<string, any>>({});
@@ -127,6 +129,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
       try {
         await dbService.updateUser('caregivers', currentUser.uid, data);
         setProfile(prev => ({ ...prev, ...data }));
+        refreshCaregiverProfile();
         onShowToast('Profile updated', 'success');
       } catch {
         onShowToast('Failed to update', 'error');
@@ -164,10 +167,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
     }
   }, [currentUser?.uid, onShowToast]);
 
-  const profileUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/caregiver/${currentUser?.uid || 'preview'}`
-    : '';
-
   // Derived display values from profile
   const displayServices: string[] = profile.services || profile.skills || editServices;
   // Location is always derived from the city/state saved in Account Settings — never from free-text input
@@ -184,17 +183,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   const displayRateThree: string = String(profile.rateFor3PlusSeniors || profile.rateForThree || editRateThree || '');
   const displayMaxClients: string = String(profile.maxClients || editMaxClients);
   const hasTransportation: boolean = hasValidTransportDocs(profile as any);
-
-  const completenessChecks = [
-    !!(profile.photo || profile.imageUrl),
-    (profile.bio?.length ?? 0) >= 50,
-    displayServices.length > 0,
-    !!displayRate,
-    !!displayLocation,
-    Object.values(displayAvailability).some(slots => slots.length > 0),
-  ];
-  const completenessCount = completenessChecks.filter(Boolean).length;
-  const completenessPct = Math.round((completenessCount / completenessChecks.length) * 100);
 
   const SectionActions = ({ section, onEdit, onSave }: { section: string; onEdit: () => void; onSave: () => void }) =>
     editingSection === section ? (
@@ -227,8 +215,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
           </button>
           <h1 className="text-2xl font-bold text-slate-900 ml-2">My Profile</h1>
         </div>
-
-        <ProfileApprovalBanner profile={profile as any} hasEngagement={hasEngagement} />
 
         {/* Hero card */}
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-6">
@@ -326,9 +312,9 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 </div>
               ) : (
                 <div>
-                  <p className="text-sm text-slate-600 leading-relaxed mb-3">
-                    {profile.bio
-                      ? profile.bio
+                  <p className="text-sm text-slate-600 leading-relaxed mb-3 break-all">
+                    {profile.bio?.trim()
+                      ? profile.bio.trim()
                       : <span className="text-slate-400 italic">Add a bio to introduce yourself to families.</span>
                     }
                   </p>
@@ -901,53 +887,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
 
           </div>
 
-          {/* Sidebar */}
-          <div className="lg:w-72 mt-4 lg:mt-0 space-y-4 flex-shrink-0">
-
-            {/* Get Recommendations */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-5">
-              <div className="w-10 h-10 bg-primary-50 rounded-xl flex items-center justify-center mb-3">
-                <Star className="w-5 h-5 text-primary-600" />
-              </div>
-              <h3 className="font-bold text-slate-900 text-sm mb-1">Get Recommendations</h3>
-              <p className="text-xs text-slate-500 leading-relaxed mb-4">
-                Share your profile with families you've worked with to get reviews and stand out.
-              </p>
-              <div className="bg-slate-50 rounded-xl p-3 mb-3 overflow-hidden">
-                <p className="text-xs text-slate-400 mb-1">Your profile link</p>
-                <p className="text-xs font-mono text-slate-600 truncate">{profileUrl}</p>
-              </div>
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(profileUrl).catch(() => {});
-                  onShowToast('Link copied!', 'success');
-                }}
-                className="w-full text-sm font-semibold bg-primary-500 hover:bg-primary-600 text-white py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2"
-              >
-                <Copy className="w-4 h-4" />
-                Copy Profile Link
-              </button>
-            </div>
-
-            {/* Profile Completeness */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-5">
-              <h3 className="font-bold text-slate-900 text-sm mb-3">Profile Completeness</h3>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-slate-500">{completenessCount} of {completenessChecks.length} complete</span>
-                <span className="text-xs font-bold text-primary-600">{completenessPct}%</span>
-              </div>
-              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary-500 rounded-full transition-all duration-500"
-                  style={{ width: `${completenessPct}%` }}
-                />
-              </div>
-              {completenessPct < 100 && (
-                <p className="text-xs text-slate-400 mt-2">Complete your profile to attract more families.</p>
-              )}
-            </div>
-
-          </div>
         </div>
 
       </div>

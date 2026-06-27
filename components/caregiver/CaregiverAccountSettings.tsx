@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle, Loader2, AlertCircle, Clock } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle, Loader2, AlertCircle, Clock, Eye, EyeOff, X } from 'lucide-react';
 import { authService, dbService } from '../../services/api';
+import firebase from '../../lib/firebase';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -13,26 +14,6 @@ const TRANSPORT_DOCS: { type: DocumentType; label: string; desc: string }[] = [
   { type: 'registration', label: 'Vehicle Registration', desc: 'Current vehicle registration document' },
 ];
 
-type NotificationKey =
-  | 'monthlyTips'
-  | 'weeklySummary'
-  | 'jobAlerts'
-  | 'confirmWeekendAvailability'
-  | 'smsOnBookingRequest'
-  | 'smsOnInterviewRequest'
-  | 'smsImportant'
-  | 'jobApplicationNotifications';
-
-const NOTIFICATION_LABELS: Record<NotificationKey, string> = {
-  monthlyTips: 'Send me monthly tips and news from CareConnex',
-  weeklySummary: 'Send me a weekly summary of my availability and bookings',
-  jobAlerts: 'Send me alerts for jobs posted within the working distance set on my profile',
-  confirmWeekendAvailability: 'Remind me to confirm my weekend availability',
-  smsOnBookingRequest: 'Send a text message when a family sends me a job request',
-  smsOnInterviewRequest: 'Send a text message when a family sends me an interview request',
-  smsImportant: 'Send a text message with important account notifications',
-  jobApplicationNotifications: 'Receive job post application notifications by default',
-};
 
 const GENDER_OPTIONS = ['Male', 'Female', 'Non-binary', 'Prefer not to say'];
 
@@ -44,12 +25,16 @@ function formatDob(raw: string): string {
 }
 
 export const CaregiverAccountSettings: React.FC = () => {
-  const { currentUser, addToast } = useCareConnex();
+  const { currentUser, addToast, blockedIds, blockedUserProfiles, unblockUser } = useCareConnex();
+  const blockedProfiles = [
+    ...Object.entries(blockedUserProfiles).map(([id, p]) => ({ id, ...p })),
+    ...Array.from(blockedIds).filter(id => !blockedUserProfiles[id]).map(id => ({ id, name: 'Blocked User', photo: '' })),
+  ];
   const [profile, setProfile] = useState<Caregiver | null>(null);
   const [prefs, setPrefs] = useState<Partial<UserProfile>>({});
   const [openAccount, setOpenAccount] = useState(true);
-  const [openComm, setOpenComm] = useState(false);
   const [openTransport, setOpenTransport] = useState(false);
+  const [openBlocked, setOpenBlocked] = useState(false);
 
   // Personal info fields
   const [firstName, setFirstName] = useState('');
@@ -66,6 +51,13 @@ export const CaregiverAccountSettings: React.FC = () => {
   const [editingGender, setEditingGender] = useState(false);
   const [editingPhone, setEditingPhone] = useState(false);
   const [editingAddress, setEditingAddress] = useState(false);
+
+  // Delete account modal
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [showDeletePassword, setShowDeletePassword] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   // Saving states
   const [savingGender, setSavingGender] = useState(false);
@@ -110,11 +102,7 @@ export const CaregiverAccountSettings: React.FC = () => {
         setZip(cp.zipCode || cp.zip || '');
         setCity(cp.city || '');
         setState(cp.state || '');
-        setPrefs({
-          notificationPrefs: cp.notificationPrefs,
-          bookingRequestPolicy: cp.bookingRequestPolicy,
-          notAcceptingNewFamilies: cp.notAcceptingNewFamilies,
-        });
+        setPrefs({});
         const docs = cp.documents || {};
         const resolveDocStatus = (doc: any) => {
           if (!doc?.url) return 'idle';
@@ -129,11 +117,14 @@ export const CaregiverAccountSettings: React.FC = () => {
           if (doc.status === 'rejected') return 'rejected';
           return 'done'; // uploaded, pending review
         };
-        setTransportStatus({
+        const newStatus: Record<string, 'idle' | 'uploading' | 'done' | 'approved' | 'expired' | 'rejected' | 'error'> = {
           driversLicense: resolveDocStatus(docs.driversLicense),
           insurance: resolveDocStatus(docs.insurance),
           registration: resolveDocStatus(docs.registration),
-        });
+        };
+        setTransportStatus(newStatus);
+        const allApproved = Object.values(newStatus).every(s => s === 'approved');
+        setOpenTransport(!allApproved);
         setTransportExpiry({
           driversLicense: docs.driversLicense?.expirationDate || null,
           insurance: docs.insurance?.expirationDate || null,
@@ -220,16 +211,6 @@ export const CaregiverAccountSettings: React.FC = () => {
     }
   };
 
-  const savePrefs = async () => {
-    if (!currentUser?.uid) return;
-    try {
-      await dbService.updateUser('caregivers', currentUser.uid, prefs as any);
-      addToast('Settings saved', 'success');
-    } catch {
-      addToast('Failed to save settings', 'error');
-    }
-  };
-
   const handleTransportUpload = useCallback(async (type: DocumentType, file: File) => {
     if (!currentUser?.uid) return;
     setTransportStatus(prev => ({ ...prev, [type]: 'uploading' }));
@@ -245,10 +226,21 @@ export const CaregiverAccountSettings: React.FC = () => {
   }, [currentUser?.uid, addToast]);
 
   const handleDeleteAccount = async () => {
-    if (!window.confirm('Are you sure? This permanently deletes your account.')) return;
+    if (!deletePassword) { setDeleteError('Please enter your password.'); return; }
+    setDeletingAccount(true);
+    setDeleteError('');
     try {
+      const user = firebase.auth().currentUser;
+      if (!user?.email) throw new Error('no-user');
+      const credential = firebase.auth.EmailAuthProvider.credential(user.email, deletePassword);
+      await user.reauthenticateWithCredential(credential);
       await authService.deleteUserAccount();
-    } catch { addToast('Failed to delete account', 'error'); }
+    } catch (err: any) {
+      setDeletingAccount(false);
+      setDeleteError(err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential'
+        ? 'Incorrect password. Please try again.'
+        : 'Failed to delete account. Please try again.');
+    }
   };
 
   const memberSince = (profile as any)?.createdAt
@@ -256,6 +248,7 @@ export const CaregiverAccountSettings: React.FC = () => {
   const hasTransportation = ((profile as any)?.skills || (profile as any)?.services || []).includes('Transportation');
 
   return (
+    <>
     <div className="min-h-screen bg-slate-50 pb-24">
       <CaregiverTopNav />
       <div className="max-w-3xl mx-auto px-4 md:px-6 py-6">
@@ -507,65 +500,91 @@ export const CaregiverAccountSettings: React.FC = () => {
           </Accordion>
         )}
 
-        {/* ── Communication ── */}
-        <Accordion open={openComm} onToggle={() => setOpenComm(o => !o)} title="Communication">
-          <div className="p-5 space-y-3">
-            <p className="text-xs font-semibold text-slate-500 uppercase">Notifications</p>
-            {(Object.keys(NOTIFICATION_LABELS) as NotificationKey[]).map(k => (
-              <label key={k} className="flex items-start gap-3 text-sm text-slate-700">
-                <input type="checkbox"
-                  className="mt-0.5 w-4 h-4 rounded border-slate-300 text-primary-500 focus:ring-primary-500"
-                  checked={!!prefs.notificationPrefs?.[k]}
-                  onChange={e => setPrefs(p => ({ ...p, notificationPrefs: { ...p.notificationPrefs, [k]: e.target.checked } }))}
-                />
-                <span>{NOTIFICATION_LABELS[k]}</span>
-              </label>
-            ))}
-            <div className="pt-3 border-t border-slate-100">
-              <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Booking requests</p>
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input type="radio" name="bookingPolicy"
-                  checked={prefs.bookingRequestPolicy !== 'only-when-available'}
-                  onChange={() => setPrefs(p => ({ ...p, bookingRequestPolicy: 'any-time-slot' }))} />
-                Send interview/job requests for any time slot
-              </label>
-              <label className="flex items-center gap-2 text-sm text-slate-700 mt-1">
-                <input type="radio" name="bookingPolicy"
-                  checked={prefs.bookingRequestPolicy === 'only-when-available'}
-                  onChange={() => setPrefs(p => ({ ...p, bookingRequestPolicy: 'only-when-available' }))} />
-                Send interview/job requests only for the times I show available
-              </label>
-            </div>
-            <div className="pt-3 border-t border-slate-100">
-              <p className="text-xs font-semibold text-slate-500 uppercase mb-2">New families</p>
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox"
-                  checked={!!prefs.notAcceptingNewFamilies}
-                  onChange={e => setPrefs(p => ({ ...p, notAcceptingNewFamilies: e.target.checked }))} />
-                Not accepting new families
-              </label>
-            </div>
-            <div className="pt-3 flex justify-end">
-              <button onClick={savePrefs}
-                className="px-4 py-2 rounded-full bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600">
-                Save changes
-              </button>
-            </div>
+        {/* ── Blocked Users ── */}
+        <Accordion open={openBlocked} onToggle={() => setOpenBlocked(o => !o)} title="Blocked Users">
+          <div className="p-5">
+            {blockedProfiles.length === 0 ? (
+              <p className="text-sm text-slate-500">You haven't blocked anyone.</p>
+            ) : (
+              <div className="space-y-3">
+                {blockedProfiles.map(p => (
+                  <div key={p.id} className="flex items-center justify-between gap-3 py-2 border-b border-slate-100 last:border-0">
+                    <div className="flex items-center gap-3">
+                      {p.photo ? (
+                        <img src={p.photo} alt={p.name} className="w-9 h-9 rounded-full object-cover" />
+                      ) : (
+                        <div className="w-9 h-9 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 text-sm font-semibold">
+                          {p.name.charAt(0)}
+                        </div>
+                      )}
+                      <span className="text-sm font-medium text-slate-800">{p.name}</span>
+                    </div>
+                    <button
+                      onClick={() => unblockUser(p.id).then(() => addToast(`${p.name} unblocked.`, 'success'))}
+                      className="text-xs text-primary-600 hover:text-primary-700 font-medium border border-primary-200 hover:border-primary-400 px-3 py-1 rounded-lg transition-colors"
+                    >
+                      Unblock
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </Accordion>
 
-        {/* ── Danger Zone ── */}
-        <div className="bg-white border border-red-200 rounded-2xl overflow-hidden mb-3 p-5">
-          <h3 className="font-semibold text-red-600 mb-1">Danger Zone</h3>
+        {/* ── Delete Account ── */}
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3 p-5">
           <p className="text-sm text-slate-500 mb-4">Deleting your account is permanent and cannot be undone.</p>
-          <button onClick={handleDeleteAccount}
-            className="flex items-center gap-2 text-red-500 hover:text-red-700 font-medium border border-red-200 hover:bg-red-50 px-4 py-2 rounded-xl transition-all text-sm">
-            <Trash2 className="w-4 h-4" /> Delete Account
+          <button
+            onClick={() => { setDeletePassword(''); setDeleteError(''); setShowDeleteModal(true); }}
+            className="flex items-center gap-2 text-red-500 hover:text-red-700 font-medium text-sm transition-colors"
+          >
+            <Trash2 className="w-4 h-4" /> Delete account
           </button>
         </div>
 
       </div>
     </div>
+
+    {/* ── Delete Account Modal ── */}
+    {showDeleteModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+            <h2 className="text-base font-bold text-slate-900">Delete account</h2>
+            <button onClick={() => setShowDeleteModal(false)} className="p-1.5 hover:bg-slate-100 rounded-lg">
+              <X className="w-5 h-5 text-slate-500" />
+            </button>
+          </div>
+          <div className="p-6 space-y-4">
+            <p className="text-sm text-slate-600">Enter your password to confirm. This action is permanent and cannot be undone.</p>
+            <div className="relative">
+              <input
+                type={showDeletePassword ? 'text' : 'password'}
+                value={deletePassword}
+                onChange={e => { setDeletePassword(e.target.value); setDeleteError(''); }}
+                placeholder="Current password"
+                className="w-full px-3 py-2.5 pr-10 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-red-400"
+              />
+              <button type="button" onClick={() => setShowDeletePassword(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                {showDeletePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            {deleteError && <p className="text-xs text-red-500">{deleteError}</p>}
+            <button
+              onClick={handleDeleteAccount}
+              disabled={deletingAccount || !deletePassword}
+              className="w-full py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+            >
+              {deletingAccount ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              {deletingAccount ? 'Deleting...' : 'Delete my account'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 };
 

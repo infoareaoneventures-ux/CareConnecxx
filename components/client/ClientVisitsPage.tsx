@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { auth, db } from '../../lib/firebase';
 import { ClientNavigation } from './ClientNavigation';
+import { useAccessGates } from '../../hooks/useAccessGates';
 import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
 
 interface Shift {
@@ -153,9 +154,10 @@ interface PendingBookingCardProps {
   booking: any;
   onCancel: (id: string) => Promise<void>;
   navigate: ReturnType<typeof useNavigate>;
+  onMessage: () => void;
 }
 
-const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCancel, navigate }) => {
+const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCancel, navigate: _navigate, onMessage }) => {
   const [cancelling, setCancelling] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
@@ -208,7 +210,7 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
           </div>
         </div>
         <button
-          onClick={() => navigate(`/client/inbox?caregiver=${booking.caregiverId}`)}
+          onClick={onMessage}
           className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 bg-white rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
         >
           <MessageSquare className="w-4 h-4" /> Message
@@ -396,9 +398,10 @@ interface ActiveVisitGroupCardProps {
   shifts: Shift[];
   onCancelBooking: (shiftId: string) => Promise<void>;
   navigate: ReturnType<typeof useNavigate>;
+  onMessage: () => void;
 }
 
-const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onCancelBooking, navigate }) => {
+const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onCancelBooking, navigate: _navigate, onMessage }) => {
   const base = shifts[0];
   const [cancelling, setCancelling] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -424,9 +427,14 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
   const handleCancelShift = async (shiftId: string) => {
     if (!db || !window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
     setCancellingShift(shiftId);
-    await db.collection('shifts').doc(shiftId).update({ status: 'cancelled' })
-      .catch(() => {})
-      .finally(() => setCancellingShift(null));
+    try {
+      // onShiftCancelled Cloud Function fires and notifies the caregiver
+      await db.collection('shifts').doc(shiftId).update({ status: 'cancelled', cancelledBy: 'client' });
+    } catch {
+      // non-critical
+    } finally {
+      setCancellingShift(null);
+    }
   };
 
   return (
@@ -458,7 +466,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
           </div>
         </div>
         <button
-          onClick={() => navigate(`/client/inbox?caregiver=${base.caregiverId}`)}
+          onClick={onMessage}
           className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 bg-white rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
         >
           <MessageSquare className="w-4 h-4" /> Message
@@ -716,9 +724,10 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
 interface PastVisitGroupCardProps {
   shifts: Shift[];
   navigate: ReturnType<typeof useNavigate>;
+  onMessage: () => void;
 }
 
-const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigate }) => {
+const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigate: _navigate, onMessage }) => {
   const base = shifts[0];
   const [expanded, setExpanded] = useState(false);
   const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
@@ -763,7 +772,7 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
           </div>
         </div>
         <button
-          onClick={() => navigate(`/client/inbox?caregiver=${base.caregiverId}`)}
+          onClick={onMessage}
           className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 bg-white rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
         >
           <MessageSquare className="w-4 h-4" /> Message
@@ -966,6 +975,7 @@ export const ClientVisitsPage: React.FC = () => {
   const [pendingBookings, setPendingBookings] = useState<any[]>([]);
   const [pendingAmendments, setPendingAmendments] = useState<BookingAmendment[]>([]);
   const [loading, setLoading] = useState(true);
+  const { gate, Modals: GateModals } = useAccessGates();
 
   const user = auth?.currentUser;
 
@@ -1045,6 +1055,7 @@ export const ClientVisitsPage: React.FC = () => {
     const shiftSnap = await db.collection('shifts').doc(shiftId).get();
     const shiftData = shiftSnap.data() as any;
     const bookingRequestId: string | undefined = shiftData?.bookingRequestId;
+    const caregiverId: string | undefined = shiftData?.caregiverId;
 
     const batch = db.batch();
     if (bookingRequestId) {
@@ -1053,17 +1064,23 @@ export const ClientVisitsPage: React.FC = () => {
         .where('status', '==', 'scheduled')
         .where('clientId', '==', user?.uid)
         .get();
-      futureSnap.docs.forEach(doc => batch.update(doc.ref, { status: 'cancelled' }));
+      // Mark shifts as bulkCancelled so onShiftCancelled skips individual notifications
+      futureSnap.docs.forEach(doc => batch.update(doc.ref, { status: 'cancelled', bulkCancelled: true }));
       await batch.commit();
+      // onBookingRequestWrite Cloud Function fires here and notifies the caregiver
       await db.collection('booking_requests').doc(bookingRequestId).update({ status: 'cancelled' }).catch(() => {});
     } else {
-      batch.update(db.collection('shifts').doc(shiftId), { status: 'cancelled' });
+      batch.update(db.collection('shifts').doc(shiftId), { status: 'cancelled', bulkCancelled: true });
       await batch.commit();
     }
+    // Notification handled by onBookingRequestWrite Cloud Function
   };
 
   const handleCancelPendingBooking = async (bookingId: string) => {
     if (!db) return;
+    const snap = await db.collection('booking_requests').doc(bookingId).get().catch(() => null);
+    const data = snap?.data() as any;
+    // onBookingRequestWrite Cloud Function fires and notifies the caregiver
     await db.collection('booking_requests').doc(bookingId).update({ status: 'cancelled' });
   };
 
@@ -1147,6 +1164,7 @@ export const ClientVisitsPage: React.FC = () => {
                 booking={b}
                 onCancel={handleCancelPendingBooking}
                 navigate={navigate}
+                onMessage={() => gate('message', b.caregiverName, () => navigate(`/client/inbox?caregiver=${b.caregiverId}`))}
               />
             ))}
             {tab === 'requests' && pendingAmendments.map(a => (
@@ -1188,6 +1206,7 @@ export const ClientVisitsPage: React.FC = () => {
                     <button
                       onClick={async () => {
                         if (!db) return;
+                        // onBookingAmendmentWrite Cloud Function fires and notifies the caregiver
                         await db.collection('booking_amendments').doc(a.id).update({ status: 'cancelled' }).catch(() => {});
                       }}
                       className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl transition-colors shrink-0 mt-0.5"
@@ -1204,6 +1223,7 @@ export const ClientVisitsPage: React.FC = () => {
                 shifts={groupShifts}
                 onCancelBooking={handleCancelBooking}
                 navigate={navigate}
+                onMessage={() => gate('message', groupShifts[0]?.caregiverName, () => navigate(`/client/inbox?caregiver=${groupShifts[0]?.caregiverId}`))}
               />
             ))}
             {tab === 'past' && Array.from(pastGroups.entries()).map(([key, groupShifts]) => (
@@ -1211,11 +1231,13 @@ export const ClientVisitsPage: React.FC = () => {
                 key={key}
                 shifts={groupShifts}
                 navigate={navigate}
+                onMessage={() => gate('message', groupShifts[0]?.caregiverName, () => navigate(`/client/inbox?caregiver=${groupShifts[0]?.caregiverId}`))}
               />
             ))}
           </div>
         )}
       </main>
+      <GateModals />
     </div>
   );
 };

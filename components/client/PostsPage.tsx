@@ -5,6 +5,7 @@ import {
   Clock, Star, MessageSquare, User, CheckCircle, XCircle, Clock3,
   Video, Phone, ChevronRight, X, Send, Edit2, Pencil, RefreshCw,
 } from 'lucide-react';
+import { useAccessGates } from '../../hooks/useAccessGates';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
 import { EditJobPostModal } from './EditJobPostModal';
 import { ClientNavigation } from './ClientNavigation';
@@ -90,6 +91,8 @@ export const PostsPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { currentUser, addToast } = useCareConnex();
+  const { gate, Modals: GateModals } = useAccessGates();
+  const handleNewRequest = () => gate('booking', undefined, () => navigate('/client/post-job'));
 
   const [posts, setPosts] = useState<JobPost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(true);
@@ -655,6 +658,8 @@ export const PostsPage: React.FC = () => {
   const handleSendBooking = async (interview: Interview, _unused: string) => {
     const user = auth?.currentUser;
     if (!user || !db) return;
+    const fdb = db;
+    gate('booking', interview.caregiverName, async () => {
     setSendingBooking(true);
     try {
       const post = interview.jobId ? posts.find(p => p.id === interview.jobId) : undefined;
@@ -685,7 +690,7 @@ export const PostsPage: React.FC = () => {
       // Prefer Auth photo; fall back to Firestore users document
       let clientPhotoURL: string | null = user.photoURL || null;
       if (!clientPhotoURL) {
-        const uSnap = await db.collection('users').doc(user.uid).get().catch(() => null);
+        const uSnap = await fdb.collection('users').doc(user.uid).get().catch(() => null);
         const uData = uSnap?.data() as any;
         clientPhotoURL = uData?.photoURL || uData?.photo || uData?.profilePhoto || uData?.imageUrl || null;
       }
@@ -752,18 +757,20 @@ export const PostsPage: React.FC = () => {
       };
 
       if (isResend && existing) {
-        await db.collection('booking_requests').doc(existing.id).update({
+        await fdb.collection('booking_requests').doc(existing.id).update({
           ...bookingData,
           status: 'pending',
+          isResend: true,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
       } else {
-        await db.collection('booking_requests').add({
+        await fdb.collection('booking_requests').add({
           ...bookingData,
           status: 'pending',
+          isResend: false,
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
-        await db.collection('hire_decisions').add({
+        await fdb.collection('hire_decisions').add({
           clientId: user.uid,
           clientName: user.displayName || '',
           caregiverId: interview.caregiverId,
@@ -775,7 +782,7 @@ export const PostsPage: React.FC = () => {
         // Mark the caregiver's application as accepted
         if (interview.jobId) {
           try {
-            const appSnap = await db.collection('job_applications')
+            const appSnap = await fdb.collection('job_applications')
               .where('caregiverId', '==', interview.caregiverId)
               .where('jobId', '==', interview.jobId)
               .limit(1)
@@ -790,16 +797,7 @@ export const PostsPage: React.FC = () => {
         }
       }
 
-      await db.collection('users').doc(interview.caregiverId).collection('notifications').add({
-        userId: interview.caregiverId,
-        type: 'booking_request',
-        title: isResend ? 'Booking Request Resent' : 'New Booking Request',
-        message: `${user.displayName || 'A family'} ${isResend ? 'resent their' : 'sent you a'} booking request.`,
-        data: { clientId: user.uid },
-        read: false, isRead: false,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
+      // Notification handled by onBookingRequestWrite Cloud Function
 
       setSendBookingFor(null);
       setBookingDraft({ note: '', selectedRecipientKeys: [], recipientDrafts: {}, lifestyleNotes: [], selectedAddress: '', emergencyContactFirstName: '', emergencyContactLastName: '', emergencyContactPhone: '', emergencyContactRelation: '', shiftStartDate: '', shiftEndDate: '', shiftOngoing: false, dayShiftTimes: {}, agreedRate: null, paymentMethod: '' });
@@ -810,12 +808,28 @@ export const PostsPage: React.FC = () => {
     } finally {
       setSendingBooking(false);
     }
+    }); // end gate callback
   };
 
   const handleCancelBooking = async (bookingId: string) => {
     if (!db) return;
     try {
+      const bookingSnap = await db.collection('booking_requests').doc(bookingId).get();
+      const bookingData = bookingSnap.data();
       await db.collection('booking_requests').doc(bookingId).update({ status: 'cancelled' });
+      if (bookingData?.caregiverId) {
+        try {
+          const clientName = auth?.currentUser?.displayName || 'A family';
+          await db.collection('users').doc(bookingData.caregiverId).collection('notifications').add({
+            userId: bookingData.caregiverId,
+            type: 'booking_cancelled',
+            title: 'Booking Request Cancelled',
+            body: `${clientName} cancelled their booking request.`,
+            isRead: false,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          });
+        } catch { /* non-critical */ }
+      }
       addToast('Booking request cancelled.', 'success');
     } catch (err) {
       console.error('handleCancelBooking error:', err);
@@ -829,7 +843,7 @@ export const PostsPage: React.FC = () => {
     setSubmittingDecision(prev => ({ ...prev, [interview.id]: true }));
     try {
       if (decision === 'decline') {
-        await db.collection('video_interviews').doc(interview.id).update({ status: 'declined' });
+        await db.collection('video_interviews').doc(interview.id).update({ status: 'declined', declinedBy: 'client' });
       }
       await db.collection('hire_decisions').add({
         clientId: user.uid,
@@ -839,18 +853,8 @@ export const PostsPage: React.FC = () => {
         decision,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
-      await db.collection('users').doc(interview.caregiverId).collection('notifications').add({
-        userId: interview.caregiverId,
-        type: 'hire_decision',
-        title: decision === 'hire' ? 'Booking Request Incoming' : 'Interview Update',
-        message: decision === 'hire'
-          ? `${user.displayName || 'A family'} would like to send you a booking request.`
-          : `${user.displayName || 'A family'} has decided not to move forward at this time.`,
-        data: { clientId: user.uid, decision },
-        read: false, isRead: false,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
+      // Notification handled by onVideoInterviewWrite Cloud Function (decline) /
+      // onBookingRequestWrite Cloud Function (hire)
       setDecisionDone(prev => ({ ...prev, [interview.id]: decision === 'hire' ? 'hired' : 'declined' }));
       addToast(decision === 'hire' ? 'Booking request sent!' : 'Caregiver notified', 'success');
     } catch (err: any) { console.error('handleDecision error:', err?.code, err?.message, err); addToast('Something went wrong. Please try again.', 'error'); }
@@ -878,6 +882,7 @@ export const PostsPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      <GateModals />
       <ClientNavigation />
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
 
@@ -885,7 +890,7 @@ export const PostsPage: React.FC = () => {
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Care Requests</h1>
           <button
-            onClick={() => navigate('/client/post-job')}
+            onClick={handleNewRequest}
             className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-sm transition-colors"
           >
             <Plus className="w-4 h-4" /> New Request
@@ -941,7 +946,7 @@ export const PostsPage: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {postsFilter === 'open' && (
                   <button
-                    onClick={() => navigate('/client/post-job')}
+                    onClick={handleNewRequest}
                     className="flex flex-col items-center justify-center text-center border-2 border-dashed border-slate-300 rounded-2xl px-4 py-10 bg-white hover:border-primary-400 hover:bg-primary-50/30 transition-colors min-h-[180px]"
                   >
                     <Briefcase className="w-8 h-8 text-slate-300 mb-2" />
@@ -1231,7 +1236,7 @@ export const PostsPage: React.FC = () => {
                             <div className="flex items-center gap-2 mt-3 pt-2 border-t border-slate-100 flex-wrap">
                               {(interview.status === 'pending' || interview.status === 'accepted') && (
                                 <button
-                                  onClick={() => navigate(`/client/inbox?caregiver=${interview.caregiverId}`)}
+                                  onClick={() => gate('message', interview.caregiverName, () => navigate(`/client/inbox?caregiver=${interview.caregiverId}`))}
                                   className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50"
                                 >
                                   <MessageSquare className="w-3.5 h-3.5" /> Message
@@ -1277,7 +1282,7 @@ export const PostsPage: React.FC = () => {
                                   // All shifts completed — offer to re-book
                                   return (
                                     <button
-                                      onClick={() => openSendBookingModal(interview)}
+                                      onClick={() => gate('booking', interview.caregiverName, () => openSendBookingModal(interview))}
                                       className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700"
                                     >
                                       <RefreshCw className="w-3.5 h-3.5" /> Re-book
@@ -1290,7 +1295,7 @@ export const PostsPage: React.FC = () => {
                                       <XCircle className="w-3.5 h-3.5" /> {booking.status === 'cancelled' ? 'Visit cancelled' : 'Caregiver declined'}
                                     </span>
                                     <button
-                                      onClick={() => openSendBookingModal(interview)}
+                                      onClick={() => gate('booking', interview.caregiverName, () => openSendBookingModal(interview))}
                                       className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700"
                                     >
                                       <Send className="w-3.5 h-3.5" /> Resend
@@ -1307,7 +1312,7 @@ export const PostsPage: React.FC = () => {
                                     <button onClick={() => handleDecision(interview, 'decline')} disabled={submitting} className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
                                       {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />} Not Selected
                                     </button>
-                                    <button onClick={() => openSendBookingModal(interview)} disabled={submitting} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700 disabled:opacity-50">
+                                    <button onClick={() => gate('booking', interview.caregiverName, () => openSendBookingModal(interview))} disabled={submitting} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700 disabled:opacity-50">
                                       <Send className="w-3.5 h-3.5" /> Send Booking
                                     </button>
                                   </>
@@ -2329,7 +2334,7 @@ export const PostsPage: React.FC = () => {
                         Profile
                       </button>
                       <button
-                        onClick={() => navigate(`/client/inbox?caregiver=${a.caregiverId}`)}
+                        onClick={() => { setPanelPostId(null); gate('message', a.caregiverName, () => navigate(`/client/inbox?caregiver=${a.caregiverId}`)); }}
                         className="px-4 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
                       >
                         Message
@@ -2356,7 +2361,7 @@ export const PostsPage: React.FC = () => {
                               </button>
                             ) : (
                               <button
-                                onClick={() => setSchedulingFor(a)}
+                                onClick={() => { setPanelPostId(null); gate('interview', a.caregiverName, () => setSchedulingFor(a)); }}
                                 className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-semibold transition-colors"
                               >
                                 Request Interview

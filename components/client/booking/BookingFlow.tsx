@@ -424,12 +424,25 @@ export default function BookingFlow() {
           onClose={() => setShowSpokenDialog(false)}
           onMessage={() => {
             setShowSpokenDialog(false);
-            gate('message', `${caregiver.firstName} ${caregiver.lastName}`, async () => {
+            gate('message', `${caregiver.firstName} ${caregiver.lastName}`, () => {
               if (!auth) return;
-              const uid = auth.currentUser?.uid!;
+              const uid = auth.currentUser?.uid;
+              if (!uid) return;
               const clientName = auth.currentUser?.displayName || 'Client';
-              const roomId = await chatService.getOrCreateChatRoom(uid, clientName, caregiver.id, `${caregiver.firstName} ${caregiver.lastName}`);
-              navigate(`/client/inbox?room=${roomId}`);
+              const caregiverFullName = `${caregiver.firstName} ${caregiver.lastName}`;
+              const sorted = [uid, caregiver.id].sort();
+              const roomId = sorted.join('_');
+              const names = sorted.map(id => id === uid ? clientName : caregiverFullName);
+              const avatars = sorted.map(id => id === uid ? '' : ((caregiver as any).imageUrl || (caregiver as any).photo || ''));
+              navigate(`/client/inbox?room=${roomId}`, {
+                state: {
+                  pendingRoom: {
+                    id: roomId, participants: sorted, participantNames: names, participantAvatars: avatars,
+                    unreadCount: { [uid]: 0, [caregiver.id]: 0 },
+                    lastMessage: '', lastMessageTime: '', lastMessageTimestamp: null, createdAt: null,
+                  }
+                }
+              });
             });
           }}
           onContinue={() => setShowSpokenDialog(false)}

@@ -3,7 +3,8 @@ import { dbService, authService } from '../services/api';
 import { notificationService } from '../services/notifications';
 import { pushNotificationService } from '../services/pushNotificationService';
 import { setSentryUser } from '../lib/sentry';
-import { isConfigured } from '../lib/firebase';
+import { isConfigured, db } from '../lib/firebase';
+import firebase from 'firebase/compat/app';
 import { Appointment, Caregiver, ToastMessage, ToastType, User, UserProfile } from '../types';
 
 /**
@@ -34,6 +35,11 @@ interface CareConnexContextType {
     bookAppointment: (appointment: Appointment) => Promise<void>;
     completePayment: (appointmentId: string) => void;
     submitReview: (appointmentId: string) => void;
+    blockedIds: Set<string>;
+    blockedUserProfiles: Record<string, { name: string; photo: string }>;
+    unblockUser: (targetId: string) => Promise<void>;
+    membershipModalOpen: boolean;
+    setMembershipModalOpen: (v: boolean) => void;
 }
 
 const CareConnexContext = createContext<CareConnexContextType | undefined>(undefined);
@@ -46,6 +52,9 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
     const [isLoading, setIsLoading] = useState(true);
     const [authResolved, setAuthResolved] = useState(false);
     const [toasts, setToasts] = useState<ToastMessage[]>([]);
+    const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
+    const [blockedUserProfiles, setBlockedUserProfiles] = useState<Record<string, { name: string; photo: string }>>({});
+    const [membershipModalOpen, setMembershipModalOpen] = useState(false);
 
     // Auth Listener - fetches user profile from Firestore to get userType
     useEffect(() => {
@@ -117,6 +126,17 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             if (p) setCaregiverProfile(p as any);
         }
     };
+
+    // Real-time listener: keep caregiverProfile in sync with Firestore
+    // so admin changes (membership, bg check, docs) reflect immediately
+    useEffect(() => {
+        if (!currentUser?.uid || currentUser.userType !== 'caregiver' || !db) return;
+        const unsub = db.collection('caregivers').doc(currentUser.uid)
+            .onSnapshot(snap => {
+                if (snap.exists) setCaregiverProfile({ id: snap.id, ...snap.data() } as any);
+            }, () => {});
+        return unsub;
+    }, [currentUser?.uid, currentUser?.userType]);
 
     const addToast = (message: string, type: ToastType) => {
         const id = Math.random().toString(36).substr(2, 9);
@@ -288,6 +308,44 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         ));
     };
 
+    // Subscribe to blocked users list
+    useEffect(() => {
+        if (!currentUser?.uid || !db) { setBlockedIds(new Set()); setBlockedUserProfiles({}); return; }
+        const unsub = db.collection('users').doc(currentUser.uid)
+            .onSnapshot(snap => {
+                const data = snap.data() as any;
+                setBlockedIds(new Set(data?.blockedUsers || []));
+                setBlockedUserProfiles(data?.blockedUserProfiles || {});
+            }, () => {});
+        return unsub;
+    }, [currentUser?.uid]);
+
+    const unblockUser = async (targetId: string) => {
+        if (!currentUser?.uid || !db) return;
+        const userRef = db.collection('users').doc(currentUser.uid);
+        // Split into two updates — mixing arrayRemove + FieldValue.delete on nested fields can reject
+        await userRef.update({
+            blockedUsers: firebase.firestore.FieldValue.arrayRemove(targetId),
+        });
+        await userRef.update({
+            [`blockedUserProfiles.${targetId}`]: firebase.firestore.FieldValue.delete(),
+        }).catch(() => {}); // field may not exist on legacy blocks — safe to ignore
+        // Hide the room from the unblocking user until a new message arrives.
+        // Also set messagesCutoff so messages sent while blocked stay hidden after unblock.
+        try {
+            const roomId = [currentUser.uid, targetId].sort().join('_');
+            const roomSnap = await db.collection('chatRooms').doc(roomId).get();
+            if (roomSnap.exists) {
+                await db.collection('chatRooms').doc(roomId).update({
+                    [`messagesCutoff.${currentUser.uid}`]: firebase.firestore.FieldValue.serverTimestamp(),
+                    [`deletedAt.${currentUser.uid}`]: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+        } catch {
+            // chatRoom update failing should not block the unblock itself
+        }
+    };
+
     return (
         <CareConnexContext.Provider value={{
             currentUser,
@@ -302,7 +360,12 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             removeToast,
             bookAppointment,
             completePayment,
-            submitReview
+            submitReview,
+            blockedIds,
+            blockedUserProfiles,
+            unblockUser,
+            membershipModalOpen,
+            setMembershipModalOpen,
         }}>
             {children}
         </CareConnexContext.Provider>

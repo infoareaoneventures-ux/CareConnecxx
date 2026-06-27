@@ -566,24 +566,15 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
                               <CreditCardBadge show={!!(caregiver as any).acceptsCreditCards} />
 
-                              {/* IDV + BGC badges */}
-                              <div className="flex items-center gap-2 mt-1.5">
-                                 <div className="w-9 h-9 rounded-full bg-teal-500 flex flex-col items-center justify-center text-white pt-1">
-                                    <Shield className="w-4 h-4 mb-0.5" />
-                                    <span className="text-[7px] font-bold leading-none tracking-wider uppercase">IDV</span>
-                                 </div>
-                                 {(caregiver as any).backgroundCheckStatus === 'clear' ? (
-                                    <div className="w-9 h-9 rounded-full bg-blue-500 flex flex-col items-center justify-center text-white pt-1" title="Background Check Cleared">
-                                       <CheckCircle className="w-4 h-4 mb-0.5" />
-                                       <span className="text-[7px] font-bold leading-none tracking-wider uppercase">BGC+</span>
-                                    </div>
-                                 ) : (
-                                    <div className="w-9 h-9 rounded-full bg-yellow-400 flex flex-col items-center justify-center text-white pt-1" title="Background Check Pending">
-                                       <Clock className="w-4 h-4 mb-0.5" />
-                                       <span className="text-[7px] font-bold leading-none tracking-wider uppercase">BGC</span>
-                                    </div>
-                                 )}
-                              </div>
+                              {/* BGC badge — only shown when cleared */}
+                              {(caregiver as any).backgroundCheckStatus === 'clear' && (
+                                <div className="flex items-center gap-2 mt-1.5">
+                                  <div className="w-9 h-9 rounded-full bg-blue-500 flex flex-col items-center justify-center text-white pt-1" title="Background Check Cleared">
+                                    <CheckCircle className="w-4 h-4 mb-0.5" />
+                                    <span className="text-[7px] font-bold leading-none tracking-wider uppercase">BGC+</span>
+                                  </div>
+                                </div>
+                              )}
                            </div>
                         </div>
 

@@ -428,7 +428,7 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
 
   const subscription = await stripe.subscriptions.retrieve(subscriptionId as string);
   const userId = subscription.metadata?.firebaseUID;
-  
+
   if (!userId) return;
 
   // Record payment
@@ -444,7 +444,90 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
-  console.log(`Payment succeeded for user: ${userId}`);
+  // Restore membership status on renewal
+  await admin.firestore().collection('users').doc(userId).set({
+    membershipStatus: 'active',
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  // Notify caregiver of successful payment
+  const amountPaid = (invoice.amount_paid / 100).toFixed(2);
+  const isRenewal = invoice.billing_reason === 'subscription_cycle';
+  await admin.firestore().collection('users').doc(userId).collection('notifications').add({
+    userId,
+    type: 'membership_payment_succeeded',
+    title: isRenewal ? 'Membership Renewed' : 'Membership Activated',
+    body: isRenewal
+      ? `Your CareConnex membership has been renewed. $${amountPaid} was charged.`
+      : `Your CareConnex membership is now active. $${amountPaid} was charged.`,
+    isRead: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  // Only re-initiate Checkr on annual renewal, not on first subscription payment
+  if (invoice.billing_reason !== 'subscription_cycle') {
+    console.log(`Invoice succeeded for ${userId} — billing_reason: ${invoice.billing_reason}, skipping Checkr re-initiation`);
+    return;
+  }
+
+  const caregiverSnap = await admin.firestore().collection('caregivers').doc(userId).get();
+  if (!caregiverSnap.exists) return;
+
+  const caregiverData = caregiverSnap.data() || {};
+  const bgData = caregiverData.backgroundCheckData || {};
+  const existingCandidateId = bgData.checkrCandidateId;
+
+  if (!existingCandidateId) {
+    console.log(`Renewal for caregiver ${userId} but no checkrCandidateId — skipping Checkr`);
+    return;
+  }
+
+  // Renewal: reset verification and re-run Checkr for the existing candidate
+  console.log(`Annual renewal for caregiver ${userId} — re-initiating Checkr`);
+
+  const apiKey = (process.env.CHECKR_KEY || process.env.CHECKR_API_KEY || '').trim();
+  if (!apiKey) {
+    console.error('CHECKR_KEY not configured — skipping Checkr renewal');
+    return;
+  }
+
+  try {
+    const CHECKR_BASE = process.env.CHECKR_API_URL || 'https://api.checkr.com/v1';
+    const CHECKR_PKG = process.env.CHECKR_PACKAGE || 'driver_pro';
+    const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
+    const dateKey = new Date().toISOString().slice(0, 10);
+
+    const invRes = await fetch(`${CHECKR_BASE}/invitations`, {
+      method: 'POST',
+      headers: { Authorization: authHeader, 'Content-Type': 'application/json', 'Idempotency-Key': `${userId}-renewal-${dateKey}` },
+      body: JSON.stringify({ candidate_id: existingCandidateId, package: CHECKR_PKG }),
+    });
+
+    const invOk = invRes.ok;
+    if (!invOk) {
+      const errText = await invRes.text().catch(() => '');
+      console.error(`Checkr renewal invitation failed for ${userId}: ${invRes.status} ${errText}`);
+    }
+
+    await admin.firestore().collection('caregivers').doc(userId).set({
+      verified: false,
+      verificationStatus: 'submitted',
+      backgroundCheckStatus: 'pending',
+      backgroundCheckComplete: false,
+      backgroundCheckData: {
+        ...bgData,
+        submittedAt: new Date().toISOString(),
+        status: 'pending',
+        invitationStatus: invOk ? 'sent' : 'error',
+        initiatedVia: 'annual_renewal',
+        checkrClearedAt: null,
+      },
+    }, { merge: true });
+
+    console.log(`Checkr renewal initiated for caregiver: ${userId}`);
+  } catch (err: any) {
+    console.error(`Checkr renewal error for ${userId}:`, err?.message);
+  }
 }
 
 /**
@@ -532,6 +615,23 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
     }
   } catch (err) {
     console.error(`handleInvoicePaymentFailed: failed to notify client ${userId}:`, err);
+  }
+
+  // In-app notification in addition to SMS
+  try {
+    const notifBody = isFinalAttempt
+      ? 'We were unable to process your membership payment. Your access is at risk — please update your payment method.'
+      : `We couldn't process your membership payment (attempt ${attemptCount}).${nextRetryDate ? ` We'll retry on ${nextRetryDate}.` : ' Please update your payment method.'}`;
+    await admin.firestore().collection('users').doc(userId).collection('notifications').add({
+      userId,
+      type: 'membership_payment_failed',
+      title: 'Membership Payment Failed',
+      body: notifBody,
+      isRead: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    console.error(`handleInvoicePaymentFailed: failed to write in-app notification for ${userId}:`, err);
   }
 
   console.log(`Payment failed for user: ${userId} (attempt ${attemptCount}, final: ${isFinalAttempt})`);
@@ -630,6 +730,15 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
     subscriptionActive: false,
     subscriptionId: null,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  await admin.firestore().collection('users').doc(userId).collection('notifications').add({
+    userId,
+    type: 'membership_cancelled',
+    title: 'Membership Cancelled',
+    body: 'Your CareConnex membership has been cancelled.',
+    isRead: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
   console.log(`Subscription canceled for user: ${userId}`);

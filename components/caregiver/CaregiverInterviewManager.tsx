@@ -120,6 +120,7 @@ export const CaregiverInterviewManager: React.FC<CaregiverInterviewManagerProps>
     try {
       const updates: any = {
         status: responseType === 'accept' ? 'scheduled' : 'declined',
+        ...(responseType === 'decline' ? { declinedBy: 'caregiver' } : {}),
         caregiverNotes: caregiverNotes,
         caregiverRespondedAt: new Date().toISOString()
       };
@@ -135,20 +136,7 @@ export const CaregiverInterviewManager: React.FC<CaregiverInterviewManagerProps>
         await dbService.updateInterviewRequest(selectedInterview.id, updates);
       }
 
-      // Notify the client of the caregiver's response
-      if (selectedInterview.clientId) {
-        try {
-          await dbService.createNotification({
-            userId: selectedInterview.clientId,
-            type: responseType === 'accept' ? 'interview_accepted' : 'interview_declined',
-            title: responseType === 'accept' ? 'Interview Accepted!' : 'Interview Declined',
-            message: responseType === 'accept'
-              ? `Your interview request has been accepted. Check your messages to confirm the time.`
-              : `The caregiver is unavailable for this interview. You can schedule with another caregiver.`,
-            data: { interviewId: selectedInterview.id }
-          });
-        } catch (_) { /* non-critical */ }
-      }
+      // Notification handled by onVideoInterviewWrite Cloud Function
 
       onShowToast(
         responseType === 'accept'

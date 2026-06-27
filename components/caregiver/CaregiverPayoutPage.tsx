@@ -17,7 +17,7 @@ const FAQS: Array<{ q: string; a: string }> = [
 ];
 
 export const CaregiverPayoutPage: React.FC = () => {
-  const { currentUser, addToast } = useCareConnex();
+  const { currentUser, addToast, setMembershipModalOpen } = useCareConnex();
   const [profile, setProfile] = useState<Caregiver | null>(null);
   const [saving, setSaving] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
@@ -153,9 +153,9 @@ export const CaregiverPayoutPage: React.FC = () => {
             <div className="bg-white border border-slate-200 rounded-2xl p-5">
               <p className="font-bold text-slate-900 mb-1">Membership payment method</p>
               <p className="text-sm text-slate-600 mb-3">Used for purchasing and renewing your membership.</p>
-              <a href="/caregiver/membership" className="inline-flex items-center px-4 py-2 rounded-full border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50">
+              <button onClick={() => setMembershipModalOpen(true)} className="inline-flex items-center px-4 py-2 rounded-full border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50">
                 Manage your credit card
-              </a>
+              </button>
             </div>
 
             {currentUser?.uid && <PayoutHistory uid={currentUser.uid} />}

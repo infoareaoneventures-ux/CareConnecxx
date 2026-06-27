@@ -16,8 +16,8 @@ import { logMatchSignal } from '../services/matchFeedback';
 import { ClientNavigation } from './client/ClientNavigation';
 import { CreditCardBadge } from './shared/CreditCardBadge';
 import { CaregiverVerificationBadges } from './shared/CaregiverVerificationBadges';
-import { chatService } from '../services/chatService';
 import { useAccessGates } from '../hooks/useAccessGates';
+import { useCareConnex } from '../context/CareConnexContext';
 import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import ClientCaregiverProfile from './ClientCaregiverProfile';
 
@@ -106,6 +106,7 @@ export default function FindCaregivers() {
   const [sortBy, setSortBy] = useState<SortOption>('rating');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(searchParams.get('tab') === 'favorites');
   const { gate, Modals: GateModals } = useAccessGates();
+  const { blockedIds } = useCareConnex();
   const [viewingCaregiver, setViewingCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
   const [interviewCaregiver, setInterviewCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
@@ -355,21 +356,22 @@ export default function FindCaregivers() {
     }
   };
 
-  const openChat = async (caregiverId: string, caregiverName: string) => {
-    try {
-      const currentUid = auth?.currentUser?.uid;
-      const currentName = auth?.currentUser?.displayName
-        || auth?.currentUser?.email?.split('@')[0]
-        || 'Client';
-      if (currentUid) {
-        const roomId = await chatService.getOrCreateChatRoom(currentUid, currentName, caregiverId, caregiverName);
-        navigate(`/client/inbox?room=${roomId}`);
-      } else {
-        navigate('/client/inbox');
+  const openChat = (caregiverId: string, caregiverName: string) => {
+    const currentUid = auth?.currentUser?.uid;
+    if (!currentUid) { navigate('/client/inbox'); return; }
+    const currentName = auth?.currentUser?.displayName || auth?.currentUser?.email?.split('@')[0] || 'Client';
+    const sorted = [currentUid, caregiverId].sort();
+    const roomId = sorted.join('_');
+    const names = sorted.map(id => id === currentUid ? currentName : caregiverName);
+    navigate(`/client/inbox?room=${roomId}`, {
+      state: {
+        pendingRoom: {
+          id: roomId, participants: sorted, participantNames: names, participantAvatars: ['', ''],
+          unreadCount: { [currentUid]: 0, [caregiverId]: 0 },
+          lastMessage: '', lastMessageTime: '', lastMessageTimestamp: null, createdAt: null,
+        }
       }
-    } catch {
-      navigate('/client/inbox');
-    }
+    });
   };
 
   const handleMessage = (caregiverId: string, caregiverName: string) => {
@@ -416,13 +418,11 @@ export default function FindCaregivers() {
 
   const filteredCaregivers = useMemo(() => {
     let list = caregivers.filter(cg => {
+      if (blockedIds.has(cg.id)) return false;
       if (showFavoritesOnly && !favorites.includes(cg.id)) return false;
       // Distance filter — only applied when client has locations AND caregiver has coords
       if (clientLocations.length > 0 && cg.lat != null && cg.lng != null) {
-        // Client's max distance slider
         if (cg.distance > maxDistance) return false;
-        // Caregiver's own service radius cross-check
-        if (cg.serviceRadius != null && cg.distance > cg.serviceRadius) return false;
       }
       if (nameQuery) {
         const q = nameQuery.toLowerCase();

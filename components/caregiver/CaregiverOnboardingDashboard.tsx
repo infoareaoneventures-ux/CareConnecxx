@@ -1,19 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
-  CheckCircle, ChevronRight, Briefcase, Calendar, Star,
-  Users, MapPin, Loader2, ArrowRight, Clock, Lock,
+  CheckCircle, Briefcase, MapPin, ArrowRight, Clock, Lock,
+  Calendar, Sun, Moon, Car, Users as UsersIcon, CreditCard, Banknote, X, Loader2,
 } from 'lucide-react';
 import { Caregiver, JobPost, AddToastFunction } from '../../types';
-import { dbService } from '../../services/api';
-import { CaregiverBookingRequests } from './CaregiverBookingRequests';
-import { CaregiverInterviewManager } from './CaregiverInterviewManager';
 import { ProfileApprovalBanner } from './ProfileApprovalBanner';
 import { BackgroundCheckModal } from '../BackgroundCheckModal';
+import { CaregiverCareRequestsCard } from './CaregiverCareRequestsCard';
+import { CaregiverBookingsCard } from './CaregiverBookingsCard';
+import { jobApplicationService } from '../../hooks/useJobApplications';
+import { hasValidTransportDocs } from '../../utils/transportDocs';
+import { openCaregiverBillingPortal } from '../../services/stripeService';
+import { useCaregiverGate } from '../../hooks/useCaregiverGate';
+import { useCareConnex } from '../../context/CareConnexContext';
+import { useNavigate } from 'react-router-dom';
 
 interface CaregiverOnboardingDashboardProps {
   profile: Caregiver;
   onNavigate: (view: any) => void;
   onShowToast?: AddToastFunction;
+  jobs?: JobPost[];
+  jobsLoaded?: boolean;
 }
 
 function getGreeting(): string {
@@ -29,29 +37,40 @@ function getFirstName(name: string): string {
 
 // ── Progress Card ─────────────────────────────────────────────────────────────
 
-const CaregiverProgressCard: React.FC<{
+export const CaregiverProgressCard: React.FC<{
   profile: Caregiver;
   onNavigate: (view: any) => void;
   onShowToast?: AddToastFunction;
-}> = ({ profile, onNavigate, onShowToast }) => {
+  compactMode?: boolean;
+}> = ({ profile, onNavigate, onShowToast, compactMode = false }) => {
   const [showBgModal, setShowBgModal] = useState(false);
   const p = profile as any;
-  const isApproved = p.verificationStatus === 'approved' || profile.verified === true;
+  const membershipActive = p.membershipStatus === 'active' || p.membershipStatus === 'trialing' || (!p.membershipStatus && p.membershipPaid === true);
+  const bgApprovedFull = profile.verified === true || p.backgroundCheckStatus === 'clear' || p.backgroundCheckComplete === true;
+  const services: string[] = (p.services || p.skills || []) as string[];
+  const needsTransportDocs = services.includes('Transportation');
+  const transportDocsValid = needsTransportDocs ? hasValidTransportDocs(profile) : false;
+  const isApproved = membershipActive && bgApprovedFull && (!needsTransportDocs || transportDocsValid);
   const profileComplete = p.onboardingStatus === 'profile_complete' || p.onboardingStatus === 'submitted' || isApproved;
-  const hasPaid = !!(p.membershipPaid === true || (p.membershipStatus && p.membershipStatus !== 'none' && p.membershipStatus !== 'inactive'));
+  const hasPaid = membershipActive;
   const checkrInitiated = !!p.backgroundCheckData?.checkrCandidateId;
-  const underReview = p.verificationStatus === 'submitted';
   const rejected = p.verificationStatus === 'rejected';
   const infoRequested = p.verificationStatus === 'info_requested';
-  const bgCheckDone = underReview || isApproved;
-  const bgCheckInProgress = checkrInitiated && !underReview && !isApproved;
+  const bgCheckInProgress = checkrInitiated && !bgApprovedFull;
 
   if (isApproved) return null;
 
+  const docs = p.documents || {};
+  const getDocStatus = (key: string) => { const d = docs[key]; return d?.url ? (d.status || 'pending') : 'missing'; };
+  const transportDocStatuses = needsTransportDocs ? ['driversLicense', 'insurance', 'registration'].map(k => getDocStatus(k)) : [];
+  const transportNeedsAction = needsTransportDocs && (transportDocStatuses.includes('missing') || transportDocStatuses.includes('rejected'));
+
   const activeStep = !profileComplete ? 1
     : !hasPaid ? 2
-    : !checkrInitiated ? 3
-    : 4;
+    : (!checkrInitiated && !bgApprovedFull) ? 3
+    : transportNeedsAction ? 5
+    : !bgApprovedFull ? 4
+    : 5;
 
   // CTA card content
   let cardTitle = '';
@@ -73,33 +92,67 @@ const CaregiverProgressCard: React.FC<{
     cardDesc = 'Add your photo, availability, services, and bio.';
     cardCta = { label: 'Complete profile', onClick: () => onNavigate('caregiver-profile') };
   } else if (activeStep === 2) {
-    cardTitle = 'Activate your membership';
-    cardDesc = 'Unlock full access to jobs, messaging, and your caregiver profile.';
-    cardCta = {
-      label: 'Activate membership',
-      onClick: () => onNavigate('caregiver-membership'),
-    };
+    if (p.membershipStatus === 'payment_failed') {
+      cardTitle = 'Payment failed';
+      cardDesc = 'We couldn\'t process your last payment. Update your payment method to continue.';
+      cardVariant = 'warning';
+      cardCta = {
+        label: 'Update payment',
+        onClick: async () => {
+          try {
+            await openCaregiverBillingPortal(`${window.location.origin}/caregiver/dashboard`);
+          } catch {
+            onShowToast?.('Unable to open billing portal. Please try again.', 'error');
+          }
+        },
+      };
+    } else if (p.membershipStatus === 'canceled') {
+      cardTitle = 'Membership canceled';
+      cardDesc = 'Your membership has been canceled. Reactivate to regain access to jobs and messaging.';
+      cardCta = { label: 'Reactivate membership', onClick: () => onNavigate('caregiver-membership') };
+    } else {
+      cardTitle = 'Activate your membership';
+      cardDesc = '';
+      cardCta = { label: 'Activate membership', onClick: () => onNavigate('caregiver-membership') };
+    }
   } else if (activeStep === 3) {
     cardTitle = 'Start your background check';
-    cardDesc = 'Required before you can apply to families.';
+    cardDesc = '';
     cardCta = {
       label: 'Start background check',
       onClick: () => setShowBgModal(true),
     };
   } else if (activeStep === 4) {
-    cardTitle = underReview ? 'Profile under review' : 'Background check in progress';
-    cardDesc = underReview
-      ? 'Our team is reviewing your profile.'
-      : 'Your background check is underway. We\'ll notify you when complete.';
+    cardTitle = 'Background check in progress';
+    cardDesc = needsTransportDocs
+      ? 'Your background check and transport document review are both underway. We\'ll notify you once everything clears.'
+      : 'Your background check is underway — we\'ll notify you once it clears.';
     cardVariant = 'info';
+  } else if (activeStep === 5) {
+    const anyDocRejected = transportDocStatuses.includes('rejected');
+    const anyDocMissing = transportDocStatuses.includes('missing');
+    if (anyDocRejected) {
+      cardTitle = 'Documents rejected';
+      cardDesc = 'Some transport documents were rejected. Please re-upload to continue.';
+      cardVariant = 'warning';
+      cardCta = { label: 'Re-upload documents', onClick: () => onNavigate('caregiver-settings') };
+    } else if (anyDocMissing) {
+      cardTitle = 'Upload transport documents';
+      cardDesc = "Upload your driver's license, vehicle insurance, and registration to earn your transportation badge.";
+      cardCta = { label: 'Upload documents', onClick: () => onNavigate('caregiver-settings') };
+    } else {
+      cardTitle = 'Documents under review';
+      cardDesc = 'Our team will review your transport documents and notify you.';
+      cardVariant = 'info';
+    }
   }
 
   const steps = [
     { label: 'Account', done: true, inProgress: false },
     { label: 'Profile', done: profileComplete, inProgress: !profileComplete },
     { label: 'Membership', done: hasPaid, inProgress: !hasPaid && profileComplete },
-    { label: 'Background Check', done: bgCheckDone, inProgress: bgCheckInProgress },
-    { label: 'Under Review', done: isApproved, inProgress: underReview },
+    { label: 'Background Check', done: bgApprovedFull, inProgress: bgCheckInProgress },
+    ...(needsTransportDocs ? [{ label: 'Transport Docs', done: transportDocsValid, inProgress: !transportDocsValid && !transportDocStatuses.includes('missing') }] : []),
   ];
 
   return (
@@ -112,33 +165,40 @@ const CaregiverProgressCard: React.FC<{
         />
       )}
     <div className="bg-white border border-slate-100 rounded-[2rem] p-6 mb-8 shadow-sm">
-      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-5">Your progress</p>
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-5">
+        {compactMode ? 'Action required' : 'Your progress'}
+      </p>
 
       {/* Horizontal stepper */}
-      <div className="flex items-start mb-5">
-        {steps.map((step, i) => (
-          <React.Fragment key={i}>
-            <div className="flex flex-col items-center flex-1 min-w-0">
-              <div className={`w-9 h-9 rounded-full flex items-center justify-center mb-2 flex-shrink-0 ${
-                step.done ? 'bg-teal-500 shadow-sm' : step.inProgress ? 'bg-indigo-600 shadow-sm' : 'bg-slate-100'
-              }`}>
-                {step.done
-                  ? <CheckCircle className="w-5 h-5 text-white" />
-                  : step.inProgress
-                  ? <Clock className="w-4 h-4 text-white" />
-                  : <Lock className="w-4 h-4 text-slate-400" />
-                }
-              </div>
-              <span className={`text-xs font-semibold text-center px-1 leading-tight ${
-                step.done ? 'text-teal-600' : step.inProgress ? 'text-indigo-700' : 'text-slate-400'
-              }`}>{step.label}</span>
-            </div>
-            {i < steps.length - 1 && (
-              <div className={`h-0.5 flex-1 mt-[18px] mx-1 ${step.done ? 'bg-teal-200' : 'bg-slate-100'}`} />
-            )}
-          </React.Fragment>
-        ))}
-      </div>
+      {(() => {
+        const visibleSteps = compactMode ? steps.filter(s => !s.done) : steps;
+        return (
+          <div className="flex items-start mb-5">
+            {visibleSteps.map((step, i) => (
+              <React.Fragment key={i}>
+                <div className="flex flex-col items-center flex-1 min-w-0">
+                  <div className={`w-9 h-9 rounded-full flex items-center justify-center mb-2 flex-shrink-0 ${
+                    step.done ? 'bg-teal-500 shadow-sm' : step.inProgress ? 'bg-indigo-600 shadow-sm' : 'bg-slate-100'
+                  }`}>
+                    {step.done
+                      ? <CheckCircle className="w-5 h-5 text-white" />
+                      : step.inProgress
+                      ? <Clock className="w-4 h-4 text-white" />
+                      : <Lock className="w-4 h-4 text-slate-400" />
+                    }
+                  </div>
+                  <span className={`text-xs font-semibold text-center px-1 leading-tight ${
+                    step.done ? 'text-teal-600' : step.inProgress ? 'text-indigo-700' : 'text-slate-400'
+                  }`}>{step.label}</span>
+                </div>
+                {!compactMode && i < visibleSteps.length - 1 && (
+                  <div className={`h-0.5 flex-1 mt-[18px] mx-1 ${step.done ? 'bg-teal-200' : 'bg-slate-100'}`} />
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Active step CTA card */}
       <div className={`rounded-2xl p-4 ${
@@ -177,77 +237,53 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
   profile,
   onNavigate,
   onShowToast,
+  jobs: prefetchedJobs,
+  jobsLoaded: prefetchedJobsLoaded,
 }) => {
-  const [jobs, setJobs] = useState<JobPost[]>([]);
-  const [loadingJobs, setLoadingJobs] = useState(true);
-  const [successOpen, setSuccessOpen] = useState(false);
-  const [hasApplied, setHasApplied] = useState(false);
-  const [checkingApplied, setCheckingApplied] = useState(true);
-  const isApproved = (profile.verificationStatus === 'approved' || profile.verified === true)
-    && profile.verificationStatus !== 'info_requested'
-    && profile.verificationStatus !== 'rejected';
+  const { blockReason, transportBlockReason } = useCaregiverGate();
+  const { setMembershipModalOpen } = useCareConnex();
+  const navigate = useNavigate();
+  const [jobs, setJobs] = useState<JobPost[]>(prefetchedJobs ?? []);
+  const loadingJobs = !prefetchedJobsLoaded;
 
-  useEffect(() => {
-    dbService.getOpenJobs()
-      .then(all => setJobs(all.slice(0, 4)))
-      .catch(() => {})
-      .finally(() => setLoadingJobs(false));
-  }, []);
+  // Sync jobs when parent finishes loading
+  React.useEffect(() => {
+    if (prefetchedJobs) setJobs(prefetchedJobs);
+  }, [prefetchedJobs]);
+  const [viewingJob, setViewingJob] = useState<JobPost | null>(null);
+  const [applyingJob, setApplyingJob] = useState<JobPost | null>(null);
+  const [coverLetter, setCoverLetter] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!isApproved || !profile.uid) {
-      setCheckingApplied(false);
-      return;
+  const handleApplyToJob = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!applyingJob || !profile) return;
+    setSubmitting(true);
+    try {
+      await jobApplicationService.applyToJob(
+        applyingJob.id, applyingJob.title, applyingJob.clientId, applyingJob.clientName,
+        { caregiverId: profile.uid, caregiverName: profile.name, caregiverPhoto: (profile as any).photo || (profile as any).imageUrl || '', experience: profile.experience ?? 0, rating: (profile as any).rating ?? undefined, skills: (profile as any).skills || (profile as any).certifications || [] },
+        coverLetter,
+      );
+      onShowToast?.(`Application submitted for ${applyingJob.title}!`, 'success');
+      setJobs(prev => prev.filter(j => j.id !== applyingJob.id));
+      setApplyingJob(null);
+      setCoverLetter('');
+    } catch (err: unknown) {
+      onShowToast?.(err instanceof Error ? err.message : 'Failed to submit application.', 'error');
+    } finally {
+      setSubmitting(false);
     }
-    import('../../lib/firebase').then(({ db }) => {
-      if (!db) { setCheckingApplied(false); return; }
-      db.collection('job_applications')
-        .where('caregiverId', '==', profile.uid)
-        .limit(1)
-        .get()
-        .then(snap => setHasApplied(!snap.empty))
-        .catch(() => {})
-        .finally(() => setCheckingApplied(false));
-    });
-  }, [isApproved, profile.uid]);
-
-  const successItems = [
-    {
-      label: 'Record a 30-second intro video',
-      done: !!(profile as any).introVideoUrl,
-      onClick: () => onNavigate('caregiver-video'),
-    },
-    {
-      label: 'Get a recommendation from a family',
-      done: (profile.reviewCount ?? 0) > 0,
-      onClick: () => onNavigate('caregiver-profile'),
-    },
-    {
-      label: 'Add availability to your calendar',
-      done: !!profile.weeklyAvailability && Object.values(profile.weeklyAvailability).some(slots => (slots as any[]).length > 0),
-      onClick: () => onNavigate('caregiver-calendar'),
-    },
-  ];
-
-  const greeting = isApproved
-    ? (checkingApplied ? '' : hasApplied ? `Welcome back, ${getFirstName(profile.name)}.` : "Let's find your next family.")
-    : profile.verificationStatus === 'info_requested'
-    ? 'We need more information.'
-    : profile.verificationStatus === 'rejected'
-    ? 'Your application was not approved.'
-    : profile.verificationStatus === 'submitted'
-    ? 'Your profile is under review.'
-    : 'Let\'s get you ready to apply.';
+  };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6 pb-24">
+  <>
+    <div className="max-w-5xl mx-auto px-4 py-6 pb-24">
 
       {/* ── Greeting ── */}
       <div className="mb-6">
-        <p className="text-slate-500 text-sm mb-0.5">👋 Good {getGreeting()}, {getFirstName(profile.name)}</p>
-        {!(isApproved && hasApplied) && !checkingApplied && greeting && (
-          <h1 className="text-2xl font-bold text-slate-900">{greeting}</h1>
-        )}
+        <p className="text-2xl font-bold text-slate-900">Good {getGreeting()}, {getFirstName(profile.name)}</p>
+        <p className="text-sm text-slate-500 mt-0.5">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
       </div>
 
       {/* ── Progress Card ── */}
@@ -262,154 +298,310 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
         <ProfileApprovalBanner profile={profile} />
       )}
 
-      {/* ── Approved Banner ── */}
-      {isApproved && !checkingApplied && !hasApplied && (
-        <div className="bg-teal-50 border border-teal-200 rounded-[2rem] p-6 mb-8 flex items-start gap-4 shadow-sm">
-          <div className="bg-teal-100 p-2.5 rounded-2xl flex-shrink-0">
-            <CheckCircle className="w-5 h-5 text-teal-600" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-teal-950 mb-0.5">You're approved — start applying!</p>
-            <p className="text-sm text-teal-800 font-medium">Browse open jobs and send your first application.</p>
-          </div>
-          <button
-            onClick={() => onNavigate('caregiver-jobs')}
-            className="flex-shrink-0 text-sm font-bold text-teal-700 hover:text-teal-900 underline underline-offset-2 transition-colors mt-1"
-          >
-            Job Board →
-          </button>
-        </div>
-      )}
+      {/* ── 2-column layout ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-      {/* ── Booking Requests ── */}
-      {profile.uid && (
-        <div className="mb-8">
-          <CaregiverBookingRequests caregiverId={profile.uid} onShowToast={onShowToast || (() => {})} />
-        </div>
-      )}
-
-      {/* ── Interview Requests ── */}
-      {profile.uid && (
-        <div className="mb-8">
-          <CaregiverInterviewManager caregiverId={profile.uid} onShowToast={onShowToast || (() => {})} />
-        </div>
-      )}
-
-      {/* ── Job Board Preview ── */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-slate-900">Job Board</h2>
-          <button onClick={() => onNavigate('caregiver-jobs')} className="text-sm text-primary-600 hover:text-primary-700 font-bold">
-            See all posts →
-          </button>
-        </div>
-        {loadingJobs ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="w-6 h-6 text-slate-300 animate-spin" />
-          </div>
-        ) : jobs.length === 0 ? (
-          <div className="bg-slate-50 border border-slate-200 rounded-[2rem] p-8 text-center">
-            <Briefcase className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-            <p className="text-slate-500 text-sm">No jobs posted yet. Check back soon.</p>
-          </div>
-        ) : (
-          <div className="grid sm:grid-cols-2 gap-4">
-            {jobs.map(job => (
-              <div key={job.id} className="bg-white border border-slate-100 rounded-[1.5rem] p-6 hover:border-primary-300 hover:shadow-lg shadow-sm transition-all duration-300">
-                <div className="flex items-start gap-4 mb-4">
-                  <div className="w-12 h-12 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-base flex-shrink-0 shadow-inner">
-                    {(job.clientName || 'F').charAt(0).toUpperCase()}
+        {/* Left: Job Board */}
+        <div className="lg:col-span-2">
+          <h2 className="text-xl font-bold text-slate-900 mb-4">Nearby Jobs</h2>
+          {loadingJobs ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 animate-pulse">
+                {[1, 2, 3].map(i => (
+                  <div key={i} className="border border-slate-100 rounded-xl p-4">
+                    <div className="flex items-start gap-3 mb-2">
+                      <div className="w-9 h-9 rounded-full bg-slate-200 flex-shrink-0" />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="h-3.5 bg-slate-200 rounded w-3/4" />
+                        <div className="h-3 bg-slate-100 rounded w-1/3" />
+                      </div>
+                    </div>
+                    <div className="h-3 bg-slate-100 rounded w-full mb-1" />
+                    <div className="h-3 bg-slate-100 rounded w-2/3" />
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-bold text-slate-900 text-sm truncate">{job.title || 'Senior Care'}, {job.jobFrequency ? job.jobFrequency.replace('-', ' ') : 'Occasional'}</p>
-                    <p className="text-xs text-primary-600 font-bold">
-                      starting {job.date ? new Date(job.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'Flexible'}
-                    </p>
-                  </div>
-                </div>
-                <p className="text-sm text-slate-600 line-clamp-2 mb-4 leading-relaxed font-medium">{job.description}</p>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-                    <MapPin className="w-4 h-4 text-slate-400" />
-                    {job.location || job.zipCode || 'Location TBD'}
-                  </div>
-                  <button onClick={() => onNavigate('caregiver-jobs')} className="text-sm font-bold text-primary-600 hover:text-primary-700 bg-primary-50 px-3 py-1.5 rounded-full">
-                    View
-                  </button>
-                </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            ) : jobs.length === 0 ? (
+              <div className="text-center py-8">
+                <Briefcase className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                <p className="text-sm text-slate-400">No jobs posted yet. Check back soon.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {jobs.map(job => {
+                  const p = profile as any;
+                  const cgLat = p.latitude ?? p.lat;
+                  const cgLng = p.longitude ?? p.lng;
+                  const dist = (cgLat != null && cgLng != null && (job as any).lat != null && (job as any).lng != null)
+                    ? (() => {
+                        const R = 3959, dLat = ((job as any).lat - cgLat) * Math.PI / 180, dLng = ((job as any).lng - cgLng) * Math.PI / 180;
+                        const a = Math.sin(dLat/2)**2 + Math.cos(cgLat*Math.PI/180)*Math.cos((job as any).lat*Math.PI/180)*Math.sin(dLng/2)**2;
+                        return (R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))).toFixed(1);
+                      })()
+                    : null;
+                  const freq = (job as any).jobFrequency || '';
+                  const freqLabel = freq === 'full-time' ? 'FULL-TIME' : freq === 'part-time' ? 'PART-TIME' : 'OCCASIONAL';
+                  const times: string[] = (job as any).timeOfDay || [];
+                  const isDay = times.some((t: string) => ['morning','afternoon'].includes(t));
+                  const isNight = times.some((t: string) => ['evening','overnight'].includes(t));
+                  const needsTransport = ((job as any).careTypes || (job as any).requirements || []).some((r: string) => /transport/i.test(r));
+                  const seniors = (job as any).recipientsCount || (job as any).numberOfSeniors;
+                  const dateStr = (job as any).date
+                    ? new Date((job as any).date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+                    : null;
+                  const timeStr = (() => {
+                    const s = (job as any).startTime, e = (job as any).endTime;
+                    if (s && e) return `${s} – ${e}`;
+                    const labels = times.map((t: string) => t.charAt(0).toUpperCase() + t.slice(1));
+                    return labels.join(', ') || null;
+                  })();
+                  const isCash = !((job as any).paymentMethod) || (job as any).paymentMethod === 'cash';
+                  return (
+                    <div key={job.id} className="bg-white rounded-2xl p-5 hover:shadow-md shadow-sm transition-all">
+                      {/* Header: title + rate */}
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="min-w-0 flex-1">
+                          <h4 className="font-bold text-slate-900 text-sm leading-snug mb-1">{job.title || 'Senior Care'}</h4>
+                          <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                            <MapPin className="w-3 h-3 flex-shrink-0" />
+                            <span>{job.location || (job as any).zipCode || 'Location TBD'}</span>
+                            {dist && <span className="text-slate-400">({dist} mi away)</span>}
+                          </div>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          {job.rate != null && (
+                            <span className="text-sm font-bold text-green-700 bg-green-100 px-2.5 py-1 rounded-full">${job.rate}/hr</span>
+                          )}
+                          {(job as any).paymentMethod && (
+                            <p className="text-[10px] text-slate-400 mt-1 flex items-center justify-end gap-0.5">
+                              {isCash ? <Banknote className="w-3 h-3" /> : <CreditCard className="w-3 h-3" />}
+                              via {isCash ? 'cash' : 'card'}
+                            </p>
+                          )}
+                        </div>
+                      </div>
 
-      {/* ── Success Guide ── */}
-      <div className="bg-white border border-slate-100 rounded-[2rem] overflow-hidden mb-8 shadow-sm">
-        <button
-          onClick={() => setSuccessOpen(o => !o)}
-          className="w-full px-6 py-5 flex items-center justify-between text-left hover:bg-slate-50 transition-colors"
-        >
-          <div>
-            <span className="font-bold text-slate-900">Success Guide</span>
-            <span className="text-slate-500 font-medium text-sm ml-2 hidden sm:inline">Book jobs faster — follow our guide to stand out.</span>
-          </div>
-          <ChevronRight className={`w-5 h-5 text-slate-400 transition-transform flex-shrink-0 ${successOpen ? 'rotate-90' : ''}`} />
-        </button>
-        {successOpen && (
-          <div className="border-t border-slate-50 divide-y divide-slate-50">
-            {successItems.map((item, i) => (
-              <button key={i} onClick={item.done ? undefined : item.onClick}
-                className={`w-full px-6 py-4 flex items-center gap-4 text-left transition-colors ${item.done ? 'cursor-default' : 'hover:bg-slate-50'}`}>
-                <div className={`w-6 h-6 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${item.done ? 'bg-primary-500 border-primary-500 shadow-sm' : 'border-slate-200'}`}>
-                  {item.done && <CheckCircle className="w-4 h-4 text-white" />}
-                </div>
-                <span className={`text-sm font-medium flex-1 ${item.done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{item.label}</span>
-                {!item.done && <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />}
+                      {/* Badges */}
+                      <div className="flex flex-wrap gap-1.5 mb-3">
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-primary-50 text-primary-700">{freqLabel}</span>
+                        {isDay && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 flex items-center gap-1"><Sun className="w-3 h-3" />Day</span>}
+                        {isNight && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 flex items-center gap-1"><Moon className="w-3 h-3" />Night</span>}
+                        {seniors > 1 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 flex items-center gap-1"><UsersIcon className="w-3 h-3" />{seniors} seniors</span>}
+                        {needsTransport && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 flex items-center gap-1"><Car className="w-3 h-3" />Transport</span>}
+                      </div>
+
+                      {/* Date + time */}
+                      {(dateStr || timeStr) && (
+                        <div className="bg-slate-50 rounded-xl px-3 py-2 mb-4 space-y-1">
+                          {dateStr && <div className="flex items-center gap-2 text-xs text-slate-600"><Calendar className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />{dateStr}</div>}
+                          {timeStr && <div className="flex items-center gap-2 text-xs text-slate-600"><Clock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />{timeStr}</div>}
+                        </div>
+                      )}
+
+                      {/* Buttons */}
+                      <div className="flex gap-2">
+                        {(() => {
+                          const jobRequiresTransport = job.careTypes?.includes('Transportation') || (job as any).requirements?.includes('Driving');
+                          const reason = jobRequiresTransport ? transportBlockReason : blockReason;
+                          if (reason === 'membership') return (
+                            <button onClick={() => setMembershipModalOpen(true)} className="flex-1 py-2 bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                              <Lock className="w-3 h-3" /> Activate Membership
+                            </button>
+                          );
+                          if (reason === 'background') return (
+                            <button onClick={() => navigate('/caregiver/dashboard')} className="flex-1 py-2 bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                              <Lock className="w-3 h-3" /> Complete Verification
+                            </button>
+                          );
+                          if (reason === 'transport') return (
+                            <button onClick={() => navigate('/caregiver/settings')} className="flex-1 py-2 bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                              <Car className="w-3 h-3" /> Transportation Badge Required
+                            </button>
+                          );
+                          return <button onClick={() => setApplyingJob(job)} className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold rounded-xl transition-colors">Apply Now</button>;
+                        })()}
+                        <button onClick={() => setViewingJob(job)} className="px-4 py-2 border border-slate-200 hover:border-slate-300 text-slate-700 text-xs font-semibold rounded-xl transition-colors">Details</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          {jobs.length > 0 && (
+            <div className="text-center pt-2 pb-1">
+              <button onClick={() => onNavigate('caregiver-jobs')} className="inline-flex items-center gap-1.5 text-sm text-primary-600 font-medium hover:text-primary-700 hover:underline transition-colors">
+                See more →
               </button>
-            ))}
+            </div>
+          )}
+        </div>
+
+        {/* Right sidebar: Care Requests + Bookings */}
+        {profile.uid && (
+          <div className="lg:col-span-1 space-y-4">
+            <CaregiverCareRequestsCard caregiverId={profile.uid} />
+            <CaregiverBookingsCard caregiverId={profile.uid} pendingOnly />
           </div>
         )}
+
       </div>
 
-      {/* ── Resources ── */}
-      <div className="mb-8">
-        <h2 className="text-lg font-bold text-slate-900 mb-4">Resources</h2>
-        <div className="grid sm:grid-cols-3 gap-4">
-          {[
-            { icon: Briefcase, title: 'How CareConnex works', desc: 'Learn how to find jobs, apply, and get hired on the platform.' },
-            { icon: Star, title: 'Building your profile', desc: 'Tips for standing out and getting more inquiries from families.' },
-            { icon: Calendar, title: 'Getting your first booking', desc: 'Step-by-step guide to landing your first shift on CareConnex.' },
-          ].map((r, i) => (
-            <div key={i} className="bg-white border border-slate-100 rounded-[1.5rem] p-6 hover:border-primary-200 hover:shadow-md shadow-sm transition-all cursor-pointer">
-              <div className="w-12 h-12 bg-primary-50 rounded-[1rem] flex items-center justify-center mb-4">
-                <r.icon className="w-6 h-6 text-primary-600" />
+      {/* ── Job Details Modal ── */}
+      {viewingJob && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setViewingJob(null)} />
+          <div className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <button onClick={() => setViewingJob(null)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X size={24} /></button>
+
+            {/* Header */}
+            <div className="pr-8 mb-1">
+              <div className="flex items-start justify-between gap-3">
+                <h2 className="text-xl font-bold text-slate-900 leading-tight">{viewingJob.title}</h2>
+                {viewingJob.rate != null && (
+                  <span className="bg-green-100 text-green-700 text-sm font-bold px-3 py-1 rounded-full shrink-0">${viewingJob.rate}/hr</span>
+                )}
               </div>
-              <p className="font-bold text-slate-900 text-sm mb-1">{r.title}</p>
-              <p className="text-sm font-medium text-slate-500 leading-relaxed">{r.desc}</p>
+              <p className="text-slate-500 text-sm mt-1">Posted by {viewingJob.clientName}</p>
+              {viewingJob.location && (
+                <p className="text-slate-400 text-xs mt-0.5 flex items-center gap-1"><MapPin className="w-3 h-3" />{viewingJob.location}</p>
+              )}
             </div>
-          ))}
-        </div>
-      </div>
 
-      {/* ── Community CTA ── */}
-      <div className="bg-gradient-to-r from-primary-50 to-primary-50 border border-primary-100 rounded-[2rem] p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-white rounded-full shadow-sm">
-            <Users className="w-6 h-6 text-primary-600" />
-          </div>
-          <div>
-            <p className="font-bold text-slate-900">Join the CareConnex caregiver community</p>
-            <p className="text-sm font-medium text-slate-600 mt-0.5">Share tips, ask questions, and connect with other caregivers.</p>
-          </div>
-        </div>
-        <a
-          href="mailto:community@careconnex.app?subject=Join%20the%20caregiver%20community"
-          className="text-sm font-bold text-white bg-primary-600 hover:bg-primary-700 px-6 py-2.5 rounded-full whitespace-nowrap transition-colors shadow-md"
-        >
-          Join Now
-        </a>
-      </div>
+            {/* Chips */}
+            {(viewingJob.jobFrequency || (viewingJob.careTypes ?? (viewingJob as any).requirements ?? []).length > 0) && (
+              <div className="flex flex-wrap gap-2 mt-3 mb-4">
+                {viewingJob.jobFrequency && (
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-primary-50 text-primary-700 text-[11px] font-semibold uppercase tracking-wide">
+                    {({'one-time':'Occasional','occasional':'Occasional','part-time':'Part-time','full-time':'Full-time'} as Record<string,string>)[viewingJob.jobFrequency] || viewingJob.jobFrequency}
+                  </span>
+                )}
+                {(viewingJob.careTypes ?? (viewingJob as any).requirements ?? []).map((ct: string, i: number) => (
+                  <span key={i} className="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-2.5 py-0.5 rounded-full font-medium">{ct}</span>
+                ))}
+              </div>
+            )}
 
+            {/* Schedule */}
+            <div className="bg-slate-50 p-4 rounded-xl space-y-2 text-sm mb-4">
+              {(viewingJob.startDate || (viewingJob as any).date) && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Starting Date</span>
+                  <span className="font-medium">{(() => { const d = new Date(((viewingJob.startDate || (viewingJob as any).date) as string) + 'T12:00:00'); return isNaN(d.getTime()) ? (viewingJob.startDate || (viewingJob as any).date) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })()}</span>
+                </div>
+              )}
+              {Array.isArray(viewingJob.daysOfWeek) && viewingJob.daysOfWeek.length > 0 && (
+                <div className="flex justify-between"><span className="text-slate-500">Days</span><span className="font-medium">{viewingJob.daysOfWeek.join(', ')}</span></div>
+              )}
+              {(() => {
+                const timeLabel = viewingJob.startTime && viewingJob.endTime && viewingJob.startTime !== '-'
+                  ? `${viewingJob.startTime} – ${viewingJob.endTime}`
+                  : Array.isArray(viewingJob.timeOfDay) && viewingJob.timeOfDay.length > 0
+                    ? (viewingJob.timeOfDay as string[]).map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(', ')
+                    : null;
+                return timeLabel ? (
+                  <div className="flex justify-between"><span className="text-slate-500">Time</span><span className="font-medium">{timeLabel}</span></div>
+                ) : null;
+              })()}
+              {viewingJob.recipientsCount != null && (
+                <div className="flex justify-between"><span className="text-slate-500">Seniors</span><span className="font-medium">{viewingJob.recipientsCount} {viewingJob.recipientsCount === 1 ? 'senior' : 'seniors'}</span></div>
+              )}
+              {viewingJob.minHoursPerWeek != null && (
+                <div className="flex justify-between"><span className="text-slate-500">Hours/week</span><span className="font-medium">{viewingJob.minHoursPerWeek}+ hrs</span></div>
+              )}
+            </div>
+
+            {/* Description */}
+            {viewingJob.description && (
+              <div className="mb-4">
+                <h3 className="font-bold text-slate-900 mb-2 text-sm">Description</h3>
+                <p className="text-slate-600 text-sm leading-relaxed break-words">{viewingJob.description}</p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-3 pt-2">
+              <button onClick={() => setViewingJob(null)} className="flex-1 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-semibold rounded-xl transition-colors">Close</button>
+              {(() => {
+                const jobRequiresTransport = viewingJob?.careTypes?.includes('Transportation') || (viewingJob as any)?.requirements?.includes('Driving');
+                const reason = jobRequiresTransport ? transportBlockReason : blockReason;
+                if (reason === 'membership') return (
+                  <button onClick={() => setMembershipModalOpen(true)} className="flex-1 py-2.5 bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5" /> Activate Membership
+                  </button>
+                );
+                if (reason === 'background') return (
+                  <button onClick={() => navigate('/caregiver/dashboard')} className="flex-1 py-2.5 bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5" /> Complete Verification
+                  </button>
+                );
+                if (reason === 'transport') return (
+                  <button onClick={() => navigate('/caregiver/settings')} className="flex-1 py-2.5 bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                    <Car className="w-3.5 h-3.5" /> Transportation Badge Required
+                  </button>
+                );
+                return <button onClick={() => { setApplyingJob(viewingJob); setViewingJob(null); }} className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-bold rounded-xl transition-colors">Apply Now</button>;
+              })()}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+      {/* ── Apply Modal ── */}
+      {applyingJob && createPortal(
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setApplyingJob(null)} />
+          <div className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl flex flex-col max-h-[90vh]">
+            <button onClick={() => setApplyingJob(null)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 z-10"><X size={24} /></button>
+
+            <div className="overflow-y-auto flex-1 p-6">
+              <h2 className="text-xl font-bold text-slate-900 mb-1">Apply for Position</h2>
+              <p className="text-slate-500 text-sm mb-6">{applyingJob.title}</p>
+
+              <form id="dashboard-apply-form" onSubmit={handleApplyToJob} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Cover Letter <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <textarea
+                    value={coverLetter}
+                    onChange={e => setCoverLetter(e.target.value)}
+                    placeholder="Tell the client why you're a good fit..."
+                    className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
+                    rows={4}
+                  />
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-xl">
+                  <h4 className="font-medium text-slate-900 mb-2">Your Profile</h4>
+                  <div className="text-sm text-slate-600 space-y-1">
+                    <p><span className="text-slate-400">Experience:</span> {profile.experience ?? 0} years</p>
+                    {(profile as any).rating != null && (
+                      <p><span className="text-slate-400">Rating:</span> {Number((profile as any).rating).toFixed(1)} ⭐</p>
+                    )}
+                    {(profile as any).skills?.length > 0 && (
+                      <p><span className="text-slate-400">Skills:</span> {(profile as any).skills.slice(0, 3).join(', ')}</p>
+                    )}
+                  </div>
+                </div>
+
+                {applyingJob.rate != null && (
+                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-sm text-blue-800">
+                    <strong>Client's budget:</strong> ${applyingJob.rate}/hr
+                  </div>
+                )}
+              </form>
+            </div>
+
+            <div className="border-t border-slate-100 p-4 flex gap-3 bg-white rounded-b-3xl">
+              <button type="button" onClick={() => setApplyingJob(null)} className="flex-1 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-semibold rounded-xl transition-colors">Cancel</button>
+              <button type="submit" form="dashboard-apply-form" disabled={submitting} className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white text-sm font-bold rounded-xl transition-colors flex items-center justify-center gap-2">
+                {submitting ? <><Loader2 className="w-4 h-4 animate-spin" /> Submitting...</> : 'Submit Application'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
+  </>
   );
 };

@@ -139,6 +139,16 @@ vi.mock("../../stripe", () => ({
   }),
 }));
 
+// These tests target the tools' own payment-safety logic (ownership, no
+// double-charge, pending_review). The runtime confirmation gate cara-100 added
+// to handleToolCall (ALWAYS_CONFIRM / CONDITIONAL_CONFIRM) has its own suite, so
+// bypass just isHighRisk here to reach the underlying handlers; keep every other
+// real export intact.
+vi.mock("../../agents/pendingActions", async (importActual) => ({
+  ...(await importActual<typeof import("../../agents/pendingActions")>()),
+  isHighRisk: () => false,
+}));
+
 import { handleToolCall } from "../server";
 
 describe("U2 caregiver action tools", () => {

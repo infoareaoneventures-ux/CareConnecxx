@@ -428,17 +428,8 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
     if (!db || !window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
     setCancellingShift(shiftId);
     try {
-      await db.collection('shifts').doc(shiftId).update({ status: 'cancelled' });
-      if (base.caregiverId) {
-        await db.collection('users').doc(base.caregiverId).collection('notifications').add({
-          userId: base.caregiverId,
-          type: 'booking',
-          title: 'Shift Cancelled',
-          body: `A client cancelled one of your shifts.`,
-          isRead: false,
-          createdAt: new Date().toISOString(),
-        }).catch(() => {});
-      }
+      // onShiftCancelled Cloud Function fires and notifies the caregiver
+      await db.collection('shifts').doc(shiftId).update({ status: 'cancelled', cancelledBy: 'client' });
     } catch {
       // non-critical
     } finally {
@@ -1073,41 +1064,24 @@ export const ClientVisitsPage: React.FC = () => {
         .where('status', '==', 'scheduled')
         .where('clientId', '==', user?.uid)
         .get();
-      futureSnap.docs.forEach(doc => batch.update(doc.ref, { status: 'cancelled' }));
+      // Mark shifts as bulkCancelled so onShiftCancelled skips individual notifications
+      futureSnap.docs.forEach(doc => batch.update(doc.ref, { status: 'cancelled', bulkCancelled: true }));
       await batch.commit();
+      // onBookingRequestWrite Cloud Function fires here and notifies the caregiver
       await db.collection('booking_requests').doc(bookingRequestId).update({ status: 'cancelled' }).catch(() => {});
     } else {
-      batch.update(db.collection('shifts').doc(shiftId), { status: 'cancelled' });
+      batch.update(db.collection('shifts').doc(shiftId), { status: 'cancelled', bulkCancelled: true });
       await batch.commit();
     }
-
-    if (caregiverId) {
-      await db.collection('users').doc(caregiverId).collection('notifications').add({
-        userId: caregiverId,
-        type: 'booking',
-        title: 'Booking Cancelled',
-        body: `${user?.displayName || 'A client'} has cancelled their booking.`,
-        isRead: false,
-        createdAt: new Date().toISOString(),
-      }).catch(() => {});
-    }
+    // Notification handled by onBookingRequestWrite Cloud Function
   };
 
   const handleCancelPendingBooking = async (bookingId: string) => {
     if (!db) return;
     const snap = await db.collection('booking_requests').doc(bookingId).get().catch(() => null);
     const data = snap?.data() as any;
+    // onBookingRequestWrite Cloud Function fires and notifies the caregiver
     await db.collection('booking_requests').doc(bookingId).update({ status: 'cancelled' });
-    if (data?.caregiverId) {
-      await db.collection('users').doc(data.caregiverId).collection('notifications').add({
-        userId: data.caregiverId,
-        type: 'booking',
-        title: 'Booking Request Cancelled',
-        body: `${user?.displayName || 'A client'} has cancelled their booking request.`,
-        isRead: false,
-        createdAt: new Date().toISOString(),
-      }).catch(() => {});
-    }
   };
 
   const activeShifts = shifts.filter(s => s.status === 'scheduled' || s.status === 'in-progress');
@@ -1232,6 +1206,7 @@ export const ClientVisitsPage: React.FC = () => {
                     <button
                       onClick={async () => {
                         if (!db) return;
+                        // onBookingAmendmentWrite Cloud Function fires and notifies the caregiver
                         await db.collection('booking_amendments').doc(a.id).update({ status: 'cancelled' }).catch(() => {});
                       }}
                       className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl transition-colors shrink-0 mt-0.5"

@@ -479,20 +479,7 @@ export default function Schedule() {
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
 
-      const dayList = selectedDays.join(', ');
-      const isOneDay = !isOngoing && visitStartDate && visitEndDate && visitStartDate === visitEndDate;
-      await fdb.collection('users').doc(visitCaregiverId).collection('notifications').add({
-        userId: visitCaregiverId,
-        type: 'extra_visit_request',
-        title: isOneDay ? 'Extra Visit Requested' : 'Schedule Change Requested',
-        message: isOneDay
-          ? `Your client requested an extra visit on ${new Date(visitStartDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}.`
-          : `Your client wants to add ${dayList} to your regular schedule.`,
-        read: false,
-        isRead: false,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-      });
+      // Notification handled by onBookingAmendmentWrite Cloud Function
 
       setShowAddModal(false);
       resetVisitModal();
@@ -508,8 +495,9 @@ export default function Schedule() {
   const handleCancel = async (id: string) => {
     if (!confirm('Cancel this shift?')) return;
     if (!db) return;
+    // onShiftCancelled Cloud Function fires and notifies the caregiver
     await db.collection('shifts').doc(id).update({
-      status: 'cancelled', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status: 'cancelled', cancelledBy: 'client', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     setSelectedShift(null);
     fetchShifts();
@@ -800,8 +788,9 @@ export default function Schedule() {
       const fdb = db;
       setCancelling(true);
       try {
+        // onVideoInterviewWrite Cloud Function fires and notifies the caregiver
         await fdb.collection('video_interviews').doc(interview.id).update({
-          status: 'cancelled', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+          status: 'cancelled', cancelledBy: 'client', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'cancelled' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'cancelled' as const } : prev);

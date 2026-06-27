@@ -904,6 +904,7 @@ const BookingGroupCard: React.FC<{
                     status: 'declined',
                     respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
                   }).catch(() => {});
+                  // Notification handled by onBookingAmendmentWrite Cloud Function
                 }}
                 className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl transition-colors"
               >
@@ -937,11 +938,9 @@ const BookingGroupCard: React.FC<{
                       userId: shift.clientId,
                       type: 'extra_visit_accepted',
                       title: 'Visit Accepted',
-                      message: `${shift.caregiverName || 'Your caregiver'} confirmed your extra visit on ${fmtDate(shift.date)}.`,
-                      read: false,
+                      body: `${shift.caregiverName || 'Your caregiver'} confirmed your extra visit on ${fmtDate(shift.date)}.`,
                       isRead: false,
                       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
                     }).catch(() => {});
                   }
                 }}
@@ -961,11 +960,9 @@ const BookingGroupCard: React.FC<{
                       userId: shift.clientId,
                       type: 'extra_visit_declined',
                       title: 'Visit Declined',
-                      message: `${shift.caregiverName || 'Your caregiver'} is unavailable for the extra visit on ${fmtDate(shift.date)}.`,
-                      read: false,
+                      body: `${shift.caregiverName || 'Your caregiver'} is unavailable for the extra visit on ${fmtDate(shift.date)}.`,
                       isRead: false,
                       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
                     }).catch(() => {});
                   }
                 }}
@@ -1632,10 +1629,13 @@ export const CaregiverBookingsPage: React.FC = () => {
     if (!db || !window.confirm('Decline this booking request?')) return;
     setSubmitting(true);
     try {
+      const snap = await db.collection('booking_requests').doc(id).get();
+      const data = snap.data() as any;
       await db.collection('booking_requests').doc(id).update({
         status: 'declined',
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
+      // Notification handled by onBookingRequestWrite Cloud Function
       addToast('Request declined', 'info');
     } catch {
       addToast('Failed to decline request', 'error');
@@ -1779,15 +1779,7 @@ export const CaregiverBookingsPage: React.FC = () => {
             }
           }
           if (count > 0) await batch.commit();
-          await fdb.collection('users').doc(amendment.clientId).collection('notifications').add({
-            userId: amendment.clientId,
-            type: 'recurring_visit_accepted',
-            title: 'Recurring Visit Accepted',
-            message: `${amendment.caregiverName} accepted your request to add ${Object.keys(amendment.newDays).join(', ')} to your regular schedule.`,
-            read: false, isRead: false,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-          }).catch(() => {});
+          // Notification handled by onBookingAmendmentWrite Cloud Function
         }
       }
       await fdb.collection('booking_amendments').doc(amendment.id).update({
@@ -1911,6 +1903,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                                 status: 'declined',
                                 respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
                               }).catch(() => {});
+                              // Notification handled by onBookingAmendmentWrite Cloud Function
                             }}
                             className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl transition-colors"
                           >

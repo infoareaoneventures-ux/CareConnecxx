@@ -759,12 +759,14 @@ export const PostsPage: React.FC = () => {
         await db.collection('booking_requests').doc(existing.id).update({
           ...bookingData,
           status: 'pending',
+          isResend: true,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
       } else {
         await db.collection('booking_requests').add({
           ...bookingData,
           status: 'pending',
+          isResend: false,
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
         await db.collection('hire_decisions').add({
@@ -794,16 +796,7 @@ export const PostsPage: React.FC = () => {
         }
       }
 
-      await db.collection('users').doc(interview.caregiverId).collection('notifications').add({
-        userId: interview.caregiverId,
-        type: 'booking_request',
-        title: isResend ? 'Booking Request Resent' : 'New Booking Request',
-        message: `${user.displayName || 'A family'} ${isResend ? 'resent their' : 'sent you a'} booking request.`,
-        data: { clientId: user.uid },
-        read: false, isRead: false,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
+      // Notification handled by onBookingRequestWrite Cloud Function
 
       setSendBookingFor(null);
       setBookingDraft({ note: '', selectedRecipientKeys: [], recipientDrafts: {}, lifestyleNotes: [], selectedAddress: '', emergencyContactFirstName: '', emergencyContactLastName: '', emergencyContactPhone: '', emergencyContactRelation: '', shiftStartDate: '', shiftEndDate: '', shiftOngoing: false, dayShiftTimes: {}, agreedRate: null, paymentMethod: '' });
@@ -820,7 +813,22 @@ export const PostsPage: React.FC = () => {
   const handleCancelBooking = async (bookingId: string) => {
     if (!db) return;
     try {
+      const bookingSnap = await db.collection('booking_requests').doc(bookingId).get();
+      const bookingData = bookingSnap.data();
       await db.collection('booking_requests').doc(bookingId).update({ status: 'cancelled' });
+      if (bookingData?.caregiverId) {
+        try {
+          const clientName = auth?.currentUser?.displayName || 'A family';
+          await db.collection('users').doc(bookingData.caregiverId).collection('notifications').add({
+            userId: bookingData.caregiverId,
+            type: 'booking_cancelled',
+            title: 'Booking Request Cancelled',
+            body: `${clientName} cancelled their booking request.`,
+            isRead: false,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          });
+        } catch { /* non-critical */ }
+      }
       addToast('Booking request cancelled.', 'success');
     } catch (err) {
       console.error('handleCancelBooking error:', err);
@@ -834,7 +842,7 @@ export const PostsPage: React.FC = () => {
     setSubmittingDecision(prev => ({ ...prev, [interview.id]: true }));
     try {
       if (decision === 'decline') {
-        await db.collection('video_interviews').doc(interview.id).update({ status: 'declined' });
+        await db.collection('video_interviews').doc(interview.id).update({ status: 'declined', declinedBy: 'client' });
       }
       await db.collection('hire_decisions').add({
         clientId: user.uid,
@@ -844,18 +852,8 @@ export const PostsPage: React.FC = () => {
         decision,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
-      await db.collection('users').doc(interview.caregiverId).collection('notifications').add({
-        userId: interview.caregiverId,
-        type: 'hire_decision',
-        title: decision === 'hire' ? 'Booking Request Incoming' : 'Interview Update',
-        message: decision === 'hire'
-          ? `${user.displayName || 'A family'} would like to send you a booking request.`
-          : `${user.displayName || 'A family'} has decided not to move forward at this time.`,
-        data: { clientId: user.uid, decision },
-        read: false, isRead: false,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
+      // Notification handled by onVideoInterviewWrite Cloud Function (decline) /
+      // onBookingRequestWrite Cloud Function (hire)
       setDecisionDone(prev => ({ ...prev, [interview.id]: decision === 'hire' ? 'hired' : 'declined' }));
       addToast(decision === 'hire' ? 'Booking request sent!' : 'Caregiver notified', 'success');
     } catch (err: any) { console.error('handleDecision error:', err?.code, err?.message, err); addToast('Something went wrong. Please try again.', 'error'); }

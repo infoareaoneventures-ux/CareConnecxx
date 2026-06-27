@@ -69,6 +69,9 @@ export * from './triggers/aiMatchTriggers';
 // Export Job Application Triggers (maintains JobPost.applicantCount)
 export * from './triggers/jobApplicationTriggers';
 
+// Notification triggers (server-side, replaces client-side notification writes)
+export * from './triggers/notificationTriggers';
+
 // Export per-shift hours submission / review / payment
 export * from './shiftHours';
 

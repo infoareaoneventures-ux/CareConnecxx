@@ -2,8 +2,43 @@ import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { safeParseJson } from "../utils/jsonUtils";
 import { sendMessage, AgentSession } from "../linq/client";
+import { isConvergenceFlipped } from "../config/featureFlags";
 
 const db = admin.firestore();
+
+// ── Prompt-driven sequencing (U13) — DARK behind CONVERGENCE_FLIPPED="modify_schedule" ─
+// Unlike the linear flows, schedule-modification branches on `changeWhat`
+// (days_only / times_only / both), so the resolver encodes that branching
+// faithfully rather than a flat field order. ms_confirm is the hand-off once the
+// requested fields are collected. Flag OFF (default) ⇒ live path unchanged.
+export const MODIFY_SCHEDULE_CONVERGENCE_FLOW = "modify_schedule";
+
+function msFilled(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value))      return value.length > 0;
+  return true;
+}
+
+// Next step derived from what the user asked to change and what's collected.
+// Mirrors the handler branching exactly (days_only→days→confirm,
+// times_only→times→confirm, both→days→times→confirm).
+export function resolveScheduleStep(scheduleData: Record<string, unknown> | undefined): string {
+  const data = scheduleData ?? {};
+  const changeWhat = data.changeWhat as string | undefined;
+  if (!changeWhat) return "ms_ask_what";
+  const needsDays  = changeWhat === "days_only"  || changeWhat === "both";
+  const needsTimes = changeWhat === "times_only" || changeWhat === "both";
+  if (needsDays  && !msFilled(data.newDays))      return "ms_ask_days";
+  if (needsTimes && !msFilled(data.newStartTime)) return "ms_ask_times";
+  return "ms_confirm";
+}
+
+export function isModifyScheduleDispatchEnabled(): boolean {
+  return isConvergenceFlipped(MODIFY_SCHEDULE_CONVERGENCE_FLOW);
+}
+
+const MS_DISPATCHABLE_STEPS = new Set(["", "ms_ask_what", "ms_ask_days", "ms_ask_times", "ms_confirm"]);
 
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
@@ -89,7 +124,12 @@ export async function handleModifyScheduleStep(
   text:    string,
   session: AgentSession
 ): Promise<void> {
-  const step = (session as any).modifyScheduleStep as string ?? "";
+  let step = (session as any).modifyScheduleStep as string ?? "";
+  // U13 (DARK): derive the step from what the user is changing + collected
+  // fields when the flag is on. Handlers + confirm path unchanged; OFF ⇒ no change.
+  if (isModifyScheduleDispatchEnabled() && MS_DISPATCHABLE_STEPS.has(step)) {
+    step = resolveScheduleStep((session as any).modifyScheduleData as Record<string, unknown> | undefined);
+  }
   switch (step) {
     case "ms_ask_what":   return handleMsAskWhat(phone, chatId, text, session);
     case "ms_ask_days":   return handleMsAskDays(phone, chatId, text, session);

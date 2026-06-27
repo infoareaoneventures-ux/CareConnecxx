@@ -20,6 +20,11 @@ export type Capability =
 export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── booking ──────────────────────────────────────────────────────────────
   request_booking:              ["booking"],
+  get_caregiver_booking_rate:   ["booking"],  // U9b: read-only rate lookup
+  quote_booking:                ["booking"],  // U9b: read-only cost estimate (no write)
+  get_callout_backups:          ["booking"],            // parity: caregiver-callout backup options (read)
+  select_callout_backup:        ["booking"],            // parity: assign a callout backup
+  request_callout_refund:       ["booking", "billing"], // parity: callout refund request
   find_replacement_caregivers:  ["booking"],
   get_caregiver_info:           ["booking"],
   get_caregiver_reviews:        ["booking"],
@@ -56,7 +61,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   manage_recurring_schedule:     ["scheduling"],
   list_user_reminders:           ["scheduling"],
   create_reminder:               ["scheduling"],
-  update_reminder:               ["scheduling"],
+  update_reminder:               ["scheduling"],  // CRUD: reminder UPDATE
   delete_reminder:               ["scheduling"],
   schedule_followup:             ["scheduling"],
   update_caregiver_availability: ["scheduling"],
@@ -93,13 +98,26 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   restore_care_plan_version: ["care_plan"],
   get_health_signals:        ["care_plan"],
   log_health_flag:           ["care_plan"],
+  create_senior_profile:     ["care_plan"],
+  // U7
+  delete_care_journal_entry: ["care_plan"],
+  delete_review:             ["booking"],
+  log_match_feedback:        ["booking"],
+  create_job_post:           ["booking"],
+  list_proactive_drafts:     ["scheduling"],
+  cancel_proactive_draft:    ["scheduling"],
   like_journal_entry:        ["care_plan", "messaging"],
   unlike_journal_entry:      ["care_plan", "messaging"],
   comment_on_journal_entry:  ["care_plan", "messaging"],
+  edit_comment:              ["care_plan", "messaging"],  // CRUD: journal-comment UPDATE
   delete_comment:            ["care_plan", "messaging"],
   edit_review:               ["booking"],
   cancel_followup:           ["scheduling"],
   update_caregiver_profile:  ["care_plan"],
+  pause_account:             ["scheduling"],
+  reactivate_account:        ["scheduling"],
+  accept_shift:              ["booking", "scheduling"],
+  decline_shift:             ["booking", "scheduling"],
   update_senior_profile:     ["care_plan"],
   update_user_profile:       ["care_plan"],
   submit_gps_checkin:        ["care_plan"],
@@ -133,6 +151,10 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   search_web:         ["memory_search"],
   perform_web_action: ["memory_search"],
   manage_credentials: ["memory_search"],
+  // U9: public web primitives decomposed from perform_web_action
+  search_healthcare_provider: ["memory_search"],
+  fetch_web_page:             ["memory_search"],
+  browse_web:                 ["memory_search"],
 
   // Note: untagged tools are "core" and always included.
   // Core tools:
@@ -150,15 +172,32 @@ const CORE_TOOL_NAMES = new Set<string>([
   "suggest_upcoming_care",
   "get_care_team",
   "create_support_ticket",
+  // U7: support-ticket read/lifecycle — like create_support_ticket, these can
+  // be needed under many intents (a status check mid-conversation), so they're
+  // core rather than bucket-filtered.
+  "get_support_ticket",
+  "list_support_tickets",
+  "update_support_ticket",
   "resume_execution_agent",
   "write_todos",
   "cara_knows",
   "task",
+  // U4: loop-control completion signal — must be available on every turn so the
+  // agent can always end intentionally, never filtered out by intent.
+  "complete_task",
   // Cross-cutting onboarding helper: "send me my payment / identity / photo /
   // document / background-check / payout link" arrives under many filtered
   // intents (UPDATE_PAYMENT_METHOD, UPDATE_PHOTO, …). It must never be filtered
   // out, or Cara falls back to deflecting instead of just sending the link.
   "send_onboarding_link",
+  // Parity: emergency alert is SAFETY-critical — it must be bound on every turn
+  // and never filtered out by intent, so a family reporting an urgent situation
+  // can always reach it.
+  "trigger_emergency_alert",
+  // Parity: referral send/status don't map to a logistics bucket and are
+  // low-risk; keep them always-available rather than guessing an intent.
+  "send_referral",
+  "get_referral_status",
 ]);
 
 // Intent → required capabilities. An empty array means "no filter — bind
@@ -238,6 +277,49 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
   PRESCRIPTION_REFILL:     ["memory_search", "messaging"],
   NEW_PRESCRIPTION:        ["memory_search", "messaging"],
 };
+
+// ── High-stakes mutations ─────────────────────────────────────────────────
+// Tools where falsely reporting success is harmful: the user would believe a
+// booking / cancellation / charge / removal / profile change happened when it
+// did not. When one of these returns a tool error, the agent loop surfaces it
+// as an `is_error` tool_result with an explicit "do not claim success"
+// instruction (see qaAgent.ts), instead of the soft buildToolResultContent
+// path used for read-only lookups. Curated rather than prefix-derived so
+// adding a tool here is a deliberate decision; genuinely low-stakes writes
+// (journal likes/comments, memory notes Cara already echoes back) are
+// intentionally excluded.
+export const HIGH_STAKES_MUTATIONS = new Set<string>([
+  // bookings & visits
+  "request_booking", "reschedule_appointment", "cancel_appointment",
+  "manage_recurring_schedule", "modify_recurring_schedule", "initiate_client_swap",
+  // interviews, hiring, jobs
+  "schedule_interview", "respond_to_interview_request", "submit_interview_feedback",
+  "respond_to_job_application", "apply_to_job", "edit_job_post", "cancel_job_post",
+  // shifts
+  "accept_shift", "decline_shift", "submit_shift_hours", "review_shift_hours",
+  "request_shift_swap", "accept_shift_swap", "cancel_shift_swap", "submit_gps_checkin",
+  // money
+  "cancel_subscription", "reactivate_subscription", "create_refund_request",
+  "request_instant_payout",
+  // people & safety
+  "add_family_member", "remove_family_member", "block_user", "unblock_user", "report_user",
+  // care data
+  "update_senior_profile", "update_care_plan", "restore_care_plan_version",
+  "create_care_journal_entry", "log_health_flag",
+  // profiles & account
+  "update_user_profile", "update_communication_preferences",
+  "update_caregiver_profile", "update_caregiver_availability",
+  "pause_account", "reactivate_account",
+  // reminders & follow-ups
+  "create_reminder", "delete_reminder", "schedule_followup", "cancel_followup",
+  // message relays (family/caregiver believe a message was delivered)
+  "send_caregiver_message", "send_client_message",
+]);
+
+/** True when a failed call to this tool must NOT be reported to the user as success. */
+export function isHighStakesMutation(toolName: string): boolean {
+  return HIGH_STAKES_MUTATIONS.has(toolName);
+}
 
 /**
  * Filter a tool list by the capabilities required for the given intent.

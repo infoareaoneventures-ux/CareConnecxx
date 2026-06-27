@@ -2,6 +2,7 @@ import { quickComplete } from "../utils/openaiClient";
 
 export type Intent =
   | "STOP"
+  | "HELP"
   | "TASK_REPLY"
   | "QUESTION"
   | "PERMISSION_UPDATE"
@@ -52,7 +53,7 @@ export type Intent =
   | "UPDATE_ONBOARDING";
 
 const VALID_INTENTS = new Set<Intent>([
-  "STOP", "TASK_REPLY", "PERMISSION_UPDATE", "REBOOK_REQUEST",
+  "STOP", "HELP", "TASK_REPLY", "PERMISSION_UPDATE", "REBOOK_REQUEST",
   "CANCEL_REQUEST", "MEMORY_QUERY", "ADD_FAMILY_MEMBER", "REMOVE_FAMILY_MEMBER",
   "FACT_CORRECTION", "FIND_CAREGIVER", "PAUSE_SCHEDULE", "CANCEL_SCHEDULE", "QUESTION",
   "BOOKING_CONFIRM", "BOOKING_DECLINE", "HIRE_CAREGIVER", "CAREGIVER_DECLINE_JOB",
@@ -97,9 +98,18 @@ export async function classifyIntentDetailed(
   const trimmed = text.trim().toUpperCase();
 
   if (STOP_WORDS.has(trimmed)) return { intent: "STOP", degraded: false };
+  // Exact-string command (allowed without an LLM per the Cara rules, like STOP).
+  // Only an exact match triggers it — "help me find a caregiver" still routes to the LLM.
+  if (trimmed === "HELP" || trimmed === "/HELP" || trimmed === "CAPABILITIES" || trimmed === "/CAPABILITIES") {
+    return { intent: "HELP", degraded: false };
+  }
   if (trimmed === "CANCEL") return { intent: "CANCEL_REQUEST", degraded: false };
   if (hasPendingTask && ["1", "2", "3"].includes(trimmed)) return { intent: "TASK_REPLY", degraded: false };
 
+  // Retry once on a failed / timed-out / garbled attempt before degrading — a
+  // transient OpenAI timeout must not silently downgrade routing to QUESTION
+  // (which then skips the fast-path bypass and over-binds the QA agent).
+  for (let attempt = 0; attempt < 2; attempt++) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6_000);
   try {
@@ -163,12 +173,15 @@ export async function classifyIntentDetailed(
     const label = raw.trim().toUpperCase() as Intent;
     if (VALID_INTENTS.has(label)) return { intent: label, degraded: false };
 
-    console.warn("intentClassifier: unrecognized label", { label, preview: text.slice(0, 50) });
+    console.warn("intentClassifier: unrecognized label", { label, attempt, preview: text.slice(0, 50) });
   } catch (err) {
     clearTimeout(timer);
-    console.error("intentClassifier error:", err);
+    console.error("intentClassifier error:", { attempt, err });
+  }
+    // Brief backoff before the single retry; no delay after the final attempt.
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 300));
   }
 
-  // Degraded fallback — classification failed, so "QUESTION" is a guess.
+  // Degraded fallback — both attempts failed, so "QUESTION" is a guess.
   return { intent: "QUESTION", degraded: true };
 }

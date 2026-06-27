@@ -23,18 +23,35 @@ function haversineDistanceMeters(
 }
 
 export const submitGpsCheckin = functions.https.onCall(async (data, context) => {
-  const { caregiverId, appointmentId, latitude, longitude } = data as {
+  const { caregiverId, appointmentId, latitude, longitude, manual } = data as {
     caregiverId: string;
     appointmentId: string;
-    latitude: number;
-    longitude: number;
+    latitude?: number;
+    longitude?: number;
+    /** Set when the caregiver checks in without usable GPS (permission denied,
+     *  signal unavailable, or timeout). Records an unvalidated arrival. */
+    manual?: boolean;
   };
 
-  if (!caregiverId || !appointmentId || latitude == null || longitude == null) {
+  // Coordinates are required unless this is an explicit manual (no-GPS) check-in.
+  if (!caregiverId || !appointmentId || (!manual && (latitude == null || longitude == null))) {
     throw new functions.https.HttpsError(
       "invalid-argument",
-      "caregiverId, appointmentId, latitude, and longitude are required"
+      "caregiverId and appointmentId are required (plus latitude/longitude unless manual)"
     );
+  }
+
+  // U4 (auth-harden): require authentication and bind the check-in to the
+  // authenticated caller. Previously any authenticated user could pass an
+  // arbitrary caregiverId and spoof another caregiver's arrival (skewing the
+  // confidence score and deceiving families). Web caregivers are uid-keyed, so
+  // the auth uid is the source of truth; phone-keyed Cara caregivers check in
+  // over SMS, not through this callable.
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "You must be signed in to check in.");
+  }
+  if (caregiverId !== context.auth.uid) {
+    throw new functions.https.HttpsError("permission-denied", "You can only check in as yourself.");
   }
 
   // Get appointment
@@ -43,6 +60,24 @@ export const submitGpsCheckin = functions.https.onCall(async (data, context) => 
     throw new functions.https.HttpsError("not-found", "Appointment not found");
   }
   const appt = apptSnap.data()!;
+  if (appt.caregiverId !== context.auth.uid) {
+    throw new functions.https.HttpsError("permission-denied", "This shift is not assigned to you.");
+  }
+
+  // Manual (no-GPS) check-in — record an unvalidated arrival and notify family.
+  if (manual || latitude == null || longitude == null) {
+    const ref = await db.collection("shift_checkins").add({
+      appointmentId, caregiverId, caregiverName: appt.caregiverName, clientId: appt.clientId,
+      checkinAt: new Date().toISOString(),
+      status: "arrived", gpsProvided: false, gpsValidated: false,
+      note: "Manual check-in (location unavailable)",
+    });
+    const clientSnap = await db.collection("users").doc(appt.clientId).get();
+    if (clientSnap.exists && clientSnap.data()?.chatId) {
+      await sendMessage(clientSnap.data()!.chatId, `${appt.caregiverName} has checked in for today's visit.`);
+    }
+    return { validated: false, checkinId: ref.id, message: "Checked in. The family has been notified." };
+  }
 
   // Get client/senior address with lat/lng
   const seniorSnap = await db.collection("senior_profiles").doc(appt.clientId).get();

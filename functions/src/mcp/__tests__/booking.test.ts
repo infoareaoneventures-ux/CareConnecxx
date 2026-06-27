@@ -85,6 +85,14 @@ vi.mock("../../agents/matchingAgent", () => ({
   runMatchingForClient: vi.fn().mockResolvedValue(undefined),
 }));
 
+// request_booking (U9b) delegates the actual write to createBookingTask via a
+// dynamic import. Mock it so the handler test exercises validation + the shared
+// quote + delegation, not the booking-executor internals (bgcheck guard etc.).
+const createBookingTask = vi.fn().mockResolvedValue("task-123");
+vi.mock("../../agents/bookingExecutor", () => ({
+  createBookingTask: (...args: unknown[]) => createBookingTask(...args),
+}));
+
 const trySend = vi.fn().mockResolvedValue({ sent: true });
 vi.mock("../../utils/toolNotify", () => ({
   trySend:        (...args: unknown[]) => trySend(...args),
@@ -129,6 +137,7 @@ import { handleToolCall } from "../server";
 describe("booking tools", () => {
   beforeEach(() => {
     hoisted.reset(); trySend.mockClear(); trySend.mockResolvedValue({ sent: true });
+    createBookingTask.mockClear(); createBookingTask.mockResolvedValue("task-123");
     // Confirmed-action gate (U12) now validates _confirmedActionId against a real
     // pending doc; seed one matching the cancel_appointment bypass calls below.
     hoisted.docState.set("pending_actions/test", { toolName: "cancel_appointment", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" });
@@ -263,6 +272,219 @@ describe("booking tools", () => {
         _confirmedActionId: "pa_2", phone: "+15125550123", appointmentId: "a1", clientId: "c1",
       }).catch(() => {});
       expect(ledger.claimToolExecution).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── U9b: read-only booking primitives extracted from request_booking ─────────
+  // These must NEVER write — the whole point is that Cara can look up a rate and
+  // quote a cost without committing. Each test asserts no booking task is created.
+  describe("get_caregiver_booking_rate (U9b)", () => {
+    it("returns the caregiver's name + hourly rate, writing nothing", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 25 });
+      const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "cg1", clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.caregiverName).toBe("Maria");
+      expect(r.hourlyRate).toBe(25);
+      // Pure read — no agent_tasks / booking writes.
+      expect(hoisted.adds.length).toBe(0);
+    });
+
+    it("falls back to $20 when the caregiver has no rate on file", async () => {
+      hoisted.docState.set("caregivers/cg2", { name: "Sam" });
+      const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "cg2" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.hourlyRate).toBe(20);
+    });
+
+    it("returns NOT_FOUND for an unknown caregiver", async () => {
+      const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "ghost" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("NOT_FOUND");
+    });
+
+    it("requires caregiverId", async () => {
+      const r = await handleToolCall("get_caregiver_booking_rate", {}) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+    });
+  });
+
+  describe("quote_booking (U9b)", () => {
+    it("computes per-visit hours, line items, and a multi-date total without booking", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      const r = await handleToolCall("quote_booking", {
+        caregiverId: "cg1",
+        clientId:    "c1",
+        dates:       ["2026-07-01", "2026-07-02"],
+        startTime:   "09:00",
+        endTime:     "17:00", // 8h
+      }) as any;
+      expect(r.success).toBe(true);
+      expect(r.committed).toBe(false);
+      expect(r.durationHours).toBe(8);
+      expect(r.lineItems).toHaveLength(2);
+      expect(r.lineItems[0]).toEqual({ date: "2026-07-01", hours: 8, amount: 240 });
+      expect(r.totalEstimate).toBe(480); // 8h * $30 * 2 days
+      // No write — quoting must not create a booking task.
+      expect(hoisted.adds.length).toBe(0);
+    });
+
+    it("accepts a single date (not wrapped in an array)", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 20 });
+      const r = await handleToolCall("quote_booking", {
+        caregiverId: "cg1", dates: "2026-07-01", startTime: "10:00", endTime: "12:00", // 2h
+      }) as any;
+      expect(r.success).toBe(true);
+      expect(r.totalEstimate).toBe(40);
+    });
+
+    it("rejects an end time at or before the start time", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 20 });
+      const r = await handleToolCall("quote_booking", {
+        caregiverId: "cg1", dates: ["2026-07-01"], startTime: "17:00", endTime: "09:00",
+      }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+    });
+
+    it("returns NOT_FOUND when the caregiver doesn't exist", async () => {
+      const r = await handleToolCall("quote_booking", {
+        caregiverId: "ghost", dates: ["2026-07-01"], startTime: "09:00", endTime: "10:00",
+      }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("NOT_FOUND");
+    });
+  });
+
+  // ── U9b: request_booking now commits via the SAME quote primitive ────────────
+  describe("request_booking (U9b — commit path shares buildBookingQuote)", () => {
+    const baseInput = {
+      clientId: "c1", phone: "+15555550100", caregiverId: "cg1",
+      dates: ["2026-07-01", "2026-07-02"], startTime: "09:00", endTime: "17:00", // 8h
+    };
+
+    it("commits the booking with the quote's computed rate/duration and returns the estimate", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      const r = await handleToolCall("request_booking", baseInput) as any;
+      expect(r.success).toBe(true);
+      expect(r.taskId).toBe("task-123");
+      expect(r.status).toBe("awaiting_approval");
+      expect(r.estimatedTotal).toBe(480); // 8h * $30 * 2 days — same math as quote_booking
+      // Delegated to createBookingTask with the quote-derived values.
+      expect(createBookingTask).toHaveBeenCalledTimes(1);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.caregiverName).toBe("Maria");
+      expect(arg.hourlyRate).toBe(30);
+      expect(arg.appointments).toHaveLength(2);
+      expect(arg.appointments[0].durationHours).toBe(8);
+    });
+
+    it("rejects an unknown caregiver BEFORE any booking write (shared NOT_FOUND)", async () => {
+      const r = await handleToolCall("request_booking", baseInput) as any; // no caregiver doc seeded
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("NOT_FOUND");
+      expect(createBookingTask).not.toHaveBeenCalled();
+    });
+
+    it("surfaces a blocked booking (e.g. pending background check) without erroring", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      createBookingTask.mockResolvedValueOnce(""); // executor blocked it + already messaged the family
+      const r = await handleToolCall("request_booking", baseInput) as any;
+      expect(r.success).toBe(false);
+      expect(r.blocked).toBe(true);
+      expect(r.reason).toBe("booking_blocked_pending_background_check");
+    });
+
+    it("requires session-injected clientId and phone", async () => {
+      const noClient = await handleToolCall("request_booking", { ...baseInput, clientId: "" }) as any;
+      expect(noClient._toolError).toBe(true);
+      const noPhone = await handleToolCall("request_booking", { ...baseInput, phone: "" }) as any;
+      expect(noPhone._toolError).toBe(true);
+      expect(createBookingTask).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Action-parity tools (Emergency SOS / caregiver callout / referral) ───────
+  describe("trigger_emergency_alert", () => {
+    it("writes an active emergency_alerts doc and advises 911", async () => {
+      const r = await handleToolCall("trigger_emergency_alert", { clientId: "c1", note: "Dad fell" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.status).toBe("active");
+      expect(r.advise911).toBe(true);
+      expect(hoisted.adds.some((a) => a.path === "emergency_alerts")).toBe(true);
+    });
+    it("requires session clientId", async () => {
+      const r = await handleToolCall("trigger_emergency_alert", {}) as any;
+      expect(r._toolError).toBe(true);
+    });
+  });
+
+  describe("caregiver-callout tools", () => {
+    it("get_callout_backups returns stored options for the owner", async () => {
+      hoisted.docState.set("appointments/a9", { clientId: "c1", backupCaregiverOptions: [{ id: "cg2", name: "Sam" }] });
+      const r = await handleToolCall("get_callout_backups", { clientId: "c1", appointmentId: "a9" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.count).toBe(1);
+    });
+    it("get_callout_backups rejects a non-owner (IDOR)", async () => {
+      hoisted.docState.set("appointments/a9", { clientId: "OTHER", backupCaregiverOptions: [] });
+      const r = await handleToolCall("get_callout_backups", { clientId: "c1", appointmentId: "a9" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("PERMISSION_DENIED");
+    });
+    it("select_callout_backup reassigns the appointment to the chosen caregiver", async () => {
+      hoisted.docState.set("appointments/a9", { clientId: "c1", caregiverId: "cg1" });
+      hoisted.docState.set("caregivers/cg2", { name: "Sam" });
+      const r = await handleToolCall("select_callout_backup", { clientId: "c1", appointmentId: "a9", backupCaregiverId: "cg2" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.caregiverId).toBe("cg2");
+      expect(hoisted.docState.get("appointments/a9").caregiverId).toBe("cg2");
+      expect(hoisted.docState.get("appointments/a9").status).toBe("confirmed");
+    });
+    it("request_callout_refund files a refund request for the owner", async () => {
+      hoisted.docState.set("appointments/a9", { clientId: "c1", amount: 120 });
+      const r = await handleToolCall("request_callout_refund", { clientId: "c1", appointmentId: "a9", reason: "no backup" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.status).toBe("pending");
+      expect(hoisted.adds.some((a) => a.path === "refundRequests")).toBe(true);
+      expect(hoisted.docState.get("appointments/a9").status).toBe("cancelled_refund_requested");
+    });
+  });
+
+  describe("update_reminder (CRUD)", () => {
+    it("updates an owned reminder's fields", async () => {
+      hoisted.docState.set("user_triggers/t1", { phone: "+15555550100", active: true, recurrence: "daily", hour: 9, minute: 0, label: "meds", message: "take meds" });
+      const r = await handleToolCall("update_reminder", { phone: "+15555550100", triggerId: "t1", hour: 8, label: "morning meds" }) as any;
+      expect(r.success).toBe(true);
+      expect(hoisted.docState.get("user_triggers/t1").hour).toBe(8);
+      expect(hoisted.docState.get("user_triggers/t1").label).toBe("morning meds");
+    });
+    it("rejects updating a reminder owned by another phone (NOT_FOUND)", async () => {
+      hoisted.docState.set("user_triggers/t1", { phone: "+1OTHER", active: true, recurrence: "daily", hour: 9, minute: 0 });
+      const r = await handleToolCall("update_reminder", { phone: "+15555550100", triggerId: "t1", hour: 8 }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("NOT_FOUND");
+    });
+    it("requires at least one field to update", async () => {
+      const r = await handleToolCall("update_reminder", { phone: "+15555550100", triggerId: "t1" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+    });
+  });
+
+  describe("referral tools", () => {
+    it("send_referral generates a code, persists it, and files a referral", async () => {
+      hoisted.docState.set("users/u1", { userType: "client" });
+      const r = await handleToolCall("send_referral", { userId: "u1", email: "friend@example.com" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.referralCode).toMatch(/^[A-Z0-9]{6}$/);
+      expect(hoisted.docState.get("users/u1").referralCode).toBe(r.referralCode); // persisted
+      expect(hoisted.adds.some((a) => a.path === "referrals")).toBe(true);
+    });
+    it("send_referral rejects an invalid email", async () => {
+      const r = await handleToolCall("send_referral", { userId: "u1", email: "not-an-email" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
     });
   });
 });

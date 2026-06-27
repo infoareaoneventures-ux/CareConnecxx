@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Send, Sparkles, Mic, MapPin, Star, User, ChevronRight, SlidersHorizontal, Check, Calendar, Clock, ShieldCheck, Trash2, Loader2, Video } from 'lucide-react';
+import { X, Send, Sparkles, Mic, MapPin, Star, User, ChevronRight, SlidersHorizontal, Check, Calendar, Clock, ShieldCheck, Trash2, Loader2, Video, HelpCircle } from 'lucide-react';
 import { Caregiver, ChatMessage, Appointment, Senior } from '../types';
 import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
@@ -12,6 +12,11 @@ import { auth, functions } from '../lib/firebase';
 import { logMatchSignal } from '../services/matchFeedback';
 import { InlineCaregiverCard } from './InlineCaregiverCard';
 import { useBookingFlow } from '../hooks/useBookingFlow';
+import { featuredCapabilities, capabilityExample, capabilityLabel, buildCapabilityMenu, isSpanish } from '../constants/caraCapabilities';
+
+// Locale source for bilingual hints (U5). preferredLanguage from the user doc
+// isn't plumbed into this component, so we fall back to the browser locale.
+const UI_LOCALE = typeof navigator !== 'undefined' ? navigator.language : 'en';
 
 interface AiSearchAgentProps {
   isOpen: boolean;
@@ -24,13 +29,6 @@ interface AiSearchAgentProps {
   seniorProfile?: Senior;
   previousBookings?: Appointment[];
 }
-
-const QUICK_ACTIONS = [
-  "Find a driver",
-  "Meal preparation help",
-  "Medical assistance",
-  "Mobility support"
-];
 
 const AVAILABLE_SKILLS = [
   "Hoyer Lift",
@@ -444,7 +442,25 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
     sendMessage(inputValue);
   };
 
+  // U5: render the capability menu as a Cara bubble (in-app /help). Reuses the
+  // normal message rendering path — no new UI surface.
+  const showHelpMenu = (echoUser: boolean) => {
+    setInputValue('');
+    setMessages(prev => [
+      ...prev,
+      ...(echoUser ? [{ id: Date.now().toString(), sender: 'user' as const, text: '/help' }] : []),
+      { id: `${Date.now()}-help`, sender: 'ai' as const, text: buildCapabilityMenu('client', UI_LOCALE) },
+    ]);
+  };
+
   const sendMessage = (text: string) => {
+    // Intercept the /help command (and "help"/"ayuda") → show the capability menu.
+    const norm = text.trim().toLowerCase();
+    if (norm === '/help' || norm === 'help' || norm === 'ayuda') {
+      showHelpMenu(true);
+      return;
+    }
+
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       sender: 'user',
@@ -742,13 +758,14 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
           {/* Quick Actions (only show if last message was AI) */}
           {messages.length > 0 && messages[messages.length - 1].sender === 'ai' && !isTyping && !messages[messages.length - 1].recommendedCaregivers && (
             <div className="flex flex-wrap gap-2 mt-2">
-              {QUICK_ACTIONS.map(action => (
+              {featuredCapabilities('client').map(cap => (
                 <button
-                  key={action}
-                  onClick={() => sendMessage(action)}
+                  key={cap.id}
+                  onClick={() => sendMessage(capabilityExample(cap, UI_LOCALE))}
+                  title={capabilityExample(cap, UI_LOCALE)}
                   className="bg-primary-50 hover:bg-primary-100 text-primary-700 text-xs px-3 py-1.5 rounded-full transition-colors border border-primary-200"
                 >
-                  {action}
+                  {capabilityLabel(cap, UI_LOCALE)}
                 </button>
               ))}
             </div>
@@ -767,13 +784,22 @@ export const AiSearchAgent: React.FC<AiSearchAgentProps> = ({
         {/* Input Area */}
         <div className="p-4 bg-white border-t border-slate-100 z-20">
           <div className="flex items-center gap-2">
+            {/* U5: in-app /help — sends the capability menu as a Cara bubble */}
+            <button
+              onClick={() => showHelpMenu(false)}
+              title={isSpanish(UI_LOCALE) ? '¿Qué puedo hacer? (/help)' : 'What can I do? (/help)'}
+              aria-label="Show what Cara can do"
+              className="p-3 text-slate-400 hover:text-primary-600 rounded-xl transition-colors"
+            >
+              <HelpCircle className="w-5 h-5" />
+            </button>
             <div className="relative flex-grow">
               <input
                 type="text"
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Describe your needs (e.g. 'Driver with CPR training')..."
+                placeholder={isSpanish(UI_LOCALE) ? "Describe lo que necesitas (ej. 'Conductor con certificación CPR')..." : "Describe your needs (e.g. 'Driver with CPR training')..."}
                 className="w-full pl-4 pr-10 py-3 bg-slate-100 border-transparent focus:bg-white focus:border-primary-500 focus:border-transparent focus:ring-2 focus:ring-primary-100 rounded-xl transition-all outline-none text-sm"
               />
               <button className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1.5 text-slate-400 hover:text-primary-600 rounded-full transition-colors">

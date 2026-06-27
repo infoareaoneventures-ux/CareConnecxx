@@ -89,6 +89,8 @@ export interface AgentSession {
   onboardingStep?:  string;
   userType?:        "client" | "caregiver";
   onboardingData?:  Record<string, unknown>;
+  // Preferred language for outbound messages ("en" | "es"); set during onboarding.
+  preferredLanguage?: string;
 }
 
 export interface LinqPhoneNumber {

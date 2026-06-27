@@ -209,16 +209,16 @@ export const PostsPage: React.FC = () => {
   const [schedulingFor, setSchedulingFor] = useState<Applicant | null>(null);
   const [decliningApplicant, setDecliningApplicant] = useState<string | null>(null);
 
-  // Load posts
+  // Load posts — live (U6): posts Cara creates/edits surface without a refresh.
   useEffect(() => {
     if (!currentUser?.uid) { setLoadingPosts(false); return; }
-    let cancelled = false;
     setLoadingPosts(true);
-    dbService.getJobPostsByClient(currentUser.uid)
-      .then(list => { if (!cancelled) setPosts(list); })
-      .catch(() => addToast('Could not load your posts', 'error'))
-      .finally(() => { if (!cancelled) setLoadingPosts(false); });
-    return () => { cancelled = true; };
+    const unsub = dbService.subscribeJobPostsByClient(
+      currentUser.uid,
+      list => { setPosts(list); setLoadingPosts(false); },
+      () => { addToast('Could not load your posts', 'error'); setLoadingPosts(false); },
+    );
+    return () => { try { unsub(); } catch {} };
   }, [currentUser?.uid]);
 
   // Count applicants per post

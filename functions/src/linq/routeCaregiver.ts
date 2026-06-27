@@ -16,6 +16,8 @@ import {
   normalizeCaregiverReferralPhone,
   resolveCaregiverReferralName,
 } from "../agents/caregiverReferral";
+import { autoApproveAtIso, TIMESHEET_AUTO_APPROVE_HOURS } from "../config/slaConstants";
+import { buildLayFallbackSummary } from "./shiftSummaryFallback";
 
 const db = admin.firestore();
 
@@ -704,7 +706,7 @@ async function sendFamilyTaskUpdate(params: {
 
 // ── Shift-end family update (after care notes parsed) ────────────────────────
 
-async function sendFamilyShiftEndUpdate(params: {
+export async function sendFamilyShiftEndUpdate(params: {
   caregiverName: string;
   clientId:      string;
   seniorId:      string;
@@ -749,6 +751,10 @@ async function sendFamilyShiftEndUpdate(params: {
         "2) Mention planned tasks completed with any notes. " +
         "3) If the senior asked for anything outside the plan, mention it clearly. " +
         "4) End with whether there are any concerns.\n" +
+        "PRIVACY (important): summarize in everyday, non-clinical language. Do NOT include specific " +
+        "medication names or dosages, lab values, or graphic bodily-function detail — refer to those only " +
+        "in general terms (e.g. 'took medications as planned', 'ate well'). Frame any health note as either " +
+        "reassuring (nothing unusual) or as something worth following up on, without clinical specifics.\n" +
         "Keep it to 4-5 sentences. No bullet points. No emoji. Output only the message text, no greeting or sign-off.",
       `Senior: ${seniorName}\n` +
         `Caregiver: ${cgFirstName}\n` +
@@ -764,17 +770,11 @@ async function sendFamilyShiftEndUpdate(params: {
     content = raw.trim();
     if (!content) throw new Error("empty");
   } catch {
-    const moodLine      = mood       ? ` ${seniorName} was in a ${mood} mood.` : "";
-    const ateLine       = appetite   ? ` Appetite was ${appetite}.` : "";
-    const actLine       = activities.length > 0 ? ` Activities: ${activities.slice(0, 2).join(" and ")}.` : "";
-    const unplannedNote = unplannedActivities.length > 0
-      ? ` ${seniorName} also asked for: ${unplannedActivities.join(", ")}.`
-      : "";
-    const obsLine       = observations ? ` ${observations}` : "";
-    content =
-      `${cgFirstName} just finished their visit with ${seniorName}.` +
-      moodLine + ateLine + actLine + unplannedNote + obsLine +
-      " No concerns to flag.";
+    // PHI-safe fallback (U3): never reproduce raw clinical observations verbatim
+    // over SMS — flag that there are notes for the family to follow up on instead.
+    content = buildLayFallbackSummary({
+      seniorName, cgFirstName, mood, appetite, activities, observations, unplannedActivities,
+    });
   }
 
   const finalContent = hasFamilyGroup
@@ -1130,7 +1130,7 @@ async function handleCareNotes(
         submittedTotalHours: durationHours, finalTotalHours: durationHours, durationHours,
         basePay: grossPay, grossPay, amountCents: Math.round(grossPay * 100),
         date: apptDate, status: "pending_client_review", submittedAt,
-        autoApproveAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        autoApproveAt: autoApproveAtIso(),
         paymentAttemptCount: 0, createdAt: submittedAt, updatedAt: submittedAt,
       });
       created = true;
@@ -1242,8 +1242,8 @@ async function handleCareNotes(
   const paymentLine = !billingSubmitted
     ? `Thanks for the update.`
     : familyNotified
-      ? `I've sent your hours to the family to confirm — you'll be paid once they approve (auto-approves in 24h if they don't reply).`
-      : `Your hours are recorded — you'll be paid once they're approved (auto-approves in 24h).`;
+      ? `I've sent your hours to the family to confirm — you'll be paid once they approve (auto-approves in ${TIMESHEET_AUTO_APPROVE_HOURS}h if they don't reply).`
+      : `Your hours are recorded — you'll be paid once they're approved (auto-approves in ${TIMESHEET_AUTO_APPROVE_HOURS}h).`;
 
   await sendMessage(chatId,
     `Got it — notes saved.\n\n` +

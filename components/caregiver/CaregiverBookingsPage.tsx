@@ -11,6 +11,9 @@ import { useCaregiverGate } from '../../hooks/useCaregiverGate';
 import { db } from '../../lib/firebase';
 import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
 import firebase from '../../lib/firebase';
+import { dbService } from '../../services/api';
+import type { PendingSwap } from '../../services/shiftSwap';
+import { PendingSwapsPanel } from '../shared/PendingSwapsPanel';
 
 type Tab = 'requests' | 'active' | 'past';
 
@@ -1534,8 +1537,17 @@ export const CaregiverBookingsPage: React.FC = () => {
   const [loggingHours, setLoggingHours] = useState(false);
 
   const [amendments, setAmendments] = useState<BookingAmendment[]>([]);
+  const [pendingSwaps, setPendingSwaps] = useState<PendingSwap[]>([]);
 
   const uid = currentUser?.uid;
+
+  // Pending shift swaps this caregiver initiated (U7) — live so the caregiver
+  // sees acceptance happen instead of the swap resolving silently.
+  useEffect(() => {
+    if (!uid) return;
+    const unsub = dbService.subscribeShiftSwapsForCaregiver(uid, setPendingSwaps);
+    return () => { try { unsub(); } catch {} };
+  }, [uid]);
 
   // Fetch booking requests
   useEffect(() => {
@@ -1809,6 +1821,11 @@ export const CaregiverBookingsPage: React.FC = () => {
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
         <h1 className="text-2xl font-bold text-slate-900 mb-1">Bookings</h1>
         <p className="text-sm text-slate-500 mb-6">Manage incoming booking requests and your scheduled shifts.</p>
+
+        {/* Pending shift swaps you've requested (U7) — hidden when none */}
+        <div className="mb-6">
+          <PendingSwapsPanel swaps={pendingSwaps} title="Pending swaps" subtitle="Swaps you've requested" />
+        </div>
 
         {/* Tabs */}
         <div className="flex flex-wrap gap-2 mb-6">

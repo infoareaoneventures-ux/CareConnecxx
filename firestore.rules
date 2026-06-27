@@ -179,9 +179,11 @@ service cloud.firestore {
     // SENIOR PROFILES COLLECTION
     // ==========================================
     match /senior_profiles/{profileId} {
-      // Only the owner (client) or admin can read/write
-      allow read: if isOwner(profileId) || isAdmin();
-      allow write: if isOwner(profileId) || isAdmin();
+      // Owner = the client whose uid is the doc id (single-senior, legacy) OR
+      // additional household seniors keyed by random id but stamped with
+      // userId == the owning client's uid (multi-senior households, U6/KTD-10).
+      allow read: if isOwner(profileId) || resource.data.userId == request.auth.uid || isAdmin();
+      allow write: if isOwner(profileId) || resource.data.userId == request.auth.uid || isAdmin();
       allow create: if isAuthenticated();
       
       // Subcollection: care_plans
@@ -328,9 +330,12 @@ service cloud.firestore {
     // JOB POSTS COLLECTION
     // ==========================================
     match /job_posts/{jobId} {
-      // Public read for open jobs
-      allow read: if true;
-      
+      // Authenticated read (U6): job posts carry sensitive care-recipient details,
+      // so they are no longer world-readable. All web readers (caregiver job board,
+      // a client's own posts, FindCaregivers) are logged in; server-side reads
+      // (browse_job_board and other MCP tools) use the Admin SDK and bypass rules.
+      allow read: if isAuthenticated();
+
       // Only client who created it or admin can update/delete
       allow update: if isAuthenticated() && (
         resource.data.clientId == request.auth.uid ||
@@ -958,6 +963,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Family-facing "Cara Activity" feed (U8) — a projection of allow-listed audit
+    // events, written ONLY by the projectActivityFeed trigger (Admin SDK) with a
+    // resolved family-owner uid and PII-free description. Owner reads their own
+    // feed; raw agent_audit_log above stays admin-only.
+    match /user_activity_feed/{entryId} {
+      allow read: if isAuthenticated() && (
+        resource.data.ownerUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow write: if false;
+    }
+
     // Agent action ledger — execution status for high-impact Cara actions.
     // Written server-side only; admin reads failure/risk state.
     match /agent_action_ledger/{entryId} {
@@ -1082,9 +1099,31 @@ service cloud.firestore {
     }
 
     // Shift offers — caregiver YES/NO offer state machine (agents/shiftOffer.ts).
-    // Server-only: created and resolved exclusively via the Admin SDK.
+    // Server-only. The raw doc carries clientPhone/caregiverPhone/caregiverName,
+    // so the UI reads the sanitized shift_swap_summaries projection instead (U7).
     match /shift_offers/{offerId} {
       allow read, write: if false;
+    }
+
+    // Caregiver-initiated shift swaps (caregiverSwapHandler). Server-only. The raw
+    // doc carries candidatesContacted/candidateResponses/fromCaregiverName, so the
+    // UI reads the sanitized shift_swap_summaries projection instead (U7).
+    match /shift_swap_requests/{swapId} {
+      allow read, write: if false;
+    }
+
+    // Sanitized swap summaries (projectSwapSummary trigger) — the ONLY swap data
+    // the UI reads. Carries status/appointment/date/time + owner ids, never the
+    // phone/name/candidate fields from the raw collections. Owner-scoped read for
+    // the affected client and the involved caregiver; writes server-only.
+    match /shift_swap_summaries/{summaryId} {
+      allow read: if isAuthenticated() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.caregiverId == request.auth.uid ||
+        resource.data.fromCaregiverId == request.auth.uid ||
+        isAdmin()
+      );
+      allow write: if false;
     }
 
     // Webhook idempotency ledgers (utils/webhookLedger.ts) — server-only.

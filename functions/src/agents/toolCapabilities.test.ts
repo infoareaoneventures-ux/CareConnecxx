@@ -168,11 +168,17 @@ describe("TOOL_CAPABILITIES coverage", () => {
       "suggest_upcoming_care",
       "get_care_team",
       "create_support_ticket",
+      "get_support_ticket",
+      "list_support_tickets",
+      "update_support_ticket",
       "resume_execution_agent",
       "write_todos",
       "cara_knows",
       "task",
       "send_onboarding_link",
+      "trigger_emergency_alert",
+      "send_referral",
+      "get_referral_status",
     ]);
 
     const trulyUntagged = untagged.filter(n => !knownCore.has(n));

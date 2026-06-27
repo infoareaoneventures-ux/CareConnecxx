@@ -13,6 +13,7 @@ import {
 import { getPreferences } from "../memory/preferences";
 import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingActionById, isConfirmedActionValid } from "../agents/pendingActions";
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
+import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 
 // U6/U7 — CONFIRMED, externally-irreversible tools whose side effect must fire
@@ -41,8 +42,102 @@ import {
   createCaregiverReferralInvite,
   resolveCaregiverReferralName,
 } from "../agents/caregiverReferral";
+import { autoApproveAtIso } from "../config/slaConstants";
 
 const db = admin.firestore();
+
+// ── Booking quote primitive (U9b) ─────────────────────────────────────────────
+// The read/compute concern extracted out of `request_booking` so the model can
+// reason about a booking in steps — look up the rate, quote the cost, THEN commit
+// — instead of one opaque all-or-nothing tool. This helper is pure (one Firestore
+// READ + arithmetic, no writes), shared by `get_caregiver_booking_rate`,
+// `quote_booking`, and reusable by the committing `request_booking` path.
+type BookingQuoteResult =
+  | { ok: false; code: string; message: string }
+  | {
+      ok: true;
+      caregiverId:   string;
+      caregiverName: string;
+      hourlyRate:    number;
+      durationHours: number;
+      dates:         string[];
+      // One line per visit date so the family sees exactly what they're paying for.
+      lineItems:     Array<{ date: string; hours: number; amount: number }>;
+      totalEstimate: number;
+    };
+
+// "HH:MM" → minutes since midnight, or null if malformed.
+function bookingTimeToMinutes(t: unknown): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(t).trim());
+  if (!m) return null;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+// Resolve caregiver name + hourly rate from the caregiver doc. Mirrors the
+// fallbacks used by the live `request_booking` path (name/fullName, rate→$20)
+// so a quote and the eventual booking agree.
+async function resolveCaregiverRate(
+  caregiverId: string,
+): Promise<{ ok: true; caregiverName: string; hourlyRate: number } | { ok: false; code: string; message: string }> {
+  if (!caregiverId) return { ok: false, code: "INVALID_INPUT", message: "caregiverId is required" };
+  const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
+  if (!cgSnap.exists) return { ok: false, code: "NOT_FOUND", message: "caregiver not found" };
+  const cg = cgSnap.data() || {};
+  return {
+    ok:            true,
+    caregiverName: (cg.name ?? cg.fullName ?? "your caregiver") as string,
+    hourlyRate:    (typeof cg.hourlyRate === "number" ? cg.hourlyRate : 20) as number,
+  };
+}
+
+// Build a full cost quote for a proposed booking. No write — safe to call freely.
+async function buildBookingQuote(input: {
+  caregiverId?: unknown;
+  dates?:       unknown;
+  startTime?:   unknown;
+  endTime?:     unknown;
+}): Promise<BookingQuoteResult> {
+  const caregiverId = String(input.caregiverId ?? "");
+  if (!caregiverId || !input.dates || !input.startTime || !input.endTime) {
+    return { ok: false, code: "INVALID_INPUT", message: "caregiverId, dates, startTime, endTime are required" };
+  }
+  const dateList = (Array.isArray(input.dates) ? input.dates : [input.dates]).map(String).filter(Boolean);
+  if (dateList.length === 0) return { ok: false, code: "INVALID_INPUT", message: "at least one date is required" };
+
+  const startMin = bookingTimeToMinutes(input.startTime);
+  const endMin   = bookingTimeToMinutes(input.endTime);
+  if (startMin === null || endMin === null || endMin <= startMin) {
+    return { ok: false, code: "INVALID_INPUT", message: "startTime/endTime must be 'HH:MM' with end after start" };
+  }
+  const durationHours = Math.round(((endMin - startMin) / 60) * 100) / 100;
+
+  const rate = await resolveCaregiverRate(caregiverId);
+  if (!rate.ok) return rate;
+
+  const perVisit  = Math.round(durationHours * rate.hourlyRate * 100) / 100;
+  const lineItems = dateList.map((date) => ({ date, hours: durationHours, amount: perVisit }));
+  const totalEstimate = Math.round(perVisit * dateList.length * 100) / 100;
+
+  return {
+    ok:            true,
+    caregiverId,
+    caregiverName: rate.caregiverName,
+    hourlyRate:    rate.hourlyRate,
+    durationHours,
+    dates:         dateList,
+    lineItems,
+    totalEstimate,
+  };
+}
+
+// Short referral code (mirrors the frontend dbService.generateReferralCode shape:
+// 6 uppercase alphanumerics). Used by send_referral / get_referral_status.
+function generateReferralCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous 0/O/1/I
+  let code = "";
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
 
 // ── Tool definitions (Anthropic tool_use format) ──────────────────────────────
 
@@ -163,8 +258,19 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "request_booking",
-    description: "Create a booking request for a caregiver. Returns the booking task ID. clientId is injected automatically — do NOT ask the user for it.",
+    name: "get_caregiver_booking_rate",
+    description: "Look up a caregiver's name and hourly rate. Read-only — books nothing. Use this when the family asks what a caregiver charges, before quoting or committing a booking.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "quote_booking",
+    description: "Estimate what a booking will COST without creating it: returns per-visit hours, the hourly rate, a line item per date, and the total estimate. Read-only — books nothing. Call this to tell the family the price first, then call request_booking to actually commit once they're happy. clientId is injected automatically.",
     input_schema: {
       type: "object",
       properties: {
@@ -175,6 +281,79 @@ export const MCP_TOOLS: McpTool[] = [
       },
       required: ["caregiverId", "dates", "startTime", "endTime"],
     },
+  },
+  {
+    name: "request_booking",
+    description: "Commit a booking request for a caregiver (the final step — this is the write). Returns the booking task ID; the family then approves it. Prefer calling quote_booking first so the family sees the cost before you commit. clientId is injected automatically — do NOT ask the user for it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string" },
+        dates:       { type: "array", items: { type: "string" }, description: "ISO date strings (YYYY-MM-DD)" },
+        startTime:   { type: "string", description: "e.g. '09:00'" },
+        endTime:     { type: "string", description: "e.g. '17:00'" },
+      },
+      required: ["caregiverId", "dates", "startTime", "endTime"],
+    },
+  },
+  {
+    name: "trigger_emergency_alert",
+    description: "Raise an emergency alert for the family/account when they report an urgent safety situation (a fall, medical emergency, caregiver no-show with the senior alone, etc.). Creates an active alert + notifies staff. clientId is injected automatically. Use ONLY for genuine urgent situations — confirm it's a real emergency first. For life-threatening events also tell them to call 911.",
+    input_schema: {
+      type: "object",
+      properties: {
+        note:     { type: "string", description: "Short description of the emergency (what's happening)" },
+        location: { type: "object", description: "Optional { lat, lng } if known", properties: { lat: { type: "number" }, lng: { type: "number" } } },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_callout_backups",
+    description: "List the backup caregiver options for an appointment whose caregiver called out. Read-only. clientId is injected automatically — only the appointment's owner may view its backups.",
+    input_schema: {
+      type: "object",
+      properties: { appointmentId: { type: "string" } },
+      required: ["appointmentId"],
+    },
+  },
+  {
+    name: "select_callout_backup",
+    description: "Assign a chosen backup caregiver to an appointment whose original caregiver called out. Reassigns the visit and notifies both parties. clientId is injected automatically — only the appointment's owner may select.",
+    input_schema: {
+      type: "object",
+      properties: {
+        appointmentId:     { type: "string" },
+        backupCaregiverId: { type: "string", description: "id of the backup caregiver to assign (from get_callout_backups)" },
+      },
+      required: ["appointmentId", "backupCaregiverId"],
+    },
+  },
+  {
+    name: "request_callout_refund",
+    description: "Request a refund for an appointment when the caregiver called out and no suitable backup is available. Cancels the visit and files a refund request for admin review. clientId is injected automatically — only the appointment's owner may request.",
+    input_schema: {
+      type: "object",
+      properties: {
+        appointmentId: { type: "string" },
+        reason:        { type: "string", description: "Optional reason for the refund" },
+      },
+      required: ["appointmentId"],
+    },
+  },
+  {
+    name: "send_referral",
+    description: "Send a referral invite to a friend/family member by email, sharing the user's referral code. userId is injected automatically.",
+    input_schema: {
+      type: "object",
+      properties: { email: { type: "string", description: "Email address to invite" } },
+      required: ["email"],
+    },
+  },
+  {
+    name: "get_referral_status",
+    description: "Get the user's referral code and how many people they've referred (and their statuses). Read-only. userId is injected automatically.",
+    input_schema: { type: "object", properties: {}, required: [] },
   },
   {
     name: "update_preferences",
@@ -397,6 +576,89 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "update_reminder",
+    description: "Update an existing personal reminder — change its time, schedule, label, or message. Use when the family says 'move my medication reminder to 8am' or 'change that reminder to weekdays'. Only the reminder's owner can update it; provide only the fields that change.",
+    input_schema: {
+      type: "object",
+      properties: {
+        phone:      { type: "string" },
+        triggerId:  { type: "string", description: "The reminder/trigger id (from list_user_reminders)" },
+        label:      { type: "string" },
+        recurrence: { type: "string", description: "One of: daily, weekly, monthly, once" },
+        dayOfWeek:  { type: "number", description: "0=Sun … 6=Sat — only for weekly recurrence" },
+        hour:       { type: "number", description: "24-hour format, 0–23" },
+        minute:     { type: "number", description: "0–59" },
+        message:    { type: "string" },
+      },
+      required: ["phone", "triggerId"],
+    },
+  },
+  {
+    name: "create_senior_profile",
+    description:
+      "Create an ADDITIONAL care recipient (senior) for this family's household. Use when a family says they want to add another parent/relative they care for. " +
+      "Do NOT use to edit the existing senior — use update_senior_profile for that. The new profile is linked to the family automatically.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:     { type: "string", description: "Injected automatically — the owning family account." },
+        userId:       { type: "string", description: "Injected automatically." },
+        name:         { type: "string", description: "The senior's name." },
+        relationship: { type: "string", description: "Relationship to the family member, e.g. 'mother', 'father'." },
+        age:          { type: "number", description: "The senior's age, if known." },
+        needs:        { type: "array", items: { type: "string" }, description: "Care needs, e.g. ['mobility','medication reminders']." },
+        conditions:   { type: "array", items: { type: "string" }, description: "Known conditions, if shared." },
+        location:     { type: "string", description: "City or address, if different from the family's." },
+      },
+      required: ["clientId", "name"],
+    },
+  },
+  {
+    name: "delete_review",
+    description: "Delete a review the family previously left for a caregiver. Permanent — confirm before calling.",
+    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, reviewId: { type: "string", description: "The review document id." } }, required: ["clientId", "reviewId"] },
+  },
+  {
+    name: "delete_care_journal_entry",
+    description: "Hide an incorrect care journal entry from the family view (soft-delete — the entry is retained in the care record). Confirm before calling.",
+    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, entryId: { type: "string", description: "The care_journal document id." } }, required: ["clientId", "entryId"] },
+  },
+  {
+    name: "get_support_ticket",
+    description: "Get the status and details of one of the family's support tickets by id.",
+    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." }, ticketId: { type: "string" } }, required: ["userId", "ticketId"] },
+  },
+  {
+    name: "list_support_tickets",
+    description: "List the family's support tickets (most recent first) so Cara can give status updates instead of opening duplicates.",
+    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." } }, required: ["userId"] },
+  },
+  {
+    name: "update_support_ticket",
+    description: "Update one of the family's OWN support tickets: add a follow-up note ('add_response') or reopen a resolved ticket ('reopen'). Cannot set admin-only triage states.",
+    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." }, ticketId: { type: "string" }, action: { type: "string", description: "'add_response' or 'reopen'" }, message: { type: "string", description: "Follow-up note (required for add_response)." } }, required: ["userId", "ticketId", "action"] },
+  },
+  {
+    name: "log_match_feedback",
+    description: "Record the family's qualitative feedback about a caregiver match (e.g. 'great with mom but often late'). Feeds future matching. Distinct from submit_review (post-visit star rating).",
+    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, caregiverId: { type: "string" }, sentiment: { type: "string", description: "'positive', 'neutral', or 'negative'" }, note: { type: "string" } }, required: ["clientId", "caregiverId", "note"] },
+  },
+  {
+    name: "create_job_post",
+    description: "Post a new caregiver job for the family so nearby caregivers can apply. Collect care needs, schedule, and hourly rate; confirm, then call.",
+    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, careTypes: { type: "array", items: { type: "string" } }, frequency: { type: "string", description: "e.g. 'weekly', 'one-time'" }, days: { type: "array", items: { type: "string" } }, timeOfDay: { type: "array", items: { type: "string" } }, hourlyRate: { type: "number" }, paymentMethod: { type: "string" }, city: { type: "string" }, startDate: { type: "string", description: "YYYY-MM-DD" } }, required: ["clientId", "careTypes", "hourlyRate"] },
+  },
+  {
+    name: "list_proactive_drafts",
+    description: "List Cara's pending proactive message drafts queued for this family that haven't sent yet.",
+    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." } }, required: ["userId"] },
+  },
+  {
+    name: "cancel_proactive_draft",
+    description: "Cancel a pending proactive message draft so Cara doesn't send it. Only works on drafts that haven't already sent.",
+    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." }, draftId: { type: "string" } }, required: ["userId", "draftId"] },
+  },
+  {
     name: "schedule_followup",
     description:
       "Schedule a one-time proactive follow-up message to send to the family at a future time. " +
@@ -496,32 +758,19 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "perform_web_action",
     description:
-      "Browse the web or take action on websites on behalf of the family. " +
-      "Handles both public web lookups AND login-required portal actions.\n\n" +
-      "PUBLIC (no login needed — always try search_web first, then these):\n" +
-      "- actionType 'search': find results matching a query\n" +
-      "- actionType 'fetch': get content from a specific URL\n" +
-      "- actionType 'browse': full AI browser session for complex navigation\n\n" +
-      "LOGIN-REQUIRED (set loginAction instead of actionType):\n" +
-      "- loginAction 'schedule_appointment': book a doctor appointment on MyChart etc.\n" +
-      "- loginAction 'pharmacy_refill': request a prescription refill on CVS/Walgreens\n" +
-      "- loginAction 'insurance_check': check authorization or coverage status\n\n" +
+      "Take a LOGIN-REQUIRED action on a healthcare portal on behalf of the family. " +
+      "For public web lookups use the dedicated primitives instead (search_healthcare_provider, fetch_web_page, browse_web), or search_web.\n\n" +
+      "Set loginAction to one of:\n" +
+      "- 'schedule_appointment': book a doctor appointment on MyChart etc.\n" +
+      "- 'pharmacy_refill': request a prescription refill on CVS/Walgreens\n" +
+      "- 'insurance_check': check authorization or coverage status\n\n" +
       "If credentials aren't stored yet, Cara will collect them securely via iMessage before proceeding.",
     input_schema: {
       type: "object",
       properties: {
         task: {
           type: "string",
-          description: "What to do or find, in plain English.",
-        },
-        url: {
-          type: "string",
-          description: "Optional starting URL if you already know the website.",
-        },
-        actionType: {
-          type: "string",
-          enum: ["search", "fetch", "browse"],
-          description: "For public web actions (no login). search = fastest, fetch = page content, browse = full AI navigation.",
+          description: "What to do, in plain English.",
         },
         loginAction: {
           type: "string",
@@ -552,7 +801,48 @@ export const MCP_TOOLS: McpTool[] = [
         referenceNumber: { type: "string", description: "Prior auth or claim reference number" },
         seniorName:      { type: "string", description: "Senior's name when account has multiple members" },
       },
-      required: ["task", "userId"],
+      required: ["task", "userId", "loginAction"],
+    },
+  },
+  {
+    name: "search_healthcare_provider",
+    description: "Public web search for healthcare providers/resources (no login). Use for 'find a cardiologist near me', 'urgent care in <city>'. Prefer search_web for general lookups.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query:  { type: "string", description: "What to search for, in plain English." },
+        city:   { type: "string", description: "City to scope the search to, if relevant." },
+        userId: { type: "string", description: "Injected automatically." },
+        phone:  { type: "string", description: "Injected automatically." },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "fetch_web_page",
+    description: "Fetch the content of a specific public URL (no login). Use when you already know the page to read.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url:    { type: "string", description: "The URL to fetch." },
+        userId: { type: "string", description: "Injected automatically." },
+        phone:  { type: "string", description: "Injected automatically." },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "browse_web",
+    description: "Run a public AI browser session for complex navigation that needs no login (multi-step lookups on public sites).",
+    input_schema: {
+      type: "object",
+      properties: {
+        task:   { type: "string", description: "What to do/find, in plain English." },
+        url:    { type: "string", description: "Optional starting URL." },
+        userId: { type: "string", description: "Injected automatically." },
+        phone:  { type: "string", description: "Injected automatically." },
+      },
+      required: ["task"],
     },
   },
   {
@@ -636,6 +926,80 @@ export const MCP_TOOLS: McpTool[] = [
         weeklyAvailability: { type: "object",  description: "Object mapping day abbreviations to time windows" },
       },
       required: ["caregiverId"],
+    },
+  },
+  {
+    name: "pause_account",
+    description:
+      "Pause your own caregiver account so you stop receiving job matches (e.g. vacation, a break). " +
+      "Reversible at any time with reactivate_account. Only you can pause your own account.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "Your caregiver Firestore document ID" },
+        until:       { type: "string", description: "When to pause until: an ISO date 'YYYY-MM-DD', or 'indefinite' for an open-ended pause" },
+        phone:       { type: "string", description: "The acting caregiver's phone — auto-injected; used to verify you own this account" },
+      },
+      required: ["caregiverId", "until"],
+    },
+  },
+  {
+    name: "reactivate_account",
+    description:
+      "Reactivate your own paused caregiver account so you start receiving job matches again. " +
+      "Only you can reactivate your own account.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "Your caregiver Firestore document ID" },
+        phone:       { type: "string", description: "The acting caregiver's phone — auto-injected; used to verify you own this account" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "accept_shift",
+    description:
+      "Accept the shift offer the family or system just sent you — confirms the visit. " +
+      "Use when you agree to take your current pending offer. There's nothing to pass; it resolves your active offer.",
+    input_schema: {
+      type: "object",
+      properties: {
+        phone:  { type: "string", description: "The acting caregiver's phone — auto-injected" },
+        chatId: { type: "string", description: "The caregiver's chat id — auto-injected" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "decline_shift",
+    description:
+      "Decline the shift offer the family or system just sent you. " +
+      "Use when you can't take your current pending offer; the system will line up a replacement.",
+    input_schema: {
+      type: "object",
+      properties: {
+        phone:  { type: "string", description: "The acting caregiver's phone — auto-injected" },
+        chatId: { type: "string", description: "The caregiver's chat id — auto-injected" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "complete_task",
+    description:
+      "Signal that you've finished this turn — call this INSTEAD of a plain text reply when you've " +
+      "achieved the outcome or are blocked. The message you pass is sent to the user as your reply. " +
+      "status: 'done' (outcome achieved), 'blocked' (can't proceed — say why in the message), or " +
+      "'needs_user' (waiting on the user). Do NOT use status 'done' while an action is still awaiting " +
+      "the user's YES/NO confirmation.",
+    input_schema: {
+      type: "object",
+      properties: {
+        status:  { type: "string", enum: ["done", "blocked", "needs_user"], description: "Completion status" },
+        message: { type: "string", description: "The user-facing message to send as your final reply this turn" },
+      },
+      required: ["status", "message"],
     },
   },
   {
@@ -1683,6 +2047,20 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "edit_comment",
+    description: "Edit the text of a comment the user previously left on a care journal entry. Use when the family says 'fix my comment to say …'. Only the comment's author can edit it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:    { type: "string", description: "The user who left the comment" },
+        entryId:   { type: "string", description: "The care_journal entry ID" },
+        commentId: { type: "string", description: "The comment ID to edit" },
+        comment:   { type: "string", description: "The new comment text" },
+      },
+      required: ["userId", "entryId", "commentId", "comment"],
+    },
+  },
+  {
     name: "edit_review",
     description: "Update a review the family already submitted for a caregiver — change the rating and/or comment. Use when they say 'change my review to 5 stars' or 'update what I wrote'. Only the review's author can edit it.",
     input_schema: {
@@ -1703,7 +2081,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         triggerId: { type: "string", description: "The follow-up triggerId returned by schedule_followup" },
-        userId:    { type: "string", description: "The owning user (ownership check)" },
+        userId:    { type: "string", description: "The owning user — auto-injected; used to verify you own this follow-up" },
       },
       required: ["triggerId", "userId"],
     },
@@ -1766,27 +2144,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "update_reminder",
-    description:
-      "Edit an existing personal reminder in place — change its time, day, recurrence, label, or message — without deleting and recreating it. " +
-      "Use when the user says 'move my medication reminder to 9am' or 'make that weekly instead of daily'. " +
-      "Pass only the fields that change. Confirm the new schedule with the user before calling.",
-    input_schema: {
-      type: "object",
-      properties: {
-        phone:      { type: "string", description: "The user's phone number (ownership check)" },
-        triggerId:  { type: "string", description: "The Firestore document ID of the user_triggers doc to update" },
-        label:      { type: "string", description: "New short name (optional)" },
-        recurrence: { type: "string", description: "New recurrence: daily, weekly, monthly, once (optional)" },
-        dayOfWeek:  { type: "number", description: "New day for weekly recurrence, 0=Sun … 6=Sat (optional)" },
-        hour:       { type: "number", description: "New hour, 24-hour 0–23 (optional)" },
-        minute:     { type: "number", description: "New minute, 0–59 (optional)" },
-        message:    { type: "string", description: "New reminder text (optional)" },
-      },
-      required: ["phone", "triggerId"],
-    },
-  },
-  {
     name: "update_care_journal_entry",
     description:
       "Correct an existing care journal entry the caregiver already logged — fix the notes, mood, meds given, or activities. " +
@@ -1826,6 +2183,11 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "delete_reminder",
   "get_billing_summary",
   "update_caregiver_profile",
+  "pause_account",
+  "reactivate_account",
+  "accept_shift",
+  "decline_shift",
+  "complete_task",
   "create_care_journal_entry",
   "apply_to_job",
   "request_instant_payout",
@@ -1869,12 +2231,13 @@ export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_N
 
 export async function handleToolCallForCaregiver(
   name: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  shadowMode = false,
 ): Promise<unknown> {
   if (name === "perform_web_action" && input.loginAction) {
     return { _toolError: true, message: "Login-required web actions are not available for caregivers." };
   }
-  return handleToolCall(name, input);
+  return handleToolCall(name, input, shadowMode);
 }
 
 // ── MCP Resources ─────────────────────────────────────────────────────────────
@@ -2150,10 +2513,42 @@ async function recordMcpToolStatus(params: {
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
+// U11: shadow/dry-run isolation. When the shadow harness (U6) runs runQaAgent
+// in parallel with a live handler, its tool calls must have ZERO side effects.
+// This is the structural guarantee (KTD-9): only explicitly read-only tools run
+// for real under shadowMode; EVERYTHING ELSE is synthesized (fail-closed), so a
+// mutating tool — or the pending-action gate it would hit — can never execute.
+// Conservative allowlist: a tool omitted here is treated as mutating (safe); a
+// mutating tool must never be added here.
+const READ_ONLY_TOOLS = new Set<string>([
+  "get_senior_profile", "list_household_seniors", "get_pending_tasks",
+  "suggest_upcoming_care", "get_care_team", "cara_knows",
+  "get_upcoming_appointments", "get_caregiver_appointments", "get_caregiver_info",
+  "get_caregiver_reviews", "find_replacement_caregivers", "list_saved_caregivers",
+  "get_recurring_schedule", "list_user_reminders",
+  "get_billing_summary", "get_invoice_history", "get_invoice_details",
+  "get_payout_history", "get_caregiver_earnings", "get_pending_timesheets", "get_tax_summary",
+  "get_care_journal", "get_care_journal_client", "get_care_plan", "get_care_plan_history",
+  "get_health_signals", "get_recent_messages", "get_family_group",
+  "read_memory_file", "search_memory", "search_web",
+  "list_client_jobs", "list_job_applicants", "browse_job_board",
+  "get_job_recommendations", "get_my_applications", "get_background_check_status",
+]);
+
+export function isReadOnlyTool(name: string): boolean {
+  return READ_ONLY_TOOLS.has(name);
+}
+
 export async function handleToolCall(
   name: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  shadowMode = false,
 ): Promise<unknown> {
+  // U11: under shadow, never execute a non-read-only tool — return a synthetic
+  // "would-have-run" result the harness records as the shadow end-state.
+  if (shadowMode && !READ_ONLY_TOOLS.has(name)) {
+    return { _shadow: true, simulated: name, wouldRun: true, input };
+  }
   // Runtime-enforced confirmation gate. High-risk tool calls (cancel_appointment,
   // remove_family_member, cancel_subscription, etc.) are intercepted on the
   // first call and turned into a pending-action stub for Claude to read.
@@ -2504,42 +2899,51 @@ async function executeToolCall(
         };
       }
 
+      case "get_caregiver_booking_rate": {
+        // U9b: read-only rate lookup extracted from request_booking. No write.
+        const rate = await resolveCaregiverRate(String(input.caregiverId ?? ""));
+        if (!rate.ok) return toolError(rate.code, rate.message);
+        return { success: true, caregiverId: String(input.caregiverId), caregiverName: rate.caregiverName, hourlyRate: rate.hourlyRate };
+      }
+
+      case "quote_booking": {
+        // U9b: pure cost estimate — lets Cara show the family the price before
+        // request_booking commits. No write; safe to call freely.
+        const quote = await buildBookingQuote(input);
+        if (!quote.ok) return toolError(quote.code, quote.message);
+        return {
+          success:       true,
+          caregiverId:   quote.caregiverId,
+          caregiverName: quote.caregiverName,
+          hourlyRate:    quote.hourlyRate,
+          durationHours: quote.durationHours,
+          dates:         quote.dates,
+          lineItems:     quote.lineItems,
+          totalEstimate: quote.totalEstimate,
+          committed:     false,
+          note:          "Estimate only — nothing has been booked. Call request_booking to commit.",
+        };
+      }
+
       case "request_booking": {
         const { clientId, caregiverId, dates, startTime, endTime, phone } = input;
-        if (!clientId || !caregiverId || !dates || !startTime || !endTime) {
-          return toolError("INVALID_INPUT", "clientId, caregiverId, dates, startTime, endTime are required");
-        }
-        if (!phone) {
-          return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
-        }
-        const dateList = (Array.isArray(dates) ? dates : [dates]) as string[];
-        if (dateList.length === 0) return toolError("INVALID_INPUT", "at least one date is required");
+        // Session-injected ownership fields are checked here; the booking shape
+        // (caregiverId/dates/times) + caregiver lookup are validated by the shared
+        // quote primitive below, so the two paths can never diverge.
+        if (!clientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
+        if (!phone)    return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
 
-        // Compute duration (hours) from "HH:MM" start/end times.
-        const toMinutes = (t: string): number | null => {
-          const m = /^(\d{1,2}):(\d{2})$/.exec(String(t).trim());
-          if (!m) return null;
-          return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-        };
-        const startMin = toMinutes(startTime as string);
-        const endMin   = toMinutes(endTime as string);
-        if (startMin === null || endMin === null || endMin <= startMin) {
-          return toolError("INVALID_INPUT", "startTime/endTime must be 'HH:MM' with end after start");
-        }
-        const durationHours = Math.round(((endMin - startMin) / 60) * 100) / 100;
+        // Commit via the SAME primitive quote_booking exposes (U9b): the duration,
+        // rate, and caregiver name the family approved in the quote and the values
+        // we book are computed by one function — no duplicated parse/lookup logic.
+        const quote = await buildBookingQuote(input);
+        if (!quote.ok) return toolError(quote.code, quote.message);
 
-        // Resolve caregiver name + rate from the caregiver doc.
-        const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-        if (!cgSnap.exists) return toolError("NOT_FOUND", "caregiver not found");
-        const cg = cgSnap.data() || {};
-        const caregiverName = (cg.name ?? cg.fullName ?? "your caregiver") as string;
-        const hourlyRate    = (typeof cg.hourlyRate === "number" ? cg.hourlyRate : 20) as number;
-
-        const appointments = dateList.map((d) => ({
+        const appointments = quote.dates.map((d) => ({
           date:          d,
           startTime:     startTime as string,
           endTime:       endTime as string,
-          durationHours,
+          durationHours: quote.durationHours,
         }));
 
         // Route through the REAL booking path: createBookingTask writes an
@@ -2551,17 +2955,130 @@ async function executeToolCall(
           clientPhone:   phone as string,
           clientId:      clientId as string,
           caregiverId:   caregiverId as string,
-          caregiverName,
+          caregiverName: quote.caregiverName,
           appointments,
-          hourlyRate,
+          hourlyRate:    quote.hourlyRate,
         });
         if (!taskId) {
           // createBookingTask returns "" when it blocks the booking (e.g. bgcheck pending)
           // and has already messaged the family. Surface that to the agent.
           return { success: false, blocked: true, reason: "booking_blocked_pending_background_check" };
         }
-        logBookingCreated(clientId as string, caregiverId as string, dateList).catch(() => {});
-        return { success: true, taskId, status: "awaiting_approval" };
+        logBookingCreated(clientId as string, caregiverId as string, quote.dates).catch(() => {});
+        return { success: true, taskId, status: "awaiting_approval", estimatedTotal: quote.totalEstimate };
+      }
+
+      case "trigger_emergency_alert": {
+        // Parity with the EmergencySOS UI (dbService.triggerEmergencyAlert). clientId
+        // is session-injected. Writes an active emergency_alerts doc + an admin_alert.
+        const { clientId, note, location } = input;
+        if (!clientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
+        const alertRef = await db.collection("emergency_alerts").add({
+          initiatorId:     clientId,
+          initiatorType:   "client",
+          timestamp:       nowIso,
+          ...(location ? { location } : {}),
+          ...(note ? { note: String(note).slice(0, 500) } : {}),
+          status:          "active",
+          notifiedContacts: [],
+          source:          "cara",
+        });
+        await db.collection("admin_alerts").add({
+          type: "emergency_alert", title: "🚨 Emergency alert raised via Cara",
+          clientId, alertId: alertRef.id, note: note ?? "", createdAt: nowIso, resolved: false,
+        }).catch(() => {});
+        logAudit({ eventType: "emergency_alert_raised", userId: clientId as string, data: { source: "mcp:trigger_emergency_alert", alertId: alertRef.id } }).catch(() => {});
+        return { success: true, alertId: alertRef.id, status: "active", advise911: true };
+      }
+
+      case "get_callout_backups": {
+        const { clientId, appointmentId } = input;
+        if (!clientId || !appointmentId) return toolError("INVALID_INPUT", "appointmentId is required");
+        const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
+        if (!apptSnap.exists) return toolError("NOT_FOUND", "appointment not found");
+        const appt = apptSnap.data() || {};
+        if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This appointment does not belong to this client");
+        const options = Array.isArray(appt.backupCaregiverOptions) ? appt.backupCaregiverOptions : [];
+        return { success: true, appointmentId, caregivers: options, count: options.length };
+      }
+
+      case "select_callout_backup": {
+        const { clientId, appointmentId, backupCaregiverId } = input;
+        if (!clientId || !appointmentId || !backupCaregiverId) return toolError("INVALID_INPUT", "appointmentId and backupCaregiverId are required");
+        const apptRef = db.collection("appointments").doc(appointmentId as string);
+        const apptSnap = await apptRef.get();
+        if (!apptSnap.exists) return toolError("NOT_FOUND", "appointment not found");
+        const appt = apptSnap.data() || {};
+        if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This appointment does not belong to this client");
+        const cgSnap = await db.collection("caregivers").doc(backupCaregiverId as string).get();
+        if (!cgSnap.exists) return toolError("NOT_FOUND", "caregiver not found");
+        const cg = cgSnap.data() || {};
+        const caregiverName = (cg.name ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "your caregiver";
+        await apptRef.update({
+          caregiverId:          backupCaregiverId,
+          caregiverName,
+          status:               "confirmed",
+          previousCaregiverId:  appt.caregiverId ?? null,
+          caregiverSwitchedAt:  nowIso,
+          needsBackup:          false,
+          backupCaregiverOptions: admin.firestore.FieldValue.delete(),
+        });
+        logAudit({ eventType: "callout_backup_selected", userId: clientId as string, data: { source: "mcp:select_callout_backup", appointmentId, backupCaregiverId } }).catch(() => {});
+        return { success: true, appointmentId, caregiverId: backupCaregiverId, caregiverName, status: "confirmed" };
+      }
+
+      case "request_callout_refund": {
+        const { clientId, appointmentId, reason } = input;
+        if (!clientId || !appointmentId) return toolError("INVALID_INPUT", "appointmentId is required");
+        const apptRef = db.collection("appointments").doc(appointmentId as string);
+        const apptSnap = await apptRef.get();
+        if (!apptSnap.exists) return toolError("NOT_FOUND", "appointment not found");
+        const appt = apptSnap.data() || {};
+        if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This appointment does not belong to this client");
+        const refundReason = (reason as string) || "Caregiver called out, no suitable backup available";
+        await apptRef.update({ status: "cancelled_refund_requested", refundRequestedAt: nowIso, refundReason, needsBackup: false });
+        const refundRef = await db.collection("refundRequests").add({
+          appointmentId, clientId, amount: appt.amount ?? 0, reason: refundReason, status: "pending", createdAt: nowIso, source: "cara",
+        });
+        await db.collection("admin_alerts").add({
+          type: "refund_request", title: "Refund request — caregiver callout (via Cara)",
+          clientId, appointmentId, refundRequestId: refundRef.id, createdAt: nowIso, resolved: false,
+        }).catch(() => {});
+        logAudit({ eventType: "callout_refund_requested", userId: clientId as string, data: { source: "mcp:request_callout_refund", appointmentId, refundRequestId: refundRef.id } }).catch(() => {});
+        return { success: true, refundRequestId: refundRef.id, status: "pending" };
+      }
+
+      case "send_referral": {
+        const { userId, email } = input;
+        if (!userId) return toolError("INVALID_INPUT", "userId is required (auto-injected from session)");
+        if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email))) return toolError("INVALID_INPUT", "a valid email is required");
+        const userSnap = await db.collection("users").doc(userId as string).get();
+        const userData = userSnap.data() || {};
+        let referralCode = userData.referralCode as string | undefined;
+        if (!referralCode) {
+          referralCode = generateReferralCode();
+          await db.collection("users").doc(userId as string).set({ referralCode }, { merge: true });
+        }
+        const userType = (userData.userType === "caregiver" ? "caregiver" : "client");
+        await db.collection("referrals").add({
+          referrerId: userId, referrerUserId: userId, referredEmail: String(email), status: "pending", referralCode, userType, createdAt: nowIso, source: "cara",
+        });
+        logAudit({ eventType: "referral_sent", userId: userId as string, data: { source: "mcp:send_referral" } }).catch(() => {});
+        return { success: true, referralCode, invited: String(email) };
+      }
+
+      case "get_referral_status": {
+        const { userId } = input;
+        if (!userId) return toolError("INVALID_INPUT", "userId is required (auto-injected from session)");
+        const userSnap = await db.collection("users").doc(userId as string).get();
+        let referralCode = (userSnap.data()?.referralCode as string | undefined);
+        if (!referralCode) {
+          referralCode = generateReferralCode();
+          await db.collection("users").doc(userId as string).set({ referralCode }, { merge: true });
+        }
+        const refSnap = await db.collection("referrals").where("referrerId", "==", userId).get();
+        const referrals = refSnap.docs.map((d) => ({ email: d.data().referredEmail, status: d.data().status }));
+        return { success: true, referralCode, totalReferred: referrals.length, referrals };
       }
 
       case "update_preferences": {
@@ -2819,6 +3336,23 @@ async function executeToolCall(
         return { success: true, deleted: true };
       }
 
+      case "update_reminder": {
+        const { phone, triggerId, label, recurrence, dayOfWeek, hour, minute, message: msg } = input;
+        if (!phone || !triggerId) return toolError("INVALID_INPUT", "phone and triggerId are required");
+        const patch: Record<string, unknown> = {};
+        if (label      !== undefined) patch.label      = label;
+        if (recurrence !== undefined) patch.recurrence = recurrence;
+        if (dayOfWeek  !== undefined) patch.dayOfWeek  = dayOfWeek;
+        if (hour       !== undefined) patch.hour       = hour;
+        if (minute     !== undefined) patch.minute     = minute;
+        if (msg        !== undefined) patch.message    = msg;
+        if (Object.keys(patch).length === 0) return toolError("INVALID_INPUT", "provide at least one field to update");
+        const { updateUserTrigger } = await import("../triggers/userTriggerManager");
+        const updated = await updateUserTrigger(phone as string, triggerId as string, patch);
+        if (!updated) return toolError("NOT_FOUND", "Reminder not found or does not belong to this user");
+        return { success: true, updated: true, triggerId };
+      }
+
       case "get_caregiver_appointments": {
         if (!input.caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
         const daysAhead   = Math.min((input.daysAhead as number) ?? 7, 30);
@@ -2873,10 +3407,9 @@ async function executeToolCall(
       }
 
       case "perform_web_action": {
+        // Login-required healthcare-portal actions only. Public web reads were
+        // decomposed into search_healthcare_provider / fetch_web_page / browse_web (U9).
         const {
-          searchHealthcareProvider,
-          fetchHealthcarePage,
-          performBrowserAction,
           findAppointmentSlots,
           bookAppointmentSlot,
           requestPharmacyRefill,
@@ -2885,12 +3418,9 @@ async function executeToolCall(
         const { startCredentialCollection } = await import("../browser/credentialCollector");
 
         const task        = input.task        as string;
-        const url         = input.url         as string | undefined;
-        const actionType  = input.actionType  as "search" | "fetch" | "browse" | undefined;
         const loginAction = input.loginAction as "schedule_appointment" | "pharmacy_refill" | "insurance_check" | undefined;
         const userId2     = input.userId      as string;
         const phone2      = (input.phone      as string | undefined) ?? "unknown";
-        const city        = input.city        as string | undefined;
 
         try {
           // ── Login-required portal actions ──────────────────────────────────
@@ -2994,30 +3524,57 @@ async function executeToolCall(
             }
           }
 
-          // ── Public web actions ─────────────────────────────────────────────
-          switch (actionType) {
-            case "search": {
-              const result = await searchHealthcareProvider({ userId: userId2, phone: phone2, query: task, city });
-              return { found: result.found, summary: result.summary, results: result.results.slice(0, 3) };
-            }
-
-            case "fetch": {
-              if (!url) return toolError("INVALID_INPUT", "url is required for fetch action");
-              const result = await fetchHealthcarePage({ userId: userId2, phone: phone2, url });
-              return { statusCode: result.statusCode, content: result.content.slice(0, 1500) };
-            }
-
-            case "browse": {
-              const result = await performBrowserAction({ userId: userId2, phone: phone2, task, url, requiresLogin: false });
-              return { success: result.success, result: result.result, sessionId: result.sessionId };
-            }
-
-            default:
-              return toolError("INVALID_INPUT", "actionType or loginAction is required");
-          }
+          // No loginAction → this tool is login-only now; public reads moved out.
+          return toolError("INVALID_INPUT", "loginAction is required. For public web reads use search_healthcare_provider, fetch_web_page, or browse_web.");
         } catch (webErr) {
           console.error("[perform_web_action] error:", webErr);
           return { error: true, message: "I ran into a problem with that web action. Let me find the link for you instead." };
+        }
+      }
+
+      // ── Public web primitives (U9 — decomposed from perform_web_action) ──────
+      case "search_healthcare_provider": {
+        const { searchHealthcareProvider } = await import("../browser/careWebActions");
+        const userIdW = (input.userId as string | undefined) ?? "unknown";
+        const phoneW  = (input.phone  as string | undefined) ?? "unknown";
+        const query   = input.query as string | undefined;
+        if (!query) return toolError("INVALID_INPUT", "query is required");
+        try {
+          const result = await searchHealthcareProvider({ userId: userIdW, phone: phoneW, query, city: input.city as string | undefined });
+          return { found: result.found, summary: result.summary, results: result.results.slice(0, 3) };
+        } catch (e) {
+          console.error("[search_healthcare_provider] error:", e);
+          return { error: true, message: "I couldn't run that search just now." };
+        }
+      }
+
+      case "fetch_web_page": {
+        const { fetchHealthcarePage } = await import("../browser/careWebActions");
+        const userIdW = (input.userId as string | undefined) ?? "unknown";
+        const phoneW  = (input.phone  as string | undefined) ?? "unknown";
+        const url     = input.url as string | undefined;
+        if (!url) return toolError("INVALID_INPUT", "url is required");
+        try {
+          const result = await fetchHealthcarePage({ userId: userIdW, phone: phoneW, url });
+          return { statusCode: result.statusCode, content: result.content.slice(0, 1500) };
+        } catch (e) {
+          console.error("[fetch_web_page] error:", e);
+          return { error: true, message: "I couldn't fetch that page just now." };
+        }
+      }
+
+      case "browse_web": {
+        const { performBrowserAction } = await import("../browser/careWebActions");
+        const userIdW = (input.userId as string | undefined) ?? "unknown";
+        const phoneW  = (input.phone  as string | undefined) ?? "unknown";
+        const task    = input.task as string | undefined;
+        if (!task) return toolError("INVALID_INPUT", "task is required");
+        try {
+          const result = await performBrowserAction({ userId: userIdW, phone: phoneW, task, url: input.url as string | undefined, requiresLogin: false });
+          return { success: result.success, result: result.result, sessionId: result.sessionId };
+        } catch (e) {
+          console.error("[browse_web] error:", e);
+          return { error: true, message: "I ran into a problem browsing for that." };
         }
       }
 
@@ -3144,6 +3701,51 @@ async function executeToolCall(
       await db.collection("caregivers").doc(caregiverId as string).set(patch, { merge: true });
       logAudit({ eventType: "profile_updated", userId: caregiverId as string, data: { source: "mcp:update_caregiver_profile", fields: Object.keys(patch).filter(k => k !== "updatedAt") } }).catch(() => {});
       return { success: true, updated: Object.keys(patch).filter(k => k !== "updatedAt") };
+    }
+
+    if (name === "pause_account") {
+      const { caregiverId, until, phone: actingPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      if (!until || typeof until !== "string") return toolError("INVALID_INPUT", "until is required ('YYYY-MM-DD' or 'indefinite')");
+      const snap = await db.collection("caregivers").doc(caregiverId as string).get();
+      if (!snap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      const ownerPhone = snap.data()?.phone;
+      // Ownership: the acting phone must own this caregiver doc. Fail CLOSED unless
+      // BOTH phones exist and match — a missing/empty ownerPhone must not bypass the
+      // check, and we do NOT trust a model-supplied caregiverId alone.
+      if (!actingPhone || !ownerPhone || ownerPhone !== actingPhone) {
+        return toolError("PERMISSION_DENIED", "You can only pause your own account");
+      }
+      await pauseCaregiver(caregiverId as string, until);
+      logAudit({ eventType: "profile_updated", userId: caregiverId as string, data: { source: "mcp:pause_account", until } }).catch(() => {});
+      return { success: true, paused: true, until };
+    }
+
+    if (name === "reactivate_account") {
+      const { caregiverId, phone: actingPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const snap = await db.collection("caregivers").doc(caregiverId as string).get();
+      if (!snap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      const ownerPhone = snap.data()?.phone;
+      // Fail CLOSED unless BOTH phones exist and match (see pause_account above).
+      if (!actingPhone || !ownerPhone || ownerPhone !== actingPhone) {
+        return toolError("PERMISSION_DENIED", "You can only reactivate your own account");
+      }
+      await reactivateCaregiver(caregiverId as string);
+      logAudit({ eventType: "profile_updated", userId: caregiverId as string, data: { source: "mcp:reactivate_account" } }).catch(() => {});
+      return { success: true, reactivated: true };
+    }
+
+    if (name === "accept_shift" || name === "decline_shift") {
+      const { phone: actingPhone, chatId } = input as Record<string, unknown>;
+      if (!actingPhone || !chatId) return toolError("INVALID_INPUT", "phone and chatId are required (auto-injected)");
+      const { acceptCaregiverShiftOffer, declineCaregiverShiftOffer } = await import("../agents/shiftOffer");
+      const res = name === "accept_shift"
+        ? await acceptCaregiverShiftOffer(actingPhone as string, chatId as string)
+        : await declineCaregiverShiftOffer(actingPhone as string, chatId as string);
+      if (res.status === "no_pending_offer") return { success: false, reason: "no_pending_offer", message: "There's no pending shift offer to act on right now." };
+      if (res.status === "not_pending" || res.status === "already_closed") return { success: false, reason: res.status, message: "That offer is no longer open." };
+      return { success: true, resolution: res.status };
     }
 
     if (name === "add_family_member") {
@@ -3435,8 +4037,182 @@ async function executeToolCall(
         source: "cara_sms", timestamp: nowIso,
       });
       await apptSnap.ref.update({ journalEntryLogged: true }).catch(() => {});
+      // U3: guarantee the family summary fires on this path too (previously only
+      // the SMS care-notes path notified the family). Reuses the shared,
+      // PHI-minimized sender so both write paths behave identically.
+      try {
+        const { sendFamilyShiftEndUpdate } = await import("../linq/routeCaregiver");
+        await sendFamilyShiftEndUpdate({
+          caregiverName: (appt.caregiverName as string) ?? "",
+          clientId: appt.clientId,
+          seniorId: (appt.seniorId ?? appt.clientId) as string,
+          apptData: { ...appt, id: appointmentId },
+          entry: { mood: mood ?? "", activities: activities ?? [], observations: notes, notes },
+        });
+      } catch (e) { console.error("[create_care_journal_entry] family summary failed", e); }
       logAudit({ eventType: "care_journal_created", userId: caregiverId as string, data: { source: "mcp:create_care_journal_entry", appointmentId, entryId: entryRef.id } }).catch(() => {});
       return { success: true, entryId: entryRef.id };
+    }
+
+    if (name === "create_senior_profile") {
+      // clientId is injected session-authoritatively (qaAgent enrichment overrides
+      // any model-supplied value), so ownership is bound to the caller (KTD-10).
+      const { clientId, name: seniorName, relationship, age, needs, conditions, location } = input as Record<string, unknown>;
+      if (!clientId || !seniorName) return toolError("INVALID_INPUT", "clientId and name are required");
+      // New household seniors are NOT keyed by the client uid (that doc is the
+      // primary senior); they get a random id stamped with userId == clientId so
+      // the amended senior_profiles rule lets the owning family read them (KTD-10).
+      const ref = await db.collection("senior_profiles").add({
+        userId:       clientId,
+        name:         seniorName,
+        relationship: relationship ?? null,
+        age:          age ?? null,
+        needs:        Array.isArray(needs) ? needs : [],
+        conditions:   Array.isArray(conditions) ? conditions : [],
+        location:     location ?? null,
+        createdAt:    nowIso,
+        source:       "cara_sms",
+      });
+      logAudit({ eventType: "senior_profile_created", userId: clientId as string, data: { source: "mcp:create_senior_profile", seniorProfileId: ref.id } }).catch(() => {});
+      return { success: true, seniorProfileId: ref.id, message: `Added ${seniorName} to the household.` };
+    }
+
+    if (name === "delete_review") {
+      const { clientId, reviewId } = input as Record<string, unknown>;
+      if (!clientId || !reviewId) return toolError("INVALID_INPUT", "clientId and reviewId are required");
+      const rSnap = await db.collection("reviews").doc(reviewId as string).get();
+      if (!rSnap.exists) return toolError("NOT_FOUND", "Review not found");
+      const review = rSnap.data()!;
+      if (review.clientId !== clientId) return toolError("PERMISSION_DENIED", "Review does not belong to this client");
+      await rSnap.ref.delete();
+      if (review.appointmentId) {
+        await db.collection("appointments").doc(review.appointmentId as string)
+          .update({ hasReview: false, reviewId: admin.firestore.FieldValue.delete() }).catch(() => {});
+      }
+      logAudit({ eventType: "review_deleted", userId: clientId as string, data: { source: "mcp:delete_review", reviewId, caregiverId: review.caregiverId } }).catch(() => {});
+      return { success: true, reviewId };
+    }
+
+    if (name === "delete_care_journal_entry") {
+      const { clientId, entryId } = input as Record<string, unknown>;
+      if (!clientId || !entryId) return toolError("INVALID_INPUT", "clientId and entryId are required");
+      const eSnap = await db.collection("care_journal").doc(entryId as string).get();
+      if (!eSnap.exists) return toolError("NOT_FOUND", "Journal entry not found");
+      const entry = eSnap.data()!;
+      if (entry.clientId !== clientId) return toolError("PERMISSION_DENIED", "Entry does not belong to this client");
+      // Soft-delete: care_journal is an append-only audit record (firestore.rules
+      // marks it never-client-deletable), so hide from the family view rather
+      // than hard-delete — preserves the audit trail (Success Criterion #2).
+      await eSnap.ref.update({ status: "hidden", hiddenAt: nowIso });
+      logAudit({ eventType: "care_journal_hidden", userId: clientId as string, data: { source: "mcp:delete_care_journal_entry", entryId } }).catch(() => {});
+      return { success: true, entryId, softDeleted: true };
+    }
+
+    if (name === "get_support_ticket") {
+      const { userId, ticketId } = input as Record<string, unknown>;
+      if (!userId || !ticketId) return toolError("INVALID_INPUT", "userId and ticketId are required");
+      const tSnap = await db.collection("support_tickets").doc(ticketId as string).get();
+      if (!tSnap.exists) return toolError("NOT_FOUND", "Support ticket not found");
+      const ticket = tSnap.data()!;
+      if (ticket.userId !== userId) return toolError("PERMISSION_DENIED", "Ticket does not belong to this user");
+      return { success: true, ticket: { id: tSnap.id, subject: ticket.subject, status: ticket.status, category: ticket.category, createdAt: ticket.createdAt, resolved: ticket.resolved ?? false } };
+    }
+
+    if (name === "list_support_tickets") {
+      const { userId } = input as Record<string, unknown>;
+      if (!userId) return toolError("INVALID_INPUT", "userId is required");
+      // where(userId) only + in-memory sort to avoid a composite index requirement.
+      const tSnap = await db.collection("support_tickets").where("userId", "==", userId).limit(25).get().catch(() => null);
+      if (!tSnap) return { success: true, tickets: [] };
+      const tickets = tSnap.docs
+        .map(d => { const t = d.data(); return { id: d.id, subject: t.subject, status: t.status, category: t.category, createdAt: t.createdAt as string, resolved: t.resolved ?? false }; })
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+        .slice(0, 10);
+      return { success: true, tickets, total: tickets.length };
+    }
+
+    if (name === "update_support_ticket") {
+      const { userId, ticketId, action, message } = input as Record<string, unknown>;
+      if (!userId || !ticketId || !action) return toolError("INVALID_INPUT", "userId, ticketId, and action are required");
+      const tSnap = await db.collection("support_tickets").doc(ticketId as string).get();
+      if (!tSnap.exists) return toolError("NOT_FOUND", "Support ticket not found");
+      const ticket = tSnap.data()!;
+      if (ticket.userId !== userId) return toolError("PERMISSION_DENIED", "Ticket does not belong to this user");
+      if (action === "reopen") {
+        await tSnap.ref.update({ status: "open", resolved: false, reopenedAt: nowIso });
+      } else if (action === "add_response") {
+        if (!message) return toolError("INVALID_INPUT", "message is required for add_response");
+        await tSnap.ref.update({ userResponses: admin.firestore.FieldValue.arrayUnion({ text: message, at: nowIso }) });
+      } else {
+        return toolError("INVALID_INPUT", "action must be 'reopen' or 'add_response' (admin-only states cannot be set here)");
+      }
+      logAudit({ eventType: "support_ticket_updated", userId: userId as string, data: { source: "mcp:update_support_ticket", ticketId, action } }).catch(() => {});
+      return { success: true, ticketId, action };
+    }
+
+    if (name === "log_match_feedback") {
+      const { clientId, caregiverId, sentiment, note } = input as Record<string, unknown>;
+      if (!clientId || !caregiverId || !note) return toolError("INVALID_INPUT", "clientId, caregiverId, and note are required");
+      await db.collection("users").doc(clientId as string).collection("match_history").add({
+        caregiverId, sentiment: sentiment ?? "neutral", note, source: "cara_sms", createdAt: nowIso,
+      });
+      logAudit({ eventType: "match_feedback_logged", userId: clientId as string, data: { source: "mcp:log_match_feedback", caregiverId, sentiment: sentiment ?? "neutral" } }).catch(() => {});
+      return { success: true };
+    }
+
+    if (name === "create_job_post") {
+      const { clientId, careTypes, frequency, days, timeOfDay, hourlyRate, paymentMethod, city, startDate } = input as Record<string, unknown>;
+      if (!clientId || !Array.isArray(careTypes) || careTypes.length === 0 || hourlyRate == null) {
+        return toolError("INVALID_INPUT", "clientId, careTypes (non-empty), and hourlyRate are required");
+      }
+      const daysArr = Array.isArray(days) ? (days as string[]) : [];
+      const todArr  = Array.isArray(timeOfDay) ? (timeOfDay as string[]) : [];
+      const ref = db.collection("job_posts").doc();
+      await ref.set({
+        intakeId:       ref.id,
+        clientId,
+        status:         "open",
+        careTypes,
+        schedule:       { frequency: frequency ?? "flexible", days: daysArr, timeOfDay: todArr },
+        startDate:      startDate ?? null,
+        location:       { city: city ?? null, lat: null, lng: null },
+        summary:        `New care job — ${(careTypes as string[]).slice(0, 2).join(", ")}`,
+        daysPerWeek:    daysArr.length,
+        timeOfDay:      todArr.join(", "),
+        hourlyRate,
+        paymentMethod:  paymentMethod ?? null,
+        applicantCount: 0,
+        notifiedCount:  0,
+        source:         "cara_sms",
+        createdAt:      nowIso,
+      });
+      logAudit({ eventType: "job_post_created", userId: clientId as string, data: { source: "mcp:create_job_post", jobId: ref.id } }).catch(() => {});
+      return { success: true, jobId: ref.id, message: "Your job is posted — caregivers nearby will see it." };
+    }
+
+    if (name === "list_proactive_drafts") {
+      const { userId } = input as Record<string, unknown>;
+      if (!userId) return toolError("INVALID_INPUT", "userId is required");
+      const dSnap = await db.collection("proactive_drafts").where("userId", "==", userId).limit(50).get().catch(() => null);
+      if (!dSnap) return { success: true, drafts: [] };
+      const PENDING = new Set(["pending", "scheduled", "queued", "draft"]);
+      const drafts = dSnap.docs
+        .map(d => { const x = d.data(); return { id: d.id, summary: x.summary ?? x.content ?? x.message ?? "(draft)", status: x.status as string, scheduledFor: x.scheduledFor ?? x.sendAt ?? null }; })
+        .filter(d => PENDING.has(String(d.status)));
+      return { success: true, drafts, total: drafts.length };
+    }
+
+    if (name === "cancel_proactive_draft") {
+      const { userId, draftId } = input as Record<string, unknown>;
+      if (!userId || !draftId) return toolError("INVALID_INPUT", "userId and draftId are required");
+      const dSnap = await db.collection("proactive_drafts").doc(draftId as string).get();
+      if (!dSnap.exists) return toolError("NOT_FOUND", "Draft not found");
+      const draft = dSnap.data()!;
+      if (draft.userId !== userId) return toolError("PERMISSION_DENIED", "Draft does not belong to this user");
+      if (draft.status === "sent") return toolError("INVALID_INPUT", "That message already went out — it can't be cancelled");
+      await dSnap.ref.update({ status: "cancelled", cancelledAt: nowIso });
+      logAudit({ eventType: "proactive_draft_cancelled", userId: userId as string, data: { source: "mcp:cancel_proactive_draft", draftId } }).catch(() => {});
+      return { success: true, draftId };
     }
 
     if (name === "apply_to_job") {
@@ -3556,7 +4332,7 @@ async function executeToolCall(
         basePay: grossPay3, grossPay: grossPay3, currency: "usd",
         paymentMethod: String(appt3.paymentMethod ?? "").toLowerCase().trim() === "cash" ? "cash" : "credit",
         status: "pending_client_review", submittedAt: nowIso,
-        autoApproveAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        autoApproveAt: autoApproveAtIso(),
         paymentAttemptCount: 0,
       }, { merge: false });
       const clientSessSnap3 = await db.collection("agent_sessions").where("userId", "==", appt3.clientId).limit(1).get();
@@ -5136,6 +5912,24 @@ async function executeToolCall(
       if (outcome.error === "PERMISSION_DENIED") return toolError("PERMISSION_DENIED", "You can only delete your own comments.");
       logAudit({ eventType: "journal_comment_deleted", userId: userId as string, data: { source: "mcp:delete_comment", entryId, commentId } }).catch(() => {});
       return { success: true, deleted: true };
+    }
+
+    // ── edit_comment ──────────────────────────────────────────────────────────
+    if (name === "edit_comment") {
+      const { userId, entryId, commentId, comment } = input as Record<string, unknown>;
+      if (!userId || !entryId || !commentId || !comment) return toolError("INVALID_INPUT", "userId, entryId, commentId, and comment are required");
+      const commentRef = db.collection("care_journal").doc(entryId as string).collection("comments").doc(commentId as string);
+      // Verify existence + author ownership in a transaction, then update the text.
+      let abort: { code: string; message: string } | null = null;
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(commentRef);
+        if (!snap.exists) { abort = { code: "NOT_FOUND", message: "Comment not found." }; return; }
+        if (snap.data()?.userId !== userId) { abort = { code: "PERMISSION_DENIED", message: "You can only edit your own comments." }; return; }
+        tx.update(commentRef, { comment: (comment as string).slice(0, 2000), editedAt: nowIso });
+      });
+      if (abort) return toolError(abort.code, abort.message);
+      logAudit({ eventType: "journal_comment_edited", userId: userId as string, data: { source: "mcp:edit_comment", entryId, commentId } }).catch(() => {});
+      return { success: true, edited: true };
     }
 
     // ── edit_review ─────────────────────────────────────────────────────────

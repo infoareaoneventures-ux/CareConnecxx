@@ -23,7 +23,13 @@ const db = admin.firestore();
 export type ShiftOfferKind = "booking" | "swap" | "time_change";
 export type ShiftOfferStatus = "pending" | "accepted" | "declined" | "expired" | "cancelled";
 
-export const SHIFT_OFFER_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours, matches booking task TTL
+// Centralized in config/slaConstants (U14). Imported locally (used in
+// createShiftOffer below) AND re-exported so existing importers
+// (`import { SHIFT_OFFER_TTL_MS } from "./shiftOffer"`) are unchanged.
+// NOTE: a bare `export { X } from "..."` re-export does NOT create a local
+// binding, so the local usage would throw ReferenceError — import + export.
+import { SHIFT_OFFER_TTL_MS } from "../config/slaConstants";
+export { SHIFT_OFFER_TTL_MS };
 
 export interface ShiftOffer {
   kind:            ShiftOfferKind;
@@ -183,6 +189,53 @@ export async function handleShiftOfferReply(params: {
   }
   await onOfferAccepted(offerId, claimed, chatId);
   return "handled";
+}
+
+// ── Agent-loop accept/decline (U2) ──────────────────────────────────────────────
+//
+// These let the MCP tool loop resolve the caregiver's CURRENT pending shift offer
+// directly, reusing the exact claim + side-effect path as handleShiftOfferReply.
+// Ownership is implicit and safe: the target offer is read from the caregiver's
+// own session (keyed by phone), never from a model-supplied id — so there is no
+// IDOR surface. The agent has already determined intent, so no classifyApproval.
+
+export type ShiftResolution =
+  | { status: "accepted" | "declined" }
+  | { status: "no_pending_offer" | "not_pending" | "already_closed" };
+
+async function resolveCaregiverPendingOffer(
+  phone: string, chatId: string, decision: "accepted" | "declined",
+): Promise<ShiftResolution> {
+  const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
+  const offerId = sessionSnap.data()?.pendingShiftOfferId as string | undefined;
+  if (!offerId) return { status: "no_pending_offer" };
+
+  const offerSnap = await db.collection("shift_offers").doc(offerId).get();
+  if (!offerSnap.exists || (offerSnap.data() as ShiftOffer).status !== "pending") {
+    await clearOfferFlag(phone);
+    return { status: "not_pending" };
+  }
+
+  const claimed = await claimOffer(offerId, decision);
+  await clearOfferFlag(phone);
+  if (!claimed) return { status: "already_closed" };
+
+  if (decision === "accepted") {
+    await onOfferAccepted(offerId, claimed, chatId);
+    return { status: "accepted" };
+  }
+  await onOfferNotAccepted(offerId, claimed, "declined");
+  return { status: "declined" };
+}
+
+/** Accept the caregiver's current pending shift offer (U2). */
+export function acceptCaregiverShiftOffer(phone: string, chatId: string): Promise<ShiftResolution> {
+  return resolveCaregiverPendingOffer(phone, chatId, "accepted");
+}
+
+/** Decline the caregiver's current pending shift offer (U2). */
+export function declineCaregiverShiftOffer(phone: string, chatId: string): Promise<ShiftResolution> {
+  return resolveCaregiverPendingOffer(phone, chatId, "declined");
 }
 
 // ── Acceptance ────────────────────────────────────────────────────────────────

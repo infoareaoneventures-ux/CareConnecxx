@@ -84,8 +84,10 @@ async function findMutualTime(proposedTimes: string[], clientPhone: string): Pro
     if (!busy.has(key)) return iso;
   }
 
-  // All proposed times conflict — return the first anyway
-  return proposedTimes[0];
+  // All proposed times conflict with the family's calendar — signal "no mutual
+  // time" (U8) so the caller can ask the caregiver for different times instead
+  // of booking the family into a known conflict.
+  return null;
 }
 
 // ── Handle family selecting caregivers for interview ─────────────────────────
@@ -205,8 +207,8 @@ export async function handleCaregiverAvailabilityReply(
         const familySession = familySnap.docs[0].data();
         const caregiverUnavailableMsg = await generateCaraMessage({
           audience: "family",
-          context:  `${caregiverName} just declined the interview request and isn't available right now. Ask the family if they'd like you to reach out to the next best match, and tell them to reply YES if so.`,
-          fallback: `${caregiverName} isn't available right now.\n\nWant me to reach out to the next best match? Reply YES and I'll get on it.`,
+          context:  `${caregiverName} just declined the interview and isn't available. Tell the family briefly — they don't need to do anything; you're already moving on to the next best match.`,
+          fallback: `${caregiverName} isn't available for the interview right now — I'm finding the next best match for you.`,
           maxTokens: 80,
         });
         await sendMessage(familySession.chatId, caregiverUnavailableMsg);
@@ -215,6 +217,12 @@ export async function handleCaregiverAvailabilityReply(
           pendingInterviewConfirm:  admin.firestore.FieldValue.delete(),
           rejectedCaregiverIds: admin.firestore.FieldValue.arrayUnion(caregiverId),
         });
+        // Auto-advance (U8): once this request is terminal, kick off matching
+        // for the next-best caregiver automatically instead of waiting for the
+        // family to reply YES. No-ops if another interview request is still
+        // active, and it owns the "searching for fresh options" message.
+        const { checkAndTriggerRematching } = await import("../triggers/triggerEngine");
+        await checkAndTriggerRematching(reqData.clientPhone, caregiverId).catch(() => {});
       }
     }
     const caregiverDeclinedAckMsg = await generateCaraMessage({
@@ -259,7 +267,26 @@ export async function handleCaregiverAvailabilityReply(
 
   // Cross-check proposed times against client's existing confirmed appointments
   const clientPhone: string = reqData.clientPhone ?? "";
-  const mutualTime = await findMutualTime(proposedTimes, clientPhone) ?? proposedTimes[0];
+  const mutualTimeResolved = await findMutualTime(proposedTimes, clientPhone);
+  const renegotiations = (reqData.timeRenegotiations ?? 0) as number;
+  if (mutualTimeResolved === null && renegotiations < 2) {
+    // All proposed times clash with the family's calendar (U8) — ask the
+    // caregiver for different times, capped at 2 rounds, rather than booking a
+    // known conflict. The request stays awaiting_caregiver_availability, so the
+    // caregiver's next reply re-enters this handler.
+    await doc.ref.update({ caregiverAvailability: proposedTimes, timeRenegotiations: renegotiations + 1 });
+    const clashMsg = await generateCaraMessage({
+      audience: "caregiver",
+      context:  "The times the caregiver proposed all conflict with the family's existing calendar. Politely ask them for 2-3 different times this week.",
+      fallback: "Those times are all taken on the family's calendar. Could you share 2–3 other times this week that work for you?",
+      maxTokens: 80,
+    });
+    await sendMessage(chatId, clashMsg);
+    return;
+  }
+  // A mutual time was found, or we've already renegotiated twice — proceed with
+  // the best available (first proposed time as a last resort).
+  const mutualTime = mutualTimeResolved ?? proposedTimes[0];
   await doc.ref.update({
     status:             "awaiting_client_confirmation",
     caregiverAvailability: proposedTimes,
@@ -288,6 +315,7 @@ export async function handleCaregiverAvailabilityReply(
     // Store pending confirmation
     await db.collection("agent_sessions").doc(reqData.clientPhone).update({
       pendingInterviewConfirm: { docId: doc.id, caregiverName, mutualTime, formatted },
+      pendingInterviewConfirmSetAt: new Date().toISOString(),
     });
   }
 
@@ -477,12 +505,20 @@ export async function writeInterviewOutcomeSignal(
   caregiverId: string,
   outcome:     "hire" | "pass"
 ): Promise<void> {
+  // Per-CLIENT signal (re-ranks this family's future matches).
   await writeFeedbackSignal({
     clientId,
     caregiverId,
     signal: outcome === "hire" ? 3 : -2,
     source: outcome === "hire" ? "hire" : "pass",
   }).catch((err) => console.error("writeInterviewOutcomeSignal error:", err));
+
+  // Platform-wide per-caregiver reputation (U5) — lets a NEW family benefit
+  // from other families' outcomes. Independent of the per-client signal above;
+  // failure here must not block the per-client write, so it's fire-and-forget.
+  const { recordCaregiverOutcome } = await import("../ai/caregiverReputation");
+  recordCaregiverOutcome(db, caregiverId, outcome)
+    .catch((err) => console.error("writeInterviewOutcomeSignal reputation error:", err));
 }
 
 // ── Post-interview follow-up ──────────────────────────────────────────────────

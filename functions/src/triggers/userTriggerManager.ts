@@ -77,29 +77,32 @@ export async function listUserTriggers(phone: string): Promise<Array<UserTrigger
   return snap.docs.map(d => ({ id: d.id, ...(d.data() as UserTrigger) }));
 }
 
+// Update an existing reminder's fields (ownership-checked, like delete). Recomputes
+// nextFireAt when any scheduling field changes so the reminder fires at the new time.
 export async function updateUserTrigger(
   phone:     string,
   triggerId: string,
-  patch:     Partial<Pick<UserTrigger, "label" | "recurrence" | "dayOfWeek" | "hour" | "minute" | "message">>
+  patch:     Partial<Pick<UserTrigger, "label" | "recurrence" | "dayOfWeek" | "hour" | "minute" | "message">>,
 ): Promise<boolean> {
   const ref  = db.collection("user_triggers").doc(triggerId);
   const snap = await ref.get();
-  if (!snap.exists || snap.data()?.phone !== phone) return false;
-  const current = snap.data() as UserTrigger;
-  const update: Record<string, unknown> = { ...patch, updatedAt: new Date().toISOString() };
-  // Recompute the next fire time only when a scheduling field actually changed.
-  const scheduleChanged =
+  if (!snap.exists || snap.data()?.phone !== phone || snap.data()?.active === false) return false;
+  const cur = snap.data() as UserTrigger;
+  const schedulingChanged =
     patch.recurrence !== undefined || patch.dayOfWeek !== undefined ||
-    patch.hour       !== undefined || patch.minute    !== undefined;
-  if (scheduleChanged) {
-    update.nextFireAt = calculateNextFireAt(
-      patch.recurrence ?? current.recurrence,
-      patch.dayOfWeek  ?? current.dayOfWeek,
-      patch.hour       ?? current.hour,
-      patch.minute     ?? current.minute,
-    );
-  }
-  await ref.update(update);
+    patch.hour !== undefined || patch.minute !== undefined;
+  await ref.update({
+    ...patch,
+    ...(schedulingChanged
+      ? { nextFireAt: calculateNextFireAt(
+          patch.recurrence ?? cur.recurrence,
+          patch.dayOfWeek  ?? cur.dayOfWeek,
+          patch.hour       ?? cur.hour,
+          patch.minute     ?? cur.minute,
+        ) }
+      : {}),
+    updatedAt: new Date().toISOString(),
+  });
   return true;
 }
 

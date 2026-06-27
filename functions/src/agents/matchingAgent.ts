@@ -17,6 +17,8 @@ import {
   ClaudeScoredMatch,
 } from "../ai/claudeMatching";
 import { getOutcomePatternSummary } from "../ai/outcomeAnalytics";
+import { getReputationBoosts } from "../ai/caregiverReputation";
+import { computeConfidenceScoreFromFields } from "./confidenceScore";
 import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
@@ -53,6 +55,23 @@ interface MatchScoreResult {
   breakdown:    ScoreBreakdown;
   reasoning:    string[];
   confidence:   "high" | "medium" | "low";
+}
+
+/**
+ * U7 — a caregiver is temporarily unavailable when they've paused their account
+ * (vacation / break) or opted out. The SMS matching flow matches on weekly
+ * pattern, not specific dates, so date-level conflicts are resolved downstream
+ * at interview/booking time; this filter just stops a paused or opted-out
+ * caregiver from being presented as if freshly available. Mirrors the same
+ * pausedUntil skip used by the job-notification fan-out.
+ */
+export function isTemporarilyUnavailable(
+  caregiver: { pausedUntil?: string; optedOut?: boolean },
+  nowIso: string = new Date().toISOString(),
+): boolean {
+  if (caregiver.optedOut === true) return true;
+  const pausedUntil = caregiver.pausedUntil;
+  return !!pausedUntil && pausedUntil > nowIso;
 }
 
 /** Compute rule-based signals as a pre-filter before calling Claude. */
@@ -154,6 +173,7 @@ export async function runMatchingForClient(
       .limit(50)
       .get();
 
+    const nowIso = new Date().toISOString();
     let caregivers: CaregiverCandidate[] = snap.docs
       .map((d) => ({
         id:                     d.id,
@@ -163,17 +183,19 @@ export async function runMatchingForClient(
         ...d.data(),
       } as CaregiverCandidate))
       .filter((c) =>
-        !rejectedIds.includes(c.id) && (
+        !rejectedIds.includes(c.id) &&
+        !isTemporarilyUnavailable(c as any, nowIso) && (
           c.city?.toLowerCase() === city.toLowerCase() ||
           (c as any).zipCode?.startsWith(zip.slice(0, 3))
         )
       );
 
     if (caregivers.length === 0) {
-      // Broader search if local returns nothing (still respecting rejections)
+      // Broader search if local returns nothing (still respecting rejections
+      // and the paused/opted-out availability filter)
       caregivers = snap.docs
         .map((d) => ({ id: d.id, ...d.data() } as CaregiverCandidate))
-        .filter((c) => !rejectedIds.includes(c.id));
+        .filter((c) => !rejectedIds.includes(c.id) && !isTemporarilyUnavailable(c as any, nowIso));
     }
 
     // Step 1: compute rule-based signals for pre-filtering
@@ -182,8 +204,27 @@ export async function runMatchingForClient(
       ...computeRuleSignals(c, intake),
     }));
 
-    // Step 2: take top 15 by rule score to send to Claude
-    const topCandidates = withSignals
+    // Step 2: take the strongest candidates by rule score, then fold in
+    // platform reputation (U6) as a bounded tie-breaker before the final
+    // top-15 cut. Pull a slightly wider pool so a strong-reputation caregiver
+    // can be promoted INTO the cut, not merely reordered within it. Reputation
+    // is capped so it tilts ties without overriding skills/proximity, and a
+    // caregiver with no outcomes scores neutral (boost 0).
+    const prelim = withSignals
+      .sort((a, b) => b.ruleScore - a.ruleScore)
+      .slice(0, 20);
+    const repBoosts = await getReputationBoosts(db, prelim.map(x => x.c.id))
+      .catch(() => new Map<string, number>());
+    for (const cand of prelim) {
+      const boost = repBoosts.get(cand.c.id) ?? 0;
+      if (boost === 0) continue;
+      cand.ruleScore = Math.max(0, cand.ruleScore + boost);
+      cand.signals.ruleScore = cand.ruleScore;
+      cand.signals.reputationNote = boost > 0
+        ? `platform reputation: positive — families across the platform tend to hire (+${boost.toFixed(1)})`
+        : `platform reputation: caution — families have tended to pass (${boost.toFixed(1)})`;
+    }
+    const topCandidates = prelim
       .sort((a, b) => b.ruleScore - a.ruleScore)
       .slice(0, 15);
 
@@ -350,21 +391,20 @@ export async function runMatchingForClient(
       ? `\n\n🧠 KNOWN PREFERENCES (learned from past conversations):\n${learnedFacts.map(f => `- ${f.fact}`).join("\n")}\nIf the top match aligns with a known preference, mention it naturally (e.g. "You mentioned preferring female caregivers — Maria fits that perfectly.").`
       : "";
 
-    // Compute a simple trust score (0-100) for each caregiver
+    // Confidence/trust score (0-100). Delegates to the shared bounded-additive
+    // scorer (U2) so the live match path stays aligned with the persisted
+    // `confidenceScore`. References are not a signal; MVR is driver-gated.
     function caregiversTrustScore(c: CaregiverCandidate): number {
-      let s = 0;
-      const bgStatus = (c as any).backgroundCheckStatus ?? (c.pendingBackgroundCheck ? "pending" : "clear");
-      if (bgStatus === "clear") s += 30;
-      const approvedAt = (c as any).approvedAt as string | undefined;
-      if (approvedAt) {
-        const months = Math.floor((Date.now() - new Date(approvedAt).getTime()) / (30 * 24 * 60 * 60 * 1000));
-        s += Math.min(months, 12) / 12 * 20;
-      }
-      if (c.rating != null) s += (c.rating / 5) * 20;
-      const vStatus = (c as any).verificationStatus as string | undefined;
-      if (vStatus === "approved" || vStatus === "checkr_clear") s += 15;
-      s += (Math.min(c.certifications?.length ?? 0, 3) / 3) * 15;
-      return Math.round(s);
+      return computeConfidenceScoreFromFields({
+        backgroundCheckStatus: (c as any).backgroundCheckStatus,
+        pendingBackgroundCheck: c.pendingBackgroundCheck,
+        approvedAt: (c as any).approvedAt,
+        rating: c.rating,
+        verificationStatus: (c as any).verificationStatus,
+        certifications: c.certifications,
+        isApprovedDriver: (c as any).isApprovedDriver,
+        backgroundCheckData: (c as any).backgroundCheckData,
+      }).score;
     }
 
     // Build structured match data for the execution agent's context

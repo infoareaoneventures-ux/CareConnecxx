@@ -8,8 +8,11 @@ export const STATE_MACHINE_FLAGS = [
   "pendingInterviewOutcome",
   "pendingMatches",
   "pendingCancelConfirm",
+  "pendingCancelConfirmSetAt",
   "pendingInterviewConfirm",
+  "pendingInterviewConfirmSetAt",
   "awaitingRecurringConfirmation",
+  "awaitingRecurringConfirmationSetAt",
   "pendingRecurringSchedule",
   "awaitingCareNotes",
   "awaitingLateMinutes",
@@ -90,6 +93,43 @@ export const STATE_MACHINE_FLAGS = [
 ] as const;
 
 export type StateFlag = typeof STATE_MACHINE_FLAGS[number];
+// ── High-stakes confirmation freshness ───────────────────────────────────────
+// pendingInterviewConfirm / pendingCancelConfirm / awaitingRecurringConfirmation
+// are checked in a fixed order by the YES/NO router. A stale flag can intercept
+// a YES meant for a newer question, and the global stateExpiresAt sweep only
+// fires when a stateExpiresAt is present — a flag set without one never expires.
+// Each set-site now stamps a `<flag>SetAt`; the router clears any flag older
+// than this TTL (or present with no stamp — the never-expires case) before
+// acting. Kept pure here so the staleness rule is unit-testable in isolation.
+export const HIGH_STAKES_CONFIRM_FLAGS = [
+  "pendingInterviewConfirm",
+  "pendingCancelConfirm",
+  "awaitingRecurringConfirmation",
+] as const;
+
+export const CONFIRM_FLAG_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Return the names of high-stakes confirmation flags on `session` that are
+ * stale and should be cleared before the YES/NO router acts on them — older
+ * than the TTL, or set with no age stamp at all (the dangerous never-expires
+ * case). Pure: performs no IO and does not mutate `session`. The caller applies
+ * the Firestore delete (also deleting the companion `<flag>SetAt`) and clears
+ * the in-memory copy.
+ */
+export function staleConfirmFlags(
+  session: Record<string, unknown>,
+  nowMs: number = Date.now(),
+): string[] {
+  const cutoff = new Date(nowMs - CONFIRM_FLAG_TTL_MS).toISOString();
+  const stale: string[] = [];
+  for (const flag of HIGH_STAKES_CONFIRM_FLAGS) {
+    if (!session[flag]) continue;
+    const setAt = session[`${flag}SetAt`] as string | undefined;
+    if (!setAt || setAt < cutoff) stale.push(flag);
+  }
+  return stale;
+}
 
 export async function clearAllStateFlags(
   phone: string,

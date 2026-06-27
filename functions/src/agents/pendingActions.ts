@@ -61,6 +61,14 @@ const ALWAYS_CONFIRM = new Set<string>([
   "block_user",
   "report_user",
   "cancel_job_post",
+  // U9: financial commit via the agent loop — a refund moves money and must be
+  // family-confirmed. (The cascade refundHandler has its own confirm step and does
+  // not route through this gate.)
+  "create_refund_request",
+  // U7: destructive CRUD — deleting a review or hiding a care-journal entry is
+  // family-visible and not casually reversible, so require explicit confirmation.
+  "delete_review",
+  "delete_care_journal_entry",
 ]);
 
 // Care-plan fields that are harmless note-like additions — free-text context
@@ -83,6 +91,10 @@ const CONDITIONAL_CONFIRM: Record<string, (input: Record<string, unknown>) => bo
   // Note-like fields skip the gate so "add a note that mom prefers tea"
   // doesn't need a confirmation round-trip.
   update_care_plan: (input) => !CARE_PLAN_NOTE_FIELDS.has(String(input.field)),
+  // U9: approving a timesheet via the agent loop releases payment to the caregiver
+  // — gate the approve path. Disputing is reversible (goes to admin review) and
+  // stays ungated.
+  review_shift_hours: (input) => input.action === "approve" || input.decision === "approve",
   // Real-world healthcare browser actions: booking an appointment or requesting
   // a refill submits on a third-party portal and is irreversible — gate it.
   // Appointment booking is two-pass (H-U3): the FIRST call (no chosenSlot) is
@@ -127,6 +139,21 @@ export function buildActionPreview(toolName: string, toolInput: Record<string, u
       return `${String(toolInput.decision ?? "respond to")} application ${String(toolInput.applicationId ?? "")}`.trim();
     case "update_care_plan":
       return `${String(toolInput.action ?? "set")} care plan ${String(toolInput.field ?? "?")}`;
+    case "create_refund_request": {
+      // U9: surface the amount + target so the family approves the specific refund.
+      const amt = toolInput.amount != null ? `$${toolInput.amount}` : "a refund";
+      const forWhat = toolInput.invoiceId ? ` for invoice ${toolInput.invoiceId}`
+        : toolInput.visitId ? ` for visit ${toolInput.visitId}` : "";
+      return `Request ${amt}${forWhat}`;
+    }
+    case "review_shift_hours": {
+      // U9: name the hours/amount/caregiver so an approval isn't a blind "approve".
+      const decision = String(toolInput.action ?? toolInput.decision ?? "review");
+      const hours    = toolInput.hours != null ? `${toolInput.hours}h` : "submitted hours";
+      const who      = toolInput.caregiverName ? ` for ${toolInput.caregiverName}` : "";
+      const amt      = toolInput.amount != null ? ` ($${toolInput.amount})` : "";
+      return `${decision} ${hours}${amt}${who}`;
+    }
     case "perform_web_action": {
       // Real-world healthcare actions — state the EXACT thing being approved (R2).
       if (toolInput.loginAction === "schedule_appointment") {

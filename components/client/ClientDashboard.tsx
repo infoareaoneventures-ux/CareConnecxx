@@ -4,6 +4,9 @@ import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, H
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
 import { ViewType, Caregiver, ClientIntakeData, Senior } from '../../types';
 import { dbService, authService } from '../../services/api';
+import type { PendingSwap } from '../../services/shiftSwap';
+import { PendingSwapsPanel } from '../shared/PendingSwapsPanel';
+import { CaraActivityFeed } from './CaraActivityFeed';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { useAccessGates } from '../../hooks/useAccessGates';
 import { ClientNavigation } from './ClientNavigation';
@@ -152,6 +155,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [careTeamProfiles, setCareTeamProfiles] = useState<Record<string, { rating?: number; verified?: boolean; backgroundCheckStatus?: string }>>({});
   const [pendingBookingRequests, setPendingBookingRequests] = useState<any[]>([]);
   const [pendingAmendments, setPendingAmendments] = useState<any[]>([]);
+  const [pendingSwaps, setPendingSwaps] = useState<PendingSwap[]>([]);
   const [allBookingRequests, setAllBookingRequests] = useState<any[]>([]);
   const [clientAllPosts, setClientAllPosts] = useState<any[]>([]);
   const [allInterviews, setAllInterviews] = useState<any[]>([]);
@@ -175,16 +179,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     if (!currentUser?.uid || !db) return;
     const unsubs: (() => void)[] = [];
 
-    // Job posts — all statuses for Care Requests card; open-only meta for interview modal
-    db.collection('job_posts')
+    // Job posts — all statuses for Care Requests card; open-only meta for interview
+    // modal. Live (U6) so posts Cara creates/edits surface without a refresh.
+    const jobPostsUnsub = db.collection('job_posts')
       .where('clientId', '==', currentUser.uid)
-      .get()
-      .then(snap => {
+      .onSnapshot(snap => {
         const posts = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
         setClientAllPosts(posts);
         setClientOpenPosts(posts.filter(p => p.status === 'open').map(p => ({ id: p.id, title: p.title || 'Untitled post' })));
-      })
-      .catch(() => {});
+      }, () => {});
+    unsubs.push(jobPostsUnsub);
 
     // Active care team — real-time subscription
     const teamUnsub = db.collection('booking_requests')
@@ -266,19 +270,24 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       }, () => {});
     unsubs.push(amendUnsub);
 
-    // Interviews — all statuses for Care Requests card + derived states
-    db.collection('video_interviews')
+    // Interviews — all statuses for Care Requests card + derived states.
+    // Live listener (U5): agent-written interview requests now surface without a
+    // manual refresh. Mirrors the booking_amendments onSnapshot pattern above.
+    const interviewUnsub = db.collection('video_interviews')
       .where('clientId', '==', currentUser.uid)
-      .get()
-      .then(snap => {
+      .onSnapshot(snap => {
         const all = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
         setAllInterviews(all);
         const activeStatuses = new Set(['requested', 'pending', 'scheduled']);
         const pending = all.filter((d: any) => activeStatuses.has(d.status));
 
         setRequestedCaregiverIds(new Set(pending.map((d: any) => d.caregiverId).filter(Boolean)));
-      })
-      .catch(() => {});
+      }, () => {});
+    unsubs.push(interviewUnsub);
+
+    // Pending shift swaps affecting this family's appointments (U7) — merges
+    // caregiver-initiated and client-initiated swaps, live.
+    unsubs.push(dbService.subscribeShiftSwapsForClient(currentUser.uid, setPendingSwaps));
 
     return () => unsubs.forEach(u => { try { u(); } catch {} });
   }, [currentUser?.uid]);
@@ -980,6 +989,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 )}
               </div>
             </div>
+
+            {/* Cara Activity — transparency feed of what Cara did (U9) */}
+            {currentUser?.uid && <CaraActivityFeed ownerUid={currentUser.uid} />}
+
+            {/* Pending care changes — live shift swaps (U7); hidden when none */}
+            <PendingSwapsPanel
+              swaps={pendingSwaps}
+              title="Pending care changes"
+              subtitle="Shift swaps being arranged for your visits"
+            />
 
             {/* Row 3: Upcoming Bookings + Timesheets + Caregivers Near You */}
             <div className="grid lg:grid-cols-3 gap-4">

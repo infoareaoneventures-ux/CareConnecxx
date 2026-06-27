@@ -4,6 +4,20 @@ import { checkRateLimit, checkSignupRateLimit, RATE_LIMITS } from './rateLimit';
 import firebase, { auth, db, functions, isConfigured, googleProvider } from '../lib/firebase';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
 import { UNBOOKABLE_BG_STATUSES } from '../utils/caregiverEligibility';
+import {
+    PendingSwap,
+    isActiveSwap,
+    mapSummaryDoc,
+} from './shiftSwap';
+
+// A family-facing "Cara Activity" entry (projection of an allow-listed audit
+// event; see functions/src/agents/activityFeedMap.ts). PII-free by construction.
+export interface AgentActivityItem {
+    id: string;
+    eventType: string;
+    description: string;
+    timestamp?: string;
+}
 
 // ==========================================
 // RATE LIMITING / DEBOUNCING UTILITIES
@@ -694,6 +708,78 @@ export const dbService = {
             }
         }
         return [];
+    },
+
+    // Live variant of getJobPostsByClient (U6): agent-created/edited job posts
+    // surface in the client UI without a manual refresh. Mirrors subscribeCareJournal.
+    subscribeJobPostsByClient: (clientId: string, onUpdate: (posts: JobPost[]) => void, onError?: (e: any) => void): (() => void) => {
+        if (!isConfigured || !db || !clientId) { onUpdate([]); return () => {}; }
+        return db.collection('job_posts')
+            .where('clientId', '==', clientId)
+            .onSnapshot(
+                snap => {
+                    const jobs: JobPost[] = [];
+                    snap.forEach(doc => jobs.push({ id: doc.id, ...doc.data() } as JobPost));
+                    jobs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+                    onUpdate(jobs);
+                },
+                (e: any) => {
+                    if (e?.code !== 'permission-denied') console.warn("subscribeJobPostsByClient error:", e);
+                    if (onError) onError(e); else onUpdate([]);
+                }
+            );
+    },
+
+    // Family-facing "Cara Activity" feed (U9). Live, owner-scoped, newest first.
+    // onError lets the UI distinguish a genuine failure from an empty feed.
+    subscribeAgentActivity: (
+        ownerUid: string,
+        onUpdate: (items: AgentActivityItem[]) => void,
+        onError?: (e: any) => void,
+    ): (() => void) => {
+        if (!isConfigured || !db || !ownerUid) { onUpdate([]); return () => {}; }
+        return db.collection('user_activity_feed')
+            .where('ownerUid', '==', ownerUid)
+            .orderBy('timestamp', 'desc')
+            .limit(50)
+            .onSnapshot(
+                snap => onUpdate(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) } as AgentActivityItem))),
+                (e: any) => {
+                    if (e?.code !== 'permission-denied') console.warn("subscribeAgentActivity error:", e);
+                    if (onError) onError(e); else onUpdate([]);
+                }
+            );
+    },
+
+    // Caregiver-initiated swaps this caregiver is tracking (U7). Live, reads the
+    // sanitized shift_swap_summaries projection (raw collections are server-only).
+    subscribeShiftSwapsForCaregiver: (caregiverId: string, onUpdate: (swaps: PendingSwap[]) => void): (() => void) => {
+        if (!isConfigured || !db || !caregiverId) { onUpdate([]); return () => {}; }
+        return db.collection('shift_swap_summaries')
+            .where('fromCaregiverId', '==', caregiverId)
+            .onSnapshot(
+                snap => onUpdate(snap.docs.map(mapSummaryDoc).filter(isActiveSwap)),
+                (e: any) => {
+                    if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForCaregiver error:", e);
+                    onUpdate([]);
+                }
+            );
+    },
+
+    // Swaps affecting this client's appointments (U7). Both swap sources are
+    // projected into shift_swap_summaries keyed by clientId, so a single
+    // owner-scoped listener covers caregiver- and client-initiated swaps.
+    subscribeShiftSwapsForClient: (clientId: string, onUpdate: (swaps: PendingSwap[]) => void): (() => void) => {
+        if (!isConfigured || !db || !clientId) { onUpdate([]); return () => {}; }
+        return db.collection('shift_swap_summaries')
+            .where('clientId', '==', clientId)
+            .onSnapshot(
+                snap => onUpdate(snap.docs.map(mapSummaryDoc).filter(isActiveSwap)),
+                (e: any) => {
+                    if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForClient error:", e);
+                    onUpdate([]);
+                }
+            );
     },
 
     cancelJobPost: async (jobId: string, clientId: string) => {
@@ -1755,6 +1841,25 @@ export const dbService = {
         return () => { };
     },
 
+    // U2: Live listener for a caregiver's own profile doc (caregivers/{uid}).
+    // Cara's agent writes to this doc during onboarding, profile edits, and
+    // verification flips; without a listener the caregiver dashboard shows a
+    // stale profile until logout/login. Mirrors subscribeToCarePlan.
+    // Emits the raw caregiver doc data; the caller merges it over the cached
+    // users-doc fields (caregiver doc wins, matching getUser's merge order).
+    subscribeToCaregiverProfile: (uid: string, onUpdate: (caregiverData: Record<string, unknown> | null) => void) => {
+        if (isConfigured && db) {
+            const docRef = db.collection('caregivers').doc(uid);
+            return docRef.onSnapshot((doc) => {
+                onUpdate(doc.exists ? (doc.data() as Record<string, unknown>) : null);
+            }, (error) => {
+                // Best-effort surface: log for diagnosis, emit nothing (keep last-known), no toast.
+                console.error('[subscribeToCaregiverProfile] snapshot error:', error?.code || error);
+            });
+        }
+        return () => { };
+    },
+
     // Fires whenever a caregiver enters or leaves the pending-verification states,
     // so the admin verification dashboard can re-pull its queue live when a Checkr
     // webhook or Cara/admin action changes a background-check / verification status.
@@ -1763,6 +1868,39 @@ export const dbService = {
             return db.collection('caregivers')
                 .where('verificationStatus', 'in', ['submitted', 'pending', 'info_requested', 'pre_adverse_action'])
                 .onSnapshot(() => onChange(), () => { });
+        }
+        return () => { };
+    },
+
+    // U3: Live listener for a client's (primary) senior profile doc.
+    // Cara writes care needs/preferences during intake; this keeps the
+    // client's profile/intake view fresh without a reload. Mirrors getSeniorProfile
+    // (doc keyed by the client uid). The senior_profiles read rule was amended
+    // (KTD-10) so additional household seniors (userId-stamped) are also readable.
+    subscribeToSeniorProfile: (uid: string, onUpdate: (data: Record<string, unknown> | null) => void) => {
+        if (isConfigured && db) {
+            const docRef = db.collection('senior_profiles').doc(uid);
+            return docRef.onSnapshot((doc) => {
+                onUpdate(doc.exists ? (doc.data() as Record<string, unknown>) : null);
+            }, (error) => {
+                console.error('[subscribeToSeniorProfile] snapshot error:', error?.code || error);
+            });
+        }
+        return () => { };
+    },
+
+    // U3: Live listener for the user doc (users/{uid}). Surfaces agent-driven
+    // changes to verification status, account state, and aggregated fields
+    // live, beyond the one-shot getUser at auth time. users/{uid} read rule
+    // already exists (firestore.rules:79) — no rule change needed.
+    subscribeToUser: (uid: string, onUpdate: (data: Record<string, unknown> | null) => void) => {
+        if (isConfigured && db) {
+            const docRef = db.collection('users').doc(uid);
+            return docRef.onSnapshot((doc) => {
+                onUpdate(doc.exists ? (doc.data() as Record<string, unknown>) : null);
+            }, (error) => {
+                console.error('[subscribeToUser] snapshot error:', error?.code || error);
+            });
         }
         return () => { };
     },

@@ -223,6 +223,55 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         };
     }, [currentUser?.uid, currentUser?.userType]); // Only re-subscribe when user changes
 
+    // U2: Live caregiver-profile listener. Cara writes to caregivers/{uid}
+    // during onboarding/profile edits/verification; this keeps the caregiver
+    // dashboard fresh without a logout/login. Per KTD-4, the listener updates
+    // context state unconditionally — consuming edit forms hold their in-progress
+    // state locally so a snapshot doesn't clobber unsaved input.
+    useEffect(() => {
+        if (!currentUser || currentUser.userType !== 'caregiver') return;
+
+        const unsubscribe = dbService.subscribeToCaregiverProfile(
+            currentUser.uid,
+            (caregiverData) => {
+                if (!caregiverData) return; // keep last-known if the doc/read is unavailable
+                setCaregiverProfile(prev => ({
+                    ...(prev as any),
+                    ...caregiverData,
+                    userType: 'caregiver',
+                }) as any);
+            }
+        );
+
+        return () => unsubscribe();
+    }, [currentUser?.uid, currentUser?.userType]);
+
+    // U3: Live user-doc listener. Surfaces agent-driven changes to verification
+    // status / account state on currentUser without a reload (beyond the one-shot
+    // getUser at auth time). users/{uid} read rule already exists.
+    useEffect(() => {
+        if (!currentUser?.uid) return;
+
+        const unsubscribe = dbService.subscribeToUser(currentUser.uid, (data) => {
+            if (!data) return; // keep last-known if unavailable
+            setCurrentUser(prev => {
+                if (!prev) return prev;
+                const validUserTypes = ['client', 'caregiver', 'admin'] as const;
+                const nextType = typeof data.userType === 'string' && (validUserTypes as readonly string[]).includes(data.userType)
+                    ? (data.userType as AuthenticatedUser['userType'])
+                    : prev.userType;
+                return {
+                    ...prev,
+                    userType: nextType,
+                    isVerified: (data.verified as boolean | undefined) ?? prev.isVerified,
+                    phone: (data.phone as string | undefined) ?? prev.phone,
+                };
+            });
+        });
+
+        return () => unsubscribe();
+    }, [currentUser?.uid]);
+
     const bookAppointment = async (appointment: Appointment) => {
         try {
             setAppointments(prev => [...prev, appointment]); // Optimistic

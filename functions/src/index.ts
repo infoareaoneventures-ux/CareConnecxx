@@ -87,6 +87,9 @@ export * from './triggers/appointmentUpdated';
 export { onCheckinCreated } from './triggers/checkinAlert';
 export { triggerFamilyEmergency } from './triggers/familyEmergency';
 export { onShiftStatusChanged } from './triggers/shiftStatusTrigger';
+export { recomputeConfidenceScore } from './triggers/confidenceScoreTrigger';
+export { projectActivityFeed } from './triggers/projectActivityFeed';
+export { projectSwapRequestSummary, projectSwapOfferSummary } from './triggers/projectSwapSummary';
 
 // Linq Sprint 3 — family group thread
 export { createFamilyGroup, addFamilyGroupMember } from './agents/familyGroupManager';
@@ -131,6 +134,8 @@ export {
 // Cara scheduled jobs
 export { dailyContactCardShare } from './scheduled/dailyContactCardShare';
 export { sendMorningBriefings } from './scheduled/morningBriefing';
+export { sendNextDayFamilyFeedback } from './scheduled/nextDayFamilyFeedback';
+export { sendFamilySatisfactionCheckins } from './scheduled/familySatisfactionCheckin';
 export { sendStaleSessionNudges } from './scheduled/staleSessionNudge';
 export { familySilenceCheckinJob } from './scheduled/familySilenceCheckin';
 export { consolidateMemoryNightly } from './scheduled/nightlyMemory';
@@ -197,6 +202,18 @@ export const getMatchPatterns = functions.https.onCall(async (_data, context) =>
 
 // JOB MATCH NOTIFICATIONS (daily 10am — texts caregivers about high-match new jobs)
 export { sendJobMatchNotifications } from './scheduled/jobMatchNotifications';
+
+// STALE APPLICANT NUDGE (daily 4pm — follows up with families sitting on unreviewed applicants)
+export { sendStaleApplicantNudges } from './scheduled/staleApplicantNudge';
+
+// PENDING TIMESHEET NUDGE (daily 5pm — reminds families to approve hours so caregivers get paid)
+export { sendPendingTimesheetNudges } from './scheduled/pendingTimesheetNudge';
+
+// INTERVIEW RESPONSE REMINDER (every 6h — nudges caregivers to respond before the request expires)
+export { sendInterviewResponseReminders } from './scheduled/interviewResponseReminder';
+
+// FIRST-VISIT ACTIVATION (daily 3pm — offers to help families who onboarded but never booked)
+export { sendFirstVisitActivation } from './scheduled/firstVisitActivation';
 
 // GPS CHECK-IN (callable — validates caregiver arrival within 200m, notifies family)
 export { submitGpsCheckin } from './agents/gpsCheckin';

@@ -6,7 +6,11 @@ import { classifyIntentDetailed } from "../agents/intentClassifier";
 /** Shape guard for pendingCancelConfirm — must carry a usable appointmentId. */
 const hasAppointmentId = (v: unknown): boolean =>
   !!v && typeof v === "object" && typeof (v as { appointmentId?: unknown }).appointmentId === "string";
+import { buildCapabilityMenu } from "../agents/caraCapabilities";
+import { staleConfirmFlags } from "../utils/sessionState";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
+import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
+import { isConvergenceFlipped } from "../config/featureFlags";
 import { handleTaskApproval } from "../agents/taskApprovalHandler";
 import { updatePermissionFromText, getPermissions } from "../agents/permissionsConversation";
 import {
@@ -292,10 +296,61 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // guess — when set, skip the quick-reply bypass and take the full QA path.
     const { intent, degraded: intentDegraded } = await classifyIntentDetailed(text, !!pendingTask);
 
+    // ── /help: capability discovery ──────────────────────────────────────────
+    // Static, side-effect-free reply listing what Cara can do for this role.
+    // Reached only via the exact-string command bypass in classifyIntentDetailed.
+    if (intent === "HELP") {
+      await sendMessage(
+        chatId,
+        buildCapabilityMenu(session.userType, session.preferredLanguage ?? "en")
+      );
+      return;
+    }
+
+    // ── U7/U8/U9: convergence shadow tap ─────────────────────────────────────
+    // Dark unless this flow is enabled in ROUTING_CONVERGENCE_SHADOW. Fire-and-
+    // forget so the live turn's latency is unaffected; runs the MCP loop in shadow
+    // mode (U11 → zero side effects, nothing sent) and records the loop's outcome
+    // to routing_shadow for the convergence pilot. Never shadows safety/onboarding
+    // intents (they're absent from the intent→flow map).
+    const shadowFlow = intentToShadowFlow(intent);
+    if (shadowFlow) {
+      void shadowTap({
+        flow: shadowFlow, intent, text, phone, chatId,
+        userId:   session.userId as string | undefined,
+        seniorId: session.seniorId as string | undefined,
+        userType: (session.userType as "client" | "caregiver") ?? "client",
+        session:  session as unknown as Record<string, unknown>,
+      }).catch(() => {});
+    }
+
     // ── Emergency replacement: 1/2/3 ─────────────────────────────────────────
     if (intent === "TASK_REPLY" && pendingTask && ["1", "2", "3"].includes(text.trim())) {
       await handleTaskApproval(pendingTask, text.trim(), session, chatId);
       return;
+    }
+
+    // ── Stale high-stakes confirmation sweep ─────────────────────────────────
+    // pendingInterviewConfirm / pendingCancelConfirm / awaitingRecurringConfirmation
+    // are checked in a fixed order by the YES/NO branches below, so a stale flag
+    // (set long ago, never resolved) can intercept a YES meant for a newer
+    // question. The global stateExpiresAt sweep in webhooks.ts only fires when a
+    // stateExpiresAt is present — flags set without one never expire. Clear any
+    // confirm flag older than its TTL here (and any flag with no age stamp, the
+    // dangerous never-expires case), in DB and on the in-memory session, so the
+    // branches below only ever act on a fresh confirmation. Mirrors the
+    // pendingTaskConfirm staleness pattern further down.
+    {
+      const stale = staleConfirmFlags(session as unknown as Record<string, unknown>);
+      if (stale.length > 0) {
+        const expired: Record<string, admin.firestore.FieldValue> = {};
+        for (const flag of stale) {
+          expired[flag] = admin.firestore.FieldValue.delete();
+          expired[`${flag}SetAt`] = admin.firestore.FieldValue.delete();
+          (session as any)[flag] = undefined;
+        }
+        await db.collection("agent_sessions").doc(phone).update(expired).catch(() => {});
+      }
     }
 
     // ── BOOKING_CONFIRM — natural language YES ("sure", "sounds good", etc.) ──
@@ -1096,6 +1151,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       await db.collection("agent_sessions").doc(phone).update({
         pendingTimeSelection:   admin.firestore.FieldValue.delete(),
         pendingInterviewConfirm: { docId: sel.interviewRequestId, caregiverName: sel.caregiverName, mutualTime: chosen, formatted: chosen },
+        pendingInterviewConfirmSetAt: new Date().toISOString(),
       });
       await handleInterviewConfirm(phone, chatId, {
         ...session,
@@ -1118,6 +1174,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       const appt = upcoming.docs[0].data();
       await db.collection("agent_sessions").doc(phone).update({
         pendingCancelConfirm: { appointmentId: upcoming.docs[0].id },
+        pendingCancelConfirmSetAt: new Date().toISOString(),
         stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       });
       await sendMessage(chatId,
@@ -1217,6 +1274,26 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
     // ── Trigger management — view or cancel personal reminders ───────────────
     if (intent === "TRIGGER_MANAGEMENT") {
+      // U10: convergence flip — when "reminder_management" is flipped (only after
+      // its shadow data shows parity), the live path runs through the MCP tool loop
+      // instead of the cascade state machine. Dark by default (flag off → the state
+      // machine below, unchanged). Reversible by clearing CONVERGENCE_FLIPPED; the
+      // state machine is retained until a later post-flip cleanup deletes it.
+      if (isConvergenceFlipped("reminder_management")) {
+        const qaReplyReminder = await runQaAgent({
+          text, phone, chatId,
+          userId:      session.userId ?? "",
+          seniorId:    session.seniorId ?? session.userId ?? "",
+          userType:    (session.userType as "client" | "caregiver") ?? "client",
+          caregiverId: session.caregiverId,
+          session:     session as unknown as Record<string, unknown>,
+          intent,
+        });
+        await sendViaInteractionAgent(phone, {
+          content: qaReplyReminder, urgency: "standard", sourceAgent: "qa_reminder", canDrop: false,
+        });
+        return;
+      }
       const { handleTriggerManagement } = await import("../agents/schedulingHandler");
       await handleTriggerManagement(phone, text, session as unknown as Record<string, unknown>);
       return;
@@ -1635,9 +1712,11 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         text,
         phone,
         chatId,
-        userId:   session.userId ?? "",
-        seniorId: session.seniorId ?? session.userId ?? "",
-        userType: session.userType ?? "client",
+        userId:      session.userId ?? "",
+        seniorId:    session.seniorId ?? session.userId ?? "",
+        userType:    session.userType ?? "client",
+        caregiverId: session.caregiverId,
+        session:     session as unknown as Record<string, unknown>,
       });
       if (zepThreadId && quickReply) {
         addAssistantMessageToZep({ threadId: zepThreadId, content: quickReply }).catch(console.error);

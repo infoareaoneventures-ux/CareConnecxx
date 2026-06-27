@@ -36,6 +36,31 @@ describe("classifyIntent — fast paths (no LLM)", () => {
     expect(out).toBe("TASK_REPLY");
     expect(hoisted.quickComplete).not.toHaveBeenCalled();
   });
+
+  it.each([
+    "help",
+    "Help",
+    "/help",
+    "capabilities",
+    "/capabilities",
+  ])("routes exact command %p to HELP without calling the LLM", async (input) => {
+    const out = await classifyIntent(input, false);
+    expect(out).toBe("HELP");
+    expect(hoisted.quickComplete).not.toHaveBeenCalled();
+  });
+
+  it("does NOT treat 'help me find a caregiver' as the HELP command (routes to the LLM)", async () => {
+    hoisted.quickComplete.mockResolvedValueOnce("FIND_CAREGIVER");
+    const out = await classifyIntent("help me find a caregiver", false);
+    expect(out).toBe("FIND_CAREGIVER");
+    expect(hoisted.quickComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes 'help' to HELP even when a task is pending (not TASK_REPLY)", async () => {
+    const out = await classifyIntent("help", true);
+    expect(out).toBe("HELP");
+    expect(hoisted.quickComplete).not.toHaveBeenCalled();
+  });
 });
 
 describe("classifyIntent — UPDATE_ONBOARDING routing", () => {
@@ -115,5 +140,45 @@ describe("classifyIntentDetailed — degradation signal", () => {
   it("keeps the plain classifyIntent wrapper behavior identical for existing callers", async () => {
     hoisted.quickComplete.mockResolvedValueOnce("FIND_CAREGIVER");
     expect(await classifyIntent("I need a caregiver", false)).toBe("FIND_CAREGIVER");
+  });
+});
+
+describe("classifyIntentDetailed — retry on transient failure (U4)", () => {
+  beforeEach(() => {
+    hoisted.quickComplete.mockReset();
+  });
+
+  it("recovers when the first attempt throws and the retry succeeds", async () => {
+    hoisted.quickComplete
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce("FIND_CAREGIVER");
+    const out = await classifyIntentDetailed("I need a caregiver", false);
+    expect(out).toEqual({ intent: "FIND_CAREGIVER", degraded: false });
+    expect(hoisted.quickComplete).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers when the first attempt returns garbage and the retry is valid", async () => {
+    hoisted.quickComplete
+      .mockResolvedValueOnce("NOT_AN_INTENT")
+      .mockResolvedValueOnce("CANCEL_REQUEST");
+    const out = await classifyIntentDetailed("cancel my Tuesday visit", false);
+    expect(out).toEqual({ intent: "CANCEL_REQUEST", degraded: false });
+    expect(hoisted.quickComplete).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT retry when the first attempt is already valid", async () => {
+    hoisted.quickComplete.mockResolvedValueOnce("FIND_CAREGIVER");
+    const out = await classifyIntentDetailed("I need a caregiver", false);
+    expect(out).toEqual({ intent: "FIND_CAREGIVER", degraded: false });
+    expect(hoisted.quickComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("degrades to QUESTION only after both attempts fail", async () => {
+    hoisted.quickComplete
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockRejectedValueOnce(new Error("timeout again"));
+    const out = await classifyIntentDetailed("hey", false);
+    expect(out).toEqual({ intent: "QUESTION", degraded: true });
+    expect(hoisted.quickComplete).toHaveBeenCalledTimes(2);
   });
 });

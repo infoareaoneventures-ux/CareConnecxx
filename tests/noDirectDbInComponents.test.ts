@@ -53,7 +53,6 @@ const KNOWN_OFFENDERS = new Set<string>([
   "components/client/DashboardSidebar.tsx",
   "components/client/EditJobPostModal.tsx",
   "components/client/IntakeModal.tsx",
-  "components/client/MyCareTeam.tsx",
   "components/client/Payments.tsx",
   "components/client/PostsPage.tsx",
   "components/client/WhatsNext.tsx",

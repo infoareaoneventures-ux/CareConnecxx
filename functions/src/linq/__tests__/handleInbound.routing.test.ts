@@ -229,6 +229,11 @@ vi.mock("../../utils/sessionState", () => ({
   claimInboundProcessing:   vi.fn(async () => true),
   releaseInboundProcessing: vi.fn(async () => {}),
   INBOUND_LOCK_TTL_MS: 90_000,
+  // Merged in from cara-100: routeIntent now sweeps stale high-stakes confirm
+  // flags. Default to none stale so existing routing assertions are unaffected.
+  staleConfirmFlags: vi.fn(() => []),
+  HIGH_STAKES_CONFIRM_FLAGS: ["pendingInterviewConfirm", "pendingCancelConfirm", "awaitingRecurringConfirmation"],
+  CONFIRM_FLAG_TTL_MS: 60 * 60 * 1000,
 }));
 vi.mock("../../utils/caraMessage", () => ({
   generateCaraMessage: vi.fn(async ({ fallback }: any) => fallback ?? "msg"),

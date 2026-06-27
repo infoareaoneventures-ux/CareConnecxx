@@ -58,6 +58,9 @@ const rulesSource    = fs.readFileSync(path.join(ROOT, 'firestore.rules'), 'utf8
 // signal to consciously decide: is this a new shared collection (add a contract
 // entry + rules block) or genuinely runtime-only (add it here)?
 const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
+    // Merged from cara-100: server/runtime-only audit, shadow, alert, and
+    // activity-feed streams Cara writes (not part of the web read contract).
+    'consent_audit_log', 'emergency_alerts', 'routing_shadow', 'user_activity_feed',
     // Agent session / runtime state
     'agent_sessions', 'agent_conversations', 'agent_turn_checkpoints',
     'agent_prefetch', 'agent_dnd_queue', 'agent_permissions', 'agent_reactions',

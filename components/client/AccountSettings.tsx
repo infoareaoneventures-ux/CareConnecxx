@@ -1,26 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ChevronUp, ChevronDown, Check, X, Eye, EyeOff, Loader2,
+  ChevronUp, ChevronDown, Check, X, Eye, EyeOff, Loader2, Trash2,
 } from 'lucide-react';
 import { ClientNavigation } from './ClientNavigation';
 import { PlanSelectModal } from './PlanSelectModal';
 import { authService } from '../../services/api';
 import { startIdentityVerification } from '../../services/stripeService';
-import { auth, db, storage } from '../../lib/firebase';
+import firebase, { auth, db, storage } from '../../lib/firebase';
 import { useCareConnex } from '../../context/CareConnexContext';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 interface PersonalInfo  { firstName: string; lastName: string; email: string; phone: string; }
 interface CareLocation  { address: string; city: string; state: string; zip: string; }
 interface PasswordData  { currentPassword: string; newPassword: string; confirmPassword: string; }
-interface CommPrefs     { newsletter: boolean; newMatches: boolean; caregiverReviews: boolean; }
-interface SavedSearch   {
-  name: string;
-  filters: Record<string, any>;
-  emailFrequency: 'daily' | 'weekly' | 'off';
-  savedAt: string;
-}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 const LABEL_W = 'w-40 flex-shrink-0';
@@ -64,7 +57,7 @@ export const AccountSettings: React.FC = () => {
 
   // ── Section open/close ────────────────────────────────────────────────────
   const [open, setOpen] = useState({
-    basics: true, privacy: true, communication: true, blocked: false,
+    basics: true, blocked: false,
   });
   const toggle = (key: keyof typeof open) =>
     setOpen(prev => ({ ...prev, [key]: !prev[key] }));
@@ -83,9 +76,6 @@ export const AccountSettings: React.FC = () => {
   const [personalInfo, setPersonalInfo] = useState<PersonalInfo>({ firstName: '', lastName: '', email: '', phone: '' });
   const [careLocation,  setCareLocation] = useState<CareLocation>({ address: '', city: '', state: '', zip: '' });
   const [passwordData,  setPasswordData] = useState<PasswordData>({ currentPassword: '', newPassword: '', confirmPassword: '' });
-  const [commPrefs,     setCommPrefs]    = useState<CommPrefs>({ newsletter: false, newMatches: true, caregiverReviews: true });
-  const [privacyShowBookings, setPrivacyShowBookings] = useState(true);
-  const [savedSearches, setSavedSearches]        = useState<SavedSearch[]>([]);
   const [identityStatus, setIdentityStatus]      = useState<'verified' | 'pending' | 'not_started'>('not_started');
   const [joinedDate, setJoinedDate]              = useState('');
   const [googleEmail, setGoogleEmail]            = useState<string | null>(null);
@@ -166,10 +156,7 @@ export const AccountSettings: React.FC = () => {
           setCareLocation(d.careLocation);
         }
 
-        if (typeof d.privacyShowBookings === 'boolean') setPrivacyShowBookings(d.privacyShowBookings);
-        if (Array.isArray(d.savedSearches)) setSavedSearches(d.savedSearches);
         if (d.identityCheckStatus) setIdentityStatus(d.identityCheckStatus);
-        if (d.commPrefs) setCommPrefs({ newsletter: false, newMatches: true, caregiverReviews: true, ...d.commPrefs });
       }).catch(() => {});
     }
   }, [navigate]);
@@ -250,12 +237,6 @@ export const AccountSettings: React.FC = () => {
     setEditingLocation(false);
   }, 'Location saved');
 
-  const handleSaveCommPrefs = () => saving(async () => {
-    const user = authService.getCurrentUser();
-    if (!user?.uid || !db) return;
-    await db.collection('users').doc(user.uid).update({ commPrefs });
-  }, 'Communication preferences saved');
-
   const handleChangePassword = async () => {
     if (passwordData.newPassword !== passwordData.confirmPassword) {
       setPasswordErrors({ confirmPassword: 'Passwords do not match' });
@@ -268,56 +249,32 @@ export const AccountSettings: React.FC = () => {
     }, 'Password changed');
   };
 
-  const handleTogglePrivacy = async () => {
-    const next = !privacyShowBookings;
-    setPrivacyShowBookings(next);
-    const user = authService.getCurrentUser();
-    if (!user?.uid || !db) return;
-    await db.collection('users').doc(user.uid).update({ privacyShowBookings: next }).catch(() => {});
-    addToast(next ? 'Booking visibility enabled' : 'Booking visibility hidden', 'success');
+  // ── Delete account state ──────────────────────────────────────────────────
+  const [showDeleteModal, setShowDeleteModal]   = useState(false);
+  const [deletePassword, setDeletePassword]     = useState('');
+  const [showDeletePassword, setShowDeletePassword] = useState(false);
+  const [deleteError, setDeleteError]           = useState('');
+  const [deletingAccount, setDeletingAccount]   = useState(false);
+
+  const handleDeleteAccount = async () => {
+    if (!deletePassword) { setDeleteError('Please enter your password.'); return; }
+    setDeletingAccount(true);
+    setDeleteError('');
+    try {
+      const user = firebase.auth().currentUser;
+      if (!user?.email) throw new Error('no-user');
+      const credential = firebase.auth.EmailAuthProvider.credential(user.email, deletePassword);
+      await user.reauthenticateWithCredential(credential);
+      await authService.deleteUserAccount();
+    } catch (err: any) {
+      setDeletingAccount(false);
+      setDeleteError(
+        err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential'
+          ? 'Incorrect password. Please try again.'
+          : 'Failed to delete account. Please try again.',
+      );
+    }
   };
-
-  const handleDeleteSavedSearch = async (idx: number) => {
-    const next = savedSearches.filter((_, i) => i !== idx);
-    setSavedSearches(next);
-    const user = authService.getCurrentUser();
-    if (!user?.uid || !db) return;
-    db.collection('users').doc(user.uid).update({ savedSearches: next })
-      .catch(() => setSavedSearches(savedSearches));
-  };
-
-  const handleFrequencyChange = async (idx: number, freq: 'daily' | 'weekly' | 'off') => {
-    const next = savedSearches.map((s, i) => i === idx ? { ...s, emailFrequency: freq } : s);
-    setSavedSearches(next);
-    const user = authService.getCurrentUser();
-    if (!user?.uid || !db) return;
-    db.collection('users').doc(user.uid).update({ savedSearches: next }).catch(() => {});
-  };
-
-  // ── Toggle switch ─────────────────────────────────────────────────────────
-  const Toggle = ({ on, onToggle }: { on: boolean; onToggle: () => void }) => (
-    <button
-      onClick={onToggle}
-      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${on ? 'bg-primary-600' : 'bg-slate-300'}`}
-    >
-      <span className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${on ? 'translate-x-5' : ''}`} />
-    </button>
-  );
-
-  // ── Checkbox ──────────────────────────────────────────────────────────────
-  const Checkbox = ({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) => (
-    <label className="flex items-start gap-3 cursor-pointer select-none">
-      <div
-        onClick={onChange}
-        className={`mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors cursor-pointer ${
-          checked ? 'bg-primary-600 border-primary-600' : 'border-slate-300 bg-white'
-        }`}
-      >
-        {checked && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-      </div>
-      <span className="text-sm text-slate-700">{label}</span>
-    </label>
-  );
 
   // ── Input field ───────────────────────────────────────────────────────────
   const inputCls = 'px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400 w-full max-w-xs';
@@ -582,130 +539,7 @@ export const AccountSettings: React.FC = () => {
 
             </Section>
 
-            {/* ── 2. Privacy Settings ───────────────────────────────── */}
-            <Section title="Privacy Settings" open={open.privacy} onToggle={() => toggle('privacy')}>
-              <p className="text-sm text-slate-500 mb-4">
-                Allow other families to see a list of the caregivers you book on your profile.
-              </p>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-slate-700">Show booked caregivers</span>
-                <Toggle on={privacyShowBookings} onToggle={handleTogglePrivacy} />
-              </div>
-            </Section>
-
-            {/* ── 3. Communication ─────────────────────────────────── */}
-            <Section title="Communication" open={open.communication} onToggle={() => toggle('communication')}>
-              <p className="text-sm text-slate-500 mb-4">
-                Please note that independent of your selections below you will still receive emails related to any bookings, messages, or purchases you initiate on CareConnex.
-              </p>
-
-              {/* Checkboxes */}
-              <div className="space-y-3 mb-6">
-                <div className="flex items-start justify-between gap-4">
-                  <span className={`${LABEL_W} text-sm text-slate-500 pt-0.5`}>Newsletter</span>
-                  <div className="flex-1">
-                    <Checkbox
-                      checked={commPrefs.newsletter}
-                      onChange={() => setCommPrefs(p => ({ ...p, newsletter: !p.newsletter }))}
-                      label="Send me a weekly CareConnex newsletter"
-                    />
-                  </div>
-                </div>
-                <div className="flex items-start justify-between gap-4">
-                  <span className={`${LABEL_W} text-sm text-slate-500 pt-0.5`}>New Matches</span>
-                  <div className="flex-1">
-                    <Checkbox
-                      checked={commPrefs.newMatches}
-                      onChange={() => setCommPrefs(p => ({ ...p, newMatches: !p.newMatches }))}
-                      label="Email me when caregivers matching my criteria become available"
-                    />
-                  </div>
-                </div>
-                <div className="flex items-start justify-between gap-4">
-                  <span className={`${LABEL_W} text-sm text-slate-500 pt-0.5`}>Caregiver Reviews</span>
-                  <div className="flex-1">
-                    <Checkbox
-                      checked={commPrefs.caregiverReviews}
-                      onChange={() => setCommPrefs(p => ({ ...p, caregiverReviews: !p.caregiverReviews }))}
-                      label="Email me when caregivers I've booked receive new reviews"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Save comm prefs */}
-              <button
-                onClick={handleSaveCommPrefs}
-                disabled={isLoading}
-                className="mb-6 px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-xl hover:bg-primary-700 transition-colors disabled:opacity-50"
-              >
-                {isLoading ? <Loader2 className="w-4 h-4 animate-spin inline" /> : 'Save Preferences'}
-              </button>
-
-              {/* Saved Searches */}
-              <div className="border-t border-slate-100 pt-5">
-                <div className="flex items-start gap-4">
-                  <span className={`${LABEL_W} text-sm text-slate-500 pt-1`}>Saved Searches</span>
-                  <div className="flex-1 min-w-0">
-                    {savedSearches.length === 0 ? (
-                      <div className="py-4 text-center">
-                        <p className="text-sm text-slate-400">No saved searches yet.</p>
-                        <p className="text-xs text-slate-400 mt-1">
-                          Use "Save Search" in Browse Caregivers to save your filters here.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {savedSearches.map((s, i) => (
-                          <div key={i} className="border border-slate-200 rounded-xl p-4">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex-1 min-w-0">
-                                <p className="font-semibold text-primary-700 text-sm">{s.name}</p>
-                                <p className="text-xs text-slate-400 mt-0.5">
-                                  Saved {new Date(s.savedAt).toLocaleDateString('en-US', { month: 'long', day: '2-digit', year: 'numeric' })}
-                                </p>
-                                {s.filters && Object.keys(s.filters).length > 0 && (
-                                  <p className="text-xs text-slate-500 mt-1.5">
-                                    <span className="font-medium">{Object.keys(s.filters).length} Filters:</span>{' '}
-                                    {[
-                                      s.filters.searchTerm,
-                                      s.filters.availability,
-                                      s.filters.location,
-                                      s.filters.distance ? `${s.filters.distance} miles` : null,
-                                      ...(s.filters.certifications || []),
-                                    ].filter(Boolean).join(', ')}
-                                  </p>
-                                )}
-                              </div>
-                              <button
-                                onClick={() => handleDeleteSavedSearch(i)}
-                                className="text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-                            <div className="flex items-center gap-2 mt-3">
-                              <span className="text-xs text-slate-500">Email notifications:</span>
-                              <select
-                                value={s.emailFrequency}
-                                onChange={e => handleFrequencyChange(i, e.target.value as 'daily' | 'weekly' | 'off')}
-                                className="text-xs border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary-300"
-                              >
-                                <option value="daily">Daily</option>
-                                <option value="weekly">Weekly</option>
-                                <option value="off">Off</option>
-                              </select>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </Section>
-
-            {/* ── 4. Blocked Users ──────────────────────────────────── */}
+            {/* ── 2. Blocked Users ──────────────────────────────────── */}
             <Section title="Blocked Users" open={open.blocked} onToggle={() => toggle('blocked')}>
               {blockedProfiles.length === 0 ? (
                 <p className="text-sm text-slate-500">You haven't blocked anyone.</p>
@@ -735,46 +569,19 @@ export const AccountSettings: React.FC = () => {
               )}
             </Section>
 
-          </div>
-
-          {/* ── Right sidebar ─────────────────────────────────────────── */}
-          <div className="w-64 flex-shrink-0 hidden lg:block sticky top-8 space-y-4">
-            {/* Upgrade card */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-              <p className="font-semibold text-slate-900 text-sm mb-1">Hiring a new caregiver?</p>
-              <p className="text-xs text-slate-500 mb-3">Get a plan:</p>
-              <ul className="text-sm text-slate-700 space-y-1 mb-4">
-                <li className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 bg-primary-500 rounded-full" />
-                  Monthly · <span className="font-semibold">$29.95</span>
-                </li>
-                <li className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 bg-primary-500 rounded-full" />
-                  Quarterly · <span className="font-semibold">$49.95</span>
-                </li>
-                <li className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 bg-primary-500 rounded-full" />
-                  Annual · <span className="font-semibold">$89.95</span>
-                </li>
-              </ul>
+            {/* ── 3. Delete Account ──────────────────────────────────── */}
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4 px-6 py-5">
+              <p className="text-sm text-slate-500 mb-4">Deleting your account is permanent and cannot be undone.</p>
               <button
-                onClick={() => setShowPlanModal(true)}
-                className="w-full py-2 bg-primary-600 text-white text-sm font-semibold rounded-xl hover:bg-primary-700 transition-colors"
+                onClick={() => { setDeletePassword(''); setDeleteError(''); setShowDeleteModal(true); }}
+                className="flex items-center gap-2 text-red-500 hover:text-red-700 font-medium text-sm transition-colors"
               >
-                Upgrade
+                <Trash2 className="w-4 h-4" /> Delete account
               </button>
             </div>
 
-            {/* Quick links */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Quick Links</p>
-              <div className="space-y-2 text-sm">
-                <button onClick={() => navigate('/client/membership')} className="block text-primary-600 hover:underline">Membership Plans</button>
-                <button onClick={() => navigate('/client/payments')} className="block text-primary-600 hover:underline">Payment History</button>
-                <button onClick={() => navigate('/client/find-caregivers')} className="block text-primary-600 hover:underline">Find Caregivers</button>
-              </div>
-            </div>
           </div>
+
         </div>
       </main>
 
@@ -841,6 +648,45 @@ export const AccountSettings: React.FC = () => {
 
       {showPlanModal && (
         <PlanSelectModal onClose={() => setShowPlanModal(false)} />
+      )}
+
+      {/* ── Delete Account Modal ──────────────────────────────────────────── */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <h2 className="text-base font-bold text-slate-900">Delete account</h2>
+              <button onClick={() => setShowDeleteModal(false)} className="p-1.5 hover:bg-slate-100 rounded-lg">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-slate-600">Enter your password to confirm. This action is permanent and cannot be undone.</p>
+              <div className="relative">
+                <input
+                  type={showDeletePassword ? 'text' : 'password'}
+                  value={deletePassword}
+                  onChange={e => { setDeletePassword(e.target.value); setDeleteError(''); }}
+                  placeholder="Current password"
+                  className="w-full px-3 py-2.5 pr-10 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-red-400"
+                />
+                <button type="button" onClick={() => setShowDeletePassword(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                  {showDeletePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              {deleteError && <p className="text-xs text-red-500">{deleteError}</p>}
+              <button
+                onClick={handleDeleteAccount}
+                disabled={deletingAccount || !deletePassword}
+                className="w-full py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+              >
+                {deletingAccount ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                {deletingAccount ? 'Deleting...' : 'Delete my account'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

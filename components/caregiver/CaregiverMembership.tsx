@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  ShieldCheck, CheckCircle, Loader2, ChevronLeft,
+  ShieldCheck, CheckCircle, Loader2, ChevronLeft, X,
   DollarSign, MessageCircle, Briefcase, Car,
 } from 'lucide-react';
 import {
@@ -13,6 +13,7 @@ import { useCareConnex } from '../../context/CareConnexContext';
 interface CaregiverMembershipProps {
   onNavigate: (view: any) => void;
   onShowToast?: (msg: string, type: 'success' | 'error' | 'info') => void;
+  onClose?: () => void;
 }
 
 const BENEFITS = [
@@ -41,6 +42,7 @@ const BENEFITS = [
 export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
   onNavigate,
   onShowToast,
+  onClose,
 }) => {
   const { caregiverProfile } = useCareConnex();
   const p = caregiverProfile as any;
@@ -91,20 +93,22 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
     }
   };
 
-  return (
-    <div className="min-h-screen flex flex-col lg:flex-row">
+  const inner = (
+    <div className={onClose ? 'flex flex-col lg:flex-row rounded-2xl overflow-hidden' : 'min-h-screen flex flex-col lg:flex-row'}>
 
       {/* ── Left: Hero / Benefits ── */}
       <div className="lg:w-[55%] bg-gradient-to-br from-primary-500 to-blue-700 text-white px-8 py-10 lg:py-16 flex flex-col">
 
-        {/* Back button */}
-        <button
-          onClick={() => onNavigate('caregiver')}
-          className="flex items-center gap-1.5 text-white/70 hover:text-white text-sm font-medium mb-10 w-fit transition-colors"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          Back to Dashboard
-        </button>
+        {/* Back button — page mode only */}
+        {!onClose && (
+          <button
+            onClick={() => onNavigate('caregiver')}
+            className="flex items-center gap-1.5 text-white/70 hover:text-white text-sm font-medium mb-10 w-fit transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Back to Dashboard
+          </button>
+        )}
 
         {/* Icon + headline */}
         <div className="flex-1 flex flex-col justify-center max-w-lg">
@@ -251,4 +255,23 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
       </div>
     </div>
   );
+
+  if (onClose) {
+    return (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+        <div className="relative w-full max-w-4xl my-auto">
+          <button
+            onClick={onClose}
+            className="absolute top-3 right-3 z-10 w-8 h-8 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow-md transition-colors"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4 text-slate-600" />
+          </button>
+          {inner}
+        </div>
+      </div>
+    );
+  }
+
+  return inner;
 };

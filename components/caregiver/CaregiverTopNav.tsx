@@ -9,6 +9,7 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { authService } from '../../services/api';
 import { CaregiverUserMenu } from './CaregiverUserMenu';
 import { NotificationDropdown } from '../ui/NotificationDropdown';
+import { useUnreadMessageCount } from '../../hooks/useUnreadMessageCount';
 import type { Caregiver } from '../../types';
 
 const BOOKINGS_ROUTES = ['/caregiver/bookings', '/caregiver/families'];
@@ -23,6 +24,8 @@ export const CaregiverTopNav: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { caregiverProfile: profile } = useCareConnex();
+  const currentUser = authService.getCurrentUser();
+  const unreadMessages = useUnreadMessageCount(currentUser?.uid ?? null);
   const [moreOpen, setMoreOpen] = useState(false);
 
   const path = location.pathname;
@@ -43,7 +46,7 @@ export const CaregiverTopNav: React.FC = () => {
   if (AUTH_PATHS.includes(path)) {
     return (
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
-        <DesktopNav profile={profile} isActive={isActive} navigate={navigate} />
+        <DesktopNav profile={profile} isActive={isActive} navigate={navigate} unreadMessages={unreadMessages} />
       </header>
     );
   }
@@ -52,7 +55,7 @@ export const CaregiverTopNav: React.FC = () => {
     <>
       {/* Top nav — logo always visible, desktop links hidden on mobile */}
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
-        <DesktopNav profile={profile} isActive={isActive} navigate={navigate} />
+        <DesktopNav profile={profile} isActive={isActive} navigate={navigate} unreadMessages={unreadMessages} />
       </header>
 
       {/* Mobile bottom nav */}
@@ -152,7 +155,8 @@ const DesktopNav: React.FC<{
   profile: Caregiver | null;
   isActive: (p: string) => boolean;
   navigate: (path: string) => void;
-}> = ({ profile, isActive, navigate }) => {
+  unreadMessages: number;
+}> = ({ profile, isActive, navigate, unreadMessages }) => {
   const [bookingsOpen, setBookingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const bookingsRef = useRef<HTMLDivElement>(null);
@@ -222,9 +226,14 @@ const DesktopNav: React.FC<{
 
       {/* Right side: Messages + Bell + Help + Avatar */}
       <div className="hidden md:flex items-center gap-1">
-        <button onClick={() => navigate('/caregiver/inbox')} aria-label="Messages"
-          className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${isActive('/caregiver/inbox') ? 'text-primary-600 bg-primary-50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}>
+        <button onClick={() => navigate('/caregiver/inbox')} aria-label={`Messages${unreadMessages > 0 ? ` (${unreadMessages} unread)` : ''}`}
+          className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${isActive('/caregiver/inbox') ? 'text-primary-600 bg-primary-50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}>
           <MessageSquare className="w-4 h-4" />
+          {unreadMessages > 0 && (
+            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-bold">
+              {unreadMessages > 9 ? '9+' : unreadMessages}
+            </span>
+          )}
         </button>
         <NotificationDropdown />
         <div className="relative" ref={helpRef}>

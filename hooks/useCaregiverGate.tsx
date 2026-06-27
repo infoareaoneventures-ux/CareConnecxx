@@ -35,8 +35,18 @@ function CaregiverGateModal({
   onClose: () => void;
 }) {
   const navigate = useNavigate();
+  const { setMembershipModalOpen } = useCareConnex();
   if (!reason) return null;
   const { title, desc, cta, path } = REASON_CONFIG[reason];
+
+  const handleCta = () => {
+    onClose();
+    if (reason === 'membership') {
+      setMembershipModalOpen(true);
+    } else {
+      navigate(path);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
@@ -59,7 +69,7 @@ function CaregiverGateModal({
             Cancel
           </button>
           <button
-            onClick={() => { onClose(); navigate(path); }}
+            onClick={handleCta}
             className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-full flex items-center justify-center gap-1.5 transition-colors"
           >
             {cta} <ArrowRight className="w-3.5 h-3.5" />

@@ -50,8 +50,9 @@ export const useNotifications = (userId: string | null) => {
         });
         const toMs = (v: any) => v?.toDate ? v.toDate().getTime() : new Date(v).getTime();
         notifs.sort((a, b) => toMs((b as any).createdAt) - toMs((a as any).createdAt));
-        setNotifications(notifs);
-        setUnreadCount(notifs.filter(n => !n.isRead).length);
+        const filtered = notifs.filter(n => (n as any).type !== 'message' && !(n as any).isDeleted);
+        setNotifications(filtered);
+        setUnreadCount(filtered.filter(n => !n.isRead).length);
         setLoading(false);
         setError(null);
       },

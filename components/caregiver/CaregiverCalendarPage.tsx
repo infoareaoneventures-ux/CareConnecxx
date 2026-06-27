@@ -9,6 +9,7 @@ import firebase from 'firebase/compat/app';
 import { auth, db } from '../../lib/firebase';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCaregiverGate } from '../../hooks/useCaregiverGate';
+import { useCareConnex } from '../../context/CareConnexContext';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../../services/availabilityService';
 import { shiftDisplayStatus, shiftStatusBlockClass, shiftStatusBadgeClass, shiftStatusDotClass, shiftStatusLabel } from '../../utils/shiftUtils';
 
@@ -142,6 +143,7 @@ interface CaregiverCalendarPageProps {
 export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ onNavigate: _onNavigate }) => {
   const navigate = useNavigate();
   const { blockReason } = useCaregiverGate();
+  const { setMembershipModalOpen } = useCareConnex();
   const [view,       setView]       = useState<'week' | 'month' | 'day' | 'list'>('week');
   const [dateFilter, setDateFilter] = useState<'upcoming' | 'this-week' | 'this-month' | 'last-30' | 'all'>('upcoming');
   const [weekOffset, setWeekOffset] = useState(0);
@@ -723,7 +725,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           {/* Scheduled + within 15 min of start (or past start but not ended): Start Shift */}
           {canStart && (
             blockReason === 'membership' ? (
-              <button onClick={() => navigate('/caregiver/membership')} className="w-full py-2.5 bg-slate-100 border border-slate-200 text-slate-500 text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors hover:bg-slate-200">
+              <button onClick={() => setMembershipModalOpen(true)} className="w-full py-2.5 bg-slate-100 border border-slate-200 text-slate-500 text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors hover:bg-slate-200">
                 <Lock className="w-4 h-4" /> Activate Membership
               </button>
             ) : blockReason === 'background' ? (

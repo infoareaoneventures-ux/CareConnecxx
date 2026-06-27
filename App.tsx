@@ -142,7 +142,7 @@ const AdminRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isLoading, authResolved, toasts, removeToast, addToast, currentUser } = useCareConnex();
+  const { isLoading, authResolved, toasts, removeToast, addToast, currentUser, membershipModalOpen, setMembershipModalOpen } = useCareConnex();
 
   // Caregiver Callout Handling
   const { activeCallout, dismissCallout } = useCaregiverCallout(currentUser?.uid || null);
@@ -224,7 +224,7 @@ const AppContent: React.FC = () => {
       case 'caregiver-profile': navigate('/caregiver/profile'); break;
       case 'caregiver-inbox': navigate('/caregiver/inbox'); break;
       case 'caregiver-calendar': navigate('/caregiver/calendar'); break;
-      case 'caregiver-membership': navigate('/caregiver/membership'); break;
+      case 'caregiver-membership': setMembershipModalOpen(true); break;
       case 'caregiver-jobs': navigate('/caregiver/jobs'); break;
       case 'caregiver-bookings': navigate('/caregiver/bookings'); break;
       case 'caregiver-video': navigate('/caregiver/video'); break;
@@ -346,7 +346,7 @@ const AppContent: React.FC = () => {
           <Route path="/caregiver/profile" element={<CaregiverRoute element={<CaregiverProfile onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/caregiver/inbox" element={<CaregiverRoute element={<InboxView userType="caregiver" onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/caregiver/calendar" element={<CaregiverRoute element={<CaregiverCalendarPage onNavigate={handleNavigation} />} />} />
-          <Route path="/caregiver/membership" element={<CaregiverRoute element={<CaregiverMembership onNavigate={handleNavigation} onShowToast={addToast} />} />} />
+          <Route path="/caregiver/membership" element={<CaregiverRoute element={<Navigate to="/caregiver/dashboard" replace />} />} />
           <Route path="/caregiver/bookings" element={<CaregiverRoute element={<CaregiverBookingsPage />} />} />
           <Route path="/caregiver/jobs" element={<CaregiverRoute element={<CaregiverJobBoardPage />} />} />
           <Route path="/caregiver/video" element={<CaregiverRoute element={<CaregiverIntroVideo />} />} />
@@ -398,6 +398,17 @@ const AppContent: React.FC = () => {
 
       {/* PWA Install Prompt */}
       <PWAInstallPrompt />
+
+      {/* Caregiver Membership Modal */}
+      {membershipModalOpen && (
+        <Suspense fallback={null}>
+          <CaregiverMembership
+            onNavigate={handleNavigation}
+            onShowToast={addToast}
+            onClose={() => setMembershipModalOpen(false)}
+          />
+        </Suspense>
+      )}
 
       {/* Caregiver Callout Modal */}
       {activeCallout && calloutAppointment && (

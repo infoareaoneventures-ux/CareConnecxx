@@ -85,7 +85,7 @@ const CHIP = (selected: boolean) =>
     `px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${selected ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`;
 
 export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobAccepted, hideApplicationsTab = false }) => {
-    const { blockedIds } = useCareConnex();
+    const { blockedIds, setMembershipModalOpen } = useCareConnex();
     const { blockReason, transportBlockReason } = useCaregiverGate();
     const navigate = useNavigate();
     const [jobs, setJobs] = useState<JobPost[]>([]);
@@ -781,7 +781,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                     const jobRequiresTransport = job.careTypes?.includes('Transportation') || job.requirements?.includes('Driving');
                                                     const reason = jobRequiresTransport ? transportBlockReason : blockReason;
                                                     if (reason === 'membership') return (
-                                                        <button onClick={() => navigate('/caregiver/membership')} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-xs font-semibold transition-colors">
+                                                        <button onClick={() => setMembershipModalOpen(true)} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-xs font-semibold transition-colors">
                                                             <Lock className="w-3 h-3" /> Activate Membership
                                                         </button>
                                                     );
@@ -1081,7 +1081,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                                     {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Decline'}
                                                                 </button>
                                                                 {blockReason === 'membership' ? (
-                                                                    <button onClick={() => navigate('/caregiver/membership')} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 border border-slate-200 text-slate-500 rounded-lg text-xs font-semibold hover:bg-slate-200 transition-colors">
+                                                                    <button onClick={() => setMembershipModalOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 border border-slate-200 text-slate-500 rounded-lg text-xs font-semibold hover:bg-slate-200 transition-colors">
                                                                         <Lock className="w-3 h-3" />
                                                                         Activate Membership
                                                                     </button>
@@ -1272,7 +1272,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                     const jobRequiresTransport = viewingJob?.careTypes?.includes('Transportation') || viewingJob?.requirements?.includes('Driving');
                                     const reason = jobRequiresTransport ? transportBlockReason : blockReason;
                                     if (reason === 'membership') return (
-                                        <button onClick={() => navigate('/caregiver/membership')} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-sm font-semibold transition-colors">
+                                        <button onClick={() => setMembershipModalOpen(true)} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-sm font-semibold transition-colors">
                                             <Lock className="w-3.5 h-3.5" /> Activate Membership
                                         </button>
                                     );

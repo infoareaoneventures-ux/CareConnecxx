@@ -69,7 +69,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   onShowToast,
 }) => {
   const navigate = useNavigate();
-  const { blockedIds } = useCareConnex();
+  const { blockedIds, setMembershipModalOpen } = useCareConnex();
   const { blockReason } = useCaregiverGate();
   const currentUser = authService.getCurrentUser();
   const uid = profile.uid || profile.id || currentUser?.uid || '';
@@ -396,7 +396,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                         const minsUntil = (new Date(`${s.date}T${s.startTime}`).getTime() - Date.now()) / 60000;
                         if (minsUntil > 15) return null;
                         return blockReason === 'membership' ? (
-                          <button onClick={() => navigate('/caregiver/membership')} className="mt-2 w-full py-1.5 bg-slate-100 border border-slate-200 text-slate-500 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors hover:bg-slate-200">
+                          <button onClick={() => setMembershipModalOpen(true)} className="mt-2 w-full py-1.5 bg-slate-100 border border-slate-200 text-slate-500 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors hover:bg-slate-200">
                             <Lock className="w-3 h-3" /> Activate Membership
                           </button>
                         ) : blockReason === 'background' ? (

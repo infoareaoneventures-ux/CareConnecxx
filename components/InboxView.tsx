@@ -75,7 +75,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const navigate = useNavigate();
   const location = useLocation();
   const pendingRoomState = (location.state as any)?.pendingRoom as (ChatRoom & { id: string }) | undefined;
-  const { appointments, blockedIds } = useCareConnex();
+  const { appointments, blockedIds, setMembershipModalOpen } = useCareConnex();
   const currentUser = authService.getCurrentUser();
   const currentUid = currentUser?.uid ?? '';
   const currentName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'You';
@@ -557,7 +557,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                     <span className="text-sm font-medium">Activate your membership to send messages</span>
                   </div>
                   <button
-                    onClick={() => navigate('/caregiver/membership')}
+                    onClick={() => setMembershipModalOpen(true)}
                     className="text-xs font-semibold text-slate-600 hover:text-slate-800 underline whitespace-nowrap"
                   >
                     Activate Membership →

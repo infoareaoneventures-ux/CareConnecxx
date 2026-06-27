@@ -3,9 +3,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Search, Calendar, MessageSquare, Heart,
   ChevronDown, LogOut, Settings, CreditCard, Crown,
-  Users, FileText, Bell, CalendarCheck,
+  Users, FileText, CalendarCheck,
   Briefcase, X, MoreHorizontal, HelpCircle, Mail,
 } from 'lucide-react';
+import { NotificationDropdown } from '../ui/NotificationDropdown';
 
 const FIND_CARE_ROUTES = ['/client/find-caregivers', '/client/browse-caregivers', '/client/posts', '/client/post-job'];
 import { authService, dbService } from '../../services/api';
@@ -176,9 +177,7 @@ export const ClientNavigation: React.FC = () => {
             <button onClick={() => navigate('/client/inbox')} className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors ${isActive('/client/inbox') ? 'text-primary-600 bg-primary-50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'}`}>
               <MessageSquare className="w-5 h-5" />
             </button>
-            <button className="flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors relative">
-              <Bell className="w-5 h-5" />
-            </button>
+            <NotificationDropdown />
 
             {/* Help */}
             <div className="relative" ref={helpRef}>

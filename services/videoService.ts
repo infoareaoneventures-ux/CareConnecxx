@@ -86,24 +86,7 @@ export const videoService = {
 
             console.log('✅ [VideoService] Interview scheduled successfully! Doc ID:', docRef.id);
 
-            // Notify caregiver of the new interview request
-            try {
-                const displayTime = scheduledTime.toLocaleString('en-US', {
-                    weekday: 'short', month: 'short', day: 'numeric',
-                    hour: '2-digit', minute: '2-digit'
-                });
-                await db.collection('users').doc(caregiverId).collection('notifications').add({
-                    userId: caregiverId,
-                    type: 'interview_request',
-                    title: 'New Interview Request',
-                    message: `${clientName} has requested a video interview on ${displayTime}.`,
-                    data: { interviewId: docRef.id },
-                    read: false,
-                    isRead: false,
-                    timestamp: new Date().toISOString(),
-                    createdAt: new Date().toISOString()
-                });
-            } catch (_) { /* non-critical */ }
+            // Notification handled by onVideoInterviewWrite Cloud Function
 
             return {
                 id: docRef.id,

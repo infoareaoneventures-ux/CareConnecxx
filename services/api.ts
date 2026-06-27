@@ -1317,6 +1317,7 @@ export const dbService = {
             try {
                 await db.collection('users').doc(notification.userId).collection('notifications').add({
                     ...notification,
+                    body: (notification as any).body ?? notification.message,
                     read: false,
                     isRead: false,
                     timestamp: new Date().toISOString(),

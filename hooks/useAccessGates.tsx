@@ -37,9 +37,8 @@ export function useAccessGates() {
 
     const unsub = fdb.collection('users').doc(uid).onSnapshot(doc => {
       const data = (doc.data() as any) || {};
-      const adminApproved = data.approvedBy === 'admin';
-      setIdentityStatus(adminApproved ? 'verified' : (data.identityCheckStatus || 'not_started'));
-      setMembershipActive(adminApproved || !!data.subscriptionActive || data.membershipStatus === 'active' || data.membershipStatus === 'trialing');
+      setIdentityStatus(data.identityCheckStatus || 'not_started');
+      setMembershipActive(!!data.subscriptionActive || data.membershipStatus === 'active' || data.membershipStatus === 'trialing');
       setReady(true);
     }, () => setReady(true));
 

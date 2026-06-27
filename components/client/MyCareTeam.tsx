@@ -7,7 +7,7 @@ import { ClientNavigation } from './ClientNavigation';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { db } from '../../lib/firebase';
 import { authService } from '../../services/api';
-import { IdentityGateModal } from './IdentityGateModal';
+import { useAccessGates } from '../../hooks/useAccessGates';
 
 interface TeamCaregiver {
   id: string;
@@ -36,9 +36,9 @@ export const MyCareTeam: React.FC = () => {
   const [query, setQuery] = useState('');
   const [activeCaregivers, setActiveCaregivers] = useState<TeamCaregiver[]>([]);
   const [pastCaregivers, setPastCaregivers] = useState<TeamCaregiver[]>([]);
+  const [completedInterviewIds, setCompletedInterviewIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
-  const [showIdentityGate, setShowIdentityGate] = useState(false);
-  const [identityStatus, setIdentityStatus] = useState<string>('not_started');
+  const { gate, Modals: GateModals } = useAccessGates();
 
   useEffect(() => {
     let isMounted = true;
@@ -50,8 +50,8 @@ export const MyCareTeam: React.FC = () => {
         const fdb = db;
         if (!fdb) { setIsLoading(false); return; }
 
-        // Query booking_requests + scheduled shifts in parallel
-        const [allBookingsSnap, scheduledShiftsSnap] = await Promise.all([
+        // Query booking_requests + scheduled shifts + completed interviews in parallel
+        const [allBookingsSnap, scheduledShiftsSnap, completedInterviewsSnap] = await Promise.all([
           fdb.collection('booking_requests')
             .where('clientId', '==', uid)
             .limit(100)
@@ -60,7 +60,18 @@ export const MyCareTeam: React.FC = () => {
             .where('clientId', '==', uid)
             .where('status', '==', 'scheduled')
             .get(),
+          fdb.collection('video_interviews')
+            .where('clientId', '==', uid)
+            .where('status', '==', 'completed')
+            .get(),
         ]);
+
+        const completedIds = new Set<string>();
+        completedInterviewsSnap.docs.forEach(d => {
+          const cgId = d.data().caregiverId;
+          if (cgId) completedIds.add(cgId);
+        });
+        if (isMounted) setCompletedInterviewIds(completedIds);
 
         // Build set of booking IDs that still have scheduled shifts
         const activeBookingIds = new Set<string>();
@@ -175,27 +186,8 @@ export const MyCareTeam: React.FC = () => {
     return () => { isMounted = false; };
   }, []);
 
-  // Load identity check status
-  useEffect(() => {
-    const uid = authService.getCurrentUser()?.uid;
-    if (!uid || !db) return;
-    let isMounted = true;
-    db.collection('users').doc(uid).get()
-      .then(doc => {
-        if (!isMounted) return;
-        setIdentityStatus((doc.data() as any)?.identityCheckStatus || 'not_started');
-      })
-      .catch(() => {});
-    return () => { isMounted = false; };
-  }, []);
-
-  const bypass = import.meta.env.VITE_BYPASS_ONBOARDING === 'true';
-
   const handleMessage = (caregiverId: string, caregiverName: string) => {
-    if (!bypass && identityStatus !== 'verified') {
-      setShowIdentityGate(true);
-      return;
-    }
+    gate('message', caregiverName, () => {
     const currentUid = authService.getCurrentUser()?.uid;
     if (!currentUid) { navigate('/client/inbox'); return; }
     const currentName = authService.getCurrentUser()?.displayName || authService.getCurrentUser()?.email?.split('@')[0] || 'Client';
@@ -211,6 +203,7 @@ export const MyCareTeam: React.FC = () => {
         }
       }
     });
+    }); // end gate callback
   };
 
 
@@ -253,11 +246,6 @@ export const MyCareTeam: React.FC = () => {
               alt={caregiver.name}
               className="w-20 h-20 rounded-full object-cover border-4 border-white shadow-md"
             />
-            {caregiver.isTopRated && (
-              <div className="absolute -bottom-1 -right-1 bg-gradient-to-r from-yellow-400 to-accent-500 text-white text-xs font-bold px-2 py-0.5 rounded-full shadow-sm">
-                Top rated
-              </div>
-            )}
           </div>
 
           <div className="flex-1">
@@ -362,7 +350,7 @@ export const MyCareTeam: React.FC = () => {
             <User className="w-4 h-4 mr-2" />
             Profile
           </Button>
-          {activeTab === 'past' && (
+          {activeTab === 'past' && completedInterviewIds.has(caregiver.id) && (
             <Button
               variant="outline"
               onClick={() => navigate(`/client/posts?rebook=${caregiver.id}`)}
@@ -469,16 +457,7 @@ export const MyCareTeam: React.FC = () => {
 
 
 
-        {showIdentityGate && (
-          <IdentityGateModal
-            onClose={() => { setShowIdentityGate(false); }}
-            onGetVerified={() => {
-              setShowIdentityGate(false);
-              navigate('/client/account');
-              addToast('Complete identity verification in Account Settings', 'info');
-            }}
-          />
-        )}
+        <GateModals />
       </main>
     </div>
   );

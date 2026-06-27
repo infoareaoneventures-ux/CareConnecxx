@@ -161,7 +161,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [bookingTab, setBookingTab] = useState<'pending' | 'upcoming'>('pending');
 
   const currentUser = authService.getCurrentUser();
-  const { gate, Modals: GateModals } = useAccessGates();
+  const { gate, Modals: GateModals, membershipActive, identityVerified } = useAccessGates();
   const hasActiveBooking = activeCareTeam.length > 0;
 
   // Nearby caregivers — uses same logic as Browse Caregivers (distance-filtered, AI-scored)
@@ -192,7 +192,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       .where('status', '==', 'accepted')
       .onSnapshot(async snap => {
         const docs = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-        setActiveCareTeam(docs);
+        const seen = new Set<string>();
+        const deduped = docs.filter((d: any) => d.caregiverId && !seen.has(d.caregiverId) && seen.add(d.caregiverId));
+        setActiveCareTeam(deduped);
         setBookedCaregiverIds(new Set(docs.map((d: any) => d.caregiverId).filter(Boolean)));
         // Fetch caregiver profiles for rating + verification badges
         const profiles: Record<string, { rating?: number; verified?: boolean; backgroundCheckStatus?: string }> = {};
@@ -524,6 +526,53 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             onScrollToMatches={scrollToMatches}
           />
         )}
+
+        {/* Action required banner — returning client missing identity and/or membership */}
+        {hasActiveBooking && (!identityVerified || !membershipActive) && (() => {
+          const needsIdentity = !identityVerified;
+          const needsMembership = !membershipActive;
+          const bothNeeded = needsIdentity && needsMembership;
+          return (
+            <div className="mb-6 bg-white border border-slate-100 rounded-[2rem] shadow-sm p-6">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-5">Action required</p>
+              <div className="flex items-start mb-5">
+                {needsIdentity && (
+                  <div className="flex flex-col items-center flex-1 min-w-0">
+                    <div className="w-9 h-9 rounded-full bg-primary-600 flex items-center justify-center mb-2 shadow-sm">
+                      <User className="w-4 h-4 text-white" />
+                    </div>
+                    <span className="text-xs font-semibold text-primary-600 text-center">Identity</span>
+                  </div>
+                )}
+                {bothNeeded && <div className="flex-1 h-px bg-slate-200 mt-4 mx-1" />}
+                {needsMembership && (
+                  <div className="flex flex-col items-center flex-1 min-w-0">
+                    <div className="w-9 h-9 rounded-full bg-primary-600 flex items-center justify-center mb-2 shadow-sm">
+                      <CreditCard className="w-4 h-4 text-white" />
+                    </div>
+                    <span className="text-xs font-semibold text-primary-600 text-center">Membership</span>
+                  </div>
+                )}
+              </div>
+              <div className="bg-slate-50 rounded-2xl p-4">
+                <p className="font-semibold text-slate-900 mb-3">
+                  {needsIdentity && !needsMembership
+                    ? 'Verify your identity'
+                    : needsMembership && !needsIdentity
+                    ? 'Activate your membership'
+                    : 'Verify your identity & activate membership'}
+                </p>
+                <button
+                  onClick={() => gate('booking', undefined, () => {})}
+                  className="inline-flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold px-5 py-2.5 rounded-full transition-colors"
+                >
+                  {needsIdentity ? 'Verify identity' : 'Activate membership'}
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Live shift check-ins — shown when there is an active appointment today */}
         {currentUser?.uid && (() => {
@@ -912,7 +961,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           {/* Actions */}
                           <div className="flex gap-2">
                             <button
-                              onClick={() => booking.caregiverId && handleChatClick({ id: booking.caregiverId, name: booking.caregiverName } as any)}
+                              onClick={() => booking.caregiverId && handleGatedMessage({ id: booking.caregiverId, name: booking.caregiverName } as any)}
                               className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
                             >
                               <MessageSquare className="w-3.5 h-3.5" /> Message

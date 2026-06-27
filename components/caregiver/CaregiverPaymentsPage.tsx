@@ -1440,7 +1440,7 @@ const SubmittableShiftCard: React.FC<{
 // ── main page ─────────────────────────────────────────────────────────────────
 
 export const CaregiverPaymentsPage: React.FC = () => {
-  const { currentUser, addToast } = useCareConnex();
+  const { currentUser, addToast, setMembershipModalOpen } = useCareConnex();
   const navigate = useNavigate();
   const uid = currentUser?.uid ?? '';
 
@@ -2180,7 +2180,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
               subscription={subscription}
               loading={subLoading}
               onRefresh={() => { setSubscription(null); }}
-              onGetMembership={() => navigate('/caregiver/membership')}
+              onGetMembership={() => setMembershipModalOpen(true)}
               onManage={handleManageMembership}
               managing={managing}
             />

@@ -285,12 +285,6 @@ export const BrowseCaregivers: React.FC = () => {
                         </span>
                       </div>
                     )}
-                    {caregiver.isTopRated && (
-                      <div className="absolute -bottom-1 -right-1 bg-gradient-to-r from-yellow-400 to-accent-500 text-white text-xs font-bold px-2 py-0.5 rounded-full shadow-sm flex items-center gap-1">
-                        <Sparkles className="w-3 h-3" />
-                        Top rated
-                      </div>
-                    )}
                   </div>
                   <button
                     onClick={() => toggleFavorite(caregiver.id)}

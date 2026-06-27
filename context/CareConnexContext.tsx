@@ -38,6 +38,8 @@ interface CareConnexContextType {
     blockedIds: Set<string>;
     blockedUserProfiles: Record<string, { name: string; photo: string }>;
     unblockUser: (targetId: string) => Promise<void>;
+    membershipModalOpen: boolean;
+    setMembershipModalOpen: (v: boolean) => void;
 }
 
 const CareConnexContext = createContext<CareConnexContextType | undefined>(undefined);
@@ -52,6 +54,7 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
     const [toasts, setToasts] = useState<ToastMessage[]>([]);
     const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
     const [blockedUserProfiles, setBlockedUserProfiles] = useState<Record<string, { name: string; photo: string }>>({});
+    const [membershipModalOpen, setMembershipModalOpen] = useState(false);
 
     // Auth Listener - fetches user profile from Firestore to get userType
     useEffect(() => {
@@ -312,6 +315,8 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             blockedIds,
             blockedUserProfiles,
             unblockUser,
+            membershipModalOpen,
+            setMembershipModalOpen,
         }}>
             {children}
         </CareConnexContext.Provider>

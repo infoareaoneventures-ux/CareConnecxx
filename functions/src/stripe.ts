@@ -592,6 +592,20 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
 
+  // Notify caregiver of successful payment
+  const amountPaid = (invoice.amount_paid / 100).toFixed(2);
+  const isRenewal = invoice.billing_reason === 'subscription_cycle';
+  await admin.firestore().collection('users').doc(userId).collection('notifications').add({
+    userId,
+    type: 'membership_payment_succeeded',
+    title: isRenewal ? 'Membership Renewed' : 'Membership Activated',
+    body: isRenewal
+      ? `Your CareConnex membership has been renewed. $${amountPaid} was charged.`
+      : `Your CareConnex membership is now active. $${amountPaid} was charged.`,
+    isRead: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
   // Only re-initiate Checkr on annual renewal, not on first subscription payment
   if (invoice.billing_reason !== 'subscription_cycle') {
     console.log(`Invoice succeeded for ${userId} — billing_reason: ${invoice.billing_reason}, skipping Checkr re-initiation`);
@@ -750,6 +764,23 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
     console.error(`handleInvoicePaymentFailed: failed to notify client ${userId}:`, err);
   }
 
+  // In-app notification in addition to SMS
+  try {
+    const notifBody = isFinalAttempt
+      ? 'We were unable to process your membership payment. Your access is at risk — please update your payment method.'
+      : `We couldn't process your membership payment (attempt ${attemptCount}).${nextRetryDate ? ` We'll retry on ${nextRetryDate}.` : ' Please update your payment method.'}`;
+    await admin.firestore().collection('users').doc(userId).collection('notifications').add({
+      userId,
+      type: 'membership_payment_failed',
+      title: 'Membership Payment Failed',
+      body: notifBody,
+      isRead: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    console.error(`handleInvoicePaymentFailed: failed to write in-app notification for ${userId}:`, err);
+  }
+
   console.log(`Payment failed for user: ${userId} (attempt ${attemptCount}, final: ${isFinalAttempt})`);
 }
 
@@ -846,6 +877,15 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
     subscriptionActive: false,
     subscriptionId: null,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  await admin.firestore().collection('users').doc(userId).collection('notifications').add({
+    userId,
+    type: 'membership_cancelled',
+    title: 'Membership Cancelled',
+    body: 'Your CareConnex membership has been cancelled.',
+    isRead: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
   console.log(`Subscription canceled for user: ${userId}`);

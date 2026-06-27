@@ -247,6 +247,7 @@ export const jobApplicationService = {
       jobDaysOfWeek: jobData.daysOfWeek || [],
     });
 
+    // Notification handled by onJobApplicationCreate Cloud Function
     return docRef.id;
   },
 

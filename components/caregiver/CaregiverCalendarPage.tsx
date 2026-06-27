@@ -9,6 +9,7 @@ import firebase from 'firebase/compat/app';
 import { auth, db } from '../../lib/firebase';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCaregiverGate } from '../../hooks/useCaregiverGate';
+import { useCareConnex } from '../../context/CareConnexContext';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../../services/availabilityService';
 import { shiftDisplayStatus, shiftStatusBlockClass, shiftStatusBadgeClass, shiftStatusDotClass, shiftStatusLabel } from '../../utils/shiftUtils';
 
@@ -142,6 +143,7 @@ interface CaregiverCalendarPageProps {
 export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ onNavigate: _onNavigate }) => {
   const navigate = useNavigate();
   const { blockReason } = useCaregiverGate();
+  const { setMembershipModalOpen } = useCareConnex();
   const [view,       setView]       = useState<'week' | 'month' | 'day' | 'list'>('week');
   const [dateFilter, setDateFilter] = useState<'upcoming' | 'this-week' | 'this-month' | 'last-30' | 'all'>('upcoming');
   const [weekOffset, setWeekOffset] = useState(0);
@@ -246,18 +248,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
       cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
       cancelledBy: 'caregiver',
     });
-    // Notify client
-    if (shift?.clientId) {
-      await db.collection('users').doc(shift.clientId).collection('notifications').add({
-        userId: shift.clientId,
-        type: 'shift_cancelled',
-        title: 'Shift Cancelled',
-        message: `Your caregiver cancelled the shift on ${shift.date}.`,
-        read: false,
-        isRead: false,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-    }
+    // Notification handled by onShiftStatusChanged Cloud Function
     setSelectedShift(null);
     fetchShifts();
   };
@@ -723,7 +714,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           {/* Scheduled + within 15 min of start (or past start but not ended): Start Shift */}
           {canStart && (
             blockReason === 'membership' ? (
-              <button onClick={() => navigate('/caregiver/membership')} className="w-full py-2.5 bg-slate-100 border border-slate-200 text-slate-500 text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors hover:bg-slate-200">
+              <button onClick={() => setMembershipModalOpen(true)} className="w-full py-2.5 bg-slate-100 border border-slate-200 text-slate-500 text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors hover:bg-slate-200">
                 <Lock className="w-4 h-4" /> Activate Membership
               </button>
             ) : blockReason === 'background' ? (
@@ -908,11 +899,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         await fdb.collection('video_interviews').doc(interview.id).update({
           status: 'accepted', acceptedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
-        await fdb.collection('users').doc(interview.clientId).collection('notifications').add({
-          type: 'interview_accepted', title: 'Interview Accepted',
-          message: 'Your interview request has been accepted.',
-          read: false, isRead: false, timestamp: new Date().toISOString(),
-        });
+        // Notification handled by onVideoInterviewWrite Cloud Function
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'accepted' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'accepted' as const } : prev);
       } catch { } finally { setAccepting(false); }
@@ -925,8 +912,9 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
       setDeclining(true);
       try {
         await fdb.collection('video_interviews').doc(interview.id).update({
-          status: 'declined', declinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          status: 'declined', declinedBy: 'caregiver', declinedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
+        // Notification handled by onVideoInterviewWrite Cloud Function
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'declined' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'declined' as const } : prev);
       } catch { } finally { setDeclining(false); }

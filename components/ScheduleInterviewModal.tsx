@@ -5,6 +5,7 @@ import { Button } from './ui/Button';
 import { Caregiver } from '../types';
 import { videoService } from '../services/videoService';
 import { authService } from '../services/api';
+import { useAccessGates } from '../hooks/useAccessGates';
 
 interface JobOption {
     id: string;
@@ -35,6 +36,7 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
     const [notes, setNotes] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [selectedJobId, setSelectedJobId] = useState(preselectedJobId || '');
+    const { gate, Modals: GateModals } = useAccessGates();
 
     const handleSchedule = async () => {
         if (!selectedDate || !selectedTime) {
@@ -42,6 +44,8 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
             return;
         }
 
+        // Re-check gate at submit time in case membership lapsed while form was open
+        gate('interview', caregiver.name, async () => {
         setIsSubmitting(true);
         try {
             console.log('🎬 [ScheduleInterviewModal] Starting interview scheduling...');
@@ -131,6 +135,7 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
         } finally {
             setIsSubmitting(false);
         }
+        }); // end gate callback
     };
 
     // Generate time slots (9 AM to 6 PM)
@@ -145,7 +150,7 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
     // Get minimum date (today)
     const today = new Date().toISOString().split('T')[0];
 
-    return createPortal(
+    const portal = createPortal(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
             <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto animate-slide-up">
                 {/* Header */}
@@ -331,4 +336,11 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
             </div>
         </div>
     , document.body);
+
+    return (
+        <>
+            {portal}
+            <GateModals />
+        </>
+    );
 };

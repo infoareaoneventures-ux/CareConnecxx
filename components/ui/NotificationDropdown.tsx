@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Bell, BellRing, Check, X, Info, Calendar, MessageSquare, AlertTriangle, Trash2, CheckCheck } from 'lucide-react';
+import { Bell, BellRing, Info, Calendar, MessageSquare, AlertTriangle, Trash2, CheckCheck } from 'lucide-react';
 import { useNotifications } from '../../hooks/useNotifications';
 import { authService } from '../../services/api';
 import { AppNotification } from '../../types';
@@ -17,14 +17,14 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = () => {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   
-  const { 
-    notifications, 
-    unreadCount, 
+  const {
+    notifications,
+    unreadCount,
     loading,
     error,
-    markAsRead, 
-    markAllAsRead, 
-    deleteNotification 
+    markAsRead,
+    markAllAsRead,
+    deleteNotification
   } = useNotifications(currentUser?.uid || null);
 
   // Close dropdown when clicking outside
@@ -53,11 +53,6 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = () => {
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
   }, [isOpen]);
-
-  const handleMarkRead = useCallback((id: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    markAsRead(id);
-  }, [markAsRead]);
 
   const handleMarkAllRead = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -179,26 +174,14 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = () => {
                           <h4 className={`text-sm ${!notif.isRead ? 'font-bold text-slate-900' : 'font-medium text-slate-700'}`}>
                             {notif.title}
                           </h4>
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            {!notif.isRead && (
-                              <button
-                                onClick={(e) => handleMarkRead(notif.id, e)}
-                                className="p-1 hover:bg-slate-200 rounded"
-                                title="Mark as read"
-                                aria-label={`Mark "${notif.title}" as read`}
-                              >
-                                <Check className="w-3 h-3 text-slate-500" aria-hidden="true" />
-                              </button>
-                            )}
-                            <button
-                              onClick={(e) => handleDelete(notif.id, e)}
-                              className="p-1 hover:bg-red-100 rounded"
-                              title="Delete"
-                              aria-label={`Delete "${notif.title}"`}
-                            >
-                              <Trash2 className="w-3 h-3 text-red-400" aria-hidden="true" />
-                            </button>
-                          </div>
+                          <button
+                            onClick={(e) => handleDelete(notif.id, e)}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-red-100 rounded"
+                            title="Delete"
+                            aria-label={`Delete "${notif.title}"`}
+                          >
+                            <Trash2 className="w-3 h-3 text-red-400" aria-hidden="true" />
+                          </button>
                         </div>
                         <p className="text-xs text-slate-500 mt-0.5 leading-snug">{notif.body}</p>
                         <span className="text-[10px] text-slate-400 mt-2 block">
@@ -224,17 +207,6 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = () => {
               )}
             </div>
 
-            {/* Footer */}
-            {notifications.length > 0 && (
-              <div className="p-3 border-t border-slate-100 bg-slate-50 text-center">
-                <button 
-                  onClick={() => setIsOpen(false)}
-                  className="text-xs text-slate-500 hover:text-slate-700"
-                >
-                  View all notifications
-                </button>
-              </div>
-            )}
           </div>
         </>
       )}

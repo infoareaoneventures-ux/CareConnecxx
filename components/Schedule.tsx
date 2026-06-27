@@ -10,6 +10,7 @@ import firebase from 'firebase/compat/app';
 import { useCareConnex } from '../context/CareConnexContext';
 import { availabilityService } from '../services/availabilityService';
 import { ClientNavigation } from './client/ClientNavigation';
+import { useAccessGates } from '../hooks/useAccessGates';
 import { shiftDisplayStatus, shiftStatusBlockClass, shiftStatusBadgeClass, shiftStatusDotClass, shiftStatusLabel } from '../utils/shiftUtils';
 
 interface Shift {
@@ -133,6 +134,7 @@ function interviewBlockStyle(status: InterviewEvent['status']): string {
 export default function Schedule() {
   const navigate = useNavigate();
   const { addToast } = useCareConnex();
+  const { gate, Modals: GateModals } = useAccessGates();
 
   const [view,       setView]       = useState<'week' | 'month' | 'day' | 'list'>('week');
   const [dateFilter, setDateFilter] = useState<'upcoming' | 'this-week' | 'this-month' | 'last-30' | 'all'>('upcoming');
@@ -145,9 +147,6 @@ export default function Schedule() {
   const [loading,    setLoading]    = useState(true);
   const [caregivers, setCaregivers] = useState<{ id: string; name: string }[]>([]);
   const [caregiverBookings, setCaregiverBookings] = useState<Record<string, { bookingId: string; jobTitle: string; address?: string; schedule?: Record<string, Array<{ start: string; end: string }>> }[]>>({});
-  const [pendingAmendments, setPendingAmendments] = useState<Array<{
-    id: string; caregiverName: string; newDays: Record<string, Array<{ start: string; end: string }>>; startDate?: string; ongoing?: boolean; endDate?: string;
-  }>>([]);
 
   const [selectedShift,     setSelectedShift]     = useState<Shift | null>(null);
   const [selectedInterview, setSelectedInterview] = useState<InterviewEvent | null>(null);
@@ -220,20 +219,6 @@ export default function Schedule() {
       .catch(() => setCgShiftBlocks({}));
   }, [visitCaregiverId]);
 
-  // Subscribe to pending booking amendments so client sees "Awaiting response"
-  useEffect(() => {
-    if (!auth || !db) return;
-    const user = auth.currentUser;
-    if (!user) return;
-    const unsub = db.collection('booking_amendments')
-      .where('clientId', '==', user.uid)
-      .where('status', '==', 'pending')
-      .onSnapshot(
-        snap => setPendingAmendments(snap.docs.map(d => ({ id: d.id, ...d.data() } as any))),
-        () => {}
-      );
-    return () => unsub();
-  }, []);
 
   // If no shifts exist for an accepted booking, generate 4 weeks client-side.
   // This runs once on mount and acts as a safety net when the Cloud Function hasn't fired yet.
@@ -452,6 +437,8 @@ export default function Schedule() {
   };
 
   const handleAddShift = async () => {
+    const cgName = caregivers.find(c => c.id === visitCaregiverId)?.name;
+    gate('booking', cgName, async () => {
     try {
       const fdb = db;
       if (!fdb || !auth) return;
@@ -492,20 +479,7 @@ export default function Schedule() {
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
 
-      const dayList = selectedDays.join(', ');
-      const isOneDay = !isOngoing && visitStartDate && visitEndDate && visitStartDate === visitEndDate;
-      await fdb.collection('users').doc(visitCaregiverId).collection('notifications').add({
-        userId: visitCaregiverId,
-        type: 'extra_visit_request',
-        title: isOneDay ? 'Extra Visit Requested' : 'Schedule Change Requested',
-        message: isOneDay
-          ? `Your client requested an extra visit on ${new Date(visitStartDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}.`
-          : `Your client wants to add ${dayList} to your regular schedule.`,
-        read: false,
-        isRead: false,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-      });
+      // Notification handled by onBookingAmendmentWrite Cloud Function
 
       setShowAddModal(false);
       resetVisitModal();
@@ -515,13 +489,15 @@ export default function Schedule() {
       console.error(e);
       addToast('Failed to send request. Please try again.', 'error');
     }
+    }); // end gate callback
   };
 
   const handleCancel = async (id: string) => {
     if (!confirm('Cancel this shift?')) return;
     if (!db) return;
+    // onShiftCancelled Cloud Function fires and notifies the caregiver
     await db.collection('shifts').doc(id).update({
-      status: 'cancelled', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status: 'cancelled', cancelledBy: 'client', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     setSelectedShift(null);
     fetchShifts();
@@ -764,7 +740,7 @@ export default function Schedule() {
       </div>
       {shift.status === 'scheduled' && (
         <div className="flex gap-2">
-          <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center justify-center gap-1.5">
+          <button onClick={() => gate('message', shift.caregiverName, () => navigate(`/client/inbox?caregiver=${shift.caregiverId}`))} className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center justify-center gap-1.5">
             <MessageSquare className="w-4 h-4" />Message
           </button>
           <button onClick={() => handleCancel(shift.id)} className="flex-1 py-2 border border-red-200 rounded-xl hover:bg-red-50 text-red-500 text-sm font-medium flex items-center justify-center gap-1.5">
@@ -774,7 +750,7 @@ export default function Schedule() {
       )}
       {shift.status === 'completed' && (
         <div className="flex items-center gap-2">
-          <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center justify-center gap-1.5">
+          <button onClick={() => gate('message', shift.caregiverName, () => navigate(`/client/inbox?caregiver=${shift.caregiverId}`))} className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center justify-center gap-1.5">
             <MessageSquare className="w-4 h-4" />Message
           </button>
         </div>
@@ -812,8 +788,9 @@ export default function Schedule() {
       const fdb = db;
       setCancelling(true);
       try {
+        // onVideoInterviewWrite Cloud Function fires and notifies the caregiver
         await fdb.collection('video_interviews').doc(interview.id).update({
-          status: 'cancelled', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+          status: 'cancelled', cancelledBy: 'client', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'cancelled' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'cancelled' as const } : prev);
@@ -921,7 +898,7 @@ export default function Schedule() {
             </button>
           )}
           <div className="flex gap-2">
-            <button onClick={() => navigate('/client/inbox')}
+            <button onClick={() => gate('message', interview.caregiverName, () => navigate('/client/inbox'))}
               className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm flex items-center justify-center gap-1.5">
               <MessageSquare className="w-4 h-4" /> Message
             </button>
@@ -964,7 +941,7 @@ export default function Schedule() {
                 ))}
               </div>
               {caregivers.length > 0 && (
-                <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 transition-colors">
+                <button onClick={() => gate('booking', undefined, () => setShowAddModal(true))} className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 transition-colors">
                   <Plus className="w-4 h-4" />Request Visit
                 </button>
               )}
@@ -986,41 +963,6 @@ export default function Schedule() {
         </div>
 
         {/* ── Pending visit requests (awaiting caregiver response) ───────── */}
-        {pendingAmendments.length > 0 && (
-          <div className="mb-4 space-y-2">
-            {pendingAmendments.map(a => {
-              const fmt12 = (t: string) => {
-                const [hStr, mStr] = (t || '').split(':');
-                const h = parseInt(hStr, 10);
-                const m = parseInt(mStr || '0', 10);
-                if (isNaN(h)) return t;
-                const ampm = h >= 12 ? 'PM' : 'AM';
-                const h12 = h % 12 || 12;
-                return m === 0 ? `${h12} ${ampm}` : `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
-              };
-              const dayList = Object.entries(a.newDays || {})
-                .map(([day, blocks]) =>
-                  `${day} ${(blocks as Array<{start:string;end:string}>).map(b => `${fmt12(b.start)}–${fmt12(b.end)}`).join(', ')}`
-                ).join(' · ');
-              return (
-                <div key={a.id} className="bg-amber-50 rounded-xl border border-amber-200 p-4 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center shrink-0">
-                      <Hourglass className="w-5 h-5 text-amber-600" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-semibold text-slate-900 text-sm truncate">{a.caregiverName}</p>
-                      <p className="text-xs text-slate-500 truncate">{dayList}</p>
-                    </div>
-                  </div>
-                  <span className="text-xs font-semibold text-amber-700 bg-amber-100 border border-amber-200 px-2 py-1 rounded-lg shrink-0 whitespace-nowrap">
-                    Awaiting response
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
 
         {/* ── Week view ──────────────────────────────────────────────────── */}
         {view === 'week' && (
@@ -1299,7 +1241,7 @@ export default function Schedule() {
                         </div>
                         {shift.status === 'scheduled' && (
                           <div className="flex gap-2 mt-3">
-                            <button onClick={() => navigate(`/client/inbox?caregiver=${shift.caregiverId}`)} className="flex-1 py-1.5 border border-slate-200 text-slate-600 text-xs font-medium rounded-lg hover:bg-slate-50">Message</button>
+                            <button onClick={() => gate('message', shift.caregiverName, () => navigate(`/client/inbox?caregiver=${shift.caregiverId}`))} className="flex-1 py-1.5 border border-slate-200 text-slate-600 text-xs font-medium rounded-lg hover:bg-slate-50">Message</button>
                             <button onClick={() => handleCancel(shift.id)} className="flex-1 py-1.5 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 text-xs">Cancel</button>
                           </div>
                         )}
@@ -1918,6 +1860,7 @@ export default function Schedule() {
           </div>
         );
       })()}
+      <GateModals />
     </div>
   );
 }

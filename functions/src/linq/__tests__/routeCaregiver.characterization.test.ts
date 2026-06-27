@@ -92,6 +92,9 @@ const hoisted = vi.hoisted(() => {
       increment: (n: number) => ({ __increment: n }),
       serverTimestamp: () => ({ __serverTimestamp: true }),
     },
+    Timestamp: {
+      fromMillis: (ms: number) => ({ __timestampMs: ms }),
+    },
   });
 
   return {

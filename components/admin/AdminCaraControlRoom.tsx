@@ -87,12 +87,42 @@ interface DraftRecord {
   createdAt?: string;
 }
 
+interface TurnMetricRecord {
+  id: string;
+  source?: string;
+  at?: string;
+  phone?: string;
+  userId?: string;
+  userType?: string;
+  inputChannel?: string;
+  pathway?: string;
+  qualityFlags?: string[];
+  errored?: boolean;
+  errorClass?: string | null;
+  replyEmpty?: boolean;
+  durationMs?: number;
+  quickReplyUsed?: boolean;
+  fallbackPathUsed?: boolean;
+  toolErrors?: number;
+  toolNames?: string[];
+  conversationRepairTriggered?: boolean;
+  conversationRepairApplied?: boolean;
+  supportDeflectionDetected?: boolean;
+  genericHelpAskDetected?: boolean;
+  medicationInstructionDetected?: boolean;
+  confidenceClaimDetected?: boolean;
+  promiseWithoutToolCall?: boolean;
+  multiQuestionDataCollection?: boolean;
+  [key: string]: unknown;
+}
+
 type QueueKind =
   | 'alert'
   | 'failed_action'
   | 'pending_approval'
   | 'support_ticket'
-  | 'draft';
+  | 'draft'
+  | 'quality_issue';
 
 type QueueFilter =
   | 'all'
@@ -294,12 +324,75 @@ function makeDraftItem(draft: DraftRecord): QueueItem {
   };
 }
 
+const QUALITY_FLAG_LABELS: Record<string, string> = {
+  agent_loop_exhausted: 'Agent loop exhausted',
+  confidence_claim_detected: 'Confidence claim',
+  conversation_repair_applied: 'Conversation repair applied',
+  conversation_repair_triggered: 'Conversation repair triggered',
+  fallback_path_used: 'Fallback path',
+  generic_help_ask_detected: 'Generic helper prompt',
+  grounding_triggered: 'Safety grounding',
+  medication_instruction_detected: 'Medication instruction risk',
+  multi_question_data_collection: 'Multi-question intake',
+  post_process_modified: 'Post-process rewrite',
+  promise_without_tool_call: 'Promise without tool call',
+  reply_empty: 'Empty reply',
+  support_deflection_detected: 'Support deflection',
+  tool_error: 'Tool error',
+  tool_truncation: 'Tool truncation',
+  turn_errored: 'Turn error',
+};
+
+function readableQualityFlags(metric: TurnMetricRecord): string[] {
+  const flags = new Set(metric.qualityFlags ?? []);
+  if (metric.errored) flags.add('turn_errored');
+  if (metric.replyEmpty) flags.add('reply_empty');
+  if ((metric.toolErrors ?? 0) > 0) flags.add('tool_error');
+  if (metric.fallbackPathUsed) flags.add('fallback_path_used');
+  if (metric.conversationRepairApplied) flags.add('conversation_repair_applied');
+  if (metric.supportDeflectionDetected) flags.add('support_deflection_detected');
+  if (metric.genericHelpAskDetected) flags.add('generic_help_ask_detected');
+  if (metric.medicationInstructionDetected) flags.add('medication_instruction_detected');
+  return Array.from(flags).map((flag) => QUALITY_FLAG_LABELS[flag] ?? flag.replace(/_/g, ' '));
+}
+
+function makeQualityMetricItem(metric: TurnMetricRecord): QueueItem {
+  const labels = readableQualityFlags(metric);
+  const severe = metric.errored || metric.replyEmpty || metric.medicationInstructionDetected || metric.supportDeflectionDetected;
+  const title = metric.conversationRepairApplied
+    ? 'Conversation repair applied'
+    : metric.errored
+      ? 'Cara turn error'
+      : 'Conversation quality flag';
+  const detailParts = [
+    labels.length ? labels.join(', ') : 'Quality signal captured',
+    metric.pathway ? `pathway: ${metric.pathway}` : '',
+    typeof metric.durationMs === 'number' ? `${metric.durationMs}ms` : '',
+    metric.toolNames?.length ? `tools: ${metric.toolNames.join(', ')}` : '',
+  ].filter(Boolean);
+  return {
+    id: `quality:${metric.id}`,
+    kind: 'quality_issue',
+    category: 'qa',
+    title,
+    detail: truncate(detailParts.join(' | ')),
+    severity: severe ? 'high' : 'medium',
+    status: metric.errored ? 'errored' : metric.conversationRepairApplied ? 'repaired' : 'flagged',
+    createdAt: metric.at,
+    phone: metric.phone,
+    userId: metric.userId,
+    toolName: metric.toolNames?.join(', '),
+    targetTab: 'messages',
+    raw: metric as unknown as Record<string, unknown>,
+  };
+}
+
 const EmptyState: React.FC = () => (
   <div className="h-full flex items-center justify-center text-center text-slate-500">
     <div>
       <Check className="w-10 h-10 mx-auto mb-3 text-emerald-500" />
       <p className="font-semibold text-slate-800">No Cara ops items match this filter.</p>
-      <p className="text-sm mt-1">Failed actions, pending confirmations, alerts, and support escalations appear here.</p>
+      <p className="text-sm mt-1">Failed actions, pending confirmations, alerts, quality flags, and support escalations appear here.</p>
     </div>
   </div>
 );
@@ -310,6 +403,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
   const [pendingActions, setPendingActions] = useState<PendingActionRecord[]>([]);
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [drafts, setDrafts] = useState<DraftRecord[]>([]);
+  const [qualityMetrics, setQualityMetrics] = useState<TurnMetricRecord[]>([]);
   const [filter, setFilter] = useState<QueueFilter>('all');
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -327,6 +421,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
       dbService.subscribePendingActions((rows) => setPendingActions(rows as PendingActionRecord[]), () => onShowToast('Failed to load pending Cara actions', 'error')),
       dbService.subscribeToTickets((rows) => setTickets(rows)),
       dbService.subscribeProactiveDrafts([], (rows) => setDrafts(rows as DraftRecord[])),
+      dbService.subscribeCaraTurnMetrics((rows) => setQualityMetrics(rows as TurnMetricRecord[]), () => onShowToast('Failed to load Cara quality metrics', 'error')),
     ];
     return () => unsubscribers.forEach((unsub) => unsub());
   }, [onShowToast]);
@@ -343,14 +438,17 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
     const activeDrafts = drafts
       .filter((d) => d.status === 'pending_review' || d.status === 'send_failed' || d.status === 'expired')
       .map(makeDraftItem);
+    const activeQuality = qualityMetrics
+      .filter((m) => (m.qualityFlags?.length ?? 0) > 0 || m.errored || m.replyEmpty)
+      .map(makeQualityMetricItem);
 
-    return [...openAlerts, ...failedLedger, ...activePending, ...activeTickets, ...activeDrafts]
+    return [...openAlerts, ...failedLedger, ...activePending, ...activeTickets, ...activeDrafts, ...activeQuality]
       .sort((a, b) => {
         const severityDelta = severityRank[a.severity] - severityRank[b.severity];
         if (severityDelta !== 0) return severityDelta;
         return new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime();
       });
-  }, [alerts, ledger, pendingActions, tickets, drafts]);
+  }, [alerts, ledger, pendingActions, tickets, drafts, qualityMetrics]);
 
   const filteredItems = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -859,6 +957,7 @@ function operatorGuidance(item: QueueItem): string {
   }
   if (item.kind === 'support_ticket') return 'Support ticket needs human follow-up. Use the Support tab to respond and update status.';
   if (item.kind === 'draft') return 'Cara draft requires review or retry. Use Cara Drafts to edit, approve, reject, or send.';
+  if (item.kind === 'quality_issue') return 'Conversation quality signal. Review recent messages and tool activity, then decide whether a prompt, routing, or operator follow-up fix is needed.';
   if (item.category === 'linq') return 'Delivery issue. Confirm Linq health, retry state, and whether SMS fallback already happened.';
   if (item.category === 'qa') return 'Cara runtime issue. Review the alert detail, recent messages, and action ledger before marking resolved.';
   return 'Review the raw context, resolve the source issue, then mark the alert resolved.';

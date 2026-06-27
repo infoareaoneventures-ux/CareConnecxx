@@ -39,6 +39,7 @@ import {
   detectMultiQuestionDataCollection,
   detectSupportDeflection,
   buildClientSystemPrompt,
+  isTrivialQuickReply,
   MEMORY_SOURCE_PRIORITY_POLICY,
   WARMTH_REFLECTION_OPENERS,
 } from "./qaAgent";
@@ -167,6 +168,28 @@ describe("conversation quality detectors", () => {
     "If this feels urgent, call 911 now.",
   ])("allows clinical redirection %p", (input) => {
     expect(detectMedicationInstruction(input)).toBe(false);
+  });
+});
+
+describe("isTrivialQuickReply", () => {
+  it.each([
+    "hi",
+    "hey",
+    "thanks",
+  ])("allows pure social short replies %p", (input) => {
+    expect(isTrivialQuickReply(input)).toBe(true);
+  });
+
+  it.each([
+    "hi did maria come",
+    "thanks approve it",
+    "mom fell",
+    "am I approved",
+    "pay maria",
+    "refer Ana",
+    "dad meds",
+  ])("routes care, payment, safety, approval, or referral context through the full agent %p", (input) => {
+    expect(isTrivialQuickReply(input)).toBe(false);
   });
 });
 

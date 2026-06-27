@@ -723,7 +723,7 @@ const handleInboundInner = traceable(
       if (isReturning) {
         welcome = preferredLanguage === "es"
           ? "¡Hola otra vez! Soy Cara. Me alegra verte de nuevo — ¿en qué te puedo ayudar hoy?"
-          : "Welcome back! It's Cara. Good to hear from you again — how can I help today?";
+          : "Welcome back. It's Cara - good to hear from you again. What should we handle first?";
       } else if (webName) {
         // Name came in from the web form — greet by name and ask them to confirm it
         // (the confirm step handler resolves yes / correction). Mirrors the tone of

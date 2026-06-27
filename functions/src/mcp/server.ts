@@ -37,6 +37,10 @@ import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames,
 import { getAppUrl } from "../config/appUrl";
 import { logAgentAction } from "../observability/actionLedger";
 import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
+import {
+  createCaregiverReferralInvite,
+  resolveCaregiverReferralName,
+} from "../agents/caregiverReferral";
 
 const db = admin.firestore();
 
@@ -1005,10 +1009,25 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "create_caregiver_referral",
+    description:
+      "Invite a referred caregiver by SMS. Writes a non-bookable referral record, sends the application link, " +
+      "and keeps the referred caregiver gated on onboarding plus Checkr clear before bookability.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:    { type: "string", description: "The referring caregiver document ID" },
+        phone:          { type: "string", description: "The referring caregiver's SMS phone number" },
+        referredName:   { type: "string", description: "Name of the caregiver being referred" },
+        referredPhone:  { type: "string", description: "Phone number to text the application link to" },
+      },
+      required: ["caregiverId", "phone", "referredName", "referredPhone"],
+    },
+  },
+  {
     name: "create_support_ticket",
     description:
-      "Create a support ticket for an issue that needs human team follow-up. " +
-      "The support team will respond within 24 hours.",
+      "Create a support ticket for an issue that needs admin review.",
     input_schema: {
       type: "object",
       properties: {
@@ -1838,6 +1857,7 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "submit_media_update",
   "respond_to_shift_hour_correction",
   "request_standard_payout",
+  "create_caregiver_referral",
   // Missing CRUD tools — reads + in-place updates
   "get_support_tickets",
   "get_shifts",
@@ -3796,7 +3816,7 @@ async function executeToolCall(
           const { trySend } = await import("../utils/toolNotify");
           const msg = decision === "accept"
             ? `Your caregiver accepted the corrected hours${correctedHours != null ? ` (${correctedHours}h)` : ""}. Reply APPROVE to finalize payment.`
-            : `Your caregiver pushed back on the hour correction. ${(corrMsg as string) ?? "Our team will help resolve it."}`;
+            : `Your caregiver pushed back on the hour correction. ${(corrMsg as string) ?? "I flagged it for admin review."}`;
           notification = await trySend(clientSessSnap.docs[0].id, msg, "mcp:respond_to_shift_hour_correction");
         }
       }
@@ -3825,6 +3845,31 @@ async function executeToolCall(
       await sc.payouts.create({ amount: payoutCents, currency: "usd", method: "standard" }, { stripeAccount: cg.stripeAccountId as string });
       logAudit({ eventType: "standard_payout_requested", userId: caregiverId as string, data: { source: "mcp:request_standard_payout", amountCents: payoutCents } }).catch(() => {});
       return { success: true, amountCents: payoutCents, amountDollars: `$${(payoutCents/100).toFixed(2)}`, method: "standard", estimatedArrival: "1–2 business days" };
+    }
+
+    if (name === "create_caregiver_referral") {
+      const caregiverId = stringInput(input, "caregiverId");
+      const phone = stringInput(input, "phone");
+      const referredName = stringInput(input, "referredName");
+      const referredPhone = stringInput(input, "referredPhone");
+      if (!caregiverId || !phone || !referredName || !referredPhone) {
+        return toolError("INVALID_INPUT", "caregiverId, phone, referredName, and referredPhone are required");
+      }
+      const referrerName = await resolveCaregiverReferralName(caregiverId, phone);
+      const result = await createCaregiverReferralInvite({
+        referrerUserId: caregiverId,
+        referrerPhone: phone,
+        referrerName,
+        referredName,
+        referredPhone,
+        source: "cara_sms",
+      });
+      return {
+        ...result,
+        status: "invited",
+        referredRole: "caregiver",
+        checkrRequired: true,
+      };
     }
 
     if (name === "resume_execution_agent") {

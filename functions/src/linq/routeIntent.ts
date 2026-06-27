@@ -79,7 +79,7 @@ async function extractFamilyMember(text: string): Promise<{ name: string | null;
 async function handleRecurringPause(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const scheduleId = (session as any).activeRecurringScheduleId as string | undefined;
   if (!scheduleId) {
-    await sendMessage(chatId, "I don't see an active recurring schedule. Let me know if you need anything else.");
+    await sendMessage(chatId, "I don't see an active recurring schedule. Want me to check upcoming visits instead?");
     return;
   }
   await db.collection("recurring_schedules").doc(scheduleId).update({
@@ -96,7 +96,7 @@ async function handleRecurringPause(phone: string, chatId: string, session: Agen
 async function handleRecurringCancel(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const scheduleId = (session as any).activeRecurringScheduleId as string | undefined;
   if (!scheduleId) {
-    await sendMessage(chatId, "I don't see an active recurring schedule. Let me know if you need anything else.");
+    await sendMessage(chatId, "I don't see an active recurring schedule. Want me to check upcoming visits instead?");
     return;
   }
 
@@ -132,7 +132,7 @@ async function handleRecurringCancel(phone: string, chatId: string, session: Age
 async function handleRecurringResume(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const scheduleId = (session as any).activeRecurringScheduleId as string | undefined;
   if (!scheduleId) {
-    await sendMessage(chatId, "I don't see a paused schedule. Let me know if you need anything else.");
+    await sendMessage(chatId, "I don't see a paused schedule. Want me to check upcoming visits instead?");
     return;
   }
   const schedSnap = await db.collection("recurring_schedules").doc(scheduleId).get();

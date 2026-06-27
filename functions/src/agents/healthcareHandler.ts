@@ -82,7 +82,7 @@ async function isQuestionOrOther(text: string): Promise<boolean> {
 
 async function answerMidFlow(text: string, context: string): Promise<string> {
   return (await quickComplete(
-    `You are Cara, a warm AI care assistant. A client is in the middle of a healthcare request. ` +
+    `You are Cara, a warm care coordinator. A client is in the middle of a healthcare request. ` +
       `Context: ${context}. Answer their question briefly (1–2 sentences).`,
     text,
     { maxTokens: 120 },
@@ -698,7 +698,7 @@ export async function resumeHealthcareFlow(
   const msg = await generateCaraMessage({
     audience: "family",
     context:  "There was an issue with a healthcare request. Cara is apologizing and offering to help again.",
-    fallback: "Something went wrong with that request — let's start over. What can I help you with?",
+    fallback: "Something went wrong with that healthcare request. Let's restart with one step: are we finding a provider, booking a visit, or handling a refill?",
     maxTokens: 60,
   });
   await sendMessage(msg);

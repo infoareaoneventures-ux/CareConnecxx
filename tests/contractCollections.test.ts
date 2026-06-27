@@ -66,7 +66,7 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // collection() in AuditDashboard, but they are not part of the contract
     // registry; they have their own rules and are server-write-only)
     'agent_error_log', 'agent_event_log', 'agent_safety_log', 'agent_alerts_log',
-    'agent_uncertainty_log', 'agent_tool_metrics', 'cara_turn_metrics',
+    'agent_uncertainty_log', 'agent_tool_metrics',
     'caregiver_lateness_log', 'issue_log',
     // Idempotency / lock / dedup / rate-limit docs
     'agent_inbound_locks', 'agent_outbound_dedup', 'agent_rate', 'rate_limits',

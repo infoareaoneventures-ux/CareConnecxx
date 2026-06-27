@@ -255,7 +255,7 @@ async function onOfferAccepted(offerId: string, offer: ShiftOffer, caregiverChat
       const msg = await generateCaraMessage({
         audience: "family",
         context:  `${offer.caregiverName} accepted the caregiver swap${p.date ? ` for the visit on ${p.date}` : ""}. Confirm the change is locked in.`,
-        fallback: `Done — ${offer.caregiverName} accepted and is now set${p.date ? ` for ${p.date}` : ""}. Let me know if you need anything else.`,
+        fallback: `Done - ${offer.caregiverName} accepted and is now set${p.date ? ` for ${p.date}` : ""}.`,
         maxTokens: 80,
       });
       await sendMessage(chatId, msg).catch(() => {});

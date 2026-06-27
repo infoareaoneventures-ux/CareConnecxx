@@ -188,6 +188,10 @@ describe("TOOL_CAPABILITIES coverage", () => {
 
 describe("LAUNCH_ACTION_PARITY", () => {
   const realToolNames = new Set(MCP_TOOLS.map(t => t.name));
+  const capabilityMapSource = fs.readFileSync(
+    path.resolve(__dirname, "../../../context/capability-map.md"),
+    "utf8",
+  );
 
   // Static text scan of index.ts (do NOT import it — it pulls in heavy
   // firebase-admin/function deps). Mirrors tests/contractCollections.test.ts.
@@ -330,6 +334,19 @@ describe("LAUNCH_ACTION_PARITY", () => {
       missingNote,
       "blocker/non-goal rows must explain why (and reference the U-id that fixes it)",
     ).toEqual([]);
+  });
+
+  it("context/capability-map.md mirrors every parity row id and shipped tool", () => {
+    const missingIds = LAUNCH_ACTION_PARITY
+      .filter((r) => !capabilityMapSource.includes(`| ${r.actor} | ${r.action}`))
+      .map((r) => r.id);
+    expect(missingIds, "capability-map.md is missing parity rows from LAUNCH_ACTION_PARITY").toEqual([]);
+
+    const missingTools = LAUNCH_ACTION_PARITY
+      .filter((r) => r.status === "shipped" && r.tool !== null)
+      .filter((r) => !capabilityMapSource.includes(`\`${r.tool}\``))
+      .map((r) => `${r.id} -> ${r.tool}`);
+    expect(missingTools, "capability-map.md is missing shipped tool/callable names").toEqual([]);
   });
 });
 

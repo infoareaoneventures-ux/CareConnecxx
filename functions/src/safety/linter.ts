@@ -32,6 +32,18 @@ const BANNED_PHRASES: string[] = [
   "Go ahead and share",
   "on file for you",
   "everything on file",
+  "AI care assistant",
+  "virtual assistant",
+  "chatbot",
+  "how can I help today",
+  "how can I help you today",
+  "what can I help you with",
+  "anything else I can help with",
+  "the support team will respond",
+  "our team will follow up",
+  "our team will help",
+  "our team will review",
+  "please contact support",
 ];
 
 // Patterns that make text feel robotic or formal
@@ -40,6 +52,16 @@ const BANNED_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /\s*—\s*/g,                      replacement: ", " },
   // Trailing "Is there anything else I can help you with?"
   { pattern: /is there anything else (?:I can help(?: you)?(?: with)?|you(?:'d like to discuss)?)\??/gi, replacement: "" },
+  { pattern: /\bhow can I help(?: you)?(?: today)?\??/gi, replacement: "What should I check first?" },
+  { pattern: /\bwhat can I help you with\??/gi, replacement: "What should I check first?" },
+  { pattern: /\b(?:an?\s+)?AI care assistant\b/gi, replacement: "care coordinator" },
+  { pattern: /\b(?:virtual assistant|chatbot|bot)\b/gi, replacement: "Cara" },
+  { pattern: /\b(?:the support team|our team) will respond(?: within [^.?!]+)?[.?!]?/gi, replacement: "I opened this for review." },
+  { pattern: /\bour team will follow up(?: within [^.?!]+)?[.?!]?/gi, replacement: "I flagged this for review." },
+  { pattern: /\bour team will help resolve it[.?!]?/gi, replacement: "I flagged this for review." },
+  { pattern: /\bour team will review(?: [^.?!]+)?[.?!]?/gi, replacement: "I flagged this for review." },
+  { pattern: /\bplease contact support[.?!]?/gi, replacement: "Text me what happened and I can handle the next step here." },
+  { pattern: /\bcontact support\b/gi, replacement: "text me what happened" },
   // Sycophantic openers: "I understand" as sentence start → nothing (keep the rest)
   { pattern: /^I understand[,.]?\s*/i,         replacement: "" },
 ];

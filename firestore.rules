@@ -983,6 +983,13 @@ service cloud.firestore {
       allow create, delete: if false;
     }
 
+    // Cara turn metrics — bounded no-message-text quality/experiment mirror.
+    // Written server-side only; Admin Cara Control Room reads flagged rows.
+    match /cara_turn_metrics/{metricId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // Pending Cara confirmations: admin read only, server write only.
     match /pending_actions/{actionId} {
       allow read: if isAdmin();

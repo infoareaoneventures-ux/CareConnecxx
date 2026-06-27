@@ -1079,6 +1079,47 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
       oneQuestionAtATime:       true,
     },
   },
+
+  {
+    name:        "invited-sibling-says-hi-context-led",
+    description: "A newly invited sibling sends a bare hi. Cara answers with care-group context, not a generic helper prompt.",
+    session: { isSecondaryMember: true },
+    claudeScript: [
+      { text: "Hey - you're in Mom's care updates now. Maria's latest note says Mom ate lunch and took a short walk." },
+    ],
+    input: { text: "hi this is jess" },
+    expect: {
+      replyContains:       ["care updates", "Mom"],
+      replyNotContains:    ["what can I help", "how can I help", "feature", "menu"],
+      toolsCalled:         [],
+      noListShape:         true,
+      noGenericHelpAsk:    true,
+      noSupportDeflection: true,
+    },
+  },
+
+  {
+    name:        "mixed-panic-medical-logistics-handles-safety-first",
+    description: "Family mixes panic, medical uncertainty, and logistics. Cara prioritizes safety, creates the record, and asks one concrete question.",
+    toolMocks: {
+      create_support_ticket: { success: true, ticketId: "tick-confused-1" },
+    },
+    claudeScript: [
+      { tools: [{ name: "create_support_ticket", input: { category: "safety", priority: "urgent", description: "Family reports sudden confusion and asks whether caregiver should still come." } }] },
+      { text: "Sudden confusion can be urgent. If this feels new or severe, call 911 now. I flagged it here too - is someone with Mom right now?" },
+    ],
+    input: { text: "mom is suddenly confused and maria comes at 3 should i cancel??" },
+    expect: {
+      replyContains:            ["urgent", "911", "flagged"],
+      replyNotContains:         ["diagnose", "probably", "likely", "contact support", "the team will"],
+      toolsCalled:              ["create_support_ticket"],
+      noListShape:              true,
+      noMedicationInstruction:  true,
+      noGenericHelpAsk:         true,
+      noSupportDeflection:      true,
+      oneQuestionAtATime:       true,
+    },
+  },
 ];
 
 // ── Replay driver ────────────────────────────────────────────────────────────

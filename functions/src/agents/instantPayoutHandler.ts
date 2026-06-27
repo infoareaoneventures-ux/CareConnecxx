@@ -26,12 +26,12 @@ export async function startInstantPayout(
   const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
   const cg = cgSnap.data();
   if (!cg) {
-    await sendMessage(chatId, "I couldn't find your caregiver profile. Please contact support.");
+    await sendMessage(chatId, "I couldn't find your caregiver profile. Send the email you used to sign up and I'll try again.");
     return;
   }
   const stripeAccountId = cg.stripeAccountId as string | undefined;
   if (!stripeAccountId) {
-    await sendMessage(chatId, "Your payout account isn't set up yet. Reach out to support to finish setup.");
+    await sendMessage(chatId, "Your payout account isn't set up yet. Open the caregiver app payout setup first, then text PAYOUT again.");
     return;
   }
 
@@ -47,7 +47,7 @@ export async function startInstantPayout(
     }
   } catch (err) {
     console.error("[instantPayout] balance retrieve failed:", err);
-    await sendMessage(chatId, "I couldn't pull your balance right now. Try again in a few minutes or contact support.");
+    await sendMessage(chatId, "I couldn't pull your balance right now. Try PAYOUT again in a few minutes.");
     return;
   }
 

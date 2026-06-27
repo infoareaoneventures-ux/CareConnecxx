@@ -6,9 +6,10 @@
 // to BigQuery via a logs router later if we need ad-hoc analytics.
 //
 // Design choices:
-//   - No Firestore writes per turn. Per-turn doc adds cost that doesn't pay back
-//     until we have a real product analytics need. Cloud Logging is queryable
-//     enough for sprint-1 tuning.
+//   - No Firestore writes for clean baseline turns. Per-turn docs add cost that
+//     doesn't pay back until we have a real product analytics need. Cloud
+//     Logging is queryable enough for ordinary traffic; Firestore only mirrors
+//     experiment-enrolled turns and quality/problem turns admins need to see.
 //   - Stable field names so dashboard queries don't break. Add new fields freely;
 //     do not rename existing ones.
 //   - No PII. Phone is a stable identifier already logged elsewhere. Message
@@ -105,6 +106,44 @@ export interface TurnMetrics {
   errorClass?: string;
 }
 
+const QUALITY_FLAG_MAP: Array<[keyof TurnMetrics, string]> = [
+  ["conversationRepairTriggered", "conversation_repair_triggered"],
+  ["conversationRepairApplied", "conversation_repair_applied"],
+  ["supportDeflectionDetected", "support_deflection_detected"],
+  ["genericHelpAskDetected", "generic_help_ask_detected"],
+  ["medicationInstructionDetected", "medication_instruction_detected"],
+  ["confidenceClaimDetected", "confidence_claim_detected"],
+  ["promiseWithoutToolCall", "promise_without_tool_call"],
+  ["multiQuestionDataCollection", "multi_question_data_collection"],
+  ["groundingTriggered", "grounding_triggered"],
+  ["formatRevisionTriggered", "format_revision_triggered"],
+  ["postProcessModified", "post_process_modified"],
+  ["exhausted", "agent_loop_exhausted"],
+  ["recoveryFired", "recovery_fired"],
+  ["resumedFromCheckpoint", "resumed_from_checkpoint"],
+];
+
+function buildQualityFlags(metrics: TurnMetrics, payload: Record<string, unknown>): string[] {
+  const flags = new Set<string>();
+
+  for (const [field, flag] of QUALITY_FLAG_MAP) {
+    if (metrics[field]) flags.add(flag);
+  }
+
+  if (payload.errored) flags.add("turn_errored");
+  if (payload.replyEmpty) flags.add("reply_empty");
+  if ((metrics.toolErrors ?? 0) > 0) flags.add("tool_error");
+  if ((metrics.truncations ?? 0) > 0) flags.add("tool_truncation");
+
+  return Array.from(flags).sort();
+}
+
+let turnMetricMirrorOverride: ((record: Record<string, unknown>) => void) | null = null;
+
+export function setTurnMetricMirrorForTest(fn: ((record: Record<string, unknown>) => void) | null): void {
+  turnMetricMirrorOverride = fn;
+}
+
 export function createTurnMetrics(init: {
   phone:         string;
   userId?:       string;
@@ -146,11 +185,19 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
     durationMs,
     replyLength: reply.length,
     replyEmpty: !reply.trim(),
+    quickReplyUsed: metrics.pathway === "quick",
+    fallbackPathUsed: !!metrics.exhausted || !!metrics.recoveryFired,
   };
 
   if (opts.error) {
     payload.errored = true;
     payload.errorClass = opts.error instanceof Error ? opts.error.constructor.name : typeof opts.error;
+    payload.fallbackPathUsed = true;
+  }
+
+  const qualityFlags = buildQualityFlags(metrics, payload);
+  if (qualityFlags.length > 0) {
+    payload.qualityFlags = qualityFlags;
   }
 
   // startedAt isn't useful for downstream queries — durationMs supersedes it.
@@ -163,22 +210,48 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
   // can aggregate per-variant outcomes. This is the minimal store needed to
   // CLOSE the improvement loop; non-experiment turns still write nothing, so the
   // module's "no per-turn writes" cost stance holds for the common case.
-  if (metrics.experiments && Object.keys(metrics.experiments).length > 0) {
-    mirrorExperimentTurn({
-      experiments:               metrics.experiments,
+  // Current policy: mirror experiments plus quality/problem turns; clean
+  // baseline turns still skip Firestore writes.
+  const hasExperiments = !!metrics.experiments && Object.keys(metrics.experiments).length > 0;
+  if (hasExperiments || qualityFlags.length > 0) {
+    mirrorTurnMetricRecord({
+      source:                    "turn_metrics",
+      at:                        new Date().toISOString(),
+      phone:                     metrics.phone,
+      userId:                    metrics.userId ?? null,
+      userType:                  metrics.userType,
+      inputChannel:              metrics.inputChannel ?? null,
+      pathway:                   metrics.pathway,
+      experiments:               metrics.experiments ?? null,
+      qualityFlags,
       errored:                   !!payload.errored,
+      errorClass:                payload.errorClass ?? null,
       replyEmpty:                !!payload.replyEmpty,
       durationMs,
+      quickReplyUsed:            metrics.pathway === "quick",
+      fallbackPathUsed:          !!payload.fallbackPathUsed,
+      toolErrors:                metrics.toolErrors ?? 0,
+      toolNames:                 toolNames ?? [],
       warmthReflectionIncluded:  metrics.warmthReflectionIncluded ?? null,
-      pathway:                   metrics.pathway,
-      at:                        new Date().toISOString(),
+      conversationRepairTriggered: !!metrics.conversationRepairTriggered,
+      conversationRepairApplied:   !!metrics.conversationRepairApplied,
+      supportDeflectionDetected:   !!metrics.supportDeflectionDetected,
+      genericHelpAskDetected:      !!metrics.genericHelpAskDetected,
+      medicationInstructionDetected: !!metrics.medicationInstructionDetected,
+      confidenceClaimDetected:      !!metrics.confidenceClaimDetected,
+      promiseWithoutToolCall:       !!metrics.promiseWithoutToolCall,
+      multiQuestionDataCollection:  !!metrics.multiQuestionDataCollection,
     });
   }
 }
 
 // Fire-and-forget, fully guarded so it never touches the hot path or throws
 // into a caller (and stays harmless in tests without firebase-admin init).
-function mirrorExperimentTurn(record: Record<string, unknown>): void {
+function mirrorTurnMetricRecord(record: Record<string, unknown>): void {
+  if (turnMetricMirrorOverride) {
+    turnMetricMirrorOverride(record);
+    return;
+  }
   try {
     // Lazy require so module load never depends on admin being initialized.
     const admin = require("firebase-admin") as typeof import("firebase-admin");

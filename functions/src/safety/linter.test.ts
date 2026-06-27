@@ -50,4 +50,17 @@ describe("lintPreservingLayout", () => {
       "Here you go:\n\nDone",
     );
   });
+
+  it("rewrites chatbot framing into Cara's care-coordinator voice", () => {
+    expect(lintPreservingLayout("I'm Cara, an AI care assistant for Mom.")).toBe(
+      "I'm Cara, care coordinator for Mom.",
+    );
+    expect(lintPreservingLayout("This chatbot can help.")).toBe("This Cara can help.");
+  });
+
+  it("rewrites generic helper and support-punt copy", () => {
+    expect(lintPreservingLayout("How can I help today?")).toBe("What should I check first?");
+    expect(lintPreservingLayout("Our team will follow up within 24 hours.")).toBe("I flagged this for review.");
+    expect(lintPreservingLayout("Please contact support.")).toBe("Text me what happened and I can handle the next step here.");
+  });
 });

@@ -1,5 +1,5 @@
 import * as admin from "firebase-admin";
-import { sendMessage, sendToPhone, startTyping, stopTyping, AgentSession } from "./client";
+import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
 import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { sendIfNotDND } from "../utils/dndGuard";
@@ -11,11 +11,13 @@ import { handleJobResponse, handleAvailabilityConfirmation } from "../triggers/j
 import { handleCaregiverAvailabilityReply } from "../agents/interviewAgent";
 import { logAudit } from "../observability/auditLog";
 import { logAgentAction } from "../observability/actionLedger";
-import { getAppUrl } from "../config/appUrl";
+import {
+  createCaregiverReferralInvite,
+  normalizeCaregiverReferralPhone,
+  resolveCaregiverReferralName,
+} from "../agents/caregiverReferral";
 
 const db = admin.firestore();
-
-const APP_URL = getAppUrl();
 
 export interface CaregiverRouteContext {
   phone: string;
@@ -32,10 +34,7 @@ interface PendingCaregiverReferral {
 }
 
 function normalizeReferralPhone(raw: string): string {
-  const digits = raw.replace(/\D/g, "");
-  if (digits.length === 10) return `+1${digits}`;
-  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
-  return raw.trim();
+  return normalizeCaregiverReferralPhone(raw);
 }
 
 function extractPhoneFromText(text: string): string {
@@ -66,15 +65,6 @@ async function isCaregiverReferralIntent(text: string, norm: string): Promise<bo
     { maxTokens: 5 },
   ).catch(() => "");
   return raw.trim().toUpperCase().startsWith("Y");
-}
-
-async function resolveCaregiverName(caregiverId: string | undefined, fallbackPhone: string): Promise<string> {
-  if (caregiverId) {
-    const snap = await db.collection("caregivers").doc(caregiverId).get().catch(() => null);
-    const name = (snap?.data()?.name ?? "") as string;
-    if (name.trim()) return name.trim();
-  }
-  return fallbackPhone;
 }
 
 async function handleCaregiverReferral(
@@ -129,96 +119,21 @@ async function handleCaregiverReferral(
     return;
   }
 
-  const now = new Date().toISOString();
-  const referrerName = await resolveCaregiverName(session.caregiverId, phone);
-  const referralRef = db.collection("referrals").doc();
-  const startLink = `${APP_URL}/start?role=caregiver&ref=${encodeURIComponent(referralRef.id)}`;
-  const inviteText =
-    `${referrerName} thought you might be a good fit as a CareConnex caregiver.\n\n` +
-    `You can start here: ${startLink}\n\n` +
-    `CareConnex caregivers complete onboarding and Checkr background screening before they can accept visits. Reply STOP to opt out.`;
-
-  await referralRef.set({
-    referrerUserId: session.caregiverId ?? session.userId ?? phone,
-    referrerRole: "caregiver",
-    referredRole: "caregiver",
-    referredName: next.referredName,
-    referredPhone: next.referredPhone,
-    source: "cara_sms",
-    status: "invited",
-    inviteUrl: startLink,
-    createdAt: now,
-    updatedAt: now,
-    checkrRequired: true,
-    bookable: false,
-    eligibilityRequired: {
-      onboardingStatus: "profile_complete",
-      verificationStatus: "approved",
-      checkrResult: "clear",
-    },
-  });
-
   try {
-    await sendToPhone(next.referredPhone, inviteText, { preferredService: "SMS" });
-    await referralRef.update({ inviteSentAt: now, deliveryStatus: "sent", updatedAt: now });
-    logAudit({
-      eventType: "referral_invited",
-      userId: session.caregiverId ?? session.userId ?? phone,
-      phone,
-      data: {
-        referralId: referralRef.id,
-        referredRole: "caregiver",
-        referredPhone: next.referredPhone,
-        source: "cara_sms",
-        deliveryStatus: "sent",
-      },
-    }).catch(() => {});
-    logAgentAction({
-      actionType: "referral_invite",
-      status: "executed",
-      userId: session.caregiverId ?? session.userId ?? phone,
-      phone,
-      role: "caregiver",
-      toolName: "caregiver_referral",
-      targetCollection: "referrals",
-      targetDocId: referralRef.id,
-      metadata: {
-        referredRole: "caregiver",
-        referredPhone: next.referredPhone,
-        source: "cara_sms",
-      },
-    }).catch(() => {});
-    await sendMessage(chatId, `Sent. I texted ${next.referredName} the caregiver application link.`);
-  } catch (err) {
-    const errorReason = err instanceof Error ? err.message : String(err);
-    await referralRef.update({ deliveryStatus: "failed", errorReason, updatedAt: now }).catch(() => {});
-    await db.collection("admin_alerts").add({
-      type: "caregiver_referral_invite_failed",
-      severity: "medium",
-      referralId: referralRef.id,
+    const referrerName = await resolveCaregiverReferralName(session.caregiverId, phone);
+    const result = await createCaregiverReferralInvite({
       referrerUserId: session.caregiverId ?? session.userId ?? phone,
+      referrerPhone: phone,
+      referrerName,
+      referredName: next.referredName,
       referredPhone: next.referredPhone,
-      createdAt: now,
-      resolved: false,
-      error: errorReason,
-    }).catch(() => {});
-    logAgentAction({
-      actionType: "referral_invite",
-      status: "failed",
-      userId: session.caregiverId ?? session.userId ?? phone,
-      phone,
-      role: "caregiver",
-      toolName: "caregiver_referral",
-      targetCollection: "referrals",
-      targetDocId: referralRef.id,
-      errorReason,
-      metadata: {
-        referredRole: "caregiver",
-        referredPhone: next.referredPhone,
-        source: "cara_sms",
-      },
-    }).catch(() => {});
-    await sendMessage(chatId, `I saved the referral, but I couldn't text ${next.referredName} yet. I flagged it for admin review.`);
+      source: "cara_sms",
+    });
+    if (result.deliveryStatus === "sent") {
+      await sendMessage(chatId, `Sent. I texted ${next.referredName} the caregiver application link.`);
+    } else {
+      await sendMessage(chatId, `I saved the referral, but I couldn't text ${next.referredName} yet. I flagged it for admin review.`);
+    }
   } finally {
     await db.collection("agent_sessions").doc(phone).update({
       pendingCaregiverReferral: admin.firestore.FieldValue.delete(),
@@ -703,7 +618,7 @@ async function handleIssue(phone: string, chatId: string): Promise<void> {
   const issuePromptMsg = await generateCaraMessage({
     audience: "caregiver",
     context: "Caregiver reported an issue during a visit. Cara is asking them to describe what's happening.",
-    fallback: "I'm sorry to hear that. Can you describe what's happening?",
+    fallback: "That sounds important. What's happening right now?",
     maxTokens: 80,
   });
   await sendMessage(chatId, issuePromptMsg);
@@ -1510,7 +1425,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       },
       PAYOUT:     async () => {
         if (!session.caregiverId) {
-          await sendMessage(chatId, "I couldn't find your caregiver profile. Please contact support.");
+          await sendMessage(chatId, "I couldn't find your caregiver profile. Send the email you used to sign up and I'll try again.");
           return;
         }
         const { startInstantPayout } = await import("../agents/instantPayoutHandler");

@@ -197,7 +197,7 @@ export async function handleRefundRequest(
       const msgR5 = await generateCaraMessage({
         audience: "family",
         context: "A family member decided to cancel their refund request. Acknowledge the cancellation warmly and let them know Cara is there if they need anything else.",
-        fallback: "No problem — refund request cancelled. Let me know if you need anything else.",
+        fallback: "No problem - refund request cancelled.",
         maxTokens: 80,
       });
       await sendMessage(msgR5);

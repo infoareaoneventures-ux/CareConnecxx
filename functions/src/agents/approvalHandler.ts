@@ -263,7 +263,7 @@ export async function handlePendingApproval(params: {
       ? "That's already been taken care of — nothing more needed."
       : alertFlagged
         ? "I tried, but it didn't go through. I've flagged it for review."
-        : "I tried, but it didn't go through, and I couldn't log it for review automatically. Please contact support and we'll help right away.";
+        : "I tried, but it didn't go through, and I couldn't log it for review automatically. Text me what happened and I can try the next step here.";
   await sendMessage(chatId, ackMessage).catch((err) => {
     console.error("handlePendingApproval: sendMessage (YES) failed", err);
   });
@@ -333,7 +333,7 @@ export async function handlePendingApprovals(params: {
     ? "Done — all set."
     : unflagged === 0
       ? `I completed what I could, but ${failedText}. I've flagged ${failures === 1 ? "it" : "them"} for review.`
-      : `I completed what I could, but ${failedText}, and I couldn't log ${unflagged === 1 ? "it" : "them"} for review automatically. Please contact support and we'll help right away.`;
+      : `I completed what I could, but ${failedText}, and I couldn't log ${unflagged === 1 ? "it" : "them"} for review automatically. Text me what happened and I can try the next step here.`;
   await sendMessage(chatId, ackMessage).catch((err) => {
     console.error("handlePendingApprovals: sendMessage (YES) failed", err);
   });

@@ -112,6 +112,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── messaging (family group, contact prefs, safety) ─────────────────────
   send_caregiver_message:           ["messaging"],
   send_client_message:              ["messaging"],
+  create_caregiver_referral:        ["messaging", "booking"],
   get_recent_messages:              ["messaging"],
   get_family_group:                 ["messaging"],
   add_family_member:                ["messaging"],

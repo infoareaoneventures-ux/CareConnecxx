@@ -86,6 +86,9 @@ vi.mock("firebase-admin", () => ({
       increment:   (n: number) => ({ __increment: n }),
       delete:      () => ({ __delete: true }),
     },
+    Timestamp: {
+      fromMillis: (ms: number) => ({ __timestampMillis: ms }),
+    },
   }),
 }));
 
@@ -115,10 +118,11 @@ vi.mock("../../utils/toolNotify", () => ({
   trySendViaCara: vi.fn().mockResolvedValue({ sent: true }),
 }));
 
+const sendToPhone = vi.fn().mockResolvedValue(undefined);
 vi.mock("../../linq/client", () => ({
   sendMessage:        vi.fn().mockResolvedValue({ message_id: "m1" }),
   getOrCreateSession: vi.fn().mockResolvedValue({ chatId: "chat-cg" }),
-  sendToPhone:        vi.fn().mockResolvedValue(undefined),
+  sendToPhone:        (...args: unknown[]) => sendToPhone(...args),
 }));
 
 vi.mock("../../agents/caraAgent", () => ({
@@ -141,6 +145,7 @@ describe("U2 caregiver action tools", () => {
   beforeEach(() => {
     hoisted.reset();
     trySend.mockClear(); trySend.mockResolvedValue({ sent: true });
+    sendToPhone.mockClear(); sendToPhone.mockResolvedValue(undefined);
     payoutCreate.mockClear(); payoutCreate.mockResolvedValue({ id: "po_1", amount: 5000, status: "pending" });
     balanceRetrieve.mockClear(); balanceRetrieve.mockResolvedValue({ available: [{ amount: 10000, currency: "usd" }] });
   });
@@ -399,6 +404,72 @@ describe("U2 caregiver action tools", () => {
       expect(alert!.data.resolved).toBe(false);
     });
   });
+
+  describe("create_caregiver_referral", () => {
+    it("requires structured referral fields", async () => {
+      const r = await handleToolCall("create_caregiver_referral", { caregiverId: "cg1" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+    });
+
+    it("writes a non-bookable referral, texts the referred caregiver, and returns delivery status", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Jane Referrer" });
+
+      const r = await handleToolCall("create_caregiver_referral", {
+        caregiverId: "cg1",
+        phone: "+15551110000",
+        referredName: "Maria Lopez",
+        referredPhone: "555-222-3333",
+      }) as any;
+
+      expect(r.success).toBe(true);
+      expect(r.deliveryStatus).toBe("sent");
+      expect(r.bookable).toBe(false);
+      expect(r.eligibilityRequired).toMatchObject({
+        onboardingStatus: "profile_complete",
+        verificationStatus: "approved",
+        checkrResult: "clear",
+      });
+      expect(sendToPhone).toHaveBeenCalledWith(
+        "+15552223333",
+        expect.stringContaining("/start?role=caregiver&ref="),
+        { preferredService: "SMS" },
+      );
+      const referral = [...hoisted.docState.entries()].find(([path]) => path.startsWith("referrals/"));
+      expect(referral?.[1]).toMatchObject({
+        referrerUserId: "cg1",
+        referrerRole: "caregiver",
+        referredRole: "caregiver",
+        referredName: "Maria Lopez",
+        referredPhone: "+15552223333",
+        source: "cara_sms",
+        status: "invited",
+        bookable: false,
+        deliveryStatus: "sent",
+      });
+    });
+
+    it("keeps a failed invite admin-visible without making the referred caregiver bookable", async () => {
+      sendToPhone.mockRejectedValueOnce(new Error("linq down"));
+      const r = await handleToolCall("create_caregiver_referral", {
+        caregiverId: "cg1",
+        phone: "+15551110000",
+        referredName: "Maria Lopez",
+        referredPhone: "+15552223333",
+      }) as any;
+
+      expect(r.success).toBe(false);
+      expect(r.deliveryStatus).toBe("failed");
+      expect(r.bookable).toBe(false);
+      const alert = hoisted.adds.find((a) => a.path === "admin_alerts" && a.data.type === "caregiver_referral_invite_failed");
+      expect(alert).toBeTruthy();
+      const referral = [...hoisted.docState.entries()].find(([path]) => path.startsWith("referrals/"));
+      expect(referral?.[1]).toMatchObject({
+        deliveryStatus: "failed",
+        bookable: false,
+      });
+    });
+  });
 });
 
 // ── U11 — money-movement auditing / auth / idempotency / refund visibility ───
@@ -406,6 +477,7 @@ describe("U11 payment auditing & safety", () => {
   beforeEach(() => {
     hoisted.reset();
     trySend.mockClear(); trySend.mockResolvedValue({ sent: true });
+    sendToPhone.mockClear(); sendToPhone.mockResolvedValue(undefined);
     payoutCreate.mockClear(); payoutCreate.mockResolvedValue({ id: "po_1", amount: 5000, status: "pending" });
     balanceRetrieve.mockClear(); balanceRetrieve.mockResolvedValue({ available: [{ amount: 10000, currency: "usd" }] });
   });

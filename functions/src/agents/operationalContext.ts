@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import { sanitizePromptContext, sanitizePromptContextValue } from "./promptContext";
 
 const db = admin.firestore();
 
@@ -53,7 +54,7 @@ export interface CaraOperationalContext {
 }
 
 function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
+  return sanitizePromptContextValue(value);
 }
 
 function truncate(value: string | undefined, max = 160): string | undefined {
@@ -271,36 +272,37 @@ export async function loadCaraOperationalContext(params: {
 
 export function formatCaraOperationalContext(ctx: CaraOperationalContext): string {
   const lines: string[] = [];
+  const safe = (value: unknown, max = 160) => sanitizePromptContext(value, max);
 
   for (const pending of ctx.pendingActions) {
-    lines.push(`- Awaiting confirmation: ${pending.preview ?? pending.toolName ?? pending.id}${pending.expiresAt ? ` (expires ${pending.expiresAt})` : ""}.`);
+    lines.push(`- Awaiting confirmation: ${safe(pending.preview ?? pending.toolName ?? pending.id)}${pending.expiresAt ? ` (expires ${safe(pending.expiresAt, 80)})` : ""}.`);
   }
   for (const alert of ctx.openAlerts) {
-    const detail = alert.message ?? alert.reason ?? "No detail provided";
-    lines.push(`- Open admin alert: [${alert.severity ?? "medium"}] ${alert.type ?? alert.id}: ${detail}.`);
+    const detail = safe(alert.message ?? alert.reason ?? "No detail provided", 220);
+    lines.push(`- Open admin alert: [${safe(alert.severity ?? "medium", 40)}] ${safe(alert.type ?? alert.id, 80)}: ${detail}.`);
   }
   for (const failed of ctx.failedActions) {
-    lines.push(`- Recent failed action: ${failed.actionType ?? "action"}${failed.toolName ? ` via ${failed.toolName}` : ""}${failed.errorReason ? ` (${failed.errorReason})` : ""}.`);
+    lines.push(`- Recent failed action: ${safe(failed.actionType ?? "action", 80)}${failed.toolName ? ` via ${safe(failed.toolName, 80)}` : ""}${failed.errorReason ? ` (${safe(failed.errorReason, 220)})` : ""}.`);
   }
   if (ctx.caregiverState) {
     const c = ctx.caregiverState;
     const bits = [
-      c.onboardingStatus ? `onboarding=${c.onboardingStatus}` : undefined,
-      c.verificationStatus ? `verification=${c.verificationStatus}` : undefined,
-      c.backgroundCheckStatus ? `checkr=${c.backgroundCheckStatus}` : undefined,
-      c.accountStatus ? `status=${c.accountStatus}` : undefined,
+      c.onboardingStatus ? `onboarding=${safe(c.onboardingStatus, 60)}` : undefined,
+      c.verificationStatus ? `verification=${safe(c.verificationStatus, 60)}` : undefined,
+      c.backgroundCheckStatus ? `checkr=${safe(c.backgroundCheckStatus, 60)}` : undefined,
+      c.accountStatus ? `status=${safe(c.accountStatus, 60)}` : undefined,
     ].filter(Boolean).join(", ");
     if (bits) lines.push(`- Caregiver state: ${bits}.`);
-    if (c.nextAppointment) lines.push(`- Caregiver upcoming/shift context: ${c.nextAppointment}.`);
-    if (c.pendingShiftHours) lines.push(`- Caregiver shift payment context: ${c.pendingShiftHours}.`);
-    if (c.lastPayoutStatus) lines.push(`- Caregiver last payout: ${c.lastPayoutStatus}.`);
+    if (c.nextAppointment) lines.push(`- Caregiver upcoming/shift context: ${safe(c.nextAppointment, 180)}.`);
+    if (c.pendingShiftHours) lines.push(`- Caregiver shift payment context: ${safe(c.pendingShiftHours, 180)}.`);
+    if (c.lastPayoutStatus) lines.push(`- Caregiver last payout: ${safe(c.lastPayoutStatus, 140)}.`);
   }
   if (ctx.clientState) {
     const c = ctx.clientState;
-    if (c.nextAppointment) lines.push(`- Client next visit: ${c.nextAppointment}.`);
-    if (c.latestCareUpdate) lines.push(`- Latest care update: ${c.latestCareUpdate}.`);
-    if (c.familyGroupStatus) lines.push(`- Family group: ${c.familyGroupStatus}.`);
-    if (c.pendingInvoiceOrPayment) lines.push(`- Pending invoice/payment: ${c.pendingInvoiceOrPayment}.`);
+    if (c.nextAppointment) lines.push(`- Client next visit: ${safe(c.nextAppointment, 180)}.`);
+    if (c.latestCareUpdate) lines.push(`- Latest care update: ${safe(c.latestCareUpdate, 240)}.`);
+    if (c.familyGroupStatus) lines.push(`- Family group: ${safe(c.familyGroupStatus, 120)}.`);
+    if (c.pendingInvoiceOrPayment) lines.push(`- Pending invoice/payment: ${safe(c.pendingInvoiceOrPayment, 120)}.`);
   }
 
   if (lines.length === 0) return "";

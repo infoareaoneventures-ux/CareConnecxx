@@ -443,6 +443,17 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     status: "shipped",
   },
   {
+    id: "caregiver-refer-caregiver",
+    actor: "caregiver",
+    action: "Refer another caregiver",
+    webSurface: "components/shared/ReferralProgram.tsx",
+    collection: "referrals",
+    tool: "create_caregiver_referral",
+    promptActor: "caregiver",
+    status: "shipped",
+    notes: "Writes non-bookable caregiver referrals, sends the SMS invite, and keeps bookability gated on onboardingStatus='profile_complete', verificationStatus='approved', and Checkr clear.",
+  },
+  {
     id: "caregiver-create-support-ticket",
     actor: "caregiver",
     action: "Open a support ticket",

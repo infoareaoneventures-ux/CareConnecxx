@@ -271,7 +271,7 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
           // Best-effort welcome — a delivery failure must NOT skip the phones
           // array update + audit below, or the member would be in the Linq chat
           // yet unrecorded in Firestore and re-added on the next run.
-          await sendMessage(chatId, `Welcome to the group! You'll receive care updates here and can text the assistant anytime.`).catch((err) => {
+          await sendMessage(chatId, `Welcome to the group. You'll receive care updates here and can text me anytime.`).catch((err) => {
             console.warn(`buildOrUpdateFamilyGroup: welcome sendMessage failed for chat ${chatId}, ${phone}:`, err);
           });
           await groupDoc.ref.update({
@@ -305,7 +305,7 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
     parts: [{
       type:  "text",
       value:
-        `Hi everyone — I'm Cara, the AI care assistant for ${seniorName}'s care.\n\n` +
+        `Hi everyone - I'm Cara, the care coordinator for ${seniorName}'s care.\n\n` +
         `I'll send care updates here so everyone stays in the loop. ` +
         `Anyone can text me questions anytime.`,
     }],

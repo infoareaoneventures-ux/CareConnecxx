@@ -165,6 +165,13 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: true,
     notes: "Cara-drafted proactive messages awaiting admin review.",
   },
+  cara_turn_metrics: {
+    path: "cara_turn_metrics",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Bounded no-message-text mirror for experiment and conversation-quality turns; AdminCaraControlRoom reads flagged rows.",
+  },
   referrals: {
     path: "referrals",
     docId: "auto",

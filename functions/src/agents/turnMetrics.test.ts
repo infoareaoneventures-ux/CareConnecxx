@@ -1,15 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createTurnMetrics, emitTurnMetrics } from "./turnMetrics";
+import { createTurnMetrics, emitTurnMetrics, setTurnMetricMirrorForTest } from "./turnMetrics";
+
+const firestoreMock = vi.hoisted(() => ({
+  add: vi.fn(async () => ({ id: "metric-1" })),
+}));
 
 let infoSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   // Mute and capture — every test inspects the emitted payload directly.
   infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+  firestoreMock.add.mockClear();
+  setTurnMetricMirrorForTest((record) => {
+    firestoreMock.add(record);
+  });
 });
 
 afterEach(() => {
   infoSpy.mockRestore();
+  setTurnMetricMirrorForTest(null);
 });
 
 describe("createTurnMetrics", () => {
@@ -136,5 +145,63 @@ describe("emitTurnMetrics", () => {
     expect(payload.formatRevisionTriggered).toBe(true);
     expect(payload.postProcessModified).toBe(true);
     expect(payload.prefetchHit).toBe(true);
+  });
+
+  it("mirrors experiment turns to cara_turn_metrics", () => {
+    const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+    m.experiments = { "tone-warmth-v1": "treatment" };
+    m.warmthReflectionIncluded = true;
+    emitTurnMetrics(m, { reply: "That makes sense. Maria is confirmed." });
+
+    expect(firestoreMock.add).toHaveBeenCalledTimes(1);
+    expect(firestoreMock.add.mock.calls[0][0]).toMatchObject({
+      source: "turn_metrics",
+      phone: "+15550001111",
+      userType: "client",
+      pathway: "qa",
+      experiments: { "tone-warmth-v1": "treatment" },
+      qualityFlags: [],
+      warmthReflectionIncluded: true,
+    });
+  });
+
+  it("mirrors quality issue turns for Admin Cara Control Room visibility", () => {
+    const m = createTurnMetrics({ phone: "+15550002222", userId: "client-1", userType: "client", pathway: "qa" });
+    m.supportDeflectionDetected = true;
+    m.genericHelpAskDetected = true;
+    m.conversationRepairApplied = true;
+    m.toolErrors = 1;
+    emitTurnMetrics(m, { reply: "I can help with that." });
+
+    expect(firestoreMock.add).toHaveBeenCalledTimes(1);
+    const mirrored = firestoreMock.add.mock.calls[0][0] as Record<string, unknown>;
+    expect(mirrored).toMatchObject({
+      source: "turn_metrics",
+      phone: "+15550002222",
+      userId: "client-1",
+      userType: "client",
+      pathway: "qa",
+      supportDeflectionDetected: true,
+      genericHelpAskDetected: true,
+      conversationRepairApplied: true,
+      toolErrors: 1,
+      quickReplyUsed: false,
+    });
+    expect(mirrored.qualityFlags).toEqual([
+      "conversation_repair_applied",
+      "generic_help_ask_detected",
+      "support_deflection_detected",
+      "tool_error",
+    ]);
+    expect(JSON.stringify(mirrored)).not.toContain("I can help with that.");
+  });
+
+  it("does not mirror ordinary clean non-experiment turns", () => {
+    const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "quick" });
+    emitTurnMetrics(m, { reply: "You're welcome." });
+    expect(firestoreMock.add).not.toHaveBeenCalled();
+    const payload = infoSpy.mock.calls[0][1] as Record<string, unknown>;
+    expect(payload.quickReplyUsed).toBe(true);
+    expect(payload.qualityFlags).toBeUndefined();
   });
 });

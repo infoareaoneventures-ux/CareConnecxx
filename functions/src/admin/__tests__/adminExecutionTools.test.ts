@@ -90,6 +90,9 @@ vi.mock("firebase-admin", () => {
     runTransaction: hoisted.runTransaction,
   });
   firestore.FieldValue = FieldValue;
+  firestore.Timestamp = {
+    fromMillis: (ms: number) => ({ __timestampMillis: ms }),
+  };
   return {
     __esModule: true,
     default: { firestore },

@@ -266,8 +266,8 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
         metadata: { appointmentId, amount, caregiverName, source: "cara_sms" },
       }).catch(() => {});
       await sendMessage(chatId,
-        `Got it — flagged for review. Our team will follow up within 24 hours.\n\n` +
-        `What looks wrong with the hours? (reply to add details, or just ignore this message)`
+        `Got it - I flagged the hours for admin review.\n\n` +
+        `What looks wrong with the hours?`
       );
       return "handled";
     }
@@ -285,7 +285,7 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
       pendingDisputeDetail: admin.firestore.FieldValue.delete(),
     });
     await sendMessage(chatId,
-      `Thanks — I've added your note to the dispute. Our team will review the hours for ${cgName} and get back to you.`
+      `Thanks - I added your note to the dispute for ${cgName}. Admin has the hour review now.`
     );
     return "handled";
   }

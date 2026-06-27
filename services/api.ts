@@ -2710,6 +2710,27 @@ export const dbService = {
             );
     },
 
+    subscribeCaraTurnMetrics: (
+        cb: (entries: Array<Record<string, any>>) => void,
+        onError?: (err: Error) => void
+    ): (() => void) => {
+        if (!isConfigured || !db) {
+            cb([]);
+            return () => {};
+        }
+        return db.collection('cara_turn_metrics')
+            .orderBy('at', 'desc')
+            .limit(150)
+            .onSnapshot(
+                (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+                (err) => {
+                    console.error('subscribeCaraTurnMetrics:', err);
+                    onError?.(err as unknown as Error);
+                    cb([]);
+                }
+            );
+    },
+
     subscribePendingActions: (
         cb: (actions: Array<Record<string, any>>) => void,
         onError?: (err: Error) => void

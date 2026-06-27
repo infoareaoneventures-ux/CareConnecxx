@@ -19,6 +19,7 @@ import {
 } from "./contextManagement";
 import { createTurnMetrics, emitTurnMetrics, type TurnMetrics } from "./turnMetrics";
 import { formatCaraOperationalContext, loadCaraOperationalContext } from "./operationalContext";
+import { sanitizePromptContext } from "./promptContext";
 import { buildCapabilityHint, DiscoveryRole } from "./capabilityDiscovery";
 import { MCP_TOOLS, CAREGIVER_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
 import { callClaudeWithRetry } from "../utils/claudeRetry";
@@ -139,15 +140,6 @@ async function getCaregiverTodayAppointment(caregiverId: string) {
 
 // ── Conversation memory ───────────────────────────────────────────────────────
 
-// Strip patterns that look like injected system instructions in user-authored text.
-function sanitizeForPrompt(text: string): string {
-  return (text ?? "")
-    .replace(/<\/?(?:system|assistant|human|user|instruction|prompt|context)\b[^>]*>/gi, "")
-    .replace(/\[(?:SYSTEM|ASSISTANT|HUMAN|INST|\/INST|SYS|\/SYS)\]/g, "")
-    .replace(/\|\s*(?:im_start|im_end|endoftext)\s*\|/gi, "")
-    .slice(0, 2000);
-}
-
 async function getConversationHistory(
   phone: string
 ): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
@@ -166,15 +158,15 @@ async function getConversationHistory(
     .filter(d => d.data().role !== "summary")
     .map(d => ({
       role:    d.data().role as "user" | "assistant",
-      content: sanitizeForPrompt(d.data().content as string),
+      content: sanitizePromptContext(d.data().content as string),
     }))
     .reverse();
 
   if (!summarySnap.empty) {
-    const summaryText = summarySnap.docs[0].data().content as string;
+    const summaryText = sanitizePromptContext(summarySnap.docs[0].data().content as string, 1200);
     return [
-      { role: "user",      content: `[SYSTEM]\n${summaryText}` },
-      { role: "assistant", content: "Got it — I have context from our earlier conversations." },
+      { role: "user",      content: `Earlier conversation summary, sanitized as user-authored data: ${summaryText}` },
+      { role: "assistant", content: "Got it - I have context from our earlier conversations." },
       ...messages,
     ];
   }
@@ -1265,7 +1257,7 @@ export async function runQaAgent(params: {
   // missing this turn so it won't assert the status of any pending/failed/
   // in-progress action.
   const OPS_CONTEXT_UNAVAILABLE_MARKER =
-    "[SYSTEM: operations_context_unavailable] Cara's live operations context (pending confirmations, " +
+    "OPERATIONS CONTEXT UNAVAILABLE: Cara's live operations context (pending confirmations, " +
     "open admin alerts, recent failed actions, and account/visit/payment state) could not be loaded this turn. " +
     "If the user asks about a pending, failed, or in-progress action, say you can't confirm its current status " +
     "right now and ask them to try again in a moment; do not claim any such action succeeded, failed, or is pending.";
@@ -1315,7 +1307,7 @@ export async function runQaAgent(params: {
     if (activeTaskSnap?.exists) {
       const t = activeTaskSnap.data()!;
       systemPrompt +=
-        `\n\nACTIVE BACKGROUND TASK:\nType: ${t.type as string}\nStatus: ${t.status as string}\nDetails: ${t.description as string}\n` +
+        `\n\nACTIVE BACKGROUND TASK:\nType: ${sanitizePromptContext(t.type, 80)}\nStatus: ${sanitizePromptContext(t.status, 80)}\nDetails: ${sanitizePromptContext(t.description, 400)}\n` +
         `If the family asks for an update or "what's happening", report this status directly.`;
     }
   }
@@ -1324,11 +1316,12 @@ export async function runQaAgent(params: {
   if (userType !== "caregiver" && !skipCrossEntity) {
     const activeAgent = await getActiveAgentForUser(phone).catch(() => null);
     if (activeAgent) {
-      const lastAction = activeAgent.operationalLog?.at(-1)?.result ?? "none";
+      const lastAction = sanitizePromptContext(activeAgent.operationalLog?.at(-1)?.result ?? "none", 300);
+      const activeAgentContext = sanitizePromptContext(JSON.stringify(activeAgent.context), 400);
       systemPrompt +=
-        `\n\nACTIVE EXECUTION AGENT:\nType: ${activeAgent.type}\nAgent ID: ${activeAgent.id}\n` +
+        `\n\nACTIVE EXECUTION AGENT:\nType: ${sanitizePromptContext(activeAgent.type, 80)}\nAgent ID: ${sanitizePromptContext(activeAgent.id, 120)}\n` +
         `Last action: ${lastAction}\n` +
-        `Context summary: ${JSON.stringify(activeAgent.context).slice(0, 400)}\n\n` +
+        `Context summary: ${activeAgentContext}\n\n` +
         `If the family's message is a follow-up question about this task (asking about a specific caregiver, rates, experience, etc.), ` +
         `call the 'resume_execution_agent' tool with agentId="${activeAgent.id}" and their message. ` +
         `Return the tool's reply EXACTLY as-is.`;
@@ -1367,7 +1360,7 @@ export async function runQaAgent(params: {
     if (Array.isArray(sessionTodos) && sessionTodos.length > 0) {
       const lines = sessionTodos.map((t: any, i: number) => {
         const mark = t.status === "completed" ? "✓" : t.status === "in_progress" ? "→" : "·";
-        return `${mark} ${i + 1}. ${t.task}`;
+        return `${mark} ${i + 1}. ${sanitizePromptContext(t.task, 180)}`;
       }).join("\n");
       systemPrompt +=
         "\n\n<active_todos>\nFrom earlier in this conversation, the outstanding checklist is:\n" +
@@ -2096,6 +2089,7 @@ export async function runQuickReply(params: {
 // reply (which is wrong; users want Cara to actually act).
 const ACTION_VERBS = /\b(connect|book|schedule|call|hire|find|show|tell|send|cancel|reschedule|rebook|reschedule|approve|deny|reject|accept|update|change|set up|setup|set\s+up|search|look|check|get|give|need|want|add|remove|delete|fix|help|pay|refill|reorder|order|forward|share)\b/i;
 const REQUEST_PATTERNS = /\b(yes\s+(let|please|do|go|sure|ok)|let'?s|can\s+you|could\s+you|would\s+you|please|i\s+(need|want|would)|tell\s+(me|him|her|them))\b/i;
+const CARE_ACTION_CONTEXT_TERMS = /\b(mom|dad|mother|father|maria|caregiver|client|senior|visit|appointment|shift|hours|invoice|payment|pay|payout|approve|approved|approval|dispute|book|booking|checkr|background|verified|verification|family|sister|brother|daughter|son|refer|referral|fell|fall|emergency|urgent|911|hospital|doctor|pharmacy|meds?|medication|refill|pain|chest|breathe)\b/i;
 
 export function isTrivialQuickReply(text: string): boolean {
   const t = text.trim();
@@ -2104,6 +2098,7 @@ export function isTrivialQuickReply(text: string): boolean {
   if (/[\d@]/.test(t)) return false;
   // Action verb or request pattern → user wants something done; use full QA agent
   if (ACTION_VERBS.test(t) || REQUEST_PATTERNS.test(t)) return false;
+  if (CARE_ACTION_CONTEXT_TERMS.test(t)) return false;
   // Proper noun in the middle (after the first word) suggests names/places.
   // First word can be capitalized (sentence start); subsequent ones flag it.
   const words = t.split(/\s+/);

@@ -104,6 +104,40 @@ exports.stripeConnectWebhook = functions
                 }
             }
         }
+        else if (event.type === "payout.paid" || event.type === "payout.failed") {
+            // Connect webhook — event.account is the connected Stripe account ID
+            const payout = event.data.object;
+            const stripeAccountId = event.account;
+            const amountDollars = (payout.amount / 100).toFixed(2);
+            const isInstant = payout.method === "instant";
+            const snap = await db.collection("caregivers")
+                .where("stripeAccountId", "==", stripeAccountId)
+                .limit(1)
+                .get();
+            if (!snap.empty) {
+                const caregiverId = snap.docs[0].id;
+                if (event.type === "payout.paid") {
+                    await db.collection("users").doc(caregiverId).collection("notifications").add({
+                        userId: caregiverId,
+                        type: "payout_paid",
+                        title: "Payout Arrived",
+                        body: `Your ${isInstant ? "instant" : "standard"} payout of $${amountDollars} has been deposited to your bank account.`,
+                        isRead: false,
+                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                }
+                else {
+                    await db.collection("users").doc(caregiverId).collection("notifications").add({
+                        userId: caregiverId,
+                        type: "payout_failed",
+                        title: "Payout Failed",
+                        body: `Your payout of $${amountDollars} could not be deposited. Please check your bank account details.`,
+                        isRead: false,
+                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                }
+            }
+        }
         else {
             console.log(`Unhandled Connect event: ${event.type}`);
         }

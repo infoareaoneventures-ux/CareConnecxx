@@ -658,6 +658,7 @@ export const PostsPage: React.FC = () => {
   const handleSendBooking = async (interview: Interview, _unused: string) => {
     const user = auth?.currentUser;
     if (!user || !db) return;
+    const fdb = db;
     gate('booking', interview.caregiverName, async () => {
     setSendingBooking(true);
     try {
@@ -689,7 +690,7 @@ export const PostsPage: React.FC = () => {
       // Prefer Auth photo; fall back to Firestore users document
       let clientPhotoURL: string | null = user.photoURL || null;
       if (!clientPhotoURL) {
-        const uSnap = await db.collection('users').doc(user.uid).get().catch(() => null);
+        const uSnap = await fdb.collection('users').doc(user.uid).get().catch(() => null);
         const uData = uSnap?.data() as any;
         clientPhotoURL = uData?.photoURL || uData?.photo || uData?.profilePhoto || uData?.imageUrl || null;
       }
@@ -756,20 +757,20 @@ export const PostsPage: React.FC = () => {
       };
 
       if (isResend && existing) {
-        await db.collection('booking_requests').doc(existing.id).update({
+        await fdb.collection('booking_requests').doc(existing.id).update({
           ...bookingData,
           status: 'pending',
           isResend: true,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
       } else {
-        await db.collection('booking_requests').add({
+        await fdb.collection('booking_requests').add({
           ...bookingData,
           status: 'pending',
           isResend: false,
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
-        await db.collection('hire_decisions').add({
+        await fdb.collection('hire_decisions').add({
           clientId: user.uid,
           clientName: user.displayName || '',
           caregiverId: interview.caregiverId,
@@ -781,7 +782,7 @@ export const PostsPage: React.FC = () => {
         // Mark the caregiver's application as accepted
         if (interview.jobId) {
           try {
-            const appSnap = await db.collection('job_applications')
+            const appSnap = await fdb.collection('job_applications')
               .where('caregiverId', '==', interview.caregiverId)
               .where('jobId', '==', interview.jobId)
               .limit(1)

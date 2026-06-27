@@ -165,6 +165,14 @@ exports.requestStandardPayout = functions
             paidOutAt,
         });
         await batch.commit();
+        await db.collection('users').doc(uid).collection('notifications').add({
+            userId: uid,
+            type: 'payout_initiated',
+            title: 'Standard Payout Initiated',
+            body: `Your standard payout of $${claim.totalEarnings.toFixed(2)} has been initiated.`,
+            isRead: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
         return {
             success: true,
             amount: claim.totalEarnings,

@@ -88,6 +88,8 @@ __exportStar(require("./aiMatching"), exports);
 __exportStar(require("./triggers/aiMatchTriggers"), exports);
 // Export Job Application Triggers (maintains JobPost.applicantCount)
 __exportStar(require("./triggers/jobApplicationTriggers"), exports);
+// Notification triggers (server-side, replaces client-side notification writes)
+__exportStar(require("./triggers/notificationTriggers"), exports);
 // Export per-shift hours submission / review / payment
 __exportStar(require("./shiftHours"), exports);
 // Export booking payment-method helpers

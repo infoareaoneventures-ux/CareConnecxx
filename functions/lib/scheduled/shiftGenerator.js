@@ -164,11 +164,9 @@ exports.onBookingAccepted = functions.firestore
                 userId: after.clientId,
                 type: 'booking_accepted',
                 title: 'Booking Accepted',
-                message: `${after.caregiverName || 'Your caregiver'} accepted your booking request.`,
+                body: `${after.caregiverName || 'Your caregiver'} accepted your booking request.`,
                 data: { bookingId, caregiverId: after.caregiverId },
-                read: false,
                 isRead: false,
-                timestamp: admin.firestore.FieldValue.serverTimestamp(),
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
         }

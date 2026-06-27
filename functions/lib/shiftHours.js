@@ -72,13 +72,13 @@ function nowIso() {
     return new Date().toISOString();
 }
 async function pushNotification(userId, type, title, message, data) {
-    await db.collection('notifications').add({
+    await db.collection('users').doc(userId).collection('notifications').add({
         userId,
         type,
         title,
-        message,
+        body: message,
         data,
-        read: false,
+        isRead: false,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 }
@@ -86,14 +86,14 @@ async function notifyAdmins(type, title, message, data) {
     const admins = await db.collection('users').where('userType', '==', 'admin').get();
     const batch = db.batch();
     admins.forEach(docSnap => {
-        const ref = db.collection('notifications').doc();
+        const ref = db.collection('users').doc(docSnap.id).collection('notifications').doc();
         batch.set(ref, {
             userId: docSnap.id,
             type,
             title,
-            message,
+            body: message,
             data,
-            read: false,
+            isRead: false,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
     });

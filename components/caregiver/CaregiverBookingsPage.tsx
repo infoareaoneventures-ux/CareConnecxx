@@ -248,6 +248,7 @@ const RequestCard: React.FC<{
   blockReason?: 'membership' | 'background' | null;
 }> = ({ req, onAccept, onDecline, submitting, blockReason }) => {
   const navigate = useNavigate();
+  const { setMembershipModalOpen } = useCareConnex();
   const [expanded, setExpanded] = useState(false);
 
   const isPending = req.status === 'pending';
@@ -593,6 +594,7 @@ const BookingGroupCard: React.FC<{
 }> = ({ shifts, amendments, onCancel, onAcceptAmendment }) => {
   const navigate = useNavigate();
   const { blockReason } = useCaregiverGate();
+  const { setMembershipModalOpen } = useCareConnex();
   const base = shifts[0];
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandedShift, setExpandedShift] = useState<string | null>(null);
@@ -1226,6 +1228,7 @@ const BookingGroupCard: React.FC<{
 
 const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shift) => void; blockReason?: 'membership' | 'background' | null }> = ({ shifts, onLogHours, blockReason }) => {
   const navigate = useNavigate();
+  const { setMembershipModalOpen } = useCareConnex();
   const base = shifts[0];
   const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
   const [showAllShifts, setShowAllShifts] = useState(false);

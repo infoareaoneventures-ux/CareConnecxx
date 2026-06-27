@@ -163,6 +163,71 @@ describe("link part normalization", () => {
   });
 });
 
+describe("splitTextAndUrls — plain-string URL extraction", () => {
+  // Asserts the regex-heavy split path: text becomes one bubble, each URL a
+  // dedicated link card. parts[0] of each /messages body is the unit under test.
+  const parts = (b: any) => b.message.parts;
+
+  it("splits multiple URLs into one text bubble + one link card each, in order", async () => {
+    const { sendMessage } = await import("./client");
+    await sendMessage("chat-1", "Plan: https://cara.app/plan and docs https://cara.app/docs");
+
+    const bodies = messageBodies();
+    expect(bodies.length).toBe(3);
+    expect(parts(bodies[0])).toEqual([{ type: "text", value: "Plan and docs" }]);
+    expect(parts(bodies[1])[0]).toEqual({ type: "link", value: "https://cara.app/plan" });
+    expect(parts(bodies[2])[0]).toEqual({ type: "link", value: "https://cara.app/docs" });
+  });
+
+  it("prepends https:// to a bare hostname URL", async () => {
+    const { sendMessage } = await import("./client");
+    await sendMessage("chat-1", "Browse caregivers at careconnex.com/find");
+
+    const bodies = messageBodies();
+    expect(bodies.length).toBe(2);
+    expect(parts(bodies[0])).toEqual([{ type: "text", value: "Browse caregivers at" }]);
+    expect(parts(bodies[1])[0]).toEqual({ type: "link", value: "https://careconnex.com/find" });
+  });
+
+  it("moves trailing sentence punctuation off the URL and back into the text", async () => {
+    const { sendMessage } = await import("./client");
+    await sendMessage("chat-1", "Pay now: https://pay.x/abc!");
+
+    const bodies = messageBodies();
+    expect(bodies.length).toBe(2);
+    expect(parts(bodies[0])).toEqual([{ type: "text", value: "Pay now!" }]);
+    expect(parts(bodies[1])[0]).toEqual({ type: "link", value: "https://pay.x/abc" });
+  });
+
+  it("strips a leading separator ('Name → URL') left behind after the URL is removed", async () => {
+    const { sendMessage } = await import("./client");
+    await sendMessage("chat-1", "Your plan → https://cara.app/plan");
+
+    const bodies = messageBodies();
+    expect(bodies.length).toBe(2);
+    expect(parts(bodies[0])).toEqual([{ type: "text", value: "Your plan" }]);
+    expect(parts(bodies[1])[0]).toEqual({ type: "link", value: "https://cara.app/plan" });
+  });
+
+  it("sends a URL-only string as a single link card, no empty text bubble", async () => {
+    const { sendMessage } = await import("./client");
+    await sendMessage("chat-1", "https://cara.app/plan");
+
+    const bodies = messageBodies();
+    expect(bodies.length).toBe(1);
+    expect(parts(bodies[0])[0]).toEqual({ type: "link", value: "https://cara.app/plan" });
+  });
+
+  it("sends a no-URL string as a single text bubble, never a link part", async () => {
+    const { sendMessage } = await import("./client");
+    await sendMessage("chat-1", "hello world");
+
+    const bodies = messageBodies();
+    expect(bodies.length).toBe(1);
+    expect(parts(bodies[0])).toEqual([{ type: "text", value: "hello world" }]);
+  });
+});
+
 describe("createChat idempotency", () => {
   it("reuses the same idempotency_key across retries", async () => {
     // First POST /chats fails with a retryable 503, second succeeds.

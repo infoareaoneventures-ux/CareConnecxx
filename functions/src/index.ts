@@ -132,6 +132,7 @@ export { sendShiftTaskNudges } from './scheduled/shiftTaskNudges';
 export { sendPreShiftFamilyCheckin } from './scheduled/preShiftFamilyCheckin';
 export { sendDayBeforeShiftReminders } from './scheduled/dayBeforeShiftReminder';
 export { sendClientDayBeforeReminders } from './scheduled/clientDayBeforeReminder';
+export { sendLocationRequestNudges } from './scheduled/locationRequestNudge';
 export { sendClientThirtyMinReminders } from './scheduled/clientThirtyMinReminder';
 export { sendThirtyMinShiftReminders } from './scheduled/thirtyMinShiftReminder';
 export { processDndQueue } from './scheduled/dndQueueProcessor';

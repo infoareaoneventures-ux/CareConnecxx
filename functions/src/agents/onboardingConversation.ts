@@ -3,7 +3,7 @@ import { quickComplete } from "../utils/openaiClient";
 import { unwrapJson } from "../utils/jsonUtils";
 import axios from "axios";
 import Stripe from "stripe";
-import { sendMessage, signalThinking, AgentSession } from "../linq/client";
+import { sendMessage, signalThinking, requestLocation, AgentSession } from "../linq/client";
 import {
   classifyEmotionalContext,
   classifyEmotionalTopic,
@@ -19,7 +19,7 @@ import { buildAndSaveJobPost } from "./buildJobPost";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { generateOtp, verifyOtp, formatOtpForDisplay, OtpState } from "../utils/phoneVerification";
 import { languageFromSession, t as tr } from "../utils/language";
-import { reverseGeocode, SharedLocation } from "../utils/locationShare";
+import { reverseGeocode, canRequestNativeLocation, SharedLocation } from "../utils/locationShare";
 import { downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/mediaIntake";
 import { addKnownNames } from "../utils/knownNames";
 import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
@@ -69,6 +69,49 @@ async function mergeOnboardingData(phone: string, data: Record<string, unknown>)
   await db.collection("agent_sessions").doc(phone).update({
     onboardingData: { ...existing, ...data },
   });
+}
+
+// ── Native location request (1:1 iMessage) ────────────────────────────────────
+// Marker persisted on the session when CARA fires Linq's native location prompt.
+// The scheduled nudge job (scheduled/locationRequestNudge.ts) reads it; the
+// onboarding location handlers clear it once a pin OR a typed city/zip arrives.
+export interface PendingLocationRequest {
+  source:    "onboarding" | "mcp";
+  sentAt:    string;   // ISO — when the prompt was fired
+  nudgeSent: boolean;  // true once the single follow-up nudge has gone out
+  reason?:   string;
+}
+
+const PENDING_LOCATION_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+/**
+ * Fire Linq's native location-share prompt and record a pending marker so the
+ * nudge job + typed fallback can take over if no pin arrives. No-op on
+ * SMS/RCS/group — the typed `locationPrompt` text already asks for city+zip
+ * there. Best-effort: never throws into the onboarding step flow.
+ */
+async function maybeRequestNativeLocation(
+  phone: string,
+  chatId: string,
+  session: AgentSession | undefined,
+  service?: string
+): Promise<void> {
+  if (!canRequestNativeLocation({ service: service ?? session?.service, groupChatId: session?.groupChatId })) return;
+  try {
+    const result = await requestLocation(chatId);
+    if (!result.requested) return; // stale-iMessage 409 etc. — typed ask already sent
+    await updateSession(phone, {
+      pendingLocationRequest: { source: "onboarding", sentAt: new Date().toISOString(), nudgeSent: false },
+      stateExpiresAt: new Date(Date.now() + PENDING_LOCATION_TTL_MS).toISOString(),
+    });
+  } catch (err) {
+    console.warn("[onboarding] native location request failed (non-critical)", err);
+  }
+}
+
+/** Clear the pending-location marker once the location step resolves. */
+function clearPendingLocation(): Record<string, unknown> {
+  return { pendingLocationRequest: admin.firestore.FieldValue.delete() };
 }
 
 // Local single-shot parser used by onboarding step handlers. Powered by
@@ -661,6 +704,8 @@ async function handleClientAskNeeds(phone: string, chatId: string, text: string,
     maxTokens: 120,
   });
   await sendMessage(chatId, locationPrompt(msg5, service));
+  // 1:1 iMessage: also pop the native one-tap location prompt. No-op elsewhere.
+  await maybeRequestNativeLocation(phone, chatId, session, service);
 }
 
 async function handleClientAskLocation(phone: string, chatId: string, text: string, session: AgentSession, opts: OnboardingStepOptions = {}): Promise<void> {
@@ -673,7 +718,7 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
     const rev = await reverseGeocode(inboundLocation.lat, inboundLocation.lng);
     const city = rev?.city ?? "", zipCode = rev?.zipCode ?? "";
     await mergeOnboardingData(phone, { city, zipCode, lat: inboundLocation.lat, lng: inboundLocation.lng });
-    await updateSession(phone, { onboardingStep: "client_ask_schedule" });
+    await updateSession(phone, { onboardingStep: "client_ask_schedule", ...clearPendingLocation() });
     const d = session.onboardingData ?? {};
     const ack = city
       ? `Got it — pinned you to ${city}${zipCode ? ` ${zipCode}` : ""}. `
@@ -713,7 +758,7 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
   }
 
   await mergeOnboardingData(phone, { city, zipCode });
-  await updateSession(phone, { onboardingStep: "client_ask_schedule" });
+  await updateSession(phone, { onboardingStep: "client_ask_schedule", ...clearPendingLocation() });
   const d = session.onboardingData ?? {};
   const msg6 = await generateCaraMessage({
     audience: "family",
@@ -1233,6 +1278,8 @@ async function handleCaregiverAskName(phone: string, chatId: string, text: strin
     maxTokens: 80,
   });
   await sendMessage(chatId, locationPrompt(msg9, service));
+  // 1:1 iMessage: also pop the native one-tap location prompt. No-op elsewhere.
+  await maybeRequestNativeLocation(phone, chatId, session, service);
 }
 
 /**
@@ -1312,7 +1359,7 @@ async function handleCaregiverAskLocation(phone: string, chatId: string, text: s
     }
   }
 
-  await updateSession(phone, { onboardingStep: "caregiver_ask_experience" });
+  await updateSession(phone, { onboardingStep: "caregiver_ask_experience", ...clearPendingLocation() });
   const d = session.onboardingData ?? {};
   const msg10intro = await generateCaraMessage({
     audience: "caregiver",

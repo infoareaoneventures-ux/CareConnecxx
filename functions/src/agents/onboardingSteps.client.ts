@@ -61,7 +61,7 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
         const safeName = (session.onboardingData?.firstName as string) ?? "there";
         return generateCaraMessage({
           audience: "family",
-          context: `Cara just learned the client's name is ${safeName}. Greet them warmly by name and ask who they're looking for care for (name and relationship to them, e.g. "my mom Dorothy").`,
+          context: `Cara just learned the client's name is ${safeName}. You're mid-conversation — do NOT greet again (no "Hi"/"Hey ${safeName}"). Warmly acknowledge and ask who they're looking for care for (name and relationship to them, e.g. "my mom Dorothy").`,
           fallback: `Nice to meet you, ${safeName}. Who are we caring for?`,
           maxTokens: 80,
         });

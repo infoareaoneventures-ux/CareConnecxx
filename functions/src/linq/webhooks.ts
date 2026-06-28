@@ -17,6 +17,8 @@ import { loadCaraOperationalContext } from "../agents/operationalContext";
 import {
   handleOnboardingStep,
 } from "../agents/onboardingConversation";
+import { runQaAgent } from "../agents/qaAgent";
+import { shouldRouteOnboardingToLoop } from "../agents/onboardingContract";
 import {
   handleClientPermissionsReply,
   handleCaregiverPermissionsReply,
@@ -1441,6 +1443,35 @@ const handleInboundInner = traceable(
       await handleCaregiverPermissionsReply(phone, chatId, text, session, caregiverId);
       return;
     }
+    // U4: agent-native onboarding collapse (client-first). For a client in the
+    // conversational collection phase, run the turn inside the qaAgent loop
+    // instead of the scripted step runner — Cara leads collection as one agent
+    // (no re-greet, no double-send). Gated OFF by default. Only plain-text turns
+    // route here; media/location stay on the legacy handlers, and transactional /
+    // gate steps (not in CLIENT_STEP_ORDER) are never affected.
+    if (shouldRouteOnboardingToLoop({
+      role:        session.userType,
+      step,
+      hasText:     text.trim() !== "",
+      hasMedia:    !!inboundMedia,
+      hasLocation: !!inboundLocation,
+    })) {
+      await runQaAgent({
+        text,
+        phone,
+        chatId,
+        userId:      (session as any).userId ?? "",
+        seniorId:    (session as any).seniorId ?? "",
+        userType:    "client",
+        zepThreadId: onboardingZepThreadId,
+        session:     session as unknown as Record<string, unknown>,
+        onboardingMode: true,
+        onboardingRole: "client",
+        intent:      null,
+      });
+      return;
+    }
+
     await handleOnboardingStep(phone, chatId, text, session, {
       service,
       inboundLocation: inboundLocation ?? undefined,

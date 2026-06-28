@@ -71,3 +71,21 @@ export function isConvergenceFlipped(flow: string): boolean {
   // Everything else (incl. onboarding, reminder_management) stays opt-in via env.
   return convergenceFlippedFlows().has(flow);
 }
+
+// Agent-native onboarding collapse (the conversational-collapse plan). When a
+// role key is present, that role's CONVERSATIONAL field-collection runs inside
+// the qaAgent loop (onboardingMode) instead of the scripted step runner — so
+// Cara leads collection as one agent and never re-greets / double-sends. The
+// deterministic transactional gates (payment/OTP/Checkr/Stripe/uploads) are NOT
+// affected. OFF by default: the scripted runner ships until a real-model eval
+// (U8) clears the flip. Comma-separated role keys, e.g. "client" or
+// "client,caregiver". Distinct from CONVERGENCE_FLIPPED (the dispatcher's
+// next-field selector) — this routes the whole collection turn to the loop.
+export function onboardingAgentLoopRoles(): ReadonlySet<string> {
+  const raw = process.env.ONBOARDING_AGENT_LOOP ?? "";
+  return new Set(raw.split(",").map(s => s.trim()).filter(Boolean));
+}
+
+export function isOnboardingAgentLoopEnabled(role: "client" | "caregiver"): boolean {
+  return onboardingAgentLoopRoles().has(role);
+}

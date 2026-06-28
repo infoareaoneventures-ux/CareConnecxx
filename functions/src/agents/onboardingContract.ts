@@ -18,7 +18,18 @@
 // the caregiver needs segmented loop ↔ gate ↔ loop handling (tracked for the
 // U3/U4 wiring). complete_collection's caregiver branch is therefore provisional.
 
+import { isOnboardingAgentLoopEnabled } from "../config/featureFlags";
+
 export type OnboardingRole = "client" | "caregiver";
+
+// Mirror of CLIENT_STEP_ORDER in onboardingConversation.ts — the conversational
+// collection steps the agent loop owns (client-first). Kept here so the routing
+// predicate stays in this pure leaf module. Must stay in sync with the legacy
+// CLIENT_STEP_ORDER.
+export const CLIENT_COLLECTION_STEPS: readonly string[] = [
+  "client_ask_name", "client_ask_senior", "client_ask_needs",
+  "client_ask_location", "client_ask_schedule",
+];
 
 // Mirror of isFieldFilled in onboardingConversation.ts.
 export function isFieldFilled(value: unknown): boolean {
@@ -95,4 +106,24 @@ export const ONBOARDING_TOOL_NAMES: ReadonlySet<string> = new Set([
 
 export function isOnboardingTool(name: string): boolean {
   return ONBOARDING_TOOL_NAMES.has(name);
+}
+
+// U4: whether this inbound onboarding turn should run inside the qaAgent loop
+// (agent-native collection) instead of the scripted step runner. Client-first,
+// flag-gated OFF by default, plain-text collection steps only — transactional
+// gates (steps not in CLIENT_COLLECTION_STEPS) and media/location turns stay on
+// the legacy handlers.
+export function shouldRouteOnboardingToLoop(args: {
+  role: string | undefined;
+  step: string;
+  hasText: boolean;
+  hasMedia: boolean;
+  hasLocation: boolean;
+}): boolean {
+  const { role, step, hasText, hasMedia, hasLocation } = args;
+  if (role !== "client") return false;
+  if (!isOnboardingAgentLoopEnabled("client")) return false;
+  if (!CLIENT_COLLECTION_STEPS.includes(step)) return false;
+  if (!hasText || hasMedia || hasLocation) return false;
+  return true;
 }

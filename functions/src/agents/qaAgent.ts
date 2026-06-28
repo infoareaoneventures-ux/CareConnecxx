@@ -1125,7 +1125,11 @@ export async function runQaAgent(params: {
     // doesn't surface someone else's appointments or care plan as if it were
     // theirs. Conversation history with THIS phone stays — that's their own
     // SMS thread with Cara, not someone else's data.
-    const unconfirmedIdentity = !!(session as any)?.__unconfirmedIdentity;
+    // U3/U4: onboarding mode has no account yet (userId/seniorId are empty until
+    // payment), so reuse the unconfirmed-identity path — it nulls all account-keyed
+    // context and keeps only this phone's conversation history, exactly what
+    // collection needs.
+    const unconfirmedIdentity = !!(session as any)?.__unconfirmedIdentity || onboardingMode;
 
     // Situation snapshot (open jobs + applicants, pending timesheets) — kicked
     // off here so it runs in parallel with the rest of context assembly; awaited
@@ -1405,7 +1409,7 @@ export async function runQaAgent(params: {
 
   // Unconfirmed-identity short-circuits: skip all per-phone task/goal/agent
   // context — they may reference work on behalf of a different linked person.
-  const skipCrossEntity = !!(session as any)?.__unconfirmedIdentity;
+  const skipCrossEntity = !!(session as any)?.__unconfirmedIdentity || onboardingMode;
 
   // Sentinel injected when the operations-context fetch FAILS — as opposed to a
   // clean empty result (which means "nothing pending" and should add nothing).

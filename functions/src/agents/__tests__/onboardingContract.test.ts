@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
+  shouldRouteOnboardingToLoop,
   CLIENT_REQUIRED_FIELDS,
   CAREGIVER_REQUIRED_FIELDS,
   requiredFieldsForRole,
@@ -99,6 +100,44 @@ describe("onboardingContract", () => {
     });
     it("caregiver hands off to the first upload gate", () => {
       expect(firstGateStep("caregiver")).toBe("caregiver_send_photo");
+    });
+  });
+
+  describe("shouldRouteOnboardingToLoop (U4 routing gate)", () => {
+    const base = { role: "client", step: "client_ask_needs", hasText: true, hasMedia: false, hasLocation: false };
+    afterEach(() => { delete process.env.ONBOARDING_AGENT_LOOP; });
+
+    it("routes a client collection step to the loop when the flag is on", () => {
+      process.env.ONBOARDING_AGENT_LOOP = "client";
+      expect(shouldRouteOnboardingToLoop(base)).toBe(true);
+    });
+
+    it("does NOT route when the flag is off (default)", () => {
+      expect(shouldRouteOnboardingToLoop(base)).toBe(false);
+    });
+
+    it("does NOT route a caregiver (client-first)", () => {
+      process.env.ONBOARDING_AGENT_LOOP = "client";
+      expect(shouldRouteOnboardingToLoop({ ...base, role: "caregiver" })).toBe(false);
+    });
+
+    it("does NOT route a transactional/gate step (not a collection step)", () => {
+      process.env.ONBOARDING_AGENT_LOOP = "client";
+      expect(shouldRouteOnboardingToLoop({ ...base, step: "client_send_payment" })).toBe(false);
+      expect(shouldRouteOnboardingToLoop({ ...base, step: "verify_phone" })).toBe(false);
+      expect(shouldRouteOnboardingToLoop({ ...base, step: "client_ask_start" })).toBe(false);
+    });
+
+    it("does NOT route media or location turns (stay on legacy handlers)", () => {
+      process.env.ONBOARDING_AGENT_LOOP = "client";
+      expect(shouldRouteOnboardingToLoop({ ...base, hasMedia: true })).toBe(false);
+      expect(shouldRouteOnboardingToLoop({ ...base, hasLocation: true })).toBe(false);
+      expect(shouldRouteOnboardingToLoop({ ...base, hasText: false })).toBe(false);
+    });
+
+    it("routes only the role named in the flag", () => {
+      process.env.ONBOARDING_AGENT_LOOP = "caregiver";
+      expect(shouldRouteOnboardingToLoop(base)).toBe(false); // client not enabled
     });
   });
 });

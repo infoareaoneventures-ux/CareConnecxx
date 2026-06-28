@@ -1003,6 +1003,38 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "save_onboarding_field",
+    description:
+      "During onboarding, persist ONE field the user just gave you (e.g. the senior's name, " +
+      "the family relationship, care needs, the caregiver's rate). Call this as soon as you've " +
+      "confirmed a value — one call per field. It returns the fields still missing so you know " +
+      "what to ask next. Do NOT use this outside an active onboarding turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        role:       { type: "string", enum: ["client", "caregiver"], description: "Which onboarding flow this is" },
+        fieldName:  { type: "string", description: "The onboardingData field to set (e.g. seniorName, age, city, schedule, hourlyRate)" },
+        fieldValue: { description: "The value to store for this field (string, number, array, or object)" },
+      },
+      required: ["role", "fieldName", "fieldValue"],
+    },
+  },
+  {
+    name: "complete_collection",
+    description:
+      "Signal that you've collected every required onboarding field. It re-checks the required " +
+      "set: if anything is still missing it returns the missing list and does NOT advance (keep " +
+      "collecting). If complete, it hands off to the next setup step (payment / uploads) and you " +
+      "should tell the user what's next in your own voice. Call ONLY when you believe collection is done.",
+    input_schema: {
+      type: "object",
+      properties: {
+        role: { type: "string", enum: ["client", "caregiver"], description: "Which onboarding flow this is" },
+      },
+      required: ["role"],
+    },
+  },
+  {
     name: "add_family_member",
     description:
       "Add a new family member to this care group. They receive a welcome SMS and start getting updates. " +
@@ -5403,6 +5435,59 @@ async function executeToolCall(
         console.error("send_onboarding_link error:", err);
         return toolError("UNAVAILABLE", "Couldn't generate that link right now — try again in a moment.");
       }
+    }
+
+    // ── save_onboarding_field (U1) ──────────────────────────────────────────
+    // The agent loop's per-field write during onboarding. Session-only mutation:
+    // merges one field into agent_sessions/{phone}.onboardingData and returns the
+    // required fields still missing for that role.
+    if (name === "save_onboarding_field") {
+      const { phone, role, fieldName } = input as Record<string, unknown>;
+      const fieldValue = (input as Record<string, unknown>).fieldValue;
+      if (!phone) return toolError("INVALID_INPUT", "phone is required");
+      if (role !== "client" && role !== "caregiver") {
+        return toolError("INVALID_INPUT", "role must be 'client' or 'caregiver'");
+      }
+      if (typeof fieldName !== "string" || !fieldName.trim()) {
+        return toolError("INVALID_INPUT", "fieldName is required");
+      }
+      const { isAllowedField, missingRequiredFields } = await import("../agents/onboardingContract");
+      if (!isAllowedField(role, fieldName)) {
+        return toolError("INVALID_INPUT", `'${fieldName}' is not a collectable onboarding field for a ${role}.`);
+      }
+      if (fieldValue === undefined || fieldValue === null || fieldValue === "") {
+        return toolError("INVALID_INPUT", "fieldValue is required");
+      }
+      const ref  = db.collection("agent_sessions").doc(phone as string);
+      await ref.set({ onboardingData: { [fieldName]: fieldValue } }, { merge: true });
+      // U7 will bootstrap durable memory from the first name+phone here.
+      const snap = await ref.get();
+      const data = (snap.data()?.onboardingData ?? {}) as Record<string, unknown>;
+      const missing = missingRequiredFields(role, data);
+      return { ok: true, fieldName, saved: true, missing, collectionComplete: missing.length === 0 };
+    }
+
+    // ── complete_collection (U1) ────────────────────────────────────────────
+    // Gate: only advances when every required field for the role is present.
+    // Otherwise returns the missing list so the loop keeps collecting (R7). On
+    // completion, sets the cursor to the first deterministic gate step.
+    if (name === "complete_collection") {
+      const { phone, role } = input as Record<string, unknown>;
+      if (!phone) return toolError("INVALID_INPUT", "phone is required");
+      if (role !== "client" && role !== "caregiver") {
+        return toolError("INVALID_INPUT", "role must be 'client' or 'caregiver'");
+      }
+      const { missingRequiredFields, firstGateStep } = await import("../agents/onboardingContract");
+      const ref  = db.collection("agent_sessions").doc(phone as string);
+      const snap = await ref.get();
+      const data = (snap.data()?.onboardingData ?? {}) as Record<string, unknown>;
+      const missing = missingRequiredFields(role, data);
+      if (missing.length > 0) {
+        return { ok: false, complete: false, missing };
+      }
+      const nextStep = firstGateStep(role);
+      await ref.set({ onboardingStep: nextStep }, { merge: true });
+      return { ok: true, complete: true, nextStep, status: "collection_complete" };
     }
 
     // ── get_invoice_details ─────────────────────────────────────────────────

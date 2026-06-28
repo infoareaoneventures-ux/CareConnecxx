@@ -185,6 +185,11 @@ const CORE_TOOL_NAMES = new Set<string>([
   // U4: loop-control completion signal — must be available on every turn so the
   // agent can always end intentionally, never filtered out by intent.
   "complete_task",
+  // Onboarding-loop writes (U1) — the agent's per-field save and the collection
+  // handoff. Only meaningful during an onboarding turn; kept core so intent
+  // filtering never strips them mid-collection.
+  "save_onboarding_field",
+  "complete_collection",
   // Cross-cutting onboarding helper: "send me my payment / identity / photo /
   // document / background-check / payout link" arrives under many filtered
   // intents (UPDATE_PAYMENT_METHOD, UPDATE_PHOTO, …). It must never be filtered

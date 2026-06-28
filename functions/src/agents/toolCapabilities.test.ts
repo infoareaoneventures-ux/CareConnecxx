@@ -175,6 +175,8 @@ describe("TOOL_CAPABILITIES coverage", () => {
       "write_todos",
       "cara_knows",
       "task",
+      "save_onboarding_field",
+      "complete_collection",
       "send_onboarding_link",
       "trigger_emergency_alert",
       "send_referral",

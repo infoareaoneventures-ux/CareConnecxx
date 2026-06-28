@@ -383,6 +383,24 @@ export async function handleOnboardingStep(
     if (step !== session.onboardingStep) session.onboardingStep = step;
   }
 
+  // ── Self-heal a desynced cursor parked at ask_role ──────────────────────────
+  // If the cursor is at ask_role but the role is ALREADY decided, never re-ask the
+  // role (or a name we already have) — jump to the first still-unanswered step for
+  // that role. This is the "Cara forgot me" bug: a stuck ask_role cursor with
+  // userType + firstName on file would otherwise loop role/name questions forever.
+  if (step === "ask_role" && session.userType) {
+    if (session.userType === "client") {
+      step = resolveClientStep(session.onboardingData as Record<string, unknown> | undefined);
+    } else if (session.userType === "caregiver") {
+      const d = (session.onboardingData ?? {}) as Record<string, unknown>;
+      step = isFieldFilled(d.name) ? "caregiver_ask_location" : "caregiver_ask_name";
+    }
+    if (step !== session.onboardingStep) {
+      await updateSession(phone, { onboardingStep: step });
+      session.onboardingStep = step;
+    }
+  }
+
   // ── Inbound image / document (vision-gated) ─────────────────────────────────
   // A texted photo/document with no text. Route by the current step before any
   // text-based detectors run (they'd misfire on empty text). The handler decides

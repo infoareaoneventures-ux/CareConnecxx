@@ -85,3 +85,14 @@ export function missingRequiredFields(
 export function firstGateStep(role: OnboardingRole): string {
   return role === "caregiver" ? CAREGIVER_FIRST_GATE_STEP : CLIENT_POST_COLLECTION_STEP;
 }
+
+// The only tools the agent loop is offered during onboarding (U3). Keeping the
+// surface tiny keeps collection focused and fast — never the full 88-tool set.
+// complete_task lets the loop end the turn intentionally.
+export const ONBOARDING_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "save_onboarding_field", "complete_collection", "complete_task",
+]);
+
+export function isOnboardingTool(name: string): boolean {
+  return ONBOARDING_TOOL_NAMES.has(name);
+}

@@ -25,6 +25,8 @@ import { MCP_TOOLS, CAREGIVER_TOOLS, handleToolCall, handleToolCallForCaregiver 
 import { callClaudeWithRetry } from "../utils/claudeRetry";
 import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
+import { buildOnboardingDirective } from "./onboardingDirective";
+import { isOnboardingTool } from "./onboardingContract";
 import { withToolsCacheControl } from "./toolCache";
 import { getLatestPending } from "./pendingActions";
 import { resolveLoopBudget, MAX_TOOL_CALLS_PER_TURN } from "./loopBudget";
@@ -975,8 +977,13 @@ export async function runQaAgent(params: {
   // tools are synthesized, never executed. The shadow harness (U6) sets this
   // together with skipSend so a parallel comparison run has zero side effects.
   shadowMode?:    boolean;
+  // U3: when true, run the loop in onboarding-collection mode — restrict the tool
+  // surface to the onboarding tools and inject the onboarding directive. Set by
+  // the routing split (U4) for a user in the conversational collection phase.
+  onboardingMode?: boolean;
+  onboardingRole?: "client" | "caregiver";
 }): Promise<string> {
-  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, _iterationsOut, sourceChannel, intent, shadowMode = false } = params;
+  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, _iterationsOut, sourceChannel, intent, shadowMode = false, onboardingMode = false, onboardingRole } = params;
 
   // Tag the input so Claude can apply different judgment per channel.
   // [USER] messages may require a reply; [TRIGGER] / [AGENT] inputs may not.
@@ -1385,6 +1392,17 @@ export async function runQaAgent(params: {
       "EXIT SIGNAL: when and only when the family has confirmed they're done, end your reply with the literal token [[EXIT_PROFILE_REVIEW]] on its own line. The post-processor strips the token before sending and clears the session flag. Do NOT emit the token while the user is still correcting fields.";
   }
 
+  // ONBOARDING MODE (U3) — the agent loop is driving conversational field
+  // collection (client-first). Inject the goal/checklist/voice directive so Cara
+  // leads collection naturally instead of the scripted runner that re-greeted
+  // and double-sent. The tool surface is restricted to the onboarding tools below.
+  if (onboardingMode && onboardingRole) {
+    systemPrompt += "\n\n" + buildOnboardingDirective(
+      onboardingRole,
+      (session as any)?.onboardingData as Record<string, unknown> | undefined,
+    );
+  }
+
   // Unconfirmed-identity short-circuits: skip all per-phone task/goal/agent
   // context — they may reference work on behalf of a different linked person.
   const skipCrossEntity = !!(session as any)?.__unconfirmedIdentity;
@@ -1521,8 +1539,12 @@ export async function runQaAgent(params: {
     // TASK_REPLY, UPDATE_ONBOARDING, null) keep the full surface. Filtering
     // reduces wrong-tool calls and prompt-cache decode cost; core tools
     // (senior profile, pending tasks, etc.) are always included.
-    const baseTools = userType === "caregiver" ? CAREGIVER_TOOLS : MCP_TOOLS;
-    const activeTools = userType === "caregiver"
+    // U3: onboarding mode restricts the surface to the onboarding tools so the
+    // loop stays focused (and fast) on collection — never the full 88-tool set.
+    const baseTools = onboardingMode
+      ? MCP_TOOLS.filter(t => isOnboardingTool(t.name))
+      : userType === "caregiver" ? CAREGIVER_TOOLS : MCP_TOOLS;
+    const activeTools = (onboardingMode || userType === "caregiver")
       ? baseTools
       : selectToolsForIntent(baseTools, intent ?? null);
     if (activeTools.length !== baseTools.length) {

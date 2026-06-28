@@ -6,6 +6,8 @@ import {
   isAllowedField,
   missingRequiredFields,
   firstGateStep,
+  isOnboardingTool,
+  ONBOARDING_TOOL_NAMES,
 } from "../onboardingContract";
 
 describe("onboardingContract", () => {
@@ -73,6 +75,21 @@ describe("onboardingContract", () => {
     it("scopes fields by role", () => {
       expect(isAllowedField("caregiver", "hourlyRate")).toBe(true);
       expect(isAllowedField("client", "hourlyRate")).toBe(false);
+    });
+  });
+
+  describe("onboarding tool surface (U3)", () => {
+    it("restricts to exactly the three onboarding tools", () => {
+      expect([...ONBOARDING_TOOL_NAMES].sort()).toEqual(
+        ["complete_collection", "complete_task", "save_onboarding_field"],
+      );
+    });
+    it("isOnboardingTool accepts the onboarding tools and rejects others", () => {
+      expect(isOnboardingTool("save_onboarding_field")).toBe(true);
+      expect(isOnboardingTool("complete_collection")).toBe(true);
+      expect(isOnboardingTool("complete_task")).toBe(true);
+      expect(isOnboardingTool("cancel_appointment")).toBe(false);
+      expect(isOnboardingTool("get_care_plan")).toBe(false);
     });
   });
 

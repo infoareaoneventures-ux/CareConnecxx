@@ -1,0 +1,74 @@
+# Runbook — Agent-native onboarding (conversational collapse) rollout
+
+**Flag:** `ONBOARDING_AGENT_LOOP` (comma-separated role keys, e.g. `client` or `client,caregiver`). Default OFF.
+**Plan:** `docs/plans/2026-06-28-001-feat-agent-native-onboarding-collapse-plan.md`
+**Scope shipped:** CLIENT conversational field-collection only. Caregiver is deferred (its flow interleaves transactional gates mid-collection — needs the segmented design, see plan + `onboardingContract.ts`).
+
+## What the flag does
+
+When `ONBOARDING_AGENT_LOOP` contains `client`, an inbound from a client on a
+conversational collection step (`client_ask_name|senior|needs|location|schedule`,
+plain text, no media/location) runs inside the `qaAgent` loop in onboarding mode
+instead of the scripted step runner. The loop:
+
+- injects `buildOnboardingDirective` (missing-field checklist + lead-don't-interrogate
+  voice rules + never-re-greet guardrail),
+- is offered only `save_onboarding_field`, `complete_collection`, `complete_task`,
+- persists each field to `agent_sessions/{phone}.onboardingData`,
+- calls `complete_collection` when the required set is filled, which sets the cursor
+  to `client_ask_start` and hands back to the deterministic machine.
+
+Transactional gates (payment, identity, uploads), `ask_role`, and all caregiver
+steps are **never** routed to the loop. Clearing the flag reverts to the scripted
+runner instantly (no redeploy).
+
+## Pre-flip gate (do NOT enable in prod until all pass)
+
+This mirrors the unvalidated-flip lesson from `context/progress-tracker.md:69` — the
+prompt dispatcher was flipped live without its eval. Do not repeat that.
+
+1. **Real-model eval.** Run the onboarding-loop eval against a real model on messy
+   human inputs (terse "My mom", front-loaded multi-field, mid-flow questions, bare
+   greetings, corrections). Gate: collection-completion rate ≥ scripted baseline;
+   no re-greet; no double-send; required fields always saved before handoff.
+   *(Harness is the remaining test work — see "Remaining" below.)*
+2. **Latency check.** Per-turn latency within agreed bound. The loop is Sonnet; the
+   scripted runner used gpt-4o-mini per field (KTD-7). Collection is few-turn, but
+   measure before trusting it on the signup happy path.
+3. **Golden transcripts** (`functions/src/agents/goldenTranscripts.test.ts`) extended
+   with onboarding cases, green.
+
+## Rollout sequence
+
+1. **OFF** (current). Scripted runner ships. Code present, inert.
+2. **Shadow** (optional): run the loop in parallel without sending, compare against
+   the scripted output on real traffic. Reuse the routing-shadow pattern
+   (`ROUTING_CONVERGENCE_SHADOW`) if wired for onboarding.
+3. **Canary:** `ONBOARDING_AGENT_LOOP=client` for a small cohort / short window.
+   Watch the metrics below.
+4. **On:** keep `client` set. Caregiver stays off pending its segmented design.
+
+## Metrics to watch (already emitted via `emitTurnMetrics`)
+
+- `memoryRecallTier`, `iterations`, `toolCalls`, `toolErrors`, truncations.
+- Signup-completion rate (collection → first gate → payment) vs the OFF baseline.
+- Per-turn latency.
+- Watch for: re-greeting (should be zero), double-sends (should be zero), stuck
+  collection (loop never calling `complete_collection`).
+
+## Rollback
+
+Clear `ONBOARDING_AGENT_LOOP` (remove the role key). Next inbound uses the scripted
+runner. No data migration — `onboardingData` shape is identical on both paths.
+
+## Remaining test work (before canary)
+
+- A `runQaAgent` onboarding-mode integration harness (mock the Claude client to drive
+  tool_use → save_onboarding_field → complete_collection, assert single reply / no
+  re-greet / handoff cursor). The existing `qaAgent.test.ts` only covers pure helpers,
+  so this harness is net-new.
+- Wire the real-model eval into `npm run eval` (`functions/src/evals/runner.ts`).
+
+Unit coverage already in place: `onboardingContract.test.ts` (field gate, routing
+predicate, tool surface), `onboardingDirective.test.ts` (voice rules, no chatbot
+phrasing), and no-regression on `qaAgent.test.ts` (68) + `handleInbound.routing.test.ts` (32).

@@ -5460,7 +5460,14 @@ async function executeToolCall(
       }
       const ref  = db.collection("agent_sessions").doc(phone as string);
       await ref.set({ onboardingData: { [fieldName]: fieldValue } }, { merge: true });
-      // U7 will bootstrap durable memory from the first name+phone here.
+      // R-MEM-1/2: durable capture begins here, at name+number — this merge
+      // persists every field as it's collected, and the webhook already logs each
+      // onboarding message to Zep from first contact. On resume, the onboarding
+      // directive (buildOnboardingDirective) reads this onboardingData so Cara
+      // recalls what's known and never re-asks. The rich memory_files bootstrap
+      // intentionally stays at completion (initializeMemoryFiles is uid-keyed; the
+      // account uid does not exist until payment, so an early phone-keyed bootstrap
+      // would orphan from the completion record). See onboardingContract notes.
       const snap = await ref.get();
       const data = (snap.data()?.onboardingData ?? {}) as Record<string, unknown>;
       const missing = missingRequiredFields(role, data);

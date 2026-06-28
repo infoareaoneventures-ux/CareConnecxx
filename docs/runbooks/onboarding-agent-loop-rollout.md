@@ -70,12 +70,21 @@ From the code review of this work:
   paths (`webhooks.ts`).
 - ~~**No stuck-signup net.**~~ FIXED — after the loop turn, if collection is complete
   but the cursor is still a collection step, `webhooks.ts` advances it to the gate.
-- **Both-flags interaction untested.** `CONVERGENCE_FLIPPED=onboarding` (dispatcher)
-  and `ONBOARDING_AGENT_LOOP=client` (this loop) are independent. Add a test that
-  both-on does not double-resolve the cursor on a `client_ask_*` step.
-- **Latency baseline undefined.** Pre-flip gate 2 says "within agreed bound" but no
-  number exists. Measure scripted-runner P95 per-collection-turn before flipping and
-  set an explicit Sonnet ceiling, or the rollback criterion is unfalsifiable.
+- ~~**Both-flags interaction untested.**~~ FIXED — `handleInbound.routing.test.ts`
+  ("onboarding agent-loop flag routing") pins the invariant: with `ONBOARDING_AGENT_LOOP=client`
+  the client collection turn routes to the loop and `handleOnboardingStep` is never
+  called, so the `CONVERGENCE_FLIPPED=onboarding` dispatcher can't also run and the
+  cursor is never double-resolved. Covers both-flags-on, loop-throws fallback, and
+  caregiver-only / flag-off negative cases.
+- **Latency baseline.** Pre-flip gate 2 ("within agreed bound") is now falsifiable.
+  **Provisional ceiling: P95 ≤ 4 s per collection turn.** Rationale: the scripted
+  runner is gpt-4o-mini single-shot per field (~0.5–1 s observed); the loop is one
+  Sonnet turn that saves the field(s) then replies — typically 2 iterations, ~1.5–2 s
+  each → ~3–4 s. Above 4 s the collection happy path degrades vs the scripted baseline.
+  **Measure before canary** (do NOT rely on the provisional number): tap
+  `emitTurnMetrics` `flowClass="onboarding"` turns in shadow/canary, take P95 over ≥50
+  turns, and ratify or revise the ceiling. The metric is already emitted (see Metrics
+  below) — this is a read, not new instrumentation.
 - **Mid-flow role-switch / "start over"** during collection lives in the bypassed
   `handleOnboardingStep`; confirm the loop directive handles these or routes back.
 

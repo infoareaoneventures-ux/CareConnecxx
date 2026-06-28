@@ -10,7 +10,7 @@
 // Every collaborator module is mocked; assertions are "which handler fired"
 // (and which did NOT), not message wording.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const hoisted = vi.hoisted(() => {
   const docState  = new Map<string, any>();
@@ -637,5 +637,65 @@ describe("web-onboarding name bridge", () => {
     await handleInbound(makeEvent("Hey Cara"));
     expect(session()?.onboardingStep).toBe("client_ask_name");
     expect(session()?.onboardingData).toBeUndefined();
+  });
+});
+
+// ── Onboarding-loop flag routing (pre-flip gate: both-flags interaction) ─────
+// ONBOARDING_AGENT_LOOP=client (this loop) and CONVERGENCE_FLIPPED=onboarding
+// (the dispatcher's next-field selector) are INDEPENDENT switches. The invariant:
+// when the loop flag is on for a client collection step, the turn routes to the
+// qaAgent loop and RETURNS before handleOnboardingStep — so the dispatcher never
+// also runs and the cursor is never double-resolved. shouldRouteOnboardingToLoop
+// + featureFlags are the REAL modules here (not mocked), so env drives routing.
+describe("onboarding agent-loop flag routing", () => {
+  afterEach(() => {
+    delete process.env.ONBOARDING_AGENT_LOOP;
+    delete process.env.CONVERGENCE_FLIPPED;
+  });
+
+  it("flag OFF: client collection step routes to the scripted runner, never the loop", async () => {
+    seedSession({ onboardingStep: "client_ask_name" });
+    await handleInbound(makeEvent("Sarah"));
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("ONBOARDING_AGENT_LOOP=client: client collection step routes to the loop, scripted runner NOT called", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_name" });
+    await handleInbound(makeEvent("Sarah"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(runQaAgent.mock.calls[0][0]).toMatchObject({
+      onboardingMode: true,
+      onboardingRole: "client",
+      userType: "client",
+    });
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  it("both flags on: loop wins and handleOnboardingStep never runs — no double cursor resolve", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    process.env.CONVERGENCE_FLIPPED   = "onboarding";
+    seedSession({ onboardingStep: "client_ask_senior" });
+    await handleInbound(makeEvent("My mom Jane"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  it("loop throws: falls through to the scripted runner so the user is never wedged", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_name" });
+    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout"));
+    await handleInbound(makeEvent("Sarah"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+  });
+
+  it("flag set to caregiver only: a client collection step still uses the scripted runner", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "caregiver";
+    seedSession({ onboardingStep: "client_ask_name" });
+    await handleInbound(makeEvent("Sarah"));
+    expect(runQaAgent).not.toHaveBeenCalled();
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
   });
 });

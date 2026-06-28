@@ -31,7 +31,8 @@ prompt dispatcher was flipped live without its eval. Do not repeat that.
    human inputs (terse "My mom", front-loaded multi-field, mid-flow questions, bare
    greetings, corrections). Gate: collection-completion rate ≥ scripted baseline;
    no re-greet; no double-send; required fields always saved before handoff.
-   *(Harness is the remaining test work — see "Remaining" below.)*
+   *(Mocked-loop harness shipped — `qaAgent.onboarding.test.ts`. The REAL-model run
+   against messy inputs is the remaining blocker — see "Remaining" below.)*
 2. **Latency check.** Per-turn latency within agreed bound. The loop is Sonnet; the
    scripted runner used gpt-4o-mini per field (KTD-7). Collection is few-turn, but
    measure before trusting it on the signup happy path.
@@ -90,11 +91,16 @@ From the code review of this work:
 
 ## Remaining test work (before canary)
 
-- A `runQaAgent` onboarding-mode integration harness (mock the Claude client to drive
-  tool_use → save_onboarding_field → complete_collection, assert single reply / no
-  re-greet / handoff cursor). The existing `qaAgent.test.ts` only covers pure helpers,
-  so this harness is net-new.
-- Wire the real-model eval into `npm run eval` (`functions/src/evals/runner.ts`).
+- ~~A `runQaAgent` onboarding-mode integration harness.~~ DONE —
+  `functions/src/agents/qaAgent.onboarding.test.ts` (5 tests) mocks the Claude client
+  to drive tool_use → `save_onboarding_field` → `complete_collection`, asserting:
+  fields saved before handoff in order; role injected into every save; tool surface
+  restricted to the three onboarding tools; single user-facing reply (no double-send /
+  no re-greet); and the `complete_collection` missing-fields recovery branch (loop
+  feeds the result back, model saves the missing field, then completes).
+- **Real-model eval (the last gate).** Wire it into `npm run eval`
+  (`functions/src/evals/runner.ts`) and run against a real model on messy human inputs.
+  Needs API spend + an explicit go — this is the only remaining pre-flip blocker.
 
 Unit coverage already in place: `onboardingContract.test.ts` (field gate, routing
 predicate, tool surface), `onboardingDirective.test.ts` (voice rules, no chatbot

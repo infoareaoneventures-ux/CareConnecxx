@@ -324,6 +324,45 @@ async function absorbClientFields(text: string, existing: Record<string, unknown
   return out;
 }
 
+// True when the message is ONLY a greeting/pleasantry — no answer, name, question,
+// or substantive content. LLM-judged (no keyword matching), per Cara's rules.
+async function isGreetingOnly(text: string): Promise<boolean> {
+  const r = await parseWithClaude(
+    "Reply with exactly GREETING or OTHER. " +
+    'GREETING = the message is ONLY a greeting or pleasantry with no real content ' +
+    '(e.g. "hey cara", "hi", "hello", "good morning", "you there?", "yo", "hey"). ' +
+    "OTHER = it contains any answer, a name, a question, a number, or any substantive info.",
+    text
+  ).catch(() => "OTHER");
+  return r.trim().toUpperCase().startsWith("GREET");
+}
+
+// Plain-words version of the question Cara should pick back up on for the current
+// onboarding step — used when a user greets mid-flow so the pickup matches the real
+// prompt instead of resetting. Reuses each step's own reask() text where possible.
+function currentStepQuestion(step: string, session: AgentSession): string {
+  if (step === "ask_role") return "are you looking for care for a loved one, or are you a caregiver looking for work?";
+  if (step === "client_confirm_name" || step === "caregiver_confirm_name") return "confirming the name I should call you";
+  const c = CLIENT_STEPS[step];    if (c?.reask) return c.reask(session);
+  const g = CAREGIVER_STEPS[step]; if (g?.reask) return g.reask(session);
+  const awaiting: Record<string, string> = {
+    client_send_payment:           "finishing your payment setup with the link I sent",
+    client_awaiting_payment:       "finishing your payment setup with the link I sent",
+    client_awaiting_identity:      "the quick identity check with the link I sent",
+    caregiver_send_photo:          "adding your profile photo with the link I sent",
+    caregiver_awaiting_photo:      "adding your profile photo with the link I sent",
+    caregiver_send_documents:      "uploading your certifications (or reply SKIP)",
+    caregiver_awaiting_documents:  "uploading your certifications (or reply SKIP)",
+    caregiver_send_membership:     "activating your membership with the link I sent",
+    caregiver_awaiting_membership: "activating your membership with the link I sent",
+    caregiver_send_bgcheck:        "your background check with the link I sent",
+    caregiver_awaiting_bgcheck:    "your background check results (usually 1–3 days)",
+    caregiver_send_stripe_connect: "setting up your payout account with the link I sent",
+    caregiver_awaiting_stripe:     "setting up your payout account with the link I sent",
+  };
+  return awaiting[step] ?? "right where we left off";
+}
+
 export async function handleOnboardingStep(
   phone:   string,
   chatId:  string,
@@ -379,6 +418,37 @@ export async function handleOnboardingStep(
     }
     (session as any)._emotionalDirective =
       buildEmotionalContextDirective(blended.value, classifyEmotionalTopic(text));
+  }
+
+  // ── Bare greeting mid-onboarding ("hey cara") ───────────────────────────────
+  // A user who just says hi partway through signup is NOT answering or starting
+  // over — they expect Cara to know where they are. Without this, "hey cara" at
+  // ask_role falls through to a robotic role menu, which reads as Cara forgetting
+  // them. Detect a greeting-only message, then warmly pick up at the CURRENT step
+  // (by name when known) instead of re-asking from scratch or resetting.
+  if (step && step !== "verify_phone" && step !== "complete"
+      && text !== "__RESUME__" && text.trim() !== "" && !inboundMedia) {
+    if (await isGreetingOnly(text)) {
+      const data      = (session.onboardingData ?? {}) as Record<string, unknown>;
+      const firstName = ((data.firstName ?? data.name) as string | undefined)?.trim() ?? "";
+      const audience: "caregiver" | "family" = session.userType === "caregiver" ? "caregiver" : "family";
+      const question  = currentStepQuestion(step, session);
+      const msg = await generateCaraMessage({
+        audience,
+        language: session.preferredLanguage === "es" ? "es" : "en",
+        context:
+          `${firstName ? `${firstName} ` : "Someone you're already helping "}just said hi while you're partway through getting them set up. ` +
+          `You are NOT starting over and you already know them — do NOT re-introduce yourself or ask their name again unless that's literally the current step. ` +
+          `Warmly greet them back${firstName ? ` by name (${firstName})` : ""}, briefly signal you remember right where you two left off, then gently pick back up with this: "${question}".`,
+        fallback: firstName
+          ? `Hey ${firstName}! We were right here — ${question}`
+          : `Hey! Picking up right where we left off — ${question}`,
+        maxTokens: 90,
+        emotionalDirective: (session as any)._emotionalDirective,
+      });
+      await sendMessage(chatId, msg);
+      return;
+    }
   }
 
   // ── Multi-field absorption (client flow only) ───────────────────────────────

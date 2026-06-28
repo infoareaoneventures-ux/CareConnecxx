@@ -85,7 +85,7 @@ export function formatClientSnapshot(s: ClientSnapshotInput): string {
     if (s.openJobs === 1 && s.openJobTitle) {
       lines.push(`- 1 open job post for ${s.openJobTitle}${applicants}.`);
     } else {
-      lines.push(`- ${s.openJobs} open job posts${applicants}.`);
+      lines.push(`- ${s.openJobs} open job post${s.openJobs === 1 ? "" : "s"}${applicants}.`);
     }
   }
   if (s.pendingTimesheets > 0)

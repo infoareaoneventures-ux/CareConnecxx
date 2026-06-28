@@ -144,10 +144,15 @@ function storedStep(): string | undefined {
 }
 
 // The dispatcher fires several pre-handler LLM calls per turn before the story
-// handler runs. With our inert emotionalContext mock the remaining ones are:
-//   detectRoleSwitch (expects JSON / "none"), detectCorrection (expects "null").
+// handler runs. With our inert emotionalContext mock the remaining ones, in order,
+// are:
+//   isGreetingOnly  (expects GREETING / OTHER),
+//   detectRoleSwitch (expects JSON / "none"),
+//   detectCorrection (expects "null").
 // We queue safe "no-op" answers for them, then the handler's own calls.
 function queueNoopPreHandlerCalls() {
+  // isGreetingOnly → OTHER (this is a real answer, not a bare greeting)
+  quickComplete.mockResolvedValueOnce("OTHER");
   // detectRoleSwitch → JSON {"switchTo":"none"}
   quickComplete.mockResolvedValueOnce('{"switchTo":"none"}');
   // detectCorrection → literal null

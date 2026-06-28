@@ -60,7 +60,10 @@ const hoisted = vi.hoisted(() => {
   const sendViaInteractionAgent = vi.fn().mockResolvedValue(undefined);
   const parseWithClaude         = vi.fn();
   const quickComplete           = vi.fn();
-  const generateCaraMessage     = vi.fn().mockResolvedValue("ack");
+  // generateCaraMessage wraps an LLM call but deterministically returns its
+  // `fallback` on empty/error output — that fallback is the contract the
+  // graceful paths rely on, so the mock mirrors it instead of a constant.
+  const generateCaraMessage     = vi.fn(async (opts: any) => opts?.fallback ?? "ack");
   const runEmergencyReplacement = vi.fn().mockResolvedValue(undefined);
 
   return {

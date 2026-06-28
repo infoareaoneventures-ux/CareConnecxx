@@ -1,4 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// Transitive imports call admin.firestore() at module load, so the module won't
+// import without a firebase-admin stub. These tests exercise only the pure
+// decision function — the stub just lets the module load; it's never read.
+vi.mock("firebase-admin", () => {
+  const firestore = () => ({ collection: () => ({ where: () => ({}), doc: () => ({}), add: () => {} }) });
+  const stub = { apps: [], initializeApp: () => ({}), firestore, storage: () => ({}), auth: () => ({}) };
+  return { __esModule: true, default: stub, ...stub };
+});
+
 import { shouldNudgeStaleApplicants, MIN_AGE_MS, COOLDOWN_MS } from "../staleApplicantNudge";
 
 // The stale-applicant nudge follows up with families who haven't reviewed

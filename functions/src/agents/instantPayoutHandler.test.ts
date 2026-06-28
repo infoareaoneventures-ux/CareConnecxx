@@ -22,7 +22,10 @@ const hoisted = vi.hoisted(() => {
   const sendMessage         = vi.fn().mockResolvedValue({ message_id: "x" });
   const parseWithClaude     = vi.fn();
   const quickComplete       = vi.fn();
-  const generateCaraMessage = vi.fn().mockResolvedValue("ack");
+  // generateCaraMessage wraps an LLM call but deterministically returns its
+  // `fallback` on empty/error output — that fallback is the contract the error
+  // paths rely on, so the mock mirrors it instead of a constant.
+  const generateCaraMessage = vi.fn(async (opts: any) => opts?.fallback ?? "ack");
 
   // Stripe balance + payouts mocks
   const balanceRetrieve = vi.fn();

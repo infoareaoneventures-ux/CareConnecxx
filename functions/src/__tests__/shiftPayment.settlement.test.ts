@@ -29,6 +29,8 @@ const hoisted = vi.hoisted(() => {
       updates.push({ path, data });
       docState.set(path, { ...(docState.get(path) ?? {}), ...data });
     }),
+    // Subcollections (e.g. users/{id}/notifications) — pushNotification writes here.
+    collection: (sub: string) => makeCollRef(`${path}/${sub}`),
   });
   const makeCollRef = (path: string): any => ({
     doc: (id: string) => makeDocRef(`${path}/${id}`),

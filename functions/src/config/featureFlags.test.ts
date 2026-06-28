@@ -45,11 +45,16 @@ describe("routing convergence flags (U6/U10)", () => {
 describe("convergence flip policy (U13 default-flipped + kill switch)", () => {
   afterEach(() => { delete process.env.CONVERGENCE_FLIPPED; delete process.env.CONVERGENCE_UNFLIPPED; });
 
-  it("flips job_posting, modify_schedule, and onboarding ON by default", () => {
+  it("flips job_posting and modify_schedule ON by default, holds onboarding DARK", () => {
     expect(isConvergenceFlipped("job_posting")).toBe(true);
     expect(isConvergenceFlipped("modify_schedule")).toBe(true);
-    // onboarding flipped at product direction (2026-06-25), kill switch is rollback.
+    // onboarding stays DARK by default in the cara-100 ↔ caregiver-mvr merge:
+    // combined-code parity isn't established and the KTD-6 eval was never run, so
+    // the proven legacy step flow ships. Still flippable per-flow once re-validated.
+    expect(isConvergenceFlipped("onboarding")).toBe(false);
+    process.env.CONVERGENCE_FLIPPED = "onboarding";
     expect(isConvergenceFlipped("onboarding")).toBe(true);
+    delete process.env.CONVERGENCE_FLIPPED;
   });
   it("CONVERGENCE_UNFLIPPED rolls back onboarding (and any default-on flow)", () => {
     process.env.CONVERGENCE_UNFLIPPED = "onboarding";

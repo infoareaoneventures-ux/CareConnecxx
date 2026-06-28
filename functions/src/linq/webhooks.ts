@@ -18,7 +18,12 @@ import {
   handleOnboardingStep,
 } from "../agents/onboardingConversation";
 import { runQaAgent } from "../agents/qaAgent";
-import { shouldRouteOnboardingToLoop } from "../agents/onboardingContract";
+import {
+  shouldRouteOnboardingToLoop,
+  missingRequiredFields,
+  firstGateStep,
+  CLIENT_COLLECTION_STEPS,
+} from "../agents/onboardingContract";
 import {
   handleClientPermissionsReply,
   handleCaregiverPermissionsReply,
@@ -1449,6 +1454,32 @@ const handleInboundInner = traceable(
     // (no re-greet, no double-send). Gated OFF by default. Only plain-text turns
     // route here; media/location stay on the legacy handlers, and transactional /
     // gate steps (not in CLIENT_STEP_ORDER) are never affected.
+    // Shared structured-Zep push (knowledge-graph capture of names/conditions/
+    // care needs). Called by BOTH the agent-loop path and the scripted runner so
+    // the graph stays populated regardless of which handled the turn.
+    const pushOnboardingStepToZep = async (completedStep: string) => {
+      if (!onboardingZepThreadId) return;
+      const afterSnap = await db.collection("agent_sessions").doc(phone).get();
+      const afterData = afterSnap.data() ?? {};
+      const oData     = (afterData.onboardingData ?? {}) as Record<string, unknown>;
+      await addBusinessDataToZep({
+        userId: getZepUserId(phone),
+        data: {
+          event_type:         "onboarding_step",
+          step_completed:     completedStep,
+          step_next:          afterData.onboardingStep ?? completedStep,
+          user_type:          afterData.userType ?? "unknown",
+          user_name:          (oData.firstName as string) ?? (oData.name as string) ?? "",
+          senior_name:        (oData.seniorName as string) ?? "",
+          senior_age:         oData.age ?? null,
+          senior_conditions:  oData.conditions ?? [],
+          senior_care_needs:  oData.careNeeds ?? [],
+          senior_city:        (oData.city as string) ?? "",
+          timestamp:          new Date().toISOString(),
+        },
+      }).catch((err) => console.error("onboarding Zep push error:", err));
+    };
+
     if (shouldRouteOnboardingToLoop({
       role:        session.userType,
       step,
@@ -1470,6 +1501,18 @@ const handleInboundInner = traceable(
           onboardingRole: "client",
           intent:      null,
         });
+        // Stuck-signup net: the cursor only advances when the model calls
+        // complete_collection. If collection is actually complete but the model
+        // didn't call it, advance to the gate so the user is never trapped on a
+        // collection step.
+        const after     = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
+        const curStep   = (after.onboardingStep as string) ?? step;
+        const curData   = (after.onboardingData ?? {}) as Record<string, unknown>;
+        if (CLIENT_COLLECTION_STEPS.includes(curStep) && missingRequiredFields("client", curData).length === 0) {
+          await db.collection("agent_sessions").doc(phone).update({ onboardingStep: firstGateStep("client") });
+          console.info("webhooks: stuck-signup net advanced cursor to gate", { phone, from: curStep });
+        }
+        await pushOnboardingStepToZep(step);
         return;
       } catch (err) {
         // RLB-001/005: the loop is Sonnet on the signup happy path. If it throws
@@ -1488,30 +1531,7 @@ const handleInboundInner = traceable(
       inboundMedia:    inboundMedia ?? undefined,
     });
 
-    // After each onboarding step, push the progress event to Zep as structured JSON
-    // so Zep's knowledge graph captures names, conditions, care needs as they're collected.
-    if (onboardingZepThreadId) {
-      const afterSnap   = await db.collection("agent_sessions").doc(phone).get();
-      const afterData   = afterSnap.data() ?? {};
-      const newStep     = afterData.onboardingStep ?? step;
-      const oData       = afterData.onboardingData ?? {};
-      addBusinessDataToZep({
-        userId: getZepUserId(phone),
-        data: {
-          event_type:         "onboarding_step",
-          step_completed:     step,
-          step_next:          newStep,
-          user_type:          afterData.userType ?? "unknown",
-          user_name:          (oData as any).firstName ?? (oData as any).name ?? "",
-          senior_name:        (oData as any).seniorName ?? "",
-          senior_age:         (oData as any).age ?? null,
-          senior_conditions:  (oData as any).conditions ?? [],
-          senior_care_needs:  (oData as any).careNeeds ?? [],
-          senior_city:        (oData as any).city ?? "",
-          timestamp:          new Date().toISOString(),
-        },
-      }).catch((err) => console.error("onboarding Zep push error:", err));
-    }
+    await pushOnboardingStepToZep(step);
     return;
   }
 

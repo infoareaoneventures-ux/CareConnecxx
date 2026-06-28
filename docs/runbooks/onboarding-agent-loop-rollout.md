@@ -63,18 +63,13 @@ runner. No data migration — `onboardingData` shape is identical on both paths.
 
 ## Open review items (address before canary)
 
-From the code review of this work (not yet fixed — deferred deliberately):
+From the code review of this work:
 
-- **Zep structured push skipped on the loop path.** The legacy path emits a
-  structured `onboarding_step` event to Zep after each step; the loop path
-  `return`s before it (`webhooks.ts`). Per-message Zep logging still runs, but the
-  structured knowledge-graph capture is lost on loop turns. Extract the push into a
-  shared helper called from both paths.
-- **No stuck-signup net.** The cursor only advances when the model calls
-  `complete_collection`. If the model fills every field but never calls it, the
-  client is stuck on a collection step. Add a server-side net: when
-  `save_onboarding_field` returns `collectionComplete:true` but the model didn't
-  call `complete_collection`, auto-advance (or fall back to the scripted runner).
+- ~~**Zep structured push skipped on the loop path.**~~ FIXED — the push is now a
+  shared `pushOnboardingStepToZep` helper called by both the loop and scripted
+  paths (`webhooks.ts`).
+- ~~**No stuck-signup net.**~~ FIXED — after the loop turn, if collection is complete
+  but the cursor is still a collection step, `webhooks.ts` advances it to the gate.
 - **Both-flags interaction untested.** `CONVERGENCE_FLIPPED=onboarding` (dispatcher)
   and `ONBOARDING_AGENT_LOOP=client` (this loop) are independent. Add a test that
   both-on does not double-resolve the cursor on a `client_ask_*` step.

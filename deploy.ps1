@@ -65,6 +65,9 @@ Write-Host ""
 Write-Host "🚀 Deploying Cloud Functions..." -ForegroundColor Cyan
 Write-Host "   This may take 3-5 minutes..." -ForegroundColor Yellow
 Set-Location ".."
+# Functions take ~4s to load; Firebase's default 10s discovery timeout can fail
+# silently in its slower sandbox, leaving function updates undeployed. Raise it.
+$env:FUNCTIONS_DISCOVERY_TIMEOUT = "120"
 firebase deploy --only functions
 if ($LASTEXITCODE -ne 0) {
     Write-Host "❌ Function deployment failed" -ForegroundColor Red

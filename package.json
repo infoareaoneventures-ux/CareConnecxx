@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "eval": "cd functions && npx ts-node src/evals/runner.ts",
     "predeploy": "npm run eval",
-    "deploy": "npm run build && firebase deploy",
+    "deploy": "node scripts/deploy.mjs",
     "test": "vitest",
     "icons": "node scripts/generate-icons.cjs",
     "migrate:predictive": "node scripts/run-migration.mjs",

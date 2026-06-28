@@ -42,6 +42,10 @@ vite.config.ts.timestamp-*
 .firebase/
 firebase-debug.log
 
+# Firebase service-account private keys - NEVER commit (full admin credentials)
+serviceAccountKey.json
+**/serviceAccountKey.json
+
 # OS files
 Thumbs.db
 

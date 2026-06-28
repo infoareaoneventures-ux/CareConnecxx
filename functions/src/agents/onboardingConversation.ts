@@ -452,7 +452,12 @@ export async function handleOnboardingStep(
   if (step !== "ask_role" && step !== "verify_phone" && !step.endsWith("_send_payment")
       && !step.endsWith("_awaiting_payment") && !step.endsWith("_awaiting_stripe")
       && !step.endsWith("_awaiting_bgcheck") && !step.endsWith("_awaiting_membership")
-      && !step.endsWith("_awaiting_documents") && !step.endsWith("_awaiting_photo")) {
+      && !step.endsWith("_awaiting_documents") && !step.endsWith("_awaiting_photo")
+      // Confirm-name steps own their own yes/correction parsing. A bare "yes" here
+      // must NOT be misread as a role switch — that would wipe onboardingData (the
+      // name we just greeted them with) and dump them back to ask_role.
+      && step !== "client_confirm_name"
+      && step !== "caregiver_confirm_name") {
     const switchTo = await detectRoleSwitch(text, session.userType ?? null);
     if (switchTo) {
       await updateSession(phone, {
@@ -514,7 +519,7 @@ export async function handleOnboardingStep(
   // Route to the appropriate step handler
   switch (step) {
     case "verify_phone":          return handleVerifyPhone(phone, chatId, text, session);
-    case "ask_role":              return handleAskRole(phone, chatId, text);
+    case "ask_role":              return handleAskRole(phone, chatId, text, session);
     case "client_confirm_name":   return handleClientConfirmName(phone, chatId, text, session);
     case "client_ask_name":       return handleClientAskName(phone, chatId, text, session);
     case "client_ask_senior":     return handleClientAskSenior(phone, chatId, text, session);
@@ -666,7 +671,7 @@ async function handleVerifyPhone(
 
 // ── ask_role ──────────────────────────────────────────────────────────────────
 
-async function handleAskRole(phone: string, chatId: string, text: string): Promise<void> {
+async function handleAskRole(phone: string, chatId: string, text: string, session?: AgentSession): Promise<void> {
   const raw = await parseWithClaude(
     'The user is choosing between two options: (1) they need care for a loved one (family/client) or ' +
     '(2) they are a caregiver looking for work. ' +
@@ -675,24 +680,63 @@ async function handleAskRole(phone: string, chatId: string, text: string): Promi
     'Reply with exactly one word: client or caregiver. If truly unclear, reply: unclear',
     text
   );
+  const emotionalDirective = (session as any)?._emotionalDirective as string | undefined;
   if (raw === "client") {
+    // If we already captured their name earlier (e.g. it rode in from the web form
+    // or was given before the role was clear), NEVER ask for it again — that's the
+    // "she doesn't know me" moment. Greet by name and move straight to the senior
+    // question, the next step in the client flow.
+    const knownName = (session?.onboardingData?.firstName as string | undefined)?.trim();
+    if (knownName) {
+      await updateSession(phone, { onboardingStep: "client_ask_senior", userType: "client" });
+      const msgKnown = await generateCaraMessage({
+        audience: "family",
+        context: `${knownName} just said they're looking for care for a loved one, and you already know their name is ${knownName}. ` +
+          `Warmly acknowledge them BY NAME — do NOT ask their name again — then ask who they're looking for care for ` +
+          `(the person's name and their relationship, e.g. "my mom Dorothy").`,
+        fallback: `Thanks, ${knownName}. Who are we caring for — their name and your relationship?`,
+        maxTokens: 80,
+        emotionalDirective,
+      });
+      await sendMessage(chatId, msgKnown);
+      return;
+    }
     await updateSession(phone, { onboardingStep: "client_ask_name", userType: "client" });
     const msg1 = await generateCaraMessage({
       audience: "family",
       context: "Cara is greeting a new family member who just said they're looking for care for a loved one. Ask for their name warmly.",
       fallback: "I'd love to help. What's your name?",
       maxTokens: 80,
+      emotionalDirective,
     });
     await sendMessage(chatId, msg1);
     return;
   }
   if (raw === "caregiver") {
+    // Same guard for the caregiver flow — if the name is already known, skip the
+    // name question and go straight to the next step (location).
+    const knownName = (session?.onboardingData?.name as string | undefined)?.trim();
+    if (knownName) {
+      await updateSession(phone, { onboardingStep: "caregiver_ask_location", userType: "caregiver" });
+      const msgKnownCg = await generateCaraMessage({
+        audience: "caregiver",
+        context: `${knownName} just said they're a caregiver looking for work, and you already know their name is ${knownName}. ` +
+          `Warmly acknowledge them BY NAME — do NOT ask their name again — let them know setup takes about 5 minutes right here, ` +
+          `then ask what city and zip code they're based in.`,
+        fallback: `Great, ${knownName}! Setup takes about 5 minutes, all right here. What city and zip code are you based in?`,
+        maxTokens: 90,
+        emotionalDirective,
+      });
+      await sendMessage(chatId, msgKnownCg);
+      return;
+    }
     await updateSession(phone, { onboardingStep: "caregiver_ask_name", userType: "caregiver" });
     const msg2 = await generateCaraMessage({
       audience: "caregiver",
       context: "Cara is greeting a new caregiver who just said they're looking for work. Let them know profile setup takes about 5 minutes and everything happens right here over text. Then ask for their name.",
       fallback: "Great — let's get your profile set up. Takes about 5 minutes and everything happens right here.\n\nWhat's your name?",
       maxTokens: 80,
+      emotionalDirective,
     });
     await sendMessage(chatId, msg2);
     return;
@@ -714,7 +758,7 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     const current = (session.onboardingData?.firstName as string | undefined) ?? "there";
-    await sendMessage(chatId, `Just to confirm — should I call you ${current}? (Reply yes, or send the name you'd prefer.)`);
+    await sendMessage(chatId, `So I get it right — do you go by ${current}?`);
     return;
   }
   const seeded = (session.onboardingData?.firstName as string | undefined) ?? "";
@@ -735,7 +779,7 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
       ? parsed.correctedName.trim() : null;
   } catch {
     // Parse failure → re-ask rather than guessing.
-    await sendMessage(chatId, `Sorry — should I call you ${seeded || "by the name you gave"}? Reply yes, or send the name you'd prefer.`);
+    await sendMessage(chatId, `Sorry — just want to get it right. Do you go by ${seeded || "the name you gave"}, or is there another you'd prefer?`);
     return;
   }
 
@@ -1276,7 +1320,7 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
     const answer = await answerQuestionMidFlow(text, sess);
     await sendMessage(chatId, answer);
     const current = (sess.onboardingData?.name as string | undefined) ?? "there";
-    await sendMessage(chatId, `Just to confirm — should I call you ${current}? (Reply yes, or send the name you'd prefer.)`);
+    await sendMessage(chatId, `So I get it right — do you go by ${current}?`);
     return;
   }
   const seeded = (sess.onboardingData?.name as string | undefined) ?? "";
@@ -1296,7 +1340,7 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
     correctedName = typeof parsed.correctedName === "string" && parsed.correctedName.trim()
       ? parsed.correctedName.trim() : null;
   } catch {
-    await sendMessage(chatId, `Sorry — should I call you ${seeded || "by the name you gave"}? Reply yes, or send the name you'd prefer.`);
+    await sendMessage(chatId, `Sorry — just want to get it right. Do you go by ${seeded || "the name you gave"}, or is there another you'd prefer?`);
     return;
   }
 

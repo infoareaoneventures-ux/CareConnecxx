@@ -719,32 +719,69 @@ const handleInboundInner = traceable(
 
       if (service === "iMessage") await startTyping(chatId).catch(() => {});
 
+      // First impressions matter most — route the opening message through Cara's
+      // actual voice (generateCaraMessage) instead of a frozen template, so the
+      // very first thing the user reads sounds like her, not a chatbot. The old
+      // hardcoded strings stay as fallbacks if the LLM call fails. The follow-up
+      // confirm/ask-name handlers parse replies via parseWithClaude, so we don't
+      // need a "(Reply yes...)" instruction in the copy.
+      const welcomeAudience: "caregiver" | "family" = webRole === "caregiver" ? "caregiver" : "family";
+      const welcomeLanguage: "en" | "es" = preferredLanguage === "es" ? "es" : "en";
       let welcome: string;
       if (isReturning) {
-        welcome = preferredLanguage === "es"
-          ? "¡Hola otra vez! Soy Cara. Me alegra verte de nuevo — ¿en qué te puedo ayudar hoy?"
-          : "Welcome back. It's Cara - good to hear from you again. What should we handle first?";
+        welcome = await generateCaraMessage({
+          audience: welcomeAudience,
+          language: welcomeLanguage,
+          context:
+            "Someone you've helped before just reconnected by text (they only said a quick hello). " +
+            "Warmly welcome them back, and ask what they'd like to handle first. One or two sentences, no lists.",
+          fallback: preferredLanguage === "es"
+            ? "¡Hola otra vez! Soy Cara. Me alegra verte de nuevo — ¿en qué te puedo ayudar hoy?"
+            : "Welcome back. It's Cara - good to hear from you again. What should we handle first?",
+          maxTokens: 90,
+        });
       } else if (webName) {
-        // Name came in from the web form — greet by name and ask them to confirm it
-        // (the confirm step handler resolves yes / correction). Mirrors the tone of
-        // the ask-name welcome but skips re-asking for something we already have.
-        welcome = webRole === "caregiver"
-          ? (preferredLanguage === "es"
-              ? `¡Hola ${webName}! Soy Cara — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Te llamo ${webName}, verdad? (Responde sí, o envíame el nombre que prefieras.)`
-              : `Hi ${webName}! I'm Cara — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and everything happens right here.\n\nShould I call you ${webName}? (Reply yes, or send the name you'd prefer.)`)
-          : (preferredLanguage === "es"
-              ? `¡Hola ${webName}! Soy Cara, tu coordinadora de cuidados. Me encantaría ayudarte.\n\n¿Te llamo ${webName}, verdad? (Responde sí, o envíame el nombre que prefieras.)`
-              : `Hi ${webName}! I'm Cara, your care coordinator. I'd love to help.\n\nShould I call you ${webName}? (Reply yes, or send the name you'd prefer.)`);
+        // Name came in from the web form — greet by name and naturally check it's
+        // right (the confirm step handler resolves yes / correction via Claude).
+        welcome = await generateCaraMessage({
+          audience: welcomeAudience,
+          language: welcomeLanguage,
+          context: welcomeAudience === "caregiver"
+            ? `You're meeting ${webName} for the very first time over text. They just signed up to find caregiving work. ` +
+              `Introduce yourself warmly as Cara, mention that setting up their profile takes about 5 minutes and happens right here by text, ` +
+              `and naturally check that "${webName}" is the name they go by — woven into a sentence, NOT as a parenthetical instruction. Sound like a real person, not a form.`
+            : `You're meeting ${webName} for the very first time over text. They're looking for care for a loved one. ` +
+              `Introduce yourself warmly as Cara, their care coordinator, ` +
+              `and naturally check that "${webName}" is the name they go by — woven into a sentence, NOT as a parenthetical instruction. Sound like a real person, not a form.`,
+          fallback: webRole === "caregiver"
+            ? (preferredLanguage === "es"
+                ? `¡Hola ${webName}! Soy Cara — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Te llamo ${webName}, verdad?`
+                : `Hi ${webName}! I'm Cara — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and it all happens right here. Do you go by ${webName}?`)
+            : (preferredLanguage === "es"
+                ? `¡Hola ${webName}! Soy Cara, tu coordinadora de cuidados. ¿Te llamo ${webName}, verdad?`
+                : `Hi ${webName}, I'm Cara — I'll be your care coordinator. Do you go by ${webName}?`),
+          maxTokens: 120,
+        });
       } else {
         // Role-aware welcome — mirrors what handleAskRole sends so the user
         // experiences the same conversational onboarding from message #1.
-        welcome = webRole === "caregiver"
-          ? (preferredLanguage === "es"
-              ? "¡Hola! Soy Cara — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Cómo te llamas?"
-              : "Hi! I'm Cara — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and everything happens right here.\n\nWhat's your name?")
-          : (preferredLanguage === "es"
-              ? "¡Hola! Soy Cara, tu coordinadora de cuidados. Me encantaría ayudarte.\n\n¿Cómo te llamas?"
-              : "Hi! I'm Cara, your care coordinator. I'd love to help.\n\nWhat's your name?");
+        welcome = await generateCaraMessage({
+          audience: welcomeAudience,
+          language: welcomeLanguage,
+          context: welcomeAudience === "caregiver"
+            ? "You're meeting someone for the very first time over text who just signed up to find caregiving work. " +
+              "Introduce yourself warmly as Cara, mention that setting up their profile takes about 5 minutes and happens right here, and ask their name. Sound like a real person, not a form."
+            : "You're meeting someone for the very first time over text who's looking for care for a loved one. " +
+              "Introduce yourself warmly as Cara, their care coordinator, and ask their name. Sound like a real person, not a form.",
+          fallback: webRole === "caregiver"
+            ? (preferredLanguage === "es"
+                ? "¡Hola! Soy Cara — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Cómo te llamas?"
+                : "Hi! I'm Cara — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and everything happens right here.\n\nWhat's your name?")
+            : (preferredLanguage === "es"
+                ? "¡Hola! Soy Cara, tu coordinadora de cuidados. ¿Cómo te llamas?"
+                : "Hi! I'm Cara — I'll be your care coordinator. What's your name?"),
+          maxTokens: 90,
+        });
       }
       await sendMessage(chatId, welcome);
 

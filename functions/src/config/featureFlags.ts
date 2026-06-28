@@ -48,16 +48,15 @@ export function convergenceFlippedFlows(): ReadonlySet<string> {
 //   • job_posting / modify_schedule (U13) — no payment/Checkr/account-creation
 //     side effects; plan-sanctioned cutover on conversational parity alone,
 //     proven by the resolveJobStep / resolveScheduleStep parity tests.
-//   • onboarding (U12) — flipped at explicit product direction (2026-06-25)
-//     WITHOUT the real-model eval (KTD-6) that the plan recommended for the
-//     signup path. Safety rests on: (a) the dispatcher only re-SEQUENCES
-//     conversational steps — the Stripe/Checkr/auth/terminal-write GATE handlers
-//     are untouched; (b) deterministic conversational parity proven across the
-//     U11 corpus with the flag on (happy path, multi-field absorption, mid-flow
-//     question, correction — onboardingReplay.test.ts); (c) instant rollback via
-//     CONVERGENCE_UNFLIPPED=onboarding. The eval remains the recommended follow-up
-//     to validate real-model sequencing; monitor signup completion after deploy.
-const DEFAULT_FLIPPED_FLOWS: ReadonlySet<string> = new Set(["job_posting", "modify_schedule", "onboarding"]);
+//   • onboarding (U12) — held DARK by default in the cara-100 ↔ caregiver-mvr
+//     integration build (2026-06-27). cara-100 had flipped it on, but its parity
+//     was proven against cara's *own* legacy machine; the merge brings in the
+//     caregiver-mvr onboarding handlers, so that parity is no longer established
+//     for the combined code, and the recommended real-model eval (KTD-6) was
+//     never run. The proven legacy step flow ships by default. The dispatcher
+//     stays fully available + tested (onboardingReplay U12 flag-ON suite) and can
+//     be flipped per-flow via CONVERGENCE_FLIPPED=onboarding once re-validated.
+const DEFAULT_FLIPPED_FLOWS: ReadonlySet<string> = new Set(["job_posting", "modify_schedule"]);
 
 function convergenceUnflippedFlows(): ReadonlySet<string> {
   const raw = process.env.CONVERGENCE_UNFLIPPED ?? "";

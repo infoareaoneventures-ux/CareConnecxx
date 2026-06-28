@@ -83,7 +83,13 @@ async function extractFamilyMember(text: string): Promise<{ name: string | null;
 async function handleRecurringPause(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const scheduleId = (session as any).activeRecurringScheduleId as string | undefined;
   if (!scheduleId) {
-    await sendMessage(chatId, "I don't see an active recurring schedule. Want me to check upcoming visits instead?");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: session.preferredLanguage === "es" ? "es" : "en",
+      context: "The family asked about their recurring schedule, but there isn't an active one on file. Gently let them know, and offer to check their upcoming visits instead.",
+      fallback: "I don't see an active recurring schedule. Want me to check upcoming visits instead?",
+      maxTokens: 70,
+    }));
     return;
   }
   await db.collection("recurring_schedules").doc(scheduleId).update({
@@ -100,7 +106,13 @@ async function handleRecurringPause(phone: string, chatId: string, session: Agen
 async function handleRecurringCancel(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const scheduleId = (session as any).activeRecurringScheduleId as string | undefined;
   if (!scheduleId) {
-    await sendMessage(chatId, "I don't see an active recurring schedule. Want me to check upcoming visits instead?");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: session.preferredLanguage === "es" ? "es" : "en",
+      context: "The family asked about their recurring schedule, but there isn't an active one on file. Gently let them know, and offer to check their upcoming visits instead.",
+      fallback: "I don't see an active recurring schedule. Want me to check upcoming visits instead?",
+      maxTokens: 70,
+    }));
     return;
   }
 
@@ -136,12 +148,24 @@ async function handleRecurringCancel(phone: string, chatId: string, session: Age
 async function handleRecurringResume(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const scheduleId = (session as any).activeRecurringScheduleId as string | undefined;
   if (!scheduleId) {
-    await sendMessage(chatId, "I don't see a paused schedule. Want me to check upcoming visits instead?");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: session.preferredLanguage === "es" ? "es" : "en",
+      context: "The family asked to resume a paused recurring schedule, but there isn't a paused one on file. Gently let them know, and offer to check their upcoming visits instead.",
+      fallback: "I don't see a paused schedule. Want me to check upcoming visits instead?",
+      maxTokens: 70,
+    }));
     return;
   }
   const schedSnap = await db.collection("recurring_schedules").doc(scheduleId).get();
   if (!schedSnap.exists || schedSnap.data()?.status !== "paused") {
-    await sendMessage(chatId, "That schedule isn't currently paused.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: session.preferredLanguage === "es" ? "es" : "en",
+      context: "The family asked to resume their recurring schedule, but it isn't actually paused right now. Gently let them know it's already active.",
+      fallback: "That schedule isn't currently paused.",
+      maxTokens: 60,
+    }));
     return;
   }
   const sched = schedSnap.data()!;
@@ -200,7 +224,13 @@ async function handleAddFamilyMemberIntent(
   session: AgentSession
 ): Promise<void> {
   if ((session as any).isSecondaryMember) {
-    await sendMessage(chatId, "I can help with updates here, but only the primary account holder can add people to this care group.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: session.preferredLanguage === "es" ? "es" : "en",
+      context: "This person is a secondary member of the care group and asked to add someone new. Warmly explain you're happy to help with updates here, but only the primary account holder can add people to the care group.",
+      fallback: "I can help with updates here, but only the primary account holder can add people to this care group.",
+      maxTokens: 70,
+    }));
     return;
   }
 
@@ -401,7 +431,13 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         } catch (err) {
           console.error("executeBookings failed (BOOKING_CONFIRM):", err);
           await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
-          await sendMessage(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
+          await sendMessage(chatId, await generateCaraMessage({
+            audience: "family",
+            language: session.preferredLanguage === "es" ? "es" : "en",
+            context: "You hit a snag finalizing that booking. Warmly reassure the family you're on it — you'll sort out an alternative and get back to them shortly. Sound human and calm, not like an error message.",
+            fallback: "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.",
+            maxTokens: 80,
+          }));
           const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
           const { runMatchingForClient: rmfc } = await import("../agents/matchingAgent");
           await rmfc(phone, chatId, sd, sd).catch(() => {});
@@ -566,7 +602,13 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         } catch (err) {
           console.error("executeBookings failed (YES):", err);
           await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
-          await sendMessage(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
+          await sendMessage(chatId, await generateCaraMessage({
+            audience: "family",
+            language: session.preferredLanguage === "es" ? "es" : "en",
+            context: "You hit a snag finalizing that booking. Warmly reassure the family you're on it — you'll sort out an alternative and get back to them shortly. Sound human and calm, not like an error message.",
+            fallback: "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.",
+            maxTokens: 80,
+          }));
           const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
           const { runMatchingForClient: rmfc4 } = await import("../agents/matchingAgent");
           await rmfc4(phone, chatId, sd, sd).catch(() => {});
@@ -957,7 +999,13 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
     if (intent === "REMOVE_FAMILY_MEMBER") {
       if ((session as any).isSecondaryMember) {
-        await sendMessage(chatId, "I can help with updates here, but only the primary account holder can remove people from this care group.");
+        await sendMessage(chatId, await generateCaraMessage({
+          audience: "family",
+          language: session.preferredLanguage === "es" ? "es" : "en",
+          context: "This person is a secondary member of the care group and asked to remove someone. Warmly explain you're happy to help with updates here, but only the primary account holder can remove people from the care group.",
+          fallback: "I can help with updates here, but only the primary account holder can remove people from this care group.",
+          maxTokens: 70,
+        }));
         return;
       }
 
@@ -1081,7 +1129,13 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         } catch (err) {
           console.error("executeBookings failed (hireMode):", err);
           await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
-          await sendMessage(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
+          await sendMessage(chatId, await generateCaraMessage({
+            audience: "family",
+            language: session.preferredLanguage === "es" ? "es" : "en",
+            context: "You hit a snag finalizing that booking. Warmly reassure the family you're on it — you'll sort out an alternative and get back to them shortly. Sound human and calm, not like an error message.",
+            fallback: "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.",
+            maxTokens: 80,
+          }));
           const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
           const { runMatchingForClient: rmfc2 } = await import("../agents/matchingAgent");
           await rmfc2(phone, chatId, sd, sd).catch(() => {});
@@ -1168,7 +1222,13 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         .where("status",   "==", "confirmed")
         .orderBy("date",   "asc").limit(1).get();
       if (upcoming.empty) {
-        await sendMessage(chatId, "I don't see any upcoming visits to cancel. What were you looking to change?");
+        await sendMessage(chatId, await generateCaraMessage({
+          audience: "family",
+          language: session.preferredLanguage === "es" ? "es" : "en",
+          context: "The family asked to cancel a visit, but there aren't any upcoming visits on the calendar. Gently let them know, and ask what they were looking to change.",
+          fallback: "I don't see any upcoming visits to cancel. What were you looking to change?",
+          maxTokens: 70,
+        }));
         return;
       }
       const appt = upcoming.docs[0].data();
@@ -1217,7 +1277,13 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         } catch (err) {
           console.error("executeBookings failed (rebook):", err);
           await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
-          await sendMessage(chatId, "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.");
+          await sendMessage(chatId, await generateCaraMessage({
+            audience: "family",
+            language: session.preferredLanguage === "es" ? "es" : "en",
+            context: "You hit a snag finalizing that booking. Warmly reassure the family you're on it — you'll sort out an alternative and get back to them shortly. Sound human and calm, not like an error message.",
+            fallback: "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.",
+            maxTokens: 80,
+          }));
           const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
           const { runMatchingForClient: rmfc3 } = await import("../agents/matchingAgent");
           await rmfc3(phone, chatId, sd, sd).catch(() => {});
@@ -1243,7 +1309,13 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         .orderBy("date",   "desc").limit(1).get();
 
       if (lastApptSnap.empty) {
-        await sendMessage(chatId, "I don't have any past bookings to rebook from. Want me to search for a caregiver? Just let me know!");
+        await sendMessage(chatId, await generateCaraMessage({
+          audience: "family",
+          language: session.preferredLanguage === "es" ? "es" : "en",
+          context: "The family asked to rebook a past caregiver, but there are no past bookings to rebook from. Gently let them know, and offer to search for a caregiver.",
+          fallback: "I don't have any past bookings to rebook from. Want me to search for a caregiver? Just let me know!",
+          maxTokens: 70,
+        }));
         return;
       }
 

@@ -340,7 +340,13 @@ export async function handleInterviewConfirm(
   } | undefined;
 
   if (!pending) {
-    await sendMessage(chatId, "I don't have a pending interview to confirm. Let me know if you'd like to schedule one.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
+      context: "The family tried to confirm an interview, but there isn't one pending right now. Gently let them know, and offer to help them schedule one.",
+      fallback: "I don't have a pending interview to confirm. Let me know if you'd like to schedule one.",
+      maxTokens: 70,
+    }));
     return;
   }
 

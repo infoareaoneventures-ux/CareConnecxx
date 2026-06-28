@@ -3,6 +3,7 @@ import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { buildAndSaveJobPost } from "./buildJobPost";
 import { isConvergenceFlipped } from "../config/featureFlags";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -127,9 +128,14 @@ export async function startJobPostingFlow(
     jobPostingData: {},
     stateExpiresAt: expiresAt,
   });
-  await sendMessage(chatId,
-    `Let's post a new care job for ${name}! 🎉\n\nWhen would you like care to start? (e.g. "next Monday", "ASAP", "June 1")`
-  );
+  const msg = await generateCaraMessage({
+    audience: "family",
+    language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
+    context: `Kicking off posting a new care job for the senior named ${name}. This is the first question: ask when they'd like care to start, giving examples like "next Monday", "ASAP", or "June 1". Be warm and a little excited.`,
+    fallback: `Let's post a new care job for ${name}! 🎉\n\nWhen would you like care to start? (e.g. "next Monday", "ASAP", "June 1")`,
+    maxTokens: 90,
+  });
+  await sendMessage(chatId, msg);
 }
 
 export async function handleJobPostingStep(
@@ -508,7 +514,13 @@ async function handleJpConfirmPost(
       jobPostingData:  admin.firestore.FieldValue.delete(),
       stateExpiresAt: admin.firestore.FieldValue.delete(),
     });
-    await sendMessage(chatId, "No problem! Text me anytime when you're ready to post a new job.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
+      context: "The family decided not to post the care job right now. Warmly let them know that's completely fine and they can text you anytime when they're ready to post a new job.",
+      fallback: "No problem! Text me anytime when you're ready to post a new job.",
+      maxTokens: 80,
+    }));
     return;
   }
 
@@ -524,7 +536,13 @@ async function handleJpConfirmPost(
   // YES — post the job
   const uid = (session as any).userId as string | undefined;
   if (!uid) {
-    await sendMessage(chatId, "I couldn't find your account. Please try again or visit the app to post.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
+      context: "You hit a snag finding the family's account while trying to post their job. Warmly apologize, ask them to try again, and mention they can also post from the app. Keep it reassuring, not technical.",
+      fallback: "I couldn't find your account. Please try again or visit the app to post.",
+      maxTokens: 80,
+    }));
     return;
   }
 
@@ -539,16 +557,22 @@ async function handleJpConfirmPost(
       stateExpiresAt: admin.firestore.FieldValue.delete(),
     });
 
-    await sendMessage(chatId,
-      `Your care request is live! Caregivers in your area are being notified.\n\n` +
-      `I'll let you know when applications come in. You can also view your post at any time by texting me "show my jobs".\n\n` +
-      `Job ID: ${jobId}`
-    );
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
+      context: `The family's care request just went live and caregivers in their area are being notified. Share the good news warmly, tell them you'll let them know when applications come in, and mention they can view their post anytime by texting you "show my jobs". You MUST include the exact phrase "show my jobs" and end with the line "Job ID: ${jobId}".`,
+      fallback: `Your care request is live! Caregivers in your area are being notified.\n\nI'll let you know when applications come in. You can also view your post at any time by texting me "show my jobs".\n\nJob ID: ${jobId}`,
+      maxTokens: 120,
+    }));
   } catch (err) {
     console.error("[jobPostingFlow] buildAndSaveJobPost error:", err);
-    await sendMessage(chatId,
-      "Sorry, I ran into a problem posting your job. Please try again or visit the app directly."
-    );
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
+      context: "Something went wrong while posting the family's job. Warmly apologize, ask them to try again, and mention they can also post directly in the app. Reassuring, not technical.",
+      fallback: "Sorry, I ran into a problem posting your job. Please try again or visit the app directly.",
+      maxTokens: 80,
+    }));
   }
 }
 

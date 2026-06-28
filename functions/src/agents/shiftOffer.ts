@@ -175,7 +175,13 @@ export async function handleShiftOfferReply(params: {
     await clearOfferFlag(phone);
     if (claimed) {
       await onOfferNotAccepted(offerId, claimed, "declined");
-      await sendMessage(chatId, "No problem — thanks for letting me know quickly. I'll find another match.").catch(() => {});
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "caregiver",
+        language: (sessionSnap.data()?.preferredLanguage as string) === "es" ? "es" : "en",
+        context: "The caregiver just declined a shift offer. Warmly thank them for letting you know quickly and let them know you'll find another match for the family. Short and gracious.",
+        fallback: "No problem — thanks for letting me know quickly. I'll find another match.",
+        maxTokens: 70,
+      })).catch(() => {});
     }
     return "handled";
   }
@@ -184,7 +190,13 @@ export async function handleShiftOfferReply(params: {
   const claimed = await claimOffer(offerId, "accepted");
   await clearOfferFlag(phone);
   if (!claimed) {
-    await sendMessage(chatId, "Looks like that offer was already closed out — I'll text you the next one!").catch(() => {});
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: (sessionSnap.data()?.preferredLanguage as string) === "es" ? "es" : "en",
+      context: "The caregiver tried to accept a shift offer, but it was already claimed/closed out by the time their reply came in. Warmly let them know, and reassure them you'll text them the next opening. Keep it upbeat.",
+      fallback: "Looks like that offer was already closed out — I'll text you the next one!",
+      maxTokens: 70,
+    })).catch(() => {});
     return "handled";
   }
   await onOfferAccepted(offerId, claimed, chatId);

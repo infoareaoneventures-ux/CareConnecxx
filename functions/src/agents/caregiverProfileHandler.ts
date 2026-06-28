@@ -85,7 +85,13 @@ export async function handleCaregiverProfileUpdate(
 ): Promise<void> {
   const activeField = (field ?? (session.profileUpdateField as ProfileUpdateField | undefined));
   if (!activeField) {
-    await sendMessage(chatId, "I'm not sure what you wanted to update. Try something like \"change my rate to $25\" or \"add dementia care to my skills\".");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: (session.preferredLanguage as string) === "es" ? "es" : "en",
+      context: "The caregiver wants to update their profile but you couldn't tell which part. Warmly ask them to clarify, and give a couple of concrete examples like \"change my rate to $25\" or \"add dementia care to my skills\". You MUST include those example phrasings.",
+      fallback: "I'm not sure what you wanted to update. Try something like \"change my rate to $25\" or \"add dementia care to my skills\".",
+      maxTokens: 80,
+    }));
     return;
   }
 
@@ -213,7 +219,13 @@ async function handleSkillsUpdate(
     } catch { /* fall through */ }
 
     if (skills.length === 0) {
-      await sendMessage(chatId, "I didn't catch any specific skills in that. Try \"add dementia care\" or \"remove mobility\".");
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "caregiver",
+        language: (session.preferredLanguage as string) === "es" ? "es" : "en",
+        context: "The caregiver tried to update their specialties but you couldn't pick out any specific skills. Warmly ask them to try again, with examples like \"add dementia care\" or \"remove mobility\". You MUST include those example phrasings.",
+        fallback: "I didn't catch any specific skills in that. Try \"add dementia care\" or \"remove mobility\".",
+        maxTokens: 80,
+      }));
       return;
     }
 

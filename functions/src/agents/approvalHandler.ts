@@ -13,6 +13,7 @@
 
 import { quickComplete } from "../utils/openaiClient";
 import { sendMessage } from "../linq/client";
+import { generateCaraMessage } from "../utils/caraMessage";
 import {
   type PendingAction,
   resolvePendingAction,
@@ -225,7 +226,13 @@ export async function handlePendingApproval(params: {
   if (pending.approverPhone && phone !== pending.approverPhone) {
     const decisionForApprover = await classifyApproval(text, pending.preview);
     if (decisionForApprover === "YES") {
-      await sendMessage(chatId, "Only the primary account holder can approve this — I've asked them to confirm.").catch(() => {});
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: userType === "caregiver" ? "caregiver" : "family",
+        language: "en",
+        context: "Someone who isn't the primary account holder tried to approve an action that needs the account holder's sign-off. Warmly explain only the primary account holder can approve this, and that you've asked them to confirm.",
+        fallback: "Only the primary account holder can approve this — I've asked them to confirm.",
+        maxTokens: 70,
+      })).catch(() => {});
       return { outcome: "handled" };
     }
     return { outcome: "fallthrough", reason: "question" };

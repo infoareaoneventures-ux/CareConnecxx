@@ -3,6 +3,7 @@ import { sendMessage } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { createShiftOffer } from "./shiftOffer";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -55,7 +56,13 @@ export async function handleClientSwapRequest(
       .get();
 
     if (snap.empty) {
-      await sendMessage(chatId, "I don't see any upcoming visits to swap the caregiver for.");
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "family",
+        language: (session.preferredLanguage as string) === "es" ? "es" : "en",
+        context: "The family asked to swap the caregiver for an upcoming visit, but there aren't any upcoming visits on the calendar. Gently let them know.",
+        fallback: "I don't see any upcoming visits to swap the caregiver for.",
+        maxTokens: 60,
+      }));
       return;
     }
 
@@ -139,7 +146,13 @@ export async function handleClientSwapRequest(
     }
 
     if (options.length === 0) {
-      await sendMessage(chatId, `I wasn't able to find an available replacement caregiver for ${visit.date}. Would you like me to create a support ticket instead?`);
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "family",
+        language: (session.preferredLanguage as string) === "es" ? "es" : "en",
+        context: `You searched but couldn't find an available replacement caregiver for the ${visit.date} visit. Gently let the family know, and offer to create a support ticket instead. Mention the ${visit.date} date.`,
+        fallback: `I wasn't able to find an available replacement caregiver for ${visit.date}. Would you like me to create a support ticket instead?`,
+        maxTokens: 80,
+      }));
       await db.collection("agent_sessions").doc(clientPhone).update({ clientSwapStep: admin.firestore.FieldValue.delete() });
       return;
     }

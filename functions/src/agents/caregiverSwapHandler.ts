@@ -3,6 +3,7 @@ import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
 import { quickComplete } from "../utils/openaiClient";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -58,7 +59,13 @@ export async function handleCaregiverSwapRequest(
       .get();
 
     if (snap.empty) {
-      await sendMessage(chatId, "You don't have any upcoming shifts to swap.");
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "caregiver",
+        language: (session.preferredLanguage as string) === "es" ? "es" : "en",
+        context: "The caregiver asked to swap a shift, but they don't have any upcoming shifts on the calendar. Gently let them know there's nothing to swap right now.",
+        fallback: "You don't have any upcoming shifts to swap.",
+        maxTokens: 60,
+      }));
       return;
     }
 
@@ -106,7 +113,13 @@ export async function handleCaregiverSwapRequest(
       swapClientId: shift.clientId,
     });
 
-    await sendMessage(chatId, `Got it — ${shift.date} at ${shift.time} with the ${shift.clientName} family. I'll find available caregivers now and reach out to them. I'll let you know when someone accepts.`);
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: (session.preferredLanguage as string) === "es" ? "es" : "en",
+      context: `The caregiver picked the shift on ${shift.date} at ${shift.time} with the ${shift.clientName} family to get covered. Warmly confirm you've got it, tell them you'll find available caregivers now and reach out, and you'll let them know when someone accepts. Mention the date/time and the ${shift.clientName} family.`,
+      fallback: `Got it — ${shift.date} at ${shift.time} with the ${shift.clientName} family. I'll find available caregivers now and reach out to them. I'll let you know when someone accepts.`,
+      maxTokens: 90,
+    }));
 
     // Find available caregivers and broadcast
     await broadcastSwapRequest(caregiverId, caregiverName, shift, caregiverPhone, chatId);
@@ -164,7 +177,13 @@ async function broadcastSwapRequest(
   }
 
   if (candidates.length === 0) {
-    await sendMessage(fromChatId, "I wasn't able to find any available caregivers for that shift. You may need to contact your coordinator or cancel the shift directly.");
+    await sendMessage(fromChatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: "en",
+      context: "You searched but couldn't find any available caregivers to cover this caregiver's shift. Gently let them know, and suggest they may need to contact their coordinator or cancel the shift directly.",
+      fallback: "I wasn't able to find any available caregivers for that shift. You may need to contact your coordinator or cancel the shift directly.",
+      maxTokens: 80,
+    }));
     await db.collection("agent_sessions").doc(fromPhone).update({ swapStep: admin.firestore.FieldValue.delete() });
     return;
   }
@@ -258,7 +277,13 @@ export async function handleSwapAcceptance(
   }
 
   // Confirm with accepting caregiver
-  await sendMessage(chatId, `You've got it! The ${swap.date} shift is now yours. The family will be notified. Thank you!`);
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "caregiver",
+    language: "en",
+    context: `The caregiver just accepted coverage for the ${swap.date} shift — it's now theirs. Warmly confirm it's theirs, let them know the family will be notified, and thank them. Mention the ${swap.date} date.`,
+    fallback: `You've got it! The ${swap.date} shift is now yours. The family will be notified. Thank you!`,
+    maxTokens: 80,
+  }));
 
   // Notify original caregiver
   const fromSnap = await db.collection("caregivers").doc(swap.fromCaregiverId).get();
@@ -269,6 +294,12 @@ export async function handleSwapAcceptance(
   // Notify client
   const clientSnap = await db.collection("users").doc(swap.clientId).get();
   if (clientSnap.exists && clientSnap.data()?.chatId) {
-    await sendMessage(clientSnap.data()!.chatId, `Heads up — your caregiver for ${swap.date} has changed. ${caregiverName} will be covering that visit. Let me know if you have any questions.`);
+    await sendMessage(clientSnap.data()!.chatId, await generateCaraMessage({
+      audience: "family",
+      language: "en",
+      context: `Letting the family know their caregiver for the ${swap.date} visit has changed — ${caregiverName} will be covering it now. Warmly reassure them and invite any questions. Mention the ${swap.date} date and that ${caregiverName} is covering.`,
+      fallback: `Heads up — your caregiver for ${swap.date} has changed. ${caregiverName} will be covering that visit. Let me know if you have any questions.`,
+      maxTokens: 80,
+    }));
   }
 }

@@ -543,7 +543,13 @@ export async function handleOnboardingStep(
       return;
     }
     case "client_awaiting_payment":
-      await sendMessage(chatId, "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳");
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "family",
+        language: session.preferredLanguage === "es" ? "es" : "en",
+        context: "The family hasn't finished their payment setup yet. Warmly nudge them to tap the link you already sent to finish up — it only takes about 30 seconds.",
+        fallback: "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳",
+        maxTokens: 70,
+      }));
       return;
     case "job_confirm_prefill":  return handleJobConfirmPrefill(phone, chatId, text, session);
     case "job_ask_start":        return handleJobAskStart(phone, chatId, text, session);
@@ -571,7 +577,13 @@ export async function handleOnboardingStep(
     case "caregiver_ask_bio":          return handleCaregiverAskBio(phone, chatId, text, session);
     case "caregiver_send_photo":       return handleCaregiverSendPhoto(phone, chatId, session);
     case "caregiver_awaiting_photo":
-      await sendMessage(chatId, "Still waiting for your photo! Tap the upload link I sent 📷");
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "caregiver",
+        language: session.preferredLanguage === "es" ? "es" : "en",
+        context: "The caregiver hasn't uploaded their profile photo yet. Warmly nudge them to tap the upload link you already sent.",
+        fallback: "Still waiting for your photo! Tap the upload link I sent 📷",
+        maxTokens: 60,
+      }));
       return;
     case "caregiver_send_documents":  return handleCaregiverSendDocuments(phone, chatId, session);
     case "caregiver_awaiting_documents":
@@ -579,7 +591,13 @@ export async function handleOnboardingStep(
         await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
         return handleCaregiverAskMvr(phone, chatId, session);
       }
-      await sendMessage(chatId, "Tap the link I sent to upload your certifications, or reply SKIP to continue without them.");
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "caregiver",
+        language: session.preferredLanguage === "es" ? "es" : "en",
+        context: "The caregiver is at the certifications step. Warmly nudge them to tap the link you already sent to upload their certifications, or reply SKIP to continue without them. You MUST include the literal keyword \"SKIP\".",
+        fallback: "Tap the link I sent to upload your certifications, or reply SKIP to continue without them.",
+        maxTokens: 70,
+      }));
       return;
     case "caregiver_ask_mvr":          return handleCaregiverAskMvr(phone, chatId, text, session);
     case "caregiver_send_membership":  return handleCaregiverSendMembership(phone, chatId, session);
@@ -603,10 +621,22 @@ export async function handleOnboardingStep(
     }
     case "caregiver_send_stripe_connect": return handleCaregiverSendStripeConnect(phone, chatId, session);
     case "caregiver_awaiting_stripe":
-      await sendMessage(chatId, "Tap the link I sent to set up your payout account so you can get paid after each visit.");
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "caregiver",
+        language: session.preferredLanguage === "es" ? "es" : "en",
+        context: "The caregiver still needs to set up their payout account. Warmly nudge them to tap the link you already sent so they can get paid after each visit.",
+        fallback: "Tap the link I sent to set up your payout account so you can get paid after each visit.",
+        maxTokens: 70,
+      }));
       return;
     default:
-      await sendMessage(chatId, "I think something went sideways. Reply START OVER to begin fresh.");
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: session.userType === "caregiver" ? "caregiver" : "family",
+        language: session.preferredLanguage === "es" ? "es" : "en",
+        context: "Something got into an unexpected state in the conversation. Warmly and lightly let them know, and ask them to reply START OVER to begin fresh. You MUST include the literal keyword \"START OVER\".",
+        fallback: "I think something went sideways. Reply START OVER to begin fresh.",
+        maxTokens: 60,
+      }));
   }
 }
 
@@ -1305,7 +1335,13 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
   });
   await sendMessage(chatId, msg7);
   await sendMessage(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
-  await sendMessage(chatId, "I'll start searching while you set that up.");
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "family",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context: "You just sent the family their payment setup link. Warmly reassure them that you'll start searching for caregivers while they set that up. One short line.",
+    fallback: "I'll start searching while you set that up.",
+    maxTokens: 60,
+  }));
 }
 
 // ── CAREGIVER FLOW ────────────────────────────────────────────────────────────
@@ -1821,7 +1857,13 @@ async function handleCaregiverSendMvr(phone: string, chatId: string, session: Ag
   // Only offer when the add-on can be both charged and run, so a caregiver is
   // never charged for an MVR that can't actually run (and vice versa).
   if (!canChargeStandaloneMvr()) {
-    await sendMessage(chatId, "Sorry — the Approved Driver add-on isn't available right now. I've let our team know.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: session.preferredLanguage === "es" ? "es" : "en",
+      context: "The optional Approved Driver (Motor Vehicle Record) add-on can't be run right now. Warmly apologize, let them know it's temporarily unavailable, and that you've flagged it to your team.",
+      fallback: "Sorry — the Approved Driver add-on isn't available right now. I've let our team know.",
+      maxTokens: 70,
+    }));
     await db.collection("admin_alerts").add({
       type: "mvr_addon_unavailable", phone, createdAt: new Date().toISOString(), resolved: false, severity: "medium",
     }).catch(() => {});
@@ -2057,7 +2099,13 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
     "Tap to get started — usually takes about 5 minutes:"
   );
   await sendMessage(chatId, { parts: [{ type: "link", value: inviteUrl }] });
-  await sendMessage(chatId, "I'll text you when results come in (usually 1–3 days).");
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "caregiver",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context: "You just sent the caregiver their background-check link. Warmly reassure them you'll text them when the results come in, usually within 1–3 days. One short line.",
+    fallback: "I'll text you when results come in (usually 1–3 days).",
+    maxTokens: 60,
+  }));
 }
 
 // Re-issue a Checkr background-check link for an already-onboarded caregiver whose

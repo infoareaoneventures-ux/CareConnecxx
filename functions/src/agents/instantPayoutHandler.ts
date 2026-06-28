@@ -26,12 +26,24 @@ export async function startInstantPayout(
   const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
   const cg = cgSnap.data();
   if (!cg) {
-    await sendMessage(chatId, "I couldn't find your caregiver profile. Send the email you used to sign up and I'll try again.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: "en",
+      context: "A caregiver asked for an instant payout but you couldn't find their caregiver profile. Warmly ask them to send the email they used to sign up so you can try again.",
+      fallback: "I couldn't find your caregiver profile. Send the email you used to sign up and I'll try again.",
+      maxTokens: 70,
+    }));
     return;
   }
   const stripeAccountId = cg.stripeAccountId as string | undefined;
   if (!stripeAccountId) {
-    await sendMessage(chatId, "Your payout account isn't set up yet. Open the caregiver app payout setup first, then text PAYOUT again.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: "en",
+      context: "The caregiver asked for an instant payout but hasn't set up their payout account yet. Warmly explain they need to open the caregiver app and finish payout setup first, then text PAYOUT again. You MUST include the literal keyword \"PAYOUT\".",
+      fallback: "Your payout account isn't set up yet. Open the caregiver app payout setup first, then text PAYOUT again.",
+      maxTokens: 80,
+    }));
     return;
   }
 
@@ -47,12 +59,24 @@ export async function startInstantPayout(
     }
   } catch (err) {
     console.error("[instantPayout] balance retrieve failed:", err);
-    await sendMessage(chatId, "I couldn't pull your balance right now. Try PAYOUT again in a few minutes.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: "en",
+      context: "You couldn't pull the caregiver's payout balance right now (a temporary hiccup). Warmly ask them to text PAYOUT again in a few minutes. You MUST include the literal keyword \"PAYOUT\".",
+      fallback: "I couldn't pull your balance right now. Try PAYOUT again in a few minutes.",
+      maxTokens: 70,
+    }));
     return;
   }
 
   if (availableCents <= 0) {
-    await sendMessage(chatId, "You don't have any funds available for instant payout right now. Your next scheduled payout is on its regular Friday cadence.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: "en",
+      context: "The caregiver has no funds available for an instant payout right now. Warmly let them know, and reassure them their next scheduled payout will arrive on its regular Friday cadence.",
+      fallback: "You don't have any funds available for instant payout right now. Your next scheduled payout is on its regular Friday cadence.",
+      maxTokens: 80,
+    }));
     return;
   }
 

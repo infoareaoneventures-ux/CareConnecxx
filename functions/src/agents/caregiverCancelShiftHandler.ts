@@ -73,7 +73,13 @@ export async function handleCaregiverCancelShift(
       .get();
 
     if (snap.empty) {
-      await sendMessage(chatId, "You don't have any upcoming shifts to cancel.");
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "caregiver",
+        language: (session.preferredLanguage as string) === "es" ? "es" : "en",
+        context: "The caregiver asked to cancel a shift, but they don't have any upcoming shifts on the calendar. Gently let them know there's nothing to cancel right now.",
+        fallback: "You don't have any upcoming shifts to cancel.",
+        maxTokens: 60,
+      }));
       await db.collection("agent_sessions").doc(caregiverPhone).update({
         cancelStep: admin.firestore.FieldValue.delete(),
       });
@@ -112,7 +118,13 @@ export async function handleCaregiverCancelShift(
     })();
 
     if (candidates.length === 0) {
-      await sendMessage(chatId, "Something went wrong — let me start over. Which shift do you need to cancel?");
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "caregiver",
+        language: (session.preferredLanguage as string) === "es" ? "es" : "en",
+        context: "Something got tangled mid-flow while cancelling a shift, so you're starting that step over. Warmly reassure them and ask which shift they need to cancel.",
+        fallback: "Something went wrong — let me start over. Which shift do you need to cancel?",
+        maxTokens: 70,
+      }));
       await db.collection("agent_sessions").doc(caregiverPhone).update({
         cancelStep:       "identify_shift",
         cancelCandidates: admin.firestore.FieldValue.delete(),
@@ -221,7 +233,13 @@ export async function handleCaregiverCancelShift(
     const clientId  = session.cancelShiftClientId as string;
 
     if (!shiftId) {
-      await sendMessage(chatId, "Something went wrong — your shifts are unchanged. Please try again.");
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "caregiver",
+        language: (session.preferredLanguage as string) === "es" ? "es" : "en",
+        context: "Something went wrong while cancelling, so nothing changed — their shifts are all still as they were. Warmly reassure them and ask them to try again.",
+        fallback: "Something went wrong — your shifts are unchanged. Please try again.",
+        maxTokens: 70,
+      }));
       await db.collection("agent_sessions").doc(caregiverPhone).update({
         cancelStep:          admin.firestore.FieldValue.delete(),
         cancelCandidates:    admin.firestore.FieldValue.delete(),

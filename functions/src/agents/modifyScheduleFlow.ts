@@ -3,6 +3,7 @@ import { quickComplete } from "../utils/openaiClient";
 import { safeParseJson } from "../utils/jsonUtils";
 import { sendMessage, AgentSession } from "../linq/client";
 import { isConvergenceFlipped } from "../config/featureFlags";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -90,9 +91,14 @@ export async function startModifyScheduleFlow(
     .get();
 
   if (schedSnap.empty) {
-    await sendMessage(chatId,
-      "I don't see an active recurring care schedule. You can set one up after booking a caregiver — just let me know if you'd like help."
-    );
+    const msg = await generateCaraMessage({
+      audience: "family",
+      language: "en",
+      context: "The family asked to change their recurring care schedule, but there's no active recurring schedule on file yet. Explain gently that a recurring schedule can be set up after they book a caregiver, and offer to help.",
+      fallback: "I don't see an active recurring care schedule. You can set one up after booking a caregiver — just let me know if you'd like help.",
+      maxTokens: 90,
+    });
+    await sendMessage(chatId, msg);
     return;
   }
 
@@ -179,7 +185,14 @@ async function handleMsAskDays(
   phone: string, chatId: string, text: string, _session: AgentSession
 ): Promise<void> {
   if (await isQuestionOrOther(text)) {
-    await sendMessage(chatId, "Which days would you like going forward? (e.g. \"Tuesday and Thursday\")");
+    const msg = await generateCaraMessage({
+      audience: "family",
+      language: "en",
+      context: "Re-asking the family which days of the week they'd like their recurring care going forward. Give an example like \"Tuesday and Thursday\".",
+      fallback: "Which days would you like going forward? (e.g. \"Tuesday and Thursday\")",
+      maxTokens: 70,
+    });
+    await sendMessage(chatId, msg);
     return;
   }
 
@@ -248,7 +261,13 @@ async function handleMsAskTimes(
   const [sh, sm] = rawStart.split(":").map(Number);
   const [eh, em] = rawEnd.split(":").map(Number);
   if (eh * 60 + em <= sh * 60 + sm) {
-    await sendMessage(chatId, "End time needs to be after start time. What times work for you?");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: "en",
+      context: "The family gave an end time that's the same as or before the start time. Gently point out the end time needs to be after the start time, and ask what times work for them.",
+      fallback: "End time needs to be after start time. What times work for you?",
+      maxTokens: 70,
+    }));
     return;
   }
 
@@ -300,7 +319,13 @@ async function handleMsConfirm(
       modifyScheduleData: admin.firestore.FieldValue.delete(),
       stateExpiresAt:     admin.firestore.FieldValue.delete(),
     });
-    await sendMessage(chatId, "No problem — your schedule stays the same. Let me know if you want to make any other changes.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
+      context: "The family decided not to change their recurring schedule after all. Warmly confirm their schedule stays the same, and let them know you're here if they want to make any other changes.",
+      fallback: "No problem — your schedule stays the same. Let me know if you want to make any other changes.",
+      maxTokens: 70,
+    }));
     return;
   }
 
@@ -316,7 +341,13 @@ async function handleMsConfirm(
 
   const schedSnap = await db.collection("recurring_schedules").doc(scheduleId).get();
   if (!schedSnap.exists) {
-    await sendMessage(chatId, "I couldn't find that schedule. It may have already been cancelled.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
+      context: "You went to apply the family's schedule change but the recurring schedule is no longer there — it may have already been cancelled. Gently let them know.",
+      fallback: "I couldn't find that schedule. It may have already been cancelled.",
+      maxTokens: 70,
+    }));
     await db.collection("agent_sessions").doc(phone).update({
       modifyScheduleStep: admin.firestore.FieldValue.delete(),
       modifyScheduleData: admin.firestore.FieldValue.delete(),

@@ -2,6 +2,7 @@ import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
 import { createBookingTask } from "./bookingExecutor";
 import { quickComplete } from "../utils/openaiClient";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -105,14 +106,26 @@ export async function finalizeTaskApproval(
   } | undefined;
 
   if (!pending) {
-    await sendMessage(chatId, "I don't have a pending booking to confirm. Want me to search for caregivers?");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: (session.preferredLanguage as string) === "es" ? "es" : "en",
+      context: "The family tried to confirm a booking, but there isn't one pending right now. Gently let them know, and offer to search for caregivers.",
+      fallback: "I don't have a pending booking to confirm. Want me to search for caregivers?",
+      maxTokens: 70,
+    }));
     return;
   }
 
   // Pull original task for appointment details
   const taskSnap = await db.collection("agent_tasks").doc(pending.taskId).get();
   if (!taskSnap.exists) {
-    await sendMessage(chatId, "That booking has expired. Want me to start a fresh search?");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: (session.preferredLanguage as string) === "es" ? "es" : "en",
+      context: "The booking the family was about to confirm has expired. Gently let them know, and offer to start a fresh search.",
+      fallback: "That booking has expired. Want me to start a fresh search?",
+      maxTokens: 70,
+    }));
     await db.collection("agent_sessions").doc(phone).update({
       pendingTaskConfirm: admin.firestore.FieldValue.delete(),
     }).catch(() => {});
@@ -153,6 +166,12 @@ export async function finalizeTaskApproval(
     const { executeBookings } = await import("./bookingExecutor");
     await executeBookings(bookingTaskId, phone);
   } else {
-    await sendMessage(chatId, "Something went wrong starting the booking. Try again or text FIND to search for a new caregiver.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "family",
+      language: (session.preferredLanguage as string) === "es" ? "es" : "en",
+      context: "Something went wrong starting the booking. Warmly apologize, ask them to try again, and mention they can text FIND to search for a new caregiver. You MUST include the literal keyword \"FIND\".",
+      fallback: "Something went wrong starting the booking. Try again or text FIND to search for a new caregiver.",
+      maxTokens: 80,
+    }));
   }
 }

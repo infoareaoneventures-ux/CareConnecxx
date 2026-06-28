@@ -55,7 +55,26 @@ let authCreateCount = 0;
 
 function applyMerge(path: string, data: Record<string, unknown>, merge: boolean): void {
   const prev = SESSIONS.get(path) ?? {};
-  SESSIONS.set(path, merge ? { ...prev, ...data } : { ...data });
+  const base: Record<string, unknown> = merge ? { ...prev } : {};
+  // Expand Firestore dotted field paths (e.g. "onboardingData.firstName") into
+  // nested updates, the way real .update() does. The runStep persistence path
+  // (mergeAndAdvance) writes dotted keys; a flat spread would store the literal
+  // "onboardingData.firstName" key and leave onboardingData empty.
+  for (const [k, v] of Object.entries(data)) {
+    if (k.includes(".")) {
+      const parts = k.split(".");
+      let cur = base;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const seg = parts[i];
+        cur[seg] = (cur[seg] && typeof cur[seg] === "object") ? { ...(cur[seg] as Record<string, unknown>) } : {};
+        cur = cur[seg] as Record<string, unknown>;
+      }
+      cur[parts[parts.length - 1]] = v;
+    } else {
+      base[k] = v;
+    }
+  }
+  SESSIONS.set(path, base);
 }
 
 vi.mock("firebase-admin", () => {

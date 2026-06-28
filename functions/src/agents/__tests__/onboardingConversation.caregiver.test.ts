@@ -435,7 +435,9 @@ describe("caregiver onboarding steps — characterization", () => {
       const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
       expect(stored.onboardingData.city).toBe("Austin");
       expect(stored.onboardingData.zipCode).toBe("78701");
-      expect(stored.onboardingStep).toBe("caregiver_ask_experience");
+      // Merged flow inserts cara-100's caregiver_ask_story step between location
+      // and experience (mvr's flow went straight to experience).
+      expect(stored.onboardingStep).toBe("caregiver_ask_story");
       // The bespoke handler sends the honest "no open jobs in <city>" teaser line.
       expect(sentMessages.some(m => m.text.includes("open jobs in Austin"))).toBe(true);
     });

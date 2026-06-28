@@ -879,15 +879,39 @@ const handleInboundInner = traceable(
     markChatRead(chatId).catch(() => {/* non-critical */});
     const partTypes = inboundParts.map((p) => String(p.type ?? "").toLowerCase());
     const hasVoiceMemo = extractVoiceMemoPart(inboundParts) !== null;
+    // Route these through Cara's voice rather than frozen templates. (The old
+    // sticker reply hardcoded "for Mom" — a wrong assumption about who the user
+    // cares for; the relationship-neutral fallback below avoids that.)
+    const mediaAudience: "caregiver" | "family" =
+      (session as any).userType === "caregiver" ? "caregiver" : "family";
+    const mediaLang: "en" | "es" = (session as any).preferredLanguage === "es" ? "es" : "en";
     if (partTypes.includes("sticker")) {
-      await sendMessage(chatId, "Love it! 😊 I'm right here if you need anything for Mom.");
+      const msg = await generateCaraMessage({
+        audience: mediaAudience,
+        language: mediaLang,
+        context: "The person just sent a sticker or tapback reaction — no words. React warmly in one short line and let them know you're here if they need anything. Do NOT assume who they care for or use any specific name.",
+        fallback: "Love it! 😊 I'm right here whenever you need me.",
+        maxTokens: 60,
+      });
+      await sendMessage(chatId, msg);
     } else if (hasVoiceMemo) {
-      await sendMessage(
-        chatId,
-        "I got your voice memo but couldn't quite make it out — could you send it again, or type what you need? I'm here either way."
-      );
+      const msg = await generateCaraMessage({
+        audience: mediaAudience,
+        language: mediaLang,
+        context: "The person sent a voice memo but it couldn't be transcribed. Warmly let them know you couldn't quite make it out, and ask them to resend it or type what they need. Short and reassuring.",
+        fallback: "I got your voice memo but couldn't quite make it out — could you send it again, or type what you need? I'm here either way.",
+        maxTokens: 70,
+      });
+      await sendMessage(chatId, msg);
     } else {
-      await sendMessage(chatId, "Got your message! If you have a question or need help, just type it out.");
+      const msg = await generateCaraMessage({
+        audience: mediaAudience,
+        language: mediaLang,
+        context: "The person sent a photo or attachment with no text. Warmly acknowledge you got it and invite them to tell you what they need. Keep it short.",
+        fallback: "Got your message! If you have a question or need help, just type it out.",
+        maxTokens: 60,
+      });
+      await sendMessage(chatId, msg);
     }
     return;
   }

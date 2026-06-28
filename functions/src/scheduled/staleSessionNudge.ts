@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
@@ -76,63 +77,68 @@ export const sendStaleSessionNudges = functions.pubsub
         const greeting  = firstName ? `Hey ${firstName}!` : "Hey there!";
         const userType  = session.userType as string | undefined;
 
-        let message: string;
+        // Build a per-step nudge in Cara's own voice instead of a frozen template.
+        // Each branch supplies (a) a context describing the moment + the concrete
+        // facts she must keep (prices, the SKIP keyword, value props) and (b) the
+        // original copy as a fallback if the model call fails. This is a daily
+        // cron, so the extra generation call carries no user-facing latency.
+        const language: "en" | "es" = session.preferredLanguage === "es" ? "es" : "en";
+        const audience: "caregiver" | "family" = userType === "caregiver" ? "caregiver" : "family";
+        const namePart = firstName ? ` ${firstName}` : "";
+        let context: string;
+        let fallback: string;
         if (!userType || step === "ask_role") {
-          message =
-            `Hi${firstName ? ` ${firstName}` : ""}, still thinking about care?\n\n` +
-            `Just reply when you're ready:\n\n` +
-            `1️⃣ I need care for someone\n` +
-            `2️⃣ I'm a caregiver`;
+          context =
+            `You haven't heard back from this person (name: ${firstName || "unknown"}) in a couple of days. ` +
+            `They first reached out about care but never told you whether they need care for a loved one or are a caregiver looking for work. ` +
+            `Send a warm, no-pressure nudge that re-opens the conversation and lays out the two options as a simple numbered list: ` +
+            `"1️⃣ I need care for someone" and "2️⃣ I'm a caregiver". Keep it short.`;
+          fallback =
+            `Hi${namePart}, still thinking about care?\n\nJust reply when you're ready:\n\n` +
+            `1️⃣ I need care for someone\n2️⃣ I'm a caregiver`;
         } else if (userType === "caregiver") {
           if (step === "caregiver_send_bgcheck" || step === "caregiver_awaiting_bgcheck") {
-            message =
-              `${greeting} Your background check is the last step before you can start getting booked.\n\n` +
-              `Families can't book you until it's done. It takes about 5 minutes. ` +
-              `Reply here and I'll send the link again.`;
+            context = `${firstName || "This caregiver"} stalled at the background-check step — the last thing before families can book them. Warmly nudge them: families can't book until it's done, it takes about 5 minutes, and they can reply here to get the link again.`;
+            fallback = `${greeting} Your background check is the last step before you can start getting booked.\n\nFamilies can't book you until it's done. It takes about 5 minutes. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_ask_rate") {
-            message =
-              `${greeting} Still thinking about your hourly rate?\n\n` +
-              `Most caregivers on Cara charge $18-28/hr. ` +
-              `You can always update it later. No pressure to get it perfect now.`;
+            context = `${firstName || "This caregiver"} stalled on setting their hourly rate. Warmly, no pressure: most caregivers on Cara charge $18-28/hr, and they can always update it later. Encourage them to pick something.`;
+            fallback = `${greeting} Still thinking about your hourly rate?\n\nMost caregivers on Cara charge $18-28/hr. You can always update it later. No pressure to get it perfect now.`;
           } else if (step === "caregiver_send_photo" || step === "caregiver_awaiting_photo") {
-            message =
-              `${greeting} Your profile is almost live.\n\n` +
-              `Adding a photo makes families much more likely to request an interview. ` +
-              `A clear headshot is all you need. Reply here and I'll send the link again.`;
+            context = `${firstName || "This caregiver"} stalled before adding a profile photo. Warmly nudge: a clear headshot makes families much more likely to request an interview, and they can reply here to get the upload link again.`;
+            fallback = `${greeting} Your profile is almost live.\n\nAdding a photo makes families much more likely to request an interview. A clear headshot is all you need. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_send_membership" || step === "caregiver_awaiting_membership") {
-            message =
-              `${greeting} You're one step from being able to apply to jobs near you.\n\n` +
-              `Activating your $24.95/year membership unlocks getting booked and Cara's payout tools. ` +
-              `Reply here and I'll send the link again.`;
+            context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: activating their $24.95/year membership unlocks getting booked and Cara's payout tools, and they can reply here to get the link again.`;
+            fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nActivating your $24.95/year membership unlocks getting booked and Cara's payout tools. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_send_documents" || step === "caregiver_awaiting_documents") {
-            message =
-              `${greeting} Almost done — just your certifications left (CNA, CPR, etc.).\n\n` +
-              `You can upload them now or reply SKIP to keep going. ` +
-              `Reply here and I'll send the upload link again.`;
+            context = `${firstName || "This caregiver"} stalled on uploading certifications (CNA, CPR, etc.). Warmly nudge: they can upload now or reply SKIP to keep going, and reply here to get the upload link again. You MUST mention they can reply "SKIP" to continue.`;
+            fallback = `${greeting} Almost done — just your certifications left (CNA, CPR, etc.).\n\nYou can upload them now or reply SKIP to keep going. Reply here and I'll send the upload link again.`;
           } else {
-            message =
-              `${greeting} Your caregiver profile is almost done.\n\n` +
-              `Reply here whenever you're ready to continue.`;
+            context = `${firstName || "This caregiver"} stalled partway through profile setup. Send a short, warm nudge inviting them to reply whenever they're ready to continue.`;
+            fallback = `${greeting} Your caregiver profile is almost done.\n\nReply here whenever you're ready to continue.`;
           }
         } else {
           if (step === "client_send_payment" || step === "client_awaiting_payment") {
-            message =
-              `${greeting} The last step is adding a payment method so caregivers can get paid after each visit.\n\n` +
-              `Takes about 30 seconds. No charges until you book a caregiver.`;
+            context = `${firstName || "This family member"} stalled at the last step — adding a payment method so caregivers can get paid after each visit. Warmly reassure: it takes about 30 seconds and there are no charges until they book a caregiver.`;
+            fallback = `${greeting} The last step is adding a payment method so caregivers can get paid after each visit.\n\nTakes about 30 seconds. No charges until you book a caregiver.`;
           } else if (step === "client_awaiting_identity") {
-            message =
-              `${greeting} Just one quick identity check left — it's a 30-second step that keeps every family on the platform safe.\n\n` +
-              `Reply here and I'll send you a fresh link.`;
+            context = `${firstName || "This family member"} stalled on a quick identity check. Warmly reassure: it's a 30-second step that keeps every family on the platform safe, and they can reply here to get a fresh link.`;
+            fallback = `${greeting} Just one quick identity check left — it's a 30-second step that keeps every family on the platform safe.\n\nReply here and I'll send you a fresh link.`;
           } else if (step === "client_ask_schedule") {
-            message =
-              `${greeting} Almost there. Just need to know how often you need care ` +
-              `and I'll start searching for caregivers.`;
+            context = `${firstName || "This family member"} stalled before telling you how often they need care. Warmly nudge: once you know the schedule you'll start searching for caregivers.`;
+            fallback = `${greeting} Almost there. Just need to know how often you need care and I'll start searching for caregivers.`;
           } else {
-            message =
-              `${greeting} I'm here whenever you're ready to continue.\n\n` +
-              `Just reply and I'll pick up where we left off.`;
+            context = `${firstName || "This family member"} stalled partway through getting set up. Send a short, warm nudge inviting them to reply whenever they're ready and you'll pick up where you left off.`;
+            fallback = `${greeting} I'm here whenever you're ready to continue.\n\nJust reply and I'll pick up where we left off.`;
           }
         }
+
+        const message = await generateCaraMessage({
+          audience,
+          language,
+          context: `${context} This is a gentle re-engagement text after a couple of days of silence — sound like a real person checking in, never pushy or salesy.`,
+          fallback,
+          maxTokens: 130,
+        });
 
         await sendViaInteractionAgent(doc.id, {
           content:     message,

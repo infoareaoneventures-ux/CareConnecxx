@@ -1456,20 +1456,30 @@ const handleInboundInner = traceable(
       hasMedia:    !!inboundMedia,
       hasLocation: !!inboundLocation,
     })) {
-      await runQaAgent({
-        text,
-        phone,
-        chatId,
-        userId:      (session as any).userId ?? "",
-        seniorId:    (session as any).seniorId ?? "",
-        userType:    "client",
-        zepThreadId: onboardingZepThreadId,
-        session:     session as unknown as Record<string, unknown>,
-        onboardingMode: true,
-        onboardingRole: "client",
-        intent:      null,
-      });
-      return;
+      try {
+        await runQaAgent({
+          text,
+          phone,
+          chatId,
+          userId:      (session as any).userId ?? "",
+          seniorId:    (session as any).seniorId ?? "",
+          userType:    "client",
+          zepThreadId: onboardingZepThreadId,
+          session:     session as unknown as Record<string, unknown>,
+          onboardingMode: true,
+          onboardingRole: "client",
+          intent:      null,
+        });
+        return;
+      } catch (err) {
+        // RLB-001/005: the loop is Sonnet on the signup happy path. If it throws
+        // (API outage/timeout/Firestore), do NOT wedge the user — fall through to
+        // the deterministic scripted runner so collection still advances.
+        console.error(
+          "webhooks: onboarding agent-loop failed — falling back to scripted runner",
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
 
     await handleOnboardingStep(phone, chatId, text, session, {

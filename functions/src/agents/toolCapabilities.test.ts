@@ -28,6 +28,7 @@ import {
   TOOL_CAPABILITIES,
   INTENT_CAPABILITIES,
   findUntaggedTools,
+  CORE_TOOL_NAMES,
 } from "./toolCapabilities";
 import { MCP_TOOLS, IDEMPOTENT_CONFIRMED_TOOLS } from "../mcp/server";
 import { LAUNCH_ACTION_PARITY } from "./launchActionParity";
@@ -157,34 +158,10 @@ describe("TOOL_CAPABILITIES coverage", () => {
     // Untagged + non-core tools always pass the filter (safe), but that
     // defeats the optimization. Catch missing taggings.
     const allNames = MCP_TOOLS.map(t => t.name);
+    // findUntaggedTools already excludes the real CORE_TOOL_NAMES (imported), so
+    // any survivor is a genuinely untagged, non-core tool. No parallel whitelist.
     const untagged = findUntaggedTools(allNames);
-
-    // Whitelist of tools known to be in the "core" set inside the module.
-    // If you add a new core tool, add it here and to CORE_TOOL_NAMES.
-    const knownCore = new Set([
-      "get_senior_profile",
-      "list_household_seniors",
-      "get_pending_tasks",
-      "suggest_upcoming_care",
-      "get_care_team",
-      "create_support_ticket",
-      "get_support_ticket",
-      "list_support_tickets",
-      "update_support_ticket",
-      "resume_execution_agent",
-      "write_todos",
-      "cara_knows",
-      "task",
-      "save_onboarding_field",
-      "complete_collection",
-      "send_onboarding_link",
-      "trigger_emergency_alert",
-      "send_referral",
-      "get_referral_status",
-    ]);
-
-    const trulyUntagged = untagged.filter(n => !knownCore.has(n));
-    expect(trulyUntagged).toEqual([]);
+    expect(untagged).toEqual([]);
   });
 
   it("every TOOL_CAPABILITIES entry references a real tool", () => {

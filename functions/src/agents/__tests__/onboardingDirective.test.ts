@@ -14,15 +14,16 @@ describe("buildOnboardingDirective", () => {
     const d = buildOnboardingDirective("client", { firstName: "Imran" });
     expect(d).toContain("save_onboarding_field");
     expect(d).toContain("the senior's age");
-    expect(d).toContain("the city and zip");
+    expect(d).toContain("what kind of help the senior needs");
+    expect(d).toContain("how many days a week");
     // firstName is known → shown as known, not as still-needed
     expect(d).toMatch(/already have it[\s\S]*first name|first name[\s\S]*already have it/i);
   });
 
   it("client with everything collected instructs complete_collection, not more asking", () => {
     const d = buildOnboardingDirective("client", {
-      firstName: "Imran", seniorName: "Dorothy", age: 82,
-      city: "Austin", schedule: { days: 5 },
+      firstName: "Imran", seniorName: "Dorothy", age: 82, careNeeds: ["bathing"],
+      city: "Austin", daysPerWeek: 5, timeOfDay: "mornings",
     });
     expect(d).toContain("complete_collection");
     expect(d).toContain("all required fields collected");

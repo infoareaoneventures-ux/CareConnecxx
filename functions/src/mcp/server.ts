@@ -1012,9 +1012,9 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        role:       { type: "string", enum: ["client", "caregiver"], description: "Which onboarding flow this is" },
-        fieldName:  { type: "string", description: "The onboardingData field to set (e.g. seniorName, age, city, schedule, hourlyRate)" },
-        fieldValue: { description: "The value to store for this field (string, number, array, or object)" },
+        role:       { type: "string", enum: ["client", "caregiver"], description: "Which onboarding flow this is (auto-injected; pass the current role)" },
+        fieldName:  { type: "string", description: "The onboardingData field to set, e.g. firstName, seniorName, age, careNeeds, city, daysPerWeek, timeOfDay, hourlyRate" },
+        fieldValue: { description: "The value to store. Pass numbers (like age) as a number, lists (like careNeeds) as an array — not as strings.", oneOf: [{ type: "string" }, { type: "number" }, { type: "array" }, { type: "object" }] },
       },
       required: ["role", "fieldName", "fieldValue"],
     },
@@ -5490,7 +5490,15 @@ async function executeToolCall(
       const data = (snap.data()?.onboardingData ?? {}) as Record<string, unknown>;
       const missing = missingRequiredFields(role, data);
       if (missing.length > 0) {
-        return { ok: false, complete: false, missing };
+        // ok:true so the model does NOT read this as a tool error (the error
+        // convention is _toolError/ok:false). complete:false + missing tells it
+        // to keep collecting, not to surface a failure to the user.
+        return {
+          ok: true,
+          complete: false,
+          missing,
+          guidance: "Not done yet — call save_onboarding_field for each missing field, then call complete_collection again.",
+        };
       }
       const nextStep = firstGateStep(role);
       await ref.set({ onboardingStep: nextStep }, { merge: true });

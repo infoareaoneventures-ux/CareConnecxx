@@ -42,8 +42,13 @@ export function isFieldFilled(value: unknown): boolean {
 }
 
 // Required conversational fields per role, in flow order.
+// IMPORTANT: these are the FLAT keys the downstream consumers read
+// (buildIntakeSummary, the carePlan/senior_profiles writes, deriveJobDataFromIntake,
+// pushOnboardingDataToZep all read daysPerWeek/timeOfDay/careNeeds/zipCode/city —
+// never a single "schedule" object). The loop must collect these exact keys or a
+// completed signup produces an empty job post after payment.
 export const CLIENT_REQUIRED_FIELDS: readonly string[] = [
-  "firstName", "seniorName", "age", "city", "schedule",
+  "firstName", "seniorName", "age", "careNeeds", "city", "daysPerWeek", "timeOfDay",
 ];
 
 export const CAREGIVER_REQUIRED_FIELDS: readonly string[] = [
@@ -56,7 +61,7 @@ export const CAREGIVER_REQUIRED_FIELDS: readonly string[] = [
 // to anything outside this set is rejected so the model can't invent keys.
 export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   ...CLIENT_REQUIRED_FIELDS,
-  "seniorName", "relationship", "careNeeds", "conditions",
+  "relationship", "conditions", "zipCode", "hoursPerDay",
   "startDate", "preferences", "budget",
 ]);
 

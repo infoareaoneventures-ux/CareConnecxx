@@ -1589,7 +1589,12 @@ export async function runQaAgent(params: {
     let recoveryFired              = false;
     const toolErrorTrail: { tool: string; preview: string }[] = [];
     // U5: resolve the iteration budget from the flow class of this turn's intent.
-    const { maxIterations, flowClass } = resolveLoopBudget(intent);
+    const budget = resolveLoopBudget(intent);
+    const flowClass = onboardingMode ? "onboarding" : budget.flowClass;
+    // Onboarding can save several fields then call complete_collection in one turn;
+    // the default intent:null budget (5) can exhaust before the handoff fires on a
+    // front-loaded answer. Give collection more headroom.
+    const maxIterations = onboardingMode ? Math.max(budget.maxIterations, 10) : budget.maxIterations;
     let totalToolCalls = 0;
     console.info("qaAgent.loopBudget", { userId, flowClass, maxIterations });
     for (let iteration = 0; iteration < maxIterations; iteration++) {
@@ -1763,6 +1768,9 @@ export async function runQaAgent(params: {
               // a specific caregiver (send_caregiver_message, submit_review,
               // get_caregiver_reviews) keep the client-supplied id.
               ...(userType === "caregiver" && caregiverId ? { caregiverId } : {}),
+              // Onboarding tools: inject the role authoritatively (last, overrides
+              // any model-guessed value) so a hallucinated role can't stall a save.
+              ...(onboardingMode && onboardingRole ? { role: onboardingRole } : {}),
             };
             const toolStart = Date.now();
             const result = await toolHandler(block.name, enrichedInput, shadowMode)

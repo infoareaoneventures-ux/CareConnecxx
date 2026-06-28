@@ -165,7 +165,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
 
 // Tools that are ALWAYS bound regardless of intent. These are the universal
 // reads Claude needs to orient itself on virtually every turn.
-const CORE_TOOL_NAMES = new Set<string>([
+export const CORE_TOOL_NAMES = new Set<string>([
   "get_senior_profile",
   "list_household_seniors",
   "get_pending_tasks",

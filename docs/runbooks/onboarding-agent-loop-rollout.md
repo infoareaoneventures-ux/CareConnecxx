@@ -98,9 +98,29 @@ From the code review of this work:
   restricted to the three onboarding tools; single user-facing reply (no double-send /
   no re-greet); and the `complete_collection` missing-fields recovery branch (loop
   feeds the result back, model saves the missing field, then completes).
-- **Real-model eval (the last gate).** Wire it into `npm run eval`
-  (`functions/src/evals/runner.ts`) and run against a real model on messy human inputs.
-  Needs API spend + an explicit go — this is the only remaining pre-flip blocker.
+- **Real-model eval (the last gate) — harness shipped, run pending.**
+  `functions/src/agents/qaAgent.onboarding.eval.test.ts` drives the loop against
+  the REAL model on 5 messy multi-turn cases (terse, front-loaded, mid-flow
+  question, correction, bare greeting) and grades the four gates via the pure
+  `onboardingEvalGraders.ts` (completion, fields-before-handoff, no re-greet, no
+  double-send) plus a per-turn P95 latency report against the 4 s ceiling.
+
+  It is SPEND-GATED: skipped unless `CARA_ONBOARDING_EVAL_LIVE=true` AND
+  `ANTHROPIC_API_KEY` are set, so `npm run eval` / the normal suite never spend.
+  The grader unit tests and the tool-engine fidelity test run for free in CI.
+
+  **To run (incurs API spend — your go):**
+  ```
+  CARA_ONBOARDING_EVAL_LIVE=true ANTHROPIC_API_KEY=sk-... npm run eval:onboarding
+  ```
+  Gate: all 5 cases pass (completion, zero re-greet, no premature handoff) and P95
+  ≤ 4 s (ratify or revise the ceiling from the printed number). This is the only
+  remaining pre-flip blocker — deliberately NOT wired into predeploy so a deploy
+  never triggers paid model runs.
+
+  Deliberate deviation from the original "wire into `npm run eval`" note: the
+  predeploy `eval` runs on every deploy, so folding a paid multi-turn model eval
+  into it would bill every deploy. It's a separate opt-in script instead.
 
 Unit coverage already in place: `onboardingContract.test.ts` (field gate, routing
 predicate, tool surface), `onboardingDirective.test.ts` (voice rules, no chatbot

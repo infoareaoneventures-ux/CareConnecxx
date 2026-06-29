@@ -116,18 +116,22 @@ export async function fetchOnboardingCanary(opts: { sinceMs?: number; limit?: nu
   const admin = require("firebase-admin") as typeof import("firebase-admin");
   if (!admin.apps.length) admin.initializeApp();
   const sinceIso = new Date(Date.now() - sinceMs).toISOString();
-  // Single-field equality filter only (no composite index needed); the time
-  // window is applied client-side. Onboarding-canary volume is low, so pulling
-  // up to `limit` flowClass=onboarding docs and filtering by `at` here is cheap.
+  // Window the query SERVER-side and order by `at` so `limit` keeps the NEWEST
+  // docs. A bare `.limit()` with no orderBy returns docs in name order, so once
+  // cara_turn_metrics grows past the cap the recent window could fall entirely
+  // outside the slice and the watch would report "0 turns" mid-canary. `at` is
+  // an ISO string, so its lexical range matches chronological order, and a
+  // range + orderBy on the SAME single field needs only a single-field index
+  // (no composite — that's what the earlier query was avoiding). flowClass is
+  // filtered in the pure summarizer, so it doesn't need to be in the query.
   const snap = await admin
     .firestore()
     .collection("cara_turn_metrics")
-    .where("flowClass", "==", "onboarding")
+    .where("at", ">=", sinceIso)
+    .orderBy("at", "desc")
     .limit(limit)
     .get();
-  return snap.docs
-    .map((d) => d.data() as CanaryRecord)
-    .filter((r) => !r.at || String(r.at) >= sinceIso);
+  return snap.docs.map((d) => d.data() as CanaryRecord);
 }
 
 // ── CLI entry ─────────────────────────────────────────────────────────────────

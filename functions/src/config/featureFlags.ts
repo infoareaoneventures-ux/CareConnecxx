@@ -108,9 +108,14 @@ export function onboardingCohortPhones(): ReadonlySet<string> {
 
 export function onboardingCohortPct(): number {
   const raw = process.env.ONBOARDING_AGENT_LOOP_COHORT_PCT;
+  // Unset/empty is the legitimate default: no narrowing, everyone in the enabled
+  // role (identical to the role flag alone).
   if (raw === undefined || raw.trim() === "") return 100;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return 100;
+  // A MALFORMED value (e.g. "10%", "ten") must fail CLOSED, not open. This is a
+  // containment knob: a typo should narrow exposure to the proven legacy path
+  // (0%), never silently widen a 10% canary to 100% of traffic.
+  if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(100, Math.floor(n)));
 }
 

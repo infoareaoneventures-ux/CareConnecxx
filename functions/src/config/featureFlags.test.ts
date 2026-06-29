@@ -70,8 +70,12 @@ describe("onboarding agent-loop canary cohort scoping", () => {
     expect(onboardingCohortPct()).toBe(100);
     process.env.ONBOARDING_AGENT_LOOP_COHORT_PCT = "-5";
     expect(onboardingCohortPct()).toBe(0);
+    // A malformed value fails CLOSED (0), not open — a typo on the canary knob
+    // must narrow to the safe legacy path, never widen exposure to 100%.
     process.env.ONBOARDING_AGENT_LOOP_COHORT_PCT = "garbage";
-    expect(onboardingCohortPct()).toBe(100); // non-numeric → fail open to default
+    expect(onboardingCohortPct()).toBe(0);
+    process.env.ONBOARDING_AGENT_LOOP_COHORT_PCT = "10%";
+    expect(onboardingCohortPct()).toBe(0);
   });
 
   it("phoneCohortBucket is deterministic and within 0..99", () => {

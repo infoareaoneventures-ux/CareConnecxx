@@ -435,7 +435,11 @@ export async function handleOnboardingStep(
 
   // Global: "start over" resets
   if (norm === "START OVER" || norm === "RESTART") {
-    await updateSession(phone, { onboardingStep: "ask_role", onboardingData: {} });
+    // Clear userType + waitlisted too (mirrors the WAITLISTED_STEP reset). Leaving
+    // userType set would trip the ask_role self-heal above on the NEXT inbound,
+    // jumping past the role question — so a user who restarts to switch roles
+    // would be silently kept in their old role.
+    await updateSession(phone, { onboardingStep: "ask_role", onboardingData: {}, userType: null, waitlisted: false });
     await sendMessage(chatId,
       "No problem, let's start fresh.\n\n" +
       "Are you looking for care for a loved one, or are you a caregiver looking for work?"
@@ -2804,6 +2808,14 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
     }
 
     case "identity": {
+      // Mark processed first to prevent a duplicate identity webhook from
+      // re-running the send below (a second Stripe Checkout session + duplicate
+      // payment link). Mirrors every other task branch; identity was the one
+      // case missing this guard.
+      await db.collection("agent_sessions").doc(phone).update({
+        processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
+      });
+
       const step = session.onboardingStep ?? "";
       if (step === "client_awaiting_identity") {
         // Ensure Firebase Auth account exists and get UID so we can write to users/{uid}

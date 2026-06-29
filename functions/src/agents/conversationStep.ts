@@ -111,6 +111,16 @@ export async function runStep(
 ): Promise<void> {
   const { phone, chatId, text, session } = ctx;
 
+  // 0. Checkpoint RESUME: the webhook re-enters the current step with the literal
+  // "__RESUME__" sentinel intending to RE-ASK the current question (see
+  // webhooks.ts resume path). It is not a user answer — never classify, parse,
+  // or advance on it, or steps whose parse() defaults (e.g. client_ask_senior →
+  // "your loved one") would silently record garbage and skip the question.
+  if (text === "__RESUME__") {
+    await deps.sendMessage(chatId, step.reask(session));
+    return;
+  }
+
   // 1. Mid-flow question: answer it, re-ask, and do not touch stored data.
   if (await deps.isQuestionOrOther(text)) {
     const answer = await deps.answerQuestionMidFlow(text, session);

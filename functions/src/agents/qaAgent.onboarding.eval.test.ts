@@ -448,26 +448,35 @@ describe.skipIf(!LIVE)("onboarding loop — REAL model eval (incurs API spend)",
 
       const replies: string[] = [];
       const perTurnSendCounts: number[] = [];
+      let runError: string | undefined;
 
-      for (const turn of ec.turns) {
-        const sess = store.sessions.get(phone)!;
-        const t0 = Date.now();
-        const reply = await runQaAgent({
-          text: turn,
-          phone,
-          chatId: `chat-${ec.id}`,
-          userId: "",
-          seniorId: "",
-          userType: "client",
-          onboardingMode: true,
-          onboardingRole: "client",
-          intent: null,
-          skipSend: true,
-          session: { onboardingStep: sess.onboardingStep, onboardingData: { ...sess.onboardingData } } as any,
-        });
-        latencies.push(Date.now() - t0);
-        replies.push(reply ?? "");
-        perTurnSendCounts.push(1); // loop returns exactly one reply per turn
+      try {
+        for (const turn of ec.turns) {
+          const sess = store.sessions.get(phone)!;
+          const t0 = Date.now();
+          const reply = await runQaAgent({
+            text: turn,
+            phone,
+            chatId: `chat-${ec.id}`,
+            userId: "",
+            seniorId: "",
+            userType: "client",
+            onboardingMode: true,
+            onboardingRole: "client",
+            intent: null,
+            skipSend: true,
+            session: { onboardingStep: sess.onboardingStep, onboardingData: { ...sess.onboardingData } } as any,
+          });
+          latencies.push(Date.now() - t0);
+          replies.push(reply ?? "");
+          perTurnSendCounts.push(1); // loop returns exactly one reply per turn
+        }
+      } catch (err) {
+        // Record the error so the results file reflects THIS run (e.g. a 401 from a
+        // missing key) instead of silently leaving a stale file from a prior run.
+        runError = (err as Error).message;
+        caseRecords.push({ id: ec.id, label: ec.label, passed: false, error: runError, turns: replies.map((r, i) => ({ user: ec.turns[i], cara: r })) });
+        throw err;
       }
 
       // Did complete_collection ever succeed (complete:true)? Inspect the in-memory
@@ -508,12 +517,14 @@ describe.skipIf(!LIVE)("onboarding loop — REAL model eval (incurs API spend)",
   }
 
   afterAll(async () => {
-    if (!LIVE || latencies.length === 0) return;
+    if (!LIVE) return;
     const passed = caseGrades.filter((c) => c.grade.passed).length;
     const summary = {
-      cases: `${passed}/${caseGrades.length}`,
-      p95LatencyMs: p95(latencies),
-      maxLatencyMs: Math.max(...latencies),
+      generatedAt: new Date().toISOString(),
+      cases: `${passed}/${EVAL_CASES.length}`,
+      ranTurns: latencies.length,
+      p95LatencyMs: latencies.length ? p95(latencies) : 0,
+      maxLatencyMs: latencies.length ? Math.max(...latencies) : 0,
       latencyCeilingMs: 4000,
       records: caseRecords,
     };

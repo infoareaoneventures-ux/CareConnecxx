@@ -43,6 +43,7 @@ import {
   MEMORY_SOURCE_PRIORITY_POLICY,
   WARMTH_REFLECTION_OPENERS,
   ensureNonEmptyTurnText,
+  sanitizeAnthropicMessages,
 } from "./qaAgent";
 
 describe("hasListShape", () => {
@@ -251,5 +252,41 @@ describe("ensureNonEmptyTurnText — no empty Claude content (BadRequestError gu
     const out = ensureNonEmptyTurnText(input as any);
     expect(out.trim().length).toBeGreaterThan(0);
     expect(out).toContain("no text");
+  });
+});
+
+// Regression for the live "give me a few minutes" doom-loop (2026-06-29): a
+// malformed conversation-history window 400'd the FIRST Claude call every turn.
+describe("sanitizeAnthropicMessages — keeps the history window API-valid", () => {
+  it("drops empty (whitespace-only) string-content entries", () => {
+    const out = sanitizeAnthropicMessages([
+      { role: "user", content: "Hi" },
+      { role: "assistant", content: "" },
+      { role: "user", content: "  " },
+      { role: "assistant", content: "real reply" },
+    ]);
+    expect(out).toEqual([
+      { role: "user", content: "Hi" },
+      { role: "assistant", content: "real reply" },
+    ]);
+  });
+
+  it("strips leading non-user turns so the array starts with role:user", () => {
+    const out = sanitizeAnthropicMessages([
+      { role: "assistant", content: "What's your name?" },
+      { role: "user", content: "Imran" },
+    ]);
+    expect(out[0]).toEqual({ role: "user", content: "Imran" });
+    expect(out).toHaveLength(1);
+  });
+
+  it("leaves a well-formed array untouched and preserves block-array content", () => {
+    const blocks = [{ type: "tool_result", tool_use_id: "t1", content: "ok" }];
+    const msgs = [
+      { role: "user", content: "find a caregiver" },
+      { role: "assistant", content: "Checking…" },
+      { role: "user", content: blocks },
+    ];
+    expect(sanitizeAnthropicMessages(msgs as any)).toEqual(msgs);
   });
 });

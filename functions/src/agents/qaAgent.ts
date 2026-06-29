@@ -190,6 +190,13 @@ async function saveConversationTurn(
   userText: string,
   assistantReply: string
 ): Promise<void> {
+  // Never persist an empty turn: an empty-content entry in history is exactly
+  // what 400s every later Claude call (see sanitizeAnthropicMessages). Skip the
+  // write rather than poison the conversation log.
+  if (!userText?.trim() || !assistantReply?.trim()) {
+    console.warn("saveConversationTurn: skipping empty turn", { phone, userEmpty: !userText?.trim(), replyEmpty: !assistantReply?.trim() });
+    return;
+  }
   const col = db.collection("agent_conversations").doc(phone).collection("messages");
   const now = Date.now();
   const batch = db.batch();
@@ -962,6 +969,33 @@ export function ensureNonEmptyTurnText(text: string | null | undefined): string 
     "(the user sent a message with no text — likely a reaction, photo, or attachment with no caption)";
 }
 
+/**
+ * Make a messages array safe to send to Anthropic. The conversation-history
+ * window (last 10 persisted turns) can produce two shapes the API rejects with a
+ * 400 (BadRequestError) on the very FIRST call — and because the bad entry sits
+ * in history, it poisons every subsequent turn until it ages out of the window,
+ * which reads to the user as Cara "regressing":
+ *
+ *   1. an entry with empty (whitespace-only) string content, and
+ *   2. an array that starts with a non-`user` message (the 10-turn window can
+ *      begin mid-exchange on an assistant turn; Anthropic requires the first
+ *      message to be `role:"user"`).
+ *
+ * This drops empty-content entries and any leading non-user turns. Structured
+ * (block-array) content — the tool_use / tool_result messages the loop pushes
+ * later — is treated as non-empty and left untouched.
+ */
+export function sanitizeAnthropicMessages<T extends { role: string; content: unknown }>(messages: T[]): T[] {
+  const nonEmpty = messages.filter((m) => {
+    if (typeof m.content === "string") return m.content.trim().length > 0;
+    if (Array.isArray(m.content)) return m.content.length > 0;
+    return m.content != null;
+  });
+  let start = 0;
+  while (start < nonEmpty.length && nonEmpty[start].role !== "user") start++;
+  return nonEmpty.slice(start);
+}
+
 export async function runQaAgent(params: {
   text:          string;
   phone:         string;
@@ -1587,10 +1621,10 @@ export async function runQaAgent(params: {
     }
 
     // Tool-use loop — Claude calls tools until it has what it needs, then produces a reply
-    const messages: Anthropic.MessageParam[] = [
+    const messages: Anthropic.MessageParam[] = sanitizeAnthropicMessages([
       ...history,
       { role: "user", content: taggedText },
-    ];
+    ]);
 
     // Cache the system prompt — it's large, stable within a session, and called up to 8x per turn.
     // Prompt caching cuts latency and cost on every tool-use iteration after the first.

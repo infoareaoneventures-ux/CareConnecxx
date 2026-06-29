@@ -44,8 +44,12 @@ function isRichService(service?: string): boolean {
  * share; on SMS keep the plain typed prompt (location-sharing is impossible there).
  */
 function locationPrompt(base: string, service?: string): string {
+  // NOTE: only a one-time dropped PIN (➕ → Location → "Send My Current Location")
+  // reaches us with coordinates. Apple's "Share My Location" (continuous live
+  // share) does NOT deliver coordinates to the webhook, so don't promise it —
+  // typing the city/zip is the reliable path.
   return isRichService(service)
-    ? `${base}\n\nOr just tap ➕ and share your location — one tap, no typing.`
+    ? `${base}\n\n(Or tap ➕ → Location → "Send My Current Location" to drop a pin.)`
     : base;
 }
 
@@ -1041,7 +1045,7 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
   if (await isQuestionOrOther(text)) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, locationPrompt("What city and zip code are you in? (e.g. \"Austin, TX 78701\")", service));
+    await sendMessage(chatId, locationPrompt("What city and zip code are you in? (e.g. \"San Jose, CA 95125\")", service));
     return;
   }
   const raw = await parseWithClaude(
@@ -1058,7 +1062,7 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
   } catch { /* keep defaults */ }
 
   if (!city && !zipCode) {
-    await sendMessage(chatId, locationPrompt("Hmm, I didn't catch that. Could you share your city and zip code? (e.g. \"Austin, TX 78701\")", service));
+    await sendMessage(chatId, locationPrompt("Hmm, I didn't catch that. Could you share your city and zip code? (e.g. \"San Jose, CA 95125\")", service));
     return;
   }
 

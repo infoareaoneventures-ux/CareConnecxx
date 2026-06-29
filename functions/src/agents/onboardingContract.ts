@@ -18,7 +18,7 @@
 // the caregiver needs segmented loop ↔ gate ↔ loop handling (tracked for the
 // U3/U4 wiring). complete_collection's caregiver branch is therefore provisional.
 
-import { isOnboardingAgentLoopEnabled } from "../config/featureFlags";
+import { isOnboardingAgentLoopEnabled, isPhoneInOnboardingCohort } from "../config/featureFlags";
 
 export type OnboardingRole = "client" | "caregiver";
 
@@ -124,11 +124,17 @@ export function shouldRouteOnboardingToLoop(args: {
   hasText: boolean;
   hasMedia: boolean;
   hasLocation: boolean;
+  // The inbound phone — used for canary cohort scoping. Optional: when omitted,
+  // cohort membership is decided as if no narrowing is active (default 100%).
+  phone?: string;
 }): boolean {
-  const { role, step, hasText, hasMedia, hasLocation } = args;
+  const { role, step, hasText, hasMedia, hasLocation, phone } = args;
   if (role !== "client") return false;
   if (!isOnboardingAgentLoopEnabled("client")) return false;
   if (!CLIENT_COLLECTION_STEPS.includes(step)) return false;
   if (!hasText || hasMedia || hasLocation) return false;
+  // Canary cohort: a narrowed rollout (a % or an allowlist) only routes the phones
+  // in-cohort; default (no narrowing) routes everyone in the enabled role.
+  if (!isPhoneInOnboardingCohort(phone)) return false;
   return true;
 }

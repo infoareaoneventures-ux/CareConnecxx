@@ -45,9 +45,30 @@ prompt dispatcher was flipped live without its eval. Do not repeat that.
 2. **Shadow** (optional): run the loop in parallel without sending, compare against
    the scripted output on real traffic. Reuse the routing-shadow pattern
    (`ROUTING_CONVERGENCE_SHADOW`) if wired for onboarding.
-3. **Canary:** `ONBOARDING_AGENT_LOOP=client` for a small cohort / short window.
-   Watch the canary report below.
-4. **On:** keep `client` set. Caregiver stays off pending its segmented design.
+3. **Canary:** `ONBOARDING_AGENT_LOOP=client` **plus a cohort narrowing** for a
+   small fraction / short window. Watch the canary report below.
+4. **On:** widen the cohort to 100% (drop the narrowing). Caregiver stays off
+   pending its segmented design.
+
+### Canary cohort controls
+
+The role flag is all-or-none; these narrow it to a real canary cohort (both default
+to "everyone in the enabled role", so the role flag alone = 100%). Allowlist wins
+over percentage. Membership is a stable per-phone hash, so a user's experience
+never flips turn to turn.
+
+```
+# 10% of clients, by stable phone hash:
+ONBOARDING_AGENT_LOOP=client
+ONBOARDING_AGENT_LOOP_COHORT_PCT=10
+
+# OR a hand-picked allowlist (exact numbers or trailing-digit suffixes):
+ONBOARDING_AGENT_LOOP=client
+ONBOARDING_AGENT_LOOP_PHONES=+15555550123,4567
+```
+
+Widen by raising the pct (10 → 25 → 50 → 100) between healthy canary-watch reads;
+roll back instantly by clearing `ONBOARDING_AGENT_LOOP` (cohort vars can stay).
 
 ## Canary watch (run during the canary)
 

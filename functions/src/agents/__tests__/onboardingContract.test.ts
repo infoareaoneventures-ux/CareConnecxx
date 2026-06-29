@@ -144,4 +144,31 @@ describe("onboardingContract", () => {
       expect(shouldRouteOnboardingToLoop(base)).toBe(false); // client not enabled
     });
   });
+
+  describe("shouldRouteOnboardingToLoop — canary cohort scoping", () => {
+    const base = { role: "client", step: "client_ask_needs", hasText: true, hasMedia: false, hasLocation: false, phone: "+15551234567" };
+    afterEach(() => {
+      delete process.env.ONBOARDING_AGENT_LOOP;
+      delete process.env.ONBOARDING_AGENT_LOOP_COHORT_PCT;
+      delete process.env.ONBOARDING_AGENT_LOOP_PHONES;
+    });
+
+    it("default (no cohort narrowing) routes the whole enabled role", () => {
+      process.env.ONBOARDING_AGENT_LOOP = "client";
+      expect(shouldRouteOnboardingToLoop(base)).toBe(true);
+    });
+
+    it("pct=0 excludes the phone even with the role enabled", () => {
+      process.env.ONBOARDING_AGENT_LOOP = "client";
+      process.env.ONBOARDING_AGENT_LOOP_COHORT_PCT = "0";
+      expect(shouldRouteOnboardingToLoop(base)).toBe(false);
+    });
+
+    it("allowlist routes only listed phones (suffix match)", () => {
+      process.env.ONBOARDING_AGENT_LOOP = "client";
+      process.env.ONBOARDING_AGENT_LOOP_PHONES = "4567";
+      expect(shouldRouteOnboardingToLoop(base)).toBe(true);
+      expect(shouldRouteOnboardingToLoop({ ...base, phone: "+15550000000" })).toBe(false);
+    });
+  });
 });

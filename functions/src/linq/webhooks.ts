@@ -1486,6 +1486,7 @@ const handleInboundInner = traceable(
       hasText:     text.trim() !== "",
       hasMedia:    !!inboundMedia,
       hasLocation: !!inboundLocation,
+      phone,
     })) {
       try {
         await runQaAgent({

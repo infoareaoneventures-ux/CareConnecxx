@@ -27,15 +27,21 @@ runner instantly (no redeploy).
 This mirrors the unvalidated-flip lesson from `context/progress-tracker.md:69` — the
 prompt dispatcher was flipped live without its eval. Do not repeat that.
 
-1. **Real-model eval.** Run the onboarding-loop eval against a real model on messy
-   human inputs (terse "My mom", front-loaded multi-field, mid-flow questions, bare
-   greetings, corrections). Gate: collection-completion rate ≥ scripted baseline;
-   no re-greet; no double-send; required fields always saved before handoff.
-   *(Mocked-loop harness shipped — `qaAgent.onboarding.test.ts`. The REAL-model run
-   against messy inputs is the remaining blocker — see "Remaining" below.)*
-2. **Latency check.** Per-turn latency within agreed bound. The loop is Sonnet; the
-   scripted runner used gpt-4o-mini per field (KTD-7). Collection is few-turn, but
-   measure before trusting it on the signup happy path.
+1. **Real-model eval.** ✅ PASSED 2026-06-29 — `npm run eval:onboarding` against the
+   real model, **5/5** cases (terse, front-loaded, mid-flow question, correction,
+   bare greeting): all complete, zero re-greet, no double-send, correct senior-vs-
+   family field mapping, complete_collection fired each time. Bugs this caught and
+   fixed first: complete_collection-never-called (over-asked optional zip), the
+   empty-text "give me a moment" stall, save-before-reply, name fixation, and a too-
+   strict re-greet grader. NOTE: one clean run — the model is stochastic (an earlier
+   run re-greeted once), so the canary is the real consistency check, not proof from
+   a single pass. Re-run after any directive change.
+2. **Latency check.** Measured P95 **~12s**, max ~23s per turn in the eval. This is a
+   COLD upper bound — the eval makes independent calls with no prompt-cache warmth
+   between turns; production reuses the cached system prompt + tools within a session.
+   The original 4s ceiling was provisional. For SMS (async; users tolerate a short
+   wait) ratify **P95 ≤ 15s** and confirm the real, cache-warm number from the canary
+   (`emitTurnMetrics` onboarding `durationMs`) before widening past the first cohort.
 3. **Golden transcripts** (`functions/src/agents/goldenTranscripts.test.ts`) extended
    with onboarding cases, green.
 

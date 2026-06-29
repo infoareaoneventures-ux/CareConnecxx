@@ -13,9 +13,11 @@ import { getAllPending } from "../agents/pendingActions";
 import { handlePendingApprovals } from "../agents/approvalHandler";
 import { optOutPhoneNumber, optInPhoneNumber, setupCaraContactCard } from "../sms";
 import { buildHelpSmsReply, DiscoveryRole } from "../agents/capabilityDiscovery";
-import { loadCaraOperationalContext } from "../agents/operationalContext";
+import { buildOperationalRecipeLead, loadCaraOperationalContext } from "../agents/operationalContext";
 import {
   handleOnboardingStep,
+  continueAfterClientCollection,
+  absorbClientFields,
 } from "../agents/onboardingConversation";
 import { runQaAgent } from "../agents/qaAgent";
 import {
@@ -1039,13 +1041,7 @@ const handleInboundInner = traceable(
     let leadWith: string | undefined;
     try {
       const ctx = await loadCaraOperationalContext({ phone, userId: session.userId });
-      if (ctx.pendingActions[0]?.preview) {
-        leadWith = `You've got something waiting on your reply: ${ctx.pendingActions[0].preview}.`;
-      } else if (role === "client" && ctx.clientState?.nextAppointment) {
-        leadWith = `Your next visit is on the books.`;
-      } else if (role === "caregiver" && ctx.caregiverState?.pendingShiftHours) {
-        leadWith = `You've got shift hours in review.`;
-      }
+      leadWith = buildOperationalRecipeLead(ctx, role);
     } catch {
       // best-effort — fall through to the no-context list reply.
     }
@@ -1515,11 +1511,61 @@ const handleInboundInner = traceable(
         // didn't call it, advance to the gate so the user is never trapped on a
         // collection step.
         const after     = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
-        const curStep   = (after.onboardingStep as string) ?? step;
-        const curData   = (after.onboardingData ?? {}) as Record<string, unknown>;
+        let   curStep   = (after.onboardingStep as string) ?? step;
+        let   curData   = (after.onboardingData ?? {}) as Record<string, unknown>;
+
+        // Persistence safety net: the agent loop depends on the MODEL calling
+        // save_onboarding_field. When it chats an answer but skips the tool, the
+        // field is lost and the cursor never moves (user perceives Cara as stuck /
+        // regressing). If the model saved nothing this turn, deterministically
+        // extract any fields from the user's message — the same parser the scripted
+        // runner trusts — and persist them, so collection never silently drops data.
+        const preData    = (session.onboardingData ?? {}) as Record<string, unknown>;
+        const modelSaved = Object.keys(curData).length > Object.keys(preData).length;
+        if (!modelSaved && text.trim() !== "") {
+          const absorbed = await absorbClientFields(text, curData).catch(() => ({}));
+          if (Object.keys(absorbed).length > 0) {
+            await db.collection("agent_sessions").doc(phone)
+              .set({ onboardingData: absorbed }, { merge: true });
+            curData = { ...curData, ...absorbed };
+            console.info("webhooks: persistence net captured fields the loop skipped", { phone, fields: Object.keys(absorbed) });
+
+            // Preserve the Santa Clara County service-area gate when the net just
+            // captured a location (mirrors save_onboarding_field's gate so the
+            // tool-skip path can't bypass it).
+            if (absorbed.city || absorbed.zipCode) {
+              const { evaluateServiceArea } = await import("../config/serviceArea");
+              const sa = evaluateServiceArea({ city: curData.city as string, zip: (curData.zipCode as string) || (curData.city as string) });
+              if (sa === "out") {
+                const { parkOutOfArea } = await import("../agents/serviceAreaGate");
+                await parkOutOfArea({ phone, role: "client", city: (curData.city as string) ?? "", zipCode: (curData.zipCode as string) ?? "", name: (curData.firstName as string) ?? "", onboardingData: curData });
+                await sendMessage(chatId, "I'm so sorry — we're not in your area just yet. I've added you to our waitlist and I'll reach out the moment we expand there. 💙");
+                await pushOnboardingStepToZep(step);
+                return;
+              }
+            }
+          }
+        }
+
         if (CLIENT_COLLECTION_STEPS.includes(curStep) && missingRequiredFields("client", curData).length === 0) {
           await db.collection("agent_sessions").doc(phone).update({ onboardingStep: firstGateStep("client") });
-          console.info("webhooks: stuck-signup net advanced cursor to gate", { phone, from: curStep });
+          curStep = firstGateStep("client");
+          console.info("webhooks: stuck-signup net advanced cursor to gate", { phone, from: step });
+        }
+        // Proactive post-collection handoff: collection just finished this turn
+        // (cursor sits at the first gate step). The loop already sent its closing
+        // line, but the matches → paywall (or no-supply hold) phase is webhook-
+        // passive and would otherwise wait for an inbound that never comes. Drive
+        // it now so Cara doesn't go silent right after "that's everything I need".
+        if (curStep === firstGateStep("client")) {
+          try {
+            await continueAfterClientCollection(phone, chatId);
+          } catch (err) {
+            console.error(
+              "webhooks: post-collection handoff failed",
+              err instanceof Error ? err.message : err,
+            );
+          }
         }
         await pushOnboardingStepToZep(step);
         return;

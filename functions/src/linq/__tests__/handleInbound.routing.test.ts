@@ -144,9 +144,13 @@ vi.mock("../../sms", () => ({
 
 const handleOnboardingStep   = vi.fn(async (..._a: any[]) => {});
 const sendBgCheckRenewalLink = vi.fn(async (..._a: any[]) => {});
+const continueAfterClientCollection = vi.fn(async (..._a: any[]) => {});
+const absorbClientFields     = vi.fn(async (..._a: any[]) => ({}));
 vi.mock("../../agents/onboardingConversation", () => ({
   handleOnboardingStep:   (...a: any[]) => handleOnboardingStep(...a),
   sendBgCheckRenewalLink: (...a: any[]) => sendBgCheckRenewalLink(...a),
+  continueAfterClientCollection: (...a: any[]) => continueAfterClientCollection(...a),
+  absorbClientFields:     (...a: any[]) => absorbClientFields(...a),
 }));
 
 const detectCrisis      = vi.fn((..._a: any[]): string | null => null);
@@ -680,6 +684,21 @@ describe("onboarding agent-loop flag routing", () => {
     await handleInbound(makeEvent("My mom Jane"));
     expect(runQaAgent).toHaveBeenCalledTimes(1);
     expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  // Persistence safety net: the live bug — the loop chats an answer but the model
+  // never calls save_onboarding_field, so the field is lost and the cursor sticks.
+  // The deterministic extractor must capture it server-side regardless.
+  it("persistence net: loop saves nothing → user's answer is still captured", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_name", onboardingData: {} });
+    // runQaAgent mock does no Firestore write → onboardingData unchanged this turn.
+    absorbClientFields.mockResolvedValueOnce({ seniorName: "Jane" });
+    await handleInbound(makeEvent("it's for my mom Jane"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(absorbClientFields).toHaveBeenCalled();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData)
+      .toMatchObject({ seniorName: "Jane" });
   });
 
   it("loop throws: falls through to the scripted runner so the user is never wedged", async () => {

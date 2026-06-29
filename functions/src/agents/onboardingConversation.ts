@@ -299,7 +299,7 @@ export function isFieldFilled(value: unknown): boolean {
  * Conservative: returns `{}` on parse error so the regular step handlers
  * still run and ask explicitly.
  */
-async function absorbClientFields(text: string, existing: Record<string, unknown>): Promise<Record<string, unknown>> {
+export async function absorbClientFields(text: string, existing: Record<string, unknown>): Promise<Record<string, unknown>> {
   const raw = await parseWithClaude(
     "You are extracting onboarding details from one message a family sent to Cara. " +
       "Return JSON only with the fields you can confidently extract. Omit fields not present. " +
@@ -1291,6 +1291,18 @@ async function handleClientShowCaregivers(
   // know what CareConnex costs. handleClientPresentPlan sets up the price.
   await updateSession(phone, { onboardingStep: "client_ask_plan" });
   await handleClientPresentPlan(phone, chatId, session);
+}
+
+// Proactive post-collection handoff for the agent loop. When the loop calls
+// complete_collection it only advances the cursor to the first gate step — the
+// next phase (show caregivers → paywall, or the honest no-supply hold) is
+// webhook-passive and would otherwise wait for an inbound that never comes (the
+// family was just told their part is done). The webhook calls this the moment
+// collection completes so Cara continues in the SAME turn instead of going silent.
+export async function continueAfterClientCollection(phone: string, chatId: string): Promise<void> {
+  const snap = await db.collection("agent_sessions").doc(phone).get();
+  if (!snap.exists) return;
+  await handleClientShowCaregivers(phone, chatId, snap.data() as AgentSession);
 }
 
 // When a caregiver activates, re-engage families we honestly held (awaitingSupply)
@@ -3537,13 +3549,20 @@ async function handleJobConfirmPost(
 
 async function answerQuestionMidFlow(text: string, session: AgentSession): Promise<string> {
   const d = session.onboardingData ?? {};
+  const name = (d.name ?? d.firstName ?? "") as string;
   return (await quickComplete(
-    "You are Cara, an AI care assistant. " +
-      "A user is in the middle of signing up and has a question. " +
-      `Context: they are ${session.userType === "caregiver" ? "a caregiver looking for work" : "a family member looking for care"}. ` +
-      `Name: ${(d.name ?? d.firstName ?? "") as string}. ` +
-      "Answer briefly (1–2 sentences). Be warm and helpful.",
+    "You are Cara, a warm human-feeling care coordinator at CareConnex. You help people entirely over text — " +
+      "YOU do the work for them: you find, vet, and match caregivers and set everything up through this conversation. " +
+      `The person you're texting is ${session.userType === "caregiver" ? "a caregiver looking for work" : "a family member looking for care for a loved one"}` +
+      `${name ? ` named ${name}` : ""}, and they're in the middle of signing up with you. They just said something — it may be a question, or just a comment. ` +
+      "Reply in ONE warm, specific sentence. " +
+      "HARD RULES: " +
+      "(1) NEVER invent or refer to a website, app, dashboard, 'platform', 'search function', filters, or any self-serve tool — none exist; the user only ever texts you, and you handle the searching and matching yourself. " +
+      "(2) If they named a place or a need (e.g. 'I'm looking for caregivers in San Jose'), reassure them you'll handle finding caregivers there — do NOT tell them to search. " +
+      "(3) Never call yourself an 'AI', 'AI assistant', 'AI care assistant', or 'chatbot', and never use phrases like 'I'm here to help' or 'let me know if you need further assistance'. " +
+      "(4) If you don't actually know the answer, say you'll get it sorted — never make up a feature or process. " +
+      "Don't re-ask the signup question; that's added automatically after your reply.",
     text,
-    { maxTokens: 100 },
+    { maxTokens: 90 },
   )).trim();
 }

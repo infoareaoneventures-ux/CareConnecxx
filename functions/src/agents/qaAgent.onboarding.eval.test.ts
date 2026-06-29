@@ -279,7 +279,9 @@ const EVAL_CASES: EvalCase[] = [
   {
     id: "terse",
     label: "terse one-word-ish answers",
-    turns: ["my mom", "Jane", "82", "she needs help bathing and meals", "Austin", "3 days a week", "mornings", "Imran"],
+    // Terse, but not a trap: "her name is Dorothy" makes clear Dorothy is the senior,
+    // and the family member gives their own name explicitly at the end.
+    turns: ["my mom needs care", "her name is Dorothy", "82", "bathing and meals", "Austin", "3 days a week", "mornings", "oh and I'm Imran"],
   },
   {
     id: "front_loaded",
@@ -292,7 +294,7 @@ const EVAL_CASES: EvalCase[] = [
   {
     id: "mid_flow_question",
     label: "asks a question mid-collection, then resumes",
-    turns: ["I'm looking for help for my dad", "his name is Robert, he's 80", "wait — how much does this cost?", "ok. he needs help with mobility and meds", "Phoenix", "5 days, afternoons", "I'm Maria"],
+    turns: ["I'm looking for help for my dad", "I'm Maria, his name is Robert and he's 80", "wait — how much does this cost?", "ok. he needs help with mobility and meds", "he's in Phoenix", "5 days a week, afternoons"],
   },
   {
     id: "correction",
@@ -315,6 +317,10 @@ describe("onboarding eval graders (pure, no spend)", () => {
     expect(isReGreet("I'm Cara, your AI care assistant.")).toBe(true);
     expect(isReGreet("Got it — and how old is she?")).toBe(false);
     expect(isReGreet("So she's alone mornings. What city are you in?")).toBe(false);
+    // "Nice to meet you, <name>" after they introduce themselves is good manners,
+    // NOT a conversation-restart re-greet.
+    expect(isReGreet("Nice to meet you, Ana. What city is Rosa in?")).toBe(false);
+    expect(isReGreet("Good to meet you, Maria! And how old is he?")).toBe(false);
   });
 
   it("hasBannedPhrasing catches chatbot tells anywhere in the reply", () => {

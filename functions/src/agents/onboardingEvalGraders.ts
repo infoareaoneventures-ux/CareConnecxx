@@ -16,10 +16,15 @@ import { OnboardingRole, missingRequiredFields } from "./onboardingContract";
 // (onboardingDirective.ts "HOW TO TALK"). A reply on turn 2+ that opens with any of
 // these is a re-greet. Anchored to the START of the reply so a mid-sentence "hi"
 // ("...said hi to her") doesn't false-positive.
+//
+// NOTE: "nice/good to meet you" and "welcome" are deliberately NOT here. Saying
+// "Nice to meet you, Ana" right after someone gives their name is warm and correct,
+// not a conversation-restart re-greet. The real defect is opening turn 2+ with
+// "Hi/Hey/Hello" as if it were first contact, or re-introducing the assistant.
 const REGREET_OPENERS = [
   /^\s*(hi|hey|hello|howdy|greetings)\b/i,
   /^\s*good\s+(morning|afternoon|evening)\b/i,
-  /^\s*(welcome|nice to meet you)\b/i,
+  /^\s*(hi|hey|hello)\s+(again|there)\b/i,
 ];
 
 // Self-introduction / chatbot phrasing banned anywhere in the reply.

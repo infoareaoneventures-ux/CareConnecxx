@@ -419,6 +419,9 @@ describe("eval harness tool engine (no spend)", () => {
 // ── live eval (SKIPPED unless CARA_ONBOARDING_EVAL_LIVE=true + ANTHROPIC_API_KEY) ─
 const latencies: number[] = [];
 const caseGrades: Array<{ id: string; grade: TranscriptGrade }> = [];
+// Full per-case transcripts, written to a results file after the run so the run
+// can be inspected turn-by-turn without scrolling/pasting terminal output.
+const caseRecords: Array<Record<string, unknown>> = [];
 
 describe.skipIf(!LIVE)("onboarding loop — REAL model eval (incurs API spend)", () => {
   beforeEach(() => { store.reset(); });
@@ -474,6 +477,16 @@ describe.skipIf(!LIVE)("onboarding loop — REAL model eval (incurs API spend)",
         completeFiredWith: completeFired ? [] : undefined,
       });
       caseGrades.push({ id: ec.id, grade });
+      caseRecords.push({
+        id: ec.id,
+        label: ec.label,
+        passed: grade.passed,
+        failures: grade.failures,
+        turns: ec.turns.map((t, i) => ({ user: t, cara: replies[i] ?? "" })),
+        finalData: finalSess.onboardingData,
+        completeFired,
+        metrics: grade.metrics,
+      });
 
       if (!grade.passed) {
         console.error(`\n[eval:${ec.id}] FAIL`, grade.failures);
@@ -488,9 +501,26 @@ describe.skipIf(!LIVE)("onboarding loop — REAL model eval (incurs API spend)",
     }, 120_000);
   }
 
-  afterAll(() => {
+  afterAll(async () => {
     if (!LIVE || latencies.length === 0) return;
     const passed = caseGrades.filter((c) => c.grade.passed).length;
+    const summary = {
+      cases: `${passed}/${caseGrades.length}`,
+      p95LatencyMs: p95(latencies),
+      maxLatencyMs: Math.max(...latencies),
+      latencyCeilingMs: 4000,
+      records: caseRecords,
+    };
+    // Write a results file for turn-by-turn inspection (path is gitignored).
+    try {
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const out = path.resolve(process.cwd(), "functions", ".eval-results.json");
+      fs.writeFileSync(out, JSON.stringify(summary, null, 2), "utf8");
+      console.log(`\n  full transcripts written to functions/.eval-results.json`);
+    } catch (e) {
+      console.warn("  could not write eval results file:", (e as Error).message);
+    }
     console.log(`\n── Onboarding loop real-model eval ──`);
     console.log(`  cases: ${passed}/${caseGrades.length} passed`);
     console.log(`  per-turn latency: P95 ${p95(latencies)}ms (n=${latencies.length}), max ${Math.max(...latencies)}ms`);

@@ -90,6 +90,7 @@ export function buildOnboardingDirective(
     ``,
     `HOW TO TALK:`,
     `  - You are mid-conversation. You already greeted them. NEVER greet again, never re-introduce yourself, never open with "Hi"/"Hey <name>". Reply directly.`,
+    `  - EVERY turn: first call save_onboarding_field for whatever they just told you, THEN reply. A short or one-word answer to your last question IS that field's value — save it immediately, don't ask them to confirm it and don't move on without saving it.`,
     `  - Acknowledge what they just said before you ask the next thing. Reflect the story`,
     `    back when it's heavy ("so she's alone mornings while you work") — then ask.`,
     `  - One question per message. Never send a numbered list or ask for several things at once.`,

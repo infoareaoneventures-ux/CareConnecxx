@@ -55,3 +55,4 @@ third_party/
 # Generated Cloud Functions output - rebuild with: npm --prefix functions run build
 # (committed copies caused rebase conflicts in functions/lib/shiftHours.js[.map])
 functions/lib/
+functions/.eval-results.json

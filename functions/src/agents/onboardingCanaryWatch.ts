@@ -116,14 +116,18 @@ export async function fetchOnboardingCanary(opts: { sinceMs?: number; limit?: nu
   const admin = require("firebase-admin") as typeof import("firebase-admin");
   if (!admin.apps.length) admin.initializeApp();
   const sinceIso = new Date(Date.now() - sinceMs).toISOString();
+  // Single-field equality filter only (no composite index needed); the time
+  // window is applied client-side. Onboarding-canary volume is low, so pulling
+  // up to `limit` flowClass=onboarding docs and filtering by `at` here is cheap.
   const snap = await admin
     .firestore()
     .collection("cara_turn_metrics")
     .where("flowClass", "==", "onboarding")
-    .where("at", ">=", sinceIso)
     .limit(limit)
     .get();
-  return snap.docs.map((d) => d.data() as CanaryRecord);
+  return snap.docs
+    .map((d) => d.data() as CanaryRecord)
+    .filter((r) => !r.at || String(r.at) >= sinceIso);
 }
 
 // ── CLI entry ─────────────────────────────────────────────────────────────────

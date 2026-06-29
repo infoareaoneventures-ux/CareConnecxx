@@ -1899,6 +1899,23 @@ export async function runQaAgent(params: {
           .map((b) => (b as { type: "text"; text: string }).text)
           .join("")
           .trim();
+        // The model sometimes ends a turn with NO user-facing text right after a
+        // tool call (e.g. saves a field then stops). That used to fall straight to
+        // the exhausted "give me a moment" stall + 30s retry. Instead, if there's
+        // still iteration budget, push the empty assistant turn and force ONE more
+        // text completion so the user always gets a real sentence.
+        if (!reply && iteration < maxIterations - 1) {
+          console.info("qaAgent: empty text reply — nudging for a user-facing sentence", { userId, iteration });
+          messages.push({
+            role: "assistant",
+            content: response.content?.length ? response.content : [{ type: "text", text: "…" }],
+          });
+          messages.push({
+            role: "user",
+            content: "Reply to me now in one short sentence — acknowledge what I just said, then ask the next thing (or, if you have everything, tell me what happens next).",
+          });
+          continue;
+        }
         break;
       }
     }

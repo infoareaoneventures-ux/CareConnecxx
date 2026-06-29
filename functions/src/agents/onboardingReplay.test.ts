@@ -137,7 +137,7 @@ vi.mock("./emotionalContext", () => ({
 vi.mock("../memory/memoryFiles", () => ({ initializeMemoryFiles: vi.fn(async () => undefined), writeMemoryFile: vi.fn(async () => undefined) }));
 vi.mock("../memory/zepClient", () => ({ pushOnboardingDataToZep: vi.fn(async () => undefined), addBusinessDataToZep: vi.fn(async () => undefined), getZepUserId: () => "z" }));
 vi.mock("../notifications", () => ({ notifyAdminNewClientSignup: vi.fn(async () => undefined), notifyAdminNewCaregiverSignup: vi.fn(async () => undefined) }));
-vi.mock("../utils/locationShare", () => ({ reverseGeocode: vi.fn(async () => ({ city: "Austin", zipCode: "78701" })) }));
+vi.mock("../utils/locationShare", () => ({ reverseGeocode: vi.fn(async () => ({ city: "San Jose", zipCode: "95110" })) }));
 vi.mock("../utils/mediaIntake", () => ({ downloadMedia: vi.fn(async () => null), storeInboundMedia: vi.fn(async () => undefined) }));
 vi.mock("../utils/visionVerify", () => ({ verifyProfilePhoto: vi.fn(async () => ({ ok: true })), verifyDocument: vi.fn(async () => ({ ok: true })) }));
 vi.mock("../utils/knownNames", () => ({ addKnownNames: vi.fn(async () => undefined) }));
@@ -186,7 +186,7 @@ describe("onboarding replay — legacy parity oracle (U11)", () => {
       { text: "I'm Sarah",                             parses: { parse: "Sarah" } },
       { text: "my mom Dorothy",                        parses: { parse: '{"seniorName":"Dorothy","relationship":"mother"}' } },
       { text: "she's 82, has dementia, needs bathing", parses: { parse: '{"age":82,"careNeeds":["bathing"],"conditions":["dementia"]}' } },
-      { text: "Austin, TX 78701",                      parses: { parse: '{"city":"Austin","zipCode":"78701"}' } },
+      { text: "San Jose, CA 95110",                      parses: { parse: '{"city":"San Jose","zipCode":"95110"}' } },
       { text: "3 mornings a week",                     parses: { parse: '{"daysPerWeek":3,"timeOfDay":"morning","hoursPerDay":4}' } },
     ]);
 
@@ -195,8 +195,8 @@ describe("onboarding replay — legacy parity oracle (U11)", () => {
     expect(d.firstName).toBe("Sarah");
     expect(d.seniorName).toBe("Dorothy");
     expect(d.age).toBe(82);
-    expect(d.city).toBe("Austin");
-    expect(d.zipCode).toBe("78701");
+    expect(d.city).toBe("San Jose");
+    expect(d.zipCode).toBe("95110");
     expect(d.daysPerWeek).toBe(3);
     // Schedule was the last absorbable step → machine advances past it.
     expect(final.onboardingStep).toBe("client_ask_start");
@@ -205,15 +205,15 @@ describe("onboarding replay — legacy parity oracle (U11)", () => {
   it("multi-field absorption: one front-loaded message fills several fields and auto-advances", async () => {
     const final = await runTurns({ onboardingStep: "client_ask_name", userType: "client" }, [
       {
-        text: "Sarah here — my mom Dorothy is 82 with dementia, we're in Austin 78701",
-        parses: { absorb: '{"firstName":"Sarah","seniorName":"Dorothy","age":82,"city":"Austin","zipCode":"78701"}', parse: '{"daysPerWeek":3,"timeOfDay":"morning","hoursPerDay":4}' },
+        text: "Sarah here — my mom Dorothy is 82 with dementia, we're in San Jose 95110",
+        parses: { absorb: '{"firstName":"Sarah","seniorName":"Dorothy","age":82,"city":"San Jose","zipCode":"95110"}', parse: '{"daysPerWeek":3,"timeOfDay":"morning","hoursPerDay":4}' },
       },
     ]);
     const d = data(final);
     expect(d.firstName).toBe("Sarah");
     expect(d.seniorName).toBe("Dorothy");
     expect(d.age).toBe(82);
-    expect(d.city).toBe("Austin");
+    expect(d.city).toBe("San Jose");
     // Absorption auto-skipped the name/senior/needs/location steps.
     expect(final.onboardingStep).not.toBe("client_ask_name");
   });
@@ -261,7 +261,7 @@ describe("prompt-driven dispatcher (U12)", () => {
         { text: "I'm Sarah",                             parses: { parse: "Sarah" } },
         { text: "my mom Dorothy",                        parses: { parse: '{"seniorName":"Dorothy","relationship":"mother"}' } },
         { text: "she's 82, has dementia, needs bathing", parses: { parse: '{"age":82,"careNeeds":["bathing"],"conditions":["dementia"]}' } },
-        { text: "Austin, TX 78701",                      parses: { parse: '{"city":"Austin","zipCode":"78701"}' } },
+        { text: "San Jose, CA 95110",                      parses: { parse: '{"city":"San Jose","zipCode":"95110"}' } },
         { text: "3 mornings a week",                     parses: { parse: '{"daysPerWeek":3,"timeOfDay":"morning","hoursPerDay":4}' } },
       ]);
       // Identical field-collection + routing to the flag-OFF happy path above.
@@ -269,8 +269,8 @@ describe("prompt-driven dispatcher (U12)", () => {
       expect(d.firstName).toBe("Sarah");
       expect(d.seniorName).toBe("Dorothy");
       expect(d.age).toBe(82);
-      expect(d.city).toBe("Austin");
-      expect(d.zipCode).toBe("78701");
+      expect(d.city).toBe("San Jose");
+      expect(d.zipCode).toBe("95110");
       expect(d.daysPerWeek).toBe(3);
       expect(final.onboardingStep).toBe("client_ask_start");
     });

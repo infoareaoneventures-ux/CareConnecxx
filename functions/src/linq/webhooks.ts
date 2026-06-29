@@ -1488,22 +1488,14 @@ const handleInboundInner = traceable(
       }).catch((err) => console.error("onboarding Zep push error:", err));
     };
 
-    const __routeLoop = shouldRouteOnboardingToLoop({
+    if (shouldRouteOnboardingToLoop({
       role:        session.userType,
       step,
       hasText:     text.trim() !== "",
       hasMedia:    !!inboundMedia,
       hasLocation: !!inboundLocation,
       phone,
-    });
-    console.warn("ONBDIAG routing", JSON.stringify({
-      phone, step, role: session.userType,
-      hasText: text.trim() !== "", hasMedia: !!inboundMedia, hasLocation: !!inboundLocation,
-      envFlag: process.env.ONBOARDING_AGENT_LOOP ?? null,
-      envPhones: process.env.ONBOARDING_AGENT_LOOP_PHONES ?? null,
-      routeLoop: __routeLoop,
-    }));
-    if (__routeLoop) {
+    })) {
       try {
         await runQaAgent({
           text,

@@ -22,6 +22,7 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { generateOtp, verifyOtp, formatOtpForDisplay, OtpState } from "../utils/phoneVerification";
 import { languageFromSession, t as tr } from "../utils/language";
 import { reverseGeocode, SharedLocation } from "../utils/locationShare";
+import { gateOnboardingLocation, askForZipMessage, WAITLISTED_STEP } from "./serviceAreaGate";
 import { downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/mediaIntake";
 import { addKnownNames } from "../utils/knownNames";
 import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
@@ -373,6 +374,25 @@ export async function handleOnboardingStep(
   let step = session.onboardingStep ?? "";
   const norm = text.trim().toUpperCase();
   const { service, inboundLocation, inboundMedia } = opts;
+
+  // Out-of-area waitlist parking (Santa Clara County gate). A waitlisted signup
+  // that keeps texting gets a calm acknowledgement, not a re-collect loop. "START
+  // OVER" lets them retry (e.g. if they mistyped their location).
+  if (step === WAITLISTED_STEP) {
+    if (norm === "START OVER" || norm === "RESTART") {
+      await updateSession(phone, { onboardingStep: "ask_role", waitlisted: false, userType: null, onboardingData: {} });
+      step = "ask_role";
+      session.onboardingStep = "ask_role";
+      (session as any).userType = null;
+      session.onboardingData = {};
+    } else {
+      await sendMessage(chatId,
+        "You're on our waitlist for when Cara expands to your area — I'll reach out the moment we do. " +
+        "If you're actually in Santa Clara County and I got that wrong, reply START OVER and we'll try again. 💙"
+      );
+      return;
+    }
+  }
 
   // U12 (DARK behind CONVERGENCE_FLIPPED="onboarding"): prompt-driven sequencing.
   // For a client in the conversational field-collection phase, derive the step
@@ -995,6 +1015,13 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
   if (inboundLocation) {
     const rev = await reverseGeocode(inboundLocation.lat, inboundLocation.lng);
     const city = rev?.city ?? "", zipCode = rev?.zipCode ?? "";
+    // Service-area gate (Santa Clara County only). A pin gives city/zip; if it's
+    // clearly out of area, decline + waitlist and stop here.
+    const d0 = session.onboardingData ?? {};
+    if (await gateOnboardingLocation({
+      phone, chatId, role: "client", city, zipCode,
+      name: (d0.firstName as string) ?? "", onboardingData: { ...d0, city, zipCode },
+    }) === "out") return;
     await mergeOnboardingData(phone, { city, zipCode, lat: inboundLocation.lat, lng: inboundLocation.lng });
     await updateSession(phone, { onboardingStep: "client_ask_schedule" });
     const d = session.onboardingData ?? {};
@@ -1033,6 +1060,19 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
   if (!city && !zipCode) {
     await sendMessage(chatId, locationPrompt("Hmm, I didn't catch that. Could you share your city and zip code? (e.g. \"Austin, TX 78701\")", service));
     return;
+  }
+
+  // Service-area gate (Santa Clara County only).
+  const dLoc = session.onboardingData ?? {};
+  const verdict = await gateOnboardingLocation({
+    phone, chatId, role: "client", city, zipCode,
+    name: (dLoc.firstName as string) ?? "", onboardingData: { ...dLoc, city, zipCode },
+  });
+  if (verdict === "out") return;               // declined + waitlisted
+  if (verdict === "need_zip") {                // city not recognized, no zip — confirm
+    await mergeOnboardingData(phone, { city });
+    await sendMessage(chatId, askForZipMessage());
+    return;                                     // stay on client_ask_location
   }
 
   await mergeOnboardingData(phone, { city, zipCode });
@@ -1561,6 +1601,19 @@ async function handleCaregiverAskLocation(phone: string, chatId: string, text: s
       text
     );
     try { const p = JSON.parse(raw); city = p.city ?? ""; zipCode = p.zipCode ?? ""; } catch { /* keep defaults */ }
+  }
+
+  // Service-area gate (Santa Clara County only) — caregivers must be in-county too.
+  const dCg = session.onboardingData ?? {};
+  const cgVerdict = await gateOnboardingLocation({
+    phone, chatId, role: "caregiver", city, zipCode,
+    name: (dCg.name as string) ?? "", onboardingData: { ...dCg, city, zipCode },
+  });
+  if (cgVerdict === "out") return;             // declined + waitlisted
+  if (cgVerdict === "need_zip") {              // city not recognized, no zip — confirm
+    await mergeOnboardingData(phone, { city });
+    await sendMessage(chatId, askForZipMessage());
+    return;                                     // stay on caregiver_ask_location
   }
 
   await mergeOnboardingData(phone, { city, zipCode, ...(coords ? { lat: coords.lat, lng: coords.lng } : {}) });

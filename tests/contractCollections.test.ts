@@ -79,6 +79,9 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     'admin_email_queue', 'adminNotifications', 'job_notifications',
     'health_alerts_pending', 'execution_agents', 'browser_sessions',
     'credential_vault',
+    // Out-of-area onboarding leads (Santa Clara County service-area gate) —
+    // server-written, not part of the web read contract.
+    'waitlist',
     // Matching / scheduling internals (web reads the user-facing mirrors, not these)
     'caregiver_booked_slots', 'replacement_candidates', 'recurring_schedules',
     'booking_patterns', 'day_patterns', 'match_history', 'match_outcomes',

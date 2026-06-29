@@ -5470,6 +5470,21 @@ async function executeToolCall(
       // would orphan from the completion record). See onboardingContract notes.
       const snap = await ref.get();
       const data = (snap.data()?.onboardingData ?? {}) as Record<string, unknown>;
+      // Service-area gate (Santa Clara County only). When a location field is
+      // saved, check coverage. Out → record a waitlist lead, park the session, and
+      // tell the model to decline. need_zip → ask for a ZIP to confirm.
+      if (fieldName === "city" || fieldName === "zipCode") {
+        const { evaluateServiceArea } = await import("../config/serviceArea");
+        const sa = evaluateServiceArea({ city: data.city as string, zip: (data.zipCode as string) || (data.city as string) });
+        if (sa === "out") {
+          const { parkOutOfArea } = await import("../agents/serviceAreaGate");
+          await parkOutOfArea({ phone: phone as string, role, city: (data.city as string) ?? "", zipCode: (data.zipCode as string) ?? "", name: (data.firstName as string) ?? (data.name as string) ?? "", onboardingData: data });
+          return { ok: true, outOfArea: true, complete: false, guidance: "This location is OUTSIDE Cara's service area (Santa Clara County, California only). Warmly tell the user we don't serve their area yet and that you've added them to our waitlist and will reach out when we expand. Do NOT collect any more fields and do NOT call complete_collection." };
+        }
+        if (sa === "need_zip" && fieldName === "city") {
+          return { ok: true, fieldName, saved: true, missing: missingRequiredFields(role, data), needZip: true, guidance: "Saved the city, but it isn't recognized — ask the user for their ZIP code to confirm we cover their area before continuing." };
+        }
+      }
       const missing = missingRequiredFields(role, data);
       return { ok: true, fieldName, saved: true, missing, collectionComplete: missing.length === 0 };
     }

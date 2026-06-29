@@ -427,19 +427,35 @@ describe("caregiver onboarding steps — characterization", () => {
 
   // ── NON-LINEAR steps stay bespoke (untouched by U3) ─────────────────────────────
   describe("non-linear steps remain bespoke", () => {
-    it("caregiver_ask_location keeps its reverse-geocode + local-job teaser path", async () => {
+    it("caregiver_ask_location keeps its reverse-geocode + local-job teaser path (in-area)", async () => {
+      const session = seedSession("caregiver_ask_location", { name: "Maria" });
+      // In-area (Santa Clara County) so the service-area gate passes.
+      stepAnswer = '{"city":"San Jose","zipCode":"95110"}';
+      await handleOnboardingStep(PHONE, CHAT, "San Jose, CA 95110", session, { service: "SMS" });
+
+      const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+      expect(stored.onboardingData.city).toBe("San Jose");
+      expect(stored.onboardingData.zipCode).toBe("95110");
+      // Merged flow inserts cara-100's caregiver_ask_story step between location
+      // and experience (mvr's flow went straight to experience).
+      expect(stored.onboardingStep).toBe("caregiver_ask_story");
+      // The bespoke handler sends the honest "no open jobs in <city>" teaser line.
+      expect(sentMessages.some(m => m.text.includes("open jobs in San Jose"))).toBe(true);
+    });
+
+    it("caregiver out-of-area location is declined + waitlisted (Santa Clara County gate)", async () => {
       const session = seedSession("caregiver_ask_location", { name: "Maria" });
       stepAnswer = '{"city":"Austin","zipCode":"78701"}';
       await handleOnboardingStep(PHONE, CHAT, "Austin, TX 78701", session, { service: "SMS" });
 
       const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
-      expect(stored.onboardingData.city).toBe("Austin");
-      expect(stored.onboardingData.zipCode).toBe("78701");
-      // Merged flow inserts cara-100's caregiver_ask_story step between location
-      // and experience (mvr's flow went straight to experience).
-      expect(stored.onboardingStep).toBe("caregiver_ask_story");
-      // The bespoke handler sends the honest "no open jobs in <city>" teaser line.
-      expect(sentMessages.some(m => m.text.includes("open jobs in Austin"))).toBe(true);
+      expect(stored.onboardingStep).toBe("out_of_area_waitlisted");
+      expect(stored.waitlisted).toBe(true);
+      // A waitlist lead is captured and the user is told we don't cover their area.
+      expect(hoisted.docState.get(`waitlist/${PHONE}`)).toBeTruthy();
+      expect(sentMessages.some(m => /Santa Clara County/i.test(m.text))).toBe(true);
+      // Did NOT advance into the rest of caregiver onboarding.
+      expect(stored.onboardingStep).not.toBe("caregiver_ask_story");
     });
 
     it("caregiver_ask_profile keeps its bespoke handler (gender/languages/canDrive)", async () => {

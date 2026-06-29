@@ -216,21 +216,31 @@ vi.mock("../mcp/server", () => {
   return { MCP_TOOLS, CAREGIVER_TOOLS: [], handleToolCall, handleToolCallForCaregiver: vi.fn() };
 });
 
-// claudeClient: return a REAL Anthropic client, but built via the NAMED export.
-// vitest's SSR transform mangles the SDK's default import, so claudeClient.ts's
-// `new Anthropic(...)` (default import) throws "is not a constructor" under the
-// runner only (production node/ts-node is fine). Constructing from the named
-// export here sidesteps that. callClaudeWithRetry stays REAL (not mocked), so the
-// loop makes genuine live API calls. wrapAnthropic (LangSmith) is skipped — fine
-// for an eval.
+// claudeClient: return a REAL Anthropic client so the loop makes genuine live API
+// calls (callClaudeWithRetry stays unmocked). Two vitest-only quirks handled here;
+// neither affects production:
+//   1. vite's SSR transform strips [[Construct]] off the SDK's exported class, so
+//      `new Anthropic(...)` throws "is not a constructor" under the runner. Loading
+//      the SDK through node's createRequire bypasses the vite transform and yields
+//      the genuine, constructible CJS class.
+//   2. the test env is jsdom, which the SDK detects as a browser and refuses to
+//      run in — dangerouslyAllowBrowser:true opts past that (test-only).
+// wrapAnthropic (LangSmith) is skipped — fine for an eval.
 vi.mock("../utils/claudeClient", async () => {
-  const sdk: any = await import("@anthropic-ai/sdk");
-  const Anthropic = sdk.Anthropic ?? sdk.default?.Anthropic ?? sdk.default;
+  const { createRequire } = await import("node:module");
+  const req = createRequire(import.meta.url);
+  const mod: any = req("@anthropic-ai/sdk");
+  const Anthropic = typeof mod === "function" ? mod : (mod.Anthropic ?? mod.default);
   let client: any = null;
   return {
     getSharedClient: () => {
       if (!client) {
-        client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", maxRetries: 0, timeout: 30_000 });
+        client = new Anthropic({
+          apiKey: process.env.ANTHROPIC_API_KEY ?? "",
+          maxRetries: 0,
+          timeout: 30_000,
+          dangerouslyAllowBrowser: true,
+        });
       }
       return client;
     },

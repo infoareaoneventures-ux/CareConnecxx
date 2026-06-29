@@ -27,6 +27,7 @@ import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
 import { isOnboardingTool } from "./onboardingContract";
+import { isReGreet } from "./onboardingEvalGraders";
 import { withToolsCacheControl } from "./toolCache";
 import { getLatestPending } from "./pendingActions";
 import { resolveLoopBudget, MAX_TOOL_CALLS_PER_TURN } from "./loopBudget";
@@ -1591,6 +1592,7 @@ export async function runQaAgent(params: {
     // U5: resolve the iteration budget from the flow class of this turn's intent.
     const budget = resolveLoopBudget(intent);
     const flowClass = onboardingMode ? "onboarding" : budget.flowClass;
+    metrics.flowClass = flowClass;
     // Onboarding can save several fields then call complete_collection in one turn;
     // the default intent:null budget (5) can exhaust before the handoff fires on a
     // front-loaded answer. Give collection more headroom.
@@ -2155,6 +2157,14 @@ export async function runQaAgent(params: {
     db.collection("agent_sessions").doc(phone).update({
       recentLintViolation: metrics.postProcessModified,
     }).catch(() => { /* non-critical telemetry */ });
+
+    // Onboarding canary signal: flag a mid-conversation re-greet on the final
+    // reply. history.length > 0 means there's a prior turn, so any greeting opener
+    // is a re-greet (the onboarding directive bans it). Detector only — never
+    // mutates the reply.
+    if (onboardingMode && history.length > 0 && isReGreet(reply)) {
+      metrics.onboardingReGreet = true;
+    }
 
     await saveConversationTurn(phone, text, reply);
     if (!skipSend) await sendSplit(chatId, reply);

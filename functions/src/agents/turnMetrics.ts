@@ -35,6 +35,16 @@ export interface TurnMetrics {
   durationMs?:    number;     // filled by emit
   contextLoadMs?: number;     // wall-clock for the parallel context fetch
 
+  // Flow class for this turn (from resolveLoopBudget, or "onboarding" when the
+  // agent-native onboarding loop handled it). Lets canary dashboards filter the
+  // onboarding cohort. Stable field — add-only.
+  flowClass?:     string;
+  // Onboarding canary signal: the loop produced a reply that re-greets /
+  // re-introduces mid-conversation (banned by the onboarding directive). Detected
+  // via onboardingEvalGraders.isReGreet on the final reply. Should be zero in
+  // canary; a non-zero rate is a rollback trigger.
+  onboardingReGreet?: boolean;
+
   // Tool-use loop (qa pathway)
   iterations?:     number;    // final iteration count when loop exited
   toolCalls?:      number;    // total successful tool invocations across iterations
@@ -121,6 +131,7 @@ const QUALITY_FLAG_MAP: Array<[keyof TurnMetrics, string]> = [
   ["exhausted", "agent_loop_exhausted"],
   ["recoveryFired", "recovery_fired"],
   ["resumedFromCheckpoint", "resumed_from_checkpoint"],
+  ["onboardingReGreet", "onboarding_re_greet"],
 ];
 
 function buildQualityFlags(metrics: TurnMetrics, payload: Record<string, unknown>): string[] {
@@ -212,8 +223,14 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
   // module's "no per-turn writes" cost stance holds for the common case.
   // Current policy: mirror experiments plus quality/problem turns; clean
   // baseline turns still skip Firestore writes.
+  // Onboarding canary turns mirror UNCONDITIONALLY so the canary watch has the
+  // full latency/completion distribution, not just flagged problems. This only
+  // fires while ONBOARDING_AGENT_LOOP is on (flowClass is "onboarding" only in the
+  // agent-native loop), so the "no per-turn writes for baseline traffic" stance
+  // holds whenever the flag is off.
   const hasExperiments = !!metrics.experiments && Object.keys(metrics.experiments).length > 0;
-  if (hasExperiments || qualityFlags.length > 0) {
+  const isOnboardingTurn = metrics.flowClass === "onboarding";
+  if (hasExperiments || qualityFlags.length > 0 || isOnboardingTurn) {
     mirrorTurnMetricRecord({
       source:                    "turn_metrics",
       at:                        new Date().toISOString(),
@@ -222,6 +239,10 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
       userType:                  metrics.userType,
       inputChannel:              metrics.inputChannel ?? null,
       pathway:                   metrics.pathway,
+      flowClass:                 metrics.flowClass ?? null,
+      onboardingReGreet:         !!metrics.onboardingReGreet,
+      iterations:                metrics.iterations ?? null,
+      exhausted:                 !!metrics.exhausted,
       experiments:               metrics.experiments ?? null,
       qualityFlags,
       errored:                   !!payload.errored,

@@ -46,16 +46,35 @@ prompt dispatcher was flipped live without its eval. Do not repeat that.
    the scripted output on real traffic. Reuse the routing-shadow pattern
    (`ROUTING_CONVERGENCE_SHADOW`) if wired for onboarding.
 3. **Canary:** `ONBOARDING_AGENT_LOOP=client` for a small cohort / short window.
-   Watch the metrics below.
+   Watch the canary report below.
 4. **On:** keep `client` set. Caregiver stays off pending its segmented design.
 
-## Metrics to watch (already emitted via `emitTurnMetrics`)
+## Canary watch (run during the canary)
 
-- `memoryRecallTier`, `iterations`, `toolCalls`, `toolErrors`, truncations.
+```
+npm run canary:onboarding         # last 24h
+npm run canary:onboarding 6       # last 6h
+```
+
+`onboardingCanaryWatch.ts` reads the `cara_turn_metrics` Firestore mirror for the
+onboarding cohort and prints re-greet rate, P95 latency vs the 4 s ceiling, and
+tool-error / exhausted / errored counts. It exits non-zero when turns exist but the
+hard gates aren't clean, so it can gate a "widen the canary" step in CI. Onboarding
+turns mirror to Firestore ONLY while the flag is on (`flowClass === "onboarding"`),
+so there's data during the canary and zero per-turn writes when the flag is off.
+
+## Metrics to watch (emitted via `emitTurnMetrics`, mirrored to `cara_turn_metrics`)
+
+- **`onboardingReGreet`** — re-greet detector (`isReGreet` on the final reply). MUST
+  be zero. Non-zero is a rollback trigger.
+- **`flowClass="onboarding"`** + **`durationMs`** — per-turn latency; P95 ≤ 4 s
+  (provisional ceiling, ratify from the eval).
+- `iterations`, `toolCalls`, `toolErrors`, `exhausted`, truncations.
 - Signup-completion rate (collection → first gate → payment) vs the OFF baseline.
-- Per-turn latency.
-- Watch for: re-greeting (should be zero), double-sends (should be zero), stuck
-  collection (loop never calling `complete_collection`).
+- Double-sends: architecturally one reply per loop turn (asserted in
+  `qaAgent.onboarding.test.ts`); the canary still surfaces `exhausted`/retry turns.
+- Stuck collection: loop never calling `complete_collection` — caught live by the
+  stuck-signup net (`webhooks.ts`), which advances the cursor to the gate.
 
 ## Rollback
 

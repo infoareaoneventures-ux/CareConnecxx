@@ -114,6 +114,14 @@ vi.mock("firebase-admin", () => {
       return { empty: true, docs: [] };
     };
     ref.add = async () => ({ id: "auto" });
+    // maybeRollUpHistory uses col.count().get() → .data().count
+    ref.count = () => ({
+      get: async () => {
+        const m = path.match(/^agent_conversations\/(.+)\/messages$/);
+        const n = m ? (store.convos.get(m[1])?.length ?? 0) : 0;
+        return { data: () => ({ count: n }) };
+      },
+    });
     return ref;
   }
 

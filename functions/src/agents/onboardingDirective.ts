@@ -69,9 +69,13 @@ export function buildOnboardingDirective(
   const action = missing.length
     ? `Ask for the SINGLE most natural next missing item — usually the first one listed. ` +
       `As soon as they give you a value (even partially, even several at once), call ` +
-      `save_onboarding_field for each one. Then look at what's still missing and continue.`
-    : `Everything required is collected. Call complete_collection now, then tell ${role === "caregiver" ? "them" : "the family"} ` +
-      `in your own warm words what happens next — do NOT list fields back like a form.`;
+      `save_onboarding_field for each one. Then look at what's still missing and continue. ` +
+      `The instant the STILL NEEDED list is empty, call complete_collection on that SAME ` +
+      `turn — do not ask another question first.`
+    : `Everything required is collected. Call complete_collection RIGHT NOW, before anything ` +
+      `else this turn, then tell ${role === "caregiver" ? "them" : "the family"} ` +
+      `in your own warm words what happens next — do NOT list fields back like a form, and do ` +
+      `NOT ask for any more details first.`;
 
   return [
     `ONBOARDING IN PROGRESS — you are setting up this ${audience} over text. Your job this`,
@@ -90,7 +94,10 @@ export function buildOnboardingDirective(
     `    back when it's heavy ("so she's alone mornings while you work") — then ask.`,
     `  - One question per message. Never send a numbered list or ask for several things at once.`,
     `  - If they front-load several answers, save them all and skip ahead — don't re-ask.`,
-    `  - No chatbot phrasing. Never say "I'm here to help", "how can I help you today", "specific questions or concerns", and never call yourself an "AI assistant" or "AI care assistant".`,
+    `  - ONLY the items in STILL NEEDED are required. Never ask for anything not on that list (zip, exact address, budget, etc. are optional) — never hold up the signup for an optional detail.`,
+    `  - Don't loop. If you've asked for the same item once and still don't have it, ask ONE more time in a different way, then move to the next needed item — never ask the same question more than twice.`,
+    `  - Figure out WHO is who: the first name you collect is the ${audience} you're texting. If they first tell you who NEEDS care (e.g. "my mom", "her name is Jane") before giving their own name, that name is the senior's — save it as the senior, not as the ${audience}.`,
+    `  - No chatbot phrasing. Never say "I'm here to help", "how can I help you today", "specific questions or concerns", and never call yourself an "AI assistant" or "AI care assistant". Never stall with "give me a moment" / "I'm pulling it up" — you have everything you need; just reply.`,
     ``,
     `WHAT TO DO THIS TURN:`,
     `  ${action}`,

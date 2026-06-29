@@ -267,7 +267,7 @@ describe("caregiver gate webhooks — end-to-end to an active caregiver doc", ()
     // Stripe membership paid → Cara fires the Checkr invitation + pre-creates the doc.
     await advanceOnboardingStep(PHONE, "membership", "sub_live123");
     expect(axiosPost).toHaveBeenCalledTimes(1);
-    expect(axiosPost.mock.calls[0][0]).toContain("checkr.com/v1/invitations");
+    expect(String(axiosPost.mock.calls[0]?.[0])).toContain("checkr.com/v1/invitations");
 
     // Checkr cleared → Cara sets up the Stripe Connect payout account.
     await advanceOnboardingStep(PHONE, "background_check", "clear");

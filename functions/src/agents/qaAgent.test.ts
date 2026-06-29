@@ -42,6 +42,7 @@ import {
   isTrivialQuickReply,
   MEMORY_SOURCE_PRIORITY_POLICY,
   WARMTH_REFLECTION_OPENERS,
+  ensureNonEmptyTurnText,
 } from "./qaAgent";
 
 describe("hasListShape", () => {
@@ -235,5 +236,20 @@ describe("memory source priority prompt", () => {
     expect(prompt).toContain("Fresh tool results or live Firestore state");
     expect(prompt).toContain("Never use older memory to override a newer user correction");
     expect(prompt).toContain("forget or stop remembering");
+  });
+});
+
+// Regression for the canary BadRequestError (2026-06-29): an empty inbound turn
+// (reaction / caption-less media / blank SMS) sent Claude an empty content string
+// → Anthropic 400 on iteration 1 → fallback path. The guard must never return "".
+describe("ensureNonEmptyTurnText — no empty Claude content (BadRequestError guard)", () => {
+  it("passes real text through unchanged", () => {
+    expect(ensureNonEmptyTurnText("I need a caregiver for my mom")).toBe("I need a caregiver for my mom");
+  });
+
+  it.each(["", "   ", "\n\t ", null, undefined])("substitutes a descriptor for blank input %j", (input) => {
+    const out = ensureNonEmptyTurnText(input as any);
+    expect(out.trim().length).toBeGreaterThan(0);
+    expect(out).toContain("no text");
   });
 });

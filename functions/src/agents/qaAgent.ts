@@ -18,7 +18,11 @@ import {
   truncateOldToolCallArgs,
 } from "./contextManagement";
 import { createTurnMetrics, emitTurnMetrics, type TurnMetrics } from "./turnMetrics";
-import { formatCaraOperationalContext, loadCaraOperationalContext } from "./operationalContext";
+import {
+  buildOperationalRecipeLead,
+  formatCaraOperationalContext,
+  loadCaraOperationalContext,
+} from "./operationalContext";
 import { sanitizePromptContext } from "./promptContext";
 import { buildCapabilityHint, DiscoveryRole } from "./capabilityDiscovery";
 import { MCP_TOOLS, CAREGIVER_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
@@ -946,6 +950,18 @@ async function resumeActiveGoal(
 
 // ── Main QA function ──────────────────────────────────────────────────────────
 
+/**
+ * A blank inbound (a reaction, an image/attachment with no caption, or an empty
+ * SMS) must never reach Claude as an empty `content` string — Anthropic rejects
+ * that with a 400 (BadRequestError) on the very first call. Substitute a short
+ * descriptor so the turn is handled (the model can ask for text) instead of
+ * failing into the fallback path.
+ */
+export function ensureNonEmptyTurnText(text: string | null | undefined): string {
+  return (text ?? "").trim() ||
+    "(the user sent a message with no text — likely a reaction, photo, or attachment with no caption)";
+}
+
 export async function runQaAgent(params: {
   text:          string;
   phone:         string;
@@ -989,7 +1005,9 @@ export async function runQaAgent(params: {
   // Tag the input so Claude can apply different judgment per channel.
   // [USER] messages may require a reply; [TRIGGER] / [AGENT] inputs may not.
   const channel = sourceChannel ?? "[USER]";
-  const taggedText = channel === "[USER]" ? text : `${channel}\n${text}`;
+  // Guard against an empty inbound producing an empty Claude `content` (400).
+  const safeText = ensureNonEmptyTurnText(text);
+  const taggedText = channel === "[USER]" ? safeText : `${channel}\n${safeText}`;
 
   // Telemetry: one structured log per turn. Mutated through the function;
   // emitted once at return (success or error path). See turnMetrics.ts.
@@ -1424,19 +1442,30 @@ export async function runQaAgent(params: {
     "right now and ask them to try again in a moment; do not claim any such action succeeded, failed, or is pending.";
 
   let hasLiveOpsContext = false;
+  let operationalRecipeLead: string | undefined;
+  const discoveryRole: DiscoveryRole = userType === "caregiver"
+    ? "caregiver"
+    : (session as any)?.isSecondaryMember
+      ? "family-secondary"
+      : "client";
   if (!skipCrossEntity) {
-    const operationalContext = await loadCaraOperationalContext({ phone, userId })
-      .then(formatCaraOperationalContext)
+    const operationalContextData = await loadCaraOperationalContext({ phone, userId })
       .catch((err) => {
         console.warn("qaAgent: operational context unavailable", err instanceof Error ? err.message : err);
-        return OPS_CONTEXT_UNAVAILABLE_MARKER;
+        return null;
       });
+    const operationalContext = operationalContextData
+      ? formatCaraOperationalContext(operationalContextData)
+      : OPS_CONTEXT_UNAVAILABLE_MARKER;
     if (operationalContext) {
       systemPrompt += `\n\n${operationalContext}`;
       // Real ops state (pending action, visit, alert, etc.) — not the
       // "unavailable" sentinel — means Cara has something to LEAD with when the
       // user asks "what can you do?" instead of listing capabilities (R12).
       hasLiveOpsContext = operationalContext !== OPS_CONTEXT_UNAVAILABLE_MARKER;
+      operationalRecipeLead = operationalContextData
+        ? buildOperationalRecipeLead(operationalContextData, discoveryRole)
+        : undefined;
     }
   }
 
@@ -1448,12 +1477,11 @@ export async function runQaAgent(params: {
   // webhooks.ts. Secondary family members get the care-visibility hint with the
   // payment-authority boundary (AE4) baked in.
   {
-    const discoveryRole: DiscoveryRole = userType === "caregiver"
-      ? "caregiver"
-      : (session as any)?.isSecondaryMember
-        ? "family-secondary"
-        : "client";
-    systemPrompt += `\n\n${buildCapabilityHint(discoveryRole, hasLiveOpsContext)}`;
+    const capabilityHint = [
+      buildCapabilityHint(discoveryRole, hasLiveOpsContext),
+      operationalRecipeLead ? `Current best lead recipe: ${operationalRecipeLead}` : undefined,
+    ].filter(Boolean).join("\n");
+    systemPrompt += `\n\n${capabilityHint}`;
   }
 
   // Inject active goal context if present

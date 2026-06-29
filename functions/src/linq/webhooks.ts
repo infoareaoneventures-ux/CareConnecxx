@@ -1344,10 +1344,18 @@ const handleInboundInner = traceable(
       session.userId         = userId;
       (session as any).seniorId      = seniorId;
       session.onboardingStep = "complete";
-    } else if (!session.onboardingStep || session.onboardingStep !== "complete") {
-      // No user account found and not complete — start onboarding from the beginning
+    } else if (!session.onboardingStep) {
+      // Genuinely stepless and no account — start onboarding from the beginning.
       await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "ask_role" });
       session.onboardingStep = "ask_role";
+    } else if (session.onboardingStep !== "complete") {
+      // Mid-onboarding with no account yet — this is NORMAL. A client/caregiver
+      // session has no userId until the account is created (at payment), so the
+      // absence of userId here is expected, not corruption. Do NOT reset to
+      // ask_role: that wiped collection progress on every inbound and made Cara
+      // re-greet from the top forever (and the agent-native collection loop could
+      // never be reached, since its steps are client_ask_*). Leave the in-progress
+      // step intact and let onboarding continue from where the user was.
     } else {
       // Complete but no user record and no users-collection match — session
       // is orphaned. Tell the user something went wrong and offer a restart
@@ -1480,14 +1488,22 @@ const handleInboundInner = traceable(
       }).catch((err) => console.error("onboarding Zep push error:", err));
     };
 
-    if (shouldRouteOnboardingToLoop({
+    const __routeLoop = shouldRouteOnboardingToLoop({
       role:        session.userType,
       step,
       hasText:     text.trim() !== "",
       hasMedia:    !!inboundMedia,
       hasLocation: !!inboundLocation,
       phone,
-    })) {
+    });
+    console.warn("ONBDIAG routing", JSON.stringify({
+      phone, step, role: session.userType,
+      hasText: text.trim() !== "", hasMedia: !!inboundMedia, hasLocation: !!inboundLocation,
+      envFlag: process.env.ONBOARDING_AGENT_LOOP ?? null,
+      envPhones: process.env.ONBOARDING_AGENT_LOOP_PHONES ?? null,
+      routeLoop: __routeLoop,
+    }));
+    if (__routeLoop) {
       try {
         await runQaAgent({
           text,

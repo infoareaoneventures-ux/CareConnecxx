@@ -216,7 +216,28 @@ vi.mock("../mcp/server", () => {
   return { MCP_TOOLS, CAREGIVER_TOOLS: [], handleToolCall, handleToolCallForCaregiver: vi.fn() };
 });
 
-// ── everything else heavy: inert (real claudeRetry/claudeClient stay LIVE) ────
+// claudeClient: return a REAL Anthropic client, but built via the NAMED export.
+// vitest's SSR transform mangles the SDK's default import, so claudeClient.ts's
+// `new Anthropic(...)` (default import) throws "is not a constructor" under the
+// runner only (production node/ts-node is fine). Constructing from the named
+// export here sidesteps that. callClaudeWithRetry stays REAL (not mocked), so the
+// loop makes genuine live API calls. wrapAnthropic (LangSmith) is skipped — fine
+// for an eval.
+vi.mock("../utils/claudeClient", async () => {
+  const sdk: any = await import("@anthropic-ai/sdk");
+  const Anthropic = sdk.Anthropic ?? sdk.default?.Anthropic ?? sdk.default;
+  let client: any = null;
+  return {
+    getSharedClient: () => {
+      if (!client) {
+        client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", maxRetries: 0, timeout: 30_000 });
+      }
+      return client;
+    },
+  };
+});
+
+// ── everything else heavy: inert (claudeRetry stays LIVE → real model calls) ──
 vi.mock("../utils/openaiClient", () => ({ quickComplete: vi.fn(), getOpenAIClient: () => ({}) }));
 vi.mock("../safety/supervisor", () => ({ supervise: (msg: string) => Promise.resolve(msg) }));
 vi.mock("../safety/linter", () => ({ lintMessage: (msg: string) => msg }));

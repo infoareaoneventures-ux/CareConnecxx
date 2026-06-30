@@ -5518,9 +5518,15 @@ async function executeToolCall(
         return toolError("INVALID_INPUT", `linkType must be one of: ${validTypes.join(", ")}`);
       }
       try {
-        const { sendOnboardingLink } = await import("../agents/onboardingConversation");
-        const res = await sendOnboardingLink(phone as string, linkType as never);
-        return { success: true, linkType: res.linkType, sent: true };
+        const { runSendOnboardingLinkAction } = await import("../agents/actions/sendOnboardingLinkAction");
+        return await runSendOnboardingLinkAction(
+          { phone, linkType },
+          {
+            caller: "mcp",
+            role: linkType === "client_payment" || linkType === "client_identity" ? "client" : "caregiver",
+            phone: phone as string,
+          },
+        );
       } catch (err) {
         console.error("send_onboarding_link error:", err);
         return toolError("UNAVAILABLE", "Couldn't generate that link right now — try again in a moment.");

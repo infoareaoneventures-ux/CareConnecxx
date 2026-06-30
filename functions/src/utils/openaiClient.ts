@@ -4,8 +4,8 @@
  * Cara is hybrid:
  *   - Short single-shot Haiku-equivalent calls (intent classification,
  *     YES/NO decisions, parseWithClaude extractions) go through this client
- *     to gpt-4o-mini. ~500ms typical, $0.15 per 1M input tokens.
- *   - The QA agent's tool-use loop stays on Claude Sonnet via claudeClient.ts.
+ *     to the configured router model.
+ *   - The QA agent's tool-use loop uses the configured agent model/provider.
  *
  * The shared instance has a 10s timeout and zero internal retries — our
  * retry/backoff logic lives in callers (parseWithClaude has its own loop).
@@ -21,6 +21,7 @@ import OpenAI from "openai";
 import { wrapOpenAI } from "langsmith/wrappers/openai";
 import type Anthropic from "@anthropic-ai/sdk";
 import { callClaudeWithRetry } from "./claudeRetry";
+import { resolveCaraModelConfig } from "../config/caraModels";
 
 // Anthropic model used only when the OpenAI fast path is unavailable. Haiku
 // keeps the fallback cheap and fast, matching the single-shot fast-path role.
@@ -58,7 +59,7 @@ export async function quickComplete(
   try {
     const res = await getOpenAIClient().chat.completions.create(
       {
-        model:       opts?.model ?? "gpt-4o-mini",
+        model:       opts?.model ?? resolveCaraModelConfig("router").model,
         max_tokens:  maxTokens,
         messages: [
           { role: "system", content: systemPrompt },

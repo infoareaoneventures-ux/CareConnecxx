@@ -227,7 +227,10 @@ vi.mock("./contextManagement", () => ({
   patchDanglingToolCalls:    vi.fn(() => 0),
   truncateOldToolCallArgs:   vi.fn(() => 0),
 }));
-vi.mock("./toolCapabilities", () => ({ selectToolsForIntent: (tools: unknown[]) => tools }));
+vi.mock("./toolCapabilities", () => ({
+  selectToolsForIntent: (tools: unknown[]) => tools,
+  isHighStakesMutation: () => false,
+}));
 // Checkpointing disabled in transcript replays — we exercise the normal path,
 // not resume. Stub to inert no-ops so the flag/env doesn't matter.
 vi.mock("./turnCheckpoint", () => ({

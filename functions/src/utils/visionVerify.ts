@@ -1,23 +1,23 @@
 /**
- * gpt-4o vision verification for inbound photos / documents.
+ * Configured OpenAI vision verification for inbound photos / documents.
  *
- * When a caregiver texts a headshot or a certification, we run it through gpt-4o
- * (the user explicitly chose gpt-4o here, not the gpt-4o-mini fast path — image
- * quality/credential judgement benefits from the stronger model) to:
+ * When a caregiver texts a headshot or a certification, we run it through the
+ * vision model configured in `config/caraModels.ts` to:
  *   - gate the profile photo (clear, single human face) and re-ask if it's not;
  *   - confirm a document is a legible caregiving credential and read its type/
  *     expiry;
  *   - classify any mid-conversation media so Cara can smart-route it.
  *
- * gpt-4o vision accepts IMAGES only. PDFs/Office docs are NOT sent to vision —
+ * Vision accepts IMAGES only. PDFs/Office docs are NOT sent to vision —
  * callers accept those without a visual gate. Every function FAILS OPEN: a
  * transient OpenAI error must never trap a caregiver mid-onboarding, so on any
  * error we return a permissive result and log it.
  */
 
 import { getOpenAIClient } from "./openaiClient";
+import { resolveCaraModelConfig } from "../config/caraModels";
 
-const VISION_MODEL = "gpt-4o";
+const VISION_MODEL = resolveCaraModelConfig("vision").model;
 
 /** gpt-4o vision only handles raster images — never PDFs/Office docs. */
 export function isVisionSupported(contentType?: string): boolean {

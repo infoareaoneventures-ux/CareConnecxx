@@ -28,6 +28,8 @@ import { buildCapabilityHint, DiscoveryRole } from "./capabilityDiscovery";
 import { findAdvertisedRecipeWithoutBacking, hasPaymentAuthorityLeak, type CareRecipeRole } from "./careRecipes";
 import { MCP_TOOLS, CAREGIVER_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
 import { callClaudeWithRetry } from "../utils/claudeRetry";
+import { resolveCaraModelConfig, shouldFallbackAgentToAnthropic } from "../config/caraModels";
+import { callOpenAiAgentTurn } from "./openaiToolLoop";
 import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
@@ -1703,14 +1705,41 @@ export async function runQaAgent(params: {
         metrics.patchedOrphans = (metrics.patchedOrphans ?? 0) + patched;
       }
       metrics.iterations = (metrics.iterations ?? 0) + 1;
-      const response = await callClaudeWithRetry(getSharedClient(), {
-        model:       "claude-sonnet-4-6",
-        max_tokens:  1024,
-        system:      cachedSystem as any,
-        tools:       cachedTools as any,
-        tool_choice: forceTextReply ? { type: "none" } : { type: "auto" },
-        messages,
-      }, { timeoutMs: 15_000, maxAttempts: 1 });
+      const agentModel = resolveCaraModelConfig("agent");
+      metrics.modelProvider = agentModel.provider;
+      metrics.modelUsed = agentModel.model;
+      const response = agentModel.provider === "openai"
+        ? await callOpenAiAgentTurn({
+            client:     getOpenAIClient(),
+            model:      agentModel.model,
+            maxTokens:  1024,
+            system:     cachedSystem as any,
+            tools:      cachedTools as any,
+            toolChoice: forceTextReply ? "none" : "auto",
+            messages,
+          }).catch(async (err) => {
+            if (!shouldFallbackAgentToAnthropic()) throw err;
+            console.warn("qaAgent: OpenAI agent loop failed; falling back to Anthropic", err instanceof Error ? err.message : err);
+            metrics.modelProvider = "anthropic";
+            metrics.modelUsed = "claude-sonnet-4-6";
+            metrics.modelFallbackUsed = true;
+            return callClaudeWithRetry(getSharedClient(), {
+              model:       "claude-sonnet-4-6",
+              max_tokens:  1024,
+              system:      cachedSystem as any,
+              tools:       cachedTools as any,
+              tool_choice: forceTextReply ? { type: "none" } : { type: "auto" },
+              messages,
+            }, { timeoutMs: 15_000, maxAttempts: 1 });
+          })
+        : await callClaudeWithRetry(getSharedClient(), {
+            model:       "claude-sonnet-4-6",
+            max_tokens:  1024,
+            system:      cachedSystem as any,
+            tools:       cachedTools as any,
+            tool_choice: forceTextReply ? { type: "none" } : { type: "auto" },
+            messages,
+          }, { timeoutMs: 15_000, maxAttempts: 1 });
 
       // max_tokens cutoff while emitting tool_use blocks → tool input JSON may
       // be truncated. We can't safely execute partially-specified tool calls
@@ -2436,7 +2465,7 @@ export async function runQuickReply(params: {
   try {
     const res = await getOpenAIClient().chat.completions.create(
       {
-        model:      "gpt-4o-mini",
+        model:      resolveCaraModelConfig("quick").model,
         max_tokens: 150,
         messages,
       },

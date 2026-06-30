@@ -34,6 +34,9 @@ export interface TurnMetrics {
   startedAt:      number;     // ms epoch — used by emitTurnMetrics to compute durationMs
   durationMs?:    number;     // filled by emit
   contextLoadMs?: number;     // wall-clock for the parallel context fetch
+  modelProvider?: "openai" | "anthropic";
+  modelUsed?:     string;
+  modelFallbackUsed?: boolean;
 
   // Flow class for this turn (from resolveLoopBudget, or "onboarding" when the
   // agent-native onboarding loop handled it). Lets canary dashboards filter the
@@ -245,6 +248,9 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
       userType:                  metrics.userType,
       inputChannel:              metrics.inputChannel ?? null,
       pathway:                   metrics.pathway,
+      modelProvider:             metrics.modelProvider ?? null,
+      modelUsed:                 metrics.modelUsed ?? null,
+      modelFallbackUsed:         !!metrics.modelFallbackUsed,
       flowClass:                 metrics.flowClass ?? null,
       onboardingReGreet:         !!metrics.onboardingReGreet,
       iterations:                metrics.iterations ?? null,

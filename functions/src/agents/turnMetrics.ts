@@ -81,6 +81,9 @@ export interface TurnMetrics {
   // unsafe patterns remained visible around the final repair/supervision path.
   confidenceClaimDetected?:  boolean; // unattributed proper-name + factual claim
   promiseWithoutToolCall?:   boolean; // "let me check" with metrics.toolCalls === 0
+  recipeWithoutBackingTool?: boolean; // advertised a recipe that has no shipped backing tool
+  contextIgnoredWhenPresent?: boolean; // live ops context existed but reply stayed generic
+  paymentAuthorityLeakDetected?: boolean; // payment approval/payment wording leaked to unauthorized family context
   multiQuestionDataCollection?: boolean; // asks for multiple intake fields in one reply
   supportDeflectionDetected?:   boolean; // punts to support/team/Cara instead of acting
   genericHelpAskDetected?:      boolean; // "what can I help with" style generic prompt
@@ -124,6 +127,9 @@ const QUALITY_FLAG_MAP: Array<[keyof TurnMetrics, string]> = [
   ["medicationInstructionDetected", "medication_instruction_detected"],
   ["confidenceClaimDetected", "confidence_claim_detected"],
   ["promiseWithoutToolCall", "promise_without_tool_call"],
+  ["recipeWithoutBackingTool", "recipe_without_backing_tool"],
+  ["contextIgnoredWhenPresent", "context_ignored_when_present"],
+  ["paymentAuthorityLeakDetected", "payment_authority_leak_detected"],
   ["multiQuestionDataCollection", "multi_question_data_collection"],
   ["groundingTriggered", "grounding_triggered"],
   ["formatRevisionTriggered", "format_revision_triggered"],
@@ -261,6 +267,9 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
       medicationInstructionDetected: !!metrics.medicationInstructionDetected,
       confidenceClaimDetected:      !!metrics.confidenceClaimDetected,
       promiseWithoutToolCall:       !!metrics.promiseWithoutToolCall,
+      recipeWithoutBackingTool:     !!metrics.recipeWithoutBackingTool,
+      contextIgnoredWhenPresent:    !!metrics.contextIgnoredWhenPresent,
+      paymentAuthorityLeakDetected: !!metrics.paymentAuthorityLeakDetected,
       multiQuestionDataCollection:  !!metrics.multiQuestionDataCollection,
     });
   }

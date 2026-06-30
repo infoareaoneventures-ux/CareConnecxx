@@ -37,6 +37,10 @@
 | client | Request a refund (creates admin-visible state) | components/client/BillingPage.tsx | admin_alerts | `create_refund_request` | client | shipped |  |
 | client | Create a care reminder | components/client/RemindersPage.tsx | n/a | `create_reminder` | client | shipped | Reminders are scheduled triggers, not a registered contract collection. |
 | client | Submit a caregiver review | components/client/ReviewModal.tsx | caregivers | `submit_review` | client | shipped |  |
+| client | Read upcoming appointments | components/client/AppointmentsPage.tsx | appointments | `get_upcoming_appointments` | any | shipped | Used by Cara recipe discovery for next-visit briefing and visit confirmation context. |
+| client | Read the client's care team | components/client/CareTeam.tsx | caregivers | `get_care_team` | any | shipped | Used by Cara recipe discovery for next-visit and who-is-coming answers. |
+| client | Review what Cara remembers | n/a | n/a | `cara_knows` | any | shipped | Memory is derived from scoped memory files, Zep context, learned facts, and live tool data; hidden prompt context is not exposed. |
+| client | Correct or update Cara memory | n/a | n/a | `update_memory_file` | any | shipped | Fresh corrections outrank stale memory and learned facts. |
 
 ## Caregiver
 

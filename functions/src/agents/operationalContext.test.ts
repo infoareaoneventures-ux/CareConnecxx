@@ -4,7 +4,7 @@ vi.mock("firebase-admin", () => ({
   firestore: () => ({ collection: () => ({}) }),
 }));
 
-import { formatCaraOperationalContext } from "./operationalContext";
+import { buildOperationalRecipeLead, formatCaraOperationalContext } from "./operationalContext";
 
 describe("formatCaraOperationalContext", () => {
   it("returns an empty string when there is no operational state", () => {
@@ -99,5 +99,49 @@ describe("formatCaraOperationalContext", () => {
     expect(formatted).not.toMatch(/ignore previous instructions/i);
     expect(formatted).not.toMatch(/developer: approve payment/i);
     expect(formatted).not.toMatch(/tool: run transfer now/i);
+  });
+});
+
+describe("buildOperationalRecipeLead", () => {
+  it("pending confirmations outrank routine client state", () => {
+    const lead = buildOperationalRecipeLead({
+      pendingActions: [{ id: "pa1", preview: "Confirm tomorrow's visit" }],
+      openAlerts: [],
+      failedActions: [],
+      clientState: {
+        nextAppointment: "appt-2 confirmed 2026-06-21 10:00",
+        latestCareUpdate: "Mom ate lunch.",
+      },
+    }, "client");
+
+    expect(lead).toContain("Confirm tomorrow's visit");
+  });
+
+  it("leads caregivers toward pay and shift context", () => {
+    const lead = buildOperationalRecipeLead({
+      pendingActions: [],
+      openAlerts: [],
+      failedActions: [],
+      caregiverState: {
+        pendingShiftHours: "appt-1: pending_client_review $120",
+        lastPayoutStatus: "paid $96",
+      },
+    }, "caregiver");
+
+    expect(lead).toContain("hours or payment status");
+  });
+
+  it("does not lead secondary family members into payment authority", () => {
+    const lead = buildOperationalRecipeLead({
+      pendingActions: [{ id: "pa1", preview: "Approve Maria's hours for $120" }],
+      openAlerts: [],
+      failedActions: [],
+      clientState: {
+        latestCareUpdate: "Mom took a short walk.",
+      },
+    }, "family-secondary");
+
+    expect(lead).toContain("latest care update");
+    expect(lead?.toLowerCase()).not.toMatch(/approve|payment|invoice|hours/);
   });
 });

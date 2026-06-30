@@ -563,8 +563,15 @@ const handleInboundInner = traceable(
 
     const groupSnap = await db.collection("agent_sessions")
       .where("groupMembers", "array-contains", phone)
-      .limit(1)
+      .limit(2)
       .get();
+    if (groupSnap.size > 1) {
+      await sendMessage(
+        chatId,
+        "I see your number in more than one care group. Which senior are you texting about?",
+      );
+      return;
+    }
     if (!groupSnap.empty) {
       primarySession = groupSnap.docs[0].data() as AgentSession;
       primaryPhone   = groupSnap.docs[0].id;
@@ -572,8 +579,15 @@ const handleInboundInner = traceable(
       // Fallback: look up the collection-based membership record (MCP-added members).
       const memberSnap = await db.collection("family_group_members")
         .where("memberPhone", "==", phone)
-        .limit(1)
+        .limit(2)
         .get();
+      if (memberSnap.size > 1) {
+        await sendMessage(
+          chatId,
+          "I see your number in more than one care group. Which senior are you texting about?",
+        );
+        return;
+      }
       if (!memberSnap.empty) {
         const pPhone = memberSnap.docs[0].data().primaryPhone as string | undefined;
         if (pPhone) {
@@ -1040,7 +1054,11 @@ const handleInboundInner = traceable(
     // falls back to the no-context list reply if it fails or is empty).
     let leadWith: string | undefined;
     try {
-      const ctx = await loadCaraOperationalContext({ phone, userId: session.userId });
+      const ctx = await loadCaraOperationalContext({
+        phone,
+        userId: session.userId,
+        caregiverId: (session as any).caregiverId,
+      });
       leadWith = buildOperationalRecipeLead(ctx, role);
     } catch {
       // best-effort — fall through to the no-context list reply.

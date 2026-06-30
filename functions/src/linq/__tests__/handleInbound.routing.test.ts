@@ -44,6 +44,7 @@ const hoisted = vi.hoisted(() => {
       const items = collState.get(path) ?? [];
       return {
         empty: items.length === 0,
+        size:  items.length,
         docs:  items.map((d: any, i: number) => ({
           id: d.id ?? `doc-${i}`, data: () => d, ref: makeDocRef(`${path}/${d.id ?? `doc-${i}`}`),
         })),
@@ -498,6 +499,19 @@ describe("onboarding + rate limit", () => {
       groupChatId: "family-group-chat",
     });
     expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("care assistant"));
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("does not silently attach a secondary member when their phone is in multiple care groups", async () => {
+    hoisted.collState.set("family_group_members", [
+      { id: "m1", primaryPhone: "+15550001111", memberPhone: PHONE },
+      { id: "m2", primaryPhone: "+15550002222", memberPhone: PHONE },
+    ]);
+
+    await handleInbound(makeEvent("hi"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toBeUndefined();
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("more than one care group"));
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 

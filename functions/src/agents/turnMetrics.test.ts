@@ -170,6 +170,9 @@ describe("emitTurnMetrics", () => {
     m.supportDeflectionDetected = true;
     m.genericHelpAskDetected = true;
     m.conversationRepairApplied = true;
+    m.recipeWithoutBackingTool = true;
+    m.contextIgnoredWhenPresent = true;
+    m.paymentAuthorityLeakDetected = true;
     m.toolErrors = 1;
     emitTurnMetrics(m, { reply: "I can help with that." });
 
@@ -184,12 +187,18 @@ describe("emitTurnMetrics", () => {
       supportDeflectionDetected: true,
       genericHelpAskDetected: true,
       conversationRepairApplied: true,
+      recipeWithoutBackingTool: true,
+      contextIgnoredWhenPresent: true,
+      paymentAuthorityLeakDetected: true,
       toolErrors: 1,
       quickReplyUsed: false,
     });
     expect(mirrored.qualityFlags).toEqual([
+      "context_ignored_when_present",
       "conversation_repair_applied",
       "generic_help_ask_detected",
+      "payment_authority_leak_detected",
+      "recipe_without_backing_tool",
       "support_deflection_detected",
       "tool_error",
     ]);

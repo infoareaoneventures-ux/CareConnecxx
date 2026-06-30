@@ -604,6 +604,31 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
   },
 
   {
+    name:        "share-latest-update-to-new-family-member",
+    description: "Family asks to send the latest care update to a sister. Cara adds/invites the member and shares the latest care note without payment details.",
+    toolMocks: {
+      add_family_member:      { success: true, added: true, name: "Jess", phone: "+15552223333", notification: { sent: true }, groupSync: { success: true } },
+      get_care_journal_client: { entries: [{ summary: "Maria noted that Anita ate soup and took a short walk after lunch." }] },
+    },
+    claudeScript: [
+      {
+        tools: [
+          { name: "add_family_member", input: { seniorId: "s-1", name: "Jess", memberPhone: "+15552223333", clientId: "u-1" } },
+          { name: "get_care_journal_client", input: { clientId: "u-1" } },
+        ],
+      },
+      { text: "Done - I added Jess, texted her, and shared the latest note: Maria said Anita ate soup and took a short walk after lunch." },
+    ],
+    input: { text: "send the latest update to my sister jess 555-222-3333" },
+    expect: {
+      replyContains:    ["Jess", "latest note", "soup"],
+      replyNotContains: ["invoice", "billing", "payment", "approve"],
+      toolsCalled:      ["add_family_member", "get_care_journal_client"],
+      noListShape:      true,
+    },
+  },
+
+  {
     name:        "messy-family-add-missing-phone-one-question",
     description: "Family asks to add a brother without a phone number. Cara asks only for the missing phone number.",
     claudeScript: [
@@ -857,14 +882,14 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "client-what-can-you-do-role-relevant",
-    description: "Client asks what Cara can do. Reply names real client actions (booking/care-plan/billing), not a generic helper prompt.",
+    description: "Client asks what Cara can do. Reply names care recipes, not raw features or a generic helper prompt.",
     claudeScript: [
-      { text: "Lots — I can book a visit, reschedule one, update Mom's care plan, or pull up your billing. Just say the word." },
+      { text: "I can pull up the next visit, review caregiver hours with you, share the latest care update, or find backup coverage if someone is late." },
     ],
     input: { text: "what can you do?" },
     expect: {
-      replyContains:    ["book a visit", "care plan"],
-      replyNotContains: ["what can I help you with", "how can I help", "here is a list"],
+      replyContains:    ["next visit", "caregiver hours", "care update"],
+      replyNotContains: ["what can I help you with", "how can I help", "here is a list", "feature"],
       toolsCalled:      [],
       noListShape:      true,
       noGenericHelpAsk: true,
@@ -873,15 +898,15 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "caregiver-what-can-you-do-schedule-pay-jobs",
-    description: "Caregiver asks what Cara can do. Reply surfaces schedule/pay/job capabilities.",
+    description: "Caregiver asks what Cara can do. Reply surfaces shift closeout, pay status, and referral recipes.",
     userType: "caregiver",
     claudeScript: [
-      { text: "I can find open jobs near you, clock you in and out of shifts, submit your hours, and check your earnings. Just tell me." },
+      { text: "I can help you close out a shift, submit hours, check payout status, or refer another caregiver." },
     ],
     input: { text: "what can i ask you?" },
     expect: {
-      replyContains:    ["jobs", "earnings"],
-      replyNotContains: ["what can I help you with", "how can I help", "here is a list"],
+      replyContains:    ["shift", "payout", "refer"],
+      replyNotContains: ["what can I help you with", "how can I help", "here is a list", "feature"],
       toolsCalled:      [],
       noListShape:      true,
       noGenericHelpAsk: true,
@@ -890,14 +915,14 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "secondary-family-what-can-you-do-no-payment-authority",
-    description: "Secondary family member asks what Cara can do. Reply surfaces care updates but NOT payment-approval authority (AE4).",
+    description: "Secondary family member asks what Cara can do. Reply surfaces care update/share recipes but NOT payment-approval authority (AE4).",
     session: { isSecondaryMember: true },
     claudeScript: [
-      { text: "I can keep you posted on how Mom's doing and what happened on the last visit, and add other family to the updates. Just ask me anytime." },
+      { text: "I can catch you up on Mom's latest care update, pull up the next visit, or help route a request to add another family member." },
     ],
     input: { text: "what can you help me with?" },
     expect: {
-      replyContains:    ["Mom", "visit"],
+      replyContains:    ["care update", "next visit"],
       replyNotContains: [
         "what can I help you with",
         "how can I help",

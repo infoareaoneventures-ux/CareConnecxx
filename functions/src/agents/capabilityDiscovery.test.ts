@@ -30,16 +30,16 @@ describe("getCapabilityExamples", () => {
     expect(ex.length).toBeLessThanOrEqual(5);
   });
 
-  it("client examples surface booking / care-plan / billing themes", () => {
+  it("client examples surface care recipe themes", () => {
     const text = getCapabilityExamples("client", 5).join(" | ").toLowerCase();
-    expect(text).toContain("visit"); // book/reschedule a visit
-    expect(text).toMatch(/care plan|billing|approve/);
+    expect(text).toMatch(/visit|care update|backup|memory/);
+    expect(text).not.toContain("feature");
   });
 
-  it("caregiver examples surface schedule / pay / job themes", () => {
+  it("caregiver examples surface shift / pay / referral themes", () => {
     const text = getCapabilityExamples("caregiver", 5).join(" | ").toLowerCase();
-    expect(text).toMatch(/job|shift|clock/);
-    expect(text).toMatch(/earnings|payout|hours/);
+    expect(text).toMatch(/shift|caregiver|clock/);
+    expect(text).toMatch(/earnings|payout|paid|hours|pay/);
   });
 
   it("family-secondary examples surface care-visibility, NOT payment authority (AE4)", () => {
@@ -65,6 +65,12 @@ describe("getCapabilityExamples", () => {
       (r) => r.id === "family-read-care-journal" || r.id === "family-add-sibling",
     );
     expect(familyRows.every((r) => r.status === "shipped")).toBe(true);
+  });
+
+  it("recipe examples are packaged care workflows, not raw feature names", () => {
+    const text = getCapabilityExamples("client", 5).join(" | ").toLowerCase();
+    expect(text).toMatch(/pull up|confirm|fix|catch you up|share|review/);
+    expect(text).not.toContain("feature");
   });
 });
 
@@ -106,7 +112,7 @@ describe("buildCapabilityHint", () => {
 
   it("tells Cara to LEAD with one action when context exists", () => {
     const withCtx = buildCapabilityHint("client", true);
-    expect(withCtx.toLowerCase()).toContain("lead with one");
+    expect(withCtx.toLowerCase()).toContain("lead with one relevant care recipe");
     const noCtx = buildCapabilityHint("client", false);
     expect(noCtx.toLowerCase()).not.toContain("lead with one");
   });

@@ -45,6 +45,8 @@ interface ClientStateContext {
   pendingInvoiceOrPayment?: string;
 }
 
+export type OperationalRecipeLeadRole = "client" | "caregiver" | "family-secondary";
+
 export interface CaraOperationalContext {
   pendingActions: PendingActionContext[];
   openAlerts: AlertContext[];
@@ -52,6 +54,8 @@ export interface CaraOperationalContext {
   caregiverState?: CaregiverStateContext;
   clientState?: ClientStateContext;
 }
+
+const PAYMENT_CONTEXT_RE = /\b(approve|payment|invoice|billing|refund|timesheet|payout|charge|hours?)\b/i;
 
 function asString(value: unknown): string | undefined {
   return sanitizePromptContextValue(value);
@@ -95,8 +99,10 @@ function firstDocSummary(docs: FirebaseFirestore.QueryDocumentSnapshot[], fields
 export async function loadCaraOperationalContext(params: {
   phone: string;
   userId?: string;
+  caregiverId?: string;
 }): Promise<CaraOperationalContext> {
-  const { phone, userId } = params;
+  const { phone, userId, caregiverId } = params;
+  const caregiverContextId = caregiverId ?? userId;
 
   const [
     pendingDocs,
@@ -137,17 +143,17 @@ export async function loadCaraOperationalContext(params: {
       .orderBy("createdAt", "desc")
       .limit(3)
       .get()),
-    userId ? safeDoc(db.collection("caregivers").doc(userId).get()) : Promise.resolve(null),
-    userId
+    caregiverContextId ? safeDoc(db.collection("caregivers").doc(caregiverContextId).get()) : Promise.resolve(null),
+    caregiverContextId
       ? safeDocs(db.collection("shiftHours")
-        .where("caregiverId", "==", userId)
+        .where("caregiverId", "==", caregiverContextId)
         .orderBy("submittedAt", "desc")
         .limit(3)
         .get())
       : Promise.resolve([]),
-    userId
+    caregiverContextId
       ? safeDocs(db.collection("caregivers")
-        .doc(userId)
+        .doc(caregiverContextId)
         .collection("payouts")
         .orderBy("createdAt", "desc")
         .limit(2)
@@ -316,4 +322,56 @@ export function formatCaraOperationalContext(ctx: CaraOperationalContext): strin
     ...lines.slice(0, 16),
     "Use this silently. If the user asks about one of these items, acknowledge the current status accurately. Never claim a pending, failed, or admin-flagged action succeeded.",
   ].join("\n");
+}
+
+export function buildOperationalRecipeLead(
+  ctx: CaraOperationalContext,
+  role: OperationalRecipeLeadRole,
+): string | undefined {
+  const pending = ctx.pendingActions.find((action) => {
+    const preview = action.preview ?? action.toolName ?? "";
+    return role !== "family-secondary" || !PAYMENT_CONTEXT_RE.test(preview);
+  });
+  if (pending?.preview || pending?.toolName) {
+    return `You've got something waiting on your reply: ${pending.preview ?? pending.toolName}.`;
+  }
+
+  const failed = ctx.failedActions[0];
+  if (failed) {
+    const target = failed.actionType ?? failed.toolName ?? "action";
+    return `I can help recover a failed action: ${target}.`;
+  }
+
+  const alert = ctx.openAlerts[0];
+  if (alert) {
+    return `There is an open ${alert.type ?? "care"} alert I can help track.`;
+  }
+
+  if (role === "caregiver") {
+    if (ctx.caregiverState?.pendingShiftHours) {
+      return "I can check the hours or payment status from your latest shift.";
+    }
+    if (ctx.caregiverState?.lastPayoutStatus) {
+      return "I can check your latest payout status.";
+    }
+    if (ctx.caregiverState?.nextAppointment) {
+      return "I can pull up your next shift and what needs to happen.";
+    }
+  }
+
+  if (role === "client" && ctx.clientState?.pendingInvoiceOrPayment) {
+    return "You have a payment or invoice item waiting; I can pull it up.";
+  }
+
+  if (ctx.clientState?.nextAppointment) {
+    return "Your next visit is on the books; I can pull up who is coming.";
+  }
+  if (ctx.clientState?.latestCareUpdate) {
+    return "I can catch you up on the latest care update.";
+  }
+  if (ctx.clientState?.familyGroupStatus) {
+    return "Your family update group is active; I can share the latest care note.";
+  }
+
+  return undefined;
 }

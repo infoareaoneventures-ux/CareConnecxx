@@ -25,6 +25,7 @@ import {
 } from "./operationalContext";
 import { sanitizePromptContext } from "./promptContext";
 import { buildCapabilityHint, DiscoveryRole } from "./capabilityDiscovery";
+import { findAdvertisedRecipeWithoutBacking, hasPaymentAuthorityLeak, type CareRecipeRole } from "./careRecipes";
 import { MCP_TOOLS, CAREGIVER_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
 import { callClaudeWithRetry } from "../utils/claudeRetry";
 import { getActiveAgentForUser } from "./executionAgent";
@@ -829,6 +830,14 @@ export function detectGenericHelpAsk(reply: string): boolean {
   return /\b(what can i help you with|how can i help|what do you need|anything else i can help|is there anything else)\b/i.test(reply);
 }
 
+export function detectPaymentAuthorityLeak(reply: string): boolean {
+  if (!hasPaymentAuthorityLeak(reply)) return false;
+  if (/\b(can'?t|cannot|not authorized|primary account holder|primary client|account holder has to|must come from the primary)\b/i.test(reply)) {
+    return false;
+  }
+  return /\b(reply approve|you can approve|approve (the )?(payment|invoice|hours|timesheet)|pay (maria|the caregiver|them|now)|release payment)\b/i.test(reply);
+}
+
 export function detectMedicationInstruction(reply: string): boolean {
   const lower = reply.toLowerCase();
   const mentionsMedication = /\b(med|meds|medication|medicine|pill|prescription|dose|dosage|mg|insulin|lisinopril)\b/.test(lower);
@@ -1483,7 +1492,7 @@ export async function runQaAgent(params: {
       ? "family-secondary"
       : "client";
   if (!skipCrossEntity) {
-    const operationalContextData = await loadCaraOperationalContext({ phone, userId })
+    const operationalContextData = await loadCaraOperationalContext({ phone, userId, caregiverId })
       .catch((err) => {
         console.warn("qaAgent: operational context unavailable", err instanceof Error ? err.message : err);
         return null;
@@ -2191,6 +2200,15 @@ export async function runQaAgent(params: {
     if (detectMedicationInstruction(reply)) {
       metrics.medicationInstructionDetected = true;
     }
+    if (hasLiveOpsContext && detectGenericHelpAsk(reply)) {
+      metrics.contextIgnoredWhenPresent = true;
+    }
+    if (discoveryRole === "family-secondary" && detectPaymentAuthorityLeak(reply)) {
+      metrics.paymentAuthorityLeakDetected = true;
+    }
+    if (findAdvertisedRecipeWithoutBacking(reply, discoveryRole as CareRecipeRole)) {
+      metrics.recipeWithoutBackingTool = true;
+    }
 
     const preSuperviseReply = reply;
     reply = await supervise(reply, { phone, role: userType }).catch((err) => {
@@ -2213,6 +2231,15 @@ export async function runQaAgent(params: {
     });
     metrics.supervisorRewriteApplied = reply !== preSuperviseReply;
     metrics.exhausted = !preSuperviseReply.trim();
+    if (hasLiveOpsContext && detectGenericHelpAsk(reply)) {
+      metrics.contextIgnoredWhenPresent = true;
+    }
+    if (discoveryRole === "family-secondary" && detectPaymentAuthorityLeak(reply)) {
+      metrics.paymentAuthorityLeakDetected = true;
+    }
+    if (findAdvertisedRecipeWithoutBacking(reply, discoveryRole as CareRecipeRole)) {
+      metrics.recipeWithoutBackingTool = true;
+    }
 
     // Sprint 8: postProcessModified is now DERIVED from the three discrete
     // rewrite-applied flags (kept for one sprint of dashboard compatibility).
@@ -2339,9 +2366,9 @@ export async function runQuickReply(params: {
           .catch(() => null)
       : Promise.resolve(null),
     userType === "client" && userId
-      ? db.collection("shift_hours")
+      ? db.collection("shiftHours")
           .where("clientId", "==", userId)
-          .where("status",   "==", "submitted")
+          .where("status",   "==", "pending_client_review")
           .limit(1)
           .get()
           .then(s => s.empty ? 0 : s.size)

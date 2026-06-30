@@ -3,7 +3,7 @@ import { getSharedClient } from "../utils/claudeClient";
 import { quickComplete } from "../utils/openaiClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
-import { buildCapabilityMenu } from "./caraCapabilities";
+import { buildHelpSmsReply } from "./capabilityDiscovery";
 import { getAppUrl } from "../config/appUrl";
 
 async function askClaude(system: string, userText: string): Promise<string> {
@@ -228,8 +228,8 @@ export async function handleClientPermissionsReply(
     await sendMessage(chatId, msgPerm4);
 
     // Capability discovery: now that onboarding is complete, tell the family
-    // what Cara can actually do for them (Track A / U3).
-    await sendMessage(chatId, buildCapabilityMenu("client", session.preferredLanguage ?? "en"));
+    // what Cara can actually do in care-work terms, not a chatbot menu.
+    await sendMessage(chatId, buildHelpSmsReply("client"));
 
     // Kick off matching
     const { runMatchingForClient } = await import("./matchingAgent");
@@ -321,8 +321,8 @@ export async function handleCaregiverPermissionsReply(
     await sendMessage(chatId, `${msgPerm7}\n\nView your profile: ${appUrl}/caregiver/${caregiverId}`);
 
     // Capability discovery: onboarding is complete — tell the caregiver what
-    // Cara can do for them (Track A / U3).
-    await sendMessage(chatId, buildCapabilityMenu("caregiver", session.preferredLanguage ?? "en"));
+    // Cara can do in care-work terms, not a chatbot menu.
+    await sendMessage(chatId, buildHelpSmsReply("caregiver"));
 
     // Notify admin for final review
     await db.collection("admin_alerts").add({

@@ -27,6 +27,8 @@ interface AdminAlertRecord {
   chatId?: string;
   actionId?: string;
   toolName?: string;
+  recipeId?: string;
+  sourceAgent?: string;
   resolved?: boolean;
   createdAt?: string;
   [key: string]: unknown;
@@ -112,6 +114,9 @@ interface TurnMetricRecord {
   medicationInstructionDetected?: boolean;
   confidenceClaimDetected?: boolean;
   promiseWithoutToolCall?: boolean;
+  recipeWithoutBackingTool?: boolean;
+  contextIgnoredWhenPresent?: boolean;
+  paymentAuthorityLeakDetected?: boolean;
   multiQuestionDataCollection?: boolean;
   [key: string]: unknown;
 }
@@ -134,6 +139,7 @@ type QueueFilter =
   | 'support'
   | 'drafts'
   | 'payments'
+  | 'recipes'
   | 'healthcare';
 
 interface QueueItem {
@@ -162,6 +168,7 @@ const FILTERS: Array<{ id: QueueFilter; label: string }> = [
   { id: 'support', label: 'Support' },
   { id: 'drafts', label: 'Drafts' },
   { id: 'payments', label: 'Payments' },
+  { id: 'recipes', label: 'Recipes' },
   { id: 'healthcare', label: 'Healthcare' },
 ];
 
@@ -220,7 +227,8 @@ function itemMatchesFilter(item: QueueItem, filter: QueueFilter): boolean {
 function makeAlertItem(alert: AdminAlertRecord): QueueItem {
   const type = alert.type ?? 'admin_alert';
   const detail = truncate(alert.message ?? alert.reason ?? alert.error ?? 'No details provided');
-  const category = type.includes('linq') ? 'linq'
+  const category = alert.recipeId || type.includes('family_group') || type.includes('recipe') ? 'recipes'
+    : type.includes('linq') ? 'linq'
     : type.includes('qa') || type.includes('agent') || type.includes('cara') ? 'qa'
       : type.includes('payment') || type.includes('invoice') || type.includes('billing') ? 'payments'
         : type.includes('healthcare') || type.includes('medical') || type.includes('crisis') ? 'healthcare'
@@ -236,7 +244,7 @@ function makeAlertItem(alert: AdminAlertRecord): QueueItem {
     createdAt: alert.createdAt,
     phone: alert.phone,
     userId: alert.userId,
-    toolName: alert.toolName,
+    toolName: alert.toolName ?? alert.sourceAgent,
     targetTab: 'alerts',
     raw: alert,
   };
@@ -245,8 +253,11 @@ function makeAlertItem(alert: AdminAlertRecord): QueueItem {
 function makeLedgerItem(entry: LedgerRecord): QueueItem {
   const action = entry.actionType ?? 'agent_action';
   const title = `${action.replace(/_/g, ' ')}${entry.toolName ? ` via ${entry.toolName}` : ''}`;
-  const category = `${action} ${entry.toolName ?? ''}`.includes('healthcare') ? 'healthcare'
-    : `${action} ${entry.toolName ?? ''}`.includes('payment') ? 'payments'
+  const haystack = `${action} ${entry.toolName ?? ''} ${String(entry.metadata?.recipeId ?? '')} ${String(entry.metadata?.sourceAgent ?? '')}`;
+  const category = haystack.includes('family_group') || haystack.includes('recipe') || !!entry.metadata?.recipeId ? 'recipes'
+    : haystack.includes('linq') ? 'linq'
+      : haystack.includes('healthcare') ? 'healthcare'
+    : haystack.includes('payment') ? 'payments'
       : 'failed_actions';
   return {
     id: `ledger:${entry.id}`,
@@ -327,6 +338,7 @@ function makeDraftItem(draft: DraftRecord): QueueItem {
 const QUALITY_FLAG_LABELS: Record<string, string> = {
   agent_loop_exhausted: 'Agent loop exhausted',
   confidence_claim_detected: 'Confidence claim',
+  context_ignored_when_present: 'Live context ignored',
   conversation_repair_applied: 'Conversation repair applied',
   conversation_repair_triggered: 'Conversation repair triggered',
   fallback_path_used: 'Fallback path',
@@ -334,8 +346,10 @@ const QUALITY_FLAG_LABELS: Record<string, string> = {
   grounding_triggered: 'Safety grounding',
   medication_instruction_detected: 'Medication instruction risk',
   multi_question_data_collection: 'Multi-question intake',
+  payment_authority_leak_detected: 'Payment authority leak',
   post_process_modified: 'Post-process rewrite',
   promise_without_tool_call: 'Promise without tool call',
+  recipe_without_backing_tool: 'Recipe without backing tool',
   reply_empty: 'Empty reply',
   support_deflection_detected: 'Support deflection',
   tool_error: 'Tool error',
@@ -353,6 +367,9 @@ function readableQualityFlags(metric: TurnMetricRecord): string[] {
   if (metric.supportDeflectionDetected) flags.add('support_deflection_detected');
   if (metric.genericHelpAskDetected) flags.add('generic_help_ask_detected');
   if (metric.medicationInstructionDetected) flags.add('medication_instruction_detected');
+  if (metric.recipeWithoutBackingTool) flags.add('recipe_without_backing_tool');
+  if (metric.contextIgnoredWhenPresent) flags.add('context_ignored_when_present');
+  if (metric.paymentAuthorityLeakDetected) flags.add('payment_authority_leak_detected');
   return Array.from(flags).map((flag) => QUALITY_FLAG_LABELS[flag] ?? flag.replace(/_/g, ' '));
 }
 
@@ -746,6 +763,8 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
                   <DetailRow label="Phone" value={selected.phone} mono />
                   <DetailRow label="User ID" value={selected.userId} mono />
                   <DetailRow label="Tool" value={selected.toolName} />
+                  <DetailRow label="Recipe" value={String(selected.raw.recipeId ?? (selected.raw.metadata as Record<string, unknown> | undefined)?.recipeId ?? '') || undefined} />
+                  <DetailRow label="Source agent" value={String(selected.raw.sourceAgent ?? (selected.raw.metadata as Record<string, unknown> | undefined)?.sourceAgent ?? '') || undefined} />
                   <DetailRow label="Created" value={formatDate(selected.createdAt)} />
                   <DetailRow label="Assigned" value={String(selected.raw.assignedTo ?? '') || undefined} mono />
                   <DetailRow label="Recovery" value={String(selected.raw.recoveryAction ?? '') || undefined} />
@@ -953,6 +972,7 @@ function operatorGuidance(item: QueueItem): string {
   if (item.kind === 'failed_action') {
     if (item.category === 'healthcare') return 'Healthcare action failed after approval. Check the browser/session trail and contact the account holder before retrying.';
     if (item.category === 'payments') return 'Payment-related action failed. Check shift hours, invoice, Stripe state, and avoid duplicate charges before retrying.';
+    if (item.category === 'recipes') return 'Recipe or family-group handoff failed. Check the ledger metadata, Linq delivery state, and family group membership before retrying.';
     return 'Review the tool failure, related alert, and user thread. Retry only when idempotency is clear.';
   }
   if (item.kind === 'support_ticket') return 'Support ticket needs human follow-up. Use the Support tab to respond and update status.';
@@ -960,6 +980,7 @@ function operatorGuidance(item: QueueItem): string {
   if (item.kind === 'quality_issue') return 'Conversation quality signal. Review recent messages and tool activity, then decide whether a prompt, routing, or operator follow-up fix is needed.';
   if (item.category === 'linq') return 'Delivery issue. Confirm Linq health, retry state, and whether SMS fallback already happened.';
   if (item.category === 'qa') return 'Cara runtime issue. Review the alert detail, recent messages, and action ledger before marking resolved.';
+  if (item.category === 'recipes') return 'Recipe handoff issue. Confirm the user-visible state, related ledger row, and whether retry would duplicate a message or group add.';
   return 'Review the raw context, resolve the source issue, then mark the alert resolved.';
 }
 

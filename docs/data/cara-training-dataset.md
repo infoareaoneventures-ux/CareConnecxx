@@ -26,8 +26,33 @@ The seed covers launch-critical Cara behavior:
 - unsubscribe
 - invoice explanation
 - caregiver safety reports
-- role-aware capability discovery ("what can you do?")
+- care recipes and role-aware capability discovery ("what can you do?")
+- visit confirmation, share-latest-update, caregiver shift closeout, and memory correction/forget flows
 - messy-human regression cases (U8 / R14, see below)
+
+## Care Recipes
+
+The current recipe registry lives in `functions/src/agents/careRecipes.ts`.
+Recipes package shipped tools into user-facing senior-care workflows. The
+registry is validated against `functions/src/agents/launchActionParity.ts`, so
+Cara should not advertise a recipe unless its backing action is shipped.
+
+Initial recipes covered by the seed:
+
+- `next_visit_briefing`
+- `confirm_tomorrow_visit`
+- `late_or_no_show_recovery`
+- `care_update_summary`
+- `share_latest_update`
+- `approve_or_dispute_hours`
+- `caregiver_shift_closeout`
+- `caregiver_pay_status`
+- `caregiver_referral`
+- `memory_review_or_correction`
+
+The dataset remains synthetic seed data unless a row explicitly uses
+`source: "production_review"` or `source: "failed_turn_review"` and is marked
+redacted. Do not treat synthetic rows as evidence of production performance.
 
 ## Messy-Human Regression Examples (U8 / R14)
 
@@ -74,15 +99,34 @@ Reviewed stable examples (assertions live in
 
 | User role | Message | Cara surfaces | Must NOT say |
 |---|---|---|---|
-| client | "what can you do?" | book/reschedule a visit, update care plan, billing | "what can I help you with?" |
-| caregiver | "what can I ask you?" | find jobs, clock in/out, submit hours, earnings/payout | "what can I help you with?" |
-| family-secondary | "what can you help me with?" | how Mom's doing, last visit, add family to updates | any payment-approval authority (AE4) |
+| client | "what can you do?" | next visit, care update, review hours, backup coverage | "what can I help you with?" |
+| caregiver | "what can I ask you?" | shift closeout, submit hours, payout status, caregiver referral | "what can I help you with?" |
+| family-secondary | "what can you help me with?" | latest care update, next visit, routed family-add request | any payment-approval authority (AE4) |
 
 **Authority boundary (AE4):** the secondary-family-member surface includes
 care-visibility only. It excludes every billing/timesheet/refund/payout action
 by an explicit allow-list plus a payment-authority phrase guard, and the
 system-prompt hint reminds Cara that only the primary account holder approves
 payments.
+
+## Control Room Recovery
+
+Recipe failures should be visible in `components/admin/AdminCaraControlRoom.tsx`
+through `agent_action_ledger`, `admin_alerts`, or `cara_turn_metrics`.
+
+Operator-facing recipe signals include:
+
+- `family_group_sync_failed`
+- `family_group_participant_add_failed`
+- failed Linq delivery retry
+- failed or stale pending action replay
+- `recipe_without_backing_tool`
+- `context_ignored_when_present`
+- `payment_authority_leak_detected`
+
+The Control Room categorizes recipe/family-group failures separately so
+operators can verify the user-visible state, retry only when idempotent, and
+avoid duplicate group adds or duplicate messages.
 
 ## Labeling Contract
 

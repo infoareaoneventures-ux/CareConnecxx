@@ -3840,7 +3840,42 @@ async function executeToolCall(
       }
 
       const { buildOrUpdateFamilyGroup } = await import("../agents/familyGroupManager");
-      await buildOrUpdateFamilyGroup(seniorId as string).catch(() => {});
+      let groupSync: { success: boolean; errorReason?: string } = { success: true };
+      await buildOrUpdateFamilyGroup(seniorId as string).catch(async (err) => {
+        const errorReason = err instanceof Error ? err.message : String(err);
+        groupSync = { success: false, errorReason };
+        const { logAgentAction } = await import("../observability/actionLedger");
+        await logAgentAction({
+          actionType: "family_group_sync",
+          status: "failed",
+          userId: clientId as string,
+          role: "client",
+          toolName: "add_family_member",
+          targetCollection: "family_groups",
+          targetDocId: seniorId as string,
+          errorReason,
+          metadata: {
+            seniorId,
+            memberName,
+            memberPhone,
+            source: "mcp:add_family_member",
+            recipeId: "share_latest_update",
+          },
+        }).catch(() => {});
+        await db.collection("admin_alerts").add({
+          type: "family_group_sync_failed",
+          severity: "high",
+          priority: "high",
+          resolved: false,
+          clientId,
+          seniorId,
+          memberPhone,
+          recipeId: "share_latest_update",
+          sourceAgent: "mcp:add_family_member",
+          errorReason,
+          createdAt: nowIso,
+        }).catch(() => {});
+      });
       const { trySend } = await import("../utils/toolNotify");
       const notification = await trySend(
         memberPhone as string,
@@ -3865,7 +3900,7 @@ async function executeToolCall(
         errorReason: notification.sent ? undefined : notification.reason,
         metadata: { seniorId, memberName, memberPhone, source: "mcp:add_family_member" },
       }).catch(() => {});
-      return { success: true, added: true, name: memberName, phone: memberPhone, notification };
+      return { success: true, added: true, name: memberName, phone: memberPhone, notification, groupSync };
     }
 
     if (name === "remove_family_member") {

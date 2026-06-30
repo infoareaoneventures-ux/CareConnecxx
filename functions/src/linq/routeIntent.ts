@@ -6,7 +6,8 @@ import { classifyIntentDetailed } from "../agents/intentClassifier";
 /** Shape guard for pendingCancelConfirm — must carry a usable appointmentId. */
 const hasAppointmentId = (v: unknown): boolean =>
   !!v && typeof v === "object" && typeof (v as { appointmentId?: unknown }).appointmentId === "string";
-import { buildCapabilityMenu } from "../agents/caraCapabilities";
+import { buildHelpSmsReply, type DiscoveryRole } from "../agents/capabilityDiscovery";
+import { buildOperationalRecipeLead, loadCaraOperationalContext } from "../agents/operationalContext";
 import { staleConfirmFlags } from "../utils/sessionState";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
@@ -330,10 +331,20 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // Static, side-effect-free reply listing what Cara can do for this role.
     // Reached only via the exact-string command bypass in classifyIntentDetailed.
     if (intent === "HELP") {
-      await sendMessage(
-        chatId,
-        buildCapabilityMenu(session.userType, session.preferredLanguage ?? "en")
-      );
+      const role: DiscoveryRole = session.userType === "caregiver"
+        ? "caregiver"
+        : (session as any).isSecondaryMember
+          ? "family-secondary"
+          : "client";
+      const ops = await loadCaraOperationalContext({
+        phone,
+        userId: session.userId,
+        caregiverId: session.caregiverId,
+      }).catch(() => null);
+      await sendMessage(chatId, buildHelpSmsReply(
+        role,
+        ops ? buildOperationalRecipeLead(ops, role) : undefined,
+      ));
       return;
     }
 

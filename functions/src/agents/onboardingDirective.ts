@@ -73,9 +73,10 @@ export function buildOnboardingDirective(
       `The instant the STILL NEEDED list is empty, call complete_collection on that SAME ` +
       `turn — do not ask another question first.`
     : `Everything required is collected. Call complete_collection RIGHT NOW, before anything ` +
-      `else this turn, then tell ${role === "caregiver" ? "them" : "the family"} ` +
-      `in your own warm words what happens next — do NOT list fields back like a form, and do ` +
-      `NOT ask for any more details first.`;
+      `else this turn, then send ONE short warm line acknowledging you've got what you need to ` +
+      `find ${role === "caregiver" ? "them work" : "their match"} — keep it brief, do NOT promise ` +
+      `a specific timeframe or that options are coming "shortly" (the next message handles what's ` +
+      `actually available), do NOT list fields back like a form, and do NOT ask for more details.`;
 
   return [
     `ONBOARDING IN PROGRESS — you are setting up this ${audience} over text. Your job this`,

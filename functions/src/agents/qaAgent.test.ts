@@ -36,6 +36,7 @@ import {
   detectPromiseWithoutToolCall,
   detectGenericHelpAsk,
   detectMedicationInstruction,
+  detectPaymentAuthorityLeak,
   detectMultiQuestionDataCollection,
   detectSupportDeflection,
   buildClientSystemPrompt,
@@ -170,6 +171,21 @@ describe("conversation quality detectors", () => {
     "If this feels urgent, call 911 now.",
   ])("allows clinical redirection %p", (input) => {
     expect(detectMedicationInstruction(input)).toBe(false);
+  });
+
+  it.each([
+    "Reply APPROVE and I'll release payment.",
+    "You can approve the hours here.",
+    "I'll pay Maria now.",
+  ])("flags payment authority leaks %p", (input) => {
+    expect(detectPaymentAuthorityLeak(input)).toBe(true);
+  });
+
+  it.each([
+    "I can't approve payment from this family group - the primary account holder has to approve Maria's hours.",
+    "The primary client must approve the invoice.",
+  ])("allows payment boundary language %p", (input) => {
+    expect(detectPaymentAuthorityLeak(input)).toBe(false);
   });
 });
 

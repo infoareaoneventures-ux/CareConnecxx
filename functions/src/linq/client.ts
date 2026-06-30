@@ -170,6 +170,45 @@ export async function checkCapability(
   }
 }
 
+// ── Native location request ──────────────────────────────────────────────────
+// Linq's native "Share Your Location" prompt. Works on 1:1 iMessage ONLY;
+// SMS / RCS / group chats return a non-2xx (409). The shared pin comes back
+// asynchronously as an inbound location part (see utils/locationShare.ts), so
+// this call only *sends* the prompt — it never returns the location itself.
+// Docs: /api/resources/chats/subresources/location/
+
+export interface LocationRequestResult {
+  /** true when Linq accepted the request and fired the native prompt. */
+  requested: boolean;
+  /** HTTP status when the request was rejected (e.g. 409 on SMS/RCS/group). */
+  status?: number;
+}
+
+/**
+ * Fire Linq's native location-share prompt on a chat. Never throws — any
+ * non-2xx (notably 409 for SMS/RCS/group, or a stale-iMessage chat) resolves to
+ * `{ requested: false }` so callers branch to a typed-address fallback. Not
+ * retried: 4xx is not transient and the request is best-effort (the location
+ * itself arrives later via the inbound webhook).
+ */
+export async function requestLocation(chatId: string): Promise<LocationRequestResult> {
+  if (!chatId) return { requested: false };
+  try {
+    const res = await axios.post(
+      `${cfg().baseUrl}/chats/${chatId}/location/request`,
+      {},
+      { headers: headers(), timeout: 10000 }
+    );
+    const traceId = res.headers["x-trace-id"] as string | undefined;
+    if (traceId) console.info("Linq requestLocation trace_id:", traceId, "chatId:", chatId);
+    return { requested: true };
+  } catch (err) {
+    const status = (err as AxiosError)?.response?.status;
+    console.info("Linq requestLocation unavailable", { chatId, status: status ?? null });
+    return { requested: false, status };
+  }
+}
+
 // ── Core send ─────────────────────────────────────────────────────────────────
 
 // Canonicalize message parts to the shapes Linq's API actually accepts.

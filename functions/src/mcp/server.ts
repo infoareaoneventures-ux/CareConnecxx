@@ -523,6 +523,23 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "request_location",
+    description:
+      "Ask the user to share their current location via the native one-tap prompt. " +
+      "Works on 1:1 iMessage only — on SMS or RCS the prompt can't fire, and this tool " +
+      "tells you to instead ask the user to type their city and zip code. The shared pin " +
+      "arrives later as a separate message; this tool only sends the prompt. " +
+      "Session context (phone, chatId) is injected automatically — do NOT ask the user for these. " +
+      "Tell the user you're requesting their location before calling this.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "Optional short reason for logs (e.g. 'find nearby caregivers', 'update address')" },
+      },
+      required: [],
+    },
+  },
+  {
     name: "get_recurring_schedule",
     description: "Get the active recurring care schedule for a client — days of the week, times, caregiver, and status.",
     input_schema: {
@@ -3286,6 +3303,44 @@ async function executeToolCall(
         const notification = await trySend(cgPhone, `Message from family: ${message as string}`, "mcp:send_caregiver_message");
         logAudit({ eventType: "health_data_accessed", userId: clientId as string ?? "", data: { source: "mcp:send_caregiver_message", caregiverId, notificationSent: notification.sent } }).catch(() => {});
         return { success: true, sent: notification.sent, caregiverName: cgSnap.data()?.name ?? "", notification };
+      }
+
+      case "request_location": {
+        const { phone, chatId, reason } = input;
+        if (!phone || !chatId) return toolError("INVALID_INPUT", "phone and chatId are required");
+        const sessionSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const session = sessionSnap.data();
+        const { canRequestNativeLocation } = await import("../utils/locationShare");
+        const typedAskFallback = {
+          success: true,
+          nativePromptSent: false,
+          fallback: "ask_typed_city_zip",
+          message: "Native location prompt unavailable on this chat — ask the user to type their city and zip code.",
+        };
+        // Gate: 1:1 iMessage only. SMS/RCS/group → fall back to a typed ask.
+        if (!canRequestNativeLocation(session as { service?: string; groupChatId?: string })) {
+          return typedAskFallback;
+        }
+        const { requestLocation } = await import("../linq/client");
+        const result = await requestLocation(chatId as string);
+        // Stale-iMessage or any non-2xx (e.g. 409) → same typed-ask fallback.
+        if (!result.requested) return typedAskFallback;
+        // Persist the pending request so the scheduled nudge job (and onboarding)
+        // can fall back to a typed ask if no pin arrives. TTL bounds the wait.
+        await db.collection("agent_sessions").doc(phone as string).set({
+          pendingLocationRequest: {
+            source:    "mcp",
+            reason:    (reason as string) ?? "",
+            sentAt:    new Date().toISOString(),
+            nudgeSent: false,
+          },
+          stateExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        }, { merge: true });
+        return {
+          success: true,
+          nativePromptSent: true,
+          message: "Sent the native location prompt. The user's shared location will arrive as a separate message.",
+        };
       }
 
       case "get_recurring_schedule": {

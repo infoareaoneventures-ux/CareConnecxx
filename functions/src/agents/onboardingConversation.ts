@@ -124,6 +124,22 @@ async function mergeOnboardingData(phone: string, data: Record<string, unknown>)
   });
 }
 
+// ── Native location request (1:1 iMessage) ────────────────────────────────────
+// Marker persisted on the session when CARA fires Linq's native location prompt.
+// The scheduled nudge job (scheduled/locationRequestNudge.ts) reads it; the
+// onboarding location handlers clear it once a pin OR a typed city/zip arrives.
+export interface PendingLocationRequest {
+  source:    "onboarding" | "mcp";
+  sentAt:    string;   // ISO — when the prompt was fired
+  nudgeSent: boolean;  // true once the single follow-up nudge has gone out
+  reason?:   string;
+}
+
+/** Clear the pending-location marker once the location step resolves. */
+function clearPendingLocation(): Record<string, unknown> {
+  return { pendingLocationRequest: admin.firestore.FieldValue.delete() };
+}
+
 // Local single-shot parser used by onboarding step handlers. Powered by
 // gpt-4o-mini under the hood for speed and lower rate-limit pressure.
 // Strips markdown code fences from the response so JSON.parse callers don't
@@ -1031,7 +1047,7 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
       name: (d0.firstName as string) ?? "", onboardingData: { ...d0, city, zipCode },
     }) === "out") return;
     await mergeOnboardingData(phone, { city, zipCode, lat: inboundLocation.lat, lng: inboundLocation.lng });
-    await updateSession(phone, { onboardingStep: "client_ask_schedule" });
+    await updateSession(phone, { onboardingStep: "client_ask_schedule", ...clearPendingLocation() });
     const d = session.onboardingData ?? {};
     const ack = city
       ? `Got it — pinned you to ${city}${zipCode ? ` ${zipCode}` : ""}. `
@@ -1084,7 +1100,7 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
   }
 
   await mergeOnboardingData(phone, { city, zipCode });
-  await updateSession(phone, { onboardingStep: "client_ask_schedule" });
+  await updateSession(phone, { onboardingStep: "client_ask_schedule", ...clearPendingLocation() });
   const d = session.onboardingData ?? {};
   const msg6 = await generateCaraMessage({
     audience: "family",
@@ -1657,7 +1673,7 @@ async function handleCaregiverAskLocation(phone: string, chatId: string, text: s
     }
   }
 
-  await updateSession(phone, { onboardingStep: "caregiver_ask_story" });
+  await updateSession(phone, { onboardingStep: "caregiver_ask_story", ...clearPendingLocation() });
   const d = session.onboardingData ?? {};
   const msgStoryIntro = await generateCaraMessage({
     audience: "caregiver",

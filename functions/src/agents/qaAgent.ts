@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { getSharedClient } from "../utils/claudeClient";
-import { quickComplete, getOpenAIClient } from "../utils/openaiClient";
+import { quickComplete, getOpenAIClient, openAiTokenLimitParam } from "../utils/openaiClient";
 import * as admin from "firebase-admin";
 import { startTyping, sendMessage } from "../linq/client";
 import { buildClickableMessage } from "./caraAgent";
@@ -2463,10 +2463,11 @@ export async function runQuickReply(params: {
   const timer = setTimeout(() => controller.abort(), 8_000);
   let reply: string;
   try {
+    const quickModel = resolveCaraModelConfig("quick").model;
     const res = await getOpenAIClient().chat.completions.create(
       {
-        model:      resolveCaraModelConfig("quick").model,
-        max_tokens: 150,
+        model: quickModel,
+        ...openAiTokenLimitParam(quickModel, 150),
         messages,
       },
       { signal: controller.signal },

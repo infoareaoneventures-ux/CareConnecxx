@@ -29,6 +29,14 @@ const FALLBACK_MODEL = "claude-haiku-4-5-20251001";
 
 let _sharedClient: OpenAI | null = null;
 
+export function openAiTokenLimitParam(model: string, maxTokens: number): { max_tokens?: number; max_completion_tokens?: number } {
+  // Newer GPT-5-family chat models reject max_tokens and require
+  // max_completion_tokens. Older chat models still accept max_tokens.
+  return /^gpt-5(?:[.-]|$)/i.test(model)
+    ? { max_completion_tokens: maxTokens }
+    : { max_tokens: maxTokens };
+}
+
 export function getOpenAIClient(): OpenAI {
   if (!_sharedClient) {
     const apiKey = process.env.OPENAI_API_KEY ?? "";
@@ -57,10 +65,11 @@ export async function quickComplete(
 ): Promise<string> {
   const maxTokens = opts?.maxTokens ?? 200;
   try {
+    const model = opts?.model ?? resolveCaraModelConfig("router").model;
     const res = await getOpenAIClient().chat.completions.create(
       {
-        model:       opts?.model ?? resolveCaraModelConfig("router").model,
-        max_tokens:  maxTokens,
+        model,
+        ...openAiTokenLimitParam(model, maxTokens),
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user",   content: userText },

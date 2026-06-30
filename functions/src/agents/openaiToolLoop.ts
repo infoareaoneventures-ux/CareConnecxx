@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
+import { openAiTokenLimitParam } from "../utils/openaiClient";
 
 type AnthropicTool = Anthropic.Tool & { cache_control?: unknown };
 
@@ -123,8 +124,8 @@ export async function callOpenAiAgentTurn(params: {
   const tools = convertTools(params.tools);
   const res = await params.client.chat.completions.create(
     {
-      model:      params.model,
-      max_tokens: params.maxTokens,
+      model: params.model,
+      ...openAiTokenLimitParam(params.model, params.maxTokens),
       messages: [
         { role: "system", content: systemToText(params.system) },
         ...convertAnthropicMessages(params.messages),

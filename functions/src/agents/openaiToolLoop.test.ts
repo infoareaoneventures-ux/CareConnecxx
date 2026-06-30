@@ -84,8 +84,34 @@ describe("openaiToolLoop", () => {
     }]);
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       model: "gpt-4o",
+      max_tokens: 200,
       tool_choice: "auto",
     }), expect.any(Object));
+  });
+
+  it("uses max_completion_tokens for GPT-5-family agent models", async () => {
+    const create = vi.fn(async () => ({
+      choices: [{
+        finish_reason: "stop",
+        message: { content: "Done.", tool_calls: [] },
+      }],
+    }));
+
+    await callOpenAiAgentTurn({
+      client: { chat: { completions: { create } } } as any,
+      model: "gpt-5.4",
+      maxTokens: 300,
+      system: "You are Cara.",
+      tools: [],
+      toolChoice: "auto",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(create.mock.calls[0][0]).toMatchObject({
+      model: "gpt-5.4",
+      max_completion_tokens: 300,
+    });
+    expect(create.mock.calls[0][0]).not.toHaveProperty("max_tokens");
   });
 
   it("omits OpenAI tools fields when no active tools are available", async () => {

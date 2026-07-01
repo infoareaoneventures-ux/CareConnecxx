@@ -5,6 +5,7 @@ import { CaraActionRegistry } from "./caraActionRegistry";
 import {
   CaraActionAccessError,
   CaraActionApprovalRequiredError,
+  CaraActionInProgressError,
   CaraActionValidationError,
   createApprovalKey,
   runCaraAction,
@@ -196,5 +197,55 @@ describe("runCaraAction", () => {
       status: "duplicate_blocked",
       toolName: "send_setup_link",
     });
+  });
+
+  it("fails closed while a mutating action with the same idempotency key is still running", async () => {
+    let claimed = false;
+    let settled = false;
+    setCaraActionExecutionStoreForTest({
+      claim: async () => {
+        if (settled) return { cached: true, result: { sent: true, messageId: "msg-running" } };
+        if (claimed) return { inProgress: true };
+        claimed = true;
+        return { cached: false };
+      },
+      settle: async (_key, outcome) => {
+        if (outcome.ok) settled = true;
+      },
+    });
+
+    let releaseRun!: () => void;
+    const runStarted = new Promise<void>(resolve => {
+      releaseRun = resolve;
+    });
+    let finishRun!: () => void;
+    const finish = new Promise<void>(resolve => {
+      finishRun = resolve;
+    });
+    const run = vi.fn(async () => {
+      releaseRun();
+      await finish;
+      return { sent: true, messageId: "msg-running" };
+    });
+    const duplicateAction = defineCaraAction({
+      ...action,
+      run,
+      idempotencyKey: input => `setup:${input.clientId}:${input.url}`,
+    });
+    const input = { clientId: "c1", url: "https://careconnex.example/setup" };
+    const ctx = { caller: "sms_agent" as const, role: "client", uid: "c1" };
+
+    const first = runCaraAction(duplicateAction, input, ctx);
+    await runStarted;
+
+    await expect(runCaraAction(duplicateAction, input, ctx)).rejects.toBeInstanceOf(CaraActionInProgressError);
+    finishRun();
+    await expect(first).resolves.toEqual({ sent: true, messageId: "msg-running" });
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(logAgentAction.mock.calls.some(call =>
+      call[0].status === "duplicate_blocked" &&
+      call[0].metadata?.reason === "in_progress",
+    )).toBe(true);
   });
 });

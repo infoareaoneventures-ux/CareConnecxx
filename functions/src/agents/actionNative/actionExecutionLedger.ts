@@ -2,10 +2,12 @@ import * as admin from "firebase-admin";
 import { createHash } from "crypto";
 
 export const CARA_ACTION_EXECUTION_COLLECTION = "cara_action_execution_ledger";
+const STALE_ACTION_CLAIM_MS = 10 * 60 * 1000;
 
 export type CaraActionExecutionClaim =
   | { cached: true; result: unknown }
-  | { cached: false };
+  | { cached: false }
+  | { inProgress: true };
 
 export interface CaraActionExecutionStore {
   claim(key: string): Promise<CaraActionExecutionClaim>;
@@ -29,13 +31,19 @@ export async function claimCaraActionExecution(key: string): Promise<CaraActionE
         key,
         status: "running",
         claimedAt: new Date().toISOString(),
+        claimedAtMs: Date.now(),
       });
       return { cached: false };
     } catch {
       return await admin.firestore().runTransaction<CaraActionExecutionClaim>(async tx => {
         const snap = await tx.get(ref);
         if (!snap.exists) {
-          tx.set(ref, { key, status: "running", claimedAt: new Date().toISOString() });
+          tx.set(ref, {
+            key,
+            status: "running",
+            claimedAt: new Date().toISOString(),
+            claimedAtMs: Date.now(),
+          });
           return { cached: false };
         }
 
@@ -44,10 +52,19 @@ export async function claimCaraActionExecution(key: string): Promise<CaraActionE
           return { cached: true, result: data.result ?? null };
         }
 
+        const claimedAtMs = typeof data.claimedAtMs === "number"
+          ? data.claimedAtMs
+          : Date.parse(String(data.claimedAt ?? "")) || 0;
+        const isStale = Date.now() - claimedAtMs > STALE_ACTION_CLAIM_MS;
+        if (!isStale) {
+          return { inProgress: true };
+        }
+
         tx.set(ref, {
           key,
           status: "running",
           claimedAt: new Date().toISOString(),
+          claimedAtMs: Date.now(),
           reclaimed: true,
         }, { merge: true });
         return { cached: false };

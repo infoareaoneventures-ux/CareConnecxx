@@ -28,6 +28,13 @@ export class CaraActionApprovalRequiredError extends Error {
   }
 }
 
+export class CaraActionInProgressError extends Error {
+  constructor(actionName: string) {
+    super(`${actionName}: action is already running for this idempotency key`);
+    this.name = "CaraActionInProgressError";
+  }
+}
+
 export async function runCaraAction<TInput, TOutput>(
   action: CaraActionDefinition<TInput, TOutput>,
   rawInput: unknown,
@@ -73,6 +80,25 @@ export async function runCaraAction<TInput, TOutput>(
   const idempotencyKey = !action.readOnly ? action.idempotencyKey?.(input, ctx) : undefined;
   if (idempotencyKey) {
     const claim = await claimCaraActionExecution(idempotencyKey);
+    if ("inProgress" in claim && claim.inProgress) {
+      await logAgentAction({
+        actionType: action.audit?.actionType ?? action.name,
+        status: "duplicate_blocked",
+        userId: ctx.uid,
+        phone: ctx.phone,
+        role: ctx.role,
+        sourceMessageId: ctx.sourceMessageId,
+        toolName: action.name,
+        targetCollection: action.audit?.targetCollection,
+        metadata: {
+          caller: ctx.caller,
+          idempotencyKey,
+          reason: "in_progress",
+        },
+      });
+      throw new CaraActionInProgressError(action.name);
+    }
+
     if (claim.cached) {
       const cached = action.outputSchema.safeParse(claim.result);
       if (!cached.success) {

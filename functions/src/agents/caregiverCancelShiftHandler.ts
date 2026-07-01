@@ -43,11 +43,11 @@ async function isQuestionOrOther(text: string, currentQuestion: string): Promise
 
 async function answerMidFlow(text: string, reAsk: string): Promise<string> {
   const answer = await quickComplete(
-    "You are Cara, an AI care assistant helping a caregiver cancel one of their upcoming shifts. " +
+    "You are Cara, a care coordinator helping a caregiver cancel one of their upcoming shifts. " +
       "Answer their question briefly (1-2 sentences). Do NOT ask them to continue the cancellation — that prompt comes next.",
     text,
     { maxTokens: 150 },
-  ).catch(() => "Let me get back to you on that. In the meantime —");
+  ).catch(() => "I do not want to guess on that.");
   return `${answer}\n\n${reAsk}`;
 }
 

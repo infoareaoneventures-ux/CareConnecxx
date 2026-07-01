@@ -401,7 +401,7 @@ async function handleShiftConfirmation(
     let answer = "";
     try {
       answer = await quickComplete(
-        "You are Cara, an AI care assistant. A caregiver was asked to confirm they'll be at " +
+        "You are Cara, a care coordinator. A caregiver was asked to confirm they'll be at " +
         `${info.seniorName}'s shift on ${info.appointmentDate} (start ${info.startTime}). ` +
         "Instead they sent the message below — likely a question about the shift, address, client, or logistics. " +
         "Answer briefly (1–2 sentences). Do NOT ask them to confirm — that prompt comes next.",
@@ -409,7 +409,7 @@ async function handleShiftConfirmation(
         { maxTokens: 180 },
       );
     } catch {
-      answer = "Let me get back to you on that. In the meantime —";
+      answer = "I do not want to guess on that.";
     }
     await sendMessage(chatId, answer);
 
@@ -547,7 +547,7 @@ async function handleDone(phone: string, chatId: string, session: AgentSession, 
           text,
           { maxTokens: 180 },
         );
-      } catch { answer = "Let me get back to you on that. In the meantime —"; }
+      } catch { answer = "I do not want to guess on that."; }
       await sendMessage(chatId, answer);
     }
   }
@@ -947,13 +947,13 @@ async function handleCareNotes(
       let answer = "";
       try {
         answer = await quickComplete(
-          "You are Cara, an AI care assistant. A caregiver just finished a shift and was asked for visit notes, " +
+          "You are Cara, a care coordinator. A caregiver just finished a shift and was asked for visit notes, " +
             "but instead they asked a question. Answer it briefly (1-2 sentences). " +
             "Do NOT ask them for notes — that prompt comes next.",
           text,
           { maxTokens: 180 },
         );
-      } catch { answer = "Let me get back to you on that. In the meantime —"; }
+      } catch { answer = "I do not want to guess on that."; }
       await sendMessage(chatId, answer);
       await sendMessage(chatId, "Now — tell me how the visit went so I can send the family an update. (Mood, meals, activities, anything notable.)");
       return;

@@ -117,7 +117,7 @@ export async function handleInstantPayoutConfirm(
         "Answer briefly (1-2 sentences). Do NOT ask them to confirm — that prompt comes next.",
       text,
       { maxTokens: 150 },
-    ).catch(() => "Let me get back to you on that. In the meantime —");
+    ).catch(() => "I do not want to guess on that.");
     await sendMessage(chatId, `${answer}\n\n${reAsk}`);
     return;
   }

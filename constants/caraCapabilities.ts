@@ -72,11 +72,18 @@ export function capabilityExample(e: FrontendCapabilityEntry, locale?: string | 
  */
 export function buildCapabilityMenu(role: CapabilityRole | string | undefined | null, locale?: string | null): string {
   const es = isSpanish(locale);
-  const entries = CARA_CAPABILITIES[normalizeRole(role)];
-  const header = es ? "Esto es lo que puedo hacer por ti:" : "Here's what I can help you with:";
-  const lines = entries.map((e) => `• ${es ? e.labelEs : e.label} — "${es ? e.exampleEs : e.example}"`);
-  const footer = es
-    ? 'Solo dime qué necesitas, o escribe "/help" para ver esto otra vez.'
-    : 'Just tell me what you need, or type "/help" to see this again.';
-  return `${header}\n\n${lines.join("\n")}\n\n${footer}`;
+  const entries = CARA_CAPABILITIES[normalizeRole(role)].filter((e) => e.featured).slice(0, 4);
+  const examples = entries.map((e) => `"${es ? e.exampleEs : e.example}"`);
+  const joinWord = es ? "o" : "or";
+  const joined = examples.length <= 1
+    ? examples.join("")
+    : `${examples.slice(0, -1).join(", ")}, ${joinWord} ${examples[examples.length - 1]}`;
+  const lead = es
+    ? "Puedo coordinar cuidado contigo por aquí."
+    : "I can coordinate care with you right here.";
+  const exampleLead = es ? "Por ejemplo:" : "For example:";
+  const ask = es
+    ? "Dime qué necesitas en una frase."
+    : "Tell me what you need in one sentence.";
+  return `${lead} ${exampleLead} ${joined}. ${ask}`;
 }

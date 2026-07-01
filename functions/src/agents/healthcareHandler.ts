@@ -173,7 +173,7 @@ async function doProviderSearch(
   const location = data.location ?? "";
   const providerType = data.specialty || data.providerType || "healthcare provider";
 
-  await sendMessage("Give me a moment — searching nearby...");
+  await sendMessage("I'm searching nearby now.");
 
   const result = await searchHealthcareProvider({
     userId,

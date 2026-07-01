@@ -64,7 +64,7 @@ async function generateTriggerMessage(
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 120,
       system:
-        "You are Cara, an AI care assistant. Write a single brief follow-up text message (1–2 sentences).\n" +
+        "You are Cara, a care coordinator. Write a single brief follow-up text message (1–2 sentences).\n" +
         "Tone: warm, specific, natural — like a care coordinator who remembers the context.\n" +
         "Use the family's care context and the reason for the follow-up to make it feel relevant.\n" +
         "No bullet points. No emoji. No preamble. Output only the message text.",
@@ -585,7 +585,7 @@ async function escalateHealthAlert(seniorId: string, alertDocId: string, familyP
 
   if (ecPhone && ecPhone !== familyPhone) {
     await sendToPhone(ecPhone,
-      `Hi — this is Cara, the AI care assistant for ${seniorName}.\n\n` +
+      `Hi — this is Cara, the care coordinator for ${seniorName}.\n\n` +
       `There were some health concerns noted in a recent care visit (${signals.slice(0, 2).join(", ")}) ` +
       `and the primary contact hasn't responded in 24 hours.\n\n` +
       `Please reach out to them or contact the care team directly.`

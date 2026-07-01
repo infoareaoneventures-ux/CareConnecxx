@@ -1676,7 +1676,7 @@ export async function runQaAgent(params: {
       // On the final allowed iteration, or once the wall-clock budget is spent,
       // force a text-only completion (tool_choice:none) so the model MUST emit a
       // user-facing reply instead of calling another tool and leaving us in the
-      // exhausted "Give me a moment" + 30s-retry fallback. Deterministic
+      // exhausted waiting-copy + 30s-retry fallback. Deterministic
       // completion beats the fragile no-text heuristic.
       const budgetExceeded   = Date.now() - turnStart > TURN_BUDGET_MS;
       const toolCapExceeded  = totalToolCalls >= MAX_TOOL_CALLS_PER_TURN;
@@ -2033,7 +2033,7 @@ export async function runQaAgent(params: {
         // is Cara's confirming sentence. Supply it directly and DO NOT schedule
         // a retry — re-running would call send_onboarding_link again (duplicate
         // link, and a fresh Stripe Checkout session for client_payment).
-        reply = "There you go — tap the link I just sent to finish up. Anything else I can help with? 💙";
+        reply = "There you go — tap the link I just sent to finish up.";
       } else if (!isRetry) {
         // Schedule a retry in 30 seconds via the trigger engine — the retry
         // will reply with the real answer when it succeeds.
@@ -2047,7 +2047,7 @@ export async function runQaAgent(params: {
           cancelledAt: null,
           createdAt:   new Date().toISOString(),
         }).catch(() => {});
-        reply = "Give me a moment on that — I'm pulling it up.";
+        reply = "I'm checking that now and will text you here with the answer.";
       } else {
         // Retry also exhausted — escalate to admin silently. User-facing
         // message is natural and warm, not "broken".
@@ -2060,7 +2060,7 @@ export async function runQaAgent(params: {
           createdAt: new Date().toISOString(),
           resolved:  false,
         }).catch(() => {});
-        reply = "Let me come back to you on that one shortly.";
+        reply = "I hit a snag answering that, and I flagged it so it does not get lost.";
       }
     }
 
@@ -2332,8 +2332,8 @@ export async function runQaAgent(params: {
     // "give me a few minutes" deflection contradicts the link that's sitting
     // right above it. Confirm the delivery instead.
     const errMsg = deliveredToUser
-      ? "There you go — tap the link I just sent to finish up. Anything else I can help with? 💙"
-      : "Give me a few minutes on that — I'll come back to you shortly.";
+      ? "There you go — tap the link I just sent to finish up."
+      : "I hit a snag answering that, and I flagged it so it does not get lost.";
     await sendMessage(chatId, errMsg).catch(() => {});
     db.collection("admin_alerts").add({
       type:      "qa_agent_failure",

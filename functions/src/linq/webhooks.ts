@@ -1786,10 +1786,6 @@ const handleInboundInner = traceable(
   } catch (err) {
     console.error("handleInbound error:", err);
     await stopTyping(chatId).catch(() => {});
-    // Don't broadcast brokenness. Send a warm, natural deflection and route
-    // the error to the admin alert table so the team can follow up.
-    await sendMessage(chatId, "Give me a moment on that — I'll come back to you shortly.").catch(() => {});
-
     await db.collection("agent_error_log").add({
       phone, error: String(err), text, createdAt: new Date().toISOString(),
     }).catch(() => {/* non-critical */});
@@ -1802,6 +1798,8 @@ const handleInboundInner = traceable(
       createdAt: new Date().toISOString(),
       resolved:  false,
     }).catch(() => {});
+    // Acknowledge only after the failure is actually recorded.
+    await sendMessage(chatId, "I hit a snag on that, and I flagged it so it does not get lost.").catch(() => {});
   } finally {
     await stopTyping(chatId).catch(() => {});
   }

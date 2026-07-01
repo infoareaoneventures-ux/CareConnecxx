@@ -240,7 +240,7 @@ const CaregiverShell: React.FC<{ children: React.ReactNode }> = ({ children }) =
           <span className="text-white font-bold text-lg">C</span>
         </div>
         <div className="text-2xl font-bold tracking-tight">Cara</div>
-        <p className="text-white/40 text-sm">Your AI care assistant</p>
+        <p className="text-white/40 text-sm">Your care coordinator</p>
       </div>
       {children}
     </div>

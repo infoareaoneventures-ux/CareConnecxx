@@ -89,8 +89,8 @@ describe("handleClientPermissionsReply — capability menu on completion (U3)", 
   it("sends the client capability menu after the final permissions step completes", async () => {
     await handleClientPermissionsReply("+1555", "chat1", "YES", session("client_permissions_autobook"), "u1");
     const texts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
-    expect(texts.some((t) => t.includes("Here's what I can help you with"))).toBe(true);
-    expect(texts.some((t) => t.includes("Find a caregiver"))).toBe(true);
+    expect(texts.some((t) => t.includes("your care coordinator"))).toBe(true);
+    expect(texts.some((t) => /next visit|care note|backup care/i.test(t))).toBe(true);
   });
 });
 
@@ -98,7 +98,7 @@ describe("handleCaregiverPermissionsReply — capability menu on completion (U3)
   it("sends the CAREGIVER capability menu after the final caregiver permissions step completes", async () => {
     await handleCaregiverPermissionsReply("+1555", "chat1", "YES", session("caregiver_permissions_arrival"), "cg1");
     const texts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
-    expect(texts.some((t) => t.includes("Find work"))).toBe(true);
+    expect(texts.some((t) => /clock out|earnings|payout|caregiver/i.test(t))).toBe(true);
     // client-only capabilities must NOT appear in the caregiver menu
     expect(texts.some((t) => t.includes("Find a caregiver"))).toBe(false);
   });

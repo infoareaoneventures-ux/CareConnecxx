@@ -19,11 +19,11 @@ async function isSwapQuestion(text: string, reAsk: string): Promise<boolean> {
 
 async function answerSwapMidFlow(text: string, reAsk: string): Promise<string> {
   const answer = await quickComplete(
-    "You are Cara, an AI care assistant helping a caregiver find coverage for one of their shifts. " +
+    "You are Cara, a care coordinator helping a caregiver find coverage for one of their shifts. " +
       "Answer their question briefly (1-2 sentences). Do NOT ask them to continue — that prompt comes next.",
     text,
     { maxTokens: 150 },
-  ).catch(() => "Let me get back to you on that. In the meantime —");
+  ).catch(() => "I do not want to guess on that.");
   return `${answer}\n\n${reAsk}`;
 }
 

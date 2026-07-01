@@ -37,7 +37,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
 
     // TCPA: first message must request consent — no care data sent until user replies YES
     const optInText =
-      `Hi ${firstName} — I'm Cara, your AI care assistant.\n\n` +
+      `Hi ${firstName} — I'm Cara, your care coordinator.\n\n` +
       `Reply YES to receive real-time care updates — visit summaries, wellness alerts, ` +
       `and health signals for your loved one.\n\n` +
       `Reply STOP anytime to opt out. Msg & data rates may apply.`;

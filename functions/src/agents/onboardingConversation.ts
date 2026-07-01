@@ -1157,15 +1157,15 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
     ? (b.min === b.max ? `$${b.max}/hr` : `$${b.min}–${b.max}/hr`)
     : "";
 
-  const lines = ["Here's what I've got:"];
-  lines.push(`• Care for ${seniorName}${age || conditions ? ` (${[age, conditions].filter(Boolean).join(", ")})` : ""}`);
-  if (loc)            lines.push(`• In ${loc}`);
-  if (sched)          lines.push(`• ${sched}`);
-  if (start)          lines.push(`• Starting: ${start}`);
-  if (prefBits.length) lines.push(`• Preference: ${prefBits.join(", ")}`);
-  if (budget)         lines.push(`• Budget: ${budget}`);
-  lines.push("", "Did I get that right? Reply YES to see your matches, or tell me what to fix.");
-  return lines.join("\n");
+  const pieces: string[] = [];
+  pieces.push(`care for ${seniorName}${age || conditions ? ` (${[age, conditions].filter(Boolean).join(", ")})` : ""}`);
+  if (loc) pieces.push(`in ${loc}`);
+  if (sched) pieces.push(sched);
+  if (start) pieces.push(`starting ${start}`);
+  if (prefBits.length) pieces.push(`preference: ${prefBits.join(", ")}`);
+  if (budget) pieces.push(`budget ${budget}`);
+
+  return `Here's what I've got: ${pieces.join("; ")}. Did I get that right? Say yes and I'll show you who can help, or tell me what to fix.`;
 }
 
 async function sendClientIntakeSummary(chatId: string, session: AgentSession): Promise<void> {
@@ -1221,7 +1221,7 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     await sendMessage(chatId, "Got it — updated.");
     await sendClientIntakeSummary(chatId, refreshed.data() as AgentSession);
   } else {
-    await sendMessage(chatId, "No problem — tell me what to change and I'll fix it. Or reply YES to go ahead.");
+    await sendMessage(chatId, "No problem — tell me what to change and I'll fix it. If it looks right, just say yes and I'll show you who can help.");
   }
 }
 
@@ -1279,14 +1279,14 @@ async function handleClientShowCaregivers(
     widened = true;
   }
 
-  const preview = docs.slice(0, 3).map(c => {
+  const previewItems = docs.slice(0, 3).map(c => {
     const name  = (c.name ?? "Caregiver") as string;
     const exp   = c.yearsExperience ?? c.experience ?? "";
     const spec  = Array.isArray(c.specialties)
       ? c.specialties[0]
       : (c.primaryServices?.[0]?.name ?? "");
-    return `• ${name}${exp ? ` — ${exp} yrs exp` : ""}${spec ? `, ${spec}` : ""}`;
-  }).join("\n");
+    return `${name}${exp ? `, ${exp} yrs experience` : ""}${spec ? `, strongest fit for ${spec}` : ""}`;
+  });
 
   const locationLabel = city || "your area";
   const needsLabel    = careNeeds.length > 0
@@ -1294,11 +1294,11 @@ async function handleClientShowCaregivers(
     : "care";
 
   const caregiverMsg = widened
-    ? `I don't have caregivers right in ${locationLabel} yet, but here are the nearest ones available:\n\n${preview}\n\n` +
-      `Here's how I'd get ${seniorName} connected with one:`
+    ? `I don't have caregivers right in ${locationLabel} yet, but I do have nearby options for ${seniorName}: ${joinCaregiverPreview(previewItems)}. ` +
+      `I would start with the best fit, confirm the schedule, and keep the family updated here.`
     : `I found ${total > 5 ? "6+" : total} caregiver${total !== 1 ? "s" : ""} near ${locationLabel} ` +
-      `who can help with ${needsLabel}:\n\n${preview}\n\n` +
-      `Here's how I'd get ${seniorName} connected with them:`;
+      `who can help with ${needsLabel}. ${joinCaregiverPreview(previewItems)}. ` +
+      `I would start with the best fit, confirm the schedule, and keep the family updated here.`;
 
   await sendMessage(chatId, caregiverMsg);
 
@@ -1307,6 +1307,13 @@ async function handleClientShowCaregivers(
   // know what CareConnex costs. handleClientPresentPlan sets up the price.
   await updateSession(phone, { onboardingStep: "client_ask_plan" });
   await handleClientPresentPlan(phone, chatId, session);
+}
+
+function joinCaregiverPreview(items: string[]): string {
+  if (items.length === 0) return "I have a few options to review";
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join("; ")}; and ${items[items.length - 1]}`;
 }
 
 // Proactive post-collection handoff for the agent loop. When the loop calls
@@ -1385,17 +1392,31 @@ async function handleClientPresentPlan(phone: string, chatId: string, session: A
   const msg = await generateCaraMessage({
     audience: "family",
     context:
-      `Cara just showed a family real local caregivers for ${seniorName}. Now state the price in one warm, simple ` +
+      `Cara just showed a family real local caregivers for ${seniorName}. State the price in one warm, simple ` +
       `message: CareConnex is ${priceLabel || "a simple monthly membership"}, and for that Cara coordinates ` +
       `everything for ${seniorName} — scheduling, weekly summaries, and keeping the whole family in the loop. ` +
-      `2-3 sentences, no bullet lists, no pressure. End by asking if they'd like you to set them up (they can reply YES, or ask about options).`,
+      `2-3 sentences, no bullet lists, no pressure. End by saying you are sending the quick identity-check link now.`,
     fallback:
       `CareConnex is ${priceLabel || "one simple monthly membership"} — I coordinate everything for ${seniorName}: ` +
-      `scheduling, weekly summaries, and keeping your whole family in the loop. Want me to set you up? (reply YES)`,
+      `scheduling, weekly summaries, and keeping your whole family in the loop. I'll send the quick identity-check link now so we can keep moving.`,
     emotionalDirective: (session as any)._emotionalDirective,
     maxTokens: 130,
   });
   await sendMessage(chatId, msg);
+
+  await signalThinking(chatId, session.service);
+  let identityUrl: string;
+  try {
+    identityUrl = await createClientIdentitySession(phone);
+  } catch (err) {
+    console.error("handleClientPresentPlan createClientIdentitySession error — falling back to payment:", err);
+    await updateSession(phone, { onboardingStep: "client_send_payment" });
+    await handleClientSendPayment(phone, chatId, session);
+    return;
+  }
+  await sendMessage(chatId, "Start here with the quick identity check. It usually takes about 30 seconds:");
+  await sendMessage(chatId, { parts: [{ type: "link", value: identityUrl }] });
+  await updateSession(phone, { onboardingStep: "client_awaiting_identity" });
 }
 
 async function handleClientPlanReply(
@@ -1408,7 +1429,7 @@ async function handleClientPlanReply(
   if (await isQuestionOrOther(text)) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, "Want me to set you up? Reply YES and I'll get you verified and your matches connected.");
+    await sendMessage(chatId, "When you're ready, say yes and I'll send the setup link again.");
     return;
   }
 
@@ -1423,12 +1444,12 @@ async function handleClientPlanReply(
     await sendMessage(chatId,
       "Right now everyone starts on the same simple membership — it covers me coordinating care, weekly summaries, " +
       "and family updates. Once you're set up, I can add things like 24/7 urgent response or a dedicated coordinator " +
-      "if you ever want them. Want me to set you up? (reply YES)"
+      "if you ever want them. If you want to keep going, say yes and I'll send the setup link again."
     );
     return;
   }
   if (intent !== "confirm") {
-    await sendMessage(chatId, "Just reply YES when you're ready and I'll get you connected with caregivers — happy to answer anything first.");
+    await sendMessage(chatId, "When you're ready, say yes and I'll get you connected with caregivers — happy to answer anything first.");
     return;
   }
 

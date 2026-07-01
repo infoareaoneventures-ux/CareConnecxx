@@ -145,7 +145,7 @@ export default function JoinFamilyPage() {
           Join {seniorName}'s care group
         </h1>
         <p className="text-slate-500 text-sm mb-6">
-          Get care updates and message Cara — the AI care assistant helping coordinate care for {seniorName}.
+          Get care updates and message Cara — the care coordinator helping coordinate care for {seniorName}.
         </p>
 
         <div className="text-left mb-4">

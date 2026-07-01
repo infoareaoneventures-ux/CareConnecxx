@@ -243,11 +243,11 @@ export async function handleJobResponse(
   );
   if (qRaw.toUpperCase().startsWith("Y")) {
     const answer = await quickComplete(
-      "You are Cara, an AI care assistant. A caregiver was offered a job and asked a question instead of replying YES/NO. " +
+      "You are Cara, a care coordinator. A caregiver was offered a job and asked a question instead of replying YES/NO. " +
         "Answer their question briefly (1-2 sentences). Do NOT ask them to commit — that prompt comes next.",
       text,
       { maxTokens: 180 },
-    ).catch(() => "Let me get back to you on that. In the meantime —");
+    ).catch(() => "I do not want to guess on that.");
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "So — interested in this job? Reply YES or NO.");
     return;

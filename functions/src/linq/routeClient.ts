@@ -53,14 +53,14 @@ async function handlePreShiftUpdate(
     let answer = "";
     try {
       answer = await quickComplete(
-        "You are Cara, an AI care assistant. A family member was asked if they want to add tasks for today's " +
+        "You are Cara, a care coordinator. A family member was asked if they want to add tasks for today's " +
         `visit with ${info.caregiverName ?? "the caregiver"} for ${info.seniorName}. Instead they asked a question — ` +
         "answer it briefly (1–2 sentences). Do NOT ask them to add tasks — that prompt comes next.",
         text,
         { maxTokens: 180 },
       );
     } catch {
-      answer = "Let me get back to you on that. In the meantime —";
+      answer = "I do not want to guess on that.";
     }
     await sendMessage(chatId, answer);
     await sendMessage(chatId,

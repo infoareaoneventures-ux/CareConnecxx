@@ -220,7 +220,7 @@ export async function escalateIssue(issueLogId: string): Promise<void> {
 
   if (ecPhone && ecPhone !== issue.clientPhone) {
     await sendToPhone(ecPhone,
-      `Hi — I'm Cara, the AI care assistant for ${seniorName}. ` +
+      `Hi — I'm Cara, the care coordinator for ${seniorName}. ` +
       `${issue.caregiverName ?? "A caregiver"} flagged a concern during today's visit. ` +
       `The primary contact hasn't responded in 30 minutes. ` +
       `Please reach out to them or contact the care team directly.`

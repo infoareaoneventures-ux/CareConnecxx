@@ -2975,6 +2975,7 @@ async function executeToolCall(
       }
 
       case "request_booking": {
+        return runActionNativeMcpWrite(name, input, async () => {
         const { clientId, caregiverId, dates, startTime, endTime, phone } = input;
         // Session-injected ownership fields are checked here; the booking shape
         // (caregiverId/dates/times) + caregiver lookup are validated by the shared
@@ -3015,9 +3016,11 @@ async function executeToolCall(
         }
         logBookingCreated(clientId as string, caregiverId as string, quote.dates).catch(() => {});
         return { success: true, taskId, status: "awaiting_approval", estimatedTotal: quote.totalEstimate };
+        });
       }
 
       case "trigger_emergency_alert": {
+        return runActionNativeMcpWrite(name, input, async () => {
         // Parity with the EmergencySOS UI (dbService.triggerEmergencyAlert). clientId
         // is session-injected. Writes an active emergency_alerts doc + an admin_alert.
         const { clientId, note, location } = input;
@@ -3038,6 +3041,7 @@ async function executeToolCall(
         }).catch(() => {});
         logAudit({ eventType: "emergency_alert_raised", userId: clientId as string, data: { source: "mcp:trigger_emergency_alert", alertId: alertRef.id } }).catch(() => {});
         return { success: true, alertId: alertRef.id, status: "active", advise911: true };
+        });
       }
 
       case "get_callout_backups": {
@@ -3824,6 +3828,7 @@ async function executeToolCall(
     }
 
     if (name === "accept_shift" || name === "decline_shift") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { phone: actingPhone, chatId } = input as Record<string, unknown>;
       if (!actingPhone || !chatId) return toolError("INVALID_INPUT", "phone and chatId are required (auto-injected)");
       const { acceptCaregiverShiftOffer, declineCaregiverShiftOffer } = await import("../agents/shiftOffer");
@@ -3833,9 +3838,11 @@ async function executeToolCall(
       if (res.status === "no_pending_offer") return { success: false, reason: "no_pending_offer", message: "There's no pending shift offer to act on right now." };
       if (res.status === "not_pending" || res.status === "already_closed") return { success: false, reason: res.status, message: "That offer is no longer open." };
       return { success: true, resolution: res.status };
+      });
     }
 
     if (name === "add_family_member") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { seniorId, name: memberName, memberPhone, clientId } = input as Record<string, unknown>;
       if (!seniorId || !memberName || !memberPhone || !clientId) return toolError("INVALID_INPUT", "seniorId, name, memberPhone, and clientId are required");
       const seniorSnap = await db.collection("senior_profiles").doc(seniorId as string).get();
@@ -3956,9 +3963,11 @@ async function executeToolCall(
         metadata: { seniorId, memberName, memberPhone, source: "mcp:add_family_member" },
       }).catch(() => {});
       return { success: true, added: true, name: memberName, phone: memberPhone, notification, groupSync };
+      });
     }
 
     if (name === "remove_family_member") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { seniorId, clientId } = input as Record<string, unknown>;
       // Target is memberPhone only. `input.phone` is the acting user's phone
       // (auto-injected for the confirmation round-trip), so falling back to it
@@ -3996,6 +4005,7 @@ async function executeToolCall(
         metadata: { seniorId, removedPhone: targetPhone, source: "mcp:remove_family_member" },
       }).catch(() => {});
       return { success: true, ...result, notification };
+      });
     }
 
     if (name === "submit_review") {
@@ -4424,6 +4434,7 @@ async function executeToolCall(
     }
 
     if (name === "submit_shift_hours") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, appointmentId, clockInTime, clockOutTime, breakMinutes } = input as Record<string, unknown>;
       if (!caregiverId || !appointmentId || !clockInTime || !clockOutTime) return toolError("INVALID_INPUT", "caregiverId, appointmentId, clockInTime, and clockOutTime are required");
       const apptSnap3 = await db.collection("appointments").doc(appointmentId as string).get();
@@ -4466,9 +4477,11 @@ async function executeToolCall(
       }
       logAudit({ eventType: "shift_hours_submitted", userId: caregiverId as string, data: { source: "mcp:submit_shift_hours", appointmentId, durationHours: durationHours3, amountCents: amountCents3 } }).catch(() => {});
       return { success: true, durationHours: durationHours3, amountCents: amountCents3, amountDollars: `$${(amountCents3/100).toFixed(2)}` };
+      });
     }
 
     if (name === "review_shift_hours") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { clientId, appointmentId, decision, correctedHours, reason } = input as Record<string, unknown>;
       if (!clientId || !appointmentId || !decision) return toolError("INVALID_INPUT", "clientId, appointmentId, and decision are required");
       if (decision === "dispute" && correctedHours == null) return toolError("INVALID_INPUT", "correctedHours is required when disputing");
@@ -4487,6 +4500,7 @@ async function executeToolCall(
       }
       logAudit({ eventType: "shift_hours_reviewed", userId: clientId as string, data: { source: "mcp:review_shift_hours", appointmentId, decision } }).catch(() => {});
       return { success: true, decision, appointmentId };
+      });
     }
 
     // ── withdraw_job_application (U2) ───────────────────────────────────────────
@@ -4507,6 +4521,7 @@ async function executeToolCall(
 
     // ── respond_to_booking_request (U2 — AE1) ───────────────────────────────────
     if (name === "respond_to_booking_request") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, appointmentId, decision, message: brMsg } = input as Record<string, unknown>;
       if (!caregiverId || !appointmentId || !decision) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and decision are required");
       if (decision !== "accept" && decision !== "decline") return toolError("INVALID_INPUT", "decision must be 'accept' or 'decline'");
@@ -4547,10 +4562,12 @@ async function executeToolCall(
       }
       logAudit({ eventType: "booking_request_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_booking_request", appointmentId, decision, notificationSent: notification.sent } }).catch(() => {});
       return { success: true, decision, appointmentId, status: decision === "accept" ? "confirmed" : "declined_by_caregiver", notification };
+      });
     }
 
     // ── start_shift (U2) ────────────────────────────────────────────────────────
     if (name === "start_shift") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, appointmentId, shiftId } = input as Record<string, unknown>;
       if (!caregiverId || (!appointmentId && !shiftId)) return toolError("INVALID_INPUT", "caregiverId and one of appointmentId or shiftId are required");
       const coll = appointmentId ? "appointments" : "shifts";
@@ -4577,10 +4594,12 @@ async function executeToolCall(
       await snap.ref.update({ status: startedStatus, startedAt: nowIso });
       logAudit({ eventType: "shift_started", userId: caregiverId as string, data: { source: "mcp:start_shift", collection: coll, docId } }).catch(() => {});
       return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: startedStatus, startedAt: nowIso };
+      });
     }
 
     // ── complete_shift (U2 — AE7, idempotent) ───────────────────────────────────
     if (name === "complete_shift") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, appointmentId, shiftId, notes: completeNotes } = input as Record<string, unknown>;
       if (!caregiverId || (!appointmentId && !shiftId)) return toolError("INVALID_INPUT", "caregiverId and one of appointmentId or shiftId are required");
       const coll = appointmentId ? "appointments" : "shifts";
@@ -4613,10 +4632,12 @@ async function executeToolCall(
       await snap.ref.update({ status: "completed", completedAt: nowIso, ...(completeNotes ? { completionNotes: completeNotes } : {}) });
       logAudit({ eventType: "shift_completed", userId: caregiverId as string, data: { source: "mcp:complete_shift", collection: coll, docId } }).catch(() => {});
       return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: "completed", completedAt: nowIso };
+      });
     }
 
     // ── update_shift_task (U2) ──────────────────────────────────────────────────
     if (name === "update_shift_task") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, shiftId, taskKey } = input as Record<string, unknown>;
       const completed = input.completed == null ? true : Boolean(input.completed);
       if (!caregiverId || !shiftId || !taskKey) return toolError("INVALID_INPUT", "caregiverId, shiftId, and taskKey are required");
@@ -4636,6 +4657,7 @@ async function executeToolCall(
       });
       logAudit({ eventType: "shift_task_updated", userId: caregiverId as string, data: { source: "mcp:update_shift_task", shiftId, taskKey, completed } }).catch(() => {});
       return { success: true, shiftId, taskKey, completed };
+      });
     }
 
     // ── submit_media_update (U2) ────────────────────────────────────────────────
@@ -4672,6 +4694,7 @@ async function executeToolCall(
 
     // ── respond_to_shift_hour_correction (U2) ───────────────────────────────────
     if (name === "respond_to_shift_hour_correction") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, appointmentId, decision, message: corrMsg } = input as Record<string, unknown>;
       if (!caregiverId || !appointmentId || !decision) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and decision are required");
       if (decision !== "accept" && decision !== "pushback") return toolError("INVALID_INPUT", "decision must be 'accept' or 'pushback'");
@@ -4720,6 +4743,7 @@ async function executeToolCall(
       }
       logAudit({ eventType: "shift_hour_correction_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_shift_hour_correction", appointmentId, decision, notificationSent: notification.sent } }).catch(() => {});
       return { success: true, decision, appointmentId, status: decision === "accept" ? "pending_client_review" : "disputed", notification };
+      });
     }
 
     // ── request_standard_payout (U2 — must not bypass Stripe/eligibility) ────────
@@ -4746,6 +4770,7 @@ async function executeToolCall(
     }
 
     if (name === "create_caregiver_referral") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const caregiverId = stringInput(input, "caregiverId");
       const phone = stringInput(input, "phone");
       const referredName = stringInput(input, "referredName");
@@ -4768,6 +4793,7 @@ async function executeToolCall(
         referredRole: "caregiver",
         checkrRequired: true,
       };
+      });
     }
 
     if (name === "resume_execution_agent") {
@@ -4780,12 +4806,14 @@ async function executeToolCall(
     }
 
     if (name === "create_support_ticket") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { userId, userType, subject, description: ticketDesc, category } = input as Record<string, unknown>;
       if (!userId || !userType || !subject || !ticketDesc) return toolError("INVALID_INPUT", "userId, userType, subject, and description are required");
       const ticketRef = await db.collection("support_tickets").add({ userId, userType, subject, description: ticketDesc, category: category ?? "other", status: "open", source: "cara_sms", createdAt: nowIso, resolved: false });
       await db.collection("admin_alerts").add({ type: "support_ticket_created", ticketId: ticketRef.id, userId, userType, subject, priority: "medium", resolved: false, createdAt: nowIso });
       logAudit({ eventType: "support_ticket_created", userId: userId as string, data: { source: "mcp:create_support_ticket", ticketId: ticketRef.id, subject } }).catch(() => {});
       return { success: true, ticketId: ticketRef.id };
+      });
     }
 
     // ── schedule_interview ──────────────────────────────────────────────────
@@ -6362,4 +6390,46 @@ async function executeToolCall(
     }
     return toolError("UNAVAILABLE", `Tool ${name} is temporarily unavailable`);
   }
+}
+
+async function runActionNativeMcpWrite(
+  name: string,
+  input: Record<string, unknown>,
+  execute: () => Promise<unknown>,
+): Promise<unknown> {
+  const { isSupportedMcpWriteAction, runMcpWriteCaraAction } = await import("../agents/actions/mcpWriteActionAdapter");
+  if (!isSupportedMcpWriteAction(name)) return execute();
+  try {
+    return await runMcpWriteCaraAction(name, input, async () => {
+      const result = await execute();
+      if (isToolErrorResult(result)) throw new McpToolResultError(result);
+      return result;
+    });
+  } catch (err) {
+    if (err instanceof McpToolResultError) return err.result;
+    const errorName = err instanceof Error ? err.name : "";
+    const message = err instanceof Error ? err.message : String(err);
+    if (errorName === "CaraActionValidationError") {
+      return toolError("INVALID_INPUT", message);
+    }
+    if (errorName === "CaraActionAccessError") {
+      return toolError("PERMISSION_DENIED", message);
+    }
+    throw err;
+  }
+}
+
+class McpToolResultError extends Error {
+  constructor(readonly result: unknown) {
+    super("MCP tool returned a structured error");
+    this.name = "McpToolResultError";
+  }
+}
+
+function isToolErrorResult(result: unknown): boolean {
+  return !!(
+    result &&
+    typeof result === "object" &&
+    (result as { _toolError?: boolean })._toolError === true
+  );
 }

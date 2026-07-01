@@ -49,7 +49,7 @@ async function isCredentialReply(text: string, step: "username" | "password", po
 async function answerCredentialQuestion(text: string, portalName: string): Promise<string> {
   try {
     return await quickComplete(
-      `You are Cara, an AI care assistant. A family member was just asked for their ${portalName} login ` +
+      `You are Cara, a care coordinator. A family member was just asked for their ${portalName} login ` +
       "so you can take an action on their behalf. They asked a question or expressed hesitation instead. " +
       "Answer briefly (1–2 sentences). Reassure them that the credential is encrypted at rest, only used " +
       "for the action they requested, and can be deleted anytime by replying " +

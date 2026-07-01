@@ -32,6 +32,7 @@ import { buildClientSteps } from "./onboardingSteps.client";
 import { buildCaregiverSteps } from "./onboardingSteps.caregiver";
 import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboardingDryRun";
 import { isOnboardingDispatchEnabled, isDispatchableClientStep, resolveClientStep } from "./onboardingDispatcher";
+import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
 
 /** iMessage/RCS can share a location pin; plain SMS cannot. */
 function isRichService(service?: string): boolean {
@@ -1246,74 +1247,25 @@ async function handleClientShowCaregivers(
   const seniorName = (d.seniorName as string) ?? "your loved one";
   const careNeeds: string[] = Array.isArray(d.careNeeds) ? d.careNeeds : [];
 
-  // Query caregivers in their city first. If none, WIDEN to any active caregiver
-  // (nearest available) rather than dead-ending — and only if there's truly zero
-  // supply anywhere do we honestly hold and skip the paywall.
-  const localSnap = await db
-    .collection("caregivers")
-    .where("status", "==", "active")
-    .where("city",   "==", city)
-    .limit(5)
-    .get();
+  const preview = await runGetCaregiverPreviewAction(
+    { city, seniorName, careNeeds },
+    { caller: "sms_agent", role: "client", phone, chatId },
+  );
 
-  let docs: FirebaseFirestore.DocumentData[];
-  let total: number;
-  let widened = false;
-
-  if (!localSnap.empty) {
-    docs  = localSnap.docs.map(doc => doc.data());
-    total = localSnap.size;
-  } else {
-    const widerSnap = await db.collection("caregivers").where("status", "==", "active").limit(5).get();
-    if (widerSnap.empty) {
-      // No supply at all — don't take payment for something we can't deliver.
-      await updateSession(phone, { onboardingStep: "complete", awaitingSupply: true });
-      await sendMessage(chatId,
-        `I don't have caregivers available in ${city || "your area"} just yet — but I've saved everything about ` +
-        `${seniorName}'s care, and I'll text you the moment the right person is available. No charge until then. 💙`
-      );
-      return;
-    }
-    docs    = widerSnap.docs.map(doc => doc.data());
-    total   = widerSnap.size;
-    widened = true;
+  if (!preview.available) {
+    // No supply at all: don't take payment for something we can't deliver.
+    await updateSession(phone, { onboardingStep: "complete", awaitingSupply: true });
+    await sendMessage(chatId, preview.message);
+    return;
   }
 
-  const previewItems = docs.slice(0, 3).map(c => {
-    const name  = (c.name ?? "Caregiver") as string;
-    const exp   = c.yearsExperience ?? c.experience ?? "";
-    const spec  = Array.isArray(c.specialties)
-      ? c.specialties[0]
-      : (c.primaryServices?.[0]?.name ?? "");
-    return `${name}${exp ? `, ${exp} yrs experience` : ""}${spec ? `, strongest fit for ${spec}` : ""}`;
-  });
-
-  const locationLabel = city || "your area";
-  const needsLabel    = careNeeds.length > 0
-    ? careNeeds.slice(0, 2).join(" & ")
-    : "care";
-
-  const caregiverMsg = widened
-    ? `I don't have caregivers right in ${locationLabel} yet, but I do have nearby options for ${seniorName}: ${joinCaregiverPreview(previewItems)}. ` +
-      `I would start with the best fit, confirm the schedule, and keep the family updated here.`
-    : `I found ${total > 5 ? "6+" : total} caregiver${total !== 1 ? "s" : ""} near ${locationLabel} ` +
-      `who can help with ${needsLabel}. ${joinCaregiverPreview(previewItems)}. ` +
-      `I would start with the best fit, confirm the schedule, and keep the family updated here.`;
-
-  await sendMessage(chatId, caregiverMsg);
+  await sendMessage(chatId, preview.message);
 
   // Value first (real caregivers shown above), then price, THEN identity, THEN
-  // payment — so a family never has to scan a government ID before they even
+  // payment, so a family never has to scan a government ID before they even
   // know what CareConnex costs. handleClientPresentPlan sets up the price.
   await updateSession(phone, { onboardingStep: "client_ask_plan" });
   await handleClientPresentPlan(phone, chatId, session);
-}
-
-function joinCaregiverPreview(items: string[]): string {
-  if (items.length === 0) return "I have a few options to review";
-  if (items.length === 1) return items[0];
-  if (items.length === 2) return `${items[0]} and ${items[1]}`;
-  return `${items.slice(0, -1).join("; ")}; and ${items[items.length - 1]}`;
 }
 
 // Proactive post-collection handoff for the agent loop. When the loop calls

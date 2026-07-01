@@ -796,7 +796,7 @@ export async function getOrCreateSession(
     // First message is a silent thread-opener; real content comes from the caller.
     // Per best-practices: no links or media in first message.
     const { chat_id } = await createChat(phone, {
-      parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
+      parts: [{ type: "text", value: "Hi, I'm Cara from CareConnex. I'm here whenever you need me." }],
     });
 
     const session: AgentSession = {

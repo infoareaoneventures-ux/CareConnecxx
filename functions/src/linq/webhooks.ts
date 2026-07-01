@@ -642,7 +642,7 @@ const handleInboundInner = traceable(
       );
 
       await sendMessage(chatId,
-        `Hi, I'm Cara — the care assistant for ${(primarySession as any).onboardingData?.seniorName ?? "your family"}. ` +
+        `Hi, I'm Cara — the care coordinator for ${(primarySession as any).onboardingData?.seniorName ?? "your family"}. ` +
         `I've added you to the care group. You'll get the same updates and can ask me anything.`
       );
       return;

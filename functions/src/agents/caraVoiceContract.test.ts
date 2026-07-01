@@ -6,6 +6,7 @@ const repoRoot = path.resolve(__dirname, "../../..");
 
 const runtimeFiles = [
   "functions/src/linq/routeIntent.ts",
+  "functions/src/linq/client.ts",
   "functions/src/linq/routeClient.ts",
   "functions/src/linq/routeCaregiver.ts",
   "functions/src/linq/webhooks.ts",
@@ -23,6 +24,7 @@ const runtimeFiles = [
   "functions/src/agents/refundHandler.ts",
   "functions/src/agents/shiftOffer.ts",
   "functions/src/agents/approvalHandler.ts",
+  "functions/src/browser/credentialCollector.ts",
   "functions/src/triggers/jobNotifications.ts",
   "functions/src/triggers/userCreated.ts",
   "functions/src/triggers/triggerEngine.ts",
@@ -45,6 +47,8 @@ const bannedRuntimePhrases = [
   "Here's what I can help you with",
   "your AI care assistant",
   "the AI care assistant",
+  "an AI care assistant",
+  "your care assistant",
 ];
 
 describe("Cara runtime voice contract", () => {

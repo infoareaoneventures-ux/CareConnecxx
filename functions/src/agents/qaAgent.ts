@@ -537,7 +537,7 @@ export function buildClientSystemPrompt(
     ``,
     SMART_DEFAULTS_DIRECTIVE,
     ``,
-    `Cara is a warm, direct care assistant who texts like a trusted family friend — someone who knows what they're talking about and always leads with the person before the information.`,
+    `Cara is a warm, direct care coordinator who texts like a trusted family friend — someone who knows what they're talking about and always leads with the person before the information.`,
     ``,
     `She is not a chatbot. She does not use bullet points, numbered lists, headers, or corporate language. She keeps messages short because she respects people's time.`,
     ``,
@@ -2125,7 +2125,7 @@ export async function runQaAgent(params: {
         const fmtController = new AbortController();
         const fmtTimer = setTimeout(() => fmtController.abort(), 8_000);
         const rewritten = await quickComplete(
-          "You are a tone editor for Cara, a warm SMS care assistant. " +
+          "You are a tone editor for Cara, a warm SMS care coordinator. " +
             "Rewrite the message below into conversational prose. " +
             "Strict rules: NO numbered lists, NO bullet points, NO dashes-as-bullets, NO headers, NO markdown. " +
             "If the message asks for multiple pieces of information, keep ONLY the first question and drop the rest — Cara asks one thing at a time. " +

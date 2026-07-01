@@ -9,6 +9,7 @@ import {
 import { hasCredential } from "../browser/credentialVault";
 import { proposePendingAction } from "./pendingActions";
 import type { AgentSession } from "../linq/client";
+import { answerHumanQuestionOnly } from "./humanReply";
 
 // Route a healthcare write action through the SAME propose→confirm→execute gate
 // the MCP path uses (R1: NEVER auto-commit from this conversational flow). Builds
@@ -81,12 +82,12 @@ async function isQuestionOrOther(text: string): Promise<boolean> {
 }
 
 async function answerMidFlow(text: string, context: string): Promise<string> {
-  return (await quickComplete(
-    `You are Cara, a warm care coordinator. A client is in the middle of a healthcare request. ` +
-      `Context: ${context}. Answer their question briefly (1–2 sentences).`,
+  return answerHumanQuestionOnly({
+    audience: "family",
+    situation: `client is in the middle of a healthcare request. Context: ${context}`,
     text,
-    { maxTokens: 120 },
-  )).trim();
+    maxTokens: 120,
+  });
 }
 
 // ── Flow data ─────────────────────────────────────────────────────────────────

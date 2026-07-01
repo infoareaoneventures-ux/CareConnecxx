@@ -1,11 +1,11 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { generateToken } from "./tokenService";
 import { getAppUrl } from "../config/appUrl";
 import { pauseCaregiver, reactivateCaregiver } from "./pauseAccount";
+import { answerHumanMidFlow } from "./humanReply";
 
 const db = admin.firestore();
 
@@ -43,13 +43,12 @@ async function isQuestionOrOther(text: string, currentQuestion: string): Promise
 }
 
 async function answerMidFlow(text: string, reAsk: string): Promise<string> {
-  const answer = await quickComplete(
-    "You are Cara, a care coordinator helping a caregiver update their profile. " +
-      "Answer their question briefly (1-2 sentences). Do NOT ask them to continue — that prompt comes next.",
+  return answerHumanMidFlow({
+    audience: "caregiver",
+    situation: "caregiver is updating their profile",
     text,
-    { maxTokens: 150 },
-  ).catch(() => "I do not want to guess on that.");
-  return `${answer}\n\n${reAsk}`;
+    reAsk,
+  });
 }
 
 const KNOWN_SPECIALTIES = [

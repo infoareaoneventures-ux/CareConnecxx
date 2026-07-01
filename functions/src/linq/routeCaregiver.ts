@@ -16,6 +16,7 @@ import {
   normalizeCaregiverReferralPhone,
   resolveCaregiverReferralName,
 } from "../agents/caregiverReferral";
+import { answerHumanQuestionOnly } from "../agents/humanReply";
 import { autoApproveAtIso, TIMESHEET_AUTO_APPROVE_HOURS } from "../config/slaConstants";
 import { buildLayFallbackSummary } from "./shiftSummaryFallback";
 
@@ -400,14 +401,12 @@ async function handleShiftConfirmation(
     // re-ask can land before the interaction agent's reply).
     let answer = "";
     try {
-      answer = await quickComplete(
-        "You are Cara, a care coordinator. A caregiver was asked to confirm they'll be at " +
-        `${info.seniorName}'s shift on ${info.appointmentDate} (start ${info.startTime}). ` +
-        "Instead they sent the message below — likely a question about the shift, address, client, or logistics. " +
-        "Answer briefly (1–2 sentences). Do NOT ask them to confirm — that prompt comes next.",
+      answer = await answerHumanQuestionOnly({
+        audience: "caregiver",
+        situation: `caregiver was asked to confirm ${info.seniorName}'s shift on ${info.appointmentDate} at ${info.startTime}`,
         text,
-        { maxTokens: 180 },
-      );
+        maxTokens: 180,
+      });
     } catch {
       answer = "I do not want to guess on that.";
     }
@@ -541,12 +540,12 @@ async function handleDone(phone: string, chatId: string, session: AgentSession, 
     if (qRaw.trim().toUpperCase().startsWith("Y")) {
       let answer = "";
       try {
-        answer = await quickComplete(
-          "You are Cara. A caregiver said they're done with a visit and also asked a question. " +
-            "Answer it briefly (1-2 sentences). Do NOT ask them for visit notes yet — that prompt comes next.",
+        answer = await answerHumanQuestionOnly({
+          audience: "caregiver",
+          situation: "caregiver said they are done with a visit and also asked a question",
           text,
-          { maxTokens: 180 },
-        );
+          maxTokens: 180,
+        });
       } catch { answer = "I do not want to guess on that."; }
       await sendMessage(chatId, answer);
     }
@@ -946,13 +945,12 @@ async function handleCareNotes(
     if (questionRaw.trim().toUpperCase().startsWith("Y")) {
       let answer = "";
       try {
-        answer = await quickComplete(
-          "You are Cara, a care coordinator. A caregiver just finished a shift and was asked for visit notes, " +
-            "but instead they asked a question. Answer it briefly (1-2 sentences). " +
-            "Do NOT ask them for notes — that prompt comes next.",
+        answer = await answerHumanQuestionOnly({
+          audience: "caregiver",
+          situation: "caregiver finished a shift and was asked for visit notes but asked a question instead",
           text,
-          { maxTokens: 180 },
-        );
+          maxTokens: 180,
+        });
       } catch { answer = "I do not want to guess on that."; }
       await sendMessage(chatId, answer);
       await sendMessage(chatId, "Now — tell me how the visit went so I can send the family an update. (Mood, meals, activities, anything notable.)");

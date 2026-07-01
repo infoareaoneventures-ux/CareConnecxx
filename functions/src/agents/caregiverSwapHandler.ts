@@ -1,9 +1,9 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { quickComplete } from "../utils/openaiClient";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { answerHumanMidFlow } from "./humanReply";
 
 const db = admin.firestore();
 
@@ -18,13 +18,12 @@ async function isSwapQuestion(text: string, reAsk: string): Promise<boolean> {
 }
 
 async function answerSwapMidFlow(text: string, reAsk: string): Promise<string> {
-  const answer = await quickComplete(
-    "You are Cara, a care coordinator helping a caregiver find coverage for one of their shifts. " +
-      "Answer their question briefly (1-2 sentences). Do NOT ask them to continue — that prompt comes next.",
+  return answerHumanMidFlow({
+    audience: "caregiver",
+    situation: "caregiver is finding coverage for one of their shifts",
     text,
-    { maxTokens: 150 },
-  ).catch(() => "I do not want to guess on that.");
-  return `${answer}\n\n${reAsk}`;
+    reAsk,
+  });
 }
 
 export async function handleCaregiverSwapRequest(

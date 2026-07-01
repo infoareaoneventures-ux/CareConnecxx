@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { answerHumanQuestionOnly } from "./humanReply";
 
 const db = admin.firestore();
 
@@ -22,12 +23,12 @@ async function isQuestionOrOther(text: string): Promise<boolean> {
 }
 
 async function answerQuestionMidFlow(text: string): Promise<string> {
-  return (await quickComplete(
-    "You are Cara, an AI care assistant. A client is in the middle of requesting a refund. " +
-      "Answer their question briefly (1–2 sentences). Be helpful and warm.",
+  return answerHumanQuestionOnly({
+    audience: "family",
+    situation: "client is in the middle of requesting a refund",
     text,
-    { maxTokens: 120 },
-  )).trim();
+    maxTokens: 120,
+  });
 }
 
 // State flow: identify_visit → select_visit → confirm → submitted

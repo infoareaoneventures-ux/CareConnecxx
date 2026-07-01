@@ -2,8 +2,8 @@ import * as admin from "firebase-admin";
 import Stripe from "stripe";
 import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { answerHumanMidFlow } from "./humanReply";
 
 const db = admin.firestore();
 
@@ -112,13 +112,12 @@ export async function handleInstantPayoutConfirm(
     text, 5,
   );
   if (isQ.toUpperCase().startsWith("Y")) {
-    const answer = await quickComplete(
-      "You are Cara. A caregiver was asked to confirm an instant payout and asked a question instead. " +
-        "Answer briefly (1-2 sentences). Do NOT ask them to confirm — that prompt comes next.",
+    await sendMessage(chatId, await answerHumanMidFlow({
+      audience: "caregiver",
+      situation: "caregiver is confirming an instant payout",
       text,
-      { maxTokens: 150 },
-    ).catch(() => "I do not want to guess on that.");
-    await sendMessage(chatId, `${answer}\n\n${reAsk}`);
+      reAsk,
+    }));
     return;
   }
 

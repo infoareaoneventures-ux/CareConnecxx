@@ -83,7 +83,7 @@ async function answerQuestionMidFlow(text: string, session: AgentSession): Promi
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
-      "You are Cara, an AI care assistant helping a client post a care job. " +
+      "You are Cara, a care coordinator helping a client post a care job. " +
       `They are setting up a job for ${(d.seniorName as string) ?? "their loved one"}. ` +
       "Answer briefly (1–2 sentences). Be warm and helpful.",
     messages: [{ role: "user", content: text }],

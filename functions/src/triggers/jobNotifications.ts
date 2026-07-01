@@ -4,7 +4,7 @@ import { haversineMiles } from "../ai/scoring";
 import { sendMessage, startTyping, getOrCreateSession } from "../linq/client";
 import { sendViaInteractionAgent, AgentOutput } from "../agents/caraAgent";
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { quickComplete } from "../utils/openaiClient";
+import { answerHumanMidFlow } from "../agents/humanReply";
 
 const MATCH_PUSH_THRESHOLD = 80; // push only when skill overlap is ≥ 80%
 // U11 — only INVITE caregivers whose profile actually fits the job, not every
@@ -242,14 +242,13 @@ export async function handleJobResponse(
     5,
   );
   if (qRaw.toUpperCase().startsWith("Y")) {
-    const answer = await quickComplete(
-      "You are Cara, a care coordinator. A caregiver was offered a job and asked a question instead of replying YES/NO. " +
-        "Answer their question briefly (1-2 sentences). Do NOT ask them to commit — that prompt comes next.",
+    await sendMessage(chatId, await answerHumanMidFlow({
+      audience: "caregiver",
+      situation: "caregiver was offered a job and asked a question instead of replying yes or no",
       text,
-      { maxTokens: 180 },
-    ).catch(() => "I do not want to guess on that.");
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "So — interested in this job? Reply YES or NO.");
+      reAsk: "So - interested in this job? Reply YES or NO.",
+      maxTokens: 180,
+    }));
     return;
   }
 

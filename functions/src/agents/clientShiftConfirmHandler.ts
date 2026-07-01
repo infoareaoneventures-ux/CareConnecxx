@@ -2,6 +2,7 @@ import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
 import { sendViaInteractionAgent } from "./caraAgent";
+import { answerHumanQuestionOnly } from "./humanReply";
 
 const db = admin.firestore();
 
@@ -131,16 +132,18 @@ export async function handleClientShiftConfirm(
   // QUESTION — answer it, then re-prompt
   let answer = "";
   try {
-    answer = await quickComplete(
-      "You are Cara, an AI care assistant. A family member was just sent a day-before reminder for " +
-      `${info.seniorName}'s visit tomorrow${info.startTime ? " at " + info.startTime : ""} with ` +
-      `${info.caregiverName}. Instead of CONFIRM or CANCEL, they asked a question. Answer briefly ` +
-      "(1–2 sentences). Do NOT ask them to confirm or cancel — that prompt comes next.",
-      text,
-      { maxTokens: 180 },
+    answer = await answerHumanQuestionOnly(
+      {
+        audience: "family",
+        situation:
+          `family was sent a day-before reminder for ${info.seniorName}'s visit tomorrow` +
+          `${info.startTime ? " at " + info.startTime : ""} with ${info.caregiverName} and asked a question instead of confirming or canceling`,
+        text,
+        maxTokens: 180,
+      },
     );
   } catch {
-    answer = "Let me check on that. In the meantime —";
+    answer = "I do not want to guess on that.";
   }
   await sendMessage(chatId, answer);
   await sendMessage(chatId,

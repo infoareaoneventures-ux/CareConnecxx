@@ -4,6 +4,7 @@ import { quickComplete } from "../utils/openaiClient";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { createShiftOffer } from "./shiftOffer";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { answerHumanQuestionOnly } from "./humanReply";
 
 const db = admin.firestore();
 
@@ -23,17 +24,12 @@ async function isQuestionOrOther(text: string): Promise<boolean> {
 }
 
 async function answerSwapQuestion(text: string): Promise<string> {
-  try {
-    return await quickComplete(
-      "You are Cara, an AI care assistant. A family member was just shown their upcoming visits and asked to " +
-      "pick one to swap the caregiver for. Instead they asked a question. Answer briefly (1–2 sentences). " +
-      "Do NOT ask them to pick a visit — that prompt comes next.",
-      text,
-      { maxTokens: 180 },
-    );
-  } catch {
-    return "Sorry, I'm having trouble pulling that up right now.";
-  }
+  return answerHumanQuestionOnly({
+    audience: "family",
+    situation: "family was shown upcoming visits and asked to pick one to swap the caregiver for",
+    text,
+    maxTokens: 180,
+  });
 }
 
 export async function handleClientSwapRequest(

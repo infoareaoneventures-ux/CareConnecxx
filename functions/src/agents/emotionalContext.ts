@@ -87,7 +87,7 @@ export async function classifyEmotionalContext(text: string): Promise<EmotionalC
   const timer = setTimeout(() => controller.abort(), 4_000);
   try {
     const raw = await quickComplete(
-      "You read a single inbound message from a family member or caregiver to Cara, an AI care assistant. " +
+      "You read a single inbound message from a family member or caregiver to Cara, a care coordinator. " +
       "Classify the EMOTIONAL POSTURE of the sender, not the topic. " +
       "Reply with exactly one word: calm, anxious, grieving, frustrated, rushed, or celebratory.\n" +
       "calm = neutral, ordinary check-in or question, no strong feeling.\n" +

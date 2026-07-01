@@ -10,7 +10,7 @@
 // characterization tests, since they touch paid/regulated flows).
 
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { quickComplete } from "../utils/openaiClient";
+import { answerHumanMidFlow } from "./humanReply";
 
 // True when the user's reply is a general question or off-topic comment rather
 // than a direct answer to the current step's question — so the handler can
@@ -18,7 +18,7 @@ import { quickComplete } from "../utils/openaiClient";
 export async function isQuestionOrOther(text: string, currentQuestion?: string): Promise<boolean> {
   const context = currentQuestion
     ? `The user is in a guided flow. Current step's question: "${currentQuestion}". `
-    : "The user is in a guided conversational flow with Cara, a care assistant. ";
+    : "The user is in a guided conversational flow with Cara, a care coordinator. ";
   const result = await parseWithClaude(
     context +
       "Reply YES if their message is a general question or off-topic comment unrelated to that question. " +
@@ -32,13 +32,11 @@ export async function isQuestionOrOther(text: string, currentQuestion?: string):
 // Answer a mid-flow question briefly, then append the re-ask so the user can
 // still answer the step they were on.
 export async function answerMidFlow(text: string, reAsk: string): Promise<string> {
-  const answer = await quickComplete(
-    "You are Cara, a warm AI care assistant. The user asked a question mid-conversation. " +
-      "Answer it briefly and honestly (1-2 sentences). Do NOT ask them to continue — that prompt is appended separately.",
+  return answerHumanMidFlow({
     text,
-    { maxTokens: 150 },
-  ).catch(() => "Good question — let me come back to that.");
-  return `${answer.trim()}\n\n${reAsk}`;
+    reAsk,
+    situation: "the user asked a question mid-conversation in a guided Cara flow",
+  });
 }
 
 export type StepResult<V> =

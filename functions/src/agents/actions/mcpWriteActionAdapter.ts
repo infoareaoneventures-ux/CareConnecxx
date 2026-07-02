@@ -216,8 +216,28 @@ export async function runMcpWriteCaraAction(
     run: execute,
   });
 
-  return runCaraAction(action, input, contextForMcpAction(role, input));
+  const result = await runCaraAction(action, input, contextForMcpAction(role, input));
+
+  // State-toggling pairs must not outlive the inverse action inside the done
+  // TTL: after a successful add, clear remove's settled claim (and vice versa)
+  // so add → remove → re-add cycles execute instead of replaying cached success.
+  const inverse = INVERSE_ACTION[name];
+  if (inverse) {
+    const inverseConfig = writeActionConfigs[inverse];
+    if ("idempotencyKey" in inverseConfig) {
+      const inverseKey = inverseConfig.idempotencyKey(input);
+      const { clearCaraActionExecution } = await import("../actionNative/actionExecutionLedger");
+      await clearCaraActionExecution(inverseKey).catch(() => {});
+    }
+  }
+
+  return result;
 }
+
+const INVERSE_ACTION: Partial<Record<SupportedMcpWriteAction, SupportedMcpWriteAction>> = {
+  add_family_member: "remove_family_member",
+  remove_family_member: "add_family_member",
+};
 
 function contextForMcpAction(role: CaraActionRole, input: Record<string, unknown>): CaraActionContext {
   return {

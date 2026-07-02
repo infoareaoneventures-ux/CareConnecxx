@@ -53,6 +53,7 @@ Origin: `docs/plans/2026-06-24-001-feat-cara-100-agent-native-plan.md` (Track A)
 | Email-format regex (validation only) | Prompt-Native | Format validation, not intent parsing. |
 | OTP generation / rate-limit constants | Prompt-Native | Security primitive; deterministic. |
 | `isTrivialQuickReply` heuristic | Prompt-Native | Fast-path routing heuristic, not intent parsing. |
+| `detectFrustrationSignals` heuristics (`frustrationSignals.ts`) | Prompt-Native | Telemetry-only quality classifier (sets `cara_turn_metrics` flags, never gates or shapes a reply). Regex/keyword by design: runs on every turn, an LLM call per turn for metrics would add latency/cost with no user-facing gain. Known trade-off: false positives on benign uses of "stop/wrong/human" inflate the admin severe queue — tune the pattern, don't LLM-ify it (2026-07-01). |
 
 ## Tools as Primitives — justified bundling / existing primitives (U8)
 

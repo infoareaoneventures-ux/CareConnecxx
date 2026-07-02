@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const repoRoot = path.resolve(__dirname, "../../..");
 
 const runtimeFiles = [
+  "functions/src/utils/language.ts",
   "functions/src/linq/routeIntent.ts",
   "functions/src/linq/client.ts",
   "functions/src/linq/routeClient.ts",

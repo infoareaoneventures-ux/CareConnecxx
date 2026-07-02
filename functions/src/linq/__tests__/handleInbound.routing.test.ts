@@ -173,6 +173,16 @@ vi.mock("../../utils/parseWithClaude", () => ({
   parseWithClaude: (...a: any[]) => parseWithClaude(...a),
 }));
 
+const isQuestionOrOther = vi.fn(async (..._a: any[]) => false);
+vi.mock("../../agents/stepHandler", () => ({
+  isQuestionOrOther: (...a: any[]) => isQuestionOrOther(...a),
+}));
+
+const answerHumanQuestionOnly = vi.fn(async (..._a: any[]) => "Good question — you're in two care groups, so I just need to know which senior you mean.");
+vi.mock("../../agents/humanReply", () => ({
+  answerHumanQuestionOnly: (...a: any[]) => answerHumanQuestionOnly(...a),
+}));
+
 const handleToolCall = vi.fn(async (..._a: any[]) => ({ success: true, notification: { sent: true } }));
 vi.mock("../../mcp/server", () => ({
   handleToolCall: (...a: any[]) => handleToolCall(...a),
@@ -814,6 +824,68 @@ describe("multi-care-group disambiguation (U8)", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(String(sendMessage.mock.calls[0][1])).not.toContain("more than one care group");
     expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("STOP mid-disambiguation opts the user out instead of being parsed as an answer", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      pendingGroupDisambiguation: {
+        candidates: [
+          { primaryPhone: PRIMARY_A, seniorName: "Jane" },
+          { primaryPhone: PRIMARY_B, seniorName: "Bob" },
+        ],
+        askedAt: "now",
+        attempts: 1,
+      },
+    });
+
+    await handleInbound(makeEvent("STOP"));
+
+    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    // Marker cleared (the mock records FieldValue.delete() as a sentinel).
+    expect(session?.pendingGroupDisambiguation?.candidates).toBeUndefined();
+    // The reply was never treated as a disambiguation answer.
+    expect(parseWithClaude).not.toHaveBeenCalled();
+    // Standard opt-out handling ran (carrier protocol: STOP always works).
+    expect(optOutPhoneNumber).toHaveBeenCalledWith(PHONE);
+  });
+
+  it("a mid-flow question gets answered and re-asked without burning a match attempt", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      pendingGroupDisambiguation: {
+        candidates: [
+          { primaryPhone: PRIMARY_A, seniorName: "Jane" },
+          { primaryPhone: PRIMARY_B, seniorName: "Bob" },
+        ],
+        askedAt: "now",
+        attempts: 1,
+      },
+    });
+    isQuestionOrOther.mockResolvedValueOnce(true);
+
+    await handleInbound(makeEvent("why do you need to know that?"));
+
+    expect(answerHumanQuestionOnly).toHaveBeenCalledTimes(1);
+    // Answer + re-ask, and the marker's attempts stay at 1.
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    const marker = hoisted.docState.get(`agent_sessions/${PHONE}`)?.pendingGroupDisambiguation;
+    expect(marker).toMatchObject({ attempts: 1 });
+    expect(parseWithClaude).not.toHaveBeenCalled();
+  });
+
+  it("a marker with no candidates is cleared and the turn falls through instead of dead-ending", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      pendingGroupDisambiguation: { candidates: [], askedAt: "now", attempts: 1 },
+    });
+
+    await handleInbound(makeEvent("hello?"));
+
+    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    // Marker cleared (the mock records FieldValue.delete() as a sentinel).
+    expect(session?.pendingGroupDisambiguation?.candidates).toBeUndefined();
+    expect(parseWithClaude).not.toHaveBeenCalled();
   });
 
   it("two consecutive no-match replies: one re-ask, then first-candidate fallback + admin_alerts, no infinite loop", async () => {

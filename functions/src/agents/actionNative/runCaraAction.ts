@@ -79,7 +79,26 @@ export async function runCaraAction<TInput, TOutput>(
 
   const idempotencyKey = !action.readOnly ? action.idempotencyKey?.(input, ctx) : undefined;
   if (idempotencyKey) {
-    const claim = await claimCaraActionExecution(idempotencyKey, { failClosed: action.failClosed });
+    let claim;
+    try {
+      claim = await claimCaraActionExecution(idempotencyKey, { failClosed: action.failClosed });
+    } catch (err) {
+      // Fail-closed refusal (ledger unavailable) — make it ops-visible before
+      // rethrowing, or a sustained ledger outage silently blocks money actions.
+      await logAgentAction({
+        actionType: action.audit?.actionType ?? action.name,
+        status: "failed",
+        userId: ctx.uid,
+        phone: ctx.phone,
+        role: ctx.role,
+        sourceMessageId: ctx.sourceMessageId,
+        toolName: action.name,
+        targetCollection: action.audit?.targetCollection,
+        errorReason: "duplicate-protection claim unavailable — fail-closed refusal",
+        metadata: { caller: ctx.caller, idempotencyKey },
+      }).catch(() => {});
+      throw err;
+    }
     if ("inProgress" in claim && claim.inProgress) {
       await logAgentAction({
         actionType: action.audit?.actionType ?? action.name,
@@ -102,6 +121,21 @@ export async function runCaraAction<TInput, TOutput>(
     if (claim.cached) {
       const cached = action.outputSchema.safeParse(claim.result);
       if (!cached.success) {
+        // Reachable when a prior run settled raw output after its own
+        // output-validation failure: every retry in the TTL window lands here.
+        // Log it so ops can see retrying is futile instead of a silent loop.
+        await logAgentAction({
+          actionType: action.audit?.actionType ?? action.name,
+          status: "failed",
+          userId: ctx.uid,
+          phone: ctx.phone,
+          role: ctx.role,
+          sourceMessageId: ctx.sourceMessageId,
+          toolName: action.name,
+          targetCollection: action.audit?.targetCollection,
+          errorReason: "cached output invalid — prior run's side effect completed but failed output validation",
+          metadata: { caller: ctx.caller, idempotencyKey },
+        }).catch(() => {});
         throw new CaraActionValidationError(`${action.name}: cached output is invalid`);
       }
       await logAgentAction({

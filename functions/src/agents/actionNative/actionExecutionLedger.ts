@@ -147,6 +147,22 @@ export async function settleCaraActionExecution(
   }
 }
 
+// Remove a settled claim so a logically-inverse action (remove after add,
+// add after remove) can execute inside the done-TTL window instead of
+// replaying the stale cached result. Best-effort — a missed clear degrades
+// to the TTL expiry, never to a wrong result.
+export async function clearCaraActionExecution(key: string): Promise<void> {
+  if (storeOverride) {
+    await storeOverride.settle(key, { ok: false });
+    return;
+  }
+  try {
+    await admin.firestore().collection(CARA_ACTION_EXECUTION_COLLECTION).doc(keyToDocId(key)).delete();
+  } catch (err) {
+    console.error("actionExecutionLedger: clear failed — inverse action may be blocked until TTL", { key, error: String(err) });
+  }
+}
+
 function keyToDocId(key: string): string {
   return createHash("sha1").update(key).digest("hex");
 }

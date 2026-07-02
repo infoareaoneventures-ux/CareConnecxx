@@ -55,16 +55,22 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
   publicAllowed: false,
   allowedRoles: ["client", "admin", "system"],
   run: async input => {
+    // Fetch a wider window than we show (15 vs 5): the seed filter runs
+    // post-fetch, so a small limit could be consumed entirely by seeded docs
+    // and starve real caregivers ranked just past it.
     const localSnap = input.city
       ? await db
           .collection("caregivers")
           .where("status", "==", "active")
           .where("city", "==", input.city)
-          .limit(5)
+          .limit(15)
           .get()
       : await emptyQuerySnapshot();
 
-    const localCaregivers = localSnap.docs.map(doc => doc.data()).filter(c => !isSeededCaregiver(c));
+    const localCaregivers = localSnap.docs
+      .map(doc => doc.data())
+      .filter(c => !isSeededCaregiver(c))
+      .slice(0, 5);
 
     if (localCaregivers.length > 0) {
       return buildCaregiverPreviewResult({
@@ -76,8 +82,11 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
       });
     }
 
-    const widerSnap = await db.collection("caregivers").where("status", "==", "active").limit(5).get();
-    const widerCaregivers = widerSnap.docs.map(doc => doc.data()).filter(c => !isSeededCaregiver(c));
+    const widerSnap = await db.collection("caregivers").where("status", "==", "active").limit(15).get();
+    const widerCaregivers = widerSnap.docs
+      .map(doc => doc.data())
+      .filter(c => !isSeededCaregiver(c))
+      .slice(0, 5);
     return buildCaregiverPreviewResult({
       caregivers: widerCaregivers,
       widened: widerCaregivers.length > 0,

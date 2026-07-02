@@ -397,6 +397,21 @@ async function handleGroupDisambiguationReply(
     return;
   }
 
+  // CLAUDE.md handler checklist: answer a mid-flow question first, then re-ask
+  // the current question — without burning one of the two match attempts.
+  const { isQuestionOrOther } = await import("../agents/stepHandler");
+  if (await isQuestionOrOther(text)) {
+    const { answerHumanQuestionOnly } = await import("../agents/humanReply");
+    const answer = await answerHumanQuestionOnly({
+      text,
+      situation:
+        "The user's phone number appears in more than one care group, and Cara just asked which senior they are texting about. Answer their question briefly.",
+    }).catch(() => "");
+    if (answer) await sendMessage(chatId, answer);
+    await askGroupDisambiguation(chatId, candidates);
+    return;
+  }
+
   const namesList = candidates
     .map((c, i) => `${i}: ${c.seniorName}`)
     .join("; ");
@@ -775,18 +790,30 @@ const handleInboundInner = traceable(
           return { primaryPhone: pPhone, seniorName } as GroupDisambiguationCandidate;
         }));
         const candidates = candidatePairs.filter((c): c is GroupDisambiguationCandidate => c !== null);
-        await db.collection("agent_sessions").doc(phone).set({
-          chatId,
+        if (candidates.length > 0) {
+          await db.collection("agent_sessions").doc(phone).set({
+            chatId,
+            phone,
+            pendingGroupDisambiguation: {
+              candidates,
+              askedAt:  new Date().toISOString(),
+              attempts: 1,
+            },
+            createdAt: new Date().toISOString(),
+          });
+          await askGroupDisambiguation(chatId, candidates);
+          return;
+        }
+        // Every membership row was missing primaryPhone (data drift) — don't
+        // ask an unanswerable question. Alert and fall through to the
+        // single-member handling below, which tolerates a missing primary.
+        await db.collection("admin_alerts").add({
+          type:      "group_disambiguation_no_candidates",
           phone,
-          pendingGroupDisambiguation: {
-            candidates,
-            askedAt:  new Date().toISOString(),
-            attempts: 1,
-          },
+          severity:  "medium",
           createdAt: new Date().toISOString(),
-        });
-        await askGroupDisambiguation(chatId, candidates);
-        return;
+          resolved:  false,
+        }).catch(() => {});
       }
       if (!memberSnap.empty) {
         const pPhone = memberSnap.docs[0].data().primaryPhone as string | undefined;
@@ -1028,8 +1055,22 @@ const handleInboundInner = traceable(
       attempts:   number;
     } | undefined;
     if (pendingGroupDis && text.trim() !== "") {
-      await handleGroupDisambiguationReply(phone, chatId, text, pendingGroupDis);
-      return;
+      if (stopWords.has(norm)) {
+        // SMS carrier protocol: STOP must always work, even mid-disambiguation.
+        // Clear the marker and fall through to the standard opt-out handling.
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingGroupDisambiguation: admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+      } else if (!pendingGroupDis.candidates?.length) {
+        // Malformed marker (no resolvable candidates) — clear it and let normal
+        // routing take over rather than dead-ending the user in silence.
+        await db.collection("agent_sessions").doc(phone).update({
+          pendingGroupDisambiguation: admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+      } else {
+        await handleGroupDisambiguationReply(phone, chatId, text, pendingGroupDis);
+        return;
+      }
     }
   }
 

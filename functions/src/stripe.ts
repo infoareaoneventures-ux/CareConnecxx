@@ -1034,6 +1034,14 @@ async function handleIdentityVerificationEvent(session: Stripe.Identity.Verifica
       } catch (err) {
         console.error('advanceOnboardingStep(identity) error:', err);
       }
+      // Clear the identity-gate-skipped flag (set when session creation once
+      // failed and the flow fell back to payment) — the user is verified now.
+      await admin.firestore().collection('agent_sessions').doc(phone).set({
+        onboardingData: {
+          needsIdentityVerification: false,
+          identityVerifiedAt: new Date().toISOString(),
+        },
+      }, { merge: true }).catch((err: unknown) => console.error('clear needsIdentityVerification error:', err));
     } else if (status === 'requires_input' || status === 'canceled') {
       // Let the client retry — send a FRESH link (the original may have scrolled
       // off or been consumed), not just "tap the link above".

@@ -33,6 +33,7 @@ import { callOpenAiAgentTurn } from "./openaiToolLoop";
 import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
+import { detectFrustrationSignals } from "./frustrationSignals";
 import { isOnboardingTool } from "./onboardingContract";
 import { isReGreet } from "./onboardingEvalGraders";
 import { withToolsCacheControl } from "./toolCache";
@@ -852,6 +853,17 @@ export function detectMedicationInstruction(reply: string): boolean {
   return directsDose;
 }
 
+function applyFrustrationMetrics(
+  metrics: TurnMetrics,
+  text: string,
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+): void {
+  const signals = detectFrustrationSignals({ text, recentHistory: history });
+  if (signals.frustrationDetected) metrics.frustrationDetected = true;
+  if (signals.rephraseLoopDetected) metrics.rephraseLoopDetected = true;
+  if (signals.repeatedGreetingDetected) metrics.repeatedGreetingDetected = true;
+}
+
 function getConversationRepairReasons(reply: string): string[] {
   const reasons: string[] = [];
   if (detectMultiQuestionDataCollection(reply)) reasons.push("asks_for_too_much_at_once");
@@ -1334,6 +1346,8 @@ export async function runQaAgent(params: {
   // and inject a one-line directive so Cara's surface register (length, emoji
   // use, language, formality) tracks theirs. No-op when the sample is too
   // small to be meaningful, so brand-new conversations get default voice.
+  applyFrustrationMetrics(metrics, text, history);
+
   const voiceDirective = buildVoiceDirective(computeVoiceProfile(history));
   if (voiceDirective) {
     systemPrompt += `\n\n${voiceDirective}`;
@@ -2416,6 +2430,7 @@ export async function runQuickReply(params: {
   metrics.contextLoadMs = Date.now() - metrics.startedAt;
 
   const recent = history.slice(-4);
+  applyFrustrationMetrics(metrics, text, history);
 
   // Build a context snippet listing the most relevant fact Cara could lead with.
   // Cara picks one (or none) to mention naturally — she doesn't list them all.

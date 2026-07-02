@@ -118,6 +118,9 @@ interface TurnMetricRecord {
   contextIgnoredWhenPresent?: boolean;
   paymentAuthorityLeakDetected?: boolean;
   multiQuestionDataCollection?: boolean;
+  frustrationDetected?: boolean;
+  rephraseLoopDetected?: boolean;
+  repeatedGreetingDetected?: boolean;
   [key: string]: unknown;
 }
 
@@ -342,6 +345,7 @@ const QUALITY_FLAG_LABELS: Record<string, string> = {
   conversation_repair_applied: 'Conversation repair applied',
   conversation_repair_triggered: 'Conversation repair triggered',
   fallback_path_used: 'Fallback path',
+  frustration_detected: 'User frustration',
   generic_help_ask_detected: 'Generic helper prompt',
   grounding_triggered: 'Safety grounding',
   medication_instruction_detected: 'Medication instruction risk',
@@ -350,6 +354,8 @@ const QUALITY_FLAG_LABELS: Record<string, string> = {
   post_process_modified: 'Post-process rewrite',
   promise_without_tool_call: 'Promise without tool call',
   recipe_without_backing_tool: 'Recipe without backing tool',
+  repeated_greeting_detected: 'Repeated greeting loop',
+  rephrase_loop_detected: 'Rephrase loop',
   reply_empty: 'Empty reply',
   support_deflection_detected: 'Support deflection',
   tool_error: 'Tool error',
@@ -370,12 +376,15 @@ function readableQualityFlags(metric: TurnMetricRecord): string[] {
   if (metric.recipeWithoutBackingTool) flags.add('recipe_without_backing_tool');
   if (metric.contextIgnoredWhenPresent) flags.add('context_ignored_when_present');
   if (metric.paymentAuthorityLeakDetected) flags.add('payment_authority_leak_detected');
+  if (metric.frustrationDetected) flags.add('frustration_detected');
+  if (metric.rephraseLoopDetected) flags.add('rephrase_loop_detected');
+  if (metric.repeatedGreetingDetected) flags.add('repeated_greeting_detected');
   return Array.from(flags).map((flag) => QUALITY_FLAG_LABELS[flag] ?? flag.replace(/_/g, ' '));
 }
 
 function makeQualityMetricItem(metric: TurnMetricRecord): QueueItem {
   const labels = readableQualityFlags(metric);
-  const severe = metric.errored || metric.replyEmpty || metric.medicationInstructionDetected || metric.supportDeflectionDetected;
+  const severe = metric.errored || metric.replyEmpty || metric.medicationInstructionDetected || metric.supportDeflectionDetected || metric.frustrationDetected || metric.rephraseLoopDetected;
   const title = metric.conversationRepairApplied
     ? 'Conversation repair applied'
     : metric.errored

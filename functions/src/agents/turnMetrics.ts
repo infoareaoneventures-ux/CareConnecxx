@@ -91,6 +91,9 @@ export interface TurnMetrics {
   supportDeflectionDetected?:   boolean; // punts to support/team/Cara instead of acting
   genericHelpAskDetected?:      boolean; // "what can I help with" style generic prompt
   medicationInstructionDetected?: boolean; // gives medication/dosing instruction instead of redirecting
+  frustrationDetected?: boolean; // user shows explicit frustration with Cara/system
+  rephraseLoopDetected?: boolean; // user repeats/rephrases a request from recent history
+  repeatedGreetingDetected?: boolean; // user repeats a greeting because Cara did not move forward
 
   // Sprint 8: tone-warmth-v1 adherence proxy. True when the reply opens with an
   // empathy reflection AND the turn was non-calm. Lets us measure whether the
@@ -134,6 +137,9 @@ const QUALITY_FLAG_MAP: Array<[keyof TurnMetrics, string]> = [
   ["contextIgnoredWhenPresent", "context_ignored_when_present"],
   ["paymentAuthorityLeakDetected", "payment_authority_leak_detected"],
   ["multiQuestionDataCollection", "multi_question_data_collection"],
+  ["frustrationDetected", "frustration_detected"],
+  ["rephraseLoopDetected", "rephrase_loop_detected"],
+  ["repeatedGreetingDetected", "repeated_greeting_detected"],
   ["groundingTriggered", "grounding_triggered"],
   ["formatRevisionTriggered", "format_revision_triggered"],
   ["postProcessModified", "post_process_modified"],
@@ -277,6 +283,9 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
       contextIgnoredWhenPresent:    !!metrics.contextIgnoredWhenPresent,
       paymentAuthorityLeakDetected: !!metrics.paymentAuthorityLeakDetected,
       multiQuestionDataCollection:  !!metrics.multiQuestionDataCollection,
+      frustrationDetected:          !!metrics.frustrationDetected,
+      rephraseLoopDetected:         !!metrics.rephraseLoopDetected,
+      repeatedGreetingDetected:     !!metrics.repeatedGreetingDetected,
     });
   }
 }

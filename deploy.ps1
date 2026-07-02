@@ -1,4 +1,4 @@
-# CareConnex Firebase Deployment Script
+﻿# CareConnex Firebase Deployment Script
 # Run this AFTER installing Firebase CLI and logging in
 
 Write-Host "🚀 CareConnex Deployment Script" -ForegroundColor Cyan

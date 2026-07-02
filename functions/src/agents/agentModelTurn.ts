@@ -3,6 +3,7 @@ import { getOpenAIClient } from "../utils/openaiClient";
 import { callClaudeWithRetry } from "../utils/claudeRetry";
 import { resolveCaraModelConfig, shouldFallbackAgentToAnthropic } from "../config/caraModels";
 import { callOpenAiAgentTurn } from "./openaiToolLoop";
+import { raiseProviderFailureAlert } from "../observability/providerFailureAlert";
 
 const ANTHROPIC_AGENT_MODEL = "claude-sonnet-4-6";
 
@@ -73,6 +74,15 @@ export async function runAgentModelTurn(params: RunAgentModelTurnParams): Promis
       "qaAgent: OpenAI agent loop failed; falling back to Anthropic",
       err instanceof Error ? err.message : err,
     );
+    // A successful fallback still hides a failing primary provider (e.g.
+    // OpenAI credit exhaustion) from ops — raise the alert here, before
+    // returning the Anthropic result, so nobody has to notice the deflection
+    // pattern in the wild to find out.
+    raiseProviderFailureAlert({
+      provider: "openai",
+      model: agentModel.model,
+      error: err,
+    }).catch(() => {});
     metrics.modelProvider = "anthropic";
     metrics.modelUsed = ANTHROPIC_AGENT_MODEL;
     metrics.modelFallbackUsed = true;

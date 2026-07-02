@@ -29,6 +29,7 @@ import { findAdvertisedRecipeWithoutBacking, hasPaymentAuthorityLeak, type CareR
 import { MCP_TOOLS, CAREGIVER_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
 import { resolveCaraModelConfig } from "../config/caraModels";
 import { runAgentModelTurn } from "./agentModelTurn";
+import { raiseProviderFailureAlert } from "../observability/providerFailureAlert";
 import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
@@ -2346,6 +2347,16 @@ export async function runQaAgent(params: {
       severity:  "medium",
       createdAt: new Date().toISOString(),
       resolved:  false,
+    }).catch(() => {});
+    // The generic qa_agent_failure alert above doesn't tell ops WHY the turn
+    // failed. When the failure is a provider call (credit exhaustion, auth,
+    // rate limit, timeout), raise the typed alert too so billing/auth issues
+    // page the founder instead of surfacing only as this deflection copy.
+    raiseProviderFailureAlert({
+      phone,
+      provider: metrics.modelProvider,
+      model: metrics.modelUsed,
+      error: err,
     }).catch(() => {});
     emitTurnMetrics(metrics, { reply: errMsg, error: err });
     return errMsg;

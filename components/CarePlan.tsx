@@ -242,7 +242,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   }, [currentUser?.uid]);
 
   useEffect(() => {
-    if (!currentPlanId) { setLoading(false); onNavigate('client-login'); return; }
+    if (!currentPlanId) { setLoading(false); onNavigate('login'); return; }
     const unsub = dbService.subscribeToCarePlan(currentPlanId, updated => {
       setPlan(prev => dirtyContactsRef.current
         ? { ...updated, emergencyContacts: prev.emergencyContacts }

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { auth, db, getOrCreateRecaptchaVerifier, clearRecaptchaVerifier } from '../../lib/firebase';
+import { auth, getOrCreateRecaptchaVerifier, clearRecaptchaVerifier } from '../../lib/firebase';
+import { dbService } from '../../services/api';
 import type firebase from 'firebase/compat/app';
 
 type Step = 'phone' | 'otp';
@@ -96,15 +97,16 @@ export const AuthLoginPage: React.FC = () => {
     setLoading(true);
     try {
       const cred = await confirmation.confirm(code);
-      // Role-aware landing. Read users/{uid} directly rather than through
+      // Role-aware landing. Resolve the profile directly rather than through
       // context, whose missing-doc fallback defaults to 'client' — a user
       // with no profile doc belongs in onboarding, not on a broken dashboard.
       const uid = cred?.user?.uid ?? auth?.currentUser?.uid;
       let dest = '/start';
-      if (uid && db) {
-        const snap = await db.collection('users').doc(uid).get().catch(() => null);
-        if (snap?.exists) {
-          const userType = snap.data()?.userType;
+      if (uid) {
+        const profile = await dbService.getUser(uid).catch(() => null);
+        // AdminUser types userType as client|caregiver; admin lives in the raw doc.
+        const userType = profile?.userType as string | undefined;
+        if (userType) {
           dest = userType === 'caregiver' ? '/caregiver/dashboard'
                : userType === 'admin'     ? '/admin'
                : '/client/dashboard';

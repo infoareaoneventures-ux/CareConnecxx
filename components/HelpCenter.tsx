@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { Activity, Search, Users, Briefcase, Globe, ChevronRight, LifeBuoy, BookOpen } from 'lucide-react';
 import { ViewType } from '../types';
 import { Footer } from './landing/Footer';
-import { LoginModal } from './landing/LoginModal';
 import { Button } from './ui/Button';
 import { SEO } from './SEO';
 
@@ -50,7 +49,6 @@ const popularArticles = [
 ];
 
 export const HelpCenter: React.FC<HelpCenterProps> = ({ onNavigate }) => {
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       <SEO title="Help Center | CareConnex" description="Find answers about using CareConnex — for families, caregivers, and general platform questions." keywords="help, support, CareConnex, FAQ" />
@@ -62,7 +60,7 @@ export const HelpCenter: React.FC<HelpCenterProps> = ({ onNavigate }) => {
               <span className="text-2xl font-bold text-slate-900 tracking-tight">CareConnex</span>
             </div>
             <div className="flex items-center gap-4">
-              <button onClick={() => setIsLoginModalOpen(true)} className="text-slate-600 hover:text-primary-600 font-medium">Log In</button>
+              <button onClick={() => onNavigate('login')} className="text-slate-600 hover:text-primary-600 font-medium">Log In</button>
               <Button onClick={() => onNavigate('client-signup')}>Get Started</Button>
             </div>
           </div>
@@ -124,7 +122,6 @@ export const HelpCenter: React.FC<HelpCenterProps> = ({ onNavigate }) => {
         </section>
       </main>
       <Footer onNavigate={onNavigate} />
-      {isLoginModalOpen && <LoginModal onNavigate={onNavigate} onClose={() => setIsLoginModalOpen(false)} />}
     </div>
   );
 };

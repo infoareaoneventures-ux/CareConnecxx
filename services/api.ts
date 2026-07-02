@@ -1,7 +1,7 @@
 import { stripeService as externalStripeService } from './stripeService';
-import { checkRateLimit, checkSignupRateLimit, RATE_LIMITS } from './rateLimit';
+import { checkRateLimit, RATE_LIMITS } from './rateLimit';
 
-import firebase, { auth, db, functions, isConfigured, googleProvider } from '../lib/firebase';
+import firebase, { auth, db, functions, isConfigured } from '../lib/firebase';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
 import { UNBOOKABLE_BG_STATUSES } from '../utils/caregiverEligibility';
 import {
@@ -152,193 +152,15 @@ function dedupePromise<T>(key: string, factory: () => Promise<T>): Promise<T> {
 }
 import { Caregiver, Appointment, Review, Thread, DirectMessage, Senior, CarePlan, SupportTicket, AppNotification, BackgroundCheckData, AdminUser, MatchFeedback, EmergencyAlert, FamilyMember, JobPost } from '../types';
 import { errorHandler } from './errorHandler';
-import { validators, validateSignup, validateLogin, isFirebaseError, getSafeErrorMessage, normalizePhoneNumber, sanitizeString } from '../utils/validation';
+import { validators, isFirebaseError, getSafeErrorMessage, normalizePhoneNumber, sanitizeString } from '../utils/validation';
 import { sanitizeMessage, sanitizeName, sanitizeBio, sanitizePlainText } from '../utils/sanitize';
 import { notifyFamilyOfArrival } from './notificationService';
 import { storageService } from './storageService';
 
+// Email/password and Google auth were retired with the phone-only login
+// cutover (docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md).
+// Login is phone OTP at /login; signup is the phone-first /start flow.
 export const dbService = {
-    login: async (email: string, pass: string, userType: 'client' | 'caregiver') => {
-        // Validate inputs before Firebase call
-        const validation = validateLogin({ email, password: pass });
-        if (!validation.isValid) {
-            throw new Error(validation.errors[0].message);
-        }
-
-        if (isConfigured && auth) {
-            try {
-                const userCredential = await auth.signInWithEmailAndPassword(email, pass);
-                return userCredential.user;
-            } catch (error: unknown) {
-                // Log with hashed email for HIPAA compliance
-                await errorHandler.logError(error, {
-                    action: 'login',
-                    component: 'authService',
-                    additionalData: { 
-                        userType, 
-                        emailHash: await validators.hashForLogging(email)
-                    }
-                });
-                throw new Error(getSafeErrorMessage(error));
-            }
-        } else {
-            throw new Error("Authentication service not configured. Please check your Firebase settings.");
-        }
-    },
-
-    signup: async (email: string, pass: string, name: string, userType: 'client' | 'caregiver', additionalData: {
-        zipCode?: string;
-        hourlyRate?: number;
-        personalityTags?: string[];
-        certifications?: string[];
-        experience?: number;
-        hasTransportation?: boolean;
-        location?: string;
-        latitude?: number;
-        longitude?: number;
-        gender?: 'Male' | 'Female' | 'Non-binary' | 'Prefer not to say';
-        verified?: boolean;
-        onboardingStatus?: string;
-        [key: string]: unknown;
-    }) => {
-        // SECURITY FIX: IP-based rate limiting to prevent email rotation attacks
-        // An attacker can bypass email-based limits by using random emails
-        const ipBasedLimit = await checkSignupRateLimit();
-        if (!ipBasedLimit.allowed) {
-            throw new Error(`Too many signup attempts. Please try again in ${Math.ceil((ipBasedLimit.retryAfterMs || 60000) / 60000)} minutes.`);
-        }
-        
-        // Also check email-based limit as secondary protection
-        const emailBasedLimit = await checkRateLimit(email.toLowerCase().trim(), RATE_LIMITS.signup);
-        if (!emailBasedLimit.allowed) {
-            throw new Error(`Too many signup attempts for this email. Please try again later.`);
-        }
-
-        // Validate all inputs before any Firebase calls
-        const validation = validateSignup({ email, password: pass, name, userType, ...additionalData });
-        if (!validation.isValid) {
-            throw new Error(validation.errors.map(e => `${e.field}: ${e.message}`).join(', '));
-        }
-
-        // Validate hourly rate bounds for caregivers
-        if (userType === 'caregiver' && additionalData.hourlyRate !== undefined) {
-            const rate = additionalData.hourlyRate;
-            if (rate < 15 || rate > 100) {
-                throw new Error('Hourly rate must be between $15 and $100');
-            }
-        }
-
-        // Sanitize inputs
-        const sanitizedEmail = sanitizeString(email);
-        const sanitizedName = sanitizeString(name);
-
-        if (isConfigured && auth && db) {
-            let user;
-            try {
-                const userCredential = await auth.createUserWithEmailAndPassword(sanitizedEmail, pass);
-                user = userCredential.user;
-            } catch (error: unknown) {
-                // SECURITY FIX: Removed auto-recovery login attempt
-                // This was a vulnerability allowing account enumeration attacks
-                await errorHandler.logError(error, {
-                    action: 'signup',
-                    component: 'authService',
-                    additionalData: {
-                        userType,
-                        emailHash: await validators.hashForLogging(sanitizedEmail)
-                    }
-                });
-                throw new Error(getSafeErrorMessage(error));
-            }
-
-            if (user) {
-                await user.updateProfile({ displayName: sanitizedName });
-
-                // Critical Fix: Firestore cannot accept 'undefined'. Use 'null' instead.
-                const verifiedStatus = userType === 'caregiver' ? false : null;
-
-                // ATTEMPT FIRESTORE WRITE
-                try {
-                    // Sanitize all additional data
-                    // CRITICAL FIX: Filter out undefined and empty string values - Firestore rejects undefined
-                    const sanitizedAdditionalData = Object.fromEntries(
-                        Object.entries(additionalData)
-                            .filter(([_, value]) => value !== undefined && value !== '')
-                            .map(([key, value]) => {
-                                // Normalize phone numbers to E.164 format
-                                if (key === 'phone' && typeof value === 'string') {
-                                    const normalized = normalizePhoneNumber(value);
-                                    return [key, normalized || value];
-                                }
-                                return [key, typeof value === 'string' ? sanitizeString(value) : value];
-                            })
-                    );
-
-                    await db.collection('users').doc(user.uid).set({
-                        uid: user.uid,
-                        name: sanitizedName,
-                        email: sanitizedEmail,
-                        userType,
-                        createdAt: new Date().toISOString(),
-                        isBanned: false,
-                        verified: verifiedStatus,
-                        ...sanitizedAdditionalData
-                    }, { merge: true });
-
-                    if (userType === 'client') {
-                        await db.collection('senior_profiles').doc(user.uid).set({
-                            name: sanitizedName,
-                            personality: 'Introvert',
-                            needs: [],
-                            zipCode: additionalData.zipCode ?? null,
-                            familyMembers: []
-                        }, { merge: true });
-                    } else if (userType === 'caregiver') {
-                        await db.collection('caregivers').doc(user.uid).set({
-                            uid: user.uid,
-                            name: sanitizedName,
-                            hourlyRate: additionalData.hourlyRate || 25,
-                            verified: false,
-                            instantPayAvailable: false,
-                            personalityTags: additionalData.personalityTags || [],
-                            matchScore: 80,
-                            distance: 0,
-                            availability: [],
-                            backgroundCheckStatus: 'none',
-                            ...sanitizedAdditionalData
-                        }, { merge: true });
-                    }
-                } catch (dbError: unknown) {
-                    await errorHandler.logError(dbError, {
-                        userId: user.uid,
-                        action: 'create_user_profile',
-                        component: 'authService',
-                        additionalData: { userType }
-                    });
-                    const errorMessage = dbError instanceof Error ? dbError.message : 'Unknown error';
-                    console.warn("Firestore Write Failed:", errorMessage);
-                    throw new Error("Failed to create user profile. Please check your permissions and try again.");
-                }
-            }
-            // Send email verification for caregivers
-            if (userType === 'caregiver' && user) {
-                try {
-                    await user.sendEmailVerification();
-                    console.log('Email verification sent to caregiver');
-                } catch (verifyError) {
-                    console.error('Failed to send email verification:', verifyError);
-                    // Don't fail signup if verification email fails
-                }
-            }
-            
-            // Clear rate limit on successful signup
-            clearLocalRateLimit(`signup_${email.toLowerCase().trim()}`);
-            return user;
-        } else {
-            throw new Error("Auth service not configured");
-        }
-    },
-
     logout: async () => {
         if (isConfigured && auth) {
             await auth.signOut();
@@ -363,91 +185,6 @@ export const dbService = {
             return true;
         }
         throw new Error("Not logged in");
-    },
-
-    sendPasswordResetEmail: async (email: string) => {
-        const cacheKey = `pwd_reset_${email.toLowerCase().trim()}`;
-        return dedupePromise(cacheKey, async () => {
-            if (!isConfigured || !functions) {
-                throw new Error("Authentication service not configured");
-            }
-            try {
-                const fn = functions.httpsCallable('v1-sendPasswordResetEmail');
-                await fn({ email });
-                return true;
-            } catch (error: unknown) {
-                await errorHandler.logError(error, {
-                    action: 'password_reset',
-                    component: 'authService',
-                    additionalData: { emailHash: await validators.hashForLogging(email) }
-                });
-                throw new Error(getSafeErrorMessage(error));
-            }
-        });
-    },
-
-    signInWithGoogle: async (userType: 'client' | 'caregiver') => {
-        if (!isConfigured || !auth || !db) {
-            throw new Error("Authentication service not configured.");
-        }
-        let result: firebase.auth.UserCredential;
-        try {
-            result = await auth.signInWithPopup(googleProvider);
-        } catch (error: unknown) {
-            throw new Error(getSafeErrorMessage(error));
-        }
-        const user = result.user;
-        if (!user) throw new Error("Google sign-in did not return a user.");
-
-        const userDocRef = db.collection('users').doc(user.uid);
-        const userDoc = await userDocRef.get();
-
-        if (!userDoc.exists) {
-            const displayName = user.displayName || user.email?.split('@')[0] || 'User';
-            await userDocRef.set({
-                uid: user.uid,
-                name: displayName,
-                email: user.email,
-                userType,
-                createdAt: new Date().toISOString(),
-                isBanned: false,
-                verified: userType === 'caregiver' ? false : null,
-            }, { merge: true });
-
-            if (userType === 'client') {
-                await db.collection('senior_profiles').doc(user.uid).set({
-                    name: displayName,
-                    personality: 'Introvert',
-                    needs: [],
-                    familyMembers: [],
-                }, { merge: true });
-            } else {
-                await db.collection('caregivers').doc(user.uid).set({
-                    uid: user.uid,
-                    name: displayName,
-                    hourlyRate: 25,
-                    verified: false,
-                    instantPayAvailable: false,
-                    personalityTags: [],
-                    matchScore: 80,
-                    distance: 0,
-                    availability: [],
-                    backgroundCheckStatus: 'none',
-                    onboardingStatus: 'incomplete',
-                    onboardingStep: 1,
-                }, { merge: true });
-            }
-        }
-
-        const actualUserType = (userDoc.data()?.userType as 'client' | 'caregiver' | undefined) ?? userType;
-        return { user, isNewUser: !userDoc.exists, actualUserType };
-    },
-
-    confirmGoogleUserName: async (uid: string, firstName: string, lastName: string) => {
-        if (!isConfigured || !db) throw new Error("Service not configured.");
-        const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
-        await db.collection('users').doc(uid).update({ name: fullName, firstName: firstName.trim(), lastName: lastName.trim() });
-        await db.collection('senior_profiles').doc(uid).update({ name: fullName }).catch(() => {});
     },
 
     onAuthStateChanged: (callback: (user: firebase.User | null) => void) => {

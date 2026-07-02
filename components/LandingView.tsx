@@ -13,7 +13,6 @@ import { TrustSafetySection } from './landing/TrustSafetySection';
 import { FeaturesSection } from './landing/FeaturesSection';
 import { CaregiverSection } from './landing/CaregiverSection';
 import { Footer } from './landing/Footer';
-import { LoginModal } from './landing/LoginModal';
 import { ServicesSection } from './landing/ServicesSection';
 import { FAQSection } from './landing/FAQSection';
 import { BlogSection } from './landing/BlogSection';
@@ -25,7 +24,6 @@ interface LandingViewProps {
 
 export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
    return (
       <div className="flex flex-col min-h-screen bg-white font-sans pb-20 md:pb-0">
@@ -83,7 +81,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
                         Help
                      </button>
                      <button
-                        onClick={() => setIsLoginModalOpen(true)}
+                        onClick={() => onNavigate('login')}
                         className="text-slate-600 hover:text-primary-600 font-medium px-4 py-2 border border-slate-300 rounded-full hover:border-primary-400 transition-colors"
                      >
                         Log In
@@ -123,7 +121,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
                      <button onClick={() => onNavigate('caregiver-signup')} className="block w-full text-left px-3 py-3 text-base font-medium text-slate-700 hover:bg-slate-50 rounded-lg">Find Jobs</button>
                      <button onClick={() => onNavigate('help-center')} className="block w-full text-left px-3 py-3 text-base font-medium text-slate-700 hover:bg-slate-50 rounded-lg">Help</button>
                      <div className="border-t border-slate-100 my-2"></div>
-                     <button onClick={() => { setIsMobileMenuOpen(false); setIsLoginModalOpen(true); }} className="block w-full text-left px-3 py-3 text-base font-medium text-primary-600 hover:bg-primary-50 rounded-lg">Log In</button>
+                     <button onClick={() => { setIsMobileMenuOpen(false); onNavigate('login'); }} className="block w-full text-left px-3 py-3 text-base font-medium text-primary-600 hover:bg-primary-50 rounded-lg">Log In</button>
                      <Button fullWidth onClick={() => { setIsMobileMenuOpen(false); onNavigate('client-signup'); }} variant="primary">
                         Find Care — For Families
                      </Button>
@@ -146,10 +144,6 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
             <BlogSection />
             <CaregiverSection onNavigate={onNavigate} />
             <Footer onNavigate={onNavigate} />
-
-            {isLoginModalOpen && (
-               <LoginModal onNavigate={onNavigate} onClose={() => setIsLoginModalOpen(false)} />
-            )}
          </main>
 
          {/* Mobile Sticky CTA */}

@@ -11,7 +11,7 @@ const hoisted = vi.hoisted(() => ({
   navigate: vi.fn(),
   confirm: vi.fn(async (_code: string): Promise<any> => ({ user: { uid: 'u1' } })),
   signInWithPhoneNumber: vi.fn(async (..._args: any[]): Promise<any> => ({ confirm: hoisted.confirm })),
-  usersDocGet: vi.fn(async (): Promise<any> => ({ exists: true, data: () => ({ userType: 'client' }) })),
+  getUser: vi.fn(async (_uid: string): Promise<any> => ({ userType: 'client' })),
   getOrCreateRecaptchaVerifier: vi.fn(() => ({ verify: vi.fn() })),
   clearRecaptchaVerifier: vi.fn(),
 }));
@@ -21,11 +21,12 @@ vi.mock('../../lib/firebase', () => ({
     signInWithPhoneNumber: hoisted.signInWithPhoneNumber,
     currentUser: { uid: 'u1' },
   },
-  db: {
-    collection: () => ({ doc: () => ({ get: hoisted.usersDocGet }) }),
-  },
   getOrCreateRecaptchaVerifier: hoisted.getOrCreateRecaptchaVerifier,
   clearRecaptchaVerifier: hoisted.clearRecaptchaVerifier,
+}));
+
+vi.mock('../../services/api', () => ({
+  dbService: { getUser: hoisted.getUser },
 }));
 
 vi.mock('react-router-dom', () => ({
@@ -54,7 +55,7 @@ describe('AuthLoginPage', () => {
     vi.clearAllMocks();
     hoisted.signInWithPhoneNumber.mockResolvedValue({ confirm: hoisted.confirm });
     hoisted.confirm.mockResolvedValue({ user: { uid: 'u1' } });
-    hoisted.usersDocGet.mockResolvedValue({ exists: true, data: () => ({ userType: 'client' }) });
+    hoisted.getUser.mockResolvedValue({ userType: 'client' });
   });
 
   it('routes a client to /client/dashboard after OTP', async () => {
@@ -65,7 +66,7 @@ describe('AuthLoginPage', () => {
   });
 
   it('routes a caregiver to /caregiver/dashboard', async () => {
-    hoisted.usersDocGet.mockResolvedValue({ exists: true, data: () => ({ userType: 'caregiver' }) });
+    hoisted.getUser.mockResolvedValue({ userType: 'caregiver' });
     render(<AuthLoginPage />);
     await enterPhoneAndSend();
     await enterOtp();
@@ -73,7 +74,7 @@ describe('AuthLoginPage', () => {
   });
 
   it('routes an admin to /admin', async () => {
-    hoisted.usersDocGet.mockResolvedValue({ exists: true, data: () => ({ userType: 'admin' }) });
+    hoisted.getUser.mockResolvedValue({ userType: 'admin' });
     render(<AuthLoginPage />);
     await enterPhoneAndSend();
     await enterOtp();
@@ -81,7 +82,7 @@ describe('AuthLoginPage', () => {
   });
 
   it('routes a user with NO users doc to /start, never a dashboard', async () => {
-    hoisted.usersDocGet.mockResolvedValue({ exists: false, data: () => undefined });
+    hoisted.getUser.mockResolvedValue(null);
     render(<AuthLoginPage />);
     await enterPhoneAndSend();
     await enterOtp();

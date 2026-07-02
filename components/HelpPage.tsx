@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { Activity, ChevronDown, ChevronUp, ChevronRight, Users, Briefcase, Globe, LifeBuoy } from 'lucide-react';
 import { ViewType } from '../types';
 import { Footer } from './landing/Footer';
-import { LoginModal } from './landing/LoginModal';
 import { Button } from './ui/Button';
 import { SEO } from './SEO';
 
@@ -311,7 +310,6 @@ const Accordion: React.FC<{ q: string; a: string; id: string; open: boolean; onT
 // ─── MAIN COMPONENT ─────────────────────────────────────────────────────────
 
 export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [openFaq, setOpenFaq] = useState<string | null>(null);
   const [activeCat, setActiveCat] = useState(0);
 
@@ -351,7 +349,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       <SEO title={config.seoTitle} description={config.subtitle} keywords={`CareConnex, help, ${section}`} />
-      <NavBar onNavigate={onNavigate} onLogin={() => setIsLoginModalOpen(true)} />
+      <NavBar onNavigate={onNavigate} onLogin={() => onNavigate('login')} />
 
       <main className="flex-grow">
         {/* Hero breadcrumb */}
@@ -470,7 +468,6 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
       </main>
 
       <Footer onNavigate={onNavigate} />
-      {isLoginModalOpen && <LoginModal onNavigate={onNavigate} onClose={() => setIsLoginModalOpen(false)} />}
     </div>
   );
 };

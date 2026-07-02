@@ -23,8 +23,6 @@ let functions: firebase.functions.Functions | undefined;
 let storage: firebase.storage.Storage | undefined;
 let isConfigured = false;
 
-let googleProvider: firebase.auth.GoogleAuthProvider;
-
 try {
   console.log("Firebase config check:", { apiKey: firebaseConfig.apiKey ? "present" : "MISSING", projectId: firebaseConfig.projectId });
   // strict validation
@@ -39,8 +37,6 @@ try {
     app = firebase.app();
   }
   auth = firebase.auth();
-  googleProvider = new firebase.auth.GoogleAuthProvider();
-  googleProvider.setCustomParameters({ prompt: 'select_account' });
   db = firebase.firestore();
   functions = firebase.functions();
   isConfigured = true;
@@ -85,5 +81,5 @@ export function clearRecaptchaVerifier(containerId: string): void {
   }
 }
 
-export { app, auth, db, functions, storage, isConfigured, googleProvider };
+export { app, auth, db, functions, storage, isConfigured };
 export default firebase;

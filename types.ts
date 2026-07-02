@@ -1,6 +1,7 @@
 
 export type ViewType =
   | 'landing'
+  | 'login'
   | 'how-it-works'
   | 'trust'
   | 'subscription'

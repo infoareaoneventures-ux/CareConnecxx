@@ -54,7 +54,7 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
           });
         }
       } else {
-        onNavigate('client-login');
+        onNavigate('login');
         return;
       }
       setLoading(false);

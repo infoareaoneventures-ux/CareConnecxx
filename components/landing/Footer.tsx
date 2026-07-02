@@ -40,7 +40,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                             <h4 className="font-bold text-slate-900 mb-4">For Families</h4>
                             <ul className="space-y-2 text-slate-500 text-sm">
                                 <li><button onClick={() => onNavigate('client-signup')} className="hover:text-primary-600">Find Care</button></li>
-                                <li><button onClick={() => onNavigate('client-login')} className="hover:text-primary-600">Log In</button></li>
+                                <li><button onClick={() => onNavigate('login')} className="hover:text-primary-600">Log In</button></li>
                                 <li><button onClick={() => onNavigate('landing')} className="hover:text-primary-600">Quality Guarantee</button></li>
                                 <li><button onClick={() => onNavigate('family-faq')} className="hover:text-primary-600">Family FAQ</button></li>
                                 <li><button onClick={() => onNavigate('client-apply')} className="hover:text-primary-600">Create Account</button></li>
@@ -51,7 +51,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                             <h4 className="font-bold text-slate-900 mb-4">For Caregivers</h4>
                             <ul className="space-y-2 text-slate-500 text-sm">
                                 <li><button onClick={() => onNavigate('caregiver-signup')} className="hover:text-primary-600">Find Jobs</button></li>
-                                <li><button onClick={() => onNavigate('caregiver-login')} className="hover:text-primary-600">Log In</button></li>
+                                <li><button onClick={() => onNavigate('login')} className="hover:text-primary-600">Log In</button></li>
                                 <li><button onClick={() => onNavigate('trust')} className="hover:text-primary-600">Trust & Safety</button></li>
                                 <li><button onClick={() => onNavigate('caregiver-apply')} className="hover:text-primary-600">Apply Online</button></li>
                             </ul>

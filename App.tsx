@@ -22,9 +22,6 @@ const ReviewSystem = lazy(() => import('./components/ReviewSystem'));
 const WeeklySummary = lazy(() => import('./components/WeeklySummary'));
 const InterviewOutcome = lazy(() => import('./components/InterviewOutcome'));
 const CaregiverDashboard = lazy(() => import('./components/CaregiverDashboard').then(module => ({ default: module.CaregiverDashboard })));
-const ClientLogin = lazy(() => import('./components/ClientLogin').then(module => ({ default: module.ClientLogin })));
-const CaregiverLogin = lazy(() => import('./components/CaregiverLogin').then(module => ({ default: module.CaregiverLogin })));
-const ForgotPassword = lazy(() => import('./components/ForgotPassword').then(module => ({ default: module.ForgotPassword })));
 const AdminView = lazy(() => import('./components/AdminView').then(module => ({ default: module.AdminView })));
 const AuditDashboard = lazy(() => import('./components/admin/AuditDashboard').then(module => ({ default: module.AuditDashboard })));
 const JoinFamilyPage = lazy(() => import('./components/pages/JoinFamilyPage'));
@@ -38,7 +35,6 @@ const PaymentSuccess = lazy(() => import('./components/PaymentSuccess').then(mod
 const PaymentCancel = lazy(() => import('./components/PaymentCancel').then(module => ({ default: module.PaymentCancel })));
 const CarePlan = lazy(() => import('./components/CarePlan').then(module => ({ default: module.CarePlan })));
 const HowItWorks = lazy(() => import('./components/HowItWorks').then(module => ({ default: module.HowItWorks })));
-const LoginPage = lazy(() => import('./components/LoginPage').then(module => ({ default: module.LoginPage })));
 const Subscription = lazy(() => import('./components/Subscription').then(module => ({ default: module.Subscription })));
 const NotFound = lazy(() => import('./components/NotFound').then(module => ({ default: module.NotFound })));
 const CaregiverCalendarPage = lazy(() => import('./components/caregiver/CaregiverCalendarPage').then(module => ({ default: module.CaregiverCalendarPage })));
@@ -67,8 +63,6 @@ const PhoneSignupPage     = lazy(() => import('./components/auth/PhoneSignupPage
 const AuthLoginPage       = lazy(() => import('./components/auth/LoginPage'));
 const UploadPage          = lazy(() => import('./components/pages/UploadPage'));
 const GenericSuccessPage  = lazy(() => import('./components/pages/GenericSuccessPage'));
-const ClientSignup = lazy(() => import('./components/ClientSignup').then(m => ({ default: m.ClientSignup })));
-const CaregiverApply = lazy(() => import('./components/CaregiverApply').then(m => ({ default: m.CaregiverApply })));
 const TermsOfServicePage  = lazy(() => import('./components/pages/TermsOfServicePage'));
 const PrivacyPolicyPage   = lazy(() => import('./components/pages/PrivacyPolicyPage'));
 
@@ -119,7 +113,7 @@ const PublicOnlyRoute: React.FC<{ element: React.ReactElement }> = ({ element })
 const ClientRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
   const { currentUser, authResolved } = useCareConnex();
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
-  if (!currentUser) return <Navigate to="/client/login" replace />;
+  if (!currentUser) return <Navigate to="/login" replace />;
   if (currentUser.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
   return element;
 };
@@ -127,7 +121,7 @@ const ClientRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => 
 const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
   const { currentUser, authResolved } = useCareConnex();
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
-  if (!currentUser) return <Navigate to="/caregiver/login" replace />;
+  if (!currentUser) return <Navigate to="/login" replace />;
   if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
   return element;
 };
@@ -135,7 +129,7 @@ const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) 
 const AdminRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
   const { authResolved, currentUser } = useCareConnex();
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
-  if (!currentUser) return <Navigate to="/client/login" replace />;
+  if (!currentUser) return <Navigate to="/login" replace />;
   if (currentUser.userType !== 'admin') return <Navigate to="/" replace />;
   return element;
 };
@@ -209,14 +203,16 @@ const AppContent: React.FC = () => {
       case 'help-general': navigate('/help/general'); break;
       case 'subscription': navigate('/pricing'); break;
       case 'client-signup': navigate('/client/signup'); break;
-      case 'client-login': navigate('/client/login'); break;
+      // Phone-OTP is the only login; legacy view names are aliases to /login.
+      case 'login':
+      case 'client-login':
+      case 'caregiver-login':
+      case 'forgot-password-client':
+      case 'forgot-password-caregiver': navigate('/login'); break;
       case 'client-intake': navigate('/client/dashboard'); break;
-      case 'forgot-password-client': navigate('/client/forgot-password'); break;
-      case 'forgot-password-caregiver': navigate('/caregiver/forgot-password'); break;
       case 'caregiver-signup': navigate('/caregiver/signup'); break;
-      case 'client-apply': navigate('/client/apply'); break;
-      case 'caregiver-apply': navigate('/caregiver/apply-web'); break;
-      case 'caregiver-login': navigate('/caregiver/login'); break;
+      case 'client-apply': navigate('/start?role=client'); break;
+      case 'caregiver-apply': navigate('/start?role=caregiver'); break;
       case 'client': navigate('/client/dashboard'); break;
       case 'client-profile': navigate('/client/profile'); break;
       case 'client-inbox': navigate('/client/inbox'); break;
@@ -296,18 +292,19 @@ const AppContent: React.FC = () => {
               The role= query param selects between the senior-friendly family mode and
               the leaner caregiver mode. See components/auth/onboarding/OnboardingFlow.tsx. */}
           <Route path="/client/signup" element={<Navigate to="/start?role=client" replace />} />
-          <Route path="/client/login" element={<PublicOnlyRoute element={<ClientLogin onNavigate={handleNavigation} onShowToast={addToast} />} />} />
+          {/* Legacy email/password auth routes — phone OTP at /login is the only login */}
+          <Route path="/client/login" element={<Navigate to="/login" replace />} />
           <Route path="/client/intake" element={<Navigate to="/client/dashboard" replace />} />
           <Route path="/client/profile" element={<ClientRoute element={<ClientProfileDashboard />} />} />
-          <Route path="/client/forgot-password" element={<ForgotPassword userType="client" onNavigate={handleNavigation} onShowToast={addToast} />} />
+          <Route path="/client/forgot-password" element={<Navigate to="/login" replace />} />
 
           <Route path="/caregiver/signup" element={<Navigate to="/start?role=caregiver" replace />} />
-          <Route path="/client/apply" element={<PublicOnlyRoute element={<ClientSignup onNavigate={handleNavigation} onShowToast={addToast} />} />} />
-          <Route path="/caregiver/apply-web" element={<PublicOnlyRoute element={<CaregiverApply onNavigate={handleNavigation} onShowToast={addToast} />} />} />
+          <Route path="/client/apply" element={<Navigate to="/start?role=client" replace />} />
+          <Route path="/caregiver/apply-web" element={<Navigate to="/start?role=caregiver" replace />} />
           {/* Web caregiver signup retired — Cara SMS (/start) is the canonical onboarding. Redirect preserves any existing bookmarks/links. */}
           <Route path="/caregiver/apply" element={<Navigate to="/start?role=caregiver" replace />} />
-          <Route path="/caregiver/login" element={<PublicOnlyRoute element={<CaregiverLogin onNavigate={handleNavigation} onShowToast={addToast} />} />} />
-          <Route path="/caregiver/forgot-password" element={<ForgotPassword userType="caregiver" onNavigate={handleNavigation} onShowToast={addToast} />} />
+          <Route path="/caregiver/login" element={<Navigate to="/login" replace />} />
+          <Route path="/caregiver/forgot-password" element={<Navigate to="/login" replace />} />
 
           <Route path="/client/dashboard" element={<ClientRoute element={<ClientDashboard onNavigate={handleNavigation} />} />} />
           <Route path="/client/account" element={<ClientRoute element={<AccountSettings />} />} />

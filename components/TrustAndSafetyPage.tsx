@@ -7,14 +7,12 @@ import {
 import { Button } from './ui/Button';
 import { SEO } from './SEO';
 import { Footer } from './landing/Footer';
-import { LoginModal } from './landing/LoginModal';
 
 interface TrustAndSafetyPageProps {
    onNavigate: (view: ViewType) => void;
 }
 
 export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNavigate }) => {
-   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
    const trustTools = [
       {
@@ -115,7 +113,7 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
                   </nav>
 
                   <div className="flex items-center space-x-4">
-                     <button onClick={() => setIsLoginModalOpen(true)} className="hidden md:block text-slate-600 hover:text-primary-600 font-medium">Log In</button>
+                     <button onClick={() => onNavigate('login')} className="hidden md:block text-slate-600 hover:text-primary-600 font-medium">Log In</button>
                      <Button onClick={() => onNavigate('client-signup')}>Get Started</Button>
                   </div>
                </div>
@@ -277,10 +275,6 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
             </section>
 
             <Footer onNavigate={onNavigate} />
-
-            {isLoginModalOpen && (
-               <LoginModal onNavigate={onNavigate} onClose={() => setIsLoginModalOpen(false)} />
-            )}
          </main>
       </div>
    );

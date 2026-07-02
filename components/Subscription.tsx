@@ -88,7 +88,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                             </nav>
 
                             <div className="flex gap-3">
-                                <Button variant="secondary" size="sm" onClick={() => onNavigate('client-login')}>
+                                <Button variant="secondary" size="sm" onClick={() => onNavigate('login')}>
                                     Sign In
                                 </Button>
                                 <Button size="sm" onClick={() => onNavigate('client-signup')}>

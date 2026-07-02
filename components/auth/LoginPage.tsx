@@ -97,20 +97,18 @@ export const AuthLoginPage: React.FC = () => {
     setLoading(true);
     try {
       const cred = await confirmation.confirm(code);
-      // Role-aware landing. Resolve the profile directly rather than through
-      // context, whose missing-doc fallback defaults to 'client' — a user
-      // with no profile doc belongs in onboarding, not on a broken dashboard.
+      // Role-aware landing on the Chat tab — chat is the home surface
+      // (tomo-style). A brand-new account with no profile also lands on chat,
+      // which renders the "Meet Cara" get-set-up state instead of bouncing
+      // straight into the signup wizard.
       const uid = cred?.user?.uid ?? auth?.currentUser?.uid;
-      let dest = '/start';
+      let dest = '/client/chat';
       if (uid) {
         const profile = await dbService.getUser(uid).catch(() => null);
         // AdminUser types userType as client|caregiver; admin lives in the raw doc.
         const userType = profile?.userType as string | undefined;
-        if (userType) {
-          dest = userType === 'caregiver' ? '/caregiver/dashboard'
-               : userType === 'admin'     ? '/admin'
-               : '/client/dashboard';
-        }
+        if (userType === 'caregiver') dest = '/caregiver/chat';
+        else if (userType === 'admin') dest = '/admin';
       }
       navigate(dest, { replace: true });
     } catch (err: any) {

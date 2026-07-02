@@ -58,19 +58,19 @@ describe('AuthLoginPage', () => {
     hoisted.getUser.mockResolvedValue({ userType: 'client' });
   });
 
-  it('routes a client to /client/dashboard after OTP', async () => {
+  it('routes a client to the chat tab after OTP', async () => {
     render(<AuthLoginPage />);
     await enterPhoneAndSend();
     await enterOtp();
-    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/client/dashboard', { replace: true }));
+    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/client/chat', { replace: true }));
   });
 
-  it('routes a caregiver to /caregiver/dashboard', async () => {
+  it('routes a caregiver to the caregiver chat tab', async () => {
     hoisted.getUser.mockResolvedValue({ userType: 'caregiver' });
     render(<AuthLoginPage />);
     await enterPhoneAndSend();
     await enterOtp();
-    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/caregiver/dashboard', { replace: true }));
+    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/caregiver/chat', { replace: true }));
   });
 
   it('routes an admin to /admin', async () => {
@@ -81,12 +81,12 @@ describe('AuthLoginPage', () => {
     await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/admin', { replace: true }));
   });
 
-  it('routes a user with NO users doc to /start, never a dashboard', async () => {
+  it('routes a user with NO profile doc to the chat tab (Meet-Cara state), never a signup bounce', async () => {
     hoisted.getUser.mockResolvedValue(null);
     render(<AuthLoginPage />);
     await enterPhoneAndSend();
     await enterOtp();
-    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/start', { replace: true }));
+    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/client/chat', { replace: true }));
   });
 
   it('recovers from a failed send: fresh verifier, retry succeeds', async () => {

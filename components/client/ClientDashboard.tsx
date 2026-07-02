@@ -18,7 +18,6 @@ import { ReviewShiftHoursModal } from '../payroll/ReviewShiftHoursModal';
 import { SupportChatModal } from '../shared/SupportChatModal';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import firebase, { db } from '../../lib/firebase';
-import { ClientJobPostingWizard } from './ClientJobPostingWizard';
 import { LiveCareFeed } from './LiveCareFeed';
 import { CareJournalFeed } from './CareJournalFeed';
 import { FamilyEmergency } from './FamilyEmergency';
@@ -146,7 +145,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [reviewingShift, setReviewingShift] = useState<any | null>(null);
 
   const [showSupportModal, setShowSupportModal] = useState(false);
-  const [showWizard, setShowWizard] = useState(false);
   const [bookedCaregiverIds, setBookedCaregiverIds] = useState<Set<string>>(new Set());
   const [requestedCaregiverIds, setRequestedCaregiverIds] = useState<Set<string>>(new Set());
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
@@ -308,21 +306,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     return () => { try { (unsub as any)?.(); } catch {} };
   }, [currentUser?.uid]);
 
-  // Show wizard for new signups (sessionStorage flag) or users who never completed it
-  useEffect(() => {
-    const fromSignup = sessionStorage.getItem('careconnex_show_wizard') === 'true';
-    if (fromSignup) {
-      sessionStorage.removeItem('careconnex_show_wizard');
-      setShowWizard(true);
-      return;
-    }
-    if (!currentUser?.uid) return;
-    dbService.getUser(currentUser.uid)
-      .then(userData => {
-        if (!(userData as any)?.jobPostingCompleted) setShowWizard(true);
-      })
-      .catch(() => {});
-  }, [currentUser?.uid]);
+  // The welcome/job-posting wizard no longer auto-fires (founder decision
+  // 2026-07-02: it trapped users who hadn't finished intake). Posting a care
+  // request stays available via the Find Care tab and dashboard CTAs.
 
   // Load client progress, intake data, and matched caregivers
   useEffect(() => {
@@ -1935,14 +1921,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             </div>
           </div>
         </div>
-      )}
-
-      {/* Job Posting Wizard — fires once after signup */}
-      {showWizard && currentUser?.uid && (
-        <ClientJobPostingWizard
-          uid={currentUser.uid}
-          onComplete={() => setShowWizard(false)}
-        />
       )}
 
       {/* Family emergency button — visible only when a shift is active today */}

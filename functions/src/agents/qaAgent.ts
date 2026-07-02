@@ -1,5 +1,4 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import { getSharedClient } from "../utils/claudeClient";
 import { quickComplete, getOpenAIClient, openAiTokenLimitParam } from "../utils/openaiClient";
 import * as admin from "firebase-admin";
 import { startTyping, sendMessage } from "../linq/client";
@@ -27,9 +26,8 @@ import { sanitizePromptContext } from "./promptContext";
 import { buildCapabilityHint, DiscoveryRole } from "./capabilityDiscovery";
 import { findAdvertisedRecipeWithoutBacking, hasPaymentAuthorityLeak, type CareRecipeRole } from "./careRecipes";
 import { MCP_TOOLS, CAREGIVER_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
-import { callClaudeWithRetry } from "../utils/claudeRetry";
-import { resolveCaraModelConfig, shouldFallbackAgentToAnthropic } from "../config/caraModels";
-import { callOpenAiAgentTurn } from "./openaiToolLoop";
+import { resolveCaraModelConfig } from "../config/caraModels";
+import { runAgentModelTurn } from "./agentModelTurn";
 import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
@@ -385,6 +383,8 @@ export function buildClientSystemPrompt(
   return [
     `You ARE Cara — a care coordinator texting with a family member caring for ${seniorName}.`,
     `IDENTITY (non-negotiable): Speak in first person ("I", "me"). Never refer to yourself as "Cara" in the third person. Never tell the family to "reach out to Cara", "contact Cara", "message Cara", or that "a Cara team member will help" or "the Cara team will follow up" — you ARE Cara. Phrases like these are banned. If they want to connect with a caregiver, YOU connect them by calling schedule_interview or request_booking — don't tell them to reach out elsewhere.`,
+    // LAUNCH: wording pending counsel review (R15)
+    `HONESTY: Never VOLUNTEER a robotic self-label (e.g. describing yourself as an assistant powered by AI, or as a chatbot). But if the family directly asks whether you are an AI, a bot, or a human, answer honestly and warmly — never deny it or dodge the question.`,
     `You act; you don't describe what you could do. When you can do something, do it and report back.`,
     ``,
     `PROMISES MUST BE ACTIONS (non-negotiable): If you say "let me pull up", "let me find", "I'll check", "let me look that up", "give me a moment", "I'll get back to you with X", or any phrase implying deferred work, you MUST call the relevant tool IN THE SAME TURN. Never end your reply with a promise to do work without having already called the tool that does it. The user gets the text reply and any tool calls as one atomic turn; if the tool isn't called now, the work never happens.`,
@@ -620,6 +620,8 @@ function buildCaregiverSystemPrompt(
   return [
     `You ARE Cara — a care coordinator texting with ${name}, one of our caregivers.`,
     `IDENTITY: Speak in first person. Never refer to yourself as "Cara" in the third person. Never say "reach out to Cara", "the Cara team will help", or anything that treats Cara as a separate entity. You ARE Cara.`,
+    // LAUNCH: wording pending counsel review (R15)
+    `HONESTY: Never VOLUNTEER a robotic self-label (e.g. describing yourself as an assistant powered by AI, or as a chatbot). But if the caregiver directly asks whether you are an AI, a bot, or a human, answer honestly and warmly — never deny it or dodge the question.`,
     `You act; you don't describe what you could do. When you can do something, do it and report back.`,
     ``,
     apptLine,
@@ -1719,41 +1721,13 @@ export async function runQaAgent(params: {
         metrics.patchedOrphans = (metrics.patchedOrphans ?? 0) + patched;
       }
       metrics.iterations = (metrics.iterations ?? 0) + 1;
-      const agentModel = resolveCaraModelConfig("agent");
-      metrics.modelProvider = agentModel.provider;
-      metrics.modelUsed = agentModel.model;
-      const response = agentModel.provider === "openai"
-        ? await callOpenAiAgentTurn({
-            client:     getOpenAIClient(),
-            model:      agentModel.model,
-            maxTokens:  1024,
-            system:     cachedSystem as any,
-            tools:      cachedTools as any,
-            toolChoice: forceTextReply ? "none" : "auto",
-            messages,
-          }).catch(async (err) => {
-            if (!shouldFallbackAgentToAnthropic()) throw err;
-            console.warn("qaAgent: OpenAI agent loop failed; falling back to Anthropic", err instanceof Error ? err.message : err);
-            metrics.modelProvider = "anthropic";
-            metrics.modelUsed = "claude-sonnet-4-6";
-            metrics.modelFallbackUsed = true;
-            return callClaudeWithRetry(getSharedClient(), {
-              model:       "claude-sonnet-4-6",
-              max_tokens:  1024,
-              system:      cachedSystem as any,
-              tools:       cachedTools as any,
-              tool_choice: forceTextReply ? { type: "none" } : { type: "auto" },
-              messages,
-            }, { timeoutMs: 15_000, maxAttempts: 1 });
-          })
-        : await callClaudeWithRetry(getSharedClient(), {
-            model:       "claude-sonnet-4-6",
-            max_tokens:  1024,
-            system:      cachedSystem as any,
-            tools:       cachedTools as any,
-            tool_choice: forceTextReply ? { type: "none" } : { type: "auto" },
-            messages,
-          }, { timeoutMs: 15_000, maxAttempts: 1 });
+      const response = await runAgentModelTurn({
+        system: cachedSystem,
+        tools: cachedTools,
+        forceTextReply,
+        messages,
+        metrics,
+      });
 
       // max_tokens cutoff while emitting tool_use blocks → tool input JSON may
       // be truncated. We can't safely execute partially-specified tool calls

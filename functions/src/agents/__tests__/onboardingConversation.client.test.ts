@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const hoisted = vi.hoisted(() => {
   const docState  = new Map<string, any>();
   const updates: Array<{ path: string; data: any }> = [];
+  const added:   Array<{ path: string; data: any }> = [];
 
   const makeDocRef = (path: string) => ({
     id: path.split("/").pop(),
@@ -54,13 +55,19 @@ const hoisted = vi.hoisted(() => {
   const makeCollRef = (path: string): any => {
     const ref: any = {};
     ref.doc = (id?: string) => makeDocRef(`${path}/${id ?? "auto"}`);
+    // .add() — used by admin_alerts writes (no caller-chosen doc id needed).
+    ref.add = vi.fn(async (data: any) => {
+      added.push({ path, data });
+      return makeDocRef(`${path}/auto-${added.length}`);
+    });
+    ref.where = () => ({ get: vi.fn(async () => ({ docs: [] })) });
     return ref;
   };
 
   return {
-    docState, updates,
+    docState, updates, added,
     collectionMock: vi.fn((p: string) => makeCollRef(p)),
-    reset: () => { docState.clear(); updates.length = 0; },
+    reset: () => { docState.clear(); updates.length = 0; added.length = 0; },
   };
 });
 
@@ -97,6 +104,32 @@ vi.mock("../../notifications", () => ({
   notifyAdminNewCaregiverSignup: vi.fn(async () => {}),
 }));
 vi.mock("../buildJobPost", () => ({ buildAndSaveJobPost: vi.fn(async () => {}) }));
+
+// Caregiver preview action (called by handleClientShowCaregivers on the way to
+// handleClientPresentPlan) — return a supply-available preview so the flow
+// proceeds into the price/identity step instead of the no-supply dead end.
+vi.mock("../actions/getCaregiverPreviewAction", () => ({
+  runGetCaregiverPreviewAction: vi.fn(async () => ({
+    available: true, widened: false, total: 1,
+    locationLabel: "your area", needsLabel: "care",
+    items: [{ name: "Alice" }],
+    message: "I found a great match near you: Alice.",
+  })),
+}));
+
+// Stripe — identity.verificationSessions.create is overridden per-test via
+// stripeIdentityCreate; prices.retrieve always resolves so describeClientPrice
+// (called earlier in handleClientPresentPlan) never throws.
+let stripeIdentityCreate = vi.fn(async () => ({ id: "vs_test", url: "https://stripe.test/identity" }));
+vi.mock("stripe", () => ({
+  default: class StripeMock {
+    identity = { verificationSessions: { create: (...args: any[]) => stripeIdentityCreate(...args) } };
+    prices   = { retrieve: vi.fn(async () => ({ id: "price_test", unit_amount: 9900, recurring: { interval: "month" } })) };
+    checkout = { sessions: { create: vi.fn(async () => ({ id: "cs_test", url: "https://stripe.test/checkout" })) } };
+    accounts = { create: vi.fn(async () => ({ id: "acct_test" })) };
+    accountLinks = { create: vi.fn(async () => ({ url: "https://stripe.test/connect" })) };
+  },
+}));
 
 // ── Network-touching helpers ───────────────────────────────────────────────────
 const sentMessages: Array<{ chatId: string; text: string }> = [];
@@ -144,7 +177,8 @@ vi.mock("../../utils/openaiClient", () => ({
   }),
 }));
 
-import { handleOnboardingStep } from "../onboardingConversation";
+import { handleOnboardingStep, continueAfterClientCollection } from "../onboardingConversation";
+import { t as tr } from "../../utils/language";
 
 const PHONE = "+15555550100";
 const CHAT  = "chat-1";
@@ -167,6 +201,7 @@ beforeEach(() => {
   sentMessages.length = 0;
   questionMode = false;
   stepAnswer = "";
+  stripeIdentityCreate = vi.fn(async () => ({ id: "vs_test", url: "https://stripe.test/identity" }));
 });
 
 describe("client onboarding steps — characterization", () => {
@@ -339,5 +374,87 @@ describe("client onboarding steps — characterization", () => {
     expect(stored.onboardingStep).toBe("client_ask_senior");
     // And there was at least one session update carrying the step advance.
     expect(allSessionUpdates().some(u => u.onboardingStep === "client_ask_senior")).toBe(true);
+  });
+});
+
+// ── U11 Part 1: honest disclosure at first contact ───────────────────────────
+// otp_greeting is the very first message a brand-new phone number receives
+// (before onboardingStep even exists). It must keep its warmth but disclose
+// that Cara is automated with a real team behind her (CA B.O.T. Act).
+describe("first-contact disclosure (otp_greeting)", () => {
+  it("English greeting discloses automation while keeping the warm intro", () => {
+    const msg = tr.otp_greeting("123456", "en");
+    expect(msg).toContain("I'm Cara");
+    expect(msg).toContain("automated care coordinator");
+    expect(msg).toContain("real team backs me up");
+    expect(msg).toContain("123456");
+  });
+
+  it("Spanish greeting discloses automation while keeping the warm intro", () => {
+    const msg = tr.otp_greeting("123456", "es");
+    expect(msg).toContain("soy Cara");
+    expect(msg).toContain("coordinadora de cuidado automatizada");
+    expect(msg).toContain("123456");
+  });
+});
+
+// ── U11 Part 2: identity-gate visibility on Stripe Identity failure ─────────
+// When createClientIdentitySession throws (e.g. Stripe Identity outage), the
+// flow must still fall back to the payment link (unchanged behavior), but now
+// it must ALSO persist a needsIdentityVerification flag on the session and
+// raise an admin_alerts doc so ops isn't relying on console.error alone.
+describe("identity-gate visibility on Stripe Identity failure", () => {
+  it("falls back to payment AND persists the session flag AND writes admin_alerts", async () => {
+    stripeIdentityCreate = vi.fn(async () => { throw new Error("stripe identity outage"); });
+
+    seedSession("client_confirm_intake", {
+      firstName: "Maria", seniorName: "Dorothy", city: "Austin", careNeeds: ["bathing"],
+    });
+    // handleClientConfirmIntake reads "confirm" vs "edit" via parseWithClaude/quickComplete.
+    stepAnswer = "confirm";
+
+    await handleOnboardingStep(PHONE, CHAT, "yes that's right", seedSession("client_confirm_intake", {
+      firstName: "Maria", seniorName: "Dorothy", city: "Austin", careNeeds: ["bathing"],
+    }), { service: "SMS" });
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+
+    // (a) payment fallback fires — step lands on client_send_payment (or beyond,
+    // since handleClientSendPayment runs synchronously after the fallback).
+    expect(
+      allSessionUpdates().some(u => u.onboardingStep === "client_send_payment")
+    ).toBe(true);
+
+    // (b) session flag persisted via mergeOnboardingData
+    expect(stored.onboardingData.needsIdentityVerification).toBe(true);
+    expect(typeof stored.onboardingData.identityGateSkippedAt).toBe("string");
+
+    // (c) admin_alerts written with the expected shape
+    const alert = hoisted.added.find(a => a.path === "admin_alerts");
+    expect(alert).toBeTruthy();
+    expect(alert!.data).toMatchObject({
+      type:     "identity_gate_skipped",
+      phone:    PHONE,
+      resolved: false,
+    });
+    expect(typeof alert!.data.error).toBe("string");
+    expect(typeof alert!.data.createdAt).toBe("string");
+  });
+
+  it("still sends the identity link on the happy path (no regression)", async () => {
+    seedSession("client_confirm_intake", {
+      firstName: "Maria", seniorName: "Dorothy", city: "Austin", careNeeds: ["bathing"],
+    });
+    stepAnswer = "confirm";
+
+    await handleOnboardingStep(PHONE, CHAT, "yes that's right", seedSession("client_confirm_intake", {
+      firstName: "Maria", seniorName: "Dorothy", city: "Austin", careNeeds: ["bathing"],
+    }), { service: "SMS" });
+
+    expect(sentMessages.some(m => m.text.includes("identity check"))).toBe(true);
+    expect(hoisted.added.find(a => a.path === "admin_alerts")).toBeUndefined();
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.onboardingData.needsIdentityVerification).toBeUndefined();
   });
 });

@@ -241,6 +241,8 @@ const CaregiverShell: React.FC<{ children: React.ReactNode }> = ({ children }) =
         </div>
         <div className="text-2xl font-bold tracking-tight">Cara</div>
         <p className="text-white/40 text-sm">Your care coordinator</p>
+        {/* LAUNCH: wording pending counsel review (R15) */}
+        <p className="text-white/25 text-xs">Cara is an automated coordinator backed by our care team.</p>
       </div>
       {children}
     </div>
@@ -271,6 +273,8 @@ const FamilyShell: React.FC<{ role: OnboardingRole | null; step: Step; children:
             <p className="text-slate-600 mt-2 text-lg leading-relaxed">
               Your care coordinator. She&rsquo;ll help you find the right caregiver for your family.
             </p>
+            {/* LAUNCH: wording pending counsel review (R15) */}
+            <p className="text-slate-400 mt-1 text-sm">Cara is an automated coordinator backed by our care team.</p>
           </div>
         )}
         {children}

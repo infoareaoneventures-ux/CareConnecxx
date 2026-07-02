@@ -1362,6 +1362,21 @@ async function handleClientPresentPlan(phone: string, chatId: string, session: A
     identityUrl = await createClientIdentitySession(phone);
   } catch (err) {
     console.error("handleClientPresentPlan createClientIdentitySession error — falling back to payment:", err);
+    // Identity verification was skipped (not completed) — persist that flag so
+    // ops can see who bypassed the identity check, and raise an admin_alerts
+    // doc so it's visible in the Control Room instead of only in logs.
+    await mergeOnboardingData(phone, {
+      needsIdentityVerification: true,
+      identityGateSkippedAt: new Date().toISOString(),
+    });
+    await db.collection("admin_alerts").add({
+      type:      "identity_gate_skipped",
+      phone,
+      error:     String(err),
+      createdAt: new Date().toISOString(),
+      resolved:  false,
+      severity:  "high",
+    }).catch(() => {});
     await updateSession(phone, { onboardingStep: "client_send_payment" });
     await handleClientSendPayment(phone, chatId, session);
     return;
@@ -3548,7 +3563,8 @@ async function answerQuestionMidFlow(text: string, session: AgentSession): Promi
       "HARD RULES: " +
       "(1) NEVER invent or refer to a website, app, dashboard, 'platform', 'search function', filters, or any self-serve tool — none exist; the user only ever texts you, and you handle the searching and matching yourself. " +
       "(2) If they named a place or a need (e.g. 'I'm looking for caregivers in San Jose'), reassure them you'll handle finding caregivers there — do NOT tell them to search. " +
-      "(3) Never call yourself an 'AI', 'AI assistant', 'AI care assistant', or 'chatbot', and never use phrases like 'I'm here to help' or 'let me know if you need further assistance'. " +
+      // LAUNCH: wording pending counsel review (R15)
+      "(3) Never VOLUNTEER a robotic self-label (e.g. describing yourself as an assistant powered by AI, or as a chatbot) and never refer to yourself in the third person. But if directly asked whether you are an AI, a bot, or a human, answer honestly and warmly — never deny it or dodge the question. Also never use phrases like 'I'm here to help' or 'let me know if you need further assistance'. " +
       "(4) If you don't actually know the answer, say you'll get it sorted — never make up a feature or process. " +
       "Don't re-ask the signup question; that's added automatically after your reply.",
     text,

@@ -32,6 +32,7 @@ const ClientProfile = lazy(() => import('./components/ClientProfile').then(modul
 const ClientProfileDashboard = lazy(() => import('./components/ClientProfileDashboard'));
 const CaregiverProfile = lazy(() => import('./components/CaregiverProfile').then(module => ({ default: module.CaregiverProfile })));
 const InboxView = lazy(() => import('./components/InboxView').then(module => ({ default: module.InboxView })));
+const CaraChatPage = lazy(() => import('./components/chat/CaraChat'));
 const StripeCallback = lazy(() => import('./components/StripeCallback').then(module => ({ default: module.StripeCallback })));
 const PaymentSuccess = lazy(() => import('./components/PaymentSuccess').then(module => ({ default: module.PaymentSuccess })));
 const PaymentCancel = lazy(() => import('./components/PaymentCancel').then(module => ({ default: module.PaymentCancel })));
@@ -342,7 +343,10 @@ const AppContent: React.FC = () => {
             }}
           />} />} />
 
+          <Route path="/client/chat" element={<ClientRoute element={<CaraChatPage />} />} />
+
           <Route path="/caregiver/dashboard" element={<CaregiverRoute element={<CaregiverDashboard onNavigate={handleNavigation} />} />} />
+          <Route path="/caregiver/chat" element={<CaregiverRoute element={<CaraChatPage />} />} />
           <Route path="/caregiver/profile" element={<CaregiverRoute element={<CaregiverProfile onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/caregiver/inbox" element={<CaregiverRoute element={<InboxView userType="caregiver" onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/caregiver/calendar" element={<CaregiverRoute element={<CaregiverCalendarPage onNavigate={handleNavigation} />} />} />

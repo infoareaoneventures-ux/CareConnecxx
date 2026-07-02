@@ -1788,6 +1788,50 @@ export const dbService = {
         });
     },
 
+    // ── Cara web chat (threads/cara_{uid} — the mirrored SMS/iMessage thread) ──
+    // Messages are server-written only (firestore.rules); the web sends via the
+    // v1-chatWithCara callable and renders whatever lands in the thread.
+
+    caraThreadId: (): string | null =>
+        auth?.currentUser ? `cara_${auth.currentUser.uid}` : null,
+
+    subscribeToCaraThread: (onUpdate: (thread: { id: string; [key: string]: any } | null) => void) => {
+        if (isConfigured && db && auth?.currentUser) {
+            return db.collection('threads').doc(`cara_${auth.currentUser.uid}`).onSnapshot(
+                (snap) => onUpdate(snap.exists ? { id: snap.id, ...snap.data() } : null),
+                (error) => {
+                    if (error.code !== 'permission-denied') console.error('Cara thread subscription error:', error);
+                    onUpdate(null);
+                }
+            );
+        }
+        return () => { };
+    },
+
+    clearCaraThreadUnread: async () => {
+        // The only client-side write firestore.rules allows on a Cara thread.
+        if (isConfigured && db && auth?.currentUser) {
+            await db.collection('threads').doc(`cara_${auth.currentUser.uid}`)
+                .update({ unreadCount: 0 })
+                .catch(() => { /* thread may not exist yet */ });
+        }
+    },
+
+    sendCaraMessage: async (message: string, clientMessageId: string): Promise<{
+        available: boolean;
+        status?: 'ok' | 'rateLimited' | 'notSetUp' | 'finishSetup' | 'caraBusy';
+        reply?: string;
+        rateLimited?: boolean;
+        showMatches?: boolean;
+        optedOut?: boolean;
+        clientMessageId?: string;
+    }> => {
+        if (!functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('v1-chatWithCara');
+        const res = await fn({ message: sanitizeMessage(message), clientMessageId });
+        return res.data;
+    },
+
     getCarePlan: async (uid: string): Promise<CarePlan> => {
         if (isConfigured && db) {
             try {

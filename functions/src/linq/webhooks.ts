@@ -1020,17 +1020,15 @@ const handleInboundInner = traceable(
     );
 
     if (service === "iMessage") await startTyping(chatId).catch(() => {});
+    // LAUNCH: wording pending counsel review (R15)
     const coldIntro = preferredLanguage === "es"
-      ? "¡Hola! Soy Cara, tu coordinadora de cuidados con IA. Ayudo a las familias a encontrar cuidadores de " +
-        "confianza con verificación de antecedentes — y a los cuidadores a encontrar trabajo — todo aquí por mensaje.\n\n" +
-        "¿Buscas cuidado para un ser querido, o eres un cuidador?\n\n" +
-        "1️⃣  Necesito cuidado para alguien\n" +
-        "2️⃣  Soy cuidador buscando trabajo"
-      : "Hi — I'm Cara, your AI care coordinator. I help families find trusted, background-checked caregivers — " +
-        "and help caregivers find work — all right here by text.\n\n" +
-        "Are you looking for care for a loved one, or are you a caregiver?\n\n" +
-        "1️⃣  I need care for someone\n" +
-        "2️⃣  I'm a caregiver looking for work";
+      ? "Hola — soy Cara, tu coordinadora de cuidado. Soy automatizada, y un equipo humano de verdad me respalda. " +
+        "Ayudo a las familias a encontrar cuidadores de confianza con verificación de antecedentes — y a los " +
+        "cuidadores a encontrar trabajo — todo aquí por mensaje.\n\n" +
+        "¿Buscas cuidado para un ser querido, o eres cuidador?"
+      : "Hi — I'm Cara, your care coordinator. I'm automated, and a real team backs me up. I help families find " +
+        "trusted, background-checked caregivers — and help caregivers find work — all right here by text.\n\n" +
+        "Are you looking for care for a loved one, or are you a caregiver yourself?";
     await sendMessage(chatId, coldIntro);
     // Share contact card AFTER the first outbound message — Linq requires at least
     // one outbound message in history before the share endpoint accepts the call.
@@ -1221,9 +1219,7 @@ const handleInboundInner = traceable(
       if (isStartOver) {
         await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "ask_role", onboardingData: {} });
         await sendMessage(chatId,
-          "Starting fresh! Are you looking for care for someone, or are you a caregiver?\n\n" +
-          "1️⃣  I need care for someone\n" +
-          "2️⃣  I'm a caregiver"
+          "Starting fresh! Are you looking for care for someone, or are you a caregiver yourself?"
         );
       } else {
         // Resume: restore checkpoint data and re-ask the current step's question
@@ -1624,10 +1620,7 @@ const handleInboundInner = traceable(
         if (reply === "accept") {
           await markOfferAccepted(phone);
           await sendMessage(chatId,
-            "Great — let's get you set up.\n\n" +
-            "Are you looking for care for a loved one, or are you a caregiver?\n\n" +
-            "1️⃣  I need care for someone\n" +
-            "2️⃣  I'm a caregiver looking for work"
+            "Great — let's get you set up. Are you looking for care for a loved one, or are you a caregiver yourself?"
           );
           return;
         }

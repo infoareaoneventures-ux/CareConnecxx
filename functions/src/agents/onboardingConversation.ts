@@ -855,6 +855,7 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       const msgKnown = await generateCaraMessage({
         audience: "family",
         context: `${knownName} just said they're looking for care for a loved one, and you already know their name is ${knownName}. ` +
+          `You ALREADY introduced yourself — never say "I'm Cara" or re-introduce yourself. ` +
           `Warmly acknowledge them BY NAME — do NOT ask their name again — then ask who they're looking for care for ` +
           `(the person's name and their relationship, e.g. "my mom Dorothy").`,
         fallback: `Thanks, ${knownName}. Who are we caring for — their name and your relationship?`,
@@ -867,7 +868,9 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
     await updateSession(phone, { onboardingStep: "client_ask_name", userType: "client" });
     const msg1 = await generateCaraMessage({
       audience: "family",
-      context: "Cara is greeting a new family member who just said they're looking for care for a loved one. Ask for their name warmly.",
+      context: "A new family member just said they're looking for care for a loved one. You ALREADY introduced " +
+        "yourself in the previous message — do NOT say your name or re-introduce yourself. Just warmly ask for " +
+        "their name.",
       fallback: "I'd love to help. What's your name?",
       maxTokens: 80,
       emotionalDirective,
@@ -884,6 +887,7 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       const msgKnownCg = await generateCaraMessage({
         audience: "caregiver",
         context: `${knownName} just said they're a caregiver looking for work, and you already know their name is ${knownName}. ` +
+          `You ALREADY introduced yourself — never say "I'm Cara" or re-introduce yourself. ` +
           `Warmly acknowledge them BY NAME — do NOT ask their name again — let them know setup takes about 5 minutes right here, ` +
           `then ask what city and zip code they're based in.`,
         fallback: `Great, ${knownName}! Setup takes about 5 minutes, all right here. What city and zip code are you based in?`,
@@ -896,7 +900,9 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
     await updateSession(phone, { onboardingStep: "caregiver_ask_name", userType: "caregiver" });
     const msg2 = await generateCaraMessage({
       audience: "caregiver",
-      context: "Cara is greeting a new caregiver who just said they're looking for work. Let them know profile setup takes about 5 minutes and everything happens right here over text. Then ask for their name.",
+      context: "A new caregiver just said they're looking for work. You ALREADY introduced yourself in the previous " +
+        "message — do NOT say your name or re-introduce yourself. Let them know profile setup takes about 5 minutes " +
+        "and everything happens right here over text. Then ask for their name.",
       fallback: "Great — let's get your profile set up. Takes about 5 minutes and everything happens right here.\n\nWhat's your name?",
       maxTokens: 80,
       emotionalDirective,

@@ -52,6 +52,8 @@ const bannedRuntimePhrases = [
   "the AI care assistant",
   "an AI care assistant",
   "your care assistant",
+  "AI care coordinator",
+  "coordinadora de cuidados con IA",
   "get back to you shortly",
   "I'll get back to you",
 ];

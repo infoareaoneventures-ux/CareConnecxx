@@ -72,8 +72,8 @@ export const t = {
 
   otp_verified_role_question: (lang: Language): string =>
     lang === "es"
-      ? `Verificado — gracias.\n\n¿Estás buscando cuidado para alguien, o eres cuidador/a?\n\n1️⃣ Necesito cuidado para alguien\n2️⃣ Soy cuidador/a`
-      : `Verified — thanks.\n\nAre you looking for care for someone, or are you a caregiver?\n\n1️⃣ I need care for someone\n2️⃣ I'm a caregiver`,
+      ? `Verificado — gracias.\n\n¿Estás buscando cuidado para alguien, o eres cuidador/a?`
+      : `Verified — thanks.\n\nAre you looking for care for someone, or are you a caregiver yourself?`,
 
   otp_resend_too_soon: (lang: Language): string =>
     lang === "es"

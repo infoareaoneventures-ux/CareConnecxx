@@ -91,11 +91,11 @@ export const sendStaleSessionNudges = functions.pubsub
           context =
             `You haven't heard back from this person (name: ${firstName || "unknown"}) in a couple of days. ` +
             `They first reached out about care but never told you whether they need care for a loved one or are a caregiver looking for work. ` +
-            `Send a warm, no-pressure nudge that re-opens the conversation and lays out the two options as a simple numbered list: ` +
-            `"1️⃣ I need care for someone" and "2️⃣ I'm a caregiver". Keep it short.`;
+            `Send a warm, no-pressure nudge that re-opens the conversation and asks naturally whether they're ` +
+            `looking for care for someone or are a caregiver themselves. No numbered lists or menus. Keep it short.`;
           fallback =
-            `Hi${namePart}, still thinking about care?\n\nJust reply when you're ready:\n\n` +
-            `1️⃣ I need care for someone\n2️⃣ I'm a caregiver`;
+            `Hi${namePart}, still thinking about care? Whenever you're ready, just tell me — ` +
+            `are you looking for care for someone, or are you a caregiver yourself?`;
         } else if (userType === "caregiver") {
           if (step === "caregiver_send_bgcheck" || step === "caregiver_awaiting_bgcheck") {
             context = `${firstName || "This caregiver"} stalled at the background-check step — the last thing before families can book them. Warmly nudge them: families can't book until it's done, it takes about 5 minutes, and they can reply here to get the link again.`;

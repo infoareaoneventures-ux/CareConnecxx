@@ -232,30 +232,42 @@ service cloud.firestore {
     // ==========================================
     match /threads/{threadId} {
       // Only participants can read/write
-      allow read: if isAuthenticated() && 
+      allow read: if isAuthenticated() &&
         request.auth.uid in resource.data.participants;
-      
-      allow update: if isAuthenticated() && 
-        request.auth.uid in resource.data.participants;
-      
+
+      // Cara threads (isCaraThread == true) are written server-side only
+      // (Admin SDK via threadMirror / chatWithCara); the sole client-side
+      // update allowed is clearing the unread counter.
+      allow update: if isAuthenticated() &&
+        request.auth.uid in resource.data.participants &&
+        (
+          resource.data.get('isCaraThread', false) != true ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unreadCount'])
+        );
+
       allow delete: if isAdmin();
-      
-      // Create new thread
-      allow create: if isAuthenticated() && 
+
+      // Create new thread (clients can never create Cara threads)
+      allow create: if isAuthenticated() &&
         request.auth.uid in request.resource.data.participants &&
         request.resource.data.participants is list &&
-        request.resource.data.participants.size() >= 2;
-      
+        request.resource.data.participants.size() >= 2 &&
+        request.resource.data.get('isCaraThread', false) != true;
+
       // Subcollection: messages
       match /messages/{messageId} {
-        // Only thread participants can read/write messages
-        allow read: if isAuthenticated() && 
+        // Only thread participants can read messages
+        allow read: if isAuthenticated() &&
           request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
-        
-        allow write: if isAuthenticated() && 
+
+        // Cara-thread messages are server-only: clients cannot create, edit,
+        // or delete them (prevents forging senderId 'cara' into the record).
+        allow write: if isAuthenticated() &&
+          get(/databases/$(database)/documents/threads/$(threadId)).data.get('isCaraThread', false) != true &&
           request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
-        
-        allow create: if isAuthenticated() && 
+
+        allow create: if isAuthenticated() &&
+          get(/databases/$(database)/documents/threads/$(threadId)).data.get('isCaraThread', false) != true &&
           request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants &&
           request.resource.data.senderId == request.auth.uid;
       }

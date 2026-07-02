@@ -78,8 +78,11 @@ export interface ConversationStep {
    */
   parse: (raw: string, session: AgentSession) => Record<string, unknown> | null;
 
-  /** Next `onboardingStep`. `null` = terminal or handed to a bespoke handler. */
-  nextStep: string | null;
+  /** Next `onboardingStep`. `null` = terminal or handed to a bespoke handler.
+   *  A function receives the session (with this step's fields already merged)
+   *  so a step can branch — e.g. skip the "who are you caring for" question
+   *  when the sender is seeking care for themselves. */
+  nextStep: string | null | ((session: AgentSession) => string | null);
 
   /** Question to re-ask after answering a mid-flow question. */
   reask: (session: AgentSession) => string;
@@ -143,12 +146,14 @@ export async function runStep(
     return;
   }
 
-  // 4. Atomic merge + advance (one write, no half-advanced state).
-  await deps.mergeAndAdvance(phone, fields, step.nextStep);
-
-  // Reflect the write in memory so nextQuestion() sees the just-saved answer.
+  // Reflect the parse in memory FIRST so a functional nextStep (and later
+  // nextQuestion()) sees the just-saved answer.
   session.onboardingData = { ...(session.onboardingData ?? {}), ...fields };
-  if (step.nextStep) session.onboardingStep = step.nextStep;
+  const nextStep = typeof step.nextStep === "function" ? step.nextStep(session) : step.nextStep;
+
+  // 4. Atomic merge + advance (one write, no half-advanced state).
+  await deps.mergeAndAdvance(phone, fields, nextStep);
+  if (nextStep) session.onboardingStep = nextStep;
 
   // 5. Acknowledge + ask the next question.
   const next = await step.nextQuestion(session);

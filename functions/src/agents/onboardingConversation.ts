@@ -837,16 +837,54 @@ async function handleVerifyPhone(
 async function handleAskRole(phone: string, chatId: string, text: string, session?: AgentSession): Promise<void> {
   const raw = await parseWithClaude(
     'The user was just asked: "Are you looking for care for a loved one, or are you a caregiver yourself?" ' +
-    'client = they NEED care (for themselves or a loved one): "1", "family", "need care", "looking for care", ' +
-    '"care for my mom/dad/parent/wife/husband", "for my loved one", "for myself". ' +
+    'client = they need care for a LOVED ONE (someone else): "1", "family", "need care", "looking for care", ' +
+    '"care for my mom/dad/parent/wife/husband", "for my loved one". ' +
+    'self = they need care for THEMSELVES: "for myself", "for me", "I need help at home", "I\'m 78 and need a hand", ' +
+    '"it\'s for me". ' +
     'caregiver = they PROVIDE care professionally and want work: "2", "I\'m a caregiver", "CNA", "HHA", "nurse", ' +
     '"looking for work", "looking for a job", "I want to work". ' +
-    'CRITICAL: "looking for care" or "need care" means they NEED care → client. ' +
+    'CRITICAL: "looking for care" or "need care" means they NEED care → client (or self if clearly for themselves). ' +
     'Only "looking for WORK" or "looking for a JOB" means caregiver. ' +
-    'Reply with exactly one word: client or caregiver. If truly unclear, reply: unclear',
+    'Reply with exactly one word: client, self, or caregiver. If truly unclear, reply: unclear',
     text
   );
   const emotionalDirective = (session as any)?._emotionalDirective as string | undefined;
+  if (raw === "self") {
+    // Senior seeking care for THEMSELVES — the texter IS the care recipient.
+    // Pre-fill relationship (and senior name when known) so no step ever asks
+    // "who are you caring for", and every reply speaks to them directly.
+    const knownName = (session?.onboardingData?.firstName as string | undefined)?.trim();
+    await mergeOnboardingData(phone, {
+      relationship: "self",
+      ...(knownName ? { seniorName: knownName } : {}),
+    });
+    if (knownName) {
+      await updateSession(phone, { onboardingStep: "client_ask_needs", userType: "client" });
+      const msgSelf = await generateCaraMessage({
+        audience: "family",
+        context: `${knownName} just said they're looking for care for THEMSELVES. You ALREADY introduced yourself — ` +
+          `never re-introduce. Speak to them directly ("you", never "your loved one" or third person). Warmly ` +
+          `acknowledge them BY NAME and ask how old they are and what kind of help would make day-to-day easier.`,
+        fallback: `Thanks, ${knownName} — I'd love to help you directly. How old are you, and what would you like a hand with day to day?`,
+        maxTokens: 90,
+        emotionalDirective,
+      });
+      await sendMessage(chatId, msgSelf);
+      return;
+    }
+    await updateSession(phone, { onboardingStep: "client_ask_name", userType: "client" });
+    const msgSelfName = await generateCaraMessage({
+      audience: "family",
+      context: "Someone just said they're looking for care for THEMSELVES. You ALREADY introduced yourself in the " +
+        "previous message — do NOT say your name or re-introduce yourself. Speak to them directly and warmly ask " +
+        "their name. Mention — once, casually — that a voice memo works instead of typing if that's easier.",
+      fallback: "I'd be glad to help you directly. What's your name? And anytime typing feels like a pain, just send me a voice memo — I'll listen.",
+      maxTokens: 100,
+      emotionalDirective,
+    });
+    await sendMessage(chatId, msgSelfName);
+    return;
+  }
   if (raw === "client") {
     // If we already captured their name earlier (e.g. it rode in from the web form
     // or was given before the role was clear), NEVER ask for it again — that's the

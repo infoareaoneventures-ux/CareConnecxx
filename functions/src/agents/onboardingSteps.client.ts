@@ -49,16 +49,33 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
       id: "client_ask_name",
       parsePrompt:
         "Extract only the first name from this message. Reply with just the first name, nothing else. If you cannot find a name, reply: unknown",
-      parse(raw) {
+      parse(raw, session) {
         const safeName = (!raw || raw === "__parse_error__" || raw === "unknown") ? "there" : raw;
         if (safeName === "there") return null; // re-ask: "didn't catch your name"
+        // Self-seeker (set at the role step): the sender IS the care recipient —
+        // mirror their name into the senior slot so "who are you caring for" is
+        // never asked.
+        if ((session.onboardingData?.relationship as string) === "self") {
+          return { firstName: safeName, seniorName: safeName };
+        }
         return { firstName: safeName };
       },
-      nextStep: "client_ask_senior",
+      nextStep: (session) =>
+        (session.onboardingData?.relationship as string) === "self"
+          ? "client_ask_needs"
+          : "client_ask_senior",
       reask: () => "What's your name?",
       retry: () => "I didn't catch your name — could you share it?",
       async nextQuestion(session) {
         const safeName = (session.onboardingData?.firstName as string) ?? "there";
+        if ((session.onboardingData?.relationship as string) === "self") {
+          return generateCaraMessage({
+            audience: "family",
+            context: `Cara just learned the name of someone looking for care for THEMSELVES: ${safeName}. You're mid-conversation — do NOT greet again. Speak to them directly ("you", never "your loved one"). Warmly acknowledge and ask how old they are and what kind of help would make day-to-day easier for them.`,
+            fallback: `Nice to meet you, ${safeName}. How old are you, and what would you like a hand with day to day?`,
+            maxTokens: 80,
+          });
+        }
         return generateCaraMessage({
           audience: "family",
           context: `Cara just learned the client's name is ${safeName}. You're mid-conversation — do NOT greet again (no "Hi"/"Hey ${safeName}"). Warmly acknowledge and ask who they're looking for care for (name and relationship to them, e.g. "my mom Dorothy").`,
@@ -72,22 +89,38 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
     client_ask_senior: {
       id: "client_ask_senior",
       parsePrompt:
-        'Extract the senior\'s first name and the user\'s relationship to them from this message. Reply in JSON format: {"seniorName":"...","relationship":"..."}',
-      parse(raw) {
+        'Extract the senior\'s first name and the user\'s relationship to them from this message. ' +
+        'If the message says the care is for the SENDER THEMSELVES ("me", "myself", "it\'s for me", "I need the care"), ' +
+        'reply exactly: {"seniorName":"SELF","relationship":"self"}. ' +
+        'Otherwise reply in JSON format: {"seniorName":"...","relationship":"..."}',
+      parse(raw, session) {
         let seniorName = "your loved one", relationship = "family member";
         try {
           const parsed = JSON.parse(raw);
           seniorName   = parsed.seniorName   || seniorName;
           relationship = parsed.relationship || relationship;
         } catch { /* keep defaults */ }
+        // "It's for me" — the sender is the care recipient.
+        if (seniorName === "SELF" || relationship === "self") {
+          const own = (session.onboardingData?.firstName as string) || "you";
+          return { seniorName: own, relationship: "self" };
+        }
         return { seniorName, relationship };
       },
       nextStep: "client_ask_needs",
-      reask: () => "Now, who are you looking for care for? (Their name and your relationship, e.g. 'my mom Dorothy')",
-      retry: () => "Now, who are you looking for care for? (Their name and your relationship, e.g. 'my mom Dorothy')",
+      reask: () => "Now, who are you looking for care for? (Their name and your relationship — or just say it's for you)",
+      retry: () => "Now, who are you looking for care for? (Their name and your relationship, e.g. 'my mom Dorothy' — or just say it's for you)",
       async nextQuestion(session) {
         const seniorName   = (session.onboardingData?.seniorName as string)   ?? "your loved one";
         const relationship = (session.onboardingData?.relationship as string) ?? "family member";
+        if (relationship === "self") {
+          return generateCaraMessage({
+            audience: "family",
+            context: `Cara is onboarding someone looking for care for THEMSELVES (${seniorName}). Speak to them directly ("you", never third person). Ask how old they are and what kind of help would make day-to-day easier for them.`,
+            fallback: `Got it — I'd love to help you directly. How old are you, and what would you like a hand with day to day?`,
+            maxTokens: 80,
+          });
+        }
         return generateCaraMessage({
           audience: "family",
           context: `Cara is onboarding a family. They just said they're looking for care for ${seniorName} (their ${relationship}). Ask how old ${seniorName} is and what kind of help they need these days.`,

@@ -21,6 +21,11 @@ vi.mock("../utils/claudeClient", () => ({
 vi.mock("../utils/openaiClient", () => ({
   getOpenAIClient: () => ({ __client: "openai" }),
 }));
+const raiseProviderFailureAlert = vi.fn(async () => undefined);
+vi.mock("../observability/providerFailureAlert", () => ({
+  raiseProviderFailureAlert: (...a: unknown[]) => raiseProviderFailureAlert(...a),
+  classifyProviderError: () => "other",
+}));
 
 import { runAgentModelTurn } from "./agentModelTurn";
 

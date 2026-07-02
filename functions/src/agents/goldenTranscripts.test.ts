@@ -222,10 +222,11 @@ vi.mock("../mcp/server", () => ({
 
 vi.mock("./executionAgent",    () => ({ getActiveAgentForUser: vi.fn(async () => null) }));
 vi.mock("./contextManagement", () => ({
-  maybeRollUpHistory:        vi.fn(async () => undefined),
+  maybeRollUpHistory:        vi.fn(async () => false),
   buildToolResultContent:    vi.fn(async (_u: string, _n: string, r: unknown) => JSON.stringify(r)),
   patchDanglingToolCalls:    vi.fn(() => 0),
   truncateOldToolCallArgs:   vi.fn(() => 0),
+  HISTORY_WINDOW:            24,
 }));
 vi.mock("./toolCapabilities", () => ({
   selectToolsForIntent: (tools: unknown[]) => tools,

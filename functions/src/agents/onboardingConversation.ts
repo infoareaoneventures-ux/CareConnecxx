@@ -2734,7 +2734,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       // persona-shift detector recognizes both from day one.
       await addKnownNames(phone, [d.firstName as string, d.seniorName as string]);
 
-      // Initialize memory files with onboarding data
+      // Initialize memory files with onboarding data. Loud on failure with phone
+      // context — this is the completion-time bootstrap; a silent miss here means
+      // the client's profile/health memory files never exist and every later
+      // qaAgent turn falls through to the lazy re-bootstrap (or worse, stays empty
+      // if that also fails), with nobody paged either time.
       initializeMemoryFiles(uid ?? phone, {
         seniorName:   d.seniorName   as string | undefined,
         seniorAge:    d.age          as string | undefined,
@@ -2743,7 +2747,9 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         city:         d.city         as string | undefined,
         clientName:   d.firstName    as string | undefined,
         relationship: d.relationship as string | undefined,
-      }).catch((err) => console.error("initializeMemoryFiles error:", err));
+      }).catch((err) => console.error("initializeMemoryFiles error:", {
+        phone, uid: uid ?? null, error: err instanceof Error ? err.message : String(err),
+      }));
 
       Promise.all([
         writeMemoryFile(uid ?? phone, "recent_episodes", `# Recent Episodes\n`),

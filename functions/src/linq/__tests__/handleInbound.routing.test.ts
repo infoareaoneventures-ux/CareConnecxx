@@ -17,6 +17,24 @@ const hoisted = vi.hoisted(() => {
   const collState = new Map<string, any[]>();
   const updates: Array<{ path: string; data: any }> = [];
 
+  // Real Firestore's `{merge: true}` merges nested maps field-by-field rather than
+  // replacing them wholesale (e.g. .set({onboardingData: {seniorName: "X"}}, {merge:
+  // true}) adds seniorName into the existing onboardingData map instead of dropping
+  // its other keys). A shallow {...prev, ...data} spread doesn't reproduce that for
+  // nested-object values, so deep-merge plain objects one level of recursion at a
+  // time — matching the semantics the persistence net (webhooks.ts) actually relies on.
+  function deepMergePlainObjects(prev: any, data: any): any {
+    const out: any = { ...(prev ?? {}) };
+    for (const [k, v] of Object.entries(data ?? {})) {
+      const prevVal = out[k];
+      const bothPlainObjects =
+        v !== null && typeof v === "object" && !Array.isArray(v) &&
+        prevVal !== null && typeof prevVal === "object" && !Array.isArray(prevVal);
+      out[k] = bothPlainObjects ? deepMergePlainObjects(prevVal, v) : v;
+    }
+    return out;
+  }
+
   const makeDocRef = (path: string): any => ({
     id: path.split("/").pop(),
     path,
@@ -25,7 +43,7 @@ const hoisted = vi.hoisted(() => {
       data:   () => docState.get(path),
     })),
     set: vi.fn(async (data: any, opts?: any) => {
-      docState.set(path, opts?.merge ? { ...(docState.get(path) ??  {}), ...data } : data);
+      docState.set(path, opts?.merge ? deepMergePlainObjects(docState.get(path), data) : data);
     }),
     update: vi.fn(async (data: any) => {
       updates.push({ path, data });
@@ -735,6 +753,66 @@ describe("onboarding agent-loop flag routing", () => {
     expect(absorbClientFields).toHaveBeenCalled();
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData)
       .toMatchObject({ seniorName: "Jane" });
+  });
+
+  // U6 (review-validated partial-save gap): the model saved ONE of the three
+  // fields present in a front-loaded message (e.g. it called
+  // save_onboarding_field for firstName only). The old gate compared
+  // Object.keys(curData).length to preData and skipped the net entirely because
+  // SOME keys grew — dropping seniorName/age silently. The net must now run
+  // whenever required fields are still missing after the turn, regardless of
+  // whether the model saved zero or some fields, and absorbClientFields already
+  // returns only fields not already in curData, so the model-saved field is
+  // never touched/double-written by the net.
+  it("persistence net: model saves ONE of three fields present in the text → net persists the rest, none re-asked next turn", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    // Simulate: session started empty, model called save_onboarding_field for
+    // firstName only during runQaAgent, so the post-turn read already has it.
+    seedSession({ onboardingStep: "client_ask_name", onboardingData: {} });
+    runQaAgent.mockImplementationOnce(async (..._a: any[]) => {
+      hoisted.docState.set(`agent_sessions/${PHONE}`, {
+        ...hoisted.docState.get(`agent_sessions/${PHONE}`),
+        onboardingData: { firstName: "Sarah" },
+      });
+      return "qa reply";
+    });
+    // The net's absorbClientFields call fills in the two fields the model skipped.
+    absorbClientFields.mockResolvedValueOnce({ seniorName: "Dorothy", age: 82 });
+
+    await handleInbound(makeEvent("I'm Sarah, my mom Dorothy is 82"));
+
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(absorbClientFields).toHaveBeenCalled();
+    const finalData = hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData;
+    // The model-saved field is untouched AND the net-recovered fields are present.
+    expect(finalData).toMatchObject({ firstName: "Sarah", seniorName: "Dorothy", age: 82 });
+  });
+
+  // U6: the net's need_zip handling must mirror save_onboarding_field's
+  // mcp/server.ts branch (city saved but unrecognized, no zip yet) — ask for the
+  // ZIP and return, rather than letting the stuck-signup net advance the cursor
+  // past collection on an unconfirmed service area. Previously the net only
+  // special-cased the "out" verdict, not "need_zip" (review-validated asymmetry).
+  it("persistence net: need_zip service-area outcome asks for ZIP and does not advance the cursor", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({
+      onboardingStep: "client_ask_location",
+      onboardingData: { firstName: "Sarah", seniorName: "Dorothy", age: 82, careNeeds: ["bathing"] },
+    });
+    // Unrecognized city, no zip → evaluateServiceArea returns "need_zip".
+    absorbClientFields.mockResolvedValueOnce({ city: "Nowhereville" });
+
+    await handleInbound(makeEvent("we're in Nowhereville"));
+
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(absorbClientFields).toHaveBeenCalled();
+    // Asked for the ZIP.
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("ZIP"));
+    // Cursor did NOT advance past collection to the post-collection gate.
+    const finalStep = hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingStep;
+    expect(finalStep).not.toBe("client_ask_start");
+    // No second (contradictory) reply from the scripted runner.
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
   });
 
   it("loop throws: falls through to the scripted runner so the user is never wedged", async () => {

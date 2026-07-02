@@ -38,12 +38,15 @@ function makeChain(): any {
     limit: () => makeChain(),
     get: async () => {
       // Ambiguous: callers use either .data()/.exists (doc) or .docs/.empty
-      // (query). Return an object satisfying both shapes.
-      return { ...makeDocSnap({}), ...makeQuerySnap() };
+      // (query). Return an object satisfying both shapes. `ref` lets a doc-snap
+      // caller (e.g. getPrefetchedContext's snap.ref.delete()) chain back into
+      // this same permissive stub instead of throwing on undefined.
+      return { ...makeDocSnap({}), ...makeQuerySnap(), ref: chain };
     },
     set: async () => {},
     update: async () => {},
     add: async () => ({ id: "mock-id" }),
+    delete: async () => {},
   };
   return chain;
 }
@@ -94,7 +97,12 @@ vi.mock("../mcp/server", () => ({
 }));
 
 vi.mock("../memory/zepClient",     () => ({ getZepContext: vi.fn(), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
-vi.mock("../memory/memoryFiles",   () => ({ getMemoryContext: vi.fn() }));
+const getMemoryContext      = vi.fn(async () => "");
+const initializeMemoryFiles = vi.fn(async () => undefined);
+vi.mock("../memory/memoryFiles",   () => ({
+  getMemoryContext:      (...a: any[]) => getMemoryContext(...a),
+  initializeMemoryFiles: (...a: any[]) => initializeMemoryFiles(...a),
+}));
 vi.mock("../memory/learnedFacts",  () => ({ getRelevantFacts: vi.fn(() => Promise.resolve([])), detectAndApplyCorrection: vi.fn() }));
 vi.mock("../memory/preferences",   () => ({ getPreferences: vi.fn(() => Promise.resolve(null)), isInDND: () => false }));
 
@@ -113,8 +121,11 @@ vi.mock("./caraAgent", () => ({ buildClickableMessage: (s: string) => s }));
 vi.mock("./executionAgent",        () => ({ getActiveAgentForUser: vi.fn(() => Promise.resolve(null)) }));
 
 // contextManagement: the loop needs patch/truncate (no-op) in addition to the
-// two the pure-fn test stubbed.
+// two the pure-fn test stubbed. HISTORY_WINDOW is a plain constant read directly
+// by getConversationHistory's .limit(HISTORY_WINDOW + 1) — must mirror the real
+// module's value or that call throws on an undefined mock export.
 vi.mock("./contextManagement", () => ({
+  HISTORY_WINDOW:         24,
   maybeRollUpHistory:     vi.fn(() => Promise.resolve()),
   buildToolResultContent: vi.fn(async (_uid: string, _name: string, result: unknown) => JSON.stringify(result)),
   patchDanglingToolCalls: vi.fn(() => 0),
@@ -331,5 +342,42 @@ describe("runQaAgent onboarding mode — complete_collection missing-fields bran
 
     // The model was re-invoked after the incomplete signal (5 scripted msgs consumed).
     expect(mockedClaude).toHaveBeenCalledTimes(5);
+  });
+});
+
+// U6: memory-file init failure must be LOUD (console.error, with phone context)
+// rather than the previous silent console.warn — a silent miss here means the
+// lazy re-bootstrap keeps retrying every turn with nobody paged. This path is
+// the general (non-onboarding-mode) lazy bootstrap in runQaAgent: onboarding-mode
+// turns short-circuit memoryContext to "" via unconfirmedIdentity and never reach
+// it, so this exercises the branch directly with an account already present
+// (userId set, onboardingMode omitted) and empty memory context.
+describe("memory-file init failure logging (U6)", () => {
+  it("initializeMemoryFiles rejecting is logged via console.error with phone context", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    getMemoryContext.mockResolvedValueOnce("");
+    initializeMemoryFiles.mockRejectedValueOnce(new Error("storage bucket unavailable"));
+    mockedHandle.mockResolvedValue({ ok: true } as any);
+    scriptClaude([textMsg("Hi there!")]);
+
+    await runQaAgent({
+      ...baseParams,
+      onboardingMode: false,
+      onboardingRole: undefined,
+      userId: "uid-123",
+      session: { onboardingData: { seniorName: "Dorothy" } },
+      text: "hello",
+      skipSend: true,
+    });
+
+    // Fire-and-forget — allow the microtask queue to flush the rejection handler.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(initializeMemoryFiles).toHaveBeenCalled();
+    const errorCall = errorSpy.mock.calls.find((c) => c[0] === "qaAgent: lazy initializeMemoryFiles failed");
+    expect(errorCall).toBeTruthy();
+    expect(errorCall?.[1]).toMatchObject({ phone: baseParams.phone, userId: "uid-123" });
+
+    errorSpy.mockRestore();
   });
 });

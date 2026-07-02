@@ -1761,14 +1761,18 @@ const handleInboundInner = traceable(
         let   curData   = (after.onboardingData ?? {}) as Record<string, unknown>;
 
         // Persistence safety net: the agent loop depends on the MODEL calling
-        // save_onboarding_field. When it chats an answer but skips the tool, the
-        // field is lost and the cursor never moves (user perceives Cara as stuck /
-        // regressing). If the model saved nothing this turn, deterministically
-        // extract any fields from the user's message — the same parser the scripted
-        // runner trusts — and persist them, so collection never silently drops data.
-        const preData    = (session.onboardingData ?? {}) as Record<string, unknown>;
-        const modelSaved = Object.keys(curData).length > Object.keys(preData).length;
-        if (!modelSaved && text.trim() !== "") {
+        // save_onboarding_field. When it chats an answer but skips the tool — OR
+        // saves only SOME of the fields present in the message (a front-loaded
+        // answer like "Sarah, my mom Dorothy, 82" where the model only calls the
+        // tool for one of the three) — the rest are lost and the cursor never
+        // moves (user perceives Cara as stuck / regressing, or gets re-asked
+        // something they already answered). Run the deterministic extractor —
+        // the same parser the scripted runner trusts — whenever required fields
+        // are STILL missing after the turn, not only when the model saved zero
+        // keys. absorbClientFields only ever returns fields not already in
+        // curData, so a field the model DID save can never be double-written or
+        // overwritten by the net.
+        if (missingRequiredFields("client", curData).length > 0 && text.trim() !== "") {
           const absorbed = await absorbClientFields(text, curData).catch(() => ({}));
           if (Object.keys(absorbed).length > 0) {
             await db.collection("agent_sessions").doc(phone)
@@ -1786,6 +1790,17 @@ const handleInboundInner = traceable(
                 const { parkOutOfArea } = await import("../agents/serviceAreaGate");
                 await parkOutOfArea({ phone, role: "client", city: (curData.city as string) ?? "", zipCode: (curData.zipCode as string) ?? "", name: (curData.firstName as string) ?? "", onboardingData: curData });
                 await sendMessage(chatId, "I'm so sorry — we're not in your area just yet. I've added you to our waitlist and I'll reach out the moment we expand there. 💙");
+                await pushOnboardingStepToZep(step);
+                return;
+              }
+              // need_zip: mirror save_onboarding_field's mcp/server.ts handling —
+              // city saved but not recognized, no zip yet. Ask for the ZIP and
+              // return BEFORE the stuck-signup net below can advance the cursor
+              // past collection on an unconfirmed service area (the review-
+              // validated asymmetry: the net previously only special-cased "out").
+              if (sa === "need_zip" && absorbed.city && !curData.zipCode) {
+                const { askForZipMessage } = await import("../agents/serviceAreaGate");
+                await sendMessage(chatId, askForZipMessage());
                 await pushOnboardingStepToZep(step);
                 return;
               }

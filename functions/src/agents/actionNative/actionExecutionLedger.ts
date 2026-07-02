@@ -70,7 +70,10 @@ export async function claimCaraActionExecution(key: string): Promise<CaraActionE
         return { cached: false };
       });
     }
-  } catch {
+  } catch (err) {
+    // Fail-open: duplicate protection is offline for this call. Loud so
+    // incident review can see the dedupe was degraded (cf. webhookLedger).
+    console.error("actionExecutionLedger: claim failed open — duplicate protection offline for this call", { key, error: String(err) });
     return { cached: false };
   }
 }
@@ -96,9 +99,10 @@ export async function settleCaraActionExecution(
     } else {
       await ref.delete();
     }
-  } catch {
+  } catch (err) {
     // Best effort only. A missed settlement risks one retry, but must not block
     // the user-facing action that already completed.
+    console.error("actionExecutionLedger: settle failed — claim may be stranded until stale-reclaim", { key, ok: outcome.ok, error: String(err) });
   }
 }
 

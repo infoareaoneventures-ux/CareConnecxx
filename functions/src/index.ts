@@ -225,6 +225,8 @@ export { send1099Notifications } from './scheduled/taxReminder';
 
 // MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
 export * from './migrations/migrateSeniorsToHousehold';
+export * from './migrations/backfillCaregiverSessionUserIds';
+export * from './migrations/linkPhoneProviders';
 
 // fixAcceptedCounterPay migration already executed — not exported
 

@@ -3057,6 +3057,10 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
 
       await updateSession(phone, {
         caregiverId,
+        // userId keeps the web-thread mirror working for caregivers: the
+        // threadMirror resolves sessions by userId, and phone-OTP web login
+        // signs into this same auth uid (U3, cara-web-chat plan).
+        ...(authUid ? { userId: authUid } : {}),
         onboardingStep: "caregiver_ask_permissions",
       });
 

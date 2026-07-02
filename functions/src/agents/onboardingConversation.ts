@@ -857,8 +857,9 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
         context: `${knownName} just said they're looking for care for a loved one, and you already know their name is ${knownName}. ` +
           `You ALREADY introduced yourself — never say "I'm Cara" or re-introduce yourself. ` +
           `Warmly acknowledge them BY NAME — do NOT ask their name again — then ask who they're looking for care for ` +
-          `(the person's name and their relationship, e.g. "my mom Dorothy").`,
-        fallback: `Thanks, ${knownName}. Who are we caring for — their name and your relationship?`,
+          `(the person's name and their relationship, e.g. "my mom Dorothy"). Mention — once, casually — that they ` +
+          `can also just send a voice memo instead of typing, and you'll listen.`,
+        fallback: `Thanks, ${knownName}. Who are we caring for — their name and your relationship? (And if typing it all out is a pain, just send me a voice memo — I'll listen.)`,
         maxTokens: 80,
         emotionalDirective,
       });
@@ -869,10 +870,11 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
     const msg1 = await generateCaraMessage({
       audience: "family",
       context: "A new family member just said they're looking for care for a loved one. You ALREADY introduced " +
-        "yourself in the previous message — do NOT say your name or re-introduce yourself. Just warmly ask for " +
-        "their name.",
-      fallback: "I'd love to help. What's your name?",
-      maxTokens: 80,
+        "yourself in the previous message — do NOT say your name or re-introduce yourself. Warmly ask for " +
+        "their name, and mention — once, casually — that if typing it all out ever feels like a pain, they can " +
+        "just send you a voice memo and you'll listen.",
+      fallback: "I'd love to help. What's your name? And anytime typing feels like a pain, just send me a voice memo — I'll listen.",
+      maxTokens: 100,
       emotionalDirective,
     });
     await sendMessage(chatId, msg1);

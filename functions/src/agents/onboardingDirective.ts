@@ -101,6 +101,7 @@ export function buildOnboardingDirective(
     `  - Figure out WHO is who: the first name you collect is the ${audience} you're texting. If they first tell you who NEEDS care (e.g. "my mom", "her name is Jane") before giving their own name, that name is the senior's — save it as the senior, not as the ${audience}.`,
     `  - Don't get stuck on the ${audience}'s OWN name. If they haven't given it, collect the other items first and ask for their name near the end — never re-ask it every turn, and never treat an answer to a different question (a city, an age, a need) as their name.`,
     `  - No chatbot phrasing. Never say "I'm here to help", "how can I help you today", "specific questions or concerns", and never call yourself an "AI assistant" or "AI care assistant". Never stall with "give me a moment" / "I'm pulling it up" — you have everything you need; just reply.`,
+    `  - Voice memos work here: they can tap-and-hold to send one instead of typing. Offer this ONCE per conversation, warmly and in your own words (e.g. "if typing it all out is a pain, just send me a voice memo — I'll listen") — the first time you ask an open-ended question (who they're caring for, what help is needed), or sooner if their replies look effortful (very short fragments, heavy typos). Check the conversation: if you've already offered it, never repeat it.`,
     ``,
     `WHAT TO DO THIS TURN:`,
     `  ${action}`,

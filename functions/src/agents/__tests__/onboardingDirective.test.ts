@@ -42,6 +42,13 @@ describe("buildOnboardingDirective", () => {
     expect(d).toContain("never re-introduce");
   });
 
+  it("offers the voice-memo option once, never repeated", () => {
+    const d = buildOnboardingDirective("client", {}).toLowerCase();
+    expect(d).toContain("voice memo");
+    expect(d).toContain("once per conversation");
+    expect(d).toContain("never repeat it");
+  });
+
   it("contains no chatbot phrasing except inside a 'never say' prohibition", () => {
     const lines = buildOnboardingDirective("client", {}).toLowerCase().split("\n");
     for (const phrase of BANNED) {

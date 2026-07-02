@@ -44,6 +44,8 @@ const BANNED_PHRASES: string[] = [
   "our team will help",
   "our team will review",
   "please contact support",
+  "I'll get back to you",
+  "get back to you shortly",
 ];
 
 // Patterns that make text feel robotic or formal

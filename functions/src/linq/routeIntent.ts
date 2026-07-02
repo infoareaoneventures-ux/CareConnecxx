@@ -442,11 +442,16 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         } catch (err) {
           console.error("executeBookings failed (BOOKING_CONFIRM):", err);
           await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
+          await db.collection("admin_alerts").add({
+            type: "route_intent_fallback", handler: "booking_confirm_nl", phone,
+            error: String(err).slice(0, 300), severity: "medium",
+            createdAt: new Date().toISOString(), resolved: false,
+          }).catch(() => {});
           await sendMessage(chatId, await generateCaraMessage({
             audience: "family",
             language: session.preferredLanguage === "es" ? "es" : "en",
-            context: "You hit a snag finalizing that booking. Warmly reassure the family you're on it — you'll sort out an alternative and get back to them shortly. Sound human and calm, not like an error message.",
-            fallback: "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.",
+            context: "That booking didn't lock in. Tell the family plainly, and say you're pulling up other openings for that same visit right now and will text as soon as you have one. Sound human and calm, not like an error message.",
+            fallback: "That booking didn't go through on my end. I'm pulling up other openings for that visit right now and I'll text you as soon as I have one.",
             maxTokens: 80,
           }));
           const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
@@ -613,11 +618,16 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         } catch (err) {
           console.error("executeBookings failed (YES):", err);
           await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
+          await db.collection("admin_alerts").add({
+            type: "route_intent_fallback", handler: "booking_confirm_yes", phone,
+            error: String(err).slice(0, 300), severity: "medium",
+            createdAt: new Date().toISOString(), resolved: false,
+          }).catch(() => {});
           await sendMessage(chatId, await generateCaraMessage({
             audience: "family",
             language: session.preferredLanguage === "es" ? "es" : "en",
-            context: "You hit a snag finalizing that booking. Warmly reassure the family you're on it — you'll sort out an alternative and get back to them shortly. Sound human and calm, not like an error message.",
-            fallback: "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.",
+            context: "That booking didn't lock in. Tell the family plainly, and say you're pulling up other openings for that same visit right now and will text as soon as you have one. Sound human and calm, not like an error message.",
+            fallback: "That booking didn't go through on my end. I'm pulling up other openings for that visit right now and I'll text you as soon as I have one.",
             maxTokens: 80,
           }));
           const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
@@ -1140,11 +1150,16 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         } catch (err) {
           console.error("executeBookings failed (hireMode):", err);
           await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
+          await db.collection("admin_alerts").add({
+            type: "route_intent_fallback", handler: "hire_mode_auto_book", phone,
+            error: String(err).slice(0, 300), severity: "medium",
+            createdAt: new Date().toISOString(), resolved: false,
+          }).catch(() => {});
           await sendMessage(chatId, await generateCaraMessage({
             audience: "family",
             language: session.preferredLanguage === "es" ? "es" : "en",
-            context: "You hit a snag finalizing that booking. Warmly reassure the family you're on it — you'll sort out an alternative and get back to them shortly. Sound human and calm, not like an error message.",
-            fallback: "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.",
+            context: `Booking ${hire.caregiverName} for that schedule didn't lock in. Tell the family plainly, and say you're checking ${hire.caregiverName}'s other openings (or a similar caregiver) right now and will text as soon as you have one. Sound human and calm, not like an error message.`,
+            fallback: `Booking ${hire.caregiverName} for that schedule didn't go through on my end. I'm checking other openings right now and I'll text you as soon as I have one.`,
             maxTokens: 80,
           }));
           const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
@@ -1288,11 +1303,16 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         } catch (err) {
           console.error("executeBookings failed (rebook):", err);
           await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
+          await db.collection("admin_alerts").add({
+            type: "route_intent_fallback", handler: "rebook_auto_book", phone,
+            error: String(err).slice(0, 300), severity: "medium",
+            createdAt: new Date().toISOString(), resolved: false,
+          }).catch(() => {});
           await sendMessage(chatId, await generateCaraMessage({
             audience: "family",
             language: session.preferredLanguage === "es" ? "es" : "en",
-            context: "You hit a snag finalizing that booking. Warmly reassure the family you're on it — you'll sort out an alternative and get back to them shortly. Sound human and calm, not like an error message.",
-            fallback: "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.",
+            context: `Rebooking ${rebook.caregiverName} for ${dateStr} didn't lock in. Tell the family plainly, and say you're checking other openings for that visit right now and will text as soon as you have one. Sound human and calm, not like an error message.`,
+            fallback: `Rebooking ${rebook.caregiverName} for that date didn't go through on my end. I'm checking other openings right now and I'll text you as soon as I have one.`,
             maxTokens: 80,
           }));
           const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};

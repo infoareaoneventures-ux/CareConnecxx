@@ -63,4 +63,12 @@ describe("lintPreservingLayout", () => {
     expect(lintPreservingLayout("Our team will follow up within 24 hours.")).toBe("I flagged this for review.");
     expect(lintPreservingLayout("Please contact support.")).toBe("Text me what happened and I can handle the next step here.");
   });
+
+  it("strips stalled-promise phrasing (unscheduled future work)", () => {
+    expect(lintMessage("I'll get back to you soon.")).toBe("soon.");
+    expect(lintMessage("Let me find an alternative — I'll get back to you shortly.")).toBe(
+      "Let me find an alternative, shortly.",
+    );
+    expect(lintPreservingLayout("I'll get back to you shortly.")).toBe("shortly.");
+  });
 });

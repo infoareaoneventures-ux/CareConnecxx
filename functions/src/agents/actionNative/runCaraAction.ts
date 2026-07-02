@@ -79,7 +79,7 @@ export async function runCaraAction<TInput, TOutput>(
 
   const idempotencyKey = !action.readOnly ? action.idempotencyKey?.(input, ctx) : undefined;
   if (idempotencyKey) {
-    const claim = await claimCaraActionExecution(idempotencyKey);
+    const claim = await claimCaraActionExecution(idempotencyKey, { failClosed: action.failClosed });
     if ("inProgress" in claim && claim.inProgress) {
       await logAgentAction({
         actionType: action.audit?.actionType ?? action.name,
@@ -164,6 +164,27 @@ export async function runCaraAction<TInput, TOutput>(
 
   const outputParsed = action.outputSchema.safeParse(output);
   if (!outputParsed.success) {
+    // The side effect already ran — settle the claim with the raw output so a
+    // retry inside the duplicate-protection window cannot re-execute it, and
+    // leave an audit trail. Settling { ok: false } would DELETE the claim and
+    // invite an immediate duplicate of a side effect that already happened.
+    if (!action.readOnly && idempotencyKey) {
+      await settleCaraActionExecution(idempotencyKey, { ok: true, result: toJsonSafe(output) });
+    }
+    if (!action.readOnly) {
+      await logAgentAction({
+        actionType: action.audit?.actionType ?? action.name,
+        status: "failed",
+        userId: ctx.uid,
+        phone: ctx.phone,
+        role: ctx.role,
+        sourceMessageId: ctx.sourceMessageId,
+        toolName: action.name,
+        targetCollection: action.audit?.targetCollection,
+        errorReason: "output validation failed after side effect executed",
+        metadata: { caller: ctx.caller, idempotencyKey: idempotencyKey ?? null },
+      });
+    }
     throw new CaraActionValidationError(`${action.name}: invalid output`);
   }
 
@@ -203,6 +224,14 @@ export function createApprovalKey(
     role: ctx.role,
   });
   return createHash("sha1").update(normalized).digest("hex").slice(0, 24);
+}
+
+function toJsonSafe(value: unknown): unknown {
+  try {
+    return JSON.parse(JSON.stringify(value ?? null));
+  } catch {
+    return null;
+  }
 }
 
 function stableStringify(value: unknown): string {

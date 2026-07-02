@@ -52,6 +52,7 @@ vi.mock("firebase-admin", () => ({
 }));
 
 import {
+  CaraActionClaimUnavailableError,
   claimCaraActionExecution,
   settleCaraActionExecution,
 } from "./actionExecutionLedger";
@@ -97,5 +98,54 @@ describe("actionExecutionLedger", () => {
     await settleCaraActionExecution("support:create", { ok: false });
 
     await expect(claimCaraActionExecution("support:create")).resolves.toEqual({ cached: false });
+  });
+
+  it("returns the cached result while the done TTL is fresh", async () => {
+    await claimCaraActionExecution("link:resend");
+    await settleCaraActionExecution("link:resend", { ok: true, result: { sent: true } });
+
+    vi.setSystemTime(new Date("2026-07-01T12:10:00Z")); // +10 min, inside the 15-min TTL
+
+    await expect(claimCaraActionExecution("link:resend")).resolves.toEqual({
+      cached: true,
+      result: { sent: true },
+    });
+  });
+
+  it("re-runs a settled action after the done TTL expires (legitimate repeat)", async () => {
+    await claimCaraActionExecution("link:resend");
+    await settleCaraActionExecution("link:resend", { ok: true, result: { sent: true } });
+
+    vi.setSystemTime(new Date("2026-07-01T12:20:00Z")); // +20 min, past the 15-min TTL
+
+    await expect(claimCaraActionExecution("link:resend")).resolves.toEqual({ cached: false });
+    const saved = Array.from(hoisted.docs.values())[0];
+    expect(saved).toMatchObject({ status: "running", reclaimed: true });
+  });
+
+  it("allows an add-remove-re-add cycle once the TTL has elapsed", async () => {
+    await claimCaraActionExecution("family:add:c1:s1:p1");
+    await settleCaraActionExecution("family:add:c1:s1:p1", { ok: true, result: { added: true } });
+
+    vi.setSystemTime(new Date("2026-07-01T12:30:00Z"));
+
+    // Re-add after remove: same key, TTL elapsed — must execute again, not replay.
+    await expect(claimCaraActionExecution("family:add:c1:s1:p1")).resolves.toEqual({ cached: false });
+  });
+
+  it("fails closed for money-adjacent actions when the ledger is unavailable", async () => {
+    const originalRunTransaction = hoisted.firestore.runTransaction;
+    const originalCollection = hoisted.firestore.collection;
+    hoisted.firestore.collection = () => { throw new Error("firestore down"); };
+    hoisted.firestore.runTransaction = async () => { throw new Error("firestore down"); };
+    try {
+      await expect(claimCaraActionExecution("pay:link", { failClosed: true }))
+        .rejects.toBeInstanceOf(CaraActionClaimUnavailableError);
+      // Non-fail-closed actions keep the documented fail-open behavior.
+      await expect(claimCaraActionExecution("note:add")).resolves.toEqual({ cached: false });
+    } finally {
+      hoisted.firestore.runTransaction = originalRunTransaction;
+      hoisted.firestore.collection = originalCollection;
+    }
   });
 });

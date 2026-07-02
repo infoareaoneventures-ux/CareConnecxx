@@ -18,6 +18,7 @@ const writeActionConfigs = {
     targetCollection: "agent_tasks",
     idempotencyKey: (input: Record<string, unknown>) =>
       `request_booking:${input.clientId}:${input.caregiverId}:${stableInput(input.dates)}:${input.startTime}:${input.endTime}`,
+    failClosed: true,
   },
   trigger_emergency_alert: {
     role: "client",
@@ -74,6 +75,7 @@ const writeActionConfigs = {
     targetCollection: "shiftHours",
     idempotencyKey: (input: Record<string, unknown>) =>
       `submit_shift_hours:${input.caregiverId}:${input.appointmentId}:${input.clockInTime}:${input.clockOutTime}:${input.breakMinutes ?? 0}`,
+    failClosed: true,
   },
   review_shift_hours: {
     role: "client",
@@ -86,6 +88,7 @@ const writeActionConfigs = {
     targetCollection: "shiftHours",
     idempotencyKey: (input: Record<string, unknown>) =>
       `review_shift_hours:${input.clientId}:${input.appointmentId}:${input.decision}:${input.correctedHours ?? ""}:${input.reason ?? ""}`,
+    failClosed: true,
   },
   respond_to_booking_request: {
     role: "caregiver",
@@ -209,6 +212,7 @@ export async function runMcpWriteCaraAction(
     idempotencyKey: "idempotencyKey" in config
       ? parsed => config.idempotencyKey(parsed as Record<string, unknown>)
       : undefined,
+    failClosed: "failClosed" in config ? config.failClosed : undefined,
     run: execute,
   });
 

@@ -49,6 +49,9 @@ export interface CaraActionDefinition<TInput = unknown, TOutput = unknown> {
   approvalRequired?: boolean | ((input: TInput, ctx: CaraActionContext) => boolean | Promise<boolean>);
   audit?: CaraActionAuditConfig;
   idempotencyKey?: (input: TInput, ctx: CaraActionContext) => string | undefined;
+  /** Money-adjacent actions refuse to run when the duplicate-protection claim
+   *  cannot be verified (ledger infra error), instead of failing open. */
+  failClosed?: boolean;
   allowedRoles?: CaraActionRole[];
   run: (input: TInput, ctx: CaraActionContext) => Promise<TOutput> | TOutput;
 }

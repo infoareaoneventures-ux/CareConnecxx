@@ -38,6 +38,9 @@ export const sendOnboardingLinkCaraAction = defineCaraAction({
     targetDocId: input => (input as { phone?: string }).phone,
   },
   idempotencyKey: input => `send_onboarding_link:${input.phone}:${input.linkType}`,
+  // Payment/identity links mint Stripe sessions — never execute when duplicate
+  // protection is unverifiable.
+  failClosed: true,
   run: async input => {
     const result = await sendOnboardingLink(input.phone, input.linkType as OnboardingLinkType);
     return { success: result.success, linkType: result.linkType, sent: true };

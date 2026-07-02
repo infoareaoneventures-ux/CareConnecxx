@@ -54,4 +54,12 @@ describe("runStep — checkpoint RESUME sentinel", () => {
       next: "client_ask_needs",
     });
   });
+
+  it("passes the current question to the mid-flow classifier (bare-name fix)", async () => {
+    // Without the question as context, a one-word answer like "Imran" to
+    // "What's your name?" was misjudged as off-topic → answer + re-ask loop.
+    const deps = makeDeps();
+    await runStep(defaultingStep, { phone: "+15551234567", chatId: "c1", text: "Imran", session }, deps);
+    expect(deps.isQuestionOrOther).toHaveBeenCalledWith("Imran", defaultingStep.reask(session));
+  });
 });

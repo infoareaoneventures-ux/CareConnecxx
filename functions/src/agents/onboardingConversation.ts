@@ -836,10 +836,13 @@ async function handleVerifyPhone(
 
 async function handleAskRole(phone: string, chatId: string, text: string, session?: AgentSession): Promise<void> {
   const raw = await parseWithClaude(
-    'The user is choosing between two options: (1) they need care for a loved one (family/client) or ' +
-    '(2) they are a caregiver looking for work. ' +
-    '"1", "family", "need care", "mom", "dad", "parent", "loved one" → client. ' +
-    '"2", "caregiver", "CNA", "HHA", "nurse", "work", "job", "looking for work" → caregiver. ' +
+    'The user was just asked: "Are you looking for care for a loved one, or are you a caregiver yourself?" ' +
+    'client = they NEED care (for themselves or a loved one): "1", "family", "need care", "looking for care", ' +
+    '"care for my mom/dad/parent/wife/husband", "for my loved one", "for myself". ' +
+    'caregiver = they PROVIDE care professionally and want work: "2", "I\'m a caregiver", "CNA", "HHA", "nurse", ' +
+    '"looking for work", "looking for a job", "I want to work". ' +
+    'CRITICAL: "looking for care" or "need care" means they NEED care → client. ' +
+    'Only "looking for WORK" or "looking for a JOB" means caregiver. ' +
     'Reply with exactly one word: client or caregiver. If truly unclear, reply: unclear',
     text
   );

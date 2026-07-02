@@ -37,8 +37,10 @@ export interface RunStepContext {
  * `onboardingConversation.ts`; tests supply fakes.
  */
 export interface StepDeps {
-  /** True when the user asked a mid-flow question instead of answering. */
-  isQuestionOrOther:    (text: string) => Promise<boolean>;
+  /** True when the user asked a mid-flow question instead of answering.
+   *  Receives the current step's question so a terse direct answer (a bare
+   *  name, a city, an age) is never misjudged as off-topic chatter. */
+  isQuestionOrOther:    (text: string, currentQuestion?: string) => Promise<boolean>;
   /** Answer a mid-flow question in context. */
   answerQuestionMidFlow:(text: string, session: AgentSession) => Promise<string>;
   /** Single-shot structured extraction (gpt-4o-mini under the hood). */
@@ -122,7 +124,9 @@ export async function runStep(
   }
 
   // 1. Mid-flow question: answer it, re-ask, and do not touch stored data.
-  if (await deps.isQuestionOrOther(text)) {
+  // Pass the current question so the classifier sees "Imran" as a direct
+  // answer to "What's your name?" rather than an off-topic one-word message.
+  if (await deps.isQuestionOrOther(text, step.reask(session))) {
     const answer = await deps.answerQuestionMidFlow(text, session);
     await deps.sendMessage(chatId, answer);
     await deps.sendMessage(chatId, step.reask(session));

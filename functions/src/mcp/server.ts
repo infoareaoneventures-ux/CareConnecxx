@@ -15,6 +15,7 @@ import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingAct
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
+import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 
 // U6/U7 — CONFIRMED, externally-irreversible tools whose side effect must fire
 // at most once per confirmation. When one runs as a confirmed action, its
@@ -5802,6 +5803,7 @@ async function executeToolCall(
       for (const doc of snap.docs) {
         if (doc.id === data.caregiverId) continue;
         const cg = doc.data();
+        if (isSeededCaregiver(cg)) continue;
         if (!isCaregiverBookable(cg)) continue;
         const avail = cg.weeklyAvailability?.[dayOfWeek] as Array<{ start: string; end: string }> | undefined;
         if (!avail?.some(s => parseInt(s.start.split(":")[0], 10) <= shiftHour && shiftHour < parseInt(s.end.split(":")[0], 10))) continue;

@@ -33,6 +33,16 @@ export type CaregiverPreviewOutput = z.infer<typeof caregiverPreviewOutputSchema
 
 type RawCaregiver = Record<string, unknown>;
 
+/**
+ * Test-seed caregivers (scripts/seed-test-caregivers.cjs) are tagged with
+ * __seedTag so they can be cleaned up exactly. They must NEVER be shown to a
+ * real family — the widened-city fallback below would otherwise defeat the
+ * "uncommon city" mitigation the seed script relies on.
+ */
+export function isSeededCaregiver(caregiver: RawCaregiver): boolean {
+  return Boolean(caregiver && (caregiver as Record<string, unknown>).__seedTag);
+}
+
 export const getCaregiverPreviewCaraAction = defineCaraAction({
   name: "get_caregiver_preview",
   description: "Read active caregivers and return a short curated preview for client onboarding.",
@@ -54,9 +64,11 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
           .get()
       : await emptyQuerySnapshot();
 
-    if (!localSnap.empty) {
+    const localCaregivers = localSnap.docs.map(doc => doc.data()).filter(c => !isSeededCaregiver(c));
+
+    if (localCaregivers.length > 0) {
       return buildCaregiverPreviewResult({
-        caregivers: localSnap.docs.map(doc => doc.data()),
+        caregivers: localCaregivers,
         widened: false,
         city: input.city,
         seniorName: input.seniorName,
@@ -65,9 +77,10 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
     }
 
     const widerSnap = await db.collection("caregivers").where("status", "==", "active").limit(5).get();
+    const widerCaregivers = widerSnap.docs.map(doc => doc.data()).filter(c => !isSeededCaregiver(c));
     return buildCaregiverPreviewResult({
-      caregivers: widerSnap.docs.map(doc => doc.data()),
-      widened: !widerSnap.empty,
+      caregivers: widerCaregivers,
+      widened: widerCaregivers.length > 0,
       city: input.city,
       seniorName: input.seniorName,
       careNeeds: input.careNeeds,

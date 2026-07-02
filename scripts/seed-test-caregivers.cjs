@@ -35,6 +35,24 @@ const db = admin.firestore();
 
 const SEED_TAG = "cara-test";
 
+// Hard guard: seeding writes fake, background-checked/verified caregiver
+// docs. Never let that happen against the live prod project by accident —
+// that's how a real family ends up matched to a fake caregiver. Checked only
+// before the seed write path (not cleanup/list). Pass --allow-prod to
+// override (e.g. deliberate prod smoke-testing with an explicit cleanup plan).
+const PROD_PROJECT_ID = "careconnex-d4c8b";
+function assertSeedNotProdUnlessAllowed() {
+  const resolvedProjectId = serviceAccount.project_id;
+  const allowProd = process.argv.includes("--allow-prod");
+  if (resolvedProjectId === PROD_PROJECT_ID && !allowProd) {
+    console.error(
+      `REFUSING: this would seed fake caregivers into the LIVE prod project ("${PROD_PROJECT_ID}").\n` +
+      `If you really mean to do this, re-run with --allow-prod.`,
+    );
+    process.exit(1);
+  }
+}
+
 // A few Santa Clara County cities with coords, so seeded caregivers also have a
 // real lat/lng for proximity matching. Default city is uncommon on purpose.
 const SCC_COORDS = {
@@ -65,6 +83,7 @@ const WEEKLY_AVAILABILITY = {
 };
 
 async function seed(cityArg, countArg) {
+  assertSeedNotProdUnlessAllowed();
   const city = cityArg || "Los Altos Hills";
   const key = city.toLowerCase().trim();
   const geo = SCC_COORDS[key] || { zip: "", lat: undefined, lng: undefined };

@@ -20,6 +20,7 @@ import { getOutcomePatternSummary } from "../ai/outcomeAnalytics";
 import { getReputationBoosts } from "../ai/caregiverReputation";
 import { computeConfidenceScoreFromFields } from "./confidenceScore";
 import { getAppUrl } from "../config/appUrl";
+import { isSeededCaregiver } from "./actions/getCaregiverPreviewAction";
 
 const db = admin.firestore();
 
@@ -183,6 +184,7 @@ export async function runMatchingForClient(
         ...d.data(),
       } as CaregiverCandidate))
       .filter((c) =>
+        !isSeededCaregiver(c as unknown as Record<string, unknown>) &&
         !rejectedIds.includes(c.id) &&
         !isTemporarilyUnavailable(c as any, nowIso) && (
           c.city?.toLowerCase() === city.toLowerCase() ||
@@ -195,7 +197,11 @@ export async function runMatchingForClient(
       // and the paused/opted-out availability filter)
       caregivers = snap.docs
         .map((d) => ({ id: d.id, ...d.data() } as CaregiverCandidate))
-        .filter((c) => !rejectedIds.includes(c.id) && !isTemporarilyUnavailable(c as any, nowIso));
+        .filter((c) =>
+          !isSeededCaregiver(c as unknown as Record<string, unknown>) &&
+          !rejectedIds.includes(c.id) &&
+          !isTemporarilyUnavailable(c as any, nowIso)
+        );
     }
 
     // Step 1: compute rule-based signals for pre-filtering

@@ -126,12 +126,13 @@ Firebase config is typically embedded via `lib/firebase.ts` (check for hardcoded
 
 Cara is a fully AI-agentic assistant. Every piece of code that touches Cara MUST follow these rules.
 
-### Hybrid LLM architecture
-Cara uses two providers, chosen by latency profile, NOT by capability:
-- **OpenAI gpt-4o-mini** (~500ms) for ALL short single-shot calls: intent classification, YES/NO decisions, structured extraction, parseWithClaude calls, the trivial-greeting bypass. Routes through `functions/src/utils/openaiClient.ts` (`getOpenAIClient`, `quickComplete`).
-- **Claude Sonnet 4.6** stays for the QA agent's multi-turn tool-use loop in `functions/src/agents/qaAgent.ts` only. Routes through `getSharedClient()` + `callClaudeWithRetry()`. Don't replace this — the 83-tool MCP loop works best on Sonnet.
+### Hybrid LLM architecture (model ladder — source of truth: `functions/src/config/caraModels.ts`)
+Cara's models are resolved per **tier** by `resolveCaraModelConfig(tier)` with env overrides:
+- **Agent tier** (the QA agent's multi-turn tool-use loop in `functions/src/agents/qaAgent.ts`, via the `runAgentModelTurn` seam in `agentModelTurn.ts`): provider set by `CARA_AGENT_PROVIDER`, model by `CARA_AGENT_MODEL`. **Prod decision (founder, 2026-07-01): OpenAI `gpt-5.4` primary with automatic Anthropic Sonnet fallback** (`CARA_AGENT_ANTHROPIC_FALLBACK=true`). The code default when env vars are absent is `gpt-4o` — always set `CARA_AGENT_MODEL` in the deployed env. Any future provider/model change goes through the spend-gated eval (`npm run eval:onboarding`) per the launch plan's model-gate protocol, and updates the PHI provider addendum in `AGENT_NATIVE_EXCLUSIONS.md`.
+- **Quick/router/vision tiers** (single-shot calls: intent classification, YES/NO, structured extraction, `parseWithClaude`, trivial-greeting bypass): `CARA_QUICK_MODEL` / `CARA_ROUTER_MODEL` / `CARA_VISION_MODEL` (prod: gpt-5.4-mini / gpt-5.4-nano / gpt-5.4-mini). Route through `functions/src/utils/openaiClient.ts` (`getOpenAIClient`, `quickComplete`).
+- **Escalation tier** (`CARA_ESCALATION_MODEL`): defined but not yet wired to a caller.
 
-Both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` must be set in the function env.
+Both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` must be set in the function env (the fallback path needs Anthropic live even when OpenAI is primary).
 
 ### Always use an LLM for user input understanding
 - **NEVER** use regex, hardcoded keyword arrays, `.includes()`, or string equality to parse the MEANING or INTENT of free-form user SMS text
@@ -164,6 +165,6 @@ Every new conversational step handler must have:
 4. `sendMessage` with the next question
 
 ### Model selection cheat-sheet
-- Single-shot classify / YES-NO / JSON extraction → `quickComplete` or `parseWithClaude` (gpt-4o-mini)
-- Multi-turn reasoning with MCP tools → `runQaAgent` (Claude Sonnet 4.6)
-- Trivial greeting / acknowledgment fast path → `runQuickReply` (gpt-4o-mini, no tools)
+- Single-shot classify / YES-NO / JSON extraction → `quickComplete` or `parseWithClaude` (quick tier, `CARA_QUICK_MODEL`)
+- Multi-turn reasoning with MCP tools → `runQaAgent` (agent tier via `runAgentModelTurn` — OpenAI primary, Sonnet fallback; see Hybrid LLM architecture)
+- Trivial greeting / acknowledgment fast path → `runQuickReply` (quick tier, no tools)

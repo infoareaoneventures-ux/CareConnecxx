@@ -83,3 +83,13 @@ round-trips. **Mitigations:** care-team **phone numbers** are NOT pre-injected (
 lazy via `get_care_team`); injection is confirmed-identity-only; the prompt hedges
 when memory (Zep) is unavailable. Revisit if provider-side logging or the compliance
 posture changes.
+
+**Provider addendum (decided 2026-07-01, founder):** the agent tier runs on **OpenAI**
+(`CARA_AGENT_PROVIDER=openai`, `CARA_AGENT_MODEL=gpt-5.4`) with Anthropic Sonnet as
+runtime fallback — so the PHI-bearing prompt flows to OpenAI by default and to
+Anthropic on fallback turns. Accepted for launch with no BAA yet in place on either
+provider; a BAA request to **baa@openai.com** is being initiated (their API BAA
+covers only Zero-Data-Retention-eligible endpoints — once signed, the API calls must
+be reconfigured for ZDR). Rollback stays one env line (`CARA_AGENT_PROVIDER=anthropic`
++ redeploy of `v1-linqWebhook`). Revisit this record when the BAA is signed or the
+provider changes again.

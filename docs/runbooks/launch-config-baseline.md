@@ -9,21 +9,21 @@ on the keys that have values). Values are never recorded here; only names and st
 
 | Question | Deployed reality | Notes |
 |---|---|---|
-| Agent-loop onboarding | `ONBOARDING_AGENT_LOOP=client`, `COHORT_PCT=100` — **live at 100% for clients** | Runbook headers and 10%-canary records are stale; update them from this row |
-| Agent model | `CARA_AGENT_PROVIDER=openai`, `CARA_AGENT_MODEL=gpt-5.4`, escalation `gpt-5.5`, Anthropic fallback `true` | GPT-5.4 IS active (env var set — the `gpt-4o` code default is not in effect). PHI flows to OpenAI **today** → R18 decision required before launch |
+| Agent-loop onboarding | `ONBOARDING_AGENT_LOOP` and `ONBOARDING_AGENT_LOOP_COHORT_PCT` both set — **agent-loop onboarding live at full rollout for clients** | Runbook headers and 10%-canary records are stale; update them from this row |
+| Agent model | `CARA_AGENT_PROVIDER` and `CARA_AGENT_MODEL` set (OpenAI primary, current-generation model), `CARA_ESCALATION_MODEL` set, `CARA_AGENT_ANTHROPIC_FALLBACK` enabled | The env-var model IS active (the older code default is not in effect). PHI flows to OpenAI **today** → R18 decision required before launch |
 | Checkpoint resume | `CARA_CHECKPOINT_RESUME` empty — **dark** | Stays dark through launch (plan KTD) |
 | Zep memory | `ZEP_API_KEY` present | Long-term memory configured; U3 adds empty-context telemetry |
-| Model ladder tiers | router `gpt-5.4-nano`, quick `gpt-5.4-mini`, vision `gpt-5.4-mini` | Matches local |
+| Model ladder tiers | `CARA_ROUTER_MODEL`, `CARA_QUICK_MODEL`, `CARA_VISION_MODEL` set to the matching small-tier models | Matches local |
 
 ## Launch decisions needed (founder-owned)
 
 | # | Item | Deployed state | Decision needed | Owner |
 |---|---|---|---|---|
 | D1 | `ADMIN_PHONE` / `ADMIN_EMAIL` | **empty** | Set before launch — U5 provider-failure SMS alerts and existing admin notifications have no destination | Founder |
-| D2 | PHI → OpenAI (R18) | live today | Verify OpenAI BAA/zero-retention, or set `CARA_AGENT_PROVIDER=anthropic` (one env line + redeploy of `v1-linqWebhook`); record beside the U4 PHI decision in `AGENT_NATIVE_EXCLUSIONS.md` | Founder |
-| D3 | `STRIPE_SECRET_KEY` prefix `mk_` | matches local | Not a standard Stripe live (`sk_live_`) prefix — confirm Stripe is in the intended mode and a real charge/checkout succeeds before launch | Founder |
+| D2 | PHI → OpenAI (R18) | live today | **DECIDED 2026-07-01: stay on OpenAI for launch.** BAA request to baa@openai.com being sent (their API BAA requires Zero-Data-Retention endpoint config once signed). Recorded in the U4 provider addendum in `AGENT_NATIVE_EXCLUSIONS.md`; CLAUDE.md model sections reconciled. Rollback unchanged: `CARA_AGENT_PROVIDER=anthropic` + redeploy | Founder ✓ |
+| D3 | `STRIPE_SECRET_KEY` has a non-standard prefix | matches local | Not the standard Stripe live secret-key shape — confirm Stripe is in the intended mode and a real charge/checkout succeeds before launch | Founder |
 | D4 | `STRIPE_WEBHOOK_SECRET`, `STRIPE_MEMBERSHIP_PRICE_ID`, `STRIPE_PLAN_FAMILY_PRICE_ID`, all `STRIPE_PRICE_*`, `STRIPE_CAREGIVER_*`, `STRIPE_CONNECT_WEBHOOK_SECRET` | **all empty** | Confirm where checkout/price config actually comes from (code default or Firestore config) and whether Stripe webhook verification is needed for the client funnel; empty webhook secret means Stripe event processing is unverified or dead | Founder + next session |
-| D5 | `FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS=true` | ON in prod | Contradicts the documented "dark in prod, eval required before flag flips" decision in `AGENT_NATIVE_EXCLUSIONS.md`. Recommend `false` for launch | Founder |
+| D5 | `FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS` | ON in prod (stale) | **DONE 2026-07-01: cleared in `functions/.env`** — takes effect at the next deploy of `v1-linqWebhook`, restoring the documented dark-in-prod posture | Founder ✓ |
 | D6 | `CHECKR_WEBHOOK_SECRET` empty (API key present) | empty | Caregiver background-check webhook verification — caregiver onboarding is deferred, but existing caregiver events may be affected; confirm post-launch | Founder |
 | D7 | `SUPPORT_PHONE`, `RESEND_FROM_EMAIL/NAME`, `INVOICE_EMAIL_FROM` | empty | Cosmetic/comms defaults — set when convenient | Founder |
 

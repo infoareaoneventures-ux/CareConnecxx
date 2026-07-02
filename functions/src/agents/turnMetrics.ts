@@ -105,6 +105,18 @@ export interface TurnMetrics {
   memoryRecallTier?:     "zep" | "memoryFiles" | "learnedFacts" | "none";
   memoryFactsRetrieved?: number;
 
+  // U3: truncation/degradation telemetry — makes mechanical forgetting
+  // measurable instead of silent. historyRolledUp is true when this turn's
+  // background maybeRollUpHistory call actually folded messages into the
+  // summary row (not just checked and no-opped). zepContextEmpty is true when
+  // getZepContext resolved to "" (not the unavailable-marker case, which
+  // zepUnavailable already covers — this is Zep responding but having nothing).
+  // learnedFactsCount mirrors memoryFactsRetrieved's value at load time so it
+  // survives independently of memoryRecallTier's derivation.
+  historyRolledUp?:   boolean;
+  zepContextEmpty?:   boolean;
+  learnedFactsCount?: number;
+
   // Sprint 8: turn checkpoint resume. resumedFromCheckpoint is true when this
   // turn skipped the tool loop and resumed a prior crashed turn's reply.
   resumedFromCheckpoint?: boolean;
@@ -286,6 +298,9 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
       frustrationDetected:          !!metrics.frustrationDetected,
       rephraseLoopDetected:         !!metrics.rephraseLoopDetected,
       repeatedGreetingDetected:     !!metrics.repeatedGreetingDetected,
+      historyRolledUp:              !!metrics.historyRolledUp,
+      zepContextEmpty:              !!metrics.zepContextEmpty,
+      learnedFactsCount:            metrics.learnedFactsCount ?? 0,
     });
   }
 }

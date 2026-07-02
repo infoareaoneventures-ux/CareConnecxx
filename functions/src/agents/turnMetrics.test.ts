@@ -222,4 +222,55 @@ describe("emitTurnMetrics", () => {
     expect(payload.quickReplyUsed).toBe(true);
     expect(payload.qualityFlags).toBeUndefined();
   });
+
+  // U3 (memory expansion + truncation telemetry): historyRolledUp, zepContextEmpty,
+  // and learnedFactsCount make memory degradation measurable instead of silent.
+  describe("truncation telemetry fields", () => {
+    it("accepts and serializes historyRolledUp, zepContextEmpty, and learnedFactsCount", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.historyRolledUp = true;
+      m.zepContextEmpty = true;
+      m.learnedFactsCount = 7;
+      emitTurnMetrics(m, { reply: "ok" });
+      const payload = infoSpy.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload.historyRolledUp).toBe(true);
+      expect(payload.zepContextEmpty).toBe(true);
+      expect(payload.learnedFactsCount).toBe(7);
+    });
+
+    it("defaults the three fields to undefined when never set", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      emitTurnMetrics(m, { reply: "ok" });
+      const payload = infoSpy.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload.historyRolledUp).toBeUndefined();
+      expect(payload.zepContextEmpty).toBeUndefined();
+      expect(payload.learnedFactsCount).toBeUndefined();
+    });
+
+    it("mirrors the three fields to Firestore on quality/experiment turns, coerced to safe defaults", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.historyRolledUp = true;
+      m.zepContextEmpty = false;
+      m.learnedFactsCount = 3;
+      m.frustrationDetected = true; // forces the Firestore mirror to fire
+      emitTurnMetrics(m, { reply: "ok" });
+
+      expect(firestoreMock.add).toHaveBeenCalledTimes(1);
+      const mirrored = firestoreMock.add.mock.calls[0][0] as Record<string, unknown>;
+      expect(mirrored.historyRolledUp).toBe(true);
+      expect(mirrored.zepContextEmpty).toBe(false);
+      expect(mirrored.learnedFactsCount).toBe(3);
+    });
+
+    it("mirrors safe defaults (false/0) when the fields were never set on a mirrored turn", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.frustrationDetected = true; // forces the Firestore mirror to fire
+      emitTurnMetrics(m, { reply: "ok" });
+
+      const mirrored = firestoreMock.add.mock.calls[0][0] as Record<string, unknown>;
+      expect(mirrored.historyRolledUp).toBe(false);
+      expect(mirrored.zepContextEmpty).toBe(false);
+      expect(mirrored.learnedFactsCount).toBe(0);
+    });
+  });
 });

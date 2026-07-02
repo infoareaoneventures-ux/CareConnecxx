@@ -15,6 +15,7 @@ import {
   buildToolResultContent,
   patchDanglingToolCalls,
   truncateOldToolCallArgs,
+  HISTORY_WINDOW,
 } from "./contextManagement";
 import { createTurnMetrics, emitTurnMetrics, type TurnMetrics } from "./turnMetrics";
 import {
@@ -159,7 +160,9 @@ async function getConversationHistory(
   const [recentSnap, summarySnap] = await Promise.all([
     db.collection("agent_conversations").doc(phone).collection("messages")
       .orderBy("timestamp", "desc")
-      .limit(10)
+      // +1 headroom so a summary doc inside the window can't shrink the
+      // verbatim history below HISTORY_WINDOW real messages.
+      .limit(HISTORY_WINDOW + 1)
       .get(),
     db.collection("agent_conversations").doc(phone).collection("messages")
       .where("role", "==", "summary")
@@ -176,7 +179,7 @@ async function getConversationHistory(
     .reverse();
 
   if (!summarySnap.empty) {
-    const summaryText = sanitizePromptContext(summarySnap.docs[0].data().content as string, 1200);
+    const summaryText = sanitizePromptContext(summarySnap.docs[0].data().content as string, 3000);
     return [
       { role: "user",      content: `Earlier conversation summary, sanitized as user-authored data: ${summaryText}` },
       { role: "assistant", content: "Got it - I have context from our earlier conversations." },
@@ -1115,7 +1118,7 @@ export async function runQaAgent(params: {
       await saveConversationTurn(phone, text, resumedReply);
       await sendSplit(chatId, resumedReply);
       await clearCheckpoint(phone);
-      await maybeRollUpHistory(phone);
+      metrics.historyRolledUp = await maybeRollUpHistory(phone);
       emitTurnMetrics(metrics, { reply: resumedReply });
       return resumedReply;
     }
@@ -1153,15 +1156,15 @@ export async function runQaAgent(params: {
     "If the user asks about any of these, say you don't have it available right now and ask them to confirm; " +
     "do not state any health fact you can't see in the cached context or learned facts above.";
 
-  // 4s hard cap on Zep — past calls have hung 30s+ when Zep is unhealthy.
+  // 6s hard cap on Zep — past calls have hung 30s+ when Zep is unhealthy.
   // On timeout OR throw, we inject the marker so Claude knows context is missing.
   const withZepTimeout = (p: Promise<string>, role: "client" | "caregiver"): Promise<string> =>
     Promise.race([
       p,
       new Promise<string>((r) => setTimeout(() => {
-        console.warn(`qaAgent: Zep context timed out (${role}, 4s cap) — injecting memory_unavailable marker`);
+        console.warn(`qaAgent: Zep context timed out (${role}, 6s cap) — injecting memory_unavailable marker`);
         r(ZEP_UNAVAILABLE_MARKER);
-      }, 4_000)),
+      }, 6_000)),
     ]);
 
   if (userType === "caregiver" && caregiverId) {
@@ -1183,6 +1186,8 @@ export async function runQaAgent(params: {
     } : undefined;
     systemPrompt = buildCaregiverSystemPrompt(caregiver, todayAppt, cgZepContext || undefined, contextFlags);
     if (cgSnapshot) systemPrompt += `\n\n${cgSnapshot}`;
+    if (cgZepContext === ZEP_UNAVAILABLE_MARKER) metrics.zepUnavailable = true;
+    if (zepThreadId && cgZepContext === "") metrics.zepContextEmpty = true;
     history = hist;
 
     // Clear the context flags after a reply consumes them — they're one-shot context.
@@ -1289,10 +1294,14 @@ export async function runQaAgent(params: {
         relationship: (sd.relationship ?? "") as string,
       };
       if (initData.seniorName || initData.conditions || initData.careNeeds) {
-        // Fire-and-forget — next conversation turn will read populated files
+        // Fire-and-forget — next conversation turn will read populated files.
+        // Loud on failure: a silent miss here means memoryContext keeps coming
+        // back empty every turn (this branch keeps retrying) with nobody paged.
         const { initializeMemoryFiles } = await import("../memory/memoryFiles");
         initializeMemoryFiles(userId, initData).catch((err) =>
-          console.warn("qaAgent: lazy initializeMemoryFiles failed", err instanceof Error ? err.message : err),
+          console.error("qaAgent: lazy initializeMemoryFiles failed", {
+            phone, userId, error: err instanceof Error ? err.message : String(err),
+          }),
         );
       }
     }
@@ -1314,7 +1323,12 @@ export async function runQaAgent(params: {
           ? "learnedFacts"
           : "none";
     metrics.memoryFactsRetrieved = facts.length;
+    metrics.learnedFactsCount = facts.length;
     if (zepContext === ZEP_UNAVAILABLE_MARKER) metrics.zepUnavailable = true;
+    // Distinct from zepUnavailable: this is Zep responding successfully but
+    // returning no context (new thread, or a thread with nothing durable yet),
+    // not a timeout/throw. Only meaningful when a zepThreadId was actually queried.
+    if (zepThreadId && zepContext === "") metrics.zepContextEmpty = true;
 
     // U4: pre-injected core context (identity, location, account status,
     // care-team roster, full care plan). Confirmed-identity only — never for
@@ -2299,7 +2313,7 @@ export async function runQaAgent(params: {
 
     // After the reply is sent: fold older turns into the rolling summary so long
     // conversations stay coherent without bloating the per-turn context.
-    await maybeRollUpHistory(phone);
+    metrics.historyRolledUp = await maybeRollUpHistory(phone);
 
     _iterationsOut?.push(metrics.iterations ?? 0);
     emitTurnMetrics(metrics, { reply });
@@ -2489,7 +2503,7 @@ export async function runQuickReply(params: {
 
   await saveConversationTurn(phone, text, reply);
   await sendMessage(chatId, buildClickableMessage(reply)).catch(() => {});
-  await maybeRollUpHistory(phone);
+  metrics.historyRolledUp = await maybeRollUpHistory(phone);
   emitTurnMetrics(metrics, { reply });
   return reply;
 }

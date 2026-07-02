@@ -84,6 +84,18 @@ lazy via `get_care_team`); injection is confirmed-identity-only; the prompt hedg
 when memory (Zep) is unavailable. Revisit if provider-side logging or the compliance
 posture changes.
 
+**Disclosure addendum (decided 2026-07-02, founder — explicit risk acceptance):**
+the proactive conversational automation disclosure ("I'm automated…") was REMOVED
+from Cara's first-contact messages by founder decision, against the standing
+recommendation (CA B.O.T. Act exposure in a paid signup flow — validated review
+finding, 2026-07-01). Remaining disclosure surfaces: (a) the web signup subtitle
+"Cara is an automated coordinator backed by our care team" (`OnboardingFlow.tsx`),
+and (b) the honest-answer-if-asked prompt rules in all three persona prompts —
+Cara never denies being an AI when asked directly. Counsel must review this
+posture before or shortly after launch; if counsel requires conversational
+disclosure, restore the sentence in `webhooks.ts` coldIntro and `language.ts`
+`otp_greeting` (git history 2026-07-02 has both wordings).
+
 **Provider addendum (decided 2026-07-01, founder):** the agent tier runs on **OpenAI**
 (`CARA_AGENT_PROVIDER=openai`, `CARA_AGENT_MODEL=gpt-5.4`) with Anthropic Sonnet as
 runtime fallback — so the PHI-bearing prompt flows to OpenAI by default and to

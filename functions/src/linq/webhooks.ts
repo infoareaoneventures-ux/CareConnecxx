@@ -1020,14 +1020,16 @@ const handleInboundInner = traceable(
     );
 
     if (service === "iMessage") await startTyping(chatId).catch(() => {});
-    // LAUNCH: wording pending counsel review (R15)
+    // LAUNCH: conversational automation disclosure REMOVED by explicit founder
+    // decision 2026-07-02 (risk accepted — see AGENT_NATIVE_EXCLUSIONS.md R15
+    // addendum). Web signup subtitle + honest-answer-if-asked rule remain the
+    // disclosure surfaces. Counsel to revisit.
     const coldIntro = preferredLanguage === "es"
-      ? "Hola — soy Cara, tu coordinadora de cuidado. Soy automatizada, y un equipo humano de verdad me respalda. " +
-        "Ayudo a las familias a encontrar cuidadores de confianza con verificación de antecedentes — y a los " +
-        "cuidadores a encontrar trabajo — todo aquí por mensaje.\n\n" +
+      ? "Hola — soy Cara, tu coordinadora de cuidado. Ayudo a las familias a encontrar cuidadores de confianza " +
+        "con verificación de antecedentes — y a los cuidadores a encontrar trabajo — todo aquí por mensaje.\n\n" +
         "¿Buscas cuidado para un ser querido, o eres cuidador?"
-      : "Hi — I'm Cara, your care coordinator. I'm automated, and a real team backs me up. I help families find " +
-        "trusted, background-checked caregivers — and help caregivers find work — all right here by text.\n\n" +
+      : "Hi — I'm Cara, your care coordinator. I help families find trusted, background-checked caregivers — " +
+        "and help caregivers find work — all right here by text.\n\n" +
         "Are you looking for care for a loved one, or are you a caregiver yourself?";
     await sendMessage(chatId, coldIntro);
     // Share contact card AFTER the first outbound message — Linq requires at least

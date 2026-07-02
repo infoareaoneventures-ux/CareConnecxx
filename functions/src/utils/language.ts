@@ -64,11 +64,13 @@ export function isSupportedLanguage(code: string): code is Language {
 // extend the same key set. Functions take parameters where needed.
 
 export const t = {
-  // LAUNCH: wording pending counsel review (R15)
+  // LAUNCH: conversational automation disclosure REMOVED by explicit founder
+  // decision 2026-07-02 (risk accepted — see AGENT_NATIVE_EXCLUSIONS.md R15
+  // addendum). Counsel to revisit.
   otp_greeting: (code: string, lang: Language): string =>
     lang === "es"
-      ? `Hola — soy Cara, tu coordinadora de cuidado. Soy automatizada, y un equipo humano de verdad me respalda.\n\nPrimero un control de seguridad: por favor responde con el código ${code} para confirmar que eres tú en este número.`
-      : `Hi — I'm Cara, your care coordinator. I'm automated, and a real team backs me up.\n\nQuick security check first: please reply with the code ${code} so I know it's really you on this number.`,
+      ? `Hola — soy Cara, tu coordinadora de cuidado.\n\nPrimero un control de seguridad: por favor responde con el código ${code} para confirmar que eres tú en este número.`
+      : `Hi — I'm Cara, your care coordinator.\n\nQuick security check first: please reply with the code ${code} so I know it's really you on this number.`,
 
   otp_verified_role_question: (lang: Language): string =>
     lang === "es"

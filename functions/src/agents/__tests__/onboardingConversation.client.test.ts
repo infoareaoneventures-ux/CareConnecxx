@@ -382,22 +382,23 @@ describe("client onboarding steps — characterization", () => {
 // (before onboardingStep even exists). It must keep its warmth but disclose
 // that Cara is automated with a real team behind her (CA B.O.T. Act).
 describe("first-contact disclosure (otp_greeting)", () => {
-  it("English greeting discloses automation while keeping the warm intro", () => {
+  // Conversational automation disclosure removed by explicit founder decision
+  // 2026-07-02 (risk accepted; web signup subtitle + honest-answer-if-asked
+  // remain the disclosure surfaces). These tests pin the warm intro and the
+  // absence of chatbot self-labels.
+  it("English greeting keeps the warm coordinator intro without chatbot self-labels", () => {
     const msg = tr.otp_greeting("123456", "en");
     expect(msg).toContain("I'm Cara");
     expect(msg).toContain("care coordinator");
-    expect(msg).toContain("I'm automated");
-    expect(msg).toContain("real team backs me up");
     expect(msg).toContain("123456");
-    // Voice contract: the chatbot self-label stays out of the greeting.
     expect(msg.toLowerCase()).not.toContain("care assistant");
+    expect(msg.toLowerCase()).not.toContain("ai ");
   });
 
-  it("Spanish greeting discloses automation while keeping the warm intro", () => {
+  it("Spanish greeting keeps the warm coordinator intro without chatbot self-labels", () => {
     const msg = tr.otp_greeting("123456", "es");
     expect(msg).toContain("soy Cara");
     expect(msg).toContain("coordinadora de cuidado");
-    expect(msg).toContain("Soy automatizada");
     expect(msg).toContain("123456");
     expect(msg.toLowerCase()).not.toContain("asistente");
   });

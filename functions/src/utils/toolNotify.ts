@@ -10,6 +10,11 @@ export type NotifyOutcome =
   | { sent: true }
   | { sent: false; reason: string; error?: string };
 
+// Action notifications (cancellation notices, APPROVE prompts, relayed
+// messages) are must-deliver: when the Linq line is temporarily blocked they
+// stay queued for this long rather than the default 15 minutes.
+const NOTIFY_QUEUE_TTL_MS = 6 * 60 * 60 * 1000;
+
 export async function trySend(
   phone:   string,
   message: string,
@@ -19,7 +24,22 @@ export async function trySend(
     return { sent: false, reason: "missing_phone" };
   }
   try {
-    await sendToPhone(phone, message);
+    const outcome = await sendToPhone(phone, message, {
+      queueTtlMs: NOTIFY_QUEUE_TTL_MS,
+      source,
+    });
+    // Previously a circuit-breaker drop returned void and was reported as
+    // sent — Cara would tell the user "I let them know" about a message that
+    // never went out. Surface the real outcome instead.
+    if (outcome === "queued") {
+      return { sent: false, reason: "queued_for_retry" };
+    }
+    if (outcome === "dropped") {
+      return { sent: false, reason: "linq_line_unavailable" };
+    }
+    if (outcome === "skipped_opt_out") {
+      return { sent: false, reason: "recipient_opted_out" };
+    }
     return { sent: true };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);

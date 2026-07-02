@@ -1105,6 +1105,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Durable retry queue for outbound Linq messages blocked by the circuit
+    // breaker / per-pair rate limit (linq/outboundQueue.ts). Server-only —
+    // drained by the drainLinqOutboundQueue scheduled function. Docs carry
+    // raw message text + phone numbers; never client-readable.
+    match /linq_outbound_queue/{queueId} {
+      allow read, write: if false;
+    }
+
     // Caregiver-initiated shift swaps (caregiverSwapHandler). Server-only. The raw
     // doc carries candidatesContacted/candidateResponses/fromCaregiverName, so the
     // UI reads the sanitized shift_swap_summaries projection instead (U7).

@@ -1,6 +1,20 @@
 {
   "indexes": [
     {
+      "collectionGroup": "linq_outbound_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "notBefore",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "care_journal",
       "queryScope": "COLLECTION",
       "fields": [

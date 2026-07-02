@@ -40,6 +40,7 @@ Origin: `docs/plans/2026-06-24-001-feat-cara-100-agent-native-plan.md` (Track A)
 | `agent_turn_checkpoints` | Shared Workspace | Mid-turn resume state; internal. |
 | `processed_stripe_events`, `processed_checkr_events` | Shared Workspace | Webhook idempotency ledgers; server-only. |
 | `dnd_queue` | Shared Workspace | SMS send-timing queue; server-only. |
+| `linq_outbound_queue` | Shared Workspace | Durable retry queue for outbound sends blocked by the Linq circuit breaker / rate limiter; server-only (drained by `drainLinqOutboundQueue`). |
 | `user_triggers`, `proactive_triggers`, `execution_agents` | Shared Workspace | Agent scheduling/lifecycle; server-only. |
 | `agent_audit_log` / `agent_action_ledger` (admin-read-only) | Shared Workspace | Users see the filtered `user_activity_feed` projection, not raw logs. |
 

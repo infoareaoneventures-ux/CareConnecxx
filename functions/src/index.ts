@@ -151,6 +151,7 @@ export { sendLocationRequestNudges } from './scheduled/locationRequestNudge';
 export { sendClientThirtyMinReminders } from './scheduled/clientThirtyMinReminder';
 export { sendThirtyMinShiftReminders } from './scheduled/thirtyMinShiftReminder';
 export { processDndQueue } from './scheduled/dndQueueProcessor';
+export { drainLinqOutboundQueue } from './scheduled/outboundQueueDrain';
 export { expirePostVisitFeedback } from './scheduled/feedbackExpiry';
 export { expirePendingShiftOffers } from './scheduled/shiftOfferExpiry';
 export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';

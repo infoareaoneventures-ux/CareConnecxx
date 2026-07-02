@@ -390,6 +390,70 @@ export interface SendOptions {
    * Docs: /guides/messaging/protocol-selection/
    */
   preferredService?: LinqService;
+  /**
+   * What to do when the guarded send paths (safeSend/sendToPhone) are blocked
+   * by the circuit breaker or per-pair rate limit. "queue" (default) parks the
+   * message in linq_outbound_queue for the every-minute drain sweep; "drop"
+   * keeps the old discard behavior — use it for messages that are worthless
+   * even a minute late (typing fillers, ephemeral acks).
+   */
+  durability?: "queue" | "drop";
+  /** Queue expiry for blocked sends. Default 15 min; must-deliver callers
+   *  (e.g. toolNotify.trySend) pass a longer window. */
+  queueTtlMs?: number;
+  /** Caller tag stored on queued docs for observability. */
+  source?: string;
+  /** Internal — set by the drain sweep so a still-blocked send reports back
+   *  instead of re-enqueueing itself. */
+  _noQueue?: boolean;
+}
+
+/**
+ * Outcome of a guarded send:
+ * - "sent"            — delivered to Linq.
+ * - "queued"          — blocked (circuit open / rate-limited) and parked in
+ *                       linq_outbound_queue; the drain sweep will deliver it.
+ * - "dropped"         — blocked and discarded (durability:"drop", queue-write
+ *                       failure, or a still-blocked drain retry).
+ * - "skipped_opt_out" — recipient opted out; deliberately not sent.
+ */
+export type GuardedSendOutcome = "sent" | "queued" | "dropped" | "skipped_opt_out";
+
+// Park a blocked send in the durable queue (unless the caller opted out of
+// queueing). Returns the outcome to surface to the caller.
+async function queueOrDrop(
+  target: { kind: "chat"; chatId: string } | { kind: "phone"; phone: string },
+  message: string | LinqMessage,
+  reason: "circuit_open" | "rate_limited",
+  opts: SendOptions,
+  superviseContext?: SuperviseContext,
+): Promise<GuardedSendOutcome> {
+  const where = target.kind === "chat" ? { chatId: target.chatId } : { phone: target.phone };
+  if (opts._noQueue || opts.durability === "drop") {
+    console.warn(`guarded send blocked (${reason}), dropping message`, where);
+    return "dropped";
+  }
+  try {
+    const { enqueueOutbound } = await import("./outboundQueue");
+    const queued = await enqueueOutbound({
+      target,
+      ...(typeof message === "string" ? { text: message } : { message }),
+      superviseContext,
+      preferredService: opts.preferredService,
+      reason,
+      source: opts.source ?? (target.kind === "chat" ? "safeSend" : "sendToPhone"),
+      ttlMs: opts.queueTtlMs,
+    });
+    if (queued) {
+      console.warn(`guarded send blocked (${reason}), queued for retry`, where);
+      return "queued";
+    }
+  } catch (err) {
+    console.error("guarded send: enqueue threw — message dropped", {
+      ...where, reason, err: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return "dropped";
 }
 
 export async function sendMessage(
@@ -871,14 +935,12 @@ export async function safeSend(
   message: string | LinqMessage,
   context: SuperviseContext,
   opts: SendOptions = {}
-): Promise<void> {
+): Promise<GuardedSendOutcome> {
   if (await isCircuitOpen()) {
-    console.warn("safeSend: circuit breaker open (line FLAGGED/CRITICAL), dropping message", { chatId });
-    return;
+    return queueOrDrop({ kind: "chat", chatId }, message, "circuit_open", opts, context);
   }
   if (!(await checkPairRateLimit(chatId))) {
-    console.warn("safeSend: per-pair rate limit reached, dropping message", { chatId });
-    return;
+    return queueOrDrop({ kind: "chat", chatId }, message, "rate_limited", opts, context);
   }
 
   let finalText = "";
@@ -907,6 +969,7 @@ export async function safeSend(
   if (context.phone) {
     logMessageSent(context.phone, context.phone, chatId, finalText || "[structured message]").catch(() => {});
   }
+  return "sent";
 }
 
 // ── High-level helper: send to a phone number ────────────────────────────────
@@ -915,10 +978,9 @@ export async function sendToPhone(
   phone: string,
   textOrMessage: string | LinqMessage,
   opts: SendOptions = {}
-): Promise<void> {
+): Promise<GuardedSendOutcome> {
   if (await isCircuitOpen()) {
-    console.warn("sendToPhone: circuit breaker open, dropping message", { phone });
-    return;
+    return queueOrDrop({ kind: "phone", phone }, textOrMessage, "circuit_open", opts);
   }
 
   const ref  = db.collection("agent_sessions").doc(phone);
@@ -926,9 +988,9 @@ export async function sendToPhone(
 
   if (snap.exists) {
     const session = snap.data() as AgentSession;
-    if (session.optedOut || session.optedIn === false) return;
+    if (session.optedOut || session.optedIn === false) return "skipped_opt_out";
     await sendMessage(session.chatId, textOrMessage, opts);
-    return;
+    return "sent";
   }
 
   // No session yet — create chat with this message as the opener
@@ -963,6 +1025,7 @@ export async function sendToPhone(
     if (newSession.service === "iMessage") {
       shareContactCard(chat_id).catch(() => {});
     }
+    return "sent";
   } catch (err) {
     const e = err as AxiosError;
     console.error("Linq sendToPhone error:", e.response?.data ?? e.message);

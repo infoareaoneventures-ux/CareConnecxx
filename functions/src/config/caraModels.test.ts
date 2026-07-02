@@ -26,6 +26,31 @@ describe("resolveCaraModelConfig", () => {
     });
   });
 
+  it("honors an explicit anthropic override in a prod-shaped env (no VITEST/NODE_ENV=test)", () => {
+    expect(resolveCaraModelConfig("agent", {
+      CARA_AGENT_PROVIDER: "anthropic",
+    })).toEqual({
+      provider: "anthropic",
+      model:    "claude-sonnet-4-6",
+    });
+  });
+
+  it("falls back to the prod default when CARA_AGENT_PROVIDER is set but unrecognized", () => {
+    expect(resolveCaraModelConfig("agent", {
+      CARA_AGENT_PROVIDER: "not-a-real-provider",
+    })).toEqual({
+      provider: "openai",
+      model:    "gpt-4o",
+    });
+  });
+
+  it("treats NODE_ENV=test the same as VITEST for the agent tier's test-env default", () => {
+    expect(resolveCaraModelConfig("agent", { NODE_ENV: "test" })).toEqual({
+      provider: "anthropic",
+      model:    "claude-sonnet-4-6",
+    });
+  });
+
   it("defaults low-cost quick and router tiers to gpt-4o-mini", () => {
     expect(resolveCaraModelConfig("quick", {})).toEqual({ provider: "openai", model: "gpt-4o-mini" });
     expect(resolveCaraModelConfig("router", {})).toEqual({ provider: "openai", model: "gpt-4o-mini" });

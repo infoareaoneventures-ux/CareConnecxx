@@ -300,6 +300,175 @@ function raiseMedicalCrisisAlert(phone: string, text: string): void {
   }).catch(() => {});
 }
 
+// ── Multi-care-group disambiguation (U8) ──────────────────────────────────────
+// A phone that matches 2+ care groups can't be auto-attached — we ask which
+// senior the message is about and persist the candidates so the ANSWER has
+// somewhere to land. Without this marker, the next inbound re-hits
+// `!sessionSnap.exists` (a disambiguation reply creates no session on its own)
+// and re-asks the same question forever.
+interface GroupDisambiguationCandidate {
+  primaryPhone: string;
+  seniorName:   string;
+}
+
+// Create the lightweight secondary-member session pointing at the primary
+// account, exactly as the single-match path does, then greet. Shared by both
+// the single-match fast path and the resolved-disambiguation path so the two
+// never drift.
+async function createSecondaryMemberSession(
+  phone:          string,
+  chatId:         string,
+  primarySession: AgentSession,
+  primaryPhone:   string,
+): Promise<void> {
+  const secondaryCap = await checkCapability(phone);
+  const secondaryService: LinqService = secondaryCap.iMessage ? "iMessage" : secondaryCap.RCS ? "RCS" : "SMS";
+
+  let groupChatId = (primarySession as any).groupChatId as string | undefined;
+  if (!groupChatId && primaryPhone) {
+    const groupForPrimary = await db.collection("family_groups")
+      .where("phones", "array-contains", primaryPhone)
+      .limit(1)
+      .get()
+      .catch(() => null);
+    groupChatId = groupForPrimary && !groupForPrimary.empty
+      ? (groupForPrimary.docs[0].data().chatId as string | undefined)
+      : undefined;
+  }
+
+  await db.collection("agent_sessions").doc(phone).set({
+    chatId,
+    phone,
+    service:        secondaryService,
+    userType:       "client",
+    onboardingStep: "complete",
+    optedIn:        true,
+    optedOut:       false,
+    userId:         primarySession.userId,
+    seniorId:       primarySession.seniorId,
+    primaryPhone,
+    isSecondaryMember: true,
+    createdAt:      new Date().toISOString(),
+    ...(groupChatId ? { groupChatId } : {}),
+  });
+
+  await initializeZepOnFirstContact(phone).catch((err) =>
+    console.error("Zep init failed (secondary member):", err)
+  );
+
+  await sendMessage(chatId,
+    `Hi, I'm Cara — the care coordinator for ${(primarySession as any).onboardingData?.seniorName ?? "your family"}. ` +
+    `I've added you to the care group. You'll get the same updates and can ask me anything.`
+  );
+}
+
+// Ask which senior the phone is texting about, naming the actual candidates.
+async function askGroupDisambiguation(
+  chatId:     string,
+  candidates: GroupDisambiguationCandidate[],
+): Promise<void> {
+  const names = candidates.map((c) => c.seniorName).join(" or ");
+  await sendMessage(
+    chatId,
+    `I see your number in more than one care group — for ${names}. Which one are you texting about?`,
+  );
+}
+
+// The reply to the disambiguation question. Resolves via parseWithClaude (per
+// CLAUDE.md — no keyword/regex intent parsing) against the candidate senior
+// names. Match → create that candidate's secondary session and clear the
+// marker. No match, first attempt → re-ask with names, increment attempts.
+// No match, second attempt → give up looping: fall back to the FIRST
+// candidate and raise an admin_alerts event so support can reconcile it.
+async function handleGroupDisambiguationReply(
+  phone:   string,
+  chatId:  string,
+  text:    string,
+  pending: { candidates: GroupDisambiguationCandidate[]; askedAt: string; attempts: number },
+): Promise<void> {
+  const { parseWithClaude } = await import("../utils/parseWithClaude");
+  const candidates = pending.candidates ?? [];
+
+  if (candidates.length === 0) {
+    // Nothing to resolve against — clear the marker so we don't loop forever.
+    await db.collection("agent_sessions").doc(phone).update({
+      pendingGroupDisambiguation: admin.firestore.FieldValue.delete(),
+    }).catch(() => {});
+    return;
+  }
+
+  const namesList = candidates
+    .map((c, i) => `${i}: ${c.seniorName}`)
+    .join("; ");
+  const raw = await parseWithClaude(
+    `The user was asked which senior's care group they're texting about. Candidates (index: name): ${namesList}. ` +
+    `Reply with ONLY the matching index number if the user's message clearly names one of these seniors. ` +
+    `Reply "none" if it doesn't clearly match any of them.`,
+    text,
+  );
+
+  const matchedIndex = /^\d+$/.test(raw.trim()) ? parseInt(raw.trim(), 10) : -1;
+  const matched = matchedIndex >= 0 && matchedIndex < candidates.length
+    ? candidates[matchedIndex]
+    : null;
+
+  if (matched) {
+    await db.collection("agent_sessions").doc(phone).update({
+      pendingGroupDisambiguation: admin.firestore.FieldValue.delete(),
+    }).catch(() => {});
+    const primarySnap = await db.collection("agent_sessions").doc(matched.primaryPhone).get();
+    if (primarySnap.exists) {
+      await createSecondaryMemberSession(phone, chatId, primarySnap.data() as AgentSession, matched.primaryPhone);
+    } else {
+      // Primary session vanished between the ask and the answer — fail safe
+      // with an alert rather than crashing the turn.
+      await db.collection("admin_alerts").add({
+        type:      "group_disambiguation_primary_missing",
+        phone,
+        primaryPhone: matched.primaryPhone,
+        severity:  "medium",
+        createdAt: new Date().toISOString(),
+        resolved:  false,
+      }).catch(() => {});
+      await sendMessage(chatId, "Something went wrong linking that care group — I've flagged it for our team to fix.");
+    }
+    return;
+  }
+
+  if (pending.attempts < 2) {
+    await db.collection("agent_sessions").doc(phone).update({
+      pendingGroupDisambiguation: {
+        candidates,
+        askedAt:  new Date().toISOString(),
+        attempts: pending.attempts + 1,
+      },
+    }).catch(() => {});
+    await askGroupDisambiguation(chatId, candidates);
+    return;
+  }
+
+  // Two unresolved attempts — stop looping. Fall back to the first candidate
+  // and raise an alert so support can reconcile the account manually.
+  await db.collection("agent_sessions").doc(phone).update({
+    pendingGroupDisambiguation: admin.firestore.FieldValue.delete(),
+  }).catch(() => {});
+  const fallback = candidates[0];
+  await db.collection("admin_alerts").add({
+    type:      "group_disambiguation_unresolved",
+    phone,
+    candidates,
+    severity:  "medium",
+    createdAt: new Date().toISOString(),
+    resolved:  false,
+  }).catch(() => {});
+  const primarySnap = await db.collection("agent_sessions").doc(fallback.primaryPhone).get();
+  if (primarySnap.exists) {
+    await createSecondaryMemberSession(phone, chatId, primarySnap.data() as AgentSession, fallback.primaryPhone);
+  } else {
+    await sendMessage(chatId, "Something went wrong linking that care group — I've flagged it for our team to fix.");
+  }
+}
+
 // ── Post-visit feedback sentiment classifier ──────────────────────────────────
 
 async function classifyFeedbackSentiment(
@@ -566,10 +735,22 @@ const handleInboundInner = traceable(
       .limit(2)
       .get();
     if (groupSnap.size > 1) {
-      await sendMessage(
+      const candidates: GroupDisambiguationCandidate[] = groupSnap.docs.map((d) => ({
+        primaryPhone: d.id,
+        seniorName:   ((d.data() as AgentSession as any).onboardingData?.seniorName as string | undefined)
+          ?? "your family member",
+      }));
+      await db.collection("agent_sessions").doc(phone).set({
         chatId,
-        "I see your number in more than one care group. Which senior are you texting about?",
-      );
+        phone,
+        pendingGroupDisambiguation: {
+          candidates,
+          askedAt:  new Date().toISOString(),
+          attempts: 1,
+        },
+        createdAt: new Date().toISOString(),
+      });
+      await askGroupDisambiguation(chatId, candidates);
       return;
     }
     if (!groupSnap.empty) {
@@ -582,10 +763,29 @@ const handleInboundInner = traceable(
         .limit(2)
         .get();
       if (memberSnap.size > 1) {
-        await sendMessage(
+        // Resolve each membership record to its primary session so we can name
+        // the actual seniors in the disambiguation question.
+        const candidatePairs = await Promise.all(memberSnap.docs.map(async (d) => {
+          const pPhone = d.data().primaryPhone as string | undefined;
+          if (!pPhone) return null;
+          const pSnap = await db.collection("agent_sessions").doc(pPhone).get().catch(() => null);
+          const seniorName = pSnap && pSnap.exists
+            ? (((pSnap.data() as AgentSession as any).onboardingData?.seniorName as string | undefined) ?? "your family member")
+            : "your family member";
+          return { primaryPhone: pPhone, seniorName } as GroupDisambiguationCandidate;
+        }));
+        const candidates = candidatePairs.filter((c): c is GroupDisambiguationCandidate => c !== null);
+        await db.collection("agent_sessions").doc(phone).set({
           chatId,
-          "I see your number in more than one care group. Which senior are you texting about?",
-        );
+          phone,
+          pendingGroupDisambiguation: {
+            candidates,
+            askedAt:  new Date().toISOString(),
+            attempts: 1,
+          },
+          createdAt: new Date().toISOString(),
+        });
+        await askGroupDisambiguation(chatId, candidates);
         return;
       }
       if (!memberSnap.empty) {
@@ -601,50 +801,7 @@ const handleInboundInner = traceable(
     }
 
     if (primarySession) {
-
-      // Detect messaging capability so session reflects real service (SMS vs iMessage vs RCS)
-      const secondaryCap = await checkCapability(phone);
-      const secondaryService: LinqService = secondaryCap.iMessage ? "iMessage" : secondaryCap.RCS ? "RCS" : "SMS";
-
-      let groupChatId = (primarySession as any).groupChatId as string | undefined;
-      if (!groupChatId && primaryPhone) {
-        const groupForPrimary = await db.collection("family_groups")
-          .where("phones", "array-contains", primaryPhone)
-          .limit(1)
-          .get()
-          .catch(() => null);
-        groupChatId = groupForPrimary && !groupForPrimary.empty
-          ? (groupForPrimary.docs[0].data().chatId as string | undefined)
-          : undefined;
-      }
-
-      // Create a lightweight session for this member pointing to the primary
-      await db.collection("agent_sessions").doc(phone).set({
-        chatId,
-        phone,
-        service:        secondaryService,
-        userType:       "client",
-        onboardingStep: "complete",
-        optedIn:        true,
-        optedOut:       false,
-        userId:         primarySession.userId,
-        seniorId:       primarySession.seniorId,
-        primaryPhone,
-        isSecondaryMember: true,
-        createdAt:      new Date().toISOString(),
-        ...(groupChatId ? { groupChatId } : {}),
-      });
-
-      // Start Zep memory for this secondary member too — awaited so zepThreadId lands before
-      // their first message is processed.
-      await initializeZepOnFirstContact(phone).catch((err) =>
-        console.error("Zep init failed (secondary member):", err)
-      );
-
-      await sendMessage(chatId,
-        `Hi, I'm Cara — the care coordinator for ${(primarySession as any).onboardingData?.seniorName ?? "your family"}. ` +
-        `I've added you to the care group. You'll get the same updates and can ask me anything.`
-      );
+      await createSecondaryMemberSession(phone, chatId, primarySession, primaryPhone);
       return;
     }
 
@@ -857,6 +1014,24 @@ const handleInboundInner = traceable(
   const session  = sessionSnap.data() as AgentSession;
   const norm     = text.trim().toUpperCase();
   const stopWords = new Set(["STOP", "UNSUBSCRIBE", "QUIT", "END", "OPTOUT"]);
+
+  // ── Multi-care-group disambiguation answer (U8) ─────────────────────────────
+  // Runs before every other guard: this session exists ONLY because we asked
+  // "which senior?" last turn and had to persist somewhere for the answer to
+  // land. Route the reply to the resolver before normal routing so it isn't
+  // swallowed by the opt-out/crisis/onboarding gates below (this session has
+  // no onboardingStep, userType, etc. yet — those guards would misbehave).
+  {
+    const pendingGroupDis = (session as any).pendingGroupDisambiguation as {
+      candidates: Array<{ primaryPhone: string; seniorName: string }>;
+      askedAt:    string;
+      attempts:   number;
+    } | undefined;
+    if (pendingGroupDis && text.trim() !== "") {
+      await handleGroupDisambiguationReply(phone, chatId, text, pendingGroupDis);
+      return;
+    }
+  }
 
   // ── Chat health gate — honour OPTED_OUT; do NOT mute direct replies ───────────
   // We only hard-stop on OPTED_OUT (a real user opt-out we must respect). CRITICAL
@@ -1510,6 +1685,12 @@ const handleInboundInner = traceable(
       hasLocation: !!inboundLocation,
       phone,
     })) {
+      // U9: runQaAgent sends its own reply internally. Once that resolves, the
+      // turn has already replied — any failure in the post-send writes below
+      // (persistence net, cursor update, Zep push) must NEVER fall through to
+      // handleOnboardingStep, which would send a second, stale-context reply
+      // on top of the one the loop already sent.
+      let loopReplied = false;
       try {
         await runQaAgent({
           text,
@@ -1524,6 +1705,7 @@ const handleInboundInner = traceable(
           onboardingRole: "client",
           intent:      null,
         });
+        loopReplied = true;
         // Stuck-signup net: the cursor only advances when the model calls
         // complete_collection. If collection is actually complete but the model
         // didn't call it, advance to the gate so the user is never trapped on a
@@ -1588,9 +1770,33 @@ const handleInboundInner = traceable(
         await pushOnboardingStepToZep(step);
         return;
       } catch (err) {
+        if (loopReplied) {
+          // The loop already sent its reply — this failure is a POST-send write
+          // (persistence net / cursor update / Zep push), not a reason to run
+          // the scripted runner too. Falling through here is exactly the U9
+          // double-reply bug: handleOnboardingStep would send a second,
+          // contradictory message from stale pre-turn session state. Record
+          // the failure and stop; the user already has a valid reply for this turn.
+          console.error(
+            "webhooks: onboarding agent-loop post-send write failed after reply was sent — not double-sending",
+            err instanceof Error ? err.message : err,
+          );
+          await db.collection("admin_alerts").add({
+            type:      "onboarding_loop_post_send_write_failed",
+            phone,
+            step,
+            error:     err instanceof Error ? err.message : String(err),
+            errorClass: err instanceof Error ? err.name : "unknown",
+            severity:  "medium",
+            createdAt: new Date().toISOString(),
+            resolved:  false,
+          }).catch(() => {});
+          return;
+        }
         // RLB-001/005: the loop is Sonnet on the signup happy path. If it throws
-        // (API outage/timeout/Firestore), do NOT wedge the user — fall through to
-        // the deterministic scripted runner so collection still advances.
+        // (API outage/timeout/Firestore) BEFORE replying, do NOT wedge the user —
+        // fall through to the deterministic scripted runner so collection still
+        // advances.
         console.error(
           "webhooks: onboarding agent-loop failed — falling back to scripted runner",
           err instanceof Error ? err.message : err,

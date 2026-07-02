@@ -168,6 +168,11 @@ vi.mock("../../utils/openaiClient", () => ({
   quickComplete: (...a: any[]) => quickComplete(...a),
 }));
 
+const parseWithClaude = vi.fn(async (..._a: any[]) => "none");
+vi.mock("../../utils/parseWithClaude", () => ({
+  parseWithClaude: (...a: any[]) => parseWithClaude(...a),
+}));
+
 const handleToolCall = vi.fn(async (..._a: any[]) => ({ success: true, notification: { sent: true } }));
 vi.mock("../../mcp/server", () => ({
   handleToolCall: (...a: any[]) => handleToolCall(...a),
@@ -326,6 +331,7 @@ beforeEach(() => {
   isLikelyRealCrisis.mockResolvedValue(true);
   classifyCrisisMultilingual.mockResolvedValue(null);
   quickComplete.mockResolvedValue("NONE");
+  parseWithClaude.mockResolvedValue("none");
   handleToolCall.mockResolvedValue({ success: true, notification: { sent: true } });
   sendMessage.mockResolvedValue({ message_id: "m1" });
 });
@@ -498,10 +504,16 @@ describe("onboarding + rate limit", () => {
       isSecondaryMember: true,
       groupChatId: "family-group-chat",
     });
-    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("care assistant"));
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("care coordinator"));
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
+  // U8: a phone in multiple care groups is no longer dropped with nothing
+  // persisted (the old dead-loop bug) — it now gets a pending disambiguation
+  // marker so the next inbound's answer has somewhere to land. See the
+  // "multi-care-group disambiguation (U8)" describe block below for the full
+  // two-turn resolution coverage; this test only pins that the phone is never
+  // silently attached to either group without asking.
   it("does not silently attach a secondary member when their phone is in multiple care groups", async () => {
     hoisted.collState.set("family_group_members", [
       { id: "m1", primaryPhone: "+15550001111", memberPhone: PHONE },
@@ -510,7 +522,7 @@ describe("onboarding + rate limit", () => {
 
     await handleInbound(makeEvent("hi"));
 
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toBeUndefined();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.isSecondaryMember).toBeUndefined();
     expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("more than one care group"));
     expect(runQaAgent).not.toHaveBeenCalled();
   });
@@ -729,6 +741,215 @@ describe("onboarding agent-loop flag routing", () => {
     seedSession({ onboardingStep: "client_ask_name" });
     await handleInbound(makeEvent("Sarah"));
     expect(runQaAgent).not.toHaveBeenCalled();
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Multi-care-group disambiguation (U8) ─────────────────────────────────────
+// Validated bug: a phone matching 2+ care groups got asked "which senior?" and
+// the turn returned with NOTHING persisted. The next inbound re-hit
+// `!sessionSnap.exists` and re-asked forever — no code path ever consumed the
+// answer. Fix: persist candidates + attempts on agent_sessions/{phone} before
+// returning, and route the next inbound's reply through the resolver first.
+describe("multi-care-group disambiguation (U8)", () => {
+  const PRIMARY_A = "+15550009999";
+  const PRIMARY_B = "+15550008888";
+
+  function seedTwoGroups() {
+    hoisted.collState.set("agent_sessions", [
+      { id: PRIMARY_A, chatId: "chat-a", groupMembers: [PHONE], userId: "uA", seniorId: "seniorA", onboardingData: { seniorName: "Jane" } },
+      { id: PRIMARY_B, chatId: "chat-b", groupMembers: [PHONE], userId: "uB", seniorId: "seniorB", onboardingData: { seniorName: "Bob" } },
+    ]);
+  }
+
+  it("multi-group inbound asks with senior names and persists a marker with attempts 1, writing nothing else", async () => {
+    seedTwoGroups();
+    await handleInbound(makeEvent("hi"));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const question = String(sendMessage.mock.calls[0][1]);
+    expect(question).toContain("Jane");
+    expect(question).toContain("Bob");
+
+    const marker = hoisted.docState.get(`agent_sessions/${PHONE}`)?.pendingGroupDisambiguation;
+    expect(marker).toMatchObject({ attempts: 1 });
+    expect(marker.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ primaryPhone: PRIMARY_A, seniorName: "Jane" }),
+        expect.objectContaining({ primaryPhone: PRIMARY_B, seniorName: "Bob" }),
+      ]),
+    );
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("second inbound naming a candidate creates that candidate's session, no re-ask, marker cleared", async () => {
+    // Seed the primary session AND the pending marker as if turn 1 already ran.
+    hoisted.docState.set(`agent_sessions/${PRIMARY_B}`, {
+      chatId: "chat-b", userId: "uB", seniorId: "seniorB", onboardingData: { seniorName: "Bob" },
+    });
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      pendingGroupDisambiguation: {
+        candidates: [
+          { primaryPhone: PRIMARY_A, seniorName: "Jane" },
+          { primaryPhone: PRIMARY_B, seniorName: "Bob" },
+        ],
+        askedAt: "now",
+        attempts: 1,
+      },
+    });
+    parseWithClaude.mockResolvedValueOnce("1"); // index 1 → Bob
+
+    await handleInbound(makeEvent("Bob, my dad"));
+
+    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(session?.pendingGroupDisambiguation).toBeUndefined();
+    expect(session).toMatchObject({
+      userId: "uB",
+      seniorId: "seniorB",
+      primaryPhone: PRIMARY_B,
+      isSecondaryMember: true,
+    });
+    // Exactly one send this turn: the "added to the care group" greeting — no re-ask.
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0][1])).not.toContain("more than one care group");
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("two consecutive no-match replies: one re-ask, then first-candidate fallback + admin_alerts, no infinite loop", async () => {
+    hoisted.docState.set(`agent_sessions/${PRIMARY_A}`, {
+      chatId: "chat-a", userId: "uA", seniorId: "seniorA", onboardingData: { seniorName: "Jane" },
+    });
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      pendingGroupDisambiguation: {
+        candidates: [
+          { primaryPhone: PRIMARY_A, seniorName: "Jane" },
+          { primaryPhone: PRIMARY_B, seniorName: "Bob" },
+        ],
+        askedAt: "now",
+        attempts: 1,
+      },
+    });
+    parseWithClaude.mockResolvedValueOnce("none");
+
+    // First no-match reply → re-ask, attempts bumped to 2, still pending.
+    await handleInbound(makeEvent("I don't know"));
+    let session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(session?.pendingGroupDisambiguation).toMatchObject({ attempts: 2 });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0][1])).toContain("Jane");
+
+    sendMessage.mockClear();
+    parseWithClaude.mockResolvedValueOnce("none");
+
+    // Second no-match reply → give up, fall back to first candidate, alert, marker cleared.
+    await handleInbound(makeEvent("still not sure"));
+    session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(session?.pendingGroupDisambiguation).toBeUndefined();
+    expect(session).toMatchObject({ primaryPhone: PRIMARY_A, isSecondaryMember: true });
+    expect(hoisted.docState.get("admin_alerts/auto-add")).toMatchObject({
+      type: "group_disambiguation_unresolved",
+    });
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("single-group phone is unaffected (unchanged secondary-member attach behavior)", async () => {
+    hoisted.collState.set("agent_sessions", [{
+      id: PRIMARY_A,
+      chatId: "primary-chat",
+      groupMembers: [PHONE],
+      userId: "u1",
+      seniorId: "senior1",
+      groupChatId: "family-group-chat",
+      onboardingData: { seniorName: "Jane" },
+    }]);
+
+    await handleInbound(makeEvent("hi"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
+      userId: "u1",
+      seniorId: "senior1",
+      primaryPhone: PRIMARY_A,
+      isSecondaryMember: true,
+      groupChatId: "family-group-chat",
+    });
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.pendingGroupDisambiguation).toBeUndefined();
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("care coordinator"));
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+});
+
+// ── Double-reply fall-through guard (U9) ─────────────────────────────────────
+// Validated bug: runQaAgent sends its own reply, then a post-send write
+// (persistence net / cursor update / Zep push) could throw into a shared catch
+// that fell through to handleOnboardingStep — sending a SECOND, contradictory
+// reply from stale pre-turn state. Fix: a loopReplied flag gates the catch.
+describe("onboarding agent-loop double-send guard (U9)", () => {
+  const defaultCollectionImpl = hoisted.collection.getMockImplementation();
+  afterEach(() => {
+    delete process.env.ONBOARDING_AGENT_LOOP;
+    // Restore the plain collection() implementation — the first test in this
+    // block installs a stateful override that must not leak into later tests.
+    if (defaultCollectionImpl) hoisted.collection.mockImplementation(defaultCollectionImpl);
+  });
+
+  it("persistence-net write throws after runQaAgent resolves → exactly one send, admin_alerts written, handleOnboardingStep NOT called", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_name", onboardingData: {} });
+
+    // runQaAgent resolves — its own reply already went out via the mocked
+    // client — then the FIRST post-send read (`db.collection("agent_sessions")
+    // .doc(phone).get()`, used to re-check the cursor/onboardingData) throws.
+    // This simulates the validated failure mode: a post-send write/read fails
+    // after the loop has already replied. Only calls to agent_sessions/{phone}
+    // .get() made AFTER runQaAgent resolves should throw — earlier calls (the
+    // session lookup at the top of the turn) must behave normally, so gate the
+    // throw on a flag flipped inside the runQaAgent mock itself.
+    let afterLoopReplied = false;
+    runQaAgent.mockImplementationOnce(async (..._a: any[]) => {
+      afterLoopReplied = true;
+      return "qa reply";
+    });
+    const realCollection = hoisted.collection.getMockImplementation()!;
+    hoisted.collection.mockImplementation((name: string) => {
+      const ref = realCollection(name);
+      if (name === "agent_sessions") {
+        const realDoc = ref.doc;
+        ref.doc = (id?: string) => {
+          const docRef = realDoc(id);
+          if (id === PHONE) {
+            const realGet = docRef.get;
+            docRef.get = vi.fn(async () => {
+              if (afterLoopReplied) throw new Error("firestore unavailable");
+              return realGet();
+            });
+          }
+          return docRef;
+        };
+      }
+      return ref;
+    });
+
+    await handleInbound(makeEvent("Sarah"));
+
+    // Loop's own reply already went out; the guarded catch must record the
+    // failure and STOP — never fall through to a second, contradictory reply
+    // from the scripted runner.
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+    expect(hoisted.docState.get("admin_alerts/auto-add")).toMatchObject({
+      type: "onboarding_loop_post_send_write_failed",
+    });
+  });
+
+  it("agent loop throws before replying → handleOnboardingStep IS called (existing recovery preserved)", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_name" });
+    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout"));
+
+    await handleInbound(makeEvent("Sarah"));
+
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
     expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
   });
 });

@@ -88,6 +88,11 @@ export async function mirrorToWebThread(params: {
   chatId?:   string;
   direction: "inbound" | "outbound"; // inbound = user -> Cara, outbound = Cara -> user
   text:      string;
+  /** Message origin ("cara_sms" default; "cara_web" for web-chat turns). */
+  source?:   string;
+  /** Client-generated id from the web composer, used to reconcile optimistic
+   *  bubbles and to keep retries from duplicating the message. */
+  clientMessageId?: string;
 }): Promise<void> {
   try {
     const text = (params.text ?? "").trim();
@@ -126,7 +131,8 @@ export async function mirrorToWebThread(params: {
         text,
         senderId:  params.direction === "inbound" ? userId : CARA_SENDER_ID,
         isRead:    params.direction === "inbound",
-        source:    "cara_sms",
+        source:    params.source ?? "cara_sms",
+        ...(params.clientMessageId ? { clientMessageId: params.clientMessageId } : {}),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     }));

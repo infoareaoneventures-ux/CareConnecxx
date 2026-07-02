@@ -383,82 +383,44 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
 // ── chatWithCara — web callable: routes authenticated web users through qaAgent ─
 // Bridges Firebase Auth UID → phone → agent_sessions so web users get the same
 // Cara experience (memory, tool use, booking) as Linq iMessage users.
-export const chatWithCara = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "Must be signed in.");
-  }
+//
+// Unified-thread contract (docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md):
+// rate check → resolve session → onboarding guard → opt-out check → per-phone
+// lock → await user-message mirror → agent. With a live Linq chat the agent
+// runs WITHOUT skipSend so sendSplit delivers the reply over SMS/iMessage and
+// auto-mirrors it into the web thread (one thread everywhere); otherwise
+// skipSend returns the reply and we mirror it manually. Rejections before the
+// mirror never leave an unanswered user bubble in the web thread.
+export const chatWithCara = functions
+  .runWith({ timeoutSeconds: 180 })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError("unauthenticated", "Must be signed in.");
+    }
 
-  const uid     = context.auth.uid;
-  const message = (data.message as string | undefined)?.trim();
-  if (!message) throw new functions.https.HttpsError("invalid-argument", "message is required");
+    const message         = (data.message as string | undefined)?.trim();
+    const clientMessageId = (data.clientMessageId as string | undefined)?.trim() || undefined;
+    if (!message) throw new functions.https.HttpsError("invalid-argument", "message is required");
 
-  const db = admin.firestore();
-
-  // Per-user sliding window: max 10 calls per 60 seconds
-  const rateRef  = db.collection("rate_limits").doc(`web_${uid}`);
-  const rateSnap = await rateRef.get();
-  const now      = Date.now();
-  const rateData = rateSnap.data() ?? { count: 0, windowStart: now };
-  if (rateData.windowStart < now - 60_000) {
-    await rateRef.set({ count: 1, windowStart: now });
-  } else if ((rateData.count as number) >= 10) {
-    return {
-      available:   true,
-      rateLimited: true,
-      reply:       "I'm getting a lot of messages right now — give me a moment before trying again.",
-      showMatches: false,
-    };
-  } else {
-    await rateRef.update({ count: admin.firestore.FieldValue.increment(1) });
-  }
-
-  // Resolve phone from the user's Firestore doc (populated during onboarding)
-  const userSnap = await db.collection("users").doc(uid).get();
-  const phone    = userSnap.data()?.phone as string | undefined;
-  if (!phone) {
-    return { available: false, reply: "Please complete your account setup to chat with Cara." };
-  }
-
-  // Load the agent session keyed by phone
-  const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
-  if (!sessionSnap.exists) {
-    return { available: false, reply: "Your Cara account isn't set up yet. Finish onboarding first." };
-  }
-
-  const session    = sessionSnap.data()!;
-  const userId     = session.userId     as string;
-  const seniorId   = session.seniorId   as string;
-  const zepThreadId = session.zepThreadId as string | undefined;
-
-  // Collect MCP tool names called during this invocation so we can signal the UI
-  const toolsCalled: string[] = [];
-
-  const { runQaAgent } = await import("./agents/qaAgent");
-  let reply: string;
-  try {
-    reply = await runQaAgent({
-      text:          message,
-      phone,
-      chatId:        "",       // no Linq chat for web — skipSend prevents any send attempt
-      userId,
-      seniorId,
-      zepThreadId,
-      session,
-      skipSend:      true,
-      _toolCallsOut: toolsCalled,
-      sourceChannel: "[USER]",
-    });
-  } catch (err) {
-    console.error("chatWithCara: qaAgent threw", err);
-    throw new functions.https.HttpsError("internal", "Cara is unavailable right now.");
-  }
-
-  // Signal the frontend to surface caregiver cards when the matching flow was triggered
-  const MATCH_TOOLS = new Set(["find_replacement_caregivers", "request_booking"]);
-  const showMatches = toolsCalled.some(t => MATCH_TOOLS.has(t));
-
-  return { available: true, reply, showMatches, toolsCalled };
-});
+    const { handleWebChatTurn, AgentUnavailableError } = await import("./linq/webChat");
+    try {
+      return await handleWebChatTurn({
+        uid:        context.auth.uid,
+        tokenPhone: context.auth.token.phone_number as string | undefined,
+        message,
+        clientMessageId,
+      });
+    } catch (err) {
+      if (err instanceof AgentUnavailableError) {
+        throw new functions.https.HttpsError(
+          "internal",
+          "Cara is unavailable right now.",
+          { status: "error", ...(clientMessageId ? { clientMessageId } : {}) },
+        );
+      }
+      throw err;
+    }
+  });
 
 // ── One-time Zep setup: create context template + backfill existing users ─────
 // Call once with header x-setup-key: cara-zep-setup-2026, then leave in place

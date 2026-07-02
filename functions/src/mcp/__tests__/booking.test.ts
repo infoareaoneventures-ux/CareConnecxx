@@ -133,6 +133,17 @@ vi.mock("../../agents/pendingActions", async (orig) => {
 });
 
 import { handleToolCall } from "../server";
+import { setCaraActionExecutionStoreForTest } from "../../agents/actionNative/actionExecutionLedger";
+
+// Pass-through duplicate-protection store: request_booking is failClosed, so
+// an unavailable ledger (this file's firestore mock) would refuse to run at
+// all. These suites test domain behavior, so the store never caches.
+setCaraActionExecutionStoreForTest({
+  async claim() {
+    return { cached: false };
+  },
+  async settle() { /* no-op */ },
+});
 
 describe("booking tools", () => {
   beforeEach(() => {

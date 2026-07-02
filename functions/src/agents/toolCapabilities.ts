@@ -190,6 +190,9 @@ export const CORE_TOOL_NAMES = new Set<string>([
   // filtering never strips them mid-collection.
   "save_onboarding_field",
   "complete_collection",
+  // Native location request (2026-06-29): needed mid-onboarding (address pin)
+  // and on profile/service-area updates under many intents — never filter.
+  "request_location",
   // Cross-cutting onboarding helper: "send me my payment / identity / photo /
   // document / background-check / payout link" arrives under many filtered
   // intents (UPDATE_PAYMENT_METHOD, UPDATE_PHOTO, …). It must never be filtered

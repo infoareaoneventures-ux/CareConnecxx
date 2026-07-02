@@ -385,16 +385,21 @@ describe("first-contact disclosure (otp_greeting)", () => {
   it("English greeting discloses automation while keeping the warm intro", () => {
     const msg = tr.otp_greeting("123456", "en");
     expect(msg).toContain("I'm Cara");
-    expect(msg).toContain("automated care coordinator");
+    expect(msg).toContain("care coordinator");
+    expect(msg).toContain("I'm automated");
     expect(msg).toContain("real team backs me up");
     expect(msg).toContain("123456");
+    // Voice contract: the chatbot self-label stays out of the greeting.
+    expect(msg.toLowerCase()).not.toContain("care assistant");
   });
 
   it("Spanish greeting discloses automation while keeping the warm intro", () => {
     const msg = tr.otp_greeting("123456", "es");
     expect(msg).toContain("soy Cara");
-    expect(msg).toContain("coordinadora de cuidado automatizada");
+    expect(msg).toContain("coordinadora de cuidado");
+    expect(msg).toContain("Soy automatizada");
     expect(msg).toContain("123456");
+    expect(msg.toLowerCase()).not.toContain("asistente");
   });
 });
 

@@ -150,6 +150,18 @@ vi.mock("../../agents/pendingActions", async (importActual) => ({
 }));
 
 import { handleToolCall } from "../server";
+import { setCaraActionExecutionStoreForTest } from "../../agents/actionNative/actionExecutionLedger";
+
+// Pass-through duplicate-protection store: submit/review_shift_hours are
+// failClosed, so an unavailable ledger (this file's firestore mock) would
+// refuse to run. These suites test the DOMAIN idempotency guards (status
+// preconditions), so the store never caches — every call reaches the handler.
+setCaraActionExecutionStoreForTest({
+  async claim() {
+    return { cached: false };
+  },
+  async settle() { /* no-op */ },
+});
 
 describe("U2 caregiver action tools", () => {
   beforeEach(() => {

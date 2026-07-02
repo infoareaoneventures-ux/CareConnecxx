@@ -1589,6 +1589,30 @@ const handleInboundInner = traceable(
       // re-greet from the top forever (and the agent-native collection loop could
       // never be reached, since its steps are client_ask_*). Leave the in-progress
       // step intact and let onboarding continue from where the user was.
+    } else if ((session as any).awaitingSupply) {
+      // Supply-hold: onboarding completed WITHOUT payment by design — no
+      // caregivers were available in their area ("no charge until then"), so
+      // there is no user record yet. Not an orphan. Answer their message with
+      // the hold context so Cara stays honest about where things stand.
+      const d = (session.onboardingData ?? {}) as Record<string, unknown>;
+      const seniorName = (d.seniorName as string) || "your loved one";
+      const city       = (d.city as string) || "your area";
+      const holdReply = await generateCaraMessage({
+        audience: "family",
+        context:
+          `This family finished setup for ${seniorName} in ${city}, but no caregivers were available there ` +
+          `yet, so they're on the waitlist — everything is saved, they have NOT been charged, and Cara will ` +
+          `text them the moment a caregiver in their area becomes available. They just sent: ` +
+          `"${text.slice(0, 300)}". Answer their message honestly with that status. If they ask about a ` +
+          `nearby city, say you'll include it in the search and reach out as soon as someone is available. ` +
+          `Never promise a specific timeframe, never re-ask intake questions, never suggest starting over.`,
+        fallback:
+          `Not yet — you're first in line for ${seniorName} in ${city}. Everything's saved and there's no ` +
+          `charge until I have the right caregiver for you. I'll text you the moment that changes.`,
+        maxTokens: 120,
+      });
+      await sendMessage(chatId, holdReply);
+      return;
     } else {
       // Complete but no user record and no users-collection match — session
       // is orphaned. Tell the user something went wrong and offer a restart

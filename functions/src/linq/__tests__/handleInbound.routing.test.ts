@@ -952,6 +952,33 @@ describe("multi-care-group disambiguation (U8)", () => {
     expect(parseWithClaude).not.toHaveBeenCalled();
   });
 
+  it("awaiting-supply hold: a follow-up question gets the honest hold answer, never the orphan START OVER", async () => {
+    // Supply-hold sessions complete WITHOUT payment by design (no caregivers
+    // available → "no charge until then"), so no userId and no users record
+    // exists. The orphan-recovery branch must not fire for them.
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      userType: "client",
+      onboardingStep: "complete",
+      awaitingSupply: true,
+      onboardingData: { firstName: "Imran", seniorName: "Sarda", city: "Santa Clara" },
+    });
+
+    await handleInbound(makeEvent("Do you have caregivers available in San Jose yet?"));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const reply = String(sendMessage.mock.calls[0][1]);
+    expect(reply).not.toContain("Something's off");
+    expect(reply).not.toContain("START OVER");
+    // generateCaraMessage mock returns the fallback — the honest hold answer.
+    expect(reply).toContain("first in line");
+    expect(reply).toContain("Sarda");
+    // The session was not reset or advanced.
+    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(session?.onboardingStep).toBe("complete");
+    expect(session?.awaitingSupply).toBe(true);
+  });
+
   it("a marker with no candidates is cleared and the turn falls through instead of dead-ending", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, {
       chatId: CHAT,

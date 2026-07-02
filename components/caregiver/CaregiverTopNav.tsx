@@ -64,12 +64,12 @@ export const CaregiverTopNav: React.FC = () => {
       {/* Mobile bottom nav */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white safe-area-pb">
         <div className="flex justify-around py-1">
-          {[
+          {([
             { icon: <Home className="w-5 h-5" />, label: 'Home', path: '/caregiver/dashboard' },
             { icon: <MessageCircle className="w-5 h-5" />, label: 'Chat', path: '/caregiver/chat', badge: caraUnread },
             { icon: <Briefcase className="w-5 h-5" />, label: 'Jobs', path: '/caregiver/jobs' },
             { icon: <Calendar className="w-5 h-5" />, label: 'Calendar', path: '/caregiver/calendar' },
-          ].map(item => (
+          ] as Array<{ icon: React.ReactNode; label: string; path: string; badge?: number }>).map(item => (
             <button
               key={item.path}
               onClick={() => { setMoreOpen(false); navigate(item.path); }}
@@ -79,9 +79,9 @@ export const CaregiverTopNav: React.FC = () => {
             >
               {item.icon}
               <span>{item.label}</span>
-              {((item as any).badge ?? 0) > 0 && (
+              {(item.badge ?? 0) > 0 && (
                 <span className="absolute top-1 right-2 min-w-[16px] h-[16px] px-0.5 rounded-full bg-primary-600 text-white text-[9px] font-bold flex items-center justify-center">
-                  {(item as any).badge > 9 ? '9+' : (item as any).badge}
+                  {item.badge! > 9 ? '9+' : item.badge}
                 </span>
               )}
             </button>

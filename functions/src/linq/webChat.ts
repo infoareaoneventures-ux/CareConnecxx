@@ -36,6 +36,9 @@ const LOCK_ATTEMPTS      = 6;
 const LOCK_RETRY_MS      = 500;
 const RATE_WINDOW_MS     = 60_000;
 const RATE_MAX_PER_WINDOW = 10;
+// Server-side guard — the client trims/sanitizes, but the callable must not
+// trust it. Caps agent-token and Firestore-write cost per message.
+const MAX_MESSAGE_CHARS  = 2_000;
 
 export async function handleWebChatTurn(args: {
   uid:              string;
@@ -43,7 +46,9 @@ export async function handleWebChatTurn(args: {
   tokenPhone?:      string;
   clientMessageId?: string;
 }): Promise<WebChatResult> {
-  const { uid, message, tokenPhone, clientMessageId } = args;
+  const { uid, tokenPhone, clientMessageId } = args;
+  const message = (args.message ?? "").trim().slice(0, MAX_MESSAGE_CHARS);
+  if (!message) throw new Error("message is required"); // callable wrapper validates; guard for direct callers
   const db = admin.firestore();
   const withId = clientMessageId ? { clientMessageId } : {};
 

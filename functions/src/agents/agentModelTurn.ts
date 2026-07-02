@@ -37,9 +37,9 @@ export async function runAgentModelTurn(params: RunAgentModelTurnParams): Promis
   metrics.modelProvider = agentModel.provider;
   metrics.modelUsed = agentModel.model;
 
-  const anthropicTurn = () =>
+  const anthropicTurn = (model: string) =>
     callClaudeWithRetry(getSharedClient(), {
-      model:       ANTHROPIC_AGENT_MODEL,
+      model,
       max_tokens:  maxTokens,
       system:      system as any,
       tools:       tools as any,
@@ -48,7 +48,15 @@ export async function runAgentModelTurn(params: RunAgentModelTurnParams): Promis
     }, { timeoutMs: 15_000, maxAttempts: 1 });
 
   if (agentModel.provider !== "openai") {
-    return anthropicTurn();
+    // Respect CARA_AGENT_MODEL on the Anthropic path too — but only when it
+    // names a Claude model. The documented rollback is a provider-only flip
+    // (CARA_AGENT_MODEL may still name an OpenAI model), which must not be
+    // handed to the Anthropic API.
+    const model = agentModel.model.toLowerCase().startsWith("claude")
+      ? agentModel.model
+      : ANTHROPIC_AGENT_MODEL;
+    metrics.modelUsed = model;
+    return anthropicTurn(model);
   }
 
   return callOpenAiAgentTurn({
@@ -68,6 +76,6 @@ export async function runAgentModelTurn(params: RunAgentModelTurnParams): Promis
     metrics.modelProvider = "anthropic";
     metrics.modelUsed = ANTHROPIC_AGENT_MODEL;
     metrics.modelFallbackUsed = true;
-    return anthropicTurn();
+    return anthropicTurn(ANTHROPIC_AGENT_MODEL);
   });
 }

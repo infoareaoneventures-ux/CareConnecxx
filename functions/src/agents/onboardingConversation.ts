@@ -1247,10 +1247,23 @@ async function handleClientShowCaregivers(
   const seniorName = (d.seniorName as string) ?? "your loved one";
   const careNeeds: string[] = Array.isArray(d.careNeeds) ? d.careNeeds : [];
 
-  const preview = await runGetCaregiverPreviewAction(
-    { city, seniorName, careNeeds },
-    { caller: "sms_agent", role: "client", phone, chatId },
-  );
+  let preview: Awaited<ReturnType<typeof runGetCaregiverPreviewAction>>;
+  try {
+    preview = await runGetCaregiverPreviewAction(
+      { city, seniorName, careNeeds },
+      { caller: "sms_agent", role: "client", phone, chatId },
+    );
+  } catch (err) {
+    // A transient action failure must not wedge the turn in silence — tell the
+    // family honestly and leave the session on the current step so their next
+    // inbound genuinely retries this handoff (no unbacked "I'll text you" promise,
+    // no stalled-work copy — voice contract R1).
+    console.error("[handleClientShowCaregivers] caregiver preview failed:", err);
+    await sendMessage(chatId,
+      `My system hiccuped pulling up caregivers for ${seniorName} — that's on me. Text me "ready" in a minute and I'll show you the matches.`
+    );
+    return;
+  }
 
   if (!preview.available) {
     // No supply at all: don't take payment for something we can't deliver.

@@ -45,8 +45,9 @@ updates may include care updates only.
 
 ## Step 0 — rotate the leaked key (you, in the console)
 
-console.anthropic.com → API keys → revoke the `sk-ant-api03-7oSLb2…` key → create a
-new one → paste the new value into `functions/.env` (editor only, never chat).
+console.anthropic.com → API keys → revoke the compromised key (the one currently
+in `functions/.env` — match it by creation date / last-used in the console) →
+create a new one → paste the new value into `functions/.env` (editor only, never chat).
 
 ## Step 1 — make the deploy env safe (choose ONE)
 
@@ -59,7 +60,7 @@ gcloud functions describe v1-linqWebhook --region=us-central1 --format="json(env
 ```
 Then convert to `.env` lines (run from repo root):
 ```powershell
-node -e "const e=require('./live-env.json').environmentVariables||{}; const fs=require('fs'); fs.writeFileSync('functions/.env.linqWebhook', Object.entries(e).map(([k,v])=>k+'='+v).join('\n')+'\nONBOARDING_AGENT_LOOP=client\nONBOARDING_AGENT_LOOP_COHORT_PCT=10\n'); console.log('wrote functions/.env.linqWebhook with', Object.keys(e).length, 'vars + 2 flags')"
+node -e "const e=require('./live-env.json').environmentVariables||{}; const fs=require('fs'); const DQ=String.fromCharCode(34); const esc=v=>String(v).replace(/\\/g,'\\\\').replace(/\x22/g,'\\'+DQ).replace(/\n/g,'\\n').replace(/\r/g,'\\r'); const q=v=>/[\s\x22'#\\]/.test(String(v))||String(v)===''?DQ+esc(v)+DQ:String(v); fs.writeFileSync('functions/.env.linqWebhook', Object.entries(e).map(([k,v])=>k+'='+q(v)).join('\n')+'\nONBOARDING_AGENT_LOOP=client\nONBOARDING_AGENT_LOOP_COHORT_PCT=10\n'); console.log('wrote functions/.env.linqWebhook with', Object.keys(e).length, 'vars + 2 flags')"
 ```
 Review `functions/.env.linqWebhook` — confirm no blanks for keys linqWebhook needs
 (ANTHROPIC_API_KEY, OPENAI_API_KEY, LINQ_API_KEY, LINQ_WEBHOOK_SECRET, LINQ_BASE_URL,

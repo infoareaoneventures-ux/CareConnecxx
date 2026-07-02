@@ -1061,6 +1061,11 @@ const handleInboundInner = traceable(
         await db.collection("agent_sessions").doc(phone).update({
           pendingGroupDisambiguation: admin.firestore.FieldValue.delete(),
         }).catch(() => {});
+      } else if (norm === "HELP" || norm === "AYUDA") {
+        // Carrier HELP keyword must also always work — fall through to the
+        // standard HELP handler below WITHOUT consuming the reply as a
+        // disambiguation answer. Keep the marker so the next reply can still
+        // resolve which care group they meant.
       } else if (!pendingGroupDis.candidates?.length) {
         // Malformed marker (no resolvable candidates) — clear it and let normal
         // routing take over rather than dead-ending the user in silence.

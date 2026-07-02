@@ -16,7 +16,8 @@ const db = admin.firestore();
 // dropped so a stale request is never nudged.
 //
 // Idempotency mirrors shiftTaskNudges / clientDayBeforeReminder: the query is
-// scoped to `nudgeSent == false`, and the flag is flipped immediately after send.
+// scoped to `nudgeSent == false`, and the flag is flipped BEFORE the send so a
+// failed post-send write can never cause a duplicate nudge on the next run.
 
 const NUDGE_AFTER_MS = 15 * 60 * 1000; // wait 15 min for a pin before nudging
 
@@ -70,17 +71,21 @@ export const sendLocationRequestNudges = functions.pubsub
               `(e.g. "Austin, TX 78701").`,
         });
 
+        // Flip the flag BEFORE the send: if the update ran after a successful
+        // send and failed, the next run would re-send the "exactly one" nudge.
+        // A nudge is non-critical, so at-most-once beats a duplicate.
+        await doc.ref.update({ "pendingLocationRequest.nudgeSent": true });
+
         await sendViaInteractionAgent(phone, {
           content:     message,
           urgency:     "standard",
           sourceAgent: "location_request_nudge",
           canDrop:     false,
         });
-
-        // Flip the flag immediately so a concurrent run never double-nudges.
-        await doc.ref.update({ "pendingLocationRequest.nudgeSent": true });
       } catch (err) {
-        console.error(`[sendLocationRequestNudges] Error for ${phone}:`, err);
+        // Don't log the raw phone number (doc id) — last 4 digits only.
+        const redacted = `…${phone.slice(-4)}`;
+        console.error(`[sendLocationRequestNudges] Error for ${redacted}:`, err);
       }
     }
   });

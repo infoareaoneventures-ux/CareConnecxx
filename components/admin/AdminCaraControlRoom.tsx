@@ -384,7 +384,7 @@ function readableQualityFlags(metric: TurnMetricRecord): string[] {
 
 function makeQualityMetricItem(metric: TurnMetricRecord): QueueItem {
   const labels = readableQualityFlags(metric);
-  const severe = metric.errored || metric.replyEmpty || metric.medicationInstructionDetected || metric.supportDeflectionDetected || metric.frustrationDetected || metric.rephraseLoopDetected;
+  const severe = metric.errored || metric.replyEmpty || metric.medicationInstructionDetected || metric.supportDeflectionDetected || metric.paymentAuthorityLeakDetected || metric.frustrationDetected || metric.rephraseLoopDetected;
   const title = metric.conversationRepairApplied
     ? 'Conversation repair applied'
     : metric.errored

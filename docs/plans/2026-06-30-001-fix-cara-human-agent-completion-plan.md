@@ -279,7 +279,7 @@ That maps directly to Cara's problem: she is currently split across `qaAgent`, L
 | `defineAction` metadata shape | `defineCaraAction` registry wrapping Firebase/MCP operations | Adapt, not direct-copy the whole file. |
 | Input and output schema validation | Zod validators for all Cara actions and returned delivery/result objects | Implement locally using existing `zod`. |
 | `readOnly`, `agentTool`, `toolCallable`, `publicAgent`, `needsApproval` flags | `readOnly`, `modelVisible`, `webVisible`, `adminOnly`, `approvalRequired`, `publicAllowed` metadata | Adapt with CareConnex names and defaults. |
-| Caller context | `caller: sms_agent | web_chat | admin | mcp | scheduler | webhook` plus role and auth scope | Implement locally. |
+| Caller context | `caller: sms_agent \| web_chat \| admin \| mcp \| scheduler \| webhook` plus role and auth scope | Implement locally. |
 | Mutating action audit | Extend `agent_action_ledger` and `auditTrail` writes at the registry seam | Implement locally against Firestore. |
 | Durable resume tool journal | Classify completed vs interrupted `tool_start`/`tool_done` events | Copy/adapt this pure module with MIT attribution. |
 | Duplicate completed write hard-block | Return journaled result instead of rerunning completed mutating action | Implement at `runCaraAction` and MCP dispatch seam. |

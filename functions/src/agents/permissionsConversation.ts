@@ -4,6 +4,7 @@ import { quickComplete } from "../utils/openaiClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { buildHelpSmsReply } from "./capabilityDiscovery";
+import { languageFromSession } from "../utils/language";
 import { getAppUrl } from "../config/appUrl";
 
 async function askClaude(system: string, userText: string): Promise<string> {
@@ -229,7 +230,8 @@ export async function handleClientPermissionsReply(
 
     // Capability discovery: now that onboarding is complete, tell the family
     // what Cara can actually do in care-work terms, not a chatbot menu.
-    await sendMessage(chatId, buildHelpSmsReply("client"));
+    await sendMessage(chatId, buildHelpSmsReply("client", undefined,
+      languageFromSession(session as unknown as Record<string, unknown>)));
 
     // Kick off matching
     const { runMatchingForClient } = await import("./matchingAgent");
@@ -322,7 +324,8 @@ export async function handleCaregiverPermissionsReply(
 
     // Capability discovery: onboarding is complete — tell the caregiver what
     // Cara can do in care-work terms, not a chatbot menu.
-    await sendMessage(chatId, buildHelpSmsReply("caregiver"));
+    await sendMessage(chatId, buildHelpSmsReply("caregiver", undefined,
+      languageFromSession(session as unknown as Record<string, unknown>)));
 
     // Notify admin for final review
     await db.collection("admin_alerts").add({

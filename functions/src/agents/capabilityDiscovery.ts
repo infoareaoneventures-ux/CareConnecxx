@@ -5,6 +5,7 @@
 // those recipes are validated against LAUNCH_ACTION_PARITY.
 
 import { getCareRecipeExamples, hasPaymentAuthorityLeak } from "./careRecipes";
+import { buildCapabilityMenu } from "./caraCapabilities";
 
 export type DiscoveryRole = "client" | "caregiver" | "family-secondary";
 
@@ -17,7 +18,17 @@ export function getCapabilityExamples(role: DiscoveryRole, limit = 4): string[] 
   return guarded.slice(0, max);
 }
 
-export function buildHelpSmsReply(role: DiscoveryRole, leadWith?: string): string {
+export function buildHelpSmsReply(role: DiscoveryRole, leadWith?: string, lang: string = "en"): string {
+  // Spanish renders through the bilingual capability entries in
+  // caraCapabilities — the care-recipe example phrases are English-only, so
+  // splicing them into a Spanish frame would produce a mixed-language reply.
+  if (lang === "es") {
+    const intro = role === "caregiver"
+      ? "Soy Cara — escríbeme y me encargo."
+      : "Soy Cara, tu coordinadora de cuidados.";
+    return `${intro} ${buildCapabilityMenu(role === "caregiver" ? "caregiver" : "client", "es")}`;
+  }
+
   if (leadWith && leadWith.trim()) {
     return `I'm Cara - I'm right here. ${leadWith.trim()} Or just tell me what you need.`;
   }

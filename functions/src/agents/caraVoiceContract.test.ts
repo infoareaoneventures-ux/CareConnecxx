@@ -6,6 +6,7 @@ const repoRoot = path.resolve(__dirname, "../../..");
 
 const runtimeFiles = [
   "functions/src/utils/language.ts",
+  "functions/src/agents/onboardingConversation.ts",
   "functions/src/linq/routeIntent.ts",
   "functions/src/linq/client.ts",
   "functions/src/linq/routeClient.ts",
@@ -42,6 +43,7 @@ const bannedRuntimePhrases = [
   "Our team will help resolve it",
   "Our team will review",
   "Give me a few minutes",
+  "give me just a few minutes",
   "Give me a moment",
   "Let me get back",
   "Let me come back",

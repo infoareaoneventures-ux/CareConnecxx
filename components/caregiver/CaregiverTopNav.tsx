@@ -3,18 +3,20 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   MessageSquare, Home, Calendar, Briefcase,
   BookOpen, Settings, X, MoreHorizontal, LogOut, User,
-  Users, Wallet, ChevronDown, HelpCircle, Mail,
+  Users, Wallet, HelpCircle, Mail, MessageCircle,
 } from 'lucide-react';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { authService } from '../../services/api';
 import { CaregiverUserMenu } from './CaregiverUserMenu';
 import { NotificationDropdown } from '../ui/NotificationDropdown';
 import { useUnreadMessageCount } from '../../hooks/useUnreadMessageCount';
+import { useCaraUnread } from '../../hooks/useCaraUnread';
 import type { Caregiver } from '../../types';
 
 const BOOKINGS_ROUTES = ['/caregiver/bookings', '/caregiver/families'];
 
 const AUTH_PATHS = [
+  '/login',
   '/caregiver/login',
   '/caregiver/signup',
   '/caregiver/forgot-password',
@@ -26,6 +28,7 @@ export const CaregiverTopNav: React.FC = () => {
   const { caregiverProfile: profile } = useCareConnex();
   const currentUser = authService.getCurrentUser();
   const unreadMessages = useUnreadMessageCount(currentUser?.uid ?? null);
+  const caraUnread = useCaraUnread();
   const [moreOpen, setMoreOpen] = useState(false);
 
   const path = location.pathname;
@@ -46,7 +49,7 @@ export const CaregiverTopNav: React.FC = () => {
   if (AUTH_PATHS.includes(path)) {
     return (
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
-        <DesktopNav profile={profile} isActive={isActive} navigate={navigate} unreadMessages={unreadMessages} />
+        <DesktopNav profile={profile} isActive={isActive} navigate={navigate} unreadMessages={unreadMessages} caraUnread={caraUnread} />
       </header>
     );
   }
@@ -55,7 +58,7 @@ export const CaregiverTopNav: React.FC = () => {
     <>
       {/* Top nav — logo always visible, desktop links hidden on mobile */}
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
-        <DesktopNav profile={profile} isActive={isActive} navigate={navigate} unreadMessages={unreadMessages} />
+        <DesktopNav profile={profile} isActive={isActive} navigate={navigate} unreadMessages={unreadMessages} caraUnread={caraUnread} />
       </header>
 
       {/* Mobile bottom nav */}
@@ -63,19 +66,24 @@ export const CaregiverTopNav: React.FC = () => {
         <div className="flex justify-around py-1">
           {[
             { icon: <Home className="w-5 h-5" />, label: 'Home', path: '/caregiver/dashboard' },
-            { icon: <Calendar className="w-5 h-5" />, label: 'Calendar', path: '/caregiver/calendar' },
+            { icon: <MessageCircle className="w-5 h-5" />, label: 'Chat', path: '/caregiver/chat', badge: caraUnread },
             { icon: <Briefcase className="w-5 h-5" />, label: 'Jobs', path: '/caregiver/jobs' },
-            { icon: <MessageSquare className="w-5 h-5" />, label: 'Chat', path: '/caregiver/inbox' },
+            { icon: <Calendar className="w-5 h-5" />, label: 'Calendar', path: '/caregiver/calendar' },
           ].map(item => (
             <button
               key={item.path}
               onClick={() => { setMoreOpen(false); navigate(item.path); }}
-              className={`flex flex-col items-center gap-0.5 px-3 py-2 text-xs font-medium transition-colors ${
+              className={`relative flex flex-col items-center gap-0.5 px-3 py-2 text-xs font-medium transition-colors ${
                 isActive(item.path) ? 'text-primary-600' : 'text-slate-500'
               }`}
             >
               {item.icon}
               <span>{item.label}</span>
+              {((item as any).badge ?? 0) > 0 && (
+                <span className="absolute top-1 right-2 min-w-[16px] h-[16px] px-0.5 rounded-full bg-primary-600 text-white text-[9px] font-bold flex items-center justify-center">
+                  {(item as any).badge > 9 ? '9+' : (item as any).badge}
+                </span>
+              )}
             </button>
           ))}
           <button
@@ -114,6 +122,7 @@ export const CaregiverTopNav: React.FC = () => {
             <div className="overflow-y-auto flex-1">
               <div className="px-4 pb-3 space-y-1">
                 {[
+                  { icon: <MessageSquare className="w-4 h-4" />, label: 'Messages', path: '/caregiver/inbox' },
                   { icon: <BookOpen className="w-4 h-4" />, label: 'Bookings', path: '/caregiver/bookings' },
                   { icon: <User className="w-4 h-4" />, label: 'Profile', path: '/caregiver/profile' },
                   { icon: <Settings className="w-4 h-4" />, label: 'Settings', path: '/caregiver/settings' },
@@ -156,12 +165,10 @@ const DesktopNav: React.FC<{
   isActive: (p: string) => boolean;
   navigate: (path: string) => void;
   unreadMessages: number;
-}> = ({ profile, isActive, navigate, unreadMessages }) => {
-  const [bookingsOpen, setBookingsOpen] = useState(false);
+  caraUnread: number;
+}> = ({ profile, isActive, navigate, unreadMessages, caraUnread }) => {
   const [helpOpen, setHelpOpen] = useState(false);
-  const bookingsRef = useRef<HTMLDivElement>(null);
   const helpRef = useRef<HTMLDivElement>(null);
-  const isBookingsActive = BOOKINGS_ROUTES.some(r => isActive(r));
 
   useEffect(() => {
     const handler = (e: MouseEvent | TouchEvent) => {
@@ -172,19 +179,20 @@ const DesktopNav: React.FC<{
     return () => { document.removeEventListener('mousedown', handler); document.removeEventListener('touchstart', handler); };
   }, []);
 
-  useEffect(() => {
-    const handler = (e: MouseEvent | TouchEvent) => {
-      if (bookingsRef.current && !bookingsRef.current.contains(e.target as Node)) setBookingsOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    document.addEventListener('touchstart', handler);
-    return () => { document.removeEventListener('mousedown', handler); document.removeEventListener('touchstart', handler); };
-  }, []);
-
-  const navBtn = (active: boolean) =>
-    `flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-      active ? 'text-primary-600 bg-primary-50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+  // Tomo-style flat tab: pill highlight on the active family
+  const tabBtn = (active: boolean) =>
+    `relative flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+      active ? 'text-primary-700 bg-primary-50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
     }`;
+
+  // Flat centered tabs — Bookings covers its family (My Families reachable
+  // from the bookings page and the mobile More drawer).
+  const DESKTOP_TABS: Array<{ label: string; icon: React.ReactNode; path: string; active: boolean; badge?: number }> = [
+    { label: 'Chat', icon: <MessageCircle className="w-4 h-4" />, path: '/caregiver/chat', active: isActive('/caregiver/chat'), badge: caraUnread },
+    { label: 'Jobs', icon: <Briefcase className="w-4 h-4" />, path: '/caregiver/jobs', active: isActive('/caregiver/jobs') },
+    { label: 'Bookings', icon: <BookOpen className="w-4 h-4" />, path: '/caregiver/bookings', active: BOOKINGS_ROUTES.some(r => isActive(r)) },
+    { label: 'Calendar', icon: <Calendar className="w-4 h-4" />, path: '/caregiver/calendar', active: isActive('/caregiver/calendar') },
+  ];
 
   return (
     <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
@@ -193,35 +201,18 @@ const DesktopNav: React.FC<{
         <span className="font-bold text-slate-900 tracking-tight">CareConnex</span>
       </Link>
 
-      <nav className="hidden md:flex items-center gap-1">
-        {/* Job Board */}
-        <Link to="/caregiver/jobs" className={navBtn(isActive('/caregiver/jobs'))}>Job Board</Link>
-
-        {/* Bookings dropdown */}
-        <div className="relative" ref={bookingsRef}>
-          <button onClick={() => setBookingsOpen(o => !o)} className={navBtn(isBookingsActive || bookingsOpen)}>
-            <span>Bookings</span>
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${bookingsOpen ? 'rotate-180' : ''}`} />
+      {/* Desktop nav — flat centered tabs (tomo-style) */}
+      <nav className="hidden md:flex flex-1 items-center justify-center gap-1">
+        {DESKTOP_TABS.map(tab => (
+          <button key={tab.path} onClick={() => navigate(tab.path)} className={tabBtn(tab.active)}>
+            {tab.icon}<span>{tab.label}</span>
+            {(tab.badge ?? 0) > 0 && (
+              <span className="ml-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-primary-600 text-white text-[10px] font-bold flex items-center justify-center">
+                {tab.badge! > 9 ? '9+' : tab.badge}
+              </span>
+            )}
           </button>
-          {bookingsOpen && (
-            <div className="absolute left-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50">
-              {[
-                { icon: <BookOpen className="w-4 h-4" />, label: 'My Bookings', path: '/caregiver/bookings' },
-                { icon: <Users className="w-4 h-4" />, label: 'My Families', path: '/caregiver/families' },
-              ].map(item => (
-                <button key={item.path} onClick={() => { navigate(item.path); setBookingsOpen(false); }}
-                  className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm transition-colors ${
-                    isActive(item.path) ? 'text-primary-600 bg-primary-50' : 'text-slate-700 hover:bg-slate-50'
-                  }`}>
-                  {item.icon}<span>{item.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Calendar */}
-        <Link to="/caregiver/calendar" className={navBtn(isActive('/caregiver/calendar'))}>Calendar</Link>
+        ))}
       </nav>
 
       {/* Right side: Messages + Bell + Help + Avatar */}

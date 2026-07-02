@@ -1,15 +1,30 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { auth } from '../../lib/firebase';
-import firebase from 'firebase/compat/app';
+import { auth, db, getOrCreateRecaptchaVerifier, clearRecaptchaVerifier } from '../../lib/firebase';
+import type firebase from 'firebase/compat/app';
 
 type Step = 'phone' | 'otp';
+
+const RECAPTCHA_CONTAINER = 'login-recaptcha';
 
 function formatDisplay(val: string): string {
   const d = val.replace(/\D/g, '').slice(0, 10);
   if (d.length <= 3) return d;
   if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
   return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+}
+
+// Raw Firebase codes leak implementation detail ("auth/too-many-requests");
+// map the ones users actually hit to plain language.
+function friendlyAuthError(err: any): string {
+  switch (err?.code) {
+    case 'auth/too-many-requests':        return 'Too many attempts — wait a few minutes and try again.';
+    case 'auth/invalid-phone-number':     return "That phone number doesn't look right. Check it and try again.";
+    case 'auth/network-request-failed':   return 'Network hiccup — check your connection and try again.';
+    case 'auth/code-expired':             return 'That code expired. Tap "Resend code" to get a new one.';
+    case 'auth/invalid-verification-code': return 'Incorrect code. Please try again.';
+    default: return 'Something went wrong. Please try again.';
+  }
 }
 
 export const AuthLoginPage: React.FC = () => {
@@ -22,22 +37,15 @@ export const AuthLoginPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [resendCountdown, setResendCountdown] = useState(0);
-  const recaptchaRef = useRef<HTMLDivElement>(null);
-  const recaptchaVerifier = useRef<firebase.auth.RecaptchaVerifier | null>(null);
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   const digits = phone.replace(/\D/g, '');
   const isValid = digits.length >= 10;
 
-  useEffect(() => {
-    if (!auth) return;
-    recaptchaVerifier.current = new firebase.auth.RecaptchaVerifier(
-      recaptchaRef.current!,
-      { size: 'invisible', callback: () => {} },
-      auth.app
-    );
-    return () => { recaptchaVerifier.current?.clear(); };
-  }, []);
+  // The verifier is created lazily per send and cleared afterwards — a
+  // consumed invisible-reCAPTCHA token can't be reused, so each send (and
+  // each resend) gets a fresh one.
+  useEffect(() => () => clearRecaptchaVerifier(RECAPTCHA_CONTAINER), []);
 
   useEffect(() => {
     if (resendCountdown <= 0) return;
@@ -47,22 +55,24 @@ export const AuthLoginPage: React.FC = () => {
 
   const sendCode = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!isValid || !auth || !recaptchaVerifier.current) return;
+    if (!isValid || !auth) return;
     setError('');
     setLoading(true);
     try {
+      const verifier = getOrCreateRecaptchaVerifier(RECAPTCHA_CONTAINER, { size: 'invisible' });
       const result = await auth.signInWithPhoneNumber(
         `${countryCode}${digits}`,
-        recaptchaVerifier.current
+        verifier
       );
       setConfirmation(result);
       setStep('otp');
       setResendCountdown(60);
       otpRefs.current[0]?.focus();
     } catch (err: any) {
-      setError(err.message ?? 'Failed to send code. Try again.');
-      recaptchaVerifier.current?.clear();
+      setError(friendlyAuthError(err));
     } finally {
+      // Fresh verifier next time either way — the token is single-use.
+      clearRecaptchaVerifier(RECAPTCHA_CONTAINER);
       setLoading(false);
     }
   };
@@ -85,10 +95,24 @@ export const AuthLoginPage: React.FC = () => {
     setError('');
     setLoading(true);
     try {
-      await confirmation.confirm(code);
-      navigate('/dashboard');
-    } catch {
-      setError('Incorrect code. Please try again.');
+      const cred = await confirmation.confirm(code);
+      // Role-aware landing. Read users/{uid} directly rather than through
+      // context, whose missing-doc fallback defaults to 'client' — a user
+      // with no profile doc belongs in onboarding, not on a broken dashboard.
+      const uid = cred?.user?.uid ?? auth?.currentUser?.uid;
+      let dest = '/start';
+      if (uid && db) {
+        const snap = await db.collection('users').doc(uid).get().catch(() => null);
+        if (snap?.exists) {
+          const userType = snap.data()?.userType;
+          dest = userType === 'caregiver' ? '/caregiver/dashboard'
+               : userType === 'admin'     ? '/admin'
+               : '/client/dashboard';
+        }
+      }
+      navigate(dest, { replace: true });
+    } catch (err: any) {
+      setError(friendlyAuthError(err));
       setOtp(['', '', '', '', '', '']);
       otpRefs.current[0]?.focus();
     } finally {
@@ -98,7 +122,8 @@ export const AuthLoginPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center justify-center px-6">
-      <div ref={recaptchaRef} />
+      {/* RecaptchaVerifier needs a stable DOM target; created per send. */}
+      <div id={RECAPTCHA_CONTAINER} />
       <div className="w-full max-w-sm space-y-8">
 
         {/* Logo */}
@@ -187,7 +212,7 @@ export const AuthLoginPage: React.FC = () => {
             <button
               type="button"
               disabled={resendCountdown > 0 || loading}
-              onClick={() => { setOtp(['', '', '', '', '', '']); setStep('phone'); sendCode(); }}
+              onClick={() => { setOtp(['', '', '', '', '', '']); sendCode(); }}
               className="w-full text-sm text-white/30 hover:text-white/50 disabled:cursor-not-allowed transition"
             >
               {resendCountdown > 0 ? `Resend in ${resendCountdown}s` : 'Resend code'}

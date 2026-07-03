@@ -75,8 +75,8 @@ export const ClientNavigation: React.FC = () => {
 
   // Tomo-style flat tab: pill highlight on the active family
   const tabBtn = (active: boolean) =>
-    `relative flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-      active ? 'text-primary-700 bg-primary-50' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+    `relative flex items-center gap-1.5 px-4 py-2 rounded-full text-sm transition-colors ${
+      active ? 'text-ink-900 font-semibold bg-paper-100' : 'font-medium text-ink-600 hover:text-ink-900 hover:bg-paper-100'
     }`;
 
   const handleLogout = async () => {
@@ -102,7 +102,7 @@ export const ClientNavigation: React.FC = () => {
   const initials = displayName.charAt(0).toUpperCase();
 
   return (
-    <nav className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
+    <nav className="bg-paper-50 border-b hairline sticky top-0 z-50 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
 
@@ -111,7 +111,7 @@ export const ClientNavigation: React.FC = () => {
             <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-primary-700 rounded-lg flex items-center justify-center mr-2">
               <Heart className="w-5 h-5 text-white" />
             </div>
-            <span className="text-xl font-bold text-gray-900">Care<span className="text-primary-600">Connex</span></span>
+            <span className="text-xl font-display font-bold text-ink-900">Care<span className="text-primary-600">Connex</span></span>
           </div>
 
           {/* Desktop nav — flat centered tabs (tomo-style) */}
@@ -134,7 +134,7 @@ export const ClientNavigation: React.FC = () => {
 
           {/* Right side: Messages + Bell + Avatar grouped together */}
           <div className="hidden md:flex items-center gap-1 ml-4">
-            <button onClick={() => navigate('/client/inbox')} className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors ${isActive('/client/inbox') ? 'text-primary-600 bg-primary-50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'}`}>
+            <button onClick={() => navigate('/client/inbox')} className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors ${isActive('/client/inbox') ? 'text-ink-900 bg-paper-100' : 'text-ink-600 hover:text-ink-900 hover:bg-paper-100'}`}>
               <MessageSquare className="w-5 h-5" />
             </button>
             <NotificationDropdown />
@@ -142,7 +142,7 @@ export const ClientNavigation: React.FC = () => {
             {/* Help */}
             <div className="relative" ref={helpRef}>
               <button onClick={() => setHelpOpen(o => !o)} aria-label="Help"
-                className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${helpOpen ? 'text-primary-600 bg-primary-50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'}`}>
+                className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${helpOpen ? 'text-ink-900 bg-paper-100' : 'text-ink-600 hover:text-ink-900 hover:bg-paper-100'}`}>
                 <HelpCircle className="w-5 h-5" />
               </button>
               {helpOpen && (
@@ -176,7 +176,7 @@ export const ClientNavigation: React.FC = () => {
             <button
               onClick={() => setAvatarOpen(o => !o)}
               className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                isAccountActive || avatarOpen ? 'text-primary-600 bg-primary-50' : 'text-gray-600 hover:bg-gray-100'
+                isAccountActive || avatarOpen ? 'text-ink-900 bg-paper-100' : 'text-ink-600 hover:bg-paper-100'
               }`}
             >
               <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-white text-sm font-bold">
@@ -216,7 +216,7 @@ export const ClientNavigation: React.FC = () => {
       </div>
 
       {/* Mobile bottom nav */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white safe-area-pb">
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t hairline bg-paper-50 safe-area-pb">
         <div className="flex justify-around py-1">
           {([
             { icon: <MessageCircle className="w-5 h-5" />, label: 'Chat', path: '/client/chat', exact: false, badge: caraUnread },
@@ -225,10 +225,10 @@ export const ClientNavigation: React.FC = () => {
             { icon: <Calendar className="w-5 h-5" />, label: 'Calendar', path: '/client/calendar', exact: false },
           ] as Array<{ icon: React.ReactNode; label: string; path: string; exact: boolean; badge?: number }>).map(item => (
             <button key={item.path} onClick={() => { setMoreOpen(false); navigate(item.path); }}
-              className={`relative flex flex-col items-center gap-0.5 px-3 py-2 text-xs font-medium transition-colors ${
+              className={`relative flex flex-col items-center gap-0.5 px-3 py-2 text-xs transition-colors ${
                 (item.exact ? location.pathname === item.path : location.pathname.startsWith(item.path))
-                  ? 'text-primary-600'
-                  : 'text-gray-500'
+                  ? 'text-ink-900 font-semibold'
+                  : 'text-ink-600 font-medium'
               }`}>
               {item.icon}
               <span>{item.label}</span>
@@ -241,10 +241,10 @@ export const ClientNavigation: React.FC = () => {
           ))}
           <button
             onClick={() => setMoreOpen(o => !o)}
-            className={`flex flex-col items-center gap-0.5 px-3 py-2 text-xs font-medium transition-colors ${
+            className={`flex flex-col items-center gap-0.5 px-3 py-2 text-xs transition-colors ${
               moreOpen || isActive('/client/posts') || isMyCareActive || isAccountActive
-                ? 'text-primary-600'
-                : 'text-gray-500'
+                ? 'text-ink-900 font-semibold'
+                : 'text-ink-600 font-medium'
             }`}>
             <MoreHorizontal className="w-5 h-5" />
             <span>More</span>

@@ -48,7 +48,7 @@ export const CaregiverTopNav: React.FC = () => {
   // Don't show mobile bottom nav on auth pages
   if (AUTH_PATHS.includes(path)) {
     return (
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
+      <header className="sticky top-0 z-40 bg-paper-50/90 backdrop-blur border-b hairline">
         <DesktopNav profile={profile} isActive={isActive} navigate={navigate} unreadMessages={unreadMessages} caraUnread={caraUnread} />
       </header>
     );
@@ -57,12 +57,12 @@ export const CaregiverTopNav: React.FC = () => {
   return (
     <>
       {/* Top nav — logo always visible, desktop links hidden on mobile */}
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
+      <header className="sticky top-0 z-40 bg-paper-50/90 backdrop-blur border-b hairline">
         <DesktopNav profile={profile} isActive={isActive} navigate={navigate} unreadMessages={unreadMessages} caraUnread={caraUnread} />
       </header>
 
       {/* Mobile bottom nav */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white safe-area-pb">
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t hairline bg-paper-50 safe-area-pb">
         <div className="flex justify-around py-1">
           {([
             { icon: <Home className="w-5 h-5" />, label: 'Home', path: '/caregiver/dashboard' },
@@ -74,7 +74,7 @@ export const CaregiverTopNav: React.FC = () => {
               key={item.path}
               onClick={() => { setMoreOpen(false); navigate(item.path); }}
               className={`relative flex flex-col items-center gap-0.5 px-3 py-2 text-xs font-medium transition-colors ${
-                isActive(item.path) ? 'text-primary-600' : 'text-slate-500'
+                isActive(item.path) ? 'text-ink-900' : 'text-ink-400'
               }`}
             >
               {item.icon}
@@ -134,7 +134,7 @@ export const CaregiverTopNav: React.FC = () => {
                     key={item.path}
                     onClick={() => { setMoreOpen(false); item.path.startsWith('mailto:') ? (window.location.href = item.path) : navigate(item.path); }}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                      isActive(item.path) ? 'text-primary-600 bg-primary-50' : 'text-slate-700 hover:bg-slate-50'
+                      isActive(item.path) ? 'text-ink-900 bg-paper-100' : 'text-ink-600 hover:bg-paper-100'
                     }`}
                   >
                     {item.icon}<span>{item.label}</span>
@@ -142,7 +142,7 @@ export const CaregiverTopNav: React.FC = () => {
                 ))}
               </div>
 
-              <div className="border-t border-slate-100 mx-4" />
+              <div className="border-t hairline mx-4" />
 
               <div className="px-4 pt-2 pb-8">
                 <button
@@ -182,7 +182,7 @@ const DesktopNav: React.FC<{
   // Tomo-style flat tab: pill highlight on the active family
   const tabBtn = (active: boolean) =>
     `relative flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-      active ? 'text-primary-700 bg-primary-50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+      active ? 'text-ink-900 bg-paper-100 font-semibold' : 'text-ink-600 hover:text-ink-900 hover:bg-paper-100'
     }`;
 
   // Flat centered tabs — Bookings covers its family (My Families reachable
@@ -197,8 +197,8 @@ const DesktopNav: React.FC<{
   return (
     <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
       <Link to="/caregiver/dashboard" className="flex items-center gap-2">
-        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-white font-bold text-lg shadow-sm">C</div>
-        <span className="font-bold text-slate-900 tracking-tight">Evia</span>
+        <div className="w-9 h-9 rounded-xl bg-ink-900 flex items-center justify-center text-white font-bold text-lg shadow-sm">C</div>
+        <span className="font-display font-semibold text-ink-900 tracking-tight text-lg">Evia</span>
       </Link>
 
       {/* Desktop nav — flat centered tabs (tomo-style) */}

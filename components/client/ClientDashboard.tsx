@@ -485,7 +485,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     return (
       <>
         <ClientNavigation />
-        <div className="min-h-screen flex items-center justify-center bg-[var(--color-neutral-50)]">
+        <div className="min-h-screen flex items-center justify-center bg-paper-50">
           <Loader2 className="w-10 h-10 text-[var(--color-primary-600)] animate-spin" />
         </div>
       </>
@@ -493,7 +493,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-paper-50">
       <ClientNavigation />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-16">
@@ -506,8 +506,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
           return (
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-slate-900">Good {timeOfDay}, {firstName}!</h1>
-              <p className="text-sm text-slate-500 mt-0.5">{today}</p>
+              <h1 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Good {timeOfDay}, {firstName}!</h1>
+              <p className="text-sm text-ink-600 mt-0.5">{today}</p>
             </div>
           );
         })()}
@@ -1367,7 +1367,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           <>
 
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-slate-900">Nearby Caregivers</h1>
+              <h1 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Nearby Caregivers</h1>
             </div>
 
             <div className="grid lg:grid-cols-3 gap-6 items-start">

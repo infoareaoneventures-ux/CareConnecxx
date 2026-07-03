@@ -276,16 +276,16 @@ const generalContent = [
 // ─── SHARED NAV BAR ─────────────────────────────────────────────────────────
 
 const NavBar: React.FC<{ onNavigate: (v: ViewType) => void; onLogin: () => void }> = ({ onNavigate, onLogin }) => (
-  <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-slate-100">
+  <header className="sticky top-0 z-50 bg-paper-50/95 backdrop-blur-sm border-b hairline">
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div className="flex justify-between items-center h-20">
         <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-          <div className="bg-primary-600 p-2 rounded-xl shadow-lg shadow-primary-200/50"><Activity className="text-white w-6 h-6" /></div>
-          <span className="text-2xl font-bold text-slate-900 tracking-tight">Evia</span>
+          <div className="bg-ink-900 p-2 rounded-xl"><Activity className="text-white w-6 h-6" /></div>
+          <span className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</span>
         </div>
         <div className="flex items-center gap-4">
-          <button onClick={() => onNavigate('help-center')} className="text-slate-500 hover:text-primary-600 text-sm font-medium hidden md:block">Help Center</button>
-          <button onClick={onLogin} className="text-slate-600 hover:text-primary-600 font-medium">Log In</button>
+          <button onClick={() => onNavigate('help-center')} className="text-ink-600 hover:text-ink-900 text-sm font-medium hidden md:block">Help Center</button>
+          <button onClick={onLogin} className="text-ink-600 hover:text-ink-900 font-medium">Log In</button>
           <Button onClick={() => onNavigate('client-signup')}>Get Started</Button>
         </div>
       </div>
@@ -296,14 +296,14 @@ const NavBar: React.FC<{ onNavigate: (v: ViewType) => void; onLogin: () => void 
 // ─── ACCORDION ──────────────────────────────────────────────────────────────
 
 const Accordion: React.FC<{ q: string; a: string; id: string; open: boolean; onToggle: () => void }> = ({ q, a, id, open, onToggle }) => (
-  <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+  <div className="bg-white rounded-xl shadow-sm border hairline overflow-hidden">
     <button id={id} onClick={onToggle} className="w-full text-left px-6 py-5 flex items-center justify-between gap-4">
-      <h3 className={`text-base font-semibold pr-4 ${open ? 'text-primary-600' : 'text-slate-900'}`}>{q}</h3>
-      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${open ? 'bg-primary-100 text-primary-600' : 'bg-slate-100 text-slate-500'}`}>
+      <h3 className="text-base font-semibold pr-4 text-ink-900">{q}</h3>
+      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-paper-100 ${open ? 'text-ink-900' : 'text-ink-600'}`}>
         {open ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
       </div>
     </button>
-    {open && <div className="px-6 pb-6 text-slate-600 leading-relaxed border-t border-slate-100 pt-4 text-sm">{a}</div>}
+    {open && <div className="px-6 pb-6 text-ink-600 leading-relaxed border-t hairline pt-4 text-sm">{a}</div>}
   </div>
 );
 
@@ -317,7 +317,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
     families: {
       title: 'Families Help Center',
       subtitle: 'Everything you need to find, hire, and manage trusted senior care.',
-      icon: <Users className="w-7 h-7 text-primary-600" />,
+      icon: <Users className="w-7 h-7 text-ink-900" />,
       view: 'help-families' as ViewType,
       content: familiesContent,
       seoTitle: 'Families Help Center | Evia',
@@ -325,7 +325,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
     caregivers: {
       title: 'Caregivers Help Center',
       subtitle: 'Set up your profile, find great jobs, and get paid on time.',
-      icon: <Briefcase className="w-7 h-7 text-accent-500" />,
+      icon: <Briefcase className="w-7 h-7 text-ink-900" />,
       view: 'help-caregivers' as ViewType,
       content: caregiversContent,
       seoTitle: 'Caregivers Help Center | Evia',
@@ -333,7 +333,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
     general: {
       title: 'General Help Center',
       subtitle: 'Platform policies, privacy, technical support, and community standards.',
-      icon: <Globe className="w-7 h-7 text-teal-600" />,
+      icon: <Globe className="w-7 h-7 text-ink-900" />,
       view: 'help-general' as ViewType,
       content: generalContent,
       seoTitle: 'General Help Center | Evia',
@@ -347,31 +347,31 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
+    <div className="min-h-screen bg-paper-50 flex flex-col font-sans">
       <SEO title={config.seoTitle} description={config.subtitle} keywords={`Evia, help, ${section}`} />
       <NavBar onNavigate={onNavigate} onLogin={() => onNavigate('login')} />
 
       <main className="flex-grow">
         {/* Hero breadcrumb */}
-        <section className="bg-white border-b border-slate-200 py-10">
+        <section className="bg-paper-50 border-b hairline py-10">
           <div className="max-w-6xl mx-auto px-4">
-            <nav className="flex items-center gap-2 text-sm text-slate-500 mb-4">
-              <button onClick={() => onNavigate('help-center')} className="flex items-center gap-1 hover:text-primary-600 transition-colors">
+            <nav className="flex items-center gap-2 text-sm text-ink-600 mb-4">
+              <button onClick={() => onNavigate('help-center')} className="flex items-center gap-1 hover:text-ink-900 transition-colors">
                 <LifeBuoy className="w-4 h-4" /> Help Center
               </button>
               <ChevronRight className="w-4 h-4" />
-              <span className="text-slate-900 font-medium">{config.title}</span>
+              <span className="text-ink-900 font-medium">{config.title}</span>
             </nav>
             <div className="flex items-center gap-3 mb-2">
               {config.icon}
-              <h1 className="text-3xl md:text-4xl font-bold text-slate-900">{config.title}</h1>
+              <h1 className="text-3xl md:text-4xl font-display font-semibold text-ink-900 tracking-[-0.02em]">{config.title}</h1>
             </div>
-            <p className="text-slate-500 mt-2">{config.subtitle}</p>
+            <p className="text-ink-600 mt-2">{config.subtitle}</p>
           </div>
         </section>
 
         {/* Section tabs */}
-        <div className="bg-white border-b border-slate-100 sticky top-20 z-40">
+        <div className="bg-paper-50 border-b hairline sticky top-20 z-40">
           <div className="max-w-6xl mx-auto px-4">
             <div className="flex gap-1">
               {sectionTabs.map(tab => (
@@ -380,8 +380,8 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
                   onClick={() => onNavigate(tab.view)}
                   className={`flex items-center gap-2 px-4 py-4 text-sm font-medium border-b-2 transition-colors ${
                     section === tab.view.replace('help-', '')
-                      ? 'border-primary-600 text-primary-600'
-                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                      ? 'border-ink-900 text-ink-900'
+                      : 'border-transparent text-ink-600 hover:text-ink-900'
                   }`}
                 >
                   {tab.icon}{tab.label}
@@ -396,23 +396,23 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
           <div className="flex flex-col lg:flex-row gap-12">
             {/* Sidebar */}
             <div className="lg:w-1/4">
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden sticky top-40">
-                <div className="p-5 bg-slate-50 border-b border-slate-100">
-                  <p className="text-xs font-bold tracking-widest uppercase text-slate-400">Categories</p>
+              <div className="bg-white rounded-2xl border hairline shadow-sm overflow-hidden sticky top-40">
+                <div className="p-5 bg-paper-100 border-b hairline">
+                  <p className="text-xs font-bold tracking-widest uppercase text-ink-400">Categories</p>
                 </div>
-                <ul className="divide-y divide-slate-100">
+                <ul className="divide-y divide-[rgba(26,31,43,0.08)]">
                   {config.content.map((cat, idx) => (
                     <li key={idx}>
                       <button
                         onClick={() => { setActiveCat(idx); setOpenFaq(null); }}
                         className={`w-full text-left px-5 py-4 flex items-center justify-between text-sm font-medium transition-colors ${
                           activeCat === idx
-                            ? 'bg-primary-50 text-primary-700 border-l-4 border-primary-600'
-                            : 'text-slate-600 hover:bg-slate-50 border-l-4 border-transparent'
+                            ? 'bg-paper-100 text-ink-900 border-l-4 border-ink-900'
+                            : 'text-ink-600 hover:bg-paper-50 border-l-4 border-transparent'
                         }`}
                       >
                         <span>{cat.category}</span>
-                        <ChevronRight className={`w-4 h-4 ${activeCat === idx ? 'text-primary-500' : 'text-slate-300'}`} />
+                        <ChevronRight className={`w-4 h-4 ${activeCat === idx ? 'text-ink-900' : 'text-ink-400'}`} />
                       </button>
                     </li>
                   ))}
@@ -422,7 +422,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
 
             {/* FAQ Accordion */}
             <div className="lg:w-3/4">
-              <h2 className="text-2xl font-bold text-slate-900 mb-6 pb-4 border-b border-slate-200">
+              <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em] mb-6 pb-4 border-b hairline">
                 {config.content[activeCat].category}
               </h2>
               <div className="space-y-4">
@@ -447,9 +447,9 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
                   <button
                     key={tab.view}
                     onClick={() => onNavigate(tab.view)}
-                    className="flex items-center gap-2 px-4 py-3 rounded-xl border border-slate-200 bg-white hover:border-primary-300 hover:bg-primary-50 transition-all text-sm font-medium text-slate-600 hover:text-primary-700"
+                    className="flex items-center gap-2 px-4 py-3 min-h-[44px] rounded-xl border hairline bg-white hover:shadow-sm transition-all text-sm font-medium text-ink-600 hover:text-ink-900"
                   >
-                    {tab.icon}{tab.label} Help <ChevronRight className="w-4 h-4 ml-auto text-slate-300" />
+                    {tab.icon}{tab.label} Help <ChevronRight className="w-4 h-4 ml-auto text-ink-400" />
                   </button>
                 ))}
               </div>
@@ -458,10 +458,10 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
         </section>
 
         {/* CTA */}
-        <section className="py-16 bg-primary-50 border-t border-primary-100">
+        <section className="py-16 bg-paper-100 border-t hairline">
           <div className="max-w-3xl mx-auto px-4 text-center">
-            <h2 className="text-2xl font-bold text-slate-900 mb-3">Still have questions?</h2>
-            <p className="text-slate-600 mb-6">Our support team is available 7 days a week.</p>
+            <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em] mb-3">Still have questions?</h2>
+            <p className="text-ink-600 mb-6">Our support team is available 7 days a week.</p>
             <Button size="lg" onClick={() => { window.location.href = 'mailto:support@eviacares.com'; }}>Contact Support</Button>
           </div>
         </section>

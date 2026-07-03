@@ -45,11 +45,11 @@ export default function GenericSuccessPage() {
   }, [count]);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center px-6 text-center gap-8">
+    <div className="min-h-screen bg-paper-50 flex flex-col items-center justify-center px-6 text-center gap-8">
       {/* Check icon */}
       <div className="relative">
-        <div className="w-20 h-20 rounded-full bg-green-500/15 border border-green-500/25 flex items-center justify-center">
-          <svg className="w-10 h-10 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <div className="w-20 h-20 rounded-full bg-green-50 border border-green-200 flex items-center justify-center">
+          <svg className="w-10 h-10 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         </div>
@@ -68,17 +68,17 @@ export default function GenericSuccessPage() {
       </div>
 
       <div className="space-y-2">
-        <h1 className="text-white text-2xl font-bold">{msg.title}</h1>
-        <p className="text-white/60 text-base max-w-xs mx-auto leading-relaxed">{msg.body}</p>
+        <h1 className="font-display text-ink-900 text-2xl font-semibold tracking-[-0.02em]">{msg.title}</h1>
+        <p className="text-ink-600 text-base max-w-xs mx-auto leading-relaxed">{msg.body}</p>
       </div>
 
-      <p className="text-white/30 text-sm">
+      <p className="text-ink-400 text-sm">
         Returning to Evia in {count}…
       </p>
 
       <a
         href={LINQ_PHONE ? `sms:${LINQ_PHONE}` : '/'}
-        className="text-blue-400 text-sm underline underline-offset-2"
+        className="text-ink-600 hover:text-ink-900 font-medium text-sm underline underline-offset-2 min-h-[44px] flex items-center"
       >
         Tap here to return to your conversation
       </a>

@@ -10,27 +10,27 @@ interface LegalDocsProps {
 export const LegalDocs: React.FC<LegalDocsProps> = ({ type, onClose }) => {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
-      
-      <div className="relative bg-white w-full max-w-2xl h-[80vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-slide-in">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+      <div className="absolute inset-0 bg-ink-900/60 backdrop-blur-sm" onClick={onClose} />
+
+      <div className="relative bg-white w-full max-w-2xl h-[80vh] rounded-3xl shadow-xl flex flex-col overflow-hidden animate-slide-in">
+        <div className="p-6 border-b hairline flex justify-between items-center bg-paper-100">
            <div className="flex items-center gap-3">
-              <div className="bg-primary-100 p-2 rounded-full text-primary-600">
+              <div className="bg-white border hairline p-2 rounded-full text-ink-900">
                  {type === 'terms' ? <FileText className="w-6 h-6" /> : <Lock className="w-6 h-6" />}
               </div>
               <div>
-                 <h2 className="text-xl font-bold text-slate-900">
+                 <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em]">
                     {type === 'terms' ? 'Terms of Service' : 'Privacy Policy'}
                  </h2>
-                 <p className="text-xs text-slate-500">Last updated: April 2026</p>
+                 <p className="text-xs text-ink-600">Last updated: April 2026</p>
               </div>
            </div>
-           <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-              <X className="w-6 h-6 text-slate-500" />
+           <button onClick={onClose} className="p-2.5 hover:bg-paper-200 rounded-full transition-colors">
+              <X className="w-6 h-6 text-ink-600" />
            </button>
         </div>
 
-        <div className="flex-grow overflow-y-auto p-8 text-slate-600 text-sm leading-relaxed space-y-6">
+        <div className="flex-grow overflow-y-auto p-8 text-ink-600 text-sm leading-relaxed space-y-6">
            {type === 'terms' ? (
              <>
                <p><strong>1. Acceptance of Terms</strong><br/>By accessing Evia, you agree to be bound by these Terms of Service. If you do not agree, you may not use the platform.</p>
@@ -72,10 +72,10 @@ export const LegalDocs: React.FC<LegalDocsProps> = ({ type, onClose }) => {
            )}
         </div>
 
-        <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end">
-           <button 
+        <div className="p-6 border-t hairline bg-paper-100 flex justify-end">
+           <button
              onClick={onClose}
-             className="px-6 py-2 bg-slate-900 text-white rounded-xl font-medium hover:bg-slate-800 transition-colors"
+             className="btn-depth-primary rounded-full px-6 py-2.5 min-h-[44px] font-semibold text-[15px] transition-colors"
            >
              I Understand
            </button>

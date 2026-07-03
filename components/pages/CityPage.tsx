@@ -35,9 +35,9 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
 
   if (!cityData) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen bg-paper-50 flex items-center justify-center">
         <div className="text-center">
-          <p className="text-slate-600 mb-4">City not found.</p>
+          <p className="text-ink-600 mb-4">City not found.</p>
           <Button onClick={() => onNavigate('landing')}>Back to Home</Button>
         </div>
       </div>
@@ -45,7 +45,7 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
   }
 
   return (
-    <div className="min-h-screen bg-white font-sans">
+    <div className="min-h-screen bg-paper-50 font-sans">
       <SEO
         title={cityData.metaTitle}
         description={cityData.metaDescription}
@@ -71,18 +71,16 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
       />
 
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-slate-100">
+      <header className="sticky top-0 z-50 bg-paper-50/95 backdrop-blur-sm border-b hairline">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center h-16">
           <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-            <div className="bg-primary-600 p-1.5 rounded-xl">
-              <Activity className="text-white w-5 h-5" />
-            </div>
-            <span className="text-xl font-bold text-slate-900">Evia</span>
+            <Activity className="text-ink-900 w-5 h-5" strokeWidth={2.5} />
+            <span className="font-display text-xl font-semibold text-ink-900">Evia</span>
           </div>
           <div className="flex items-center gap-3">
             <button
               onClick={() => onNavigate('client-signup')}
-              className="hidden sm:block text-sm font-medium text-slate-600 hover:text-primary-600 transition-colors"
+              className="hidden sm:block text-sm font-medium text-ink-600 hover:text-ink-900 transition-colors"
             >
               Log in
             </button>
@@ -95,24 +93,23 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
 
       <main>
         {/* Hero */}
-        <section className="bg-gradient-to-br from-slate-900 via-slate-800 to-primary-900 text-white py-20 lg:py-28">
+        <section className="bg-paper-50 py-20 lg:py-28">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/10 rounded-full text-sm font-medium mb-6 border border-white/20">
-              <MapPin className="w-4 h-4 text-primary-400" />
+            <div className="inline-flex items-center gap-2 px-4 py-2 bg-paper-100 border hairline rounded-full text-sm font-medium text-ink-600 mb-6">
+              <MapPin className="w-4 h-4 text-ink-400" />
               {cityData.name}, {cityData.county}
             </div>
-            <h1 className="text-4xl md:text-6xl font-bold leading-tight mb-6">
+            <h1 className="font-display text-4xl md:text-6xl font-semibold text-ink-900 tracking-[-0.02em] leading-tight mb-6">
               {cityData.headline}
             </h1>
-            <p className="text-xl text-slate-300 max-w-2xl mx-auto mb-10 leading-relaxed">
+            <p className="text-xl text-ink-600 max-w-2xl mx-auto mb-10 leading-relaxed">
               {cityData.subheadline}
             </p>
-            <div className="flex flex-col sm:flex-row justify-center gap-4">
-              <Button size="lg" onClick={() => onNavigate('client-signup')} className="bg-primary-500 hover:bg-primary-400">
+            <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
+              <Button size="lg" onClick={() => onNavigate('client-signup')}>
                 Find a Caregiver <ArrowRight className="w-5 h-5 ml-1" />
               </Button>
-              <Button size="lg" variant="secondary" onClick={() => onNavigate('caregiver-signup')}
-                className="bg-white/10 border-white/20 text-white hover:bg-white/20">
+              <Button size="lg" variant="secondary" onClick={() => onNavigate('caregiver-signup')}>
                 I'm a Caregiver
               </Button>
             </div>
@@ -120,13 +117,13 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
         </section>
 
         {/* Stats row */}
-        <section className="bg-primary-50 border-y border-primary-100 py-8">
+        <section className="bg-paper-100 border-y hairline py-8">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
               {cityData.localStats.map((stat, i) => (
                 <div key={i}>
-                  <p className="text-2xl font-black text-primary-700">{stat.value}</p>
-                  <p className="text-sm text-slate-500 mt-1">{stat.label}</p>
+                  <p className="font-display text-2xl font-medium text-ink-900 tracking-tight">{stat.value}</p>
+                  <p className="text-sm text-ink-600 mt-1">{stat.label}</p>
                 </div>
               ))}
             </div>
@@ -134,17 +131,17 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
         </section>
 
         {/* Services */}
-        <section className="py-16 bg-white">
+        <section className="py-16 bg-paper-50">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-            <h2 className="text-3xl font-bold text-slate-900 mb-2">
+            <h2 className="font-display text-3xl font-semibold text-ink-900 tracking-[-0.02em] mb-2">
               Care Services in {cityData.name}
             </h2>
-            <p className="text-slate-500 mb-10">All services are available for part-time, full-time, and overnight schedules.</p>
+            <p className="text-ink-600 mb-10">All services are available for part-time, full-time, and overnight schedules.</p>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {careTypes.map((care, i) => (
-                <div key={i} className="p-5 border border-slate-200 rounded-2xl hover:border-primary-200 hover:bg-primary-50/30 transition-all">
-                  <h3 className="font-bold text-slate-900 mb-1">{care.name}</h3>
-                  <p className="text-sm text-slate-500">{care.desc}</p>
+                <div key={i} className="p-5 bg-white border hairline rounded-2xl hover:shadow-sm transition-all">
+                  <h3 className="font-semibold text-ink-900 mb-1">{care.name}</h3>
+                  <p className="text-sm text-ink-600">{care.desc}</p>
                 </div>
               ))}
             </div>
@@ -152,40 +149,40 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
         </section>
 
         {/* Pricing */}
-        <section className="py-16 bg-slate-50">
+        <section className="py-16 bg-paper-100 border-y hairline">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <h2 className="text-3xl font-bold text-slate-900 mb-3">
+            <h2 className="font-display text-3xl font-semibold text-ink-900 tracking-[-0.02em] mb-3">
               What Does In-Home Care Cost in {cityData.name}?
             </h2>
-            <p className="text-slate-500 mb-10 max-w-2xl">
+            <p className="text-ink-600 mb-10 max-w-2xl">
               {cityData.name} caregiver hourly rates through Evia typically range from {cityData.avgHourlyRate}/hr — compared to $38–$55/hr through traditional agencies.
             </p>
 
             <div className="grid md:grid-cols-2 gap-6">
-              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Traditional Agency</p>
-                <div className="text-3xl font-black text-slate-400 mb-1">$38–$55<span className="text-sm font-normal">/hr</span></div>
-                <p className="text-sm text-slate-400 mb-4">High markup, caregiver earns only $18–22/hr</p>
+              <div className="bg-white rounded-2xl border hairline p-6 shadow-sm">
+                <p className="text-xs font-bold text-ink-400 uppercase tracking-widest mb-3">Traditional Agency</p>
+                <div className="font-display text-3xl font-medium text-ink-400 mb-1">$38–$55<span className="text-sm font-normal">/hr</span></div>
+                <p className="text-sm text-ink-400 mb-4">High markup, caregiver earns only $18–22/hr</p>
                 <ul className="space-y-2">
                   {['No say in who is assigned', 'Background check — limited', 'Long-term contracts common', 'No video interview option'].map((item, i) => (
-                    <li key={i} className="flex items-center gap-2 text-sm text-slate-400">
-                      <span className="w-4 h-4 text-slate-200">✗</span> {item}
+                    <li key={i} className="flex items-center gap-2 text-sm text-ink-400">
+                      <span className="w-4 h-4 text-ink-400">✗</span> {item}
                     </li>
                   ))}
                 </ul>
               </div>
 
-              <div className="bg-primary-600 rounded-2xl border border-primary-500 p-6 shadow-lg relative">
+              <div className="bg-ink-900 rounded-2xl p-6 shadow-lg relative">
                 <div className="absolute -top-3 left-6">
-                  <span className="bg-accent-500 text-white text-xs font-bold px-3 py-1 rounded-full">Best Value</span>
+                  <span className="bg-white border hairline text-ink-900 text-xs font-bold px-3 py-1 rounded-full shadow-sm">Best Value</span>
                 </div>
-                <p className="text-xs font-bold text-primary-200 uppercase tracking-widest mb-3">Evia</p>
-                <div className="text-3xl font-black text-white mb-1">{cityData.avgHourlyRate}<span className="text-sm font-normal text-primary-200">/hr</span></div>
-                <p className="text-sm text-primary-200 mb-4">Caregiver earns full rate · $29.95/mo membership</p>
+                <p className="text-xs font-bold text-white/60 uppercase tracking-widest mb-3">Evia</p>
+                <div className="font-display text-3xl font-medium text-white mb-1">{cityData.avgHourlyRate}<span className="text-sm font-normal text-white/60">/hr</span></div>
+                <p className="text-sm text-white/60 mb-4">Caregiver earns full rate · $29.95/mo membership</p>
                 <ul className="space-y-2">
                   {['You choose your caregiver', 'Annual Checkr background check included', 'Cancel anytime, no contract', 'Video interview built in'].map((item, i) => (
                     <li key={i} className="flex items-center gap-2 text-sm text-white">
-                      <Check className="w-4 h-4 text-primary-300 flex-shrink-0" /> {item}
+                      <Check className="w-4 h-4 text-white/70 flex-shrink-0" /> {item}
                     </li>
                   ))}
                 </ul>
@@ -195,19 +192,19 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
         </section>
 
         {/* Why Evia wins */}
-        <section className="py-16 bg-white">
+        <section className="py-16 bg-paper-50">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <h2 className="text-3xl font-bold text-slate-900 mb-3">Why {cityData.name} Families Choose Evia</h2>
-            <p className="text-slate-500 mb-10">We're not just cheaper — we're built differently.</p>
+            <h2 className="font-display text-3xl font-semibold text-ink-900 tracking-[-0.02em] mb-3">Why {cityData.name} Families Choose Evia</h2>
+            <p className="text-ink-600 mb-10">We're not just cheaper — we're built differently.</p>
             <div className="space-y-4">
               {whyBetter.map((item, i) => (
-                <div key={i} className="flex items-start gap-4 p-4 border border-slate-200 rounded-xl">
-                  <div className="w-8 h-8 bg-primary-50 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <Check className="w-4 h-4 text-primary-600" />
+                <div key={i} className="flex items-start gap-4 p-4 bg-white border hairline rounded-xl">
+                  <div className="w-8 h-8 bg-paper-100 rounded-2xl flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Check className="w-4 h-4 text-ink-900" />
                   </div>
                   <div>
-                    <p className="font-semibold text-slate-900">{item.label}</p>
-                    <p className="text-sm text-slate-400 mt-0.5">{item.detail}</p>
+                    <p className="font-semibold text-ink-900">{item.label}</p>
+                    <p className="text-sm text-ink-400 mt-0.5">{item.detail}</p>
                   </div>
                 </div>
               ))}
@@ -216,13 +213,13 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
         </section>
 
         {/* Neighborhoods */}
-        <section className="py-12 bg-slate-50">
+        <section className="py-12 bg-paper-100 border-y hairline">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <h2 className="text-2xl font-bold text-slate-900 mb-6">Neighborhoods We Serve in {cityData.name}</h2>
+            <h2 className="font-display text-2xl font-semibold text-ink-900 tracking-[-0.02em] mb-6">Neighborhoods We Serve in {cityData.name}</h2>
             <div className="flex flex-wrap gap-3">
               {cityData.nearbyNeighborhoods.map((n, i) => (
-                <span key={i} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-full text-sm text-slate-600">
-                  <MapPin className="w-3 h-3 text-primary-400" /> {n}
+                <span key={i} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border hairline rounded-full text-sm text-ink-600">
+                  <MapPin className="w-3 h-3 text-ink-400" /> {n}
                 </span>
               ))}
             </div>
@@ -230,23 +227,23 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
         </section>
 
         {/* Testimonial */}
-        <section className="py-16 bg-white">
+        <section className="py-16 bg-paper-50">
           <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
             <div className="flex justify-center gap-1 mb-5">
               {[...Array(5)].map((_, i) => <Star key={i} className="w-5 h-5 text-yellow-400 fill-yellow-400" />)}
             </div>
-            <blockquote className="text-2xl font-medium text-slate-800 leading-relaxed mb-6">
+            <blockquote className="font-display text-2xl font-medium text-ink-900 leading-relaxed mb-6">
               "{cityData.testimonial.quote}"
             </blockquote>
-            <p className="text-primary-600 font-bold">{cityData.testimonial.name}</p>
-            <p className="text-sm text-slate-400">{cityData.testimonial.neighborhood}</p>
+            <p className="text-ink-900 font-semibold">{cityData.testimonial.name}</p>
+            <p className="text-sm text-ink-400">{cityData.testimonial.neighborhood}</p>
           </div>
         </section>
 
         {/* Nearby cities */}
-        <section className="py-10 bg-slate-50 border-t border-slate-200">
+        <section className="py-10 bg-paper-100 border-t hairline">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <p className="text-sm font-semibold text-slate-500 mb-4">Also serving nearby cities:</p>
+            <p className="text-sm font-semibold text-ink-600 mb-4">Also serving nearby cities:</p>
             <div className="flex flex-wrap gap-3">
               {cityData.nearestCities.map((c, i) => {
                 const nearCity = cities.find(x => x.name === c);
@@ -254,12 +251,12 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
                   <button
                     key={i}
                     onClick={() => navigate(`/care/${nearCity.slug}`)}
-                    className="text-sm text-primary-600 hover:underline font-medium"
+                    className="text-sm text-ink-600 hover:text-ink-900 hover:underline font-medium"
                   >
                     Senior Care in {c}
                   </button>
                 ) : (
-                  <span key={i} className="text-sm text-slate-400">{c}</span>
+                  <span key={i} className="text-sm text-ink-400">{c}</span>
                 );
               })}
             </div>
@@ -267,24 +264,27 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
         </section>
 
         {/* CTA */}
-        <section className="py-16 bg-primary-600 text-white">
+        <section className="py-16 bg-paper-50 border-t hairline">
           <div className="max-w-3xl mx-auto px-4 text-center">
-            <ShieldCheck className="w-12 h-12 text-primary-300 mx-auto mb-4" />
-            <h2 className="text-3xl font-bold mb-4">Find a Caregiver in {cityData.name} Today</h2>
-            <p className="text-primary-200 mb-8 max-w-xl mx-auto">
+            <div className="w-14 h-14 bg-paper-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <ShieldCheck className="w-7 h-7 text-ink-900" />
+            </div>
+            <h2 className="font-display text-3xl font-semibold text-ink-900 tracking-[-0.02em] mb-4">Find a Caregiver in {cityData.name} Today</h2>
+            <p className="text-ink-600 mb-8 max-w-xl mx-auto">
               Browse {cityData.availableCaregivers}+ background-checked caregivers in {cityData.name}. Read reviews, watch intro videos, and interview before your first booking.
             </p>
-            <div className="flex flex-col sm:flex-row justify-center gap-4">
-              <Button size="lg" onClick={() => onNavigate('client-signup')}
-                className="bg-white text-primary-700 hover:bg-primary-50">
+            <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
+              <Button size="lg" onClick={() => onNavigate('client-signup')}>
                 Get Matched Free <ArrowRight className="w-5 h-5 ml-1" />
               </Button>
-              <Button size="lg" variant="secondary" onClick={() => onNavigate('how-it-works')}
-                className="border-white/30 text-white hover:bg-white/10">
-                How It Works
-              </Button>
+              <button
+                onClick={() => onNavigate('how-it-works')}
+                className="min-h-[44px] px-4 text-ink-600 hover:text-ink-900 font-medium transition-colors"
+              >
+                How It Works →
+              </button>
             </div>
-            <p className="text-primary-300 text-sm mt-5">No credit card required · Cancel anytime</p>
+            <p className="text-ink-400 text-sm mt-5">No credit card required · Cancel anytime</p>
           </div>
         </section>
       </main>

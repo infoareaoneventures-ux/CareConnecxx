@@ -28,14 +28,14 @@ export const QRHandoff: React.FC<Props> = ({ linqPhone, tone, caption, helper })
 
   return (
     <div className="w-full space-y-5">
-      <div className={isDark ? 'text-white/60 text-sm text-center' : 'text-slate-600 text-base text-center leading-relaxed'}>
+      <div className={isDark ? 'text-ink-600 text-sm text-center' : 'text-ink-600 text-base text-center leading-relaxed'}>
         {caption}
       </div>
 
       <div className={
         isDark
-          ? 'mx-auto rounded-3xl bg-white p-5 w-fit shadow-2xl shadow-blue-500/10'
-          : 'mx-auto rounded-3xl bg-white p-5 w-fit shadow-xl shadow-slate-200 border border-slate-100'
+          ? 'mx-auto rounded-3xl bg-white p-5 w-fit shadow-lg border hairline'
+          : 'mx-auto rounded-3xl bg-white p-5 w-fit shadow-lg border hairline'
       }>
         <a href={href} aria-label={`Open Messages to text Evia: ${SMS_BODY}`} className="block">
           <QRCanvas data={href} size={260} />
@@ -48,17 +48,17 @@ export const QRHandoff: React.FC<Props> = ({ linqPhone, tone, caption, helper })
           onClick={copyNumber}
           className={
             isDark
-              ? 'inline-flex items-center gap-2 rounded-full bg-white/5 hover:bg-white/10 transition px-4 py-2 text-sm font-medium text-white'
-              : 'inline-flex items-center gap-2 rounded-full bg-slate-100 hover:bg-slate-200 transition px-5 py-2.5 text-base font-medium text-slate-900'
+              ? 'inline-flex items-center gap-2 rounded-full bg-paper-100 border hairline hover:shadow-sm transition px-4 py-2.5 text-sm font-medium text-ink-900'
+              : 'inline-flex items-center gap-2 rounded-full bg-paper-100 border hairline hover:shadow-sm transition px-5 py-2.5 text-base font-medium text-ink-900'
           }
         >
           <span>{formatPhoneForDisplay(linqPhone)}</span>
-          <span className={isDark ? 'text-white/40 text-xs' : 'text-slate-500 text-xs'}>
+          <span className={isDark ? 'text-ink-400 text-xs' : 'text-ink-400 text-xs'}>
             {copied ? 'copied' : 'tap to copy'}
           </span>
         </button>
         {helper && (
-          <div className={isDark ? 'text-white/30 text-xs' : 'text-slate-500 text-sm'}>
+          <div className={isDark ? 'text-ink-400 text-xs' : 'text-ink-600 text-sm'}>
             {helper}
           </div>
         )}

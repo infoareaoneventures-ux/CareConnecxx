@@ -42,7 +42,7 @@ export const MobileHandoff: React.FC<Props> = ({ linqPhone, tone, caption, ctaLa
 
   return (
     <div className="w-full space-y-6">
-      <div className={isDark ? 'text-white/70 text-base text-center leading-relaxed' : 'text-slate-700 text-lg text-center leading-relaxed'}>
+      <div className={isDark ? 'text-ink-600 text-base text-center leading-relaxed' : 'text-ink-600 text-lg text-center leading-relaxed'}>
         {caption}
       </div>
 
@@ -50,8 +50,8 @@ export const MobileHandoff: React.FC<Props> = ({ linqPhone, tone, caption, ctaLa
         href={href}
         className={
           isDark
-            ? 'block w-full text-center rounded-2xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 transition py-5 text-white font-semibold text-lg shadow-lg shadow-blue-500/20'
-            : 'block w-full text-center rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 transition py-5 text-white font-semibold text-lg shadow-lg shadow-emerald-200'
+            ? 'block w-full text-center btn-depth-primary rounded-full py-5 font-semibold text-lg'
+            : 'block w-full text-center btn-depth-primary rounded-full py-5 font-semibold text-lg'
         }
       >
         {ctaLabel}
@@ -63,17 +63,17 @@ export const MobileHandoff: React.FC<Props> = ({ linqPhone, tone, caption, ctaLa
           onClick={copyNumber}
           className={
             isDark
-              ? 'inline-flex items-center gap-2 rounded-full bg-white/5 hover:bg-white/10 transition px-4 py-2 text-sm font-medium text-white'
-              : 'inline-flex items-center gap-2 rounded-full bg-slate-100 hover:bg-slate-200 transition px-5 py-2.5 text-base font-medium text-slate-900'
+              ? 'inline-flex items-center gap-2 rounded-full bg-paper-100 border hairline hover:shadow-sm transition px-4 py-2.5 text-sm font-medium text-ink-900'
+              : 'inline-flex items-center gap-2 rounded-full bg-paper-100 border hairline hover:shadow-sm transition px-5 py-2.5 text-base font-medium text-ink-900'
           }
         >
           <span>{formatPhoneForDisplay(linqPhone)}</span>
-          <span className={isDark ? 'text-white/40 text-xs' : 'text-slate-500 text-xs'}>
+          <span className={isDark ? 'text-ink-400 text-xs' : 'text-ink-400 text-xs'}>
             {copied ? 'copied' : 'tap to copy'}
           </span>
         </button>
         {helper && (
-          <div className={isDark ? 'text-white/30 text-xs' : 'text-slate-500 text-sm'}>
+          <div className={isDark ? 'text-ink-400 text-xs' : 'text-ink-600 text-sm'}>
             {helper}
           </div>
         )}

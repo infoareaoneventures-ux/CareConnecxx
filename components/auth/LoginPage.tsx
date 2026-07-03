@@ -121,30 +121,30 @@ export const AuthLoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center justify-center px-6">
+    <div className="min-h-screen bg-paper-50 text-ink-900 flex flex-col items-center justify-center px-6">
       {/* RecaptchaVerifier needs a stable DOM target; created per send. */}
       <div id={RECAPTCHA_CONTAINER} />
       <div className="w-full max-w-sm space-y-8">
 
         {/* Logo */}
         <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center mx-auto">
-            <span className="text-white font-bold text-lg">C</span>
+          <div className="w-12 h-12 rounded-2xl bg-paper-100 border hairline flex items-center justify-center mx-auto">
+            <span className="text-ink-900 font-semibold text-lg">C</span>
           </div>
-          <div className="text-2xl font-bold tracking-tight">Evia</div>
-          <p className="text-white/40 text-sm">Welcome back</p>
+          <div className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</div>
+          <p className="text-ink-600 text-sm">Welcome back</p>
         </div>
 
         {/* Step: phone */}
         {step === 'phone' && (
           <form onSubmit={sendCode} className="space-y-5">
-            <h2 className="text-xl font-semibold text-center">What's your mobile number?</h2>
+            <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em] text-center">What's your mobile number?</h2>
 
             <div className="flex gap-2">
               <select
                 value={countryCode}
                 onChange={e => setCountryCode(e.target.value)}
-                className="bg-white/5 border border-white/10 rounded-xl px-3 py-3.5 text-sm text-white focus:outline-none focus:border-blue-500 flex-shrink-0"
+                className="bg-white border hairline rounded-xl px-3 py-3.5 text-base text-ink-900 focus:outline-none focus:border-ink-400 flex-shrink-0"
               >
                 <option value="+1">🇺🇸 +1</option>
                 <option value="+44">🇬🇧 +44</option>
@@ -157,23 +157,23 @@ export const AuthLoginPage: React.FC = () => {
                 placeholder="(555) 555-5555"
                 value={phone}
                 onChange={e => setPhone(formatDisplay(e.target.value))}
-                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-white placeholder-white/20 focus:outline-none focus:border-blue-500 text-sm"
+                className="flex-1 bg-white border hairline rounded-xl px-4 py-3.5 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-base"
               />
             </div>
 
-            {error && <p className="text-red-400 text-sm">{error}</p>}
+            {error && <p className="text-red-600 text-sm">{error}</p>}
 
             <button
               type="submit"
               disabled={!isValid || loading}
-              className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed transition font-semibold text-sm"
+              className="w-full py-3.5 btn-depth-primary rounded-full disabled:opacity-30 disabled:cursor-not-allowed font-semibold text-[15px]"
             >
               {loading ? 'Sending…' : 'Send code →'}
             </button>
 
-            <p className="text-white/25 text-xs text-center">
+            <p className="text-ink-400 text-xs text-center">
               New to Evia?{' '}
-              <Link to="/start" className="text-blue-400 hover:text-blue-300">Get started →</Link>
+              <Link to="/start" className="text-ink-600 hover:text-ink-900 font-medium">Get started →</Link>
             </p>
           </form>
         )}
@@ -182,8 +182,8 @@ export const AuthLoginPage: React.FC = () => {
         {step === 'otp' && (
           <div className="space-y-6">
             <div className="text-center space-y-1">
-              <h2 className="text-xl font-semibold">Enter your code</h2>
-              <p className="text-white/40 text-sm">Sent to {countryCode} {phone}</p>
+              <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Enter your code</h2>
+              <p className="text-ink-600 text-sm">Sent to {countryCode} {phone}</p>
             </div>
 
             <div className="flex gap-2 justify-center">
@@ -198,22 +198,22 @@ export const AuthLoginPage: React.FC = () => {
                   onChange={e => handleOtpChange(idx, e.target.value)}
                   onKeyDown={e => handleOtpKeyDown(idx, e)}
                   autoFocus={idx === 0}
-                  className="w-12 h-14 text-center text-xl font-semibold bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                  className="w-12 h-14 text-center text-xl font-semibold bg-white border hairline rounded-xl text-ink-900 focus:outline-none focus:border-ink-400"
                 />
               ))}
             </div>
 
-            {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+            {error && <p className="text-red-600 text-sm text-center">{error}</p>}
 
             {loading && (
-              <p className="text-white/40 text-sm text-center">Verifying…</p>
+              <p className="text-ink-600 text-sm text-center">Verifying…</p>
             )}
 
             <button
               type="button"
               disabled={resendCountdown > 0 || loading}
               onClick={() => { setOtp(['', '', '', '', '', '']); sendCode(); }}
-              className="w-full text-sm text-white/30 hover:text-white/50 disabled:cursor-not-allowed transition"
+              className="w-full py-3 text-sm text-ink-600 hover:text-ink-900 font-medium disabled:cursor-not-allowed transition"
             >
               {resendCountdown > 0 ? `Resend in ${resendCountdown}s` : 'Resend code'}
             </button>

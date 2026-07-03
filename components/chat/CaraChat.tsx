@@ -7,10 +7,10 @@ import { ClientNavigation } from '../client/ClientNavigation';
 import { CaregiverTopNav } from '../caregiver/CaregiverTopNav';
 import type { DirectMessage } from '../../types';
 
-// Cara web chat (U4, docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md).
-// Renders threads/cara_{uid} — the SAME conversation the user has with Cara
+// Evia web chat (U4, docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md).
+// Renders threads/cara_{uid} — the SAME conversation the user has with Evia
 // over SMS/iMessage. Messages are server-written; sending goes through the
-// v1-chatWithCara callable, which also delivers Cara's reply as a text when
+// v1-chatWithCara callable, which also delivers Evia's reply as a text when
 // the user has a live SMS thread. The browser never writes message docs
 // (firestore.rules) — optimistic bubbles live in local state keyed by a
 // client-generated id and reconcile when the mirrored doc arrives.
@@ -108,12 +108,12 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
         case 'rateLimited':
           setPending((prev) => prev.filter((p) => p.clientMessageId !== clientMessageId));
           setDraft(body);
-          setNotice('Cara is getting a lot of messages — wait a moment and try again.');
+          setNotice('Evia is getting a lot of messages — wait a moment and try again.');
           break;
         case 'caraBusy':
           setPending((prev) => prev.filter((p) => p.clientMessageId !== clientMessageId));
           setDraft(body);
-          setNotice('Cara is still replying to your last message — try again in a moment.');
+          setNotice('Evia is still replying to your last message — try again in a moment.');
           break;
         case 'notSetUp':
           setPending((prev) => prev.filter((p) => p.clientMessageId !== clientMessageId));
@@ -150,16 +150,16 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
           <div className="w-14 h-14 rounded-2xl bg-primary-50 flex items-center justify-center mx-auto">
             <MessageCircle className="w-7 h-7 text-primary-600" />
           </div>
-          <h2 className="text-lg font-bold text-neutral-900">Meet Cara</h2>
+          <h2 className="text-lg font-bold text-neutral-900">Meet Evia</h2>
           <p className="text-sm text-neutral-500">
-            Cara gets set up over a quick text conversation. Once you've said hi
+            Evia gets set up over a quick text conversation. Once you've said hi
             by text, this chat and your messages stay in sync everywhere.
           </p>
           <button
             onClick={() => navigate('/start')}
             className="min-h-[44px] px-6 py-3 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold transition-colors"
           >
-            Get set up with Cara
+            Get set up with Evia
           </button>
         </div>
       </div>
@@ -174,7 +174,7 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
           <span className="text-white font-bold">C</span>
         </div>
         <div className="min-w-0">
-          <h1 className="text-base font-bold text-neutral-900 leading-tight">Cara</h1>
+          <h1 className="text-base font-bold text-neutral-900 leading-tight">Evia</h1>
           <p className="text-xs text-neutral-500 truncate">
             Texts and web chat — one conversation
           </p>
@@ -185,22 +185,22 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
       {optedOut && (
         <div className="px-4 py-2 bg-warning-50 border-b border-warning-100 text-xs text-warning-700 flex items-center gap-2">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          Texting is paused (you replied STOP), so Cara answers here on the web only.
+          Texting is paused (you replied STOP), so Evia answers here on the web only.
         </div>
       )}
       {mode === 'finishSetup' && (
         <div className="px-4 py-2 bg-info-50 border-b border-info-100 text-xs text-info-700 flex items-center gap-2">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          Finish setting up with Cara over text first — this chat unlocks right after.
+          Finish setting up with Evia over text first — this chat unlocks right after.
         </div>
       )}
 
       {/* Messages */}
-      <div role="log" aria-label="Conversation with Cara" className="flex-1 overflow-y-auto px-4 py-4 space-y-2 bg-neutral-50">
+      <div role="log" aria-label="Conversation with Evia" className="flex-1 overflow-y-auto px-4 py-4 space-y-2 bg-neutral-50">
         {isEmpty && mode === 'chat' && (
           <div className="text-center pt-10 space-y-4">
             <p className="text-sm text-neutral-500">
-              Say hi — Cara remembers your conversation whether you text her or type here.
+              Say hi — Evia remembers your conversation whether you text her or type here.
             </p>
             <div className="flex flex-wrap justify-center gap-2">
               {suggestions.map((s) => (
@@ -247,7 +247,7 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
                   onClick={() => send(p.text, p.clientMessageId)}
                   className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-error-600 hover:text-error-700 min-h-[24px]"
                 >
-                  <RotateCcw className="w-3 h-3" /> Couldn't reach Cara — tap to retry
+                  <RotateCcw className="w-3 h-3" /> Couldn't reach Evia — tap to retry
                 </button>
               ) : (
                 <div className="text-[10px] mt-1 text-white/60">Sending…</div>
@@ -259,7 +259,7 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
         {caraTyping && (
           <div className="flex justify-start">
             <div className="px-4 py-3 rounded-2xl rounded-bl-md bg-white border border-neutral-200">
-              <span className="inline-flex gap-1" aria-label="Cara is typing">
+              <span className="inline-flex gap-1" aria-label="Evia is typing">
                 <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-bounce [animation-delay:0ms]" />
                 <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-bounce [animation-delay:150ms]" />
                 <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-bounce [animation-delay:300ms]" />
@@ -293,8 +293,8 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
                 }
               }}
               rows={1}
-              placeholder="Message Cara…"
-              aria-label="Message Cara"
+              placeholder="Message Evia…"
+              aria-label="Message Evia"
               disabled={caraTyping}
               className="flex-1 resize-none px-4 py-3 bg-neutral-100 rounded-2xl text-neutral-900 placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary-200 disabled:opacity-60"
             />

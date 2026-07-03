@@ -198,7 +198,7 @@ describe("checkrWebhook — exactly-once", () => {
   });
 
   beforeEach(() => {
-    // Caregiver matched by checkrCandidateId; no phone → no Cara-advance path.
+    // Caregiver matched by checkrCandidateId; no phone → no Evia-advance path.
     hoisted.collState.set("caregivers", [
       { id: "cg1", name: "Test CG", backgroundCheckData: { checkrCandidateId: "cand_1" } },
     ]);
@@ -265,7 +265,7 @@ describe("stripeConnectWebhook — exactly-once", () => {
   });
 
   beforeEach(() => {
-    // Caregiver matched by stripeAccountId; no phone → skip the Cara-advance path.
+    // Caregiver matched by stripeAccountId; no phone → skip the Evia-advance path.
     hoisted.collState.set("caregivers", [
       { id: "cg1", stripeAccountId: "acct_1" },
     ]);

@@ -814,7 +814,7 @@ export const onShiftHoursApproved = functions
 
 // Resolve gross pay in cents. shiftHours docs come from three rails that
 // historically disagreed on field names: in-app submitShiftHours writes
-// `grossPay` (dollars); the Cara MCP tool and care-notes completion write
+// `grossPay` (dollars); the Evia MCP tool and care-notes completion write
 // `amountCents`. Fall back through the known shapes so every approved shift
 // charges instead of dying on "grossPay not set".
 function computeGrossCents(shift: any): number {
@@ -1009,7 +1009,7 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
         payment_method: typeof defaultPm === 'string' ? defaultPm : defaultPm.id,
         confirm: true,
         off_session: true,
-        description: `CareConnex shift ${appointmentId}`,
+        description: `Evia shift ${appointmentId}`,
         metadata: { appointmentId, shiftHoursId: appointmentId },
       }, {
         // Idempotency-keyed by appointmentId so re-firing the Firestore

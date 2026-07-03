@@ -116,7 +116,7 @@ export async function runEvals(): Promise<{
 
 if (require.main === module) {
   runEvals().then(({ passed, failed, total, rate, failures }) => {
-    console.log(`\n── Cara Eval Results ──`);
+    console.log(`\n── Evia Eval Results ──`);
     console.log(`  Passed: ${passed}/${total} (${(rate * 100).toFixed(1)}%)`);
     console.log(`  Failed: ${failed}`);
 

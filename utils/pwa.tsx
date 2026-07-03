@@ -62,7 +62,7 @@ export const PWAInstallPrompt: React.FC = () => {
                     </svg>
                 </div>
                 <div className="flex-1">
-                    <h3 className="font-bold text-slate-900 mb-1">Install CareConnex</h3>
+                    <h3 className="font-bold text-slate-900 mb-1">Install Evia</h3>
                     <p className="text-sm text-slate-600 mb-3">
                         Add to your home screen for quick access and offline support
                     </p>

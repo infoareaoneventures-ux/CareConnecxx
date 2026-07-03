@@ -72,7 +72,7 @@ export function generateICSFile(params: {
   return [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//Cara//Care Interview//EN",
+    "PRODID:-//Evia//Care Interview//EN",
     "BEGIN:VEVENT",
     `UID:${uid}`,
     `DTSTART:${start}`,

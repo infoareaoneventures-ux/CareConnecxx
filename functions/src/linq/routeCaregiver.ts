@@ -63,7 +63,7 @@ async function extractReferralName(text: string): Promise<string> {
 async function isCaregiverReferralIntent(text: string, norm: string): Promise<boolean> {
   if (norm === "REFER" || norm === "REFERRAL") return true;
   const raw = await quickComplete(
-    "Does this caregiver's message express intent to refer, invite, or recommend ANOTHER person to become a CareConnex caregiver? Reply only YES or NO.",
+    "Does this caregiver's message express intent to refer, invite, or recommend ANOTHER person to become an Evia caregiver? Reply only YES or NO.",
     text,
     { maxTokens: 5 },
   ).catch(() => "");
@@ -604,7 +604,7 @@ async function handleRunningLate(phone: string, chatId: string): Promise<void> {
   });
   const howLateMsg = await generateCaraMessage({
     audience: "caregiver",
-    context: "Caregiver said they're running late. Cara is asking how late they expect to be.",
+    context: "Caregiver said they're running late. Evia is asking how late they expect to be.",
     fallback: "How late do you think you'll be?",
     maxTokens: 60,
   });
@@ -618,7 +618,7 @@ async function handleIssue(phone: string, chatId: string): Promise<void> {
   });
   const issuePromptMsg = await generateCaraMessage({
     audience: "caregiver",
-    context: "Caregiver reported an issue during a visit. Cara is asking them to describe what's happening.",
+    context: "Caregiver reported an issue during a visit. Evia is asking them to describe what's happening.",
     fallback: "That sounds important. What's happening right now?",
     maxTokens: 80,
   });
@@ -680,7 +680,7 @@ async function sendFamilyTaskUpdate(params: {
   try {
     const raw = await quickComplete(
       "You write a brief 1-2 sentence real-time care update for a family member.\n" +
-        "Tone: warm, direct, reassuring. From Cara (a care coordinator), not the caregiver.\n" +
+        "Tone: warm, direct, reassuring. From Evia (a care coordinator), not the caregiver.\n" +
         "Keep it short — this is a mid-shift task update. No emoji. Output only the message text.",
       `Task just completed: ${taskDescription}\n` +
         `Category: ${taskCategory}\n` +
@@ -745,7 +745,7 @@ export async function sendFamilyShiftEndUpdate(params: {
 
     const raw = await quickComplete(
       "You write a warm, personal text message to a family member after their loved one's care visit.\n" +
-        "Tone: warm and reassuring, like a trusted care coordinator. From Cara, not the caregiver.\n" +
+        "Tone: warm and reassuring, like a trusted care coordinator. From Evia, not the caregiver.\n" +
         "Structure: 1) Start with the visit wrapping up and overall mood/meals. " +
         "2) Mention planned tasks completed with any notes. " +
         "3) If the senior asked for anything outside the plan, mention it clearly. " +
@@ -907,7 +907,7 @@ async function handleTaskAck(
       audience: "caregiver",
       context: `The caregiver said they haven't completed "${taskInfo.taskDescription}" for ` +
         `${taskInfo.seniorName} yet. Write a gentle, understanding 1-sentence reply — ` +
-        `no pressure, Cara will follow up with them again soon.`,
+        `no pressure, Evia will follow up with them again soon.`,
       fallback: `No worries — I'll check back with you soon!`,
       maxTokens: 60,
     });
@@ -1330,7 +1330,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         });
         const swapDeclineMsg = await generateCaraMessage({
           audience: "caregiver",
-          context: `Caregiver declined a shift swap request from ${fromName}. Cara is acknowledging the decline and thanking them for letting the coordinator know.`,
+          context: `Caregiver declined a shift swap request from ${fromName}. Evia is acknowledging the decline and thanking them for letting the coordinator know.`,
           fallback: `No problem — thanks for letting ${fromName}'s coordinator know!`,
           maxTokens: 60,
         });
@@ -1412,7 +1412,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         });
         const rescheduleMsg = await generateCaraMessage({
           audience: "caregiver",
-          context: "Caregiver wants to reschedule a visit. Cara is asking them to suggest 2–3 times that work and will relay them to the family.",
+          context: "Caregiver wants to reschedule a visit. Evia is asking them to suggest 2–3 times that work and will relay them to the family.",
           fallback: "No problem — text me 2–3 times that work for you and I'll let the family know right away.",
           maxTokens: 80,
         });
@@ -1467,7 +1467,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
             await candidateSnap.docs[0].ref.update({ status: "available", respondedAt: new Date().toISOString() });
             const jobConfirmMsg = await generateCaraMessage({
               audience: "caregiver",
-              context: "Caregiver indicated availability for a job. Cara will confirm with the family and follow up shortly.",
+              context: "Caregiver indicated availability for a job. Evia will confirm with the family and follow up shortly.",
               fallback: "Got it — we'll confirm with the family and follow up shortly.",
               maxTokens: 60,
             });
@@ -1476,7 +1476,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
             await candidateSnap.docs[0].ref.update({ status: "declined", respondedAt: new Date().toISOString() });
             const jobDeclineMsg = await generateCaraMessage({
               audience: "caregiver",
-              context: "Caregiver declined a job offer. Cara is acknowledging gracefully.",
+              context: "Caregiver declined a job offer. Evia is acknowledging gracefully.",
               fallback: "No worries — thanks for letting us know!",
               maxTokens: 60,
             });
@@ -1594,7 +1594,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         }
         const driveMsg = await generateCaraMessage({
           audience: "caregiver",
-          context: "Caregiver said how late they'll be and Cara has already notified the family. Send a brief acknowledgment and wish them a safe drive.",
+          context: "Caregiver said how late they'll be and Evia has already notified the family. Send a brief acknowledgment and wish them a safe drive.",
           fallback: "I've notified the family. Drive safe.",
           maxTokens: 60,
         });
@@ -1653,7 +1653,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
 
       const issueFlaggedMsg = await generateCaraMessage({
         audience: "caregiver",
-        context: "Caregiver reported an issue during a visit. Cara has escalated it to the team and notified the family. Thank them for letting Cara know.",
+        context: "Caregiver reported an issue during a visit. Evia has escalated it to the team and notified the family. Thank them for letting Evia know.",
         fallback: "I've flagged this for our team and notified the family. Thank you for letting me know.",
         maxTokens: 80,
       });
@@ -1675,7 +1675,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         }).catch(() => {});
         const issueResolvedMsg = await generateCaraMessage({
           audience: "caregiver",
-          context: "Caregiver confirmed the issue from a prior visit is resolved. Cara is glad to hear it and wraps up the check-in.",
+          context: "Caregiver confirmed the issue from a prior visit is resolved. Evia is glad to hear it and wraps up the check-in.",
           fallback: "Good to hear — glad everything's okay.",
           maxTokens: 60,
         });
@@ -1683,7 +1683,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       } else {
         const issueUpdateMsg = await generateCaraMessage({
           audience: "caregiver",
-          context: "Caregiver gave an update on an ongoing issue rather than confirming it's resolved. Cara acknowledges the update and notes it.",
+          context: "Caregiver gave an update on an ongoing issue rather than confirming it's resolved. Evia acknowledges the update and notes it.",
           fallback: "Thanks for the update — I've noted it. Let me know if anything changes.",
           maxTokens: 60,
         });

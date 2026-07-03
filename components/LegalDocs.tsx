@@ -33,19 +33,19 @@ export const LegalDocs: React.FC<LegalDocsProps> = ({ type, onClose }) => {
         <div className="flex-grow overflow-y-auto p-8 text-slate-600 text-sm leading-relaxed space-y-6">
            {type === 'terms' ? (
              <>
-               <p><strong>1. Acceptance of Terms</strong><br/>By accessing CareConnex, you agree to be bound by these Terms of Service. If you do not agree, you may not use the platform.</p>
+               <p><strong>1. Acceptance of Terms</strong><br/>By accessing Evia, you agree to be bound by these Terms of Service. If you do not agree, you may not use the platform.</p>
 
-               <p><strong>2. Nature of Platform</strong><br/>CareConnex is a venue connecting independent Caregivers with Clients. We are not an employer. Caregivers are independent contractors who set their own rates and schedules.</p>
+               <p><strong>2. Nature of Platform</strong><br/>Evia is a venue connecting independent Caregivers with Clients. We are not an employer. Caregivers are independent contractors who set their own rates and schedules.</p>
 
                <p><strong>3. Trust & Safety</strong><br/>We perform background checks via Checkr and identity verification via Stripe Identity. We do not guarantee the conduct of any user. Users are responsible for their interactions and should exercise appropriate caution.</p>
 
-               <p><strong>4. Payments & Fees</strong><br/>Clients are charged at the time of booking or after shift completion via Stripe. CareConnex takes a platform fee. Cancellations within 24 hours may incur a fee. Caregivers receive payouts via Stripe Connect.</p>
+               <p><strong>4. Payments & Fees</strong><br/>Clients are charged at the time of booking or after shift completion via Stripe. Evia takes a platform fee. Cancellations within 24 hours may incur a fee. Caregivers receive payouts via Stripe Connect.</p>
 
                <p><strong>5. Medical Disclaimer</strong><br/>Caregivers provide non-medical assistance unless specifically licensed (e.g., RN). This platform does not provide medical advice. Always consult a qualified healthcare professional for medical concerns.</p>
 
                <p><strong>6. Account Termination</strong><br/>We reserve the right to suspend or terminate accounts that violate these terms, abuse the platform, or pose a safety risk to other users.</p>
 
-               <p><strong>7. Limitation of Liability</strong><br/>CareConnex is not liable for damages arising from interactions between users on the platform. Our total liability is limited to fees paid to us in the prior 12 months.</p>
+               <p><strong>7. Limitation of Liability</strong><br/>Evia is not liable for damages arising from interactions between users on the platform. Our total liability is limited to fees paid to us in the prior 12 months.</p>
 
                <p><strong>8. Governing Law</strong><br/>These terms are governed by the laws of the State of California. Any disputes shall be resolved in the courts of Santa Clara County, California.</p>
              </>
@@ -63,11 +63,11 @@ export const LegalDocs: React.FC<LegalDocsProps> = ({ type, onClose }) => {
 
                <p><strong>6. Data Retention</strong><br/>We retain account data for as long as your account is active. After account deletion, financial records are retained per IRS requirements (7 years); other personal data is purged within 90 days.</p>
 
-               <p><strong>7. Your Rights</strong><br/>You can access, correct, or delete your personal information at any time from your account settings, or by contacting privacy@careconnex.com.</p>
+               <p><strong>7. Your Rights</strong><br/>You can access, correct, or delete your personal information at any time from your account settings, or by contacting privacy@eviacares.com.</p>
 
-               <p><strong>8. Children's Privacy</strong><br/>CareConnex is not directed at children under 18. We do not knowingly collect information from minors.</p>
+               <p><strong>8. Children's Privacy</strong><br/>Evia is not directed at children under 18. We do not knowingly collect information from minors.</p>
 
-               <p><strong>9. Contact</strong><br/>For privacy questions, contact privacy@careconnex.com.</p>
+               <p><strong>9. Contact</strong><br/>For privacy questions, contact privacy@eviacares.com.</p>
              </>
            )}
         </div>

@@ -217,7 +217,7 @@ async function findCaregiverUidByCandidateId(candidateId: string): Promise<strin
  * mean a redelivered payment webhook never starts a second check. The resulting
  * report is routed by handleMvrReportEvent to the driver badge ONLY.
  *
- * Called from the Stripe payment-success webhook (web add-on and Cara SMS).
+ * Called from the Stripe payment-success webhook (web add-on and Evia SMS).
  */
 export async function initiateMvrOnlyCheck(caregiverUid: string): Promise<void> {
   const snap = await db.collection("caregivers").doc(caregiverUid).get();
@@ -354,7 +354,7 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
   const payload: Record<string, any> = event?.data?.object || {};
 
   // Exactly-once guard — a replayed report.completed would otherwise re-fire
-  // family notifications, re-advance Cara onboarding, and duplicate admin
+  // family notifications, re-advance Evia onboarding, and duplicate admin
   // alerts. Events without an id (unexpected shape) process without dedupe.
   const eventId: string | null = typeof event.id === "string" && event.id ? event.id : null;
   if (eventId) {
@@ -505,7 +505,7 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
           body: "Great news — your background check came back clear. You're approved and families can now book you!",
         };
 
-        // Advance Cara onboarding if caregiver has an iMessage session; also mark approved driver if MVR was included
+        // Advance Evia onboarding if caregiver has an iMessage session; also mark approved driver if MVR was included
         try {
           const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
           const cgData = cgSnap.data();

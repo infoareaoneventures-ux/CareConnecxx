@@ -171,7 +171,7 @@ vi.mock("../../utils/openaiClient", () => ({
     // Mid-flow question gate.
     if (prompt.includes("Reply YES if this is a general question")) return questionMode ? "YES" : "NO";
     // answerQuestionMidFlow — only hit when questionMode is on.
-    if (prompt.includes("You are Cara, an AI care assistant")) return "Here's a helpful answer.";
+    if (prompt.includes("You are Evia, an AI care assistant")) return "Here's a helpful answer.";
     // Otherwise it's the step's own parse prompt.
     return stepAnswer;
   }),
@@ -380,7 +380,7 @@ describe("client onboarding steps — characterization", () => {
 // ── U11 Part 1: honest disclosure at first contact ───────────────────────────
 // otp_greeting is the very first message a brand-new phone number receives
 // (before onboardingStep even exists). It must keep its warmth but disclose
-// that Cara is automated with a real team behind her (CA B.O.T. Act).
+// that Evia is automated with a real team behind her (CA B.O.T. Act).
 describe("first-contact disclosure (otp_greeting)", () => {
   // Conversational automation disclosure removed by explicit founder decision
   // 2026-07-02 (risk accepted; web signup subtitle + honest-answer-if-asked
@@ -388,7 +388,7 @@ describe("first-contact disclosure (otp_greeting)", () => {
   // absence of chatbot self-labels.
   it("English greeting keeps the warm coordinator intro without chatbot self-labels", () => {
     const msg = tr.otp_greeting("123456", "en");
-    expect(msg).toContain("I'm Cara");
+    expect(msg).toContain("I'm Evia");
     expect(msg).toContain("care coordinator");
     expect(msg).toContain("123456");
     expect(msg.toLowerCase()).not.toContain("care assistant");
@@ -397,7 +397,7 @@ describe("first-contact disclosure (otp_greeting)", () => {
 
   it("Spanish greeting keeps the warm coordinator intro without chatbot self-labels", () => {
     const msg = tr.otp_greeting("123456", "es");
-    expect(msg).toContain("soy Cara");
+    expect(msg).toContain("soy Evia");
     expect(msg).toContain("coordinadora de cuidado");
     expect(msg).toContain("123456");
     expect(msg.toLowerCase()).not.toContain("asistente");

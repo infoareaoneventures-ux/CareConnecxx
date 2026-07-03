@@ -143,7 +143,7 @@ export default function Membership() {
             <Crown className="w-8 h-8 text-accent-500" />
             <div>
               <h1 className="text-2xl font-bold text-slate-900">Membership</h1>
-              <p className="text-slate-500">Manage your CareConnex subscription</p>
+              <p className="text-slate-500">Manage your Evia subscription</p>
             </div>
           </div>
         </div>

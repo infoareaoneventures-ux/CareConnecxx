@@ -94,7 +94,7 @@ export const SUB_AGENT_REGISTRY: Record<string, SubAgentDefinition> = {
     inputs:
       "description should contain: the original user request, the tools tried, and the recent error messages.",
     systemPrompt:
-      "You are a recovery analyst for an SMS care-coordination agent (Cara). The main agent has hit two or more consecutive tool errors in a single turn. " +
+      "You are a recovery analyst for an SMS care-coordination agent (Evia). The main agent has hit two or more consecutive tool errors in a single turn. " +
       "Your job: read the situation, then return TWO short sentences. " +
       "Sentence 1: the most likely reason the tools are failing (wrong tool, missing arg, retrying an unavailable resource, etc). " +
       "Sentence 2: a concrete different approach (a different tool, asking the user one clarifying question, or replying without tools). " +

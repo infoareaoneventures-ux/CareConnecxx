@@ -10,7 +10,7 @@ import {
     mapSummaryDoc,
 } from './shiftSwap';
 
-// A family-facing "Cara Activity" entry (projection of an allow-listed audit
+// A family-facing "Evia Activity" entry (projection of an allow-listed audit
 // event; see functions/src/agents/activityFeedMap.ts). PII-free by construction.
 export interface AgentActivityItem {
     id: string;
@@ -400,7 +400,7 @@ export const dbService = {
             try {
                 const geoRes = await fetch(
                     `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addrQuery)}&format=json&limit=1&countrycodes=us`,
-                    { headers: { 'Accept-Language': 'en', 'User-Agent': 'CareConnex/1.0' } }
+                    { headers: { 'Accept-Language': 'en', 'User-Agent': 'Evia/1.0' } }
                 );
                 const geoData = await geoRes.json();
                 if (geoData?.length) {
@@ -467,7 +467,7 @@ export const dbService = {
             );
     },
 
-    // Family-facing "Cara Activity" feed (U9). Live, owner-scoped, newest first.
+    // Family-facing "Evia Activity" feed (U9). Live, owner-scoped, newest first.
     // onError lets the UI distinguish a genuine failure from an empty feed.
     subscribeAgentActivity: (
         ownerUid: string,
@@ -1525,7 +1525,7 @@ export const dbService = {
         });
     },
 
-    // ── Cara web chat (threads/cara_{uid} — the mirrored SMS/iMessage thread) ──
+    // ── Evia web chat (threads/cara_{uid} — the mirrored SMS/iMessage thread) ──
     // Messages are server-written only (firestore.rules); the web sends via the
     // v1-chatWithCara callable and renders whatever lands in the thread.
 
@@ -1537,7 +1537,7 @@ export const dbService = {
             return db.collection('threads').doc(`cara_${auth.currentUser.uid}`).onSnapshot(
                 (snap) => onUpdate(snap.exists ? { id: snap.id, ...snap.data() } : null),
                 (error) => {
-                    if (error.code !== 'permission-denied') console.error('Cara thread subscription error:', error);
+                    if (error.code !== 'permission-denied') console.error('Evia thread subscription error:', error);
                     onUpdate(null);
                 }
             );
@@ -1546,7 +1546,7 @@ export const dbService = {
     },
 
     clearCaraThreadUnread: async () => {
-        // The only client-side write firestore.rules allows on a Cara thread.
+        // The only client-side write firestore.rules allows on an Evia thread.
         if (isConfigured && db && auth?.currentUser) {
             await db.collection('threads').doc(`cara_${auth.currentUser.uid}`)
                 .update({ unreadCount: 0 })
@@ -1610,7 +1610,7 @@ export const dbService = {
         return () => { };
     },
 
-    // Live caregiver-doc updates. Cara writes rate, payout status, verification,
+    // Live caregiver-doc updates. Evia writes rate, payout status, verification,
     // and background-check fields to the caregivers doc; without this the web UI
     // shows stale values until a manual refresh (the "silent action" gap).
     subscribeCaregiverProfile: (caregiverId: string, onUpdate: (profile: Record<string, any> | null) => void) => {
@@ -1623,7 +1623,7 @@ export const dbService = {
     },
 
     // U2: Live listener for a caregiver's own profile doc (caregivers/{uid}).
-    // Cara's agent writes to this doc during onboarding, profile edits, and
+    // Evia's agent writes to this doc during onboarding, profile edits, and
     // verification flips; without a listener the caregiver dashboard shows a
     // stale profile until logout/login. Mirrors subscribeToCarePlan.
     // Emits the raw caregiver doc data; the caller merges it over the cached
@@ -1643,7 +1643,7 @@ export const dbService = {
 
     // Fires whenever a caregiver enters or leaves the pending-verification states,
     // so the admin verification dashboard can re-pull its queue live when a Checkr
-    // webhook or Cara/admin action changes a background-check / verification status.
+    // webhook or Evia/admin action changes a background-check / verification status.
     subscribeCaregiverVerificationChanges: (onChange: () => void) => {
         if (isConfigured && db) {
             return db.collection('caregivers')
@@ -1654,7 +1654,7 @@ export const dbService = {
     },
 
     // U3: Live listener for a client's (primary) senior profile doc.
-    // Cara writes care needs/preferences during intake; this keeps the
+    // Evia writes care needs/preferences during intake; this keeps the
     // client's profile/intake view fresh without a reload. Mirrors getSeniorProfile
     // (doc keyed by the client uid). The senior_profiles read rule was amended
     // (KTD-10) so additional household seniors (userId-stamped) are also readable.
@@ -2120,7 +2120,7 @@ export const dbService = {
 
     /**
      * Subscribe to care journal entries for real-time updates.
-     * Entries are written server-side (Cara's journal tools + caregiver flows)
+     * Entries are written server-side (Evia's journal tools + caregiver flows)
      * into `care_journal`; rules allow the owning client, the caregiver, and
      * admins to read. Single-field query + client-side sort — no composite
      * index needed.
@@ -3963,7 +3963,7 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
         try {
             const geoRes = await fetch(
                 `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addrQuery)}&format=json&limit=1&countrycodes=us`,
-                { headers: { 'Accept-Language': 'en', 'User-Agent': 'CareConnex/1.0' } }
+                { headers: { 'Accept-Language': 'en', 'User-Agent': 'Evia/1.0' } }
             );
             const geoData = await geoRes.json();
             if (geoData?.length) {

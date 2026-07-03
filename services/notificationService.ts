@@ -178,7 +178,7 @@ export async function notifyFamilyOfCheckIn(
   payload: NotificationPayload
 ): Promise<void> {
   const { seniorId, seniorName, caregiverName, message, data } = payload;
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://careconnex.com';
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://eviacares.com';
   const secureLink = generateSecureLink(data?.entryId || '', baseUrl);
   
   // HIPAA-compliant SMS (no names, only generic message)
@@ -213,14 +213,14 @@ export async function notifyFamilyOfCheckIn(
         </a>
         
         <p style="color: #666; font-size: 13px; margin-top: 30px;">
-          This link will take you to your secure CareConnex dashboard. For privacy and security, 
+          This link will take you to your secure Evia dashboard. For privacy and security, 
           detailed visit information is only available after logging in.
         </p>
         
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;">
         
         <p style="color: #94a3b8; font-size: 12px;">
-          You're receiving this because you're a registered family member on CareConnex.<br>
+          You're receiving this because you're a registered family member on Evia.<br>
           <a href="${baseUrl}/settings/notifications" style="color: #64748b;">Manage notification preferences</a>
         </p>
       </div>
@@ -236,7 +236,7 @@ View the full visit details in your secure dashboard:
 ${secureLink}
 
 ---
-CareConnex - Secure Family Care Platform
+Evia - Secure Family Care Platform
 Manage notifications: ${baseUrl}/settings/notifications`;
 
   // Send to all family members
@@ -278,7 +278,7 @@ export async function notifyFamilyOfArrival(
   caregiverId: string,
   appointmentTime: string
 ): Promise<void> {
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://careconnex.com';
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://eviacares.com';
   
   // HIPAA-compliant: Generic message only
   const smsMessage = `A caregiver has arrived for their scheduled appointment. View dashboard: ${baseUrl}/client`;
@@ -334,7 +334,7 @@ export async function sendWeeklyDigest(
     photosCount: number;
   }
 ): Promise<void> {
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://careconnex.com';
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://eviacares.com';
   const subject = 'Weekly Care Summary';
   
   // HIPAA-compliant: Only aggregate data, no specific dates/times/activities
@@ -365,7 +365,7 @@ export async function sendWeeklyDigest(
       </a>
       
       <p style="color: #94a3b8; margin-top: 30px; font-size: 12px;">
-        This is your weekly summary from CareConnex.<br>
+        This is your weekly summary from Evia.<br>
         <a href="${baseUrl}/settings/notifications" style="color: #64748b;">Update notification preferences</a>
       </p>
     </div>

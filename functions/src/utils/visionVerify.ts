@@ -6,7 +6,7 @@
  *   - gate the profile photo (clear, single human face) and re-ask if it's not;
  *   - confirm a document is a legible caregiving credential and read its type/
  *     expiry;
- *   - classify any mid-conversation media so Cara can smart-route it.
+ *   - classify any mid-conversation media so Evia can smart-route it.
  *
  * Vision accepts IMAGES only. PDFs/Office docs are NOT sent to vision —
  * callers accept those without a visual gate. Every function FAILS OPEN: a
@@ -136,7 +136,7 @@ export interface MediaClassification {
 }
 
 /**
- * Classify mid-conversation media (completed users) so Cara can smart-route it:
+ * Classify mid-conversation media (completed users) so Evia can smart-route it:
  * a new credential → caregiver profile, an ID → identity, a receipt → expense,
  * else hand to the QA agent with a description. Fails open to "other".
  */

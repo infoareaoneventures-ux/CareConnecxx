@@ -52,7 +52,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onNavigate }) => {
                         Care for your<br />
                         loved one.
                         <br />
-                        <span className="text-slate-500">Cara handles</span>
+                        <span className="text-slate-500">Evia handles</span>
                         <br className="hidden sm:block" />
                         <span className="text-slate-500"> the rest.</span>
                     </h1>
@@ -149,7 +149,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onNavigate }) => {
                                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-sm shadow-blue-300/40">
                                     <span className="text-white font-bold text-sm">C</span>
                                 </div>
-                                <p className="text-slate-900 text-[10px] font-semibold leading-tight mt-0.5">Cara 💙</p>
+                                <p className="text-slate-900 text-[10px] font-semibold leading-tight mt-0.5">Evia 💙</p>
                             </div>
                             <button className="text-[#007aff]">
                                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

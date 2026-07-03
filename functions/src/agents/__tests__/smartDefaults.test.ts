@@ -1,14 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { SMART_DEFAULTS_DIRECTIVE } from "../smartDefaults";
 
-// The "don't play twenty questions" directive lets Cara default low-stakes
+// The "don't play twenty questions" directive lets Evia default low-stakes
 // details instead of interrogating. Its HARD LIMIT is safety-critical — it keeps
 // that behavior away from money/booking/care. These guard the boundary so a
 // future prompt edit can't silently widen "default-and-go" into dangerous
 // territory.
 
 describe("SMART_DEFAULTS_DIRECTIVE", () => {
-  it("tells Cara to default low-stakes details instead of interrogating", () => {
+  it("tells Evia to default low-stakes details instead of interrogating", () => {
     expect(SMART_DEFAULTS_DIRECTIVE).toContain("DON'T PLAY TWENTY QUESTIONS");
     expect(SMART_DEFAULTS_DIRECTIVE.toLowerCase()).toContain("low-stakes only");
   });

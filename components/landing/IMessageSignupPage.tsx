@@ -15,7 +15,7 @@ export const IMessageSignupPage: React.FC = () => {
     <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
       {/* Nav */}
       <nav className="px-6 py-5 flex items-center justify-between max-w-6xl mx-auto w-full">
-        <span className="text-lg font-semibold tracking-tight text-white">Cara</span>
+        <span className="text-lg font-semibold tracking-tight text-white">Evia</span>
         <a href="/login" className="text-sm text-white/50 hover:text-white/80 transition-colors">Log in</a>
       </nav>
 
@@ -32,7 +32,7 @@ export const IMessageSignupPage: React.FC = () => {
 
           <div className="space-y-4">
             <h1 className="text-5xl md:text-6xl font-bold leading-[1.05] tracking-tight">
-              Meet Cara, your family's{' '}
+              Meet Evia, your family's{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-blue-300">
                 care contact.
               </span>
@@ -78,7 +78,7 @@ export const IMessageSignupPage: React.FC = () => {
               <span className="text-white/40">→</span>
             </button>
             <p className="text-white/25 text-xs leading-relaxed text-center">
-              By continuing, you agree to receive care updates from Cara via text.
+              By continuing, you agree to receive care updates from Evia via text.
               Reply STOP anytime. Msg &amp; data rates may apply.
             </p>
           </div>
@@ -111,7 +111,7 @@ export const IMessageSignupPage: React.FC = () => {
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mb-1">
                   <span className="text-white font-bold text-sm">C</span>
                 </div>
-                <p className="text-white text-sm font-semibold">Cara 💙</p>
+                <p className="text-white text-sm font-semibold">Evia 💙</p>
                 <p className="text-white/40 text-xs">CareConnecxx</p>
               </div>
 

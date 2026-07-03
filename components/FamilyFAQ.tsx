@@ -29,8 +29,8 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
       'getting-started': [
          {
             id: 'gs-1',
-            q: 'What is CareConnex?',
-            a: 'CareConnex is a premium platform connecting families directly with experienced, vetted senior caregivers. We provide the tools to find, interview, hire, and manage care for your aging loved ones without the need for expensive traditional agencies.'
+            q: 'What is Evia?',
+            a: 'Evia is a premium platform connecting families directly with experienced, vetted senior caregivers. We provide the tools to find, interview, hire, and manage care for your aging loved ones without the need for expensive traditional agencies.'
          },
          {
             id: 'gs-2',
@@ -40,7 +40,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          {
             id: 'gs-3',
             q: 'Can I manage care for a family member living in another state?',
-            a: 'Yes. CareConnex is designed for remote family management. Our platform includes a Family Command Center (the Care Journal) where caregivers can log daily activities, meals, and medication adherence in real-time, allowing you to monitor care from anywhere.'
+            a: 'Yes. Evia is designed for remote family management. Our platform includes a Family Command Center (the Care Journal) where caregivers can log daily activities, meals, and medication adherence in real-time, allowing you to monitor care from anywhere.'
          },
          {
             id: 'gs-4',
@@ -52,16 +52,16 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          {
             id: 'ts-1',
             q: 'Are caregivers background checked?',
-            a: 'Yes, absolutely. Every caregiver on CareConnex must pass a comprehensive annual background check processed by Checkr before their profile becomes visible to families. We also continually monitor for any new records.'
+            a: 'Yes, absolutely. Every caregiver on Evia must pass a comprehensive annual background check processed by Checkr before their profile becomes visible to families. We also continually monitor for any new records.'
          },
          {
             id: 'ts-2',
             q: 'How does the review system work?',
-            a: 'Only families who have successfully hired and paid a caregiver through CareConnex can leave a review. This ensures that every rating and testimonial is based on a verified, firsthand experience.'
+            a: 'Only families who have successfully hired and paid a caregiver through Evia can leave a review. This ensures that every rating and testimonial is based on a verified, firsthand experience.'
          },
          {
             id: 'ts-3',
-            q: 'How does CareConnex protect my personal information?',
+            q: 'How does Evia protect my personal information?',
             a: 'We use industry-standard encryption to protect your data. Your contact information is kept private and is only shared with a caregiver after a booking is confirmed or when you explicitly choose to share it.'
          },
          {
@@ -74,7 +74,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          {
             id: 'bk-1',
             q: 'How do I interview a caregiver?',
-            a: 'We strongly encourage interviews before hiring. You can schedule and conduct secure video interviews directly through the CareConnex platform, making it easy to meet candidates without sharing personal phone numbers or Zoom links.'
+            a: 'We strongly encourage interviews before hiring. You can schedule and conduct secure video interviews directly through the Evia platform, making it easy to meet candidates without sharing personal phone numbers or Zoom links.'
          },
          {
             id: 'bk-2',
@@ -100,8 +100,8 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          },
          {
             id: 'py-2',
-            q: 'Does CareConnex take a cut of the caregiver\'s hourly rate?',
-            a: 'No. Caregivers keep 100% of the hourly rate they set. CareConnex charges a nominal service fee to families to cover background checks, platform maintenance, and customer support.'
+            q: 'Does Evia take a cut of the caregiver\'s hourly rate?',
+            a: 'No. Caregivers keep 100% of the hourly rate they set. Evia charges a nominal service fee to families to cover background checks, platform maintenance, and customer support.'
          },
          {
             id: 'py-3',
@@ -111,7 +111,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          {
             id: 'py-4',
             q: 'Are there membership fees?',
-            a: 'CareConnex offers flexible membership options, including a monthly subscription or a pay-as-you-go model. A premium membership provides reduced booking fees and priority support.'
+            a: 'Evia offers flexible membership options, including a monthly subscription or a pay-as-you-go model. A premium membership provides reduced booking fees and priority support.'
          }
       ],
       'account': [
@@ -136,9 +136,9 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
    return (
       <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
          <SEO
-            title="Help Center & FAQ | CareConnex"
-            description="Find answers to all your questions about finding, hiring, and managing senior caregivers on CareConnex."
-            keywords="Help center, FAQ, support, CareConnex, family, senior care"
+            title="Help Center & FAQ | Evia"
+            description="Find answers to all your questions about finding, hiring, and managing senior caregivers on Evia."
+            keywords="Help center, FAQ, support, Evia, family, senior care"
          />
 
          {/* Navigation Header */}
@@ -149,7 +149,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
                      <div className="bg-primary-600 p-2 rounded-xl shadow-lg shadow-primary-200/50">
                         <Activity className="text-white w-6 h-6" />
                      </div>
-                     <span className="text-2xl font-bold text-slate-900 tracking-tight">CareConnex</span>
+                     <span className="text-2xl font-bold text-slate-900 tracking-tight">Evia</span>
                   </div>
 
                   <nav className="hidden md:flex items-center space-x-8">
@@ -266,7 +266,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
                      <Button size="lg" onClick={() => onNavigate('client-signup')}>
                         Sign up free
                      </Button>
-                     <Button size="lg" variant="secondary" onClick={() => window.location.href = 'mailto:support@careconnex.com'}>
+                     <Button size="lg" variant="secondary" onClick={() => window.location.href = 'mailto:support@eviacares.com'}>
                         Contact Support
                      </Button>
                   </div>

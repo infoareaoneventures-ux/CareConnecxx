@@ -1,4 +1,4 @@
-// Web → Cara unified-thread turn (docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md, U2).
+// Web → Evia unified-thread turn (docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md, U2).
 //
 // Ordered send invariant: rate check → resolve session → onboarding guard →
 // opt-out check → per-phone lock → await user-message mirror → agent →
@@ -16,7 +16,7 @@ import * as admin from "firebase-admin";
  *  to an HttpsError so the client sees a clean `internal` failure. */
 export class AgentUnavailableError extends Error {
   constructor(public readonly clientMessageId?: string) {
-    super("Cara agent turn failed");
+    super("Evia agent turn failed");
     this.name = "AgentUnavailableError";
   }
 }
@@ -85,7 +85,7 @@ export async function handleWebChatTurn(args: {
     return {
       available: false,
       status:    "notSetUp",
-      reply:     "Please complete your account setup to chat with Cara.",
+      reply:     "Please complete your account setup to chat with Evia.",
     };
   }
 
@@ -95,7 +95,7 @@ export async function handleWebChatTurn(args: {
     return {
       available: false,
       status:    "notSetUp",
-      reply:     "Your Cara account isn't set up yet. Finish onboarding first.",
+      reply:     "Your Evia account isn't set up yet. Finish onboarding first.",
     };
   }
   const session = sessionSnap.data()!;
@@ -107,7 +107,7 @@ export async function handleWebChatTurn(args: {
     return {
       available: false,
       status:    "finishSetup",
-      reply:     "Finish setting up with Cara over text first — this chat unlocks right after.",
+      reply:     "Finish setting up with Evia over text first — this chat unlocks right after.",
     };
   }
 
@@ -126,7 +126,7 @@ export async function handleWebChatTurn(args: {
     return {
       available: true,
       status:    "caraBusy",
-      reply:     "Cara is still replying to your last message — try again in a moment.",
+      reply:     "Evia is still replying to your last message — try again in a moment.",
       ...withId,
     };
   }

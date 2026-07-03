@@ -1,6 +1,6 @@
 # Runbook: Real-World Healthcare Actions
 
-Cara can act on a family's behalf on healthcare portals — book a doctor
+Evia can act on a family's behalf on healthcare portals — book a doctor
 appointment, request a pharmacy refill, check insurance coverage — through a
 **propose → confirm → execute** trust layer. This runbook covers the pre-launch
 gate, the flag, and recovery for the failure modes the design accepts as
@@ -108,7 +108,7 @@ re-surface. **v1 has no automated reconciliation** (accepted risk).
 ### Slot gone / ambiguous at commit (`slot_unavailable` / `slot_ambiguous`)
 
 `bookAppointmentSlot` extract-verifies exactly one match before submitting; on 0
-or >1 it returns without submitting and Cara offers to re-find. No action needed
+or >1 it returns without submitting and Evia offers to re-find. No action needed
 beyond confirming the family was offered a re-find. Expect a real rate of
 "that slot was taken" — this is correct, not a bug.
 
@@ -137,7 +137,7 @@ undo — the verification read-back + the confirmation gate are the prevention.
 A message that reads as a medical emergency is intercepted **before** any
 healthcare flow by the crisis fast-path in `linq/webhooks.ts` (keyword scan
 `safety/crisisDetector.ts` + LLM verify/multilingual classify). On a confirmed
-medical crisis Cara:
+medical crisis Evia:
 
 1. Sends the 911 / ER guidance (`tr.crisis_medical`) and returns immediately —
    the QA tool loop and every healthcare flow are skipped (no booking, no refill).
@@ -148,7 +148,7 @@ medical crisis Cara:
    — a failed alert never delays the 911 message.
 4. Arms a `NOTIFY` follow-up so the family can opt to page the care team.
 
-Cara never diagnoses, prescribes, or advises on dosing (R7) — the new-prescription
+Evia never diagnoses, prescribes, or advises on dosing (R7) — the new-prescription
 flow collects condition + prescribing-doctor context and books/searches a provider;
 it never invents clinical content. Pinned by `agents/goldenTranscripts.test.ts`,
 `linq/__tests__/handleInbound.routing.test.ts`, `safety/crisisDetector.test.ts`.

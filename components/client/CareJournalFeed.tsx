@@ -3,7 +3,7 @@ import { BookOpen } from 'lucide-react';
 import { dbService } from '../../services/api';
 
 // Family-visible care journal — entries written by caregivers (web) and by
-// Cara's log_journal_entry / create_care_journal_entry tools (care_journal
+// Evia's log_journal_entry / create_care_journal_entry tools (care_journal
 // collection). Renders nothing until the family has at least one entry.
 
 export interface CareJournalEntry {

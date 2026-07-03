@@ -258,7 +258,7 @@ describe("LAUNCH_ACTION_PARITY", () => {
   it("shipped caregiver tools are reachable by the caregiver prompt filter", () => {
     // A shipped caregiver action must be exposed to the caregiver prompt — i.e.
     // tagged in TOOL_CAPABILITIES or in the core allowlist. A silently
-    // unreachable tool would make Cara claim parity it can't deliver.
+    // unreachable tool would make Evia claim parity it can't deliver.
     const unreachable = LAUNCH_ACTION_PARITY.filter(
       r =>
         r.actor === "caregiver" &&

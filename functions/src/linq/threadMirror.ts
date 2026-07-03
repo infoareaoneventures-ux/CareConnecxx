@@ -1,5 +1,5 @@
-// Mirrors Cara SMS/iMessage conversations into the web chat model
-// (threads/{threadId}/messages) so families and caregivers see their Cara
+// Mirrors Evia SMS/iMessage conversations into the web chat model
+// (threads/{threadId}/messages) so families and caregivers see their Evia
 // history in the web inbox (Chat.tsx / ChatInbox.tsx read threads where
 // participants array-contains their uid).
 //
@@ -86,7 +86,7 @@ async function resolveUserIds(params: { userId?: string; chatId?: string }): Pro
 export async function mirrorToWebThread(params: {
   userId?:   string;
   chatId?:   string;
-  direction: "inbound" | "outbound"; // inbound = user -> Cara, outbound = Cara -> user
+  direction: "inbound" | "outbound"; // inbound = user -> Evia, outbound = Evia -> user
   text:      string;
   /** Message origin ("cara_sms" default; "cara_web" for web-chat turns). */
   source?:   string;
@@ -113,14 +113,14 @@ export async function mirrorToWebThread(params: {
       await threadRef.set({
         id:            threadId,
         participants:  [userId, CARA_SENDER_ID],
-        contactName:   "Cara",
+        contactName:   "Evia",
         contactAvatar: CARA_AVATAR,
         isCaraThread:  true,
         lastMessage:   preview,
         lastMessageTime: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        // Only Cara's outbound replies add to the web-inbox unread badge. For
-        // inbound (user -> Cara) we OMIT unreadCount entirely so merge:true
-        // preserves any existing unread from earlier Cara replies the user
+        // Only Evia's outbound replies add to the web-inbox unread badge. For
+        // inbound (user -> Evia) we OMIT unreadCount entirely so merge:true
+        // preserves any existing unread from earlier Evia replies the user
         // hasn't opened in the web inbox — writing 0 here would wipe it.
         ...(params.direction === "outbound"
           ? { unreadCount: admin.firestore.FieldValue.increment(1) }

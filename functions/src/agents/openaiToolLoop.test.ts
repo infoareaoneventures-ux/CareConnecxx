@@ -43,7 +43,7 @@ describe("openaiToolLoop", () => {
     ]);
   });
 
-  it("returns Anthropic-shaped tool_use blocks for the existing Cara loop", async () => {
+  it("returns Anthropic-shaped tool_use blocks for the existing Evia loop", async () => {
     const create = vi.fn(async () => ({
       choices: [{
         finish_reason: "tool_calls",
@@ -65,7 +65,7 @@ describe("openaiToolLoop", () => {
       client: { chat: { completions: { create } } } as any,
       model: "gpt-4o",
       maxTokens: 200,
-      system: "You are Cara.",
+      system: "You are Evia.",
       tools: [{
         name: "get_care_plan",
         description: "Read care plan",
@@ -101,7 +101,7 @@ describe("openaiToolLoop", () => {
       client: { chat: { completions: { create } } } as any,
       model: "gpt-5.4",
       maxTokens: 300,
-      system: "You are Cara.",
+      system: "You are Evia.",
       tools: [],
       toolChoice: "auto",
       messages: [{ role: "user", content: "Hi" }],
@@ -126,7 +126,7 @@ describe("openaiToolLoop", () => {
       client: { chat: { completions: { create } } } as any,
       model: "gpt-4o",
       maxTokens: 200,
-      system: "You are Cara.",
+      system: "You are Evia.",
       tools: [],
       toolChoice: "auto",
       messages: [{ role: "user", content: "Hi" }],

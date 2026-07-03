@@ -74,7 +74,7 @@ export default function JoinFamilyPage() {
   }
 
   const LINQ_NUMBER = import.meta.env.VITE_LINQ_PHONE_NUMBER ?? "+18005550199";
-  const smsLink = `sms:${LINQ_NUMBER}?body=${encodeURIComponent("Hey Cara!")}`;
+  const smsLink = `sms:${LINQ_NUMBER}?body=${encodeURIComponent("Hey Evia!")}`;
 
   if (state === "loading") {
     return (
@@ -103,13 +103,13 @@ export default function JoinFamilyPage() {
           <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
           <h1 className="text-xl font-bold text-slate-800 mb-2">You're in! 💙</h1>
           <p className="text-slate-600 mb-6">
-            You've joined {seniorName}'s care group on Cara. You'll now receive care updates and can message Cara directly.
+            You've joined {seniorName}'s care group on Evia. You'll now receive care updates and can message Evia directly.
           </p>
           <a
             href={smsLink}
             className="inline-block bg-indigo-600 text-white px-6 py-3 rounded-xl font-semibold text-sm hover:bg-indigo-700 transition-colors"
           >
-            Say hi to Cara
+            Say hi to Evia
           </a>
         </div>
       </div>
@@ -145,7 +145,7 @@ export default function JoinFamilyPage() {
           Join {seniorName}'s care group
         </h1>
         <p className="text-slate-500 text-sm mb-6">
-          Get care updates and message Cara — the care coordinator helping coordinate care for {seniorName}.
+          Get care updates and message Evia — the care coordinator helping coordinate care for {seniorName}.
         </p>
 
         <div className="text-left mb-4">
@@ -173,7 +173,7 @@ export default function JoinFamilyPage() {
         </button>
 
         <p className="text-xs text-slate-400 mt-4">
-          By joining, you agree to receive care updates via iMessage from Cara. Reply STOP anytime to unsubscribe.
+          By joining, you agree to receive care updates via iMessage from Evia. Reply STOP anytime to unsubscribe.
         </p>
       </div>
     </div>

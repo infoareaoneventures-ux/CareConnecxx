@@ -15,13 +15,13 @@ const trustPoints = [
 
 const testimonials = [
     {
-        quote: "It's so easy and I always find a caregiver! Cara's AI matching is spot on — she found someone perfect for my mom in less than a day.",
+        quote: "It's so easy and I always find a caregiver! Evia's AI matching is spot on — she found someone perfect for my mom in less than a day.",
         name: "Jennifer R.",
         location: "San Jose, CA",
         rating: 5
     },
     {
-        quote: "Cara is efficient, trustworthy, and has helped me in a bind many times. Just texting her is way better than calling agencies.",
+        quote: "Evia is efficient, trustworthy, and has helped me in a bind many times. Just texting her is way better than calling agencies.",
         name: "Annika D.",
         location: "Mountain View, CA",
         rating: 5

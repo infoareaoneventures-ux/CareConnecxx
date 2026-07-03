@@ -49,7 +49,7 @@ function createDocument(data) {
 }
 
 async function seedData() {
-  console.log('🌱 Seeding CareConnex Database...\n');
+  console.log('🌱 Seeding Evia Database...\n');
   
   const seededAt = new Date().toISOString();
   const SEED_FLAG = { _seedData: true, seededAt };

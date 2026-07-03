@@ -171,7 +171,7 @@ vi.mock("../../utils/openaiClient", () => ({
     if (prompt.includes('"switchTo"')) return '{"switchTo":"none"}';
     if (prompt.includes("Detect if they are correcting")) return "null";
     if (prompt.includes("Reply YES if this is a general question")) return questionMode ? "YES" : "NO";
-    if (prompt.includes("You are Cara, an AI care assistant")) return "Here's a helpful answer.";
+    if (prompt.includes("You are Evia, an AI care assistant")) return "Here's a helpful answer.";
     return stepAnswer;
   }),
 }));
@@ -264,12 +264,12 @@ describe("caregiver gate webhooks — end-to-end to an active caregiver doc", ()
   it("drives the money/compliance gates and finalizes caregivers/{uid} as active", async () => {
     seed("caregiver_awaiting_membership", { ...FULL_DATA });
 
-    // Stripe membership paid → Cara fires the Checkr invitation + pre-creates the doc.
+    // Stripe membership paid → Evia fires the Checkr invitation + pre-creates the doc.
     await advanceOnboardingStep(PHONE, "membership", "sub_live123");
     expect(axiosPost).toHaveBeenCalledTimes(1);
     expect(String(axiosPost.mock.calls[0]?.[0])).toContain("checkr.com/v1/invitations");
 
-    // Checkr cleared → Cara sets up the Stripe Connect payout account.
+    // Checkr cleared → Evia sets up the Stripe Connect payout account.
     await advanceOnboardingStep(PHONE, "background_check", "clear");
     expect(stripeSpies.accountsCreate).toHaveBeenCalledTimes(1);
     expect(stripeSpies.accountLinksCreate).toHaveBeenCalledTimes(1);
@@ -279,7 +279,7 @@ describe("caregiver gate webhooks — end-to-end to an active caregiver doc", ()
 
     const cg = hoisted.caregiverDoc();
     expect(cg).not.toBeNull();
-    expect(cg!.path).toBe("caregivers/cg-uid");          // uid-keyed (web/Cara data contract)
+    expect(cg!.path).toBe("caregivers/cg-uid");          // uid-keyed (web/Evia data contract)
     expect(cg!.data.status).toBe("active");
     expect(cg!.data.onboardingStatus).toBe("profile_complete"); // FindCaregivers visibility gate
     expect(cg!.data.verificationStatus).toBe("submitted");      // admin verification queue

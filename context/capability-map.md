@@ -1,4 +1,4 @@
-# Cara Launch Action-Parity Map
+# Evia Launch Action-Parity Map
 
 > Generated mirror of `functions/src/agents/launchActionParity.ts`.
 > `LAUNCH_ACTION_PARITY` is the source of truth; update this file whenever that registry changes.
@@ -17,7 +17,7 @@
 
 ## Client
 
-| Actor | Action | Web surface | Collection | Cara tool/handler | Prompt actor | Status | Notes |
+| Actor | Action | Web surface | Collection | Evia tool/handler | Prompt actor | Status | Notes |
 |---|---|---|---|---|---|---|---|
 | client | Search/match caregivers and request replacements | components/client/FindCaregivers.tsx | caregivers | `find_replacement_caregivers` | client | shipped |  |
 | client | Book a caregiver (creates pending_caregiver_confirmation appointment) | components/BookingModal.tsx | appointments | `request_booking` | client | shipped |  |
@@ -30,21 +30,21 @@
 | client | Comment on / like a care journal entry | components/client/CareJournalFeed.tsx | care_journal | `comment_on_journal_entry` | any | shipped |  |
 | client | Message a caregiver | components/shared/MessagingPanel.tsx | threads | `send_caregiver_message` | client | shipped |  |
 | client | Open a support ticket | components/shared/SupportWidget.tsx | support_tickets | `create_support_ticket` | any | shipped |  |
-| client | Get a Stripe payment-method update link | components/client/BillingPage.tsx | n/a | `get_payment_update_link` | any | shipped | Raw card details are never captured in chat; Cara only hands off a Stripe-hosted link. |
+| client | Get a Stripe payment-method update link | components/client/BillingPage.tsx | n/a | `get_payment_update_link` | any | shipped | Raw card details are never captured in chat; Evia only hands off a Stripe-hosted link. |
 | client | View invoice history and details | components/client/BillingPage.tsx | n/a | `get_invoice_history` | client | shipped | Invoices live in Stripe + billing summaries, not a registered Firestore contract collection. |
 | client | View pending timesheets awaiting approval | components/client/TimesheetsPage.tsx | shiftHours | `get_pending_timesheets` | client | shipped |  |
 | client | Approve/reject submitted shift hours | components/client/TimesheetsPage.tsx | shiftHours | `review_shift_hours` | client | shipped |  |
 | client | Request a refund (creates admin-visible state) | components/client/BillingPage.tsx | admin_alerts | `create_refund_request` | client | shipped |  |
 | client | Create a care reminder | components/client/RemindersPage.tsx | n/a | `create_reminder` | client | shipped | Reminders are scheduled triggers, not a registered contract collection. |
 | client | Submit a caregiver review | components/client/ReviewModal.tsx | caregivers | `submit_review` | client | shipped |  |
-| client | Read upcoming appointments | components/client/AppointmentsPage.tsx | appointments | `get_upcoming_appointments` | any | shipped | Used by Cara recipe discovery for next-visit briefing and visit confirmation context. |
-| client | Read the client's care team | components/client/CareTeam.tsx | caregivers | `get_care_team` | any | shipped | Used by Cara recipe discovery for next-visit and who-is-coming answers. |
-| client | Review what Cara remembers | n/a | n/a | `cara_knows` | any | shipped | Memory is derived from scoped memory files, Zep context, learned facts, and live tool data; hidden prompt context is not exposed. |
-| client | Correct or update Cara memory | n/a | n/a | `update_memory_file` | any | shipped | Fresh corrections outrank stale memory and learned facts. |
+| client | Read upcoming appointments | components/client/AppointmentsPage.tsx | appointments | `get_upcoming_appointments` | any | shipped | Used by Evia recipe discovery for next-visit briefing and visit confirmation context. |
+| client | Read the client's care team | components/client/CareTeam.tsx | caregivers | `get_care_team` | any | shipped | Used by Evia recipe discovery for next-visit and who-is-coming answers. |
+| client | Review what Evia remembers | n/a | n/a | `cara_knows` | any | shipped | Memory is derived from scoped memory files, Zep context, learned facts, and live tool data; hidden prompt context is not exposed. |
+| client | Correct or update Evia memory | n/a | n/a | `update_memory_file` | any | shipped | Fresh corrections outrank stale memory and learned facts. |
 
 ## Caregiver
 
-| Actor | Action | Web surface | Collection | Cara tool/handler | Prompt actor | Status | Notes |
+| Actor | Action | Web surface | Collection | Evia tool/handler | Prompt actor | Status | Notes |
 |---|---|---|---|---|---|---|---|
 | caregiver | Update caregiver profile (rate/skills/bio) | components/caregiver/CaregiverProfilePage.tsx | caregivers | `update_caregiver_profile` | caregiver | shipped |  |
 | caregiver | Update availability | components/caregiver/CaregiverCalendar.tsx | caregivers | `update_caregiver_availability` | caregiver | shipped |  |
@@ -71,14 +71,14 @@
 
 ## Family (Secondary Members)
 
-| Actor | Action | Web surface | Collection | Cara tool/handler | Prompt actor | Status | Notes |
+| Actor | Action | Web surface | Collection | Evia tool/handler | Prompt actor | Status | Notes |
 |---|---|---|---|---|---|---|---|
 | family | Read care updates for the senior | components/client/CareJournalFeed.tsx | care_journal | `get_care_journal_client` | any | shipped |  |
 | family | Add another family member to the group | components/client/CareTeam.tsx | family_groups | `add_family_member` | any | shipped | AE3 — added member receives a Linq welcome and the action is logged. |
 
 ## Admin
 
-| Actor | Action | Web surface | Collection | Cara tool/handler | Prompt actor | Status | Notes |
+| Actor | Action | Web surface | Collection | Evia tool/handler | Prompt actor | Status | Notes |
 |---|---|---|---|---|---|---|---|
 | admin | Resolve a Checkr consider/exception in the verification queue | components/admin/CaregiverVerificationDashboard.tsx | caregivers | `admin_review_caregiver_exception` | admin | shipped | U3 — AE8/R8. Admin-gated callable. A manual approve sets verificationStatus but only flips status:'active' (bookable) when onboardingStatus profile_complete AND verificationStatus approved both hold; never fabricates a Checkr clear. |
 | admin | Approve/reject an uploaded caregiver document | components/admin/CaregiverVerificationDashboard.tsx | caregivers | `admin_review_document` | admin | shipped | U3 — admin-gated callable; sets documents.{type}.status approved/rejected. |
@@ -96,8 +96,8 @@
 
 ## Non-Goals
 
-| Actor | Action | Web surface | Collection | Cara tool/handler | Prompt actor | Status | Notes |
+| Actor | Action | Web surface | Collection | Evia tool/handler | Prompt actor | Status | Notes |
 |---|---|---|---|---|---|---|---|
-| client | Diagnose, prescribe, or give medical advice | n/a | n/a | -- | -- | non-goal | R7 — Cara avoids medical advice and routes emergencies to 911 guidance. |
+| client | Diagnose, prescribe, or give medical advice | n/a | n/a | -- | -- | non-goal | R7 — Evia avoids medical advice and routes emergencies to 911 guidance. |
 | client | Collect raw card numbers / portal passwords in chat text | n/a | n/a | -- | -- | non-goal | Out of scope — payment changes go through Stripe-hosted links only. |
 | admin | Make a caregiver bookable without completed onboarding + Checkr clear | n/a | caregivers | -- | -- | non-goal | R8 — bookability requires onboardingStatus profile_complete + verificationStatus approved. |

@@ -1,6 +1,6 @@
-// Canonical step-handler framework for Cara's conversational flows.
+// Canonical step-handler framework for Evia's conversational flows.
 //
-// The mandatory Cara checklist (CLAUDE.md) — isQuestionOrOther guard → parse →
+// The mandatory Evia checklist (CLAUDE.md) — isQuestionOrOther guard → parse →
 // acknowledge → ask — was reimplemented ~10 times across handlers
 // (onboardingConversation, availabilityHandler, jobPostingFlow,
 // caregiverProfileHandler, modifyScheduleFlow, ...), each a hand-rolled copy.
@@ -18,7 +18,7 @@ import { answerHumanMidFlow } from "./humanReply";
 export async function isQuestionOrOther(text: string, currentQuestion?: string): Promise<boolean> {
   const context = currentQuestion
     ? `The user is in a guided flow. Current step's question: "${currentQuestion}". `
-    : "The user is in a guided conversational flow with Cara, a care coordinator. ";
+    : "The user is in a guided conversational flow with Evia, a care coordinator. ";
   const result = await parseWithClaude(
     context +
       "Reply YES if their message is a general question or off-topic comment unrelated to that question. " +
@@ -35,7 +35,7 @@ export async function answerMidFlow(text: string, reAsk: string): Promise<string
   return answerHumanMidFlow({
     text,
     reAsk,
-    situation: "the user asked a question mid-conversation in a guided Cara flow",
+    situation: "the user asked a question mid-conversation in a guided Evia flow",
   });
 }
 

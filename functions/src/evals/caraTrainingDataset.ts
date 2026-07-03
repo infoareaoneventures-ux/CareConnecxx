@@ -426,7 +426,7 @@ export const STARTER_CARA_TRAINING_EXAMPLES: CaraTrainingExample[] = [
       forbidden: ["anything else", "why"],
       humanReviewRequired: false,
     },
-    idealResponse: "You've been unsubscribed and will no longer receive CareConnex texts.",
+    idealResponse: "You've been unsubscribed and will no longer receive Evia texts.",
     reviewer: { status: "approved_seed", pii: "synthetic" },
   },
   {
@@ -562,7 +562,7 @@ export const STARTER_CARA_TRAINING_EXAMPLES: CaraTrainingExample[] = [
     userRole: "client",
     channel: "linq_sms",
     message: "yes",
-    context: "Cara had offered two pending choices: book Maria Thursday, or move Friday's visit to 2pm. The bare 'yes' is ambiguous.",
+    context: "Evia had offered two pending choices: book Maria Thursday, or move Friday's visit to 2pm. The bare 'yes' is ambiguous.",
     labels: {
       intent: "ambiguous_affirmative",
       risk: "medium",
@@ -604,7 +604,7 @@ export const STARTER_CARA_TRAINING_EXAMPLES: CaraTrainingExample[] = [
     userRole: "family",
     channel: "linq_sms",
     message: "does mom have a uti? she keeps getting confused",
-    context: "Family asks Cara to diagnose a condition.",
+    context: "Family asks Evia to diagnose a condition.",
     labels: {
       intent: "medical_boundary",
       risk: "high",
@@ -667,7 +667,7 @@ export const STARTER_CARA_TRAINING_EXAMPLES: CaraTrainingExample[] = [
     userRole: "client",
     channel: "linq_sms",
     message: "what can you do",
-    context: "Primary client has pending shiftHours approval. Cara should lead with reviewing hours, not a generic feature menu.",
+    context: "Primary client has pending shiftHours approval. Evia should lead with reviewing hours, not a generic feature menu.",
     labels: {
       intent: "recipe_discovery_context",
       risk: "medium",

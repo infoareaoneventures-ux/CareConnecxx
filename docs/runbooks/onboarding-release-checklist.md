@@ -5,9 +5,9 @@ The feature is built, tested, and real-model-eval-passed **5/5**, committed on l
 `ONBOARDING_AGENT_LOOP_COHORT_PCT=10`). It is NOT deployed. Shipping it is a real
 release, not a flag flip — read the three hazards first.
 
-## Cara recipe/control-room pre-deploy gates
+## Evia recipe/control-room pre-deploy gates
 
-Do not deploy the current Cara recipe and Control Room work until these local
+Do not deploy the current Evia recipe and Control Room work until these local
 checks pass and the release scope is explicitly approved:
 
 ```powershell

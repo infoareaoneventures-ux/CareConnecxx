@@ -5,15 +5,15 @@ import { functions } from '../../lib/firebase';
 const LINQ_PHONE = import.meta.env.VITE_LINQ_PHONE_NUMBER || '';
 
 const MESSAGES: Record<string, { title: string; body: string }> = {
-  payment:           { title: 'Payment set up!',        body: "Cara is already searching for caregivers. You'll hear from her shortly." },
-  identity:          { title: 'Identity verified!',     body: "You're all set. Cara will continue your onboarding." },
+  payment:           { title: 'Payment set up!',        body: "Evia is already searching for caregivers. You'll hear from her shortly." },
+  identity:          { title: 'Identity verified!',     body: "You're all set. Evia will continue your onboarding." },
   photo_upload:      { title: 'Photo uploaded!',        body: 'Your profile photo is saved. Almost done!' },
   doc_upload:        { title: 'Document uploaded!',     body: 'Certification saved. Moving to your next step.' },
-  background_check:  { title: 'Background check started!', body: "Results usually arrive in 1–3 days. Cara will text you." },
-  stripe_connect:    { title: 'Payout account ready!', body: "You're all set to get paid. Cara will text you next steps." },
+  background_check:  { title: 'Background check started!', body: "Results usually arrive in 1–3 days. Evia will text you." },
+  stripe_connect:    { title: 'Payout account ready!', body: "You're all set to get paid. Evia will text you next steps." },
   quick_confirm:     { title: 'Confirmed!',             body: 'Your request has been confirmed.' },
-  interview_confirm: { title: 'Interview confirmed!',   body: "Cara will send you the video link 30 minutes before." },
-  booking_confirm:   { title: 'Booked!',                body: "Your visits are confirmed. Cara will send details." },
+  interview_confirm: { title: 'Interview confirmed!',   body: "Evia will send you the video link 30 minutes before." },
+  booking_confirm:   { title: 'Booked!',                body: "Your visits are confirmed. Evia will send details." },
 };
 
 export default function GenericSuccessPage() {
@@ -73,7 +73,7 @@ export default function GenericSuccessPage() {
       </div>
 
       <p className="text-white/30 text-sm">
-        Returning to Cara in {count}…
+        Returning to Evia in {count}…
       </p>
 
       <a

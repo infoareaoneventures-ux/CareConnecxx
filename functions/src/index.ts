@@ -10,7 +10,7 @@ if (!admin.apps.length) {
 // absent on certain message.sent / reaction events). Writing those undefined
 // values into Firestore throws SYNCHRONOUSLY from validateUserInput, bypassing
 // .catch handlers and bubbling up to the webhook's top-level error handler —
-// which then ack'd Linq but skipped the qaAgent reply, surfacing as Cara's
+// which then ack'd Linq but skipped the qaAgent reply, surfacing as Evia's
 // "Give me a few minutes" deflection. Enabling ignoreUndefinedProperties on
 // the default Firestore instance silently drops undefined fields instead.
 admin.firestore().settings({ ignoreUndefinedProperties: true });
@@ -117,7 +117,7 @@ export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/tran
 // Shift generation: instant on acceptance + daily rolling window
 export { generateRollingShifts, onBookingAccepted } from './scheduled/shiftGenerator';
 
-// Cara iMessage pivot — onboarding callables
+// Evia iMessage pivot — onboarding callables
 export { markTaskComplete } from './agents/onboardingAgent';
 
 // Admin invoicing (createInvoice/sendInvoiceEmail were called by the admin
@@ -131,7 +131,7 @@ export {
   onInvoiceDeleted,
 } from './invoicing';
 
-// Cara scheduled jobs
+// Evia scheduled jobs
 export { dailyContactCardShare } from './scheduled/dailyContactCardShare';
 export { sendMorningBriefings } from './scheduled/morningBriefing';
 export { sendNextDayFamilyFeedback } from './scheduled/nextDayFamilyFeedback';
@@ -231,7 +231,7 @@ export * from './migrations/linkPhoneProviders';
 // fixAcceptedCounterPay migration already executed — not exported
 
 // ── initiateCara — DEPRECATED no-op stub (do not extend) ──────────────────────
-// The original callable proactively sent Cara's greeting SMS from the old web
+// The original callable proactively sent Evia's greeting SMS from the old web
 // "Continue with Phone" screen (PhoneSignupPage). It was removed from source
 // when onboarding moved to the inbound-first model (see createWebOnboardingSession
 // below), but the deployed v1-initiateCara function kept getting called by stale
@@ -258,7 +258,7 @@ export const initiateCara = functions.https.onCall(async (data) => {
 // ── createWebOnboardingSession — authenticated callable, NEVER sends outbound SMS ──
 // Called from /start after the user verifies their phone with Firebase Phone Auth.
 // Records role + consent on a TTL'd bridge doc that the LINQ inbound webhook reads
-// when the user texts "Hey Cara" — letting us skip the SMS-side OTP step (their phone
+// when the user texts "Hey Evia" — letting us skip the SMS-side OTP step (their phone
 // possession is already proven by Firebase) and route them straight into the role-aware
 // onboarding flow.
 //
@@ -377,14 +377,14 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
   return {
     success:     true,
     linqPhone:   linqPhoneNumber,
-    smsBody:     "Hey Cara",
+    smsBody:     "Hey Evia",
     expiresInMs: 30 * 60 * 1000,
   };
 });
 
 // ── chatWithCara — web callable: routes authenticated web users through qaAgent ─
 // Bridges Firebase Auth UID → phone → agent_sessions so web users get the same
-// Cara experience (memory, tool use, booking) as Linq iMessage users.
+// Evia experience (memory, tool use, booking) as Linq iMessage users.
 //
 // Unified-thread contract (docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md):
 // rate check → resolve session → onboarding guard → opt-out check → per-phone
@@ -416,7 +416,7 @@ export const chatWithCara = functions
       if (err instanceof AgentUnavailableError) {
         throw new functions.https.HttpsError(
           "internal",
-          "Cara is unavailable right now.",
+          "Evia is unavailable right now.",
           { status: "error", ...(clientMessageId ? { clientMessageId } : {}) },
         );
       }

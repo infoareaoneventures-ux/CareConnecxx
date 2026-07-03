@@ -77,7 +77,7 @@ export const sendOnboardingReengagement = functions.pubsub
               "Send a short warm reminder (1-2 sentences) inviting them to pick up where they left off. " +
               "Mention they're close to seeing their caregiver matches. Don't be pushy.",
           fallback: isCaregiver
-            ? `Hey ${firstName.split(" ")[0]}, you're just a step or two away from being able to take jobs on CareConnex. ` +
+            ? `Hey ${firstName.split(" ")[0]}, you're just a step or two away from being able to take jobs on Evia. ` +
               `Want to pick up where you left off? Reply RESUME to continue.`
             : `Hi ${firstName.split(" ")[0]}, you're just a step or two away from seeing your caregiver matches. ` +
               `Want to pick up where you left off? Reply RESUME to continue.`,

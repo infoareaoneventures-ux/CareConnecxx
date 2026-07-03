@@ -1,8 +1,8 @@
-# CareConnex AI System
+# Evia AI System
 
 ## 🚀 What Was Built
 
-This is a **production-ready, self-learning AI system** that powers the CareConnex caregiver matching platform. It uses synthetic data to bootstrap the ML models and is designed to continuously improve with real user data.
+This is a **production-ready, self-learning AI system** that powers the Evia caregiver matching platform. It uses synthetic data to bootstrap the ML models and is designed to continuously improve with real user data.
 
 ---
 
@@ -299,4 +299,4 @@ The platform will get smarter every day, automatically optimizing for the outcom
 
 ---
 
-*Built with ❤️ by CareConnex AI Team*
+*Built with ❤️ by Evia AI Team*

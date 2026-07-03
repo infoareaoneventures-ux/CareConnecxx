@@ -139,7 +139,7 @@ curl -X POST https://api.linqapp.com/api/partner/v3/chats \
 curl -X POST https://api.linqapp.com/api/partner/v3/chats/{CHAT_ID}/messages \
   -H "Authorization: Bearer $LINQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"message": {"text": "CareConnex: Your caregiver cancelled. View backup options: https://careconnex.app/a/APPOINTMENT_ID"}}'
+  -d '{"message": {"text": "Evia: Your caregiver cancelled. View backup options: https://careconnex.app/a/APPOINTMENT_ID"}}'
 ```
 
 ### Resend Email
@@ -149,7 +149,7 @@ curl -X POST https://api.resend.com/emails \
   -H 'Authorization: Bearer {API_KEY}' \
   -H 'Content-Type: application/json' \
   -d '{
-    "from": "CareConnex <noreply@careconnex.com>",
+    "from": "Evia <noreply@eviacares.com>",
     "to": ["client@email.com"],
     "subject": "Caregiver Cancellation - Backup Options",
     "html": "<html>...</html>"
@@ -232,7 +232,7 @@ db.collection('refundRequests').doc('REQUEST_ID').update({
   status: 'processed',
   processedAt: admin.firestore.FieldValue.serverTimestamp(),
   stripeRefundId: refund.id,
-  processedBy: 'admin_email@careconnex.com'
+  processedBy: 'admin_email@eviacares.com'
 });
 
 // Update appointment
@@ -291,7 +291,7 @@ firebase functions:log --only onCaregiverCallout
 | Linq (SMS/iMessage) issues | Linq Support | linqapp.com support |
 | Resend issues | Resend Support | resend.com/support |
 | Critical system failure | On-call engineer | PagerDuty |
-| HIPAA concern | Compliance team | compliance@careconnex.com |
+| HIPAA concern | Compliance team | compliance@eviacares.com |
 
 ---
 

@@ -12,7 +12,8 @@ export interface FrustrationSignals {
 const FRUSTRATION_RE =
   /\b(annoyed|angry|mad|frustrated|horrible|terrible|useless|broken|not working|doesn'?t work|didn'?t work|wrong|stop|human|real person|agent|representative|why (are|aren'?t|isn'?t|won'?t)|you keep|same answer|again and again|still not|no link|didn'?t send|where'?s the link|what'?s going on)\b/i;
 
-const GREETING_RE = /^(hi|hey|hello|yo|cara|hey cara|hi cara|hello cara)$/i;
+// "cara" kept alongside "evia": existing SMS users still greet by the old name.
+const GREETING_RE = /^(hi|hey|hello|yo|cara|evia|(?:hey|hi|hello) (?:cara|evia))$/i;
 const MIN_REPHRASE_CHARS = 18;
 
 export function detectFrustrationSignals(input: FrustrationSignalInput): FrustrationSignals {

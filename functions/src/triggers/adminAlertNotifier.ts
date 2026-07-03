@@ -54,14 +54,14 @@ export const onAdminAlertCreated = functions.firestore
       return;
     }
 
-    const adminEmail = process.env.ADMIN_EMAIL ?? "admin@careconnex.com";
+    const adminEmail = process.env.ADMIN_EMAIL ?? "admin@eviacares.com";
     const now        = new Date().toISOString();
 
     // ── Write to admin_email_queue ─────────────────────────────────────────────
     try {
       await db.collection("admin_email_queue").add({
         to:        adminEmail,
-        subject:   `[Cara Alert] ${type ?? "unknown"} — ${priority ?? "medium"} priority`,
+        subject:   `[Evia Alert] ${type ?? "unknown"} — ${priority ?? "medium"} priority`,
         body:
           `Alert type: ${type ?? "unknown"}\n` +
           `Priority: ${priority ?? "medium"}\n` +
@@ -85,7 +85,7 @@ export const onAdminAlertCreated = functions.firestore
     const adminPhone = process.env.ADMIN_PHONE;
     if (adminPhone && typeof type === "string" && PUSH_NOTIFY_TYPES.has(type)) {
       await sendViaInteractionAgent(adminPhone, {
-        content:     `Cara Alert: ${type} — check admin dashboard.`,
+        content:     `Evia Alert: ${type} — check admin dashboard.`,
         urgency:     "immediate",
         sourceAgent: "admin_alert_notifier",
         canDrop:     false,

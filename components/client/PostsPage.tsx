@@ -209,7 +209,7 @@ export const PostsPage: React.FC = () => {
   const [schedulingFor, setSchedulingFor] = useState<Applicant | null>(null);
   const [decliningApplicant, setDecliningApplicant] = useState<string | null>(null);
 
-  // Load posts — live (U6): posts Cara creates/edits surface without a refresh.
+  // Load posts — live (U6): posts Evia creates/edits surface without a refresh.
   useEffect(() => {
     if (!currentUser?.uid) { setLoadingPosts(false); return; }
     setLoadingPosts(true);

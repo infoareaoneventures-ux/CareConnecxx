@@ -14,7 +14,7 @@ const BUFFER_MINUTES = 30;
 
 /**
  * Onboarding Step 5 saves weeklyAvailability as block IDs: { monday: ['morning', 'afternoon'] }
- * Cara's availabilityHandler saves it as TimeSlots:        { monday: [{ start: '06:00', end: '12:00' }] }
+ * Evia's availabilityHandler saves it as TimeSlots:        { monday: [{ start: '06:00', end: '12:00' }] }
  * This map normalizes both formats so the service works regardless of which was used.
  */
 const BLOCK_TO_TIMESLOT: Record<string, TimeSlot> = {
@@ -39,7 +39,7 @@ const BLOCK_ORDER = ['morning', 'afternoon', 'evening', 'overnight'] as const;
 /**
  * Convert block IDs → TimeSlots for Firestore storage.
  * Use this before saving from onboarding or profile edit so
- * the format matches what Cara's availabilityHandler writes.
+ * the format matches what Evia's availabilityHandler writes.
  * e.g. { monday: ['morning','afternoon'] } → { monday: [{start:'06:00',end:'12:00'},{start:'12:00',end:'18:00'}] }
  */
 export function blocksToWeeklySlots(

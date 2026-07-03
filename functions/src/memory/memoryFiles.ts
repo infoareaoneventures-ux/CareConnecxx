@@ -6,7 +6,7 @@ import { embedText, embedMany, splitIntoBlocks, rankBySimilarity, EMBED_MODEL } 
 const storage = admin.storage();
 const db      = admin.firestore();
 
-// The five canonical files Cara initializes and consolidates into. Callers may also
+// The five canonical files Evia initializes and consolidates into. Callers may also
 // read/write arbitrary slugs (the `(string & {})` keeps autocomplete for the canonical
 // names while still accepting any other string — e.g. offloaded tool results).
 export type CanonicalMemoryFile = "profile" | "health" | "family" | "recent_episodes" | "procedural";
@@ -316,7 +316,7 @@ export async function handleMemoryQuery(
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 220,
     system:
-      "You are Cara, a care assistant. Summarize what you know about this family's care situation " +
+      "You are Evia, a care assistant. Summarize what you know about this family's care situation " +
       "in 2–3 warm, conversational sentences. No bullet points. No headers. Speak as if recounting " +
       "what a trusted friend would remember.",
     messages: [{ role: "user", content: combined }],
@@ -400,7 +400,7 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
   const events = msgSnap.docs
     .filter((d) => d.data().role === "user" || d.data().role === "assistant")
     .map((d) => {
-      const label   = d.data().role === "user" ? "Family" : "Cara";
+      const label   = d.data().role === "user" ? "Family" : "Evia";
       const content = (d.data().content as string | undefined) ?? "";
       return `[${label}]: ${content.slice(0, 600)}`;
     })
@@ -414,7 +414,7 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
     model:      "claude-sonnet-4-6",
     max_tokens: 600,
     system:
-      "You maintain memory files for a caregiving AI assistant named Cara. " +
+      "You maintain memory files for a caregiving AI assistant named Evia. " +
       "Based on recent conversation events, extract new facts and decide which memory files to update. " +
       "Memory files: profile (identity/contact prefs), health (diagnoses/meds/allergies), " +
       "family (relationships/dynamics), recent_episodes (last 30 days events), procedural (routines). " +

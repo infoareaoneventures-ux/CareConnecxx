@@ -77,7 +77,7 @@ export const sendStaleSessionNudges = functions.pubsub
         const greeting  = firstName ? `Hey ${firstName}!` : "Hey there!";
         const userType  = session.userType as string | undefined;
 
-        // Build a per-step nudge in Cara's own voice instead of a frozen template.
+        // Build a per-step nudge in Evia's own voice instead of a frozen template.
         // Each branch supplies (a) a context describing the moment + the concrete
         // facts she must keep (prices, the SKIP keyword, value props) and (b) the
         // original copy as a fallback if the model call fails. This is a daily
@@ -101,14 +101,14 @@ export const sendStaleSessionNudges = functions.pubsub
             context = `${firstName || "This caregiver"} stalled at the background-check step — the last thing before families can book them. Warmly nudge them: families can't book until it's done, it takes about 5 minutes, and they can reply here to get the link again.`;
             fallback = `${greeting} Your background check is the last step before you can start getting booked.\n\nFamilies can't book you until it's done. It takes about 5 minutes. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_ask_rate") {
-            context = `${firstName || "This caregiver"} stalled on setting their hourly rate. Warmly, no pressure: most caregivers on Cara charge $18-28/hr, and they can always update it later. Encourage them to pick something.`;
-            fallback = `${greeting} Still thinking about your hourly rate?\n\nMost caregivers on Cara charge $18-28/hr. You can always update it later. No pressure to get it perfect now.`;
+            context = `${firstName || "This caregiver"} stalled on setting their hourly rate. Warmly, no pressure: most caregivers on Evia charge $18-28/hr, and they can always update it later. Encourage them to pick something.`;
+            fallback = `${greeting} Still thinking about your hourly rate?\n\nMost caregivers on Evia charge $18-28/hr. You can always update it later. No pressure to get it perfect now.`;
           } else if (step === "caregiver_send_photo" || step === "caregiver_awaiting_photo") {
             context = `${firstName || "This caregiver"} stalled before adding a profile photo. Warmly nudge: a clear headshot makes families much more likely to request an interview, and they can reply here to get the upload link again.`;
             fallback = `${greeting} Your profile is almost live.\n\nAdding a photo makes families much more likely to request an interview. A clear headshot is all you need. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_send_membership" || step === "caregiver_awaiting_membership") {
-            context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: activating their $24.95/year membership unlocks getting booked and Cara's payout tools, and they can reply here to get the link again.`;
-            fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nActivating your $24.95/year membership unlocks getting booked and Cara's payout tools. Reply here and I'll send the link again.`;
+            context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: activating their $24.95/year membership unlocks getting booked and Evia's payout tools, and they can reply here to get the link again.`;
+            fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nActivating your $24.95/year membership unlocks getting booked and Evia's payout tools. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_send_documents" || step === "caregiver_awaiting_documents") {
             context = `${firstName || "This caregiver"} stalled on uploading certifications (CNA, CPR, etc.). Warmly nudge: they can upload now or reply SKIP to keep going, and reply here to get the upload link again. You MUST mention they can reply "SKIP" to continue.`;
             fallback = `${greeting} Almost done — just your certifications left (CNA, CPR, etc.).\n\nYou can upload them now or reply SKIP to keep going. Reply here and I'll send the upload link again.`;

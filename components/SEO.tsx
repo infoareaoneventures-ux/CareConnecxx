@@ -11,8 +11,8 @@ interface SEOProps {
   schema?: object;
 }
 
-const DEFAULT_IMAGE = 'https://www.careconnex.com/icon-512.png';
-const SITE_URL = 'https://www.careconnex.com';
+const DEFAULT_IMAGE = 'https://www.eviacares.com/icon-512.png';
+const SITE_URL = 'https://www.eviacares.com';
 
 export const SEO: React.FC<SEOProps> = ({
   title,
@@ -25,7 +25,7 @@ export const SEO: React.FC<SEOProps> = ({
 }) => {
   useEffect(() => {
     // Update Title
-    document.title = `${title} | CareConnex`;
+    document.title = `${title} | Evia`;
 
     // Helper to update or create meta tags
     const updateMeta = (name: string, content: string, attribute = 'name') => {
@@ -64,7 +64,7 @@ export const SEO: React.FC<SEOProps> = ({
     updateMeta('og:description', description, 'property');
     updateMeta('og:image', image, 'property');
     updateMeta('og:url', canonical, 'property');
-    updateMeta('og:site_name', 'CareConnex', 'property');
+    updateMeta('og:site_name', 'Evia', 'property');
     updateMeta('og:locale', 'en_US', 'property');
 
     // Twitter
@@ -72,7 +72,7 @@ export const SEO: React.FC<SEOProps> = ({
     updateMeta('twitter:title', title, 'name');
     updateMeta('twitter:description', description, 'name');
     updateMeta('twitter:image', image, 'name');
-    updateMeta('twitter:site', '@CareConnex', 'name');
+    updateMeta('twitter:site', '@Evia', 'name');
 
     // Structured Data (Schema.org)
     if (schema) {
@@ -98,7 +98,7 @@ export const SEO: React.FC<SEOProps> = ({
 export const generateOrganizationSchema = () => ({
   '@context': 'https://schema.org',
   '@type': 'Organization',
-  name: 'CareConnex',
+  name: 'Evia',
   url: SITE_URL,
   logo: `${SITE_URL}/icon-512.png`,
   description: 'Connect with verified caregivers instantly. AI-powered matching for senior care.',
@@ -115,7 +115,7 @@ export const generateOrganizationSchema = () => ({
 export const generateLocalBusinessSchema = () => ({
   '@context': 'https://schema.org',
   '@type': 'LocalBusiness',
-  name: 'CareConnex',
+  name: 'Evia',
   image: `${SITE_URL}/icon-512.png`,
   url: SITE_URL,
   telephone: '',
@@ -130,7 +130,7 @@ export const generateServiceSchema = () => ({
   name: 'Senior Care Matching',
   provider: {
     '@type': 'Organization',
-    name: 'CareConnex'
+    name: 'Evia'
   },
   description: 'AI-powered caregiver matching for senior care',
   serviceType: 'Health Care'

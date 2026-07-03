@@ -123,7 +123,7 @@ export async function handleInterviewSelection(
   if (perms && !perms.canContactCaregivers) {
     const permissionMsg = await generateCaraMessage({
       audience: "family",
-      context:  "The family wants to reach out to caregivers for an interview, but Cara doesn't yet have their permission to contact caregivers on their behalf. Ask them to reply ALLOW to grant permission, or visit the app to update their settings.",
+      context:  "The family wants to reach out to caregivers for an interview, but Evia doesn't yet have their permission to contact caregivers on their behalf. Ask them to reply ALLOW to grant permission, or visit the app to update their settings.",
       fallback: "I need your permission to reach out to caregivers on your behalf.\n\nReply ALLOW to give me permission, or visit the app to update your settings.",
       maxTokens: 80,
     });
@@ -164,15 +164,15 @@ export async function handleInterviewSelection(
     const caregiverSession = await getOrCreateSession(caregiverPhone, { caregiverId: match.id });
     const caregiverReachOutMsg = await generateCaraMessage({
       audience: "caregiver",
-      context:  `Introduce yourself as Cara, the care coordinator, and let ${match.name} know that a family is interested in meeting them for a care position. The senior is ${seniorName}, who is a ${relationship}${age ? ` and is ${age} years old` : ""}. Ask if they're available for a 20-minute video call this week. Tell them to reply with 2–3 times that work, or PASS to decline.`,
-      fallback: `Hi ${match.name} — I'm Cara, your care coordinator.\n\nA family is interested in meeting you for a care position for their ${relationship}, ${age ? `${age}-year-old ` : ""}${seniorName}.\n\nAre you available for a 20-minute video call this week?\n\nReply with 2–3 times that work for you, or PASS to decline.`,
+      context:  `Introduce yourself as Evia, the care coordinator, and let ${match.name} know that a family is interested in meeting them for a care position. The senior is ${seniorName}, who is a ${relationship}${age ? ` and is ${age} years old` : ""}. Ask if they're available for a 20-minute video call this week. Tell them to reply with 2–3 times that work, or PASS to decline.`,
+      fallback: `Hi ${match.name} — I'm Evia, your care coordinator.\n\nA family is interested in meeting you for a care position for their ${relationship}, ${age ? `${age}-year-old ` : ""}${seniorName}.\n\nAre you available for a 20-minute video call this week?\n\nReply with 2–3 times that work for you, or PASS to decline.`,
     });
     await sendMessage(caregiverSession.chatId, caregiverReachOutMsg);
   }
 
   const reachedOutMsg = await generateCaraMessage({
     audience: "family",
-    context:  `Cara just contacted ${selected.length} ${selected.length === 1 ? "caregiver" : "caregivers"} on the family's behalf. Let them know and say you'll text as soon as you hear back with availability.`,
+    context:  `Evia just contacted ${selected.length} ${selected.length === 1 ? "caregiver" : "caregivers"} on the family's behalf. Let them know and say you'll text as soon as you hear back with availability.`,
     fallback: `I've reached out to ${selected.length === 1 ? "that caregiver" : "those caregivers"} on your behalf.\n\nI'll text you as soon as I hear back with their availability.`,
     maxTokens: 80,
   });
@@ -321,7 +321,7 @@ export async function handleCaregiverAvailabilityReply(
 
   const timesSentMsg = await generateCaraMessage({
     audience: "caregiver",
-    context:  "The caregiver just sent their available times for an interview. Cara has forwarded those times to the family. Let the caregiver know and tell them you'll reach out once the family confirms.",
+    context:  "The caregiver just sent their available times for an interview. Evia has forwarded those times to the family. Let the caregiver know and tell them you'll reach out once the family confirms.",
     fallback: "I've sent those times to the family. I'll let you know once they confirm.",
     maxTokens: 80,
   });

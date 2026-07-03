@@ -29,12 +29,14 @@ const SSN_PATTERN = /\b\d{3}-\d{2}-\d{4}\b/g;
 // order/booking ids that happen to be 13–16 digits aren't mangled.
 const CARD_CANDIDATE = /\b\d(?:[ -]?\d){12,15}\b/g;
 
-// Email detection is format validation, not intent parsing. Cara's own
-// addresses (support@careconnex.com etc.) are explicitly allowlisted below.
+// Email detection is format validation, not intent parsing. Evia's own
+// addresses (support@eviacares.com etc.) are explicitly allowlisted below.
 // Edge case: "Meet @ 123 Main St" does NOT match (no .tld after the domain),
 // so shift addresses with "@" in them are safe. Only foo@host.tld shapes match.
 const EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
-const CARECONNEX_DOMAIN = /(^|\.)careconnex\.[a-z]+$/i;
+// eviacares.com is the current brand domain; careconnex stays allowlisted for
+// legacy addresses still present in older threads.
+const CARECONNEX_DOMAIN = /(^|\.)(careconnex|eviacares)\.[a-z]+$/i;
 
 // Standard Luhn checksum — true for real card numbers, false for almost all
 // arbitrary digit runs (ids, refs), which is what keeps false positives low.

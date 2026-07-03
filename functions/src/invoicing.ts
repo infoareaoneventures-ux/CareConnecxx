@@ -223,7 +223,7 @@ export const sendInvoiceEmail = functions.https.onCall(async (data, context) => 
             ? `<p><a href="${invoiceData.pdfUrl}">View your invoice PDF</a> (link valid for 7 days)</p>`
             : '';
         const html = `
-            <h2>CareConnex Invoice ${invoiceData.invoiceNumber}</h2>
+            <h2>Evia Invoice ${invoiceData.invoiceNumber}</h2>
             <p>Hi ${invoiceData.clientName || 'there'},</p>
             <p>Your invoice for care services is ready.</p>
             <p>
@@ -232,11 +232,11 @@ export const sendInvoiceEmail = functions.https.onCall(async (data, context) => 
                 <strong>Due date:</strong> ${invoiceData.dueDate ? new Date(invoiceData.dueDate).toLocaleDateString() : 'N/A'}
             </p>
             ${pdfSection}
-            <p>— The CareConnex Team</p>`;
+            <p>— The Evia Team</p>`;
 
         await sendTransactionalEmail({
             to: clientEmail,
-            subject: `CareConnex Invoice ${invoiceData.invoiceNumber}`,
+            subject: `Evia Invoice ${invoiceData.invoiceNumber}`,
             html,
             from: process.env.INVOICE_EMAIL_FROM,
         });

@@ -295,7 +295,7 @@ function raiseMedicalCrisisAlert(phone: string, text: string): void {
     severity: "critical",
     phone,
     source:   "crisisDetector",
-    message:  "Possible medical emergency reported over SMS — Cara directed the user to call 911.",
+    message:  "Possible medical emergency reported over SMS — Evia directed the user to call 911.",
     context:  { textPreview: text.slice(0, 200) },
   }).catch(() => {});
 }
@@ -357,7 +357,7 @@ async function createSecondaryMemberSession(
   );
 
   await sendMessage(chatId,
-    `Hi, I'm Cara — the care coordinator for ${(primarySession as any).onboardingData?.seniorName ?? "your family"}. ` +
+    `Hi, I'm Evia — the care coordinator for ${(primarySession as any).onboardingData?.seniorName ?? "your family"}. ` +
     `I've added you to the care group. You'll get the same updates and can ask me anything.`
   );
 }
@@ -405,7 +405,7 @@ async function handleGroupDisambiguationReply(
     const answer = await answerHumanQuestionOnly({
       text,
       situation:
-        "The user's phone number appears in more than one care group, and Cara just asked which senior they are texting about. Answer their question briefly.",
+        "The user's phone number appears in more than one care group, and Evia just asked which senior they are texting about. Answer their question briefly.",
     }).catch(() => "");
     if (answer) await sendMessage(chatId, answer);
     await askGroupDisambiguation(chatId, candidates);
@@ -641,7 +641,7 @@ const handleInboundInner = traceable(
 
   // ── Voice memo → Whisper transcription ─────────────────────────────────────
   // Users who can't easily type tap-and-hold to send a voice memo. Transcribe
-  // it and fall through to normal text processing so the rest of Cara doesn't
+  // it and fall through to normal text processing so the rest of Evia doesn't
   // need to care that the input was spoken.
   if (text === "") {
     const voicePart = extractVoiceMemoPart(inboundParts);
@@ -726,7 +726,7 @@ const handleInboundInner = traceable(
     }
     await db.collection("agent_sessions").doc(phone).update(update).catch(() => {});
 
-    // Mirror the user's inbound message into the web chat inbox so the Cara
+    // Mirror the user's inbound message into the web chat inbox so the Evia
     // conversation shows up in Chat/ChatInbox. Best-effort, never blocks.
     if (text && stored.userId) {
       const { mirrorToWebThread } = await import("./threadMirror");
@@ -855,7 +855,7 @@ const handleInboundInner = traceable(
       const webRole  = (webSessionData.role as string | undefined) === "caregiver" ? "caregiver" : "client";
       const referralId = webRole === "caregiver" ? (webSessionData.referralId as string | undefined) : undefined;
       // Name typed on the /start web form (if any). When present, we pre-seed it into
-      // onboardingData and route to the confirm step so Cara greets by name and asks
+      // onboardingData and route to the confirm step so Evia greets by name and asks
       // them to confirm — instead of asking "What's your name?" from scratch.
       const webName = (webSessionData.name as string | undefined)?.trim() || "";
       const firstStep = webName
@@ -926,7 +926,7 @@ const handleInboundInner = traceable(
 
       if (service === "iMessage") await startTyping(chatId).catch(() => {});
 
-      // First impressions matter most — route the opening message through Cara's
+      // First impressions matter most — route the opening message through Evia's
       // actual voice (generateCaraMessage) instead of a frozen template, so the
       // very first thing the user reads sounds like her, not a chatbot. The old
       // hardcoded strings stay as fallbacks if the LLM call fails. The follow-up
@@ -943,8 +943,8 @@ const handleInboundInner = traceable(
             "Someone you've helped before just reconnected by text (they only said a quick hello). " +
             "Warmly welcome them back, and ask what they'd like to handle first. One or two sentences, no lists.",
           fallback: preferredLanguage === "es"
-            ? "¡Hola otra vez! Soy Cara. Me alegra verte de nuevo — ¿en qué te puedo ayudar hoy?"
-            : "Welcome back. It's Cara - good to hear from you again. What should we handle first?",
+            ? "¡Hola otra vez! Soy Evia. Me alegra verte de nuevo — ¿en qué te puedo ayudar hoy?"
+            : "Welcome back. It's Evia - good to hear from you again. What should we handle first?",
           maxTokens: 90,
         });
       } else if (webName) {
@@ -955,18 +955,18 @@ const handleInboundInner = traceable(
           language: welcomeLanguage,
           context: welcomeAudience === "caregiver"
             ? `You're meeting ${webName} for the very first time over text. They just signed up to find caregiving work. ` +
-              `Introduce yourself warmly as Cara, mention that setting up their profile takes about 5 minutes and happens right here by text, ` +
+              `Introduce yourself warmly as Evia, mention that setting up their profile takes about 5 minutes and happens right here by text, ` +
               `and naturally check that "${webName}" is the name they go by — woven into a sentence, NOT as a parenthetical instruction. Sound like a real person, not a form.`
             : `You're meeting ${webName} for the very first time over text. They're looking for care for a loved one. ` +
-              `Introduce yourself warmly as Cara, their care coordinator, ` +
+              `Introduce yourself warmly as Evia, their care coordinator, ` +
               `and naturally check that "${webName}" is the name they go by — woven into a sentence, NOT as a parenthetical instruction. Sound like a real person, not a form.`,
           fallback: webRole === "caregiver"
             ? (preferredLanguage === "es"
-                ? `¡Hola ${webName}! Soy Cara — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Te llamo ${webName}, verdad?`
-                : `Hi ${webName}! I'm Cara — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and it all happens right here. Do you go by ${webName}?`)
+                ? `¡Hola ${webName}! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Te llamo ${webName}, verdad?`
+                : `Hi ${webName}! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and it all happens right here. Do you go by ${webName}?`)
             : (preferredLanguage === "es"
-                ? `¡Hola ${webName}! Soy Cara, tu coordinadora de cuidados. ¿Te llamo ${webName}, verdad?`
-                : `Hi ${webName}, I'm Cara — I'll be your care coordinator. Do you go by ${webName}?`),
+                ? `¡Hola ${webName}! Soy Evia, tu coordinadora de cuidados. ¿Te llamo ${webName}, verdad?`
+                : `Hi ${webName}, I'm Evia — I'll be your care coordinator. Do you go by ${webName}?`),
           maxTokens: 120,
         });
       } else {
@@ -977,16 +977,16 @@ const handleInboundInner = traceable(
           language: welcomeLanguage,
           context: welcomeAudience === "caregiver"
             ? "You're meeting someone for the very first time over text who just signed up to find caregiving work. " +
-              "Introduce yourself warmly as Cara, mention that setting up their profile takes about 5 minutes and happens right here, and ask their name. Sound like a real person, not a form."
+              "Introduce yourself warmly as Evia, mention that setting up their profile takes about 5 minutes and happens right here, and ask their name. Sound like a real person, not a form."
             : "You're meeting someone for the very first time over text who's looking for care for a loved one. " +
-              "Introduce yourself warmly as Cara, their care coordinator, and ask their name. Sound like a real person, not a form.",
+              "Introduce yourself warmly as Evia, their care coordinator, and ask their name. Sound like a real person, not a form.",
           fallback: webRole === "caregiver"
             ? (preferredLanguage === "es"
-                ? "¡Hola! Soy Cara — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Cómo te llamas?"
-                : "Hi! I'm Cara — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and everything happens right here.\n\nWhat's your name?")
+                ? "¡Hola! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Cómo te llamas?"
+                : "Hi! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and everything happens right here.\n\nWhat's your name?")
             : (preferredLanguage === "es"
-                ? "¡Hola! Soy Cara, tu coordinadora de cuidados. ¿Cómo te llamas?"
-                : "Hi! I'm Cara — I'll be your care coordinator. What's your name?"),
+                ? "¡Hola! Soy Evia, tu coordinadora de cuidados. ¿Cómo te llamas?"
+                : "Hi! I'm Evia — I'll be your care coordinator. What's your name?"),
           maxTokens: 90,
         });
       }
@@ -999,7 +999,7 @@ const handleInboundInner = traceable(
     // No web session and no prior history — a cold inbound. Phone verification
     // happens on the WEBSITE (Firebase Phone Auth) before createWebOnboardingSession,
     // not over SMS — so we do NOT gate the thread behind an OTP. Lead with a proper
-    // Cara intro and start onboarding right here in the thread; the inbound number
+    // Evia intro and start onboarding right here in the thread; the inbound number
     // is the conversation identity.
     await db.collection("agent_sessions").doc(phone).set({
       chatId,
@@ -1025,10 +1025,10 @@ const handleInboundInner = traceable(
     // addendum). Web signup subtitle + honest-answer-if-asked rule remain the
     // disclosure surfaces. Counsel to revisit.
     const coldIntro = preferredLanguage === "es"
-      ? "Hola — soy Cara, tu coordinadora de cuidado. Ayudo a las familias a encontrar cuidadores de confianza " +
+      ? "Hola — soy Evia, tu coordinadora de cuidado. Ayudo a las familias a encontrar cuidadores de confianza " +
         "con verificación de antecedentes — y a los cuidadores a encontrar trabajo — todo aquí por mensaje.\n\n" +
         "¿Buscas cuidado para un ser querido, o eres cuidador?"
-      : "Hi — I'm Cara, your care coordinator. I help families find trusted, background-checked caregivers — " +
+      : "Hi — I'm Evia, your care coordinator. I help families find trusted, background-checked caregivers — " +
         "and help caregivers find work — all right here by text.\n\n" +
         "Are you looking for care for a loved one, or are you a caregiver yourself?";
     await sendMessage(chatId, coldIntro);
@@ -1083,7 +1083,7 @@ const handleInboundInner = traceable(
   // We only hard-stop on OPTED_OUT (a real user opt-out we must respect). CRITICAL
   // health reflects line/deliverability risk that matters for PROACTIVE/bulk sends
   // (reminders, digests) — those are already gated by the global circuit breaker and
-  // sendIfNotDND. Suppressing a direct reply to a user who just texted in makes Cara
+  // sendIfNotDND. Suppressing a direct reply to a user who just texted in makes Evia
   // look broken, so we log CRITICAL for observability but still respond. If Linq
   // genuinely rejects the send, sendMessage surfaces that downstream.
   const chatHealth = (ev.data?.chat?.health_status?.status ?? "HEALTHY") as string;
@@ -1123,7 +1123,7 @@ const handleInboundInner = traceable(
     markChatRead(chatId).catch(() => {/* non-critical */});
     const partTypes = inboundParts.map((p) => String(p.type ?? "").toLowerCase());
     const hasVoiceMemo = extractVoiceMemoPart(inboundParts) !== null;
-    // Route these through Cara's voice rather than frozen templates. (The old
+    // Route these through Evia's voice rather than frozen templates. (The old
     // sticker reply hardcoded "for Mom" — a wrong assumption about who the user
     // cares for; the relationship-neutral fallback below avoids that.)
     const mediaAudience: "caregiver" | "family" =
@@ -1294,8 +1294,8 @@ const handleInboundInner = traceable(
     const subStatus = userSnap?.data()?.subscriptionStatus as string | undefined;
     if (subStatus === "past_due" || subStatus === "canceled" || subStatus === "unpaid") {
       await sendMessage(chatId,
-        "Your Cara membership needs attention — there was an issue with your payment.\n\n" +
-        "To keep your care coordination active, please update your billing at cara.app/billing. Reply SUPPORT and I'll connect you with our team.",
+        "Your Evia membership needs attention — there was an issue with your payment.\n\n" +
+        "To keep your care coordination active, please update your billing at https://careconnex-d4c8b.web.app/client/membership. Reply SUPPORT and I'll connect you with our team.",
         { preferredService: "SMS" } // billing/legal notice — force SMS, never iMessage
       );
       return;
@@ -1408,7 +1408,7 @@ const handleInboundInner = traceable(
       let isSame = false;
       try {
         const verdict = await quickComplete(
-          `Cara asked: "Is this still about ${pending.seniorName ?? "the person on file"}?" ` +
+          `Evia asked: "Is this still about ${pending.seniorName ?? "the person on file"}?" ` +
           "Reply YES if the user confirms it is still about them. " +
           "Reply NO if the user says it is a different person or family. " +
           "Reply UNCLEAR if you cannot tell. Only reply one word.",
@@ -1460,7 +1460,7 @@ const handleInboundInner = traceable(
       text,
       sessionSenior: sessionSeniorName,
       sessionRole:   session.userType,
-      // Names Cara already expects on this account (client, recipients, family,
+      // Names Evia already expects on this account (client, recipients, family,
       // caregivers) so a known name or caregiver-logistics question never trips it.
       knownNames:    collectKnownNames(session as unknown as Record<string, unknown>),
     }).catch(() => null);
@@ -1511,7 +1511,7 @@ const handleInboundInner = traceable(
       await db.collection("agent_sessions").doc(phone).update({ bereavementMode: admin.firestore.FieldValue.delete() });
       const bereavementExitMsg = await generateCaraMessage({
         audience: "family",
-        context: "Family asked to exit bereavement support mode. Cara is gently transitioning back to normal and offering help.",
+        context: "Family asked to exit bereavement support mode. Evia is gently transitioning back to normal and offering help.",
         fallback: "Of course. I'm here whenever you need me. What can I help you with?",
         maxTokens: 80,
       });
@@ -1525,7 +1525,7 @@ const handleInboundInner = traceable(
       if (daysSince > 30) {
         const bereavementCheckinMsg = await generateCaraMessage({
           audience: "family",
-          context: "30-day bereavement check-in — Cara is gently reaching out to see if the family is ready to think about care again. Tone should be warm and not pushy.",
+          context: "30-day bereavement check-in — Evia is gently reaching out to see if the family is ready to think about care again. Tone should be warm and not pushy.",
           fallback: "I'm here with you. 💙 Whenever you're ready to arrange care again, just let me know.",
           maxTokens: 80,
         });
@@ -1533,7 +1533,7 @@ const handleInboundInner = traceable(
       } else {
         const bereavementSupportMsg = await generateCaraMessage({
           audience: "family",
-          context: "Family is in bereavement mode and has messaged. Cara is being supportive and not rushing them.",
+          context: "Family is in bereavement mode and has messaged. Evia is being supportive and not rushing them.",
           fallback: "I'm here with you. 💙 Take all the time you need.",
           maxTokens: 60,
         });
@@ -1585,7 +1585,7 @@ const handleInboundInner = traceable(
       // Mid-onboarding with no account yet — this is NORMAL. A client/caregiver
       // session has no userId until the account is created (at payment), so the
       // absence of userId here is expected, not corruption. Do NOT reset to
-      // ask_role: that wiped collection progress on every inbound and made Cara
+      // ask_role: that wiped collection progress on every inbound and made Evia
       // re-greet from the top forever (and the agent-native collection loop could
       // never be reached, since its steps are client_ask_*). Leave the in-progress
       // step intact and let onboarding continue from where the user was.
@@ -1593,7 +1593,7 @@ const handleInboundInner = traceable(
       // Supply-hold: onboarding completed WITHOUT payment by design — no
       // caregivers were available in their area ("no charge until then"), so
       // there is no user record yet. Not an orphan. Answer their message with
-      // the hold context so Cara stays honest about where things stand.
+      // the hold context so Evia stays honest about where things stand.
       const d = (session.onboardingData ?? {}) as Record<string, unknown>;
       const seniorName = (d.seniorName as string) || "your loved one";
       const city       = (d.city as string) || "your area";
@@ -1601,7 +1601,7 @@ const handleInboundInner = traceable(
         audience: "family",
         context:
           `This family finished setup for ${seniorName} in ${city}, but no caregivers were available there ` +
-          `yet, so they're on the waitlist — everything is saved, they have NOT been charged, and Cara will ` +
+          `yet, so they're on the waitlist — everything is saved, they have NOT been charged, and Evia will ` +
           `text them the moment a caregiver in their area becomes available. They just sent: ` +
           `"${text.slice(0, 300)}". Answer their message honestly with that status. If they ask about a ` +
           `nearby city, say you'll include it in the search and reach out as soon as someone is available. ` +
@@ -1712,7 +1712,7 @@ const handleInboundInner = traceable(
     }
     // U4: agent-native onboarding collapse (client-first). For a client in the
     // conversational collection phase, run the turn inside the qaAgent loop
-    // instead of the scripted step runner — Cara leads collection as one agent
+    // instead of the scripted step runner — Evia leads collection as one agent
     // (no re-greet, no double-send). Gated OFF by default. Only plain-text turns
     // route here; media/location stay on the legacy handlers, and transactional /
     // gate steps (not in CLIENT_STEP_ORDER) are never affected.
@@ -1784,7 +1784,7 @@ const handleInboundInner = traceable(
         // saves only SOME of the fields present in the message (a front-loaded
         // answer like "Sarah, my mom Dorothy, 82" where the model only calls the
         // tool for one of the three) — the rest are lost and the cursor never
-        // moves (user perceives Cara as stuck / regressing, or gets re-asked
+        // moves (user perceives Evia as stuck / regressing, or gets re-asked
         // something they already answered). Run the deterministic extractor —
         // the same parser the scripted runner trusts — whenever required fields
         // are STILL missing after the turn, not only when the model saved zero
@@ -1836,7 +1836,7 @@ const handleInboundInner = traceable(
         // (cursor sits at the first gate step). The loop already sent its closing
         // line, but the matches → paywall (or no-supply hold) phase is webhook-
         // passive and would otherwise wait for an inbound that never comes. Drive
-        // it now so Cara doesn't go silent right after "that's everything I need".
+        // it now so Evia doesn't go silent right after "that's everything I need".
         if (curStep === firstGateStep("client")) {
           try {
             await continueAfterClientCollection(phone, chatId);
@@ -2016,9 +2016,9 @@ const handleInboundInner = traceable(
   }
 
   // ── Pending irreversible-action approval — runtime-enforced HITL gate ──────
-  // When Cara proposed a high-risk action (cancel_appointment, cancel_subscription,
+  // When Evia proposed a high-risk action (cancel_appointment, cancel_subscription,
   // remove_family_member, etc.) on a prior turn, the MCP gate stored a
-  // pending_action doc and Cara texted the family for confirmation. This block
+  // pending_action doc and Evia texted the family for confirmation. This block
   // intercepts the family's reply BEFORE intent classification so we catch
   // natural-language YES/NO ("yeah", "go ahead", "actually no") that the
   // generalist 50-intent classifier would misroute. See pendingActions.ts +
@@ -2044,7 +2044,7 @@ const handleInboundInner = traceable(
       });
       if (result.outcome === "handled") return;
       // result.outcome === "fallthrough" — the family asked a question instead
-      // of approving/declining. Let the normal flow run so Cara can answer it;
+      // of approving/declining. Let the normal flow run so Evia can answer it;
       // the pending action stays awaiting until they answer YES/NO or it expires.
     }
   }

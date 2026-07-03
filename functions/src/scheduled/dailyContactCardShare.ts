@@ -6,7 +6,7 @@ import { setupCaraContactCard } from "../sms";
 const db = admin.firestore();
 
 // Runs every day at 10am ET (15:00 UTC).
-// Best practice: re-share Cara's contact card daily so users who dismissed the
+// Best practice: re-share Evia's contact card daily so users who dismissed the
 // "Add to contacts" prompt get another chance to save her name and photo.
 export const dailyContactCardShare = functions.pubsub
   .schedule("0 15 * * *")

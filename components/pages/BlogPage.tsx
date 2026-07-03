@@ -89,7 +89,7 @@ const BlogIndex: React.FC<{ articles: BlogArticle[]; onNavigate: (view: ViewType
             <div className="bg-primary-600 p-1.5 rounded-xl">
               <Activity className="text-white w-5 h-5" />
             </div>
-            <span className="text-xl font-bold text-slate-900">CareConnex</span>
+            <span className="text-xl font-bold text-slate-900">Evia</span>
           </div>
           <Button size="sm" onClick={() => onNavigate('client-signup')}>Find Care</Button>
         </div>
@@ -155,15 +155,15 @@ const ArticleView: React.FC<{ article: BlogArticle; allArticles: BlogArticle[]; 
           '@type': 'Article',
           headline: article.title,
           description: article.metaDescription,
-          author: { '@type': 'Organization', name: 'CareConnex' },
+          author: { '@type': 'Organization', name: 'Evia' },
           publisher: {
             '@type': 'Organization',
-            name: 'CareConnex',
-            logo: { '@type': 'ImageObject', url: 'https://www.careconnex.com/icon-512.png' }
+            name: 'Evia',
+            logo: { '@type': 'ImageObject', url: 'https://www.eviacares.com/icon-512.png' }
           },
           datePublished: article.publishDate,
           dateModified: article.publishDate,
-          mainEntityOfPage: { '@type': 'WebPage', '@id': `https://www.careconnex.com/blog/${article.slug}` }
+          mainEntityOfPage: { '@type': 'WebPage', '@id': `https://www.eviacares.com/blog/${article.slug}` }
         }}
       />
 
@@ -181,7 +181,7 @@ const ArticleView: React.FC<{ article: BlogArticle; allArticles: BlogArticle[]; 
               <div className="bg-primary-600 p-1.5 rounded-xl">
                 <Activity className="text-white w-4 h-4" />
               </div>
-              <span className="text-lg font-bold text-slate-900">CareConnex</span>
+              <span className="text-lg font-bold text-slate-900">Evia</span>
             </div>
           </div>
           <Button size="sm" onClick={() => onNavigate('client-signup')}>Find Care</Button>

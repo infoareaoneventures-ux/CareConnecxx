@@ -1,7 +1,7 @@
 // Regression test for the SMS-native visit-completion → payment rail.
 //
 // The canonical caregiver UX completes a visit over SMS: caregiver texts DONE,
-// Cara asks for notes, and handleCareNotes (routeCaregiver.ts) runs. The bug we
+// Evia asks for notes, and handleCareNotes (routeCaregiver.ts) runs. The bug we
 // fixed: that path used to call a dead createVisitPayment (a confirm:false
 // PaymentIntent that was never captured), so SMS-completed visits charged $0 and
 // took no platform fee. It now funnels into the single shiftHours rail.
@@ -234,7 +234,7 @@ describe("handleCareNotes → shiftHours payment rail", () => {
   it("notifies the family to APPROVE and arms the pendingShiftApproval flag", async () => {
     await routeCaregiverMessage(makeCtx("ate well, good mood"));
 
-    // Among Cara's family messages (a shift-end care update also fires), exactly
+    // Among Evia's family messages (a shift-end care update also fires), exactly
     // one is the payment-approval prompt to the client phone asking for APPROVE.
     const approvalCalls = sendViaInteractionAgent.mock.calls.filter(
       ([toPhone, payload]: any[]) => toPhone === CLIENT_PHONE && String(payload?.content).includes("APPROVE"),

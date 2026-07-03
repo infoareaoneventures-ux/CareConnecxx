@@ -83,7 +83,7 @@ async function answerQuestionMidFlow(text: string, session: AgentSession): Promi
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
-      "You are Cara, a care coordinator helping a client post a care job. " +
+      "You are Evia, a care coordinator helping a client post a care job. " +
       `They are setting up a job for ${(d.seniorName as string) ?? "their loved one"}. ` +
       "Answer briefly (1–2 sentences). Be warm and helpful.",
     messages: [{ role: "user", content: text }],
@@ -436,7 +436,7 @@ async function handleJpAskRate(
   await updateJobStep(phone, "jp_ask_pay_method");
   await sendMessage(chatId,
     `${rateLabel} — sounds good! How would you prefer to pay?\n\n` +
-    "1️⃣  Card (processed through CareConnex)\n" +
+    "1️⃣  Card (processed through Evia)\n" +
     "2️⃣  Cash"
   );
 }
@@ -451,7 +451,7 @@ async function handleJpAskPayMethod(
     return;
   }
   const raw = await parseWithClaude(
-    '"1", card, credit, debit, online, CareConnex = card. "2", cash, in person = cash. ' +
+    '"1", card, credit, debit, online, Evia = card. "2", cash, in person = cash. ' +
     'Reply with exactly one of: card, cash',
     text
   );

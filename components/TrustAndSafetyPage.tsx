@@ -69,7 +69,7 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
       {
          icon: <ShieldCheck className="w-6 h-6 text-indigo-500" />,
          title: "Industry-respected trust and safety partners",
-         desc: "CareConnex partners with Checkr for background checks and Stripe for payment processing, two of the most trusted names in their fields."
+         desc: "Evia partners with Checkr for background checks and Stripe for payment processing, two of the most trusted names in their fields."
       }
    ];
 
@@ -84,16 +84,16 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
       },
       {
          title: "Booking support",
-         desc: "We provide support for payment, reliability and member concerns for every booking scheduled through CareConnex."
+         desc: "We provide support for payment, reliability and member concerns for every booking scheduled through Evia."
       }
    ];
 
    return (
       <div className="min-h-screen bg-white font-sans">
          <SEO
-            title="Trust & Safety | CareConnex"
-            description="Your family's safety is our top priority. Every caregiver on CareConnex is background checked annually. Learn more about our Trust and Safety tools."
-            keywords="trust, safety, background checks, secure payments, safe messaging, CareConnex"
+            title="Trust & Safety | Evia"
+            description="Your family's safety is our top priority. Every caregiver on Evia is background checked annually. Learn more about our Trust and Safety tools."
+            keywords="trust, safety, background checks, secure payments, safe messaging, Evia"
          />
 
          {/* Navigation Header */}
@@ -104,7 +104,7 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
                      <div className="bg-primary-600 p-2 rounded-xl shadow-lg shadow-primary-200/50">
                         <Activity className="text-white w-6 h-6" />
                      </div>
-                     <span className="text-2xl font-bold text-slate-900 tracking-tight">CareConnex</span>
+                     <span className="text-2xl font-bold text-slate-900 tracking-tight">Evia</span>
                   </div>
 
                   <nav className="hidden md:flex items-center space-x-8">
@@ -136,7 +136,7 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
                      Your family's safety is our <span className="text-primary-400">top priority.</span>
                   </h1>
                   <p className="text-xl text-slate-300 max-w-2xl mx-auto leading-relaxed">
-                     Every caregiver on CareConnex is background checked annually. Each caregiver profile is individually reviewed by our Trust and Safety team. Our aim is to provide members with transparency and information to make informed decisions.
+                     Every caregiver on Evia is background checked annually. Each caregiver profile is individually reviewed by our Trust and Safety team. Our aim is to provide members with transparency and information to make informed decisions.
                   </p>
                </div>
             </section>
@@ -147,7 +147,7 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
                   <div className="text-center mb-16">
                      <h2 className="text-3xl font-bold text-slate-900 mb-6">Tools to find care you can trust</h2>
                      <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-                        From community recommendations and parent reviews to annual background checks and responsive support, CareConnex gives you the tools to find senior care you can trust.
+                        From community recommendations and parent reviews to annual background checks and responsive support, Evia gives you the tools to find senior care you can trust.
                      </p>
                   </div>
 
@@ -221,7 +221,7 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
             <section className="py-20 bg-slate-900 text-white">
                <div className="max-w-6xl mx-auto px-4">
                   <div className="text-center mb-16">
-                     <h2 className="text-3xl font-bold mb-6">How CareConnex protects your privacy</h2>
+                     <h2 className="text-3xl font-bold mb-6">How Evia protects your privacy</h2>
                      <p className="text-lg text-slate-400 max-w-2xl mx-auto">
                         We use industry-leading security practices to keep your personal and financial information safe.
                      </p>

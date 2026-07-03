@@ -2,7 +2,7 @@ import { isHighRisk, proposePendingAction, buildPendingActionStub } from "../age
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 
 /**
- * runTool — the deep module behind Cara's tool execution.
+ * runTool — the deep module behind Evia's tool execution.
  *
  * Every MCP tool used to re-implement the same cross-cutting bands inline in a
  * ~3,000-line switch: field injection, ownership checks, the confirmation gate,

@@ -6,7 +6,7 @@ import {
   toCaraEvalCases,
 } from "./caraTrainingDataset";
 
-describe("Cara training dataset", () => {
+describe("Evia training dataset", () => {
   it("keeps stable unique ids and launch-critical coverage", () => {
     const ids = new Set(STARTER_CARA_TRAINING_EXAMPLES.map((example) => example.id));
     expect(ids.size).toBe(STARTER_CARA_TRAINING_EXAMPLES.length);

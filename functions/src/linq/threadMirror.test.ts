@@ -128,7 +128,7 @@ describe("mirrorToWebThread", () => {
     hoisted.collState.set("agent_sessions", [
       { id: "primary", chatId: "direct-chat-B", userId: "inboundClient" },
     ]);
-    // Pre-existing unread from earlier unopened Cara replies must survive a
+    // Pre-existing unread from earlier unopened Evia replies must survive a
     // merge:true write that omits unreadCount.
     hoisted.docState.set("threads/cara_inboundClient", { unreadCount: 3 });
 

@@ -148,10 +148,10 @@ export const ClientNavigation: React.FC = () => {
               {helpOpen && (
                 <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-200 p-4 z-50">
                   <p className="text-xs font-semibold text-slate-700 mb-3">Need Help?</p>
-                  <a href="mailto:support@careconnex.com"
+                  <a href="mailto:support@eviacares.com"
                     className="flex items-center gap-2 text-xs text-slate-600 hover:text-primary-600 mb-3">
                     <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    support@careconnex.com
+                    support@eviacares.com
                   </a>
                   <button
                     onClick={async () => {
@@ -313,7 +313,7 @@ export const ClientNavigation: React.FC = () => {
                 { icon: <Settings className="w-4 h-4" />, label: 'Account Settings', path: '/client/account' },
                 { icon: <CreditCard className="w-4 h-4" />, label: 'Payments', path: '/client/payments' },
                 { icon: <Crown className="w-4 h-4" />, label: 'Membership', path: '/client/membership' },
-                { icon: <HelpCircle className="w-4 h-4" />, label: 'Help & Support', path: 'mailto:support@careconnex.com' },
+                { icon: <HelpCircle className="w-4 h-4" />, label: 'Help & Support', path: 'mailto:support@eviacares.com' },
               ].map(item => (
                 <button key={item.path}
                   onClick={() => { setMoreOpen(false); item.path.startsWith('mailto:') ? (window.location.href = item.path) : navigate(item.path); }}

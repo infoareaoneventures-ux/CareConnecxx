@@ -3,11 +3,11 @@ import { detectFrustrationSignals, normalize } from "./frustrationSignals";
 
 describe("frustrationSignals", () => {
   it("normalizes punctuation and casing without keeping formatting noise", () => {
-    expect(normalize("Hey, Cara!!")).toBe("hey cara");
+    expect(normalize("Hey, Evia!!")).toBe("hey evia");
   });
 
   it("flags explicit frustration and missing-link complaints", () => {
-    expect(detectFrustrationSignals({ text: "Cara still didn't send the link" })).toMatchObject({
+    expect(detectFrustrationSignals({ text: "Evia still didn't send the link" })).toMatchObject({
       frustrationDetected: true,
     });
     expect(detectFrustrationSignals({ text: "this is horrible, I need a real person" })).toMatchObject({

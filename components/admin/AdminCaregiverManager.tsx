@@ -258,7 +258,7 @@ export const AdminCaregiverManager: React.FC = () => {
     setModerating(true);
     try {
       await dbService.sendNotification(selected.uid, {
-        type: 'admin_message', title: 'Message from CareConnex',
+        type: 'admin_message', title: 'Message from Evia',
         body: notifyMessage, message: notifyMessage,
         userId: selected.uid, isRead: false,
       });

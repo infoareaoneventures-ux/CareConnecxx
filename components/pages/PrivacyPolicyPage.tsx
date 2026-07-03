@@ -9,7 +9,7 @@ export const PrivacyPolicyPage: React.FC = () => (
           <div className="bg-primary-600 p-2 rounded-xl">
             <Activity className="text-white w-5 h-5" />
           </div>
-          <span className="text-xl font-bold text-slate-900">CareConnex</span>
+          <span className="text-xl font-bold text-slate-900">Evia</span>
         </a>
       </div>
     </header>
@@ -21,7 +21,7 @@ export const PrivacyPolicyPage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-slate-800 mb-2">1. Introduction</h2>
-          <p>CareConnex ("we," "us," or "our") is committed to protecting your privacy. This Policy explains how we collect, use, and safeguard your information. We are designed to comply with HIPAA, HITECH, CCPA, CPRA, and other applicable privacy laws.</p>
+          <p>Evia ("we," "us," or "our") is committed to protecting your privacy. This Policy explains how we collect, use, and safeguard your information. We are designed to comply with HIPAA, HITECH, CCPA, CPRA, and other applicable privacy laws.</p>
         </section>
 
         <section>
@@ -51,7 +51,7 @@ export const PrivacyPolicyPage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-slate-800 mb-2">5. SMS &amp; Text Messaging</h2>
-          <p>When you provide consent during registration, CareConnex may send you SMS messages including appointment confirmations, care updates from our AI assistant Cara, health alerts, and service notifications. You may opt out at any time by texting STOP. We do not share your phone number with third parties for marketing purposes. Message frequency varies. Message and data rates may apply.</p>
+          <p>When you provide consent during registration, Evia may send you SMS messages including appointment confirmations, care updates from our AI assistant Evia, health alerts, and service notifications. You may opt out at any time by texting STOP. We do not share your phone number with third parties for marketing purposes. Message frequency varies. Message and data rates may apply.</p>
         </section>
 
         <section>
@@ -74,12 +74,12 @@ export const PrivacyPolicyPage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-slate-800 mb-2">8. Data Retention</h2>
-          <p>We retain personal information for as long as your account is active or as needed to provide services. SMS consent records are retained for a minimum of 5 years. PHI is retained per HIPAA requirements (minimum 6 years). You may request deletion of your account data by contacting us at privacy@careconnex.com.</p>
+          <p>We retain personal information for as long as your account is active or as needed to provide services. SMS consent records are retained for a minimum of 5 years. PHI is retained per HIPAA requirements (minimum 6 years). You may request deletion of your account data by contacting us at privacy@eviacares.com.</p>
         </section>
 
         <section>
           <h2 className="text-lg font-semibold text-slate-800 mb-2">9. Your Rights (CCPA / CPRA)</h2>
-          <p>California residents have the right to know what personal information we collect, request deletion of personal information, opt out of the sale of personal information (we do not sell personal information), and non-discrimination for exercising these rights. To exercise your rights, contact us at privacy@careconnex.com.</p>
+          <p>California residents have the right to know what personal information we collect, request deletion of personal information, opt out of the sale of personal information (we do not sell personal information), and non-discrimination for exercising these rights. To exercise your rights, contact us at privacy@eviacares.com.</p>
         </section>
 
         <section>
@@ -89,9 +89,9 @@ export const PrivacyPolicyPage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-slate-800 mb-2">11. Contact Us</h2>
-          <p>Privacy Officer: <a href="mailto:privacy@careconnex.com" className="text-primary-600 underline">privacy@careconnex.com</a></p>
-          <p>General Support: <a href="mailto:support@careconnex.com" className="text-primary-600 underline">support@careconnex.com</a></p>
-          <p>CareConnex Inc. &nbsp;·&nbsp; www.careconnex.com</p>
+          <p>Privacy Officer: <a href="mailto:privacy@eviacares.com" className="text-primary-600 underline">privacy@eviacares.com</a></p>
+          <p>General Support: <a href="mailto:support@eviacares.com" className="text-primary-600 underline">support@eviacares.com</a></p>
+          <p>Evia Inc. &nbsp;·&nbsp; www.eviacares.com</p>
         </section>
 
         <p className="text-xs text-slate-400 pt-4 border-t border-slate-200">This Privacy Policy was last updated February 7, 2026. We will notify you of material changes by posting the updated Policy on our platform and updating the effective date.</p>

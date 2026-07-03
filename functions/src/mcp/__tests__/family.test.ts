@@ -141,7 +141,7 @@ describe("family tools", () => {
       expect(r.success).toBe(true);
       expect(r.added).toBe(true);
       expect(r.notification.sent).toBe(true);
-      expect(trySend).toHaveBeenCalledWith("+15555550111", expect.stringContaining("CareConnex care group"), "mcp:add_family_member");
+      expect(trySend).toHaveBeenCalledWith("+15555550111", expect.stringContaining("Evia care group"), "mcp:add_family_member");
     });
 
     it("surfaces notification.sent=false when welcome SMS fails", async () => {
@@ -202,7 +202,7 @@ describe("family tools", () => {
       expect(r.success).toBe(true);
       // Welcome SMS must go to the MEMBER, not the acting user — definitive proof
       // the right person was added despite phone being auto-injected.
-      expect(trySend).toHaveBeenCalledWith("+15555550111", expect.stringContaining("CareConnex care group"), "mcp:add_family_member");
+      expect(trySend).toHaveBeenCalledWith("+15555550111", expect.stringContaining("Evia care group"), "mcp:add_family_member");
       expect(trySend).not.toHaveBeenCalledWith("+15550009999", expect.anything(), expect.anything());
     });
   });

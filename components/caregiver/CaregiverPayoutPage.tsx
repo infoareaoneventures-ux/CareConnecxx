@@ -11,8 +11,8 @@ import type { Caregiver } from '../../types';
 const FAQS: Array<{ q: string; a: string }> = [
   { q: 'Why should I accept credit card payments?', a: 'Families overwhelmingly prefer paying by card. Accepting card payments significantly increases the jobs you see and land.' },
   { q: 'How long will payout setup take? What will I need?', a: 'Most caregivers finish in under 5 minutes. Have a photo ID and your bank routing info ready.' },
-  { q: 'Are there any fees to accept credit card payments?', a: 'CareConnex covers Stripe processing fees for membership customers. See your plan for details.' },
-  { q: 'How can I pay with my CareConnex balance?', a: 'Funds arrive in your connected bank on a rolling schedule after each credit-card booking is completed.' },
+  { q: 'Are there any fees to accept credit card payments?', a: 'Evia covers Stripe processing fees for membership customers. See your plan for details.' },
+  { q: 'How can I pay with my Evia balance?', a: 'Funds arrive in your connected bank on a rolling schedule after each credit-card booking is completed.' },
   { q: 'Can I transfer funds to my own bank account?', a: 'Yes — link any US bank account during onboarding. Instant payout options may apply on eligible accounts.' },
 ];
 

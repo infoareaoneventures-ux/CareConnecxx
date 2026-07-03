@@ -42,7 +42,7 @@ export const PaymentSuccess: React.FC<PaymentSuccessProps> = ({ onNavigate, onPa
           <>
             <h1 className="text-2xl font-bold text-slate-900 mb-2">All done!</h1>
             <p className="text-slate-500 mb-8">
-              Cara is ready for you. Head back to continue setting up your care.
+              Evia is ready for you. Head back to continue setting up your care.
             </p>
           </>
         ) : (

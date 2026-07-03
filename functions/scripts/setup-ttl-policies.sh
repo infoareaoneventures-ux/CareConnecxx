@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Firestore TTL policies for CareConnex (one-time / idempotent).
+# Firestore TTL policies for Evia (one-time / idempotent).
 #
 # Firestore TTL is configured per collection-group on a Timestamp field; docs
 # whose field value is in the past are auto-deleted (within ~24h). It is NOT

@@ -24,7 +24,7 @@ import { DirectMessage, Thread } from '../types';
 import { validators, ValidationError } from '../utils/validation';
 
 export const SUPPORT_AGENT_ID = 'careconnex-support';
-export const SUPPORT_AGENT_NAME = 'CareConnex Support';
+export const SUPPORT_AGENT_NAME = 'Evia Support';
 
 export interface ChatRoom {
   id: string;
@@ -106,7 +106,7 @@ export const chatService = {
     await addDoc(collection(fdb, 'chatRooms', chatRoomRef.id, 'messages'), {
       chatRoomId: chatRoomRef.id,
       senderId: 'system',
-      senderName: 'CareConnex',
+      senderName: 'Evia',
       text: `Chat started between ${clientName} and ${caregiverName}. You can now coordinate details for your appointment.`,
       timestamp: serverTimestamp(),
       createdAt: new Date().toISOString(),

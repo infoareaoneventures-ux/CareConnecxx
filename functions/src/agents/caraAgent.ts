@@ -98,7 +98,7 @@ async function shouldSend(
 // Matches both explicit URLs (https://example.com/path) and bare hostnames
 // the matching/onboarding agents sometimes produce when the LLM drops the
 // scheme to save SMS characters (careconnex-d4c8b.web.app/caregiver/abc).
-// Without https://, iMessage won't auto-link the URL — see issue where Cara's
+// Without https://, iMessage won't auto-link the URL — see issue where Evia's
 // caregiver-profile links rendered as plain text.
 const URL_RE =
   /\b(?:https?:\/\/[^\s<>"'`)\]]+|(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|app|net|org|io|co|us|web\.app|dev|ai)(?:\/[^\s<>"'`)\]]*)?)/gi;
@@ -246,7 +246,7 @@ export async function sendViaInteractionAgent(
   // urgencies — a doubled critical message is a redelivery artifact). Distinct
   // content, or the same content sent later, still goes out.
   // Fail open (like the supervisor call below): if the dedup claim throws
-  // (e.g. Firestore unavailable) we send anyway rather than letting Cara go
+  // (e.g. Firestore unavailable) we send anyway rather than letting Evia go
   // dark — a rare duplicate is far less harmful than a dropped message.
   let isDuplicate = false;
   try {
@@ -265,7 +265,7 @@ export async function sendViaInteractionAgent(
   }
 
   // Run through supervisor (which also lints internally). If supervisor throws
-  // we fail-open (send unsupervised) so Cara doesn't go dark — but record an
+  // we fail-open (send unsupervised) so Evia doesn't go dark — but record an
   // admin_alert so a sustained supervisor outage gets noticed instead of just
   // showing up in logs.
   const safe = await supervise(output.content, { phone }).catch((err) => {

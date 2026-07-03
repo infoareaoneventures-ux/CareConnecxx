@@ -1,6 +1,6 @@
 // Adapted from BuilderIO/agent-native packages/core/src/agent/tool-call-journal.ts.
 // Original project: https://github.com/BuilderIO/agent-native
-// License: MIT. CareConnex localizes event types and keeps the utility pure.
+// License: MIT. Evia localizes event types and keeps the utility pure.
 
 export interface ToolCallEvent {
   type: "tool_start" | "tool_done" | "clear";
@@ -115,7 +115,7 @@ export function buildResumeJournalNote(journal: ToolCallJournal): string | null 
   if (isJournalEmpty(journal)) return null;
 
   const lines: string[] = [
-    "Tool-call journal from the interrupted Cara turn:",
+    "Tool-call journal from the interrupted Evia turn:",
   ];
 
   if (journal.completed.length > 0) {

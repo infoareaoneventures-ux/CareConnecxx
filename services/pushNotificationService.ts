@@ -291,7 +291,7 @@ class PushNotificationService {
       const sendTestFn = httpsCallable(this.functions, 'v1-sendAppointmentReminder');
       await sendTestFn({
         title: 'Test Notification',
-        body: 'This is a test push notification from CareConnex!',
+        body: 'This is a test push notification from Evia!',
         appointmentId: 'test'
       });
       console.log('Test notification sent');

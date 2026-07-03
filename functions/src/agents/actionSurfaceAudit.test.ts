@@ -3,7 +3,7 @@ import { z } from "zod";
 import { defineCaraAction } from "./actionNative/defineCaraAction";
 import { CaraActionRegistry } from "./actionNative/caraActionRegistry";
 
-describe("Cara action surface audit", () => {
+describe("Evia action surface audit", () => {
   it("keeps admin-only actions out of client model-visible surfaces", () => {
     const registry = new CaraActionRegistry();
     registry.register(defineCaraAction({

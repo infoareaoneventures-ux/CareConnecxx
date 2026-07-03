@@ -197,12 +197,12 @@ describe("splitTextAndUrls — plain-string URL extraction", () => {
 
   it("prepends https:// to a bare hostname URL", async () => {
     const { sendMessage } = await import("./client");
-    await sendMessage("chat-1", "Browse caregivers at careconnex.com/find");
+    await sendMessage("chat-1", "Browse caregivers at eviacares.com/find");
 
     const bodies = messageBodies();
     expect(bodies.length).toBe(2);
     expect(parts(bodies[0])).toEqual([{ type: "text", value: "Browse caregivers at" }]);
-    expect(parts(bodies[1])[0]).toEqual({ type: "link", value: "https://careconnex.com/find" });
+    expect(parts(bodies[1])[0]).toEqual({ type: "link", value: "https://eviacares.com/find" });
   });
 
   it("moves trailing sentence punctuation off the URL and back into the text", async () => {

@@ -81,7 +81,7 @@ describe('AuthLoginPage', () => {
     await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/admin', { replace: true }));
   });
 
-  it('routes a user with NO profile doc to the chat tab (Meet-Cara state), never a signup bounce', async () => {
+  it('routes a user with NO profile doc to the chat tab (Meet-Evia state), never a signup bounce', async () => {
     hoisted.getUser.mockResolvedValue(null);
     render(<AuthLoginPage />);
     await enterPhoneAndSend();

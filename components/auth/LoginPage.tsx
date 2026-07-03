@@ -99,7 +99,7 @@ export const AuthLoginPage: React.FC = () => {
       const cred = await confirmation.confirm(code);
       // Role-aware landing on the Chat tab — chat is the home surface
       // (tomo-style). A brand-new account with no profile also lands on chat,
-      // which renders the "Meet Cara" get-set-up state instead of bouncing
+      // which renders the "Meet Evia" get-set-up state instead of bouncing
       // straight into the signup wizard.
       const uid = cred?.user?.uid ?? auth?.currentUser?.uid;
       let dest = '/client/chat';
@@ -131,7 +131,7 @@ export const AuthLoginPage: React.FC = () => {
           <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center mx-auto">
             <span className="text-white font-bold text-lg">C</span>
           </div>
-          <div className="text-2xl font-bold tracking-tight">Cara</div>
+          <div className="text-2xl font-bold tracking-tight">Evia</div>
           <p className="text-white/40 text-sm">Welcome back</p>
         </div>
 
@@ -172,7 +172,7 @@ export const AuthLoginPage: React.FC = () => {
             </button>
 
             <p className="text-white/25 text-xs text-center">
-              New to Cara?{' '}
+              New to Evia?{' '}
               <Link to="/start" className="text-blue-400 hover:text-blue-300">Get started →</Link>
             </p>
           </form>

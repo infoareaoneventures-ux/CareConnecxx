@@ -62,7 +62,7 @@ export interface RaiseProviderFailureAlertParams {
 }
 
 // Best-effort alerting sink for a provider-call failure: writes a typed
-// admin_alerts doc and, for the classes that mean "Cara is silently degraded
+// admin_alerts doc and, for the classes that mean "Evia is silently degraded
 // for everyone" (billing/auth), best-effort SMS's the founder via ADMIN_PHONE.
 // Never throws — a failed alert must not break the user's turn.
 export async function raiseProviderFailureAlert(params: RaiseProviderFailureAlertParams): Promise<void> {
@@ -120,6 +120,6 @@ async function smsAdmin(): Promise<void> {
   const { sendToPhone } = await import("../linq/client");
   await sendToPhone(
     adminPhone,
-    "CareConnex: Cara's AI provider is failing (billing/auth) — users are getting fallback replies. Check the provider console.",
+    "Evia: the AI provider is failing (billing/auth) — users are getting fallback replies. Check the provider console.",
   ).catch(() => {});
 }

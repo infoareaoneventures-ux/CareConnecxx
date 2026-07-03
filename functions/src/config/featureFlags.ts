@@ -75,7 +75,7 @@ export function isConvergenceFlipped(flow: string): boolean {
 // Agent-native onboarding collapse (the conversational-collapse plan). When a
 // role key is present, that role's CONVERSATIONAL field-collection runs inside
 // the qaAgent loop (onboardingMode) instead of the scripted step runner — so
-// Cara leads collection as one agent and never re-greets / double-sends. The
+// Evia leads collection as one agent and never re-greets / double-sends. The
 // deterministic transactional gates (payment/OTP/Checkr/Stripe/uploads) are NOT
 // affected. OFF by default: the scripted runner ships until a real-model eval
 // (U8) clears the flip. Comma-separated role keys, e.g. "client" or

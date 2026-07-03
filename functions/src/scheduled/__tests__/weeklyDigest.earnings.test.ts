@@ -141,7 +141,7 @@ describe("shiftGrossCents", () => {
   it("resolves grossPay (dollars) to cents", () => {
     expect(shiftGrossCents({ grossPay: 120 })).toBe(12000);
   });
-  it("uses amountCents when grossPay is absent (Cara / care-notes rail)", () => {
+  it("uses amountCents when grossPay is absent (Evia / care-notes rail)", () => {
     expect(shiftGrossCents({ amountCents: 8000 })).toBe(8000);
   });
   it("falls back to hours × rate", () => {
@@ -207,7 +207,7 @@ describe("runWeeklyDigests — caregiver earnings", () => {
     expect(phone).toBe("+15550000001");
     expect(payload.sourceAgent).toBe("weekly_digest");
 
-    // Context handed to Cara reflects $120 + $80 = $200 over 2 visits.
+    // Context handed to Evia reflects $120 + $80 = $200 over 2 visits.
     const ctx = hoisted.caraMsgSpy.mock.calls[0][0].context as string;
     expect(ctx).toContain("$200.00");
     expect(ctx).toContain("2 visit");

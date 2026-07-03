@@ -63,26 +63,26 @@ async function answerPermissionQuestion(
 // then re-pose the exact question the user was on.
 const CLIENT_STEPS: Record<string, { desc: string; reask: string }> = {
   client_permissions_contact: {
-    desc:  "Can Cara reach out to caregivers on your behalf to schedule interviews once you select someone?",
+    desc:  "Can Evia reach out to caregivers on your behalf to schedule interviews once you select someone?",
     reask: "Can I reach out to caregivers on your behalf to schedule interviews once you select someone?\n\nReply YES or NO",
   },
   client_permissions_booking: {
-    desc:  "Once you've approved a caregiver, can Cara book their first visits for you (always showing you what's booked and waiting for confirmation)?",
+    desc:  "Once you've approved a caregiver, can Evia book their first visits for you (always showing you what's booked and waiting for confirmation)?",
     reask: "Once you've approved a caregiver after an interview, can I book their first visits for you? I'll always show you exactly what I'm booking and wait for your confirmation.\n\nReply YES or NO",
   },
   client_permissions_autobook: {
-    desc:  "For recurring visits with a caregiver you've already approved, can Cara book automatically without checking each time?",
+    desc:  "For recurring visits with a caregiver you've already approved, can Evia book automatically without checking each time?",
     reask: "For recurring visits with a caregiver you've already approved, can I go ahead and book automatically without checking each time?\n\n1️⃣ Yes, book automatically\n2️⃣ No, always ask me first",
   },
 };
 
 const CAREGIVER_STEPS: Record<string, { desc: string; reask: string }> = {
   caregiver_permissions_decline: {
-    desc:  "Can Cara automatically decline job requests that are outside your stated availability?",
+    desc:  "Can Evia automatically decline job requests that are outside your stated availability?",
     reask: "Can I automatically decline job requests that are outside your stated availability?\n(Saves you time on requests you can't take)\n\nReply YES or NO",
   },
   caregiver_permissions_arrival: {
-    desc:  "When you arrive at a client's home, do you want Cara to automatically notify the family?",
+    desc:  "When you arrive at a client's home, do you want Evia to automatically notify the family?",
     reask: "When you arrive at a client's home, want me to automatically notify the family?\nThey love knowing their caregiver has arrived.\n\nReply YES or NO",
   },
 };
@@ -154,7 +154,7 @@ export async function sendClientPermissionsFlow(
 
   const msgPerm1 = await generateCaraMessage({
     audience: "family",
-    context: `Cara has already started searching for caregivers for ${d.seniorName ?? "a loved one"}. Before sending matches, Cara needs to ask a couple of quick questions. Introduce this warmly and ask if Cara can reach out to caregivers on the family's behalf to schedule interviews once they select someone.`,
+    context: `Evia has already started searching for caregivers for ${d.seniorName ?? "a loved one"}. Before sending matches, Evia needs to ask a couple of quick questions. Introduce this warmly and ask if Evia can reach out to caregivers on the family's behalf to schedule interviews once they select someone.`,
     fallback: `I'm already searching for caregivers for ${d.seniorName ?? "your loved one"}. Before I send you matches, two quick questions so I know how to best help you.\n\nCan I reach out to caregivers on your behalf to schedule interviews once you select someone?`,
   });
   await sendMessage(chatId, `${msgPerm1}\n\nReply YES or NO`);
@@ -185,7 +185,7 @@ export async function handleClientPermissionsReply(
     await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "client_permissions_booking" });
     const msgPerm2 = await generateCaraMessage({
       audience: "family",
-      context: "Cara just received the family's answer about scheduling interviews. Acknowledge their reply, then ask: once they've approved a caregiver after an interview, can Cara book the first visits for them? Mention that Cara will always show exactly what's being booked and wait for confirmation before scheduling anything.",
+      context: "Evia just received the family's answer about scheduling interviews. Acknowledge their reply, then ask: once they've approved a caregiver after an interview, can Evia book the first visits for them? Mention that Evia will always show exactly what's being booked and wait for confirmation before scheduling anything.",
       fallback: "Got it.\n\nOnce you've approved a caregiver after an interview, can I book their first visits for you? I'll always show you exactly what I'm booking and wait for your confirmation before anything is scheduled.",
     });
     await sendMessage(chatId, `${msgPerm2}\n\nReply YES or NO`);
@@ -202,7 +202,7 @@ export async function handleClientPermissionsReply(
     await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "client_permissions_autobook" });
     const msgPerm3 = await generateCaraMessage({
       audience: "family",
-      context: "Cara just received the family's answer about booking visits. Acknowledge, then ask: for recurring visits with a caregiver they've already approved, can Cara book automatically without checking each time?",
+      context: "Evia just received the family's answer about booking visits. Acknowledge, then ask: for recurring visits with a caregiver they've already approved, can Evia book automatically without checking each time?",
       fallback: "Got it.\n\nOne more thing — for recurring visits with a caregiver you've already approved, can I go ahead and book automatically without checking each time?",
     });
     await sendMessage(chatId,
@@ -223,13 +223,13 @@ export async function handleClientPermissionsReply(
     });
     const msgPerm4 = await generateCaraMessage({
       audience: "family",
-      context: `Cara just finished the permissions setup for a family. They ${isYes ? "said YES to automatic booking" : "said NO — they want to make final calls themselves"}. Send a warm closing message acknowledging their choice, let them know Cara is still searching and will text the top caregiver matches within the hour, and invite them to text anytime with questions.`,
+      context: `Evia just finished the permissions setup for a family. They ${isYes ? "said YES to automatic booking" : "said NO — they want to make final calls themselves"}. Send a warm closing message acknowledging their choice, let them know Evia is still searching and will text the top caregiver matches within the hour, and invite them to text anytime with questions.`,
       fallback: `Perfect. I'll handle all the coordination${isYes ? " and book automatically" : " — you make the final calls"}.\n\nI'm still searching for caregivers — I'll text you the top matches within the hour.\n\nQuestions? Just text me anytime.`,
     });
     await sendMessage(chatId, msgPerm4);
 
     // Capability discovery: now that onboarding is complete, tell the family
-    // what Cara can actually do in care-work terms, not a chatbot menu.
+    // what Evia can actually do in care-work terms, not a chatbot menu.
     await sendMessage(chatId, buildHelpSmsReply("client", undefined,
       languageFromSession(session as unknown as Record<string, unknown>)));
 
@@ -263,7 +263,7 @@ export async function sendCaregiverPermissionsFlow(
   });
   const msgPerm5 = await generateCaraMessage({
     audience: "caregiver",
-    context: `Cara is starting the permissions setup for caregiver ${caregiverName}. Ask a couple of quick questions so Cara can work best for them. First question: can Cara automatically decline job requests that are outside their stated availability? Mention it saves them time on requests they can't take.`,
+    context: `Evia is starting the permissions setup for caregiver ${caregiverName}. Ask a couple of quick questions so Evia can work best for them. First question: can Evia automatically decline job requests that are outside their stated availability? Mention it saves them time on requests they can't take.`,
     fallback: `A couple of quick questions so I can work best for you, ${caregiverName}:\n\nCan I automatically decline job requests that are outside your stated availability?\n(Saves you time on requests you can't take)`,
   });
   await sendMessage(chatId, `${msgPerm5}\n\nReply YES or NO`);
@@ -294,7 +294,7 @@ export async function handleCaregiverPermissionsReply(
     await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "caregiver_permissions_arrival" });
     const msgPerm6 = await generateCaraMessage({
       audience: "caregiver",
-      context: "Cara just received a caregiver's answer about auto-declining jobs. Acknowledge it, then ask: when they arrive at a client's home, would they like Cara to automatically notify the family? Families love knowing their caregiver has arrived.",
+      context: "Evia just received a caregiver's answer about auto-declining jobs. Acknowledge it, then ask: when they arrive at a client's home, would they like Evia to automatically notify the family? Families love knowing their caregiver has arrived.",
       fallback: "Got it.\n\nWhen you arrive at a client's home, want me to automatically notify the family?\nThey love knowing their caregiver has arrived.",
     });
     await sendMessage(chatId, `${msgPerm6}\n\nReply YES or NO`);
@@ -317,13 +317,13 @@ export async function handleCaregiverPermissionsReply(
 
     const msgPerm7 = await generateCaraMessage({
       audience: "caregiver",
-      context: `Caregiver ${d.name ? String(d.name) : ""}${city ? ` based${city}` : ""} just completed onboarding and permissions setup. Their profile is now live and they're ready to be matched with families. Celebrate this warmly, let them know what happens next (Cara will text job details when a family needs someone with their skills, including the care plan and directions before every visit).`,
+      context: `Caregiver ${d.name ? String(d.name) : ""}${city ? ` based${city}` : ""} just completed onboarding and permissions setup. Their profile is now live and they're ready to be matched with families. Celebrate this warmly, let them know what happens next (Evia will text job details when a family needs someone with their skills, including the care plan and directions before every visit).`,
       fallback: `You're all set${name}! Your profile is live and you're ready to be matched with families${city}.\n\nWhen a family needs someone with your skills, I'll text you the job details — including the care plan and directions before every visit.`,
     });
     await sendMessage(chatId, `${msgPerm7}\n\nView your profile: ${appUrl}/caregiver/${caregiverId}`);
 
     // Capability discovery: onboarding is complete — tell the caregiver what
-    // Cara can do in care-work terms, not a chatbot menu.
+    // Evia can do in care-work terms, not a chatbot menu.
     await sendMessage(chatId, buildHelpSmsReply("caregiver", undefined,
       languageFromSession(session as unknown as Record<string, unknown>)));
 

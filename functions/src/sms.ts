@@ -1,5 +1,5 @@
 /**
- * SMS Service — Linq iMessage/RCS/SMS integration for CareConnex
+ * SMS Service — Linq iMessage/RCS/SMS integration for Evia
  * All transactional messages route through Linq; Twilio is retained for Video only.
  */
 
@@ -176,36 +176,36 @@ export async function sendSMSToUser(
 
 export const SMS_TEMPLATES = {
   bookingConfirmed: (caregiverName: string, date: string, time: string) =>
-    `Cara: Your booking with ${caregiverName} is confirmed for ${date} at ${time}. View details in the app.`,
+    `Evia: Your booking with ${caregiverName} is confirmed for ${date} at ${time}. View details in the app.`,
 
   newBookingRequest: (clientName: string, date: string, time: string) =>
-    `Cara: New booking! ${clientName} booked you for ${date} at ${time}. Open app to confirm.`,
+    `Evia: New booking! ${clientName} booked you for ${date} at ${time}. Open app to confirm.`,
 
   bookingCancelled: (name: string, date: string, reason?: string) =>
-    `Cara: ${name} cancelled the appointment on ${date}.${reason ? ` Reason: ${reason}` : ""} Open app for details.`,
+    `Evia: ${name} cancelled the appointment on ${date}.${reason ? ` Reason: ${reason}` : ""} Open app for details.`,
 
   newMessage: (senderName: string) =>
-    `Cara: New message from ${senderName}. Open the app to reply.`,
+    `Evia: New message from ${senderName}. Open the app to reply.`,
 
   interviewScheduled: (name: string, dateTime: string) =>
-    `Cara: Video interview with ${name} scheduled for ${dateTime}. Open app to join when ready.`,
+    `Evia: Video interview with ${name} scheduled for ${dateTime}. Open app to join when ready.`,
 
   interviewReminder: (name: string, minutesUntil: number) =>
-    `Cara: Reminder! Your interview with ${name} starts in ${minutesUntil} minutes. Open app to join.`,
+    `Evia: Reminder! Your interview with ${name} starts in ${minutesUntil} minutes. Open app to join.`,
 
   shiftReminder: (clientName: string, time: string) =>
-    `Cara: Reminder! Your shift with ${clientName} starts at ${time}. Don't forget to clock in!`,
+    `Evia: Reminder! Your shift with ${clientName} starts at ${time}. Don't forget to clock in!`,
 
   paymentReceived: (amount: string) =>
-    `Cara: Payment of ${amount} has been deposited to your account. View earnings in app.`,
+    `Evia: Payment of ${amount} has been deposited to your account. View earnings in app.`,
 
   backgroundCheckComplete: (status: "clear" | "flagged") =>
     status === "clear"
-      ? `Cara: Great news! Your background check is complete and clear. You're ready to accept bookings!`
-      : `Cara: Your background check requires review. Please contact support for next steps.`,
+      ? `Evia: Great news! Your background check is complete and clear. You're ready to accept bookings!`
+      : `Evia: Your background check requires review. Please contact support for next steps.`,
 
   emergencyAlert: (initiatorName: string) =>
-    `🚨 Cara URGENT: ${initiatorName} triggered an emergency alert. Please check in immediately or call 911 if needed.`,
+    `🚨 Evia URGENT: ${initiatorName} triggered an emergency alert. Please check in immediately or call 911 if needed.`,
 
   caregiverCallout: (
     caregiverName: string,
@@ -214,7 +214,7 @@ export const SMS_TEMPLATES = {
     backupCount: number,
     backupNames: string
   ) =>
-    `Cara: ${caregiverName} cancelled your ${date} at ${time} appointment. ${backupCount} backup caregiver(s) available: ${backupNames}. Open app to select replacement or request refund.`,
+    `Evia: ${caregiverName} cancelled your ${date} at ${time} appointment. ${backupCount} backup caregiver(s) available: ${backupNames}. Open app to select replacement or request refund.`,
 
   backupCaregiverAssigned: (
     clientName: string,
@@ -222,7 +222,7 @@ export const SMS_TEMPLATES = {
     time: string,
     address?: string
   ) =>
-    `Cara: You've been assigned to care for ${clientName} on ${date} at ${time}. Previous caregiver called out.${address ? ` Address: ${address}` : ""} Open app for details.`,
+    `Evia: You've been assigned to care for ${clientName} on ${date} at ${time}. Previous caregiver called out.${address ? ` Address: ${address}` : ""} Open app for details.`,
 };
 
 // ── Phone health check (Linq API) ────────────────────────────────────────────
@@ -274,7 +274,7 @@ export async function syncPhoneHealth(): Promise<void> {
 // ── Contact card setup ────────────────────────────────────────────────────────
 
 /**
- * One-time setup: configure Cara's identity on the provisioned Linq number.
+ * One-time setup: configure Evia's identity on the provisioned Linq number.
  * Safe to call on every deploy — uses PATCH if card already exists.
  */
 export async function setupCaraContactCard(params?: {
@@ -289,8 +289,8 @@ export async function setupCaraContactCard(params?: {
   }
   await createOrUpdateContactCard({
     phone_number: phoneNumber,
-    first_name:   params?.firstName ?? "Cara",
-    last_name:    params?.lastName  ?? "CareConnex",
+    first_name:   params?.firstName ?? "Evia",
+    last_name:    params?.lastName  ?? "Evia",
     image_url:    params?.imageUrl  ?? process.env.CARA_AVATAR_URL,
   });
 }

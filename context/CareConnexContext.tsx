@@ -207,7 +207,7 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             return;
         }
 
-        console.log('[CareConnex] Subscribing to appointments for', currentUser.uid);
+        console.log('[Evia] Subscribing to appointments for', currentUser.uid);
         
         const unsubscribe = dbService.subscribeToAppointments(
             currentUser.uid,
@@ -218,12 +218,12 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         );
 
         return () => {
-            console.log('[CareConnex] Unsubscribing from appointments');
+            console.log('[Evia] Unsubscribing from appointments');
             unsubscribe();
         };
     }, [currentUser?.uid, currentUser?.userType]); // Only re-subscribe when user changes
 
-    // U2: Live caregiver-profile listener. Cara writes to caregivers/{uid}
+    // U2: Live caregiver-profile listener. Evia writes to caregivers/{uid}
     // during onboarding/profile edits/verification; this keeps the caregiver
     // dashboard fresh without a logout/login. Per KTD-4, the listener updates
     // context state unconditionally — consuming edit forms hold their in-progress

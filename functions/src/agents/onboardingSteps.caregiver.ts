@@ -13,7 +13,7 @@ import { AgentSession } from "../linq/client";
  *
  * Every user-visible string here is copied VERBATIM from the former
  * `handleCaregiverAsk*` handlers in onboardingConversation.ts. Changing any of
- * them changes what Cara says — that is a regression, not a refactor.
+ * them changes what Evia says — that is a regression, not a refactor.
  *
  * ── Boundary: what is migrated vs. left bespoke ──────────────────────────────
  * MIGRATED (here): caregiver_ask_name, caregiver_ask_experience,
@@ -45,7 +45,7 @@ import { AgentSession } from "../linq/client";
  */
 
 export interface CaregiverStepDeps {
-  /** Generate Cara's next line (ack + next question) — same call shape as before. */
+  /** Generate Evia's next line (ack + next question) — same call shape as before. */
   generateCaraMessage: (opts: {
     audience: "caregiver" | "family";
     context: string;
@@ -78,7 +78,7 @@ export function buildCaregiverSteps(deps: CaregiverStepDeps): Record<string, Con
         const name = (session.onboardingData?.name as string) ?? "";
         const msg9 = await generateCaraMessage({
           audience: "caregiver",
-          context: `Cara just learned the caregiver's name is ${name}. Greet them by name and ask what city and zip code they work in.`,
+          context: `Evia just learned the caregiver's name is ${name}. Greet them by name and ask what city and zip code they work in.`,
           fallback: `Hi ${name} — what city and zip code do you work in?`,
           maxTokens: 80,
         });
@@ -106,7 +106,7 @@ export function buildCaregiverSteps(deps: CaregiverStepDeps): Record<string, Con
         const msg11intro = await generateCaraMessage({
           audience: "caregiver",
           context:
-            `Cara is onboarding a caregiver who just told her they have ${yearsExperience || "some"} years of experience` +
+            `Evia is onboarding a caregiver who just told her they have ${yearsExperience || "some"} years of experience` +
             `${certifications.length ? ` and these certifications: ${certifications.join(", ")}` : ""}. ` +
             `Acknowledge that warmly in one short line (genuine, not flattery clichés), then ask what types of care they specialize in.`,
           fallback: "What types of care do you specialize in?",
@@ -135,7 +135,7 @@ export function buildCaregiverSteps(deps: CaregiverStepDeps): Record<string, Con
         return generateCaraMessage({
           audience: "caregiver",
           context:
-            `Cara is onboarding a caregiver who just shared their specialties${specialties.length ? `: ${specialties.join(", ")}` : ""}. ` +
+            `Evia is onboarding a caregiver who just shared their specialties${specialties.length ? `: ${specialties.join(", ")}` : ""}. ` +
             `Acknowledge it warmly in one short line, then ask three quick profile details families use when matching: ` +
             `whether they're male or female (some families have a preference), what languages they speak, and whether they can ` +
             `drive clients to appointments. Keep it light and quick.`,
@@ -165,7 +165,7 @@ export function buildCaregiverSteps(deps: CaregiverStepDeps): Record<string, Con
         const availIntro = await generateCaraMessage({
           audience: "caregiver",
           context:
-            `Cara is onboarding a caregiver who just shared their availability${hours ? ` (${hours})` : ""}. ` +
+            `Evia is onboarding a caregiver who just shared their availability${hours ? ` (${hours})` : ""}. ` +
             `Acknowledge it warmly in one short line, then ask whether they want occasional, part-time, or ` +
             `full-time work. Phrase it as a natural either/or question, not a numbered menu.`,
           fallback: "Got it, thanks!",
@@ -234,7 +234,7 @@ export function buildCaregiverSteps(deps: CaregiverStepDeps): Record<string, Con
         return generateCaraMessage({
           audience: "caregiver",
           context:
-            `Cara is onboarding a caregiver who just set their rate at $${hourlyRate}/hr. Acknowledge it in one short, ` +
+            `Evia is onboarding a caregiver who just set their rate at $${hourlyRate}/hr. Acknowledge it in one short, ` +
             `genuine line (no flattery clichés), then ask for their email address, mentioning it's used to set up their payout account.`,
           fallback: `$${hourlyRate}/hr works. What's your email address? I'll use it to set up your payout account.`,
           maxTokens: 70,

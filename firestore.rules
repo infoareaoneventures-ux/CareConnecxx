@@ -235,7 +235,7 @@ service cloud.firestore {
       allow read: if isAuthenticated() &&
         request.auth.uid in resource.data.participants;
 
-      // Cara threads (isCaraThread == true) are written server-side only
+      // Evia threads (isCaraThread == true) are written server-side only
       // (Admin SDK via threadMirror / chatWithCara); the sole client-side
       // update allowed is clearing the unread counter.
       allow update: if isAuthenticated() &&
@@ -247,7 +247,7 @@ service cloud.firestore {
 
       allow delete: if isAdmin();
 
-      // Create new thread (clients can never create Cara threads)
+      // Create new thread (clients can never create Evia threads)
       allow create: if isAuthenticated() &&
         request.auth.uid in request.resource.data.participants &&
         request.resource.data.participants is list &&
@@ -260,7 +260,7 @@ service cloud.firestore {
         allow read: if isAuthenticated() &&
           request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
 
-        // Cara-thread messages are server-only: clients cannot create, edit,
+        // Evia-thread messages are server-only: clients cannot create, edit,
         // or delete them (prevents forging senderId 'cara' into the record).
         allow write: if isAuthenticated() &&
           get(/databases/$(database)/documents/threads/$(threadId)).data.get('isCaraThread', false) != true &&
@@ -954,7 +954,7 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Proactive reflection drafts — Cara's pending/approved SMS suggestions for human review.
+    // Proactive reflection drafts — Evia's pending/approved SMS suggestions for human review.
     // Admin-only UI surface (ProactiveReflectionDashboard). Cloud Functions use the Admin
     // SDK and bypass rules entirely, so the sender + reflection cron are unaffected.
     match /proactive_drafts/{draftId} {
@@ -968,14 +968,14 @@ service cloud.firestore {
       allow create, delete: if false;
     }
 
-    // Agent audit log — every consequential Cara action (observability/auditLog.ts).
+    // Agent audit log — every consequential Evia action (observability/auditLog.ts).
     // Written server-side only; AuditTrail/AuditDashboard admin surfaces read it.
     match /agent_audit_log/{entryId} {
       allow read: if isAdmin();
       allow write: if false;
     }
 
-    // Family-facing "Cara Activity" feed (U8) — a projection of allow-listed audit
+    // Family-facing "Evia Activity" feed (U8) — a projection of allow-listed audit
     // events, written ONLY by the projectActivityFeed trigger (Admin SDK) with a
     // resolved family-owner uid and PII-free description. Owner reads their own
     // feed; raw agent_audit_log above stays admin-only.
@@ -987,7 +987,7 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Agent action ledger — execution status for high-impact Cara actions.
+    // Agent action ledger — execution status for high-impact Evia actions.
     // Written server-side only; admin reads failure/risk state.
     match /agent_action_ledger/{entryId} {
       allow read: if isAdmin();
@@ -1012,14 +1012,14 @@ service cloud.firestore {
       allow create, delete: if false;
     }
 
-    // Cara turn metrics — bounded no-message-text quality/experiment mirror.
-    // Written server-side only; Admin Cara Control Room reads flagged rows.
+    // Evia turn metrics — bounded no-message-text quality/experiment mirror.
+    // Written server-side only; Admin Evia Control Room reads flagged rows.
     match /cara_turn_metrics/{metricId} {
       allow read: if isAdmin();
       allow write: if false;
     }
 
-    // Pending Cara confirmations: admin read only, server write only.
+    // Pending Evia confirmations: admin read only, server write only.
     match /pending_actions/{actionId} {
       allow read: if isAdmin();
       allow update: if isAdmin() &&
@@ -1182,7 +1182,7 @@ service cloud.firestore {
     }
 
     // ==========================================
-    // REPORTS — user abuse/safety reports (components/InboxView.tsx, Cara/mcp)
+    // REPORTS — user abuse/safety reports (components/InboxView.tsx, Evia/mcp)
     // The reporting user creates their own row; only admins review them.
     // Audit-sensitive: not client-deletable.
     // ==========================================

@@ -130,7 +130,7 @@ describe("conversation quality detectors", () => {
 
   it.each([
     "Please contact support for that.",
-    "The Cara team will follow up.",
+    "The Evia team will follow up.",
     "I'd recommend reaching out to our team.",
   ])("flags support deflection %p", (input) => {
     expect(detectSupportDeflection(input)).toBe(true);
@@ -235,7 +235,7 @@ describe("WARMTH_REFLECTION_OPENERS", () => {
 });
 
 describe("memory source priority prompt", () => {
-  it("instructs Cara to prefer fresh tool/user facts over stale long-term memory", () => {
+  it("instructs Evia to prefer fresh tool/user facts over stale long-term memory", () => {
     const prompt = buildClientSystemPrompt(
       { name: "Anita", needs: ["companionship"] },
       [],

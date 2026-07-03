@@ -1,7 +1,7 @@
 import { quickComplete } from "./openaiClient";
 
 /**
- * Shared structured-extraction helper for Cara handlers.
+ * Shared structured-extraction helper for Evia handlers.
  *
  * **The function name is historical** — the underlying model is now
  * `gpt-4o-mini` for speed and lower rate-limit pressure. Public API

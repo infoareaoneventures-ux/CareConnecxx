@@ -29,7 +29,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
       <div className="flex flex-col min-h-screen bg-white font-sans pb-20 md:pb-0">
          <SEO
             title="Find Trusted Senior Caregivers Near You"
-            description="CareConnex connects families with verified local caregivers using AI matching. Find in-home care, respite care, and dementia care for your loved ones."
+            description="Evia connects families with verified local caregivers using AI matching. Find in-home care, respite care, and dementia care for your loved ones."
             keywords="senior care, caregiver, elderly care, home health aide, respite care, dementia care, in-home care, find caregivers"
             schema={{
               '@context': 'https://schema.org',
@@ -39,9 +39,9 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
                 generateFAQSchema(faqs),
                 {
                   '@type': 'WebPage',
-                  name: 'CareConnex - Senior Care Marketplace',
+                  name: 'Evia - Senior Care Marketplace',
                   description: 'Connect with verified caregivers instantly. AI-powered matching for senior care.',
-                  url: 'https://www.careconnex.com/',
+                  url: 'https://www.eviacares.com/',
                   aggregateRating: {
                     '@type': 'AggregateRating',
                     ratingValue: '4.9',
@@ -63,7 +63,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
                      <div className="bg-primary-600 p-2 rounded-2xl shadow-xl shadow-primary-200/50">
                         <Activity className="text-white w-6 h-6" />
                      </div>
-                     <span className="text-2xl font-bold text-slate-900 tracking-tight">CareConnex</span>
+                     <span className="text-2xl font-bold text-slate-900 tracking-tight">Evia</span>
                   </div>
 
                   {/* Desktop Nav */}

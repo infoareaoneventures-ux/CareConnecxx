@@ -43,7 +43,7 @@ export default function IdentityCallback() {
   }, [navigate]);
 
   useEffect(() => {
-    // On mobile Cara flow: don't auto-navigate — let the user tap "Go back to messages"
+    // On mobile Evia flow: don't auto-navigate — let the user tap "Go back to messages"
     if (status === 'verified' && !showBackBtn) {
       const t = window.setTimeout(() => navigate(next, { replace: true }), 1200);
       return () => window.clearTimeout(t);
@@ -78,7 +78,7 @@ export default function IdentityCallback() {
               {showBackBtn ? (
                 <>
                   <p className="text-sm text-slate-600 mb-5">
-                    All done! Cara is ready to continue setting up your care.
+                    All done! Evia is ready to continue setting up your care.
                   </p>
                   <a
                     href={`sms:${caraPhone}`}

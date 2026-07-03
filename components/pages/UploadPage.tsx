@@ -65,14 +65,14 @@ export default function UploadPage() {
         <div>
           <p className="text-white text-xl font-semibold">This link has expired</p>
           <p className="text-white/50 text-sm mt-1">
-            For your security these links expire after a couple of hours. Text Cara and I'll send you a fresh one.
+            For your security these links expire after a couple of hours. Text Evia and I'll send you a fresh one.
           </p>
         </div>
         <a
           href={LINQ_PHONE ? `sms:${LINQ_PHONE}` : '/'}
           className="w-full max-w-xs py-4 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl text-base text-center transition-all active:scale-95"
         >
-          Text Cara for a new link
+          Text Evia for a new link
         </a>
       </div>
     );
@@ -94,7 +94,7 @@ export default function UploadPage() {
           href={LINQ_PHONE ? `sms:${LINQ_PHONE}` : '/'}
           className="text-blue-400 text-sm underline underline-offset-2"
         >
-          Tap here to return to Cara
+          Tap here to return to Evia
         </a>
       </div>
     );

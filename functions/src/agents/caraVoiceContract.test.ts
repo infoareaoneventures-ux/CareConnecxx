@@ -58,8 +58,8 @@ const bannedRuntimePhrases = [
   "I'll get back to you",
 ];
 
-describe("Cara runtime voice contract", () => {
-  it("keeps known chatbot/support-punt phrases out of Cara-owned runtime replies", () => {
+describe("Evia runtime voice contract", () => {
+  it("keeps known chatbot/support-punt phrases out of Evia-owned runtime replies", () => {
     const offenders: string[] = [];
 
     for (const relative of runtimeFiles) {

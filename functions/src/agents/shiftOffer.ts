@@ -1,7 +1,7 @@
 // Shift-offer state machine — the "no silent auto-booking" contract.
 //
 // Any change that puts a caregiver on a shift (new booking, client-requested
-// swap, shift time change) must be ACCEPTED by that caregiver over Cara SMS
+// swap, shift time change) must be ACCEPTED by that caregiver over Evia SMS
 // before the appointment reflects it. This module owns the offer lifecycle:
 //
 //   createShiftOffer()      → writes shift_offers doc, texts the caregiver a

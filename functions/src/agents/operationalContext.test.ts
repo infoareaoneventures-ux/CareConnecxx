@@ -15,7 +15,7 @@ describe("formatCaraOperationalContext", () => {
     })).toBe("");
   });
 
-  it("summarizes pending confirmations, open alerts, and failed actions for Cara", () => {
+  it("summarizes pending confirmations, open alerts, and failed actions for Evia", () => {
     const formatted = formatCaraOperationalContext({
       pendingActions: [{
         id: "pa1",
@@ -27,7 +27,7 @@ describe("formatCaraOperationalContext", () => {
         id: "al1",
         type: "cara_pending_action_failed",
         severity: "high",
-        message: "Cara could not complete an approved action",
+        message: "Evia could not complete an approved action",
       }],
       failedActions: [{
         id: "led1",
@@ -37,7 +37,7 @@ describe("formatCaraOperationalContext", () => {
       }],
     });
 
-    expect(formatted).toContain("CARA OPERATIONS CONTEXT");
+    expect(formatted).toContain("EVIA OPERATIONS CONTEXT");
     expect(formatted).toContain("Awaiting confirmation: Book appointment with Dr. Jones on Friday");
     expect(formatted).toContain("Open admin alert: [high] cara_pending_action_failed");
     expect(formatted).toContain("Recent failed action: pending_action via perform_web_action");

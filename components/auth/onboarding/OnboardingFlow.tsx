@@ -239,10 +239,10 @@ const CaregiverShell: React.FC<{ children: React.ReactNode }> = ({ children }) =
         <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center mx-auto">
           <span className="text-white font-bold text-lg">C</span>
         </div>
-        <div className="text-2xl font-bold tracking-tight">Cara</div>
+        <div className="text-2xl font-bold tracking-tight">Evia</div>
         <p className="text-white/40 text-sm">Your care coordinator</p>
         {/* LAUNCH: wording pending counsel review (R15) */}
-        <p className="text-white/25 text-xs">Cara is an automated coordinator backed by our care team.</p>
+        <p className="text-white/25 text-xs">Evia is an automated coordinator backed by our care team.</p>
       </div>
       {children}
     </div>
@@ -256,7 +256,7 @@ const FamilyShell: React.FC<{ role: OnboardingRole | null; step: Step; children:
         <div className="w-9 h-9 rounded-xl bg-emerald-600 flex items-center justify-center shadow-sm shadow-emerald-200">
           <span className="text-white font-bold text-base">C</span>
         </div>
-        <span className="font-semibold text-slate-900 group-hover:text-emerald-700 transition">CareConnex</span>
+        <span className="font-semibold text-slate-900 group-hover:text-emerald-700 transition">Evia</span>
       </Link>
       <a
         href={SUPPORT_PHONE_HREF}
@@ -269,12 +269,12 @@ const FamilyShell: React.FC<{ role: OnboardingRole | null; step: Step; children:
       <div className="w-full max-w-md space-y-7">
         {step !== 'connected' && (
           <div className="text-center">
-            <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-slate-900">Meet Cara</h1>
+            <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-slate-900">Meet Evia</h1>
             <p className="text-slate-600 mt-2 text-lg leading-relaxed">
               Your care coordinator. She&rsquo;ll help you find the right caregiver for your family.
             </p>
             {/* LAUNCH: wording pending counsel review (R15) */}
-            <p className="text-slate-400 mt-1 text-sm">Cara is an automated coordinator backed by our care team.</p>
+            <p className="text-slate-400 mt-1 text-sm">Evia is an automated coordinator backed by our care team.</p>
           </div>
         )}
         {children}
@@ -346,9 +346,9 @@ const ConsentScreen: React.FC<{
     return (
       <div className="space-y-5">
         <div className="space-y-1 text-center">
-          <h2 className="text-xl font-semibold">Welcome to Cara</h2>
+          <h2 className="text-xl font-semibold">Welcome to Evia</h2>
           <p className="text-white/40 text-sm">
-            Cara communicates with you over iMessage, RCS, or SMS.
+            Evia communicates with you over iMessage, RCS, or SMS.
           </p>
         </div>
         <div className="h-52 overflow-y-auto rounded-2xl border border-white/10 bg-white/5 px-4 py-4 space-y-4 text-sm leading-relaxed">
@@ -410,11 +410,11 @@ const ConsentScreen: React.FC<{
           </li>
           <li className="flex gap-3">
             <span className="flex-shrink-0 w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 font-bold flex items-center justify-center text-sm">2</span>
-            <span>You&rsquo;ll send Cara a quick &ldquo;Hey&rdquo; from your Messages app.</span>
+            <span>You&rsquo;ll send Evia a quick &ldquo;Hey&rdquo; from your Messages app.</span>
           </li>
           <li className="flex gap-3">
             <span className="flex-shrink-0 w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 font-bold flex items-center justify-center text-sm">3</span>
-            <span>Cara replies, asks a few questions, and finds caregivers near you.</span>
+            <span>Evia replies, asks a few questions, and finds caregivers near you.</span>
           </li>
         </ol>
       </div>
@@ -422,8 +422,8 @@ const ConsentScreen: React.FC<{
         <p className="font-semibold text-slate-900 mb-1">Quick note on texts</p>
         <p>
           {role === 'caregiver'
-            ? 'Cara will text you about jobs near you and family requests. Standard message and data rates may apply. Reply STOP anytime.'
-            : 'Cara will text you about caregiver matches and visit updates — never sales pitches. Standard rates may apply. Reply STOP anytime.'}
+            ? 'Evia will text you about jobs near you and family requests. Standard message and data rates may apply. Reply STOP anytime.'
+            : 'Evia will text you about caregiver matches and visit updates — never sales pitches. Standard rates may apply. Reply STOP anytime.'}
           {' '}
           <Link to="/terms" className="underline underline-offset-2">Terms</Link>
           {' · '}
@@ -471,7 +471,7 @@ const NameEntry: React.FC<{
       <form onSubmit={onSubmitForm} className="space-y-5">
         <div className="space-y-1">
           <h2 className="text-xl font-semibold text-center">What&rsquo;s your name?</h2>
-          <p className="text-white/40 text-sm text-center">So Cara knows who she&rsquo;s talking to.</p>
+          <p className="text-white/40 text-sm text-center">So Evia knows who she&rsquo;s talking to.</p>
         </div>
         <input
           type="text"
@@ -500,8 +500,8 @@ const NameEntry: React.FC<{
         <h2 className="text-2xl font-semibold text-slate-900">What&rsquo;s your name?</h2>
         <p className="text-slate-600 text-base">
           {role === 'caregiver'
-            ? "So Cara can greet you properly when you text her."
-            : "So Cara knows who she’s helping when you text her."}
+            ? "So Evia can greet you properly when you text her."
+            : "So Evia knows who she’s helping when you text her."}
         </p>
       </div>
       <input
@@ -730,13 +730,13 @@ const HandoffScreen: React.FC<{
         tone={tone}
         caption={
           isCaregiver ? (
-            <>Tap below to open Messages. We&rsquo;ve filled in a quick &ldquo;Hey Cara&rdquo; — just hit send.</>
+            <>Tap below to open Messages. We&rsquo;ve filled in a quick &ldquo;Hey Evia&rdquo; — just hit send.</>
           ) : (
-            <>One last step: open Messages and send the pre-filled note to Cara. She&rsquo;ll take it from there.</>
+            <>One last step: open Messages and send the pre-filled note to Evia. She&rsquo;ll take it from there.</>
           )
         }
-        ctaLabel={isCaregiver ? 'Open Messages' : 'Send to Cara'}
-        helper={<>Cara will reply on this number. You can keep texting her here whenever you need.</>}
+        ctaLabel={isCaregiver ? 'Open Messages' : 'Send to Evia'}
+        helper={<>Evia will reply on this number. You can keep texting her here whenever you need.</>}
       />
     );
   }
@@ -746,18 +746,18 @@ const HandoffScreen: React.FC<{
       tone={tone}
       caption={
         isCaregiver ? (
-          <>Scan with your phone&rsquo;s camera. We&rsquo;ll open Messages with a quick &ldquo;Hey Cara&rdquo; ready to send.</>
+          <>Scan with your phone&rsquo;s camera. We&rsquo;ll open Messages with a quick &ldquo;Hey Evia&rdquo; ready to send.</>
         ) : (
           <>
             <p className="text-xl font-semibold text-slate-900 mb-1">Scan to start your conversation</p>
-            <p>Point your phone&rsquo;s camera at the code. Your Messages app will open with a note to Cara — just press send.</p>
+            <p>Point your phone&rsquo;s camera at the code. Your Messages app will open with a note to Evia — just press send.</p>
           </>
         )
       }
       helper={
         isCaregiver
-          ? <>No camera? Text the number above with the words <span className="font-semibold">Hey Cara</span>.</>
-          : <>Don&rsquo;t have a camera handy? Text the number above with the words <span className="font-semibold">Hey Cara</span>.</>
+          ? <>No camera? Text the number above with the words <span className="font-semibold">Hey Evia</span>.</>
+          : <>Don&rsquo;t have a camera handy? Text the number above with the words <span className="font-semibold">Hey Evia</span>.</>
       }
     />
   );
@@ -771,8 +771,8 @@ const ConnectedScreen: React.FC<{ role: OnboardingRole; tone: 'dark' | 'light' }
         <h2 className="text-xl font-semibold">You&rsquo;re connected</h2>
         <p className="text-white/50 text-sm leading-relaxed">
           {role === 'caregiver'
-            ? "Cara is texting you now. Keep the conversation going in Messages — she'll walk you through your profile in a few minutes."
-            : "Cara is texting you. Open Messages to continue."}
+            ? "Evia is texting you now. Keep the conversation going in Messages — she'll walk you through your profile in a few minutes."
+            : "Evia is texting you. Open Messages to continue."}
         </p>
         <p className="text-white/25 text-xs">You can close this tab.</p>
       </div>
@@ -785,7 +785,7 @@ const ConnectedScreen: React.FC<{ role: OnboardingRole; tone: 'dark' | 'light' }
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
         </svg>
       </div>
-      <h2 className="text-2xl font-semibold text-slate-900">Cara is texting you now</h2>
+      <h2 className="text-2xl font-semibold text-slate-900">Evia is texting you now</h2>
       <p className="text-slate-600 text-lg leading-relaxed">
         Open Messages to continue. She&rsquo;ll ask a few quick questions and then show you caregivers in your area.
       </p>

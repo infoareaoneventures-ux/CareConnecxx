@@ -2,7 +2,7 @@
  * Canonical caregiver-bookability contract.
  *
  * A caregiver is bookable ONLY when BOTH are true:
- *   - onboardingStatus  === "profile_complete"  (Cara onboarding finished)
+ *   - onboardingStatus  === "profile_complete"  (Evia onboarding finished)
  *   - verificationStatus === "approved"          (background check cleared / admin approved)
  *
  * Query contract: Firestore queries may pre-filter on ONE field for index

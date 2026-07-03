@@ -51,11 +51,11 @@ describe("lintPreservingLayout", () => {
     );
   });
 
-  it("rewrites chatbot framing into Cara's care-coordinator voice", () => {
-    expect(lintPreservingLayout("I'm Cara, an AI care assistant for Mom.")).toBe(
-      "I'm Cara, care coordinator for Mom.",
+  it("rewrites chatbot framing into Evia's care-coordinator voice", () => {
+    expect(lintPreservingLayout("I'm Evia, an AI care assistant for Mom.")).toBe(
+      "I'm Evia, care coordinator for Mom.",
     );
-    expect(lintPreservingLayout("This chatbot can help.")).toBe("This Cara can help.");
+    expect(lintPreservingLayout("This chatbot can help.")).toBe("This Evia can help.");
   });
 
   it("rewrites generic helper and support-punt copy", () => {

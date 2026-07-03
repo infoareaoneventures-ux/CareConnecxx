@@ -3,7 +3,7 @@ import { VideoInterview, VideoInterviewStatus } from '../types';
 
 
 /**
- * @deprecated V5: in-app Twilio Video replaced by FaceTime/Google Meet links delivered via Cara iMessage.
+ * @deprecated V5: in-app Twilio Video replaced by FaceTime/Google Meet links delivered via Evia iMessage.
  * This function is intentionally stubbed — calling it will throw.
  */
 export const generateAccessToken = async (
@@ -11,7 +11,7 @@ export const generateAccessToken = async (
     _roomName: string
 ): Promise<string> => {
     throw new Error(
-        "Twilio Video removed in V5. Interviews are conducted via FaceTime/Google Meet links sent by Cara."
+        "Twilio Video removed in V5. Interviews are conducted via FaceTime/Google Meet links sent by Evia."
     );
 };
 

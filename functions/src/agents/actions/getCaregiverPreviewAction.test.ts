@@ -88,7 +88,7 @@ describe("getCaregiverPreviewAction", () => {
     expect(result.message).not.toContain("reply YES");
   });
 
-  it("is visible to Cara and web but remains read-only", () => {
+  it("is visible to Evia and web but remains read-only", () => {
     expect(getCaregiverPreviewCaraAction.readOnly).toBe(true);
     expect(getCaregiverPreviewCaraAction.modelVisible).toBe(true);
     expect(getCaregiverPreviewCaraAction.webVisible).toBe(true);

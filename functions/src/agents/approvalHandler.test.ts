@@ -219,7 +219,7 @@ describe("handlePendingApprovals — batch confirmation", () => {
       id:        "pa_2",
       toolName:  "cancel_subscription",
       toolInput: {},
-      preview:   "Cancel CareConnex subscription",
+      preview:   "Cancel Evia subscription",
       proposedAt: new Date(Date.now() - 1_000).toISOString(),
     }),
     makePending({
@@ -267,7 +267,7 @@ describe("handlePendingApprovals — batch confirmation", () => {
     });
     const [systemPrompt] = hoisted.quickCompleteMock.mock.calls[0] as [string];
     expect(systemPrompt).toContain("1. Cancel appointment appt_1");
-    expect(systemPrompt).toContain("2. Cancel CareConnex subscription");
+    expect(systemPrompt).toContain("2. Cancel Evia subscription");
   });
 
   it("NO rejects ALL pending actions without executing any", async () => {

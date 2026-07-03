@@ -94,7 +94,7 @@ export const requestStandardPayout = functions
                         amount: Math.round(claim.totalEarnings * 100),
                         currency: "usd",
                         method: "standard",
-                        statement_descriptor: "Cara Payout",
+                        statement_descriptor: "Evia Payout",
                     },
                     {
                         stripeAccount: stripeAccountId,

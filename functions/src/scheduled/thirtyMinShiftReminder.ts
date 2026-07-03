@@ -5,7 +5,7 @@ import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
-// Runs every 15 minutes — sends a warm Cara reminder to caregivers
+// Runs every 15 minutes — sends a warm Evia reminder to caregivers
 // whose shift is starting in 25–40 minutes.
 export const sendThirtyMinShiftReminders = functions.pubsub
   .schedule("*/15 * * * *")

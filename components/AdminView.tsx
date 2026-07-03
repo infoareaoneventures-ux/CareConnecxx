@@ -127,7 +127,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
     );
     return () => unsub();
   }, []);
-  // Cara Control surfaces more than open alerts (failed actions + pending
+  // Evia Control surfaces more than open alerts (failed actions + pending
   // approvals too), so its badge needs its own count — not the plain alert count
   // the Alerts tab uses. Mirrors AdminCaraControlRoom's queue composition.
   useEffect(() => {
@@ -216,8 +216,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
     {
       label: 'AI Review',
       items: [
-        { id: 'cara_control' as TabId, label: 'Cara Control', icon: Sparkles, badge: caraOpsCount },
-        { id: 'proactive_drafts' as TabId, label: 'Cara Drafts', icon: HeartHandshake },
+        { id: 'cara_control' as TabId, label: 'Evia Control', icon: Sparkles, badge: caraOpsCount },
+        { id: 'proactive_drafts' as TabId, label: 'Evia Drafts', icon: HeartHandshake },
       ],
     },
     {
@@ -247,7 +247,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
               <Activity className="w-4 h-4 text-white" />
             </div>
             <div>
-              <p className="font-bold text-slate-900 text-sm leading-tight">CareConnex</p>
+              <p className="font-bold text-slate-900 text-sm leading-tight">Evia</p>
               <p className="text-xs text-slate-400">Admin</p>
             </div>
           </div>

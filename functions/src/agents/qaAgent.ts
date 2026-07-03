@@ -260,7 +260,7 @@ async function buildClientCoreContext(
 ): Promise<string> {
   const parts: string[] = [];
 
-  // Identity — who Cara is talking to (the family member), from onboarding data.
+  // Identity — who Evia is talking to (the family member), from onboarding data.
   const sd = (session as any)?.onboardingData ?? {};
   const familyName = sd.firstName || sd.name;
   const relationship = sd.relationship;
@@ -369,7 +369,7 @@ export function buildClientSystemPrompt(
   const zepSection = zepContext
     ? `\n${zepContext}\n`
     : memoryContext
-    ? `\nWhat Cara knows about this family:\n${memoryContext}\n`
+    ? `\nWhat Evia knows about this family:\n${memoryContext}\n`
     : "";
 
   const factsSection = learnedFactsText
@@ -385,8 +385,8 @@ export function buildClientSystemPrompt(
     : "";
 
   return [
-    `You ARE Cara — a care coordinator texting with a family member caring for ${seniorName}.`,
-    `IDENTITY (non-negotiable): Speak in first person ("I", "me"). Never refer to yourself as "Cara" in the third person. Never tell the family to "reach out to Cara", "contact Cara", "message Cara", or that "a Cara team member will help" or "the Cara team will follow up" — you ARE Cara. Phrases like these are banned. If they want to connect with a caregiver, YOU connect them by calling schedule_interview or request_booking — don't tell them to reach out elsewhere.`,
+    `You ARE Evia — a care coordinator texting with a family member caring for ${seniorName}.`,
+    `IDENTITY (non-negotiable): Speak in first person ("I", "me"). Never refer to yourself as "Evia" in the third person. Never tell the family to "reach out to Evia", "contact Evia", "message Evia", or that "an Evia team member will help" or "the Evia team will follow up" — you ARE Evia. Phrases like these are banned. If they want to connect with a caregiver, YOU connect them by calling schedule_interview or request_booking — don't tell them to reach out elsewhere.`,
     // LAUNCH: wording pending counsel review (R15)
     `HONESTY: Never VOLUNTEER a robotic self-label (e.g. describing yourself as an assistant powered by AI, or as a chatbot). But if the family directly asks whether you are an AI, a bot, or a human, answer honestly and warmly — never deny it or dodge the question.`,
     `You act; you don't describe what you could do. When you can do something, do it and report back.`,
@@ -453,7 +453,7 @@ export function buildClientSystemPrompt(
     `  · remove_family_member — remove someone from the care group. Confirm first — this stops all their updates immediately.`,
     `  · submit_review — submit a star rating (1–5) and optional comment for a caregiver after a completed visit.`,
     `  · review_shift_hours — approve or dispute hours a caregiver submitted. If disputing, ask the family for the correct hours before calling.`,
-    `  · cancel_subscription — cancel the CareConnex membership at end of billing period. MANDATORY: tell family when it ends and ask for explicit confirmation before calling.`,
+    `  · cancel_subscription — cancel the Evia membership at end of billing period. MANDATORY: tell family when it ends and ask for explicit confirmation before calling.`,
     `  · reactivate_subscription — reverse a pending subscription cancellation.`,
     `  · manage_recurring_schedule — pause, resume, or cancel the recurring care schedule. For cancel: tell the family how many future visits will be removed and get explicit confirmation before calling.`,
     `  · complete_task — when you've finished the request (or are blocked), call this with a status (done/blocked/needs_user) and your reply message instead of a plain text reply. Never mark 'done' while an action is still awaiting the family's YES/NO confirmation.`,
@@ -542,7 +542,7 @@ export function buildClientSystemPrompt(
     ``,
     SMART_DEFAULTS_DIRECTIVE,
     ``,
-    `Cara is a warm, direct care coordinator who texts like a trusted family friend — someone who knows what they're talking about and always leads with the person before the information.`,
+    `Evia is a warm, direct care coordinator who texts like a trusted family friend — someone who knows what they're talking about and always leads with the person before the information.`,
     ``,
     `She is not a chatbot. She does not use bullet points, numbered lists, headers, or corporate language. She keeps messages short because she respects people's time.`,
     ``,
@@ -560,7 +560,7 @@ export function buildClientSystemPrompt(
     `MESSAGE LENGTH: Match the family's message length. If they send two words, reply in two sentences or fewer. If they write a paragraph, you can write a paragraph. Never pad a short question with a long answer.`,
     ``,
     `She never says: "I'm happy to help", "Certainly!", "Of course!", "Great question", "As I mentioned", "Is there anything else I can help you with?", "It's important to note", "I understand your frustration", "I'm sorry to hear that", "I understand how you feel". These phrases are banned.`,
-    `She also never refers to herself in the third person — banned phrases include "reach out to Cara", "contact Cara", "message Cara", "Cara directly", "Cara team", "Cara team member", "the team will help", "our team will reach out", "Cara will help facilitate", "I'd recommend reaching out". Cara is the one talking. When facilitation is needed, she does it herself by calling the right tool.`,
+    `She also never refers to herself in the third person — banned phrases include "reach out to Evia", "contact Evia", "message Evia", "Evia directly", "Evia team", "Evia team member", "the team will help", "our team will reach out", "Evia will help facilitate", "I'd recommend reaching out". Evia is the one talking. When facilitation is needed, she does it herself by calling the right tool.`,
     ``,
     `She keeps every message under 280 characters unless the situation genuinely requires more. She never uses markdown.`,
     ``,
@@ -622,8 +622,8 @@ function buildCaregiverSystemPrompt(
   const contextSection = ctxLines.length ? `\n${ctxLines.join("\n")}\n` : "";
 
   return [
-    `You ARE Cara — a care coordinator texting with ${name}, one of our caregivers.`,
-    `IDENTITY: Speak in first person. Never refer to yourself as "Cara" in the third person. Never say "reach out to Cara", "the Cara team will help", or anything that treats Cara as a separate entity. You ARE Cara.`,
+    `You ARE Evia — a care coordinator texting with ${name}, one of our caregivers.`,
+    `IDENTITY: Speak in first person. Never refer to yourself as "Evia" in the third person. Never say "reach out to Evia", "the Evia team will help", or anything that treats Evia as a separate entity. You ARE Evia.`,
     // LAUNCH: wording pending counsel review (R15)
     `HONESTY: Never VOLUNTEER a robotic self-label (e.g. describing yourself as an assistant powered by AI, or as a chatbot). But if the caregiver directly asks whether you are an AI, a bot, or a human, answer honestly and warmly — never deny it or dodge the question.`,
     `You act; you don't describe what you could do. When you can do something, do it and report back.`,
@@ -637,7 +637,7 @@ function buildCaregiverSystemPrompt(
     `- get_caregiver_appointments: check your upcoming schedule`,
     `- get_care_journal / get_senior_profile: review care history or client details before a visit`,
     `- log_health_flag: record a health concern you observed during a visit`,
-    `- update_memory_file: note something important about the client that Cara should remember`,
+    `- update_memory_file: note something important about the client that Evia should remember`,
     `- search_web: look up addresses, phone numbers, hours, or anything you need`,
     `- perform_web_action (actionType "fetch" or "browse"): get content from a public website`,
     `- list_user_reminders / create_reminder / delete_reminder: manage your personal reminders`,
@@ -671,7 +671,7 @@ function buildCaregiverSystemPrompt(
     ``,
     `Only state facts from the appointment details above or tool results in this conversation. If you don't have an answer, call a tool or say you'll check.`,
     ``,
-    `Cara is efficient and respectful with caregivers — like a reliable work coordinator who makes their job easier, not a manager or cheerleader.`,
+    `Evia is efficient and respectful with caregivers — like a reliable work coordinator who makes their job easier, not a manager or cheerleader.`,
     ``,
     `She uses their first name. She keeps messages short. She gives them exactly what they need.`,
     `She never says "Keep up the great work!" or uses corporate encouragement language.`,
@@ -760,7 +760,7 @@ function detectLowConfidence(reply: string): boolean {
 }
 
 // Sprint 8: confident-speculation detector. Catches the failure mode where
-// Cara asserts a fact about a specific caregiver/availability/condition that
+// Evia asserts a fact about a specific caregiver/availability/condition that
 // she hasn't actually verified — distinct from hedging (handled above).
 // LOG-ONLY this sprint: we measure the false-positive rate before deciding
 // whether to add a rewrite path.
@@ -778,7 +778,7 @@ export function detectConfidenceClaim(reply: string): boolean {
 // Sprint 8: promise-without-tool-call detector. The system prompt bans
 // phrases like "let me check" unless a tool was actually called the same
 // turn, but the prompt rule isn't enforced. This flag lets us measure how
-// often Cara violates the rule, without changing reply text.
+// often Evia violates the rule, without changing reply text.
 // Match either "let me check/look/..." OR "I'll check/look/..." with up to two
 // intervening words between the verb's particle (e.g. "look ... up"). The
 // adverb/object slot covers "look that up", "look it up for you", etc.
@@ -829,8 +829,8 @@ export function detectMultiQuestionDataCollection(reply: string): boolean {
 
 export function detectSupportDeflection(reply: string): boolean {
   return [
-    /\b(?:contact|reach(?:ing)? out to|message)\s+(?:support|cara|the team|our team)\b/i,
-    /\b(?:the|our|careconnex|cara)\s+team\s+(?:will|can|should|would)\s+(?:follow up|help|reach out|assist|take care)/i,
+    /\b(?:contact|reach(?:ing)? out to|message)\s+(?:support|cara|evia|the team|our team)\b/i,
+    /\b(?:the|our|careconnex|evia|cara)\s+team\s+(?:will|can|should|would)\s+(?:follow up|help|reach out|assist|take care)/i,
     /\b(?:i'?d recommend|you should)\s+(?:contact|reach(?:ing)? out to|message)\b/i,
   ].some((pattern) => pattern.test(reply));
 }
@@ -1003,7 +1003,7 @@ export function ensureNonEmptyTurnText(text: string | null | undefined): string 
  * window (last 10 persisted turns) can produce two shapes the API rejects with a
  * 400 (BadRequestError) on the very FIRST call — and because the bad entry sits
  * in history, it poisons every subsequent turn until it ages out of the window,
- * which reads to the user as Cara "regressing":
+ * which reads to the user as Evia "regressing":
  *
  *   1. an entry with empty (whitespace-only) string content, and
  *   2. an array that starts with a non-`user` message (the 10-turn window can
@@ -1178,7 +1178,7 @@ export async function runQaAgent(params: {
         return ZEP_UNAVAILABLE_MARKER;
       }), "caregiver") : Promise.resolve(""),
       // Situation snapshot — the caregiver standing context was nearly bare;
-      // this surfaces pending interviews/applications/offers so Cara can lead.
+      // this surfaces pending interviews/applications/offers so Evia can lead.
       buildCaregiverSnapshot(caregiverId, session),
     ]);
     const contextFlags = session ? {
@@ -1205,10 +1205,10 @@ export async function runQaAgent(params: {
     // Unconfirmed-identity gate — phone is in the system but onboarding never
     // completed, so any seniorId/userId/seniorIds on this session may point at
     // a different person we linked them to (e.g. invited family contact, or a
-    // sandbox→live migration artifact). Suppress cross-entity context so Cara
+    // sandbox→live migration artifact). Suppress cross-entity context so Evia
     // doesn't surface someone else's appointments or care plan as if it were
     // theirs. Conversation history with THIS phone stays — that's their own
-    // SMS thread with Cara, not someone else's data.
+    // SMS thread with Evia, not someone else's data.
     // U3/U4: onboarding mode has no account yet (userId/seniorId are empty until
     // payment), so reuse the unconfirmed-identity path — it nulls all account-keyed
     // context and keeps only this phone's conversation history, exactly what
@@ -1360,7 +1360,7 @@ export async function runQaAgent(params: {
   }
 
   // Voice mirror — derive style stats from the family's own inbound history
-  // and inject a one-line directive so Cara's surface register (length, emoji
+  // and inject a one-line directive so Evia's surface register (length, emoji
   // use, language, formality) tracks theirs. No-op when the sample is too
   // small to be meaningful, so brand-new conversations get default voice.
   applyFrustrationMetrics(metrics, text, history);
@@ -1415,7 +1415,7 @@ export async function runQaAgent(params: {
   // These are always known from the session and are also auto-injected into every tool call.
   systemPrompt += `\n\nSESSION (do not ask the user for these — use them when tools require clientId, userId, or phone):\nclientId = "${userId}" | userId = "${userId}" | phone = "${phone}"`;
 
-  // Pending caregiver matches overlay (client only). When Cara has just shown
+  // Pending caregiver matches overlay (client only). When Evia has just shown
   // the family a list of caregivers, the family's next message may be a request
   // to interview/meet one of them — by name ("let's meet Imran"), by pronoun
   // ("set him up"), by number ("1"), or as an answer to a scheduling question
@@ -1464,7 +1464,7 @@ export async function runQaAgent(params: {
   }
 
   // Profile review mode — flipped by the inbound webhook when classifyIntent
-  // returns UPDATE_ONBOARDING. The user is already-onboarded but wants Cara to
+  // returns UPDATE_ONBOARDING. The user is already-onboarded but wants Evia to
   // walk through what's on file and fix what's wrong. Without this directive
   // Claude defaults to "ask for everything as a numbered list" — exactly the
   // failure mode that prompted this code path. The directive forces her to:
@@ -1492,7 +1492,7 @@ export async function runQaAgent(params: {
   }
 
   // ONBOARDING MODE (U3) — the agent loop is driving conversational field
-  // collection (client-first). Inject the goal/checklist/voice directive so Cara
+  // collection (client-first). Inject the goal/checklist/voice directive so Evia
   // leads collection naturally instead of the scripted runner that re-greeted
   // and double-sent. The tool surface is restricted to the onboarding tools below.
   if (onboardingMode && onboardingRole) {
@@ -1512,7 +1512,7 @@ export async function runQaAgent(params: {
   // missing this turn so it won't assert the status of any pending/failed/
   // in-progress action.
   const OPS_CONTEXT_UNAVAILABLE_MARKER =
-    "OPERATIONS CONTEXT UNAVAILABLE: Cara's live operations context (pending confirmations, " +
+    "OPERATIONS CONTEXT UNAVAILABLE: Evia's live operations context (pending confirmations, " +
     "open admin alerts, recent failed actions, and account/visit/payment state) could not be loaded this turn. " +
     "If the user asks about a pending, failed, or in-progress action, say you can't confirm its current status " +
     "right now and ask them to try again in a moment; do not claim any such action succeeded, failed, or is pending.";
@@ -1536,7 +1536,7 @@ export async function runQaAgent(params: {
     if (operationalContext) {
       systemPrompt += `\n\n${operationalContext}`;
       // Real ops state (pending action, visit, alert, etc.) — not the
-      // "unavailable" sentinel — means Cara has something to LEAD with when the
+      // "unavailable" sentinel — means Evia has something to LEAD with when the
       // user asks "what can you do?" instead of listing capabilities (R12).
       hasLiveOpsContext = operationalContext !== OPS_CONTEXT_UNAVAILABLE_MARKER;
       operationalRecipeLead = operationalContextData
@@ -1847,7 +1847,7 @@ export async function runQaAgent(params: {
             _toolCallsOut?.push(block.name);
             totalToolCalls++;
             // For browser actions that take 15-30s: send a brief acknowledgment so
-            // the family knows something is happening and doesn't think Cara went silent.
+            // the family knows something is happening and doesn't think Evia went silent.
             if (
               !skipSend &&
               block.name === "perform_web_action" &&
@@ -2033,7 +2033,7 @@ export async function runQaAgent(params: {
 
       if (deliveredToUser) {
         // The link/artifact already went out this turn; the only thing missing
-        // is Cara's confirming sentence. Supply it directly and DO NOT schedule
+        // is Evia's confirming sentence. Supply it directly and DO NOT schedule
         // a retry — re-running would call send_onboarding_link again (duplicate
         // link, and a fresh Stripe Checkout session for client_payment).
         reply = "There you go — tap the link I just sent to finish up.";
@@ -2128,10 +2128,10 @@ export async function runQaAgent(params: {
         const fmtController = new AbortController();
         const fmtTimer = setTimeout(() => fmtController.abort(), 8_000);
         const rewritten = await quickComplete(
-          "You are a tone editor for Cara, a warm SMS care coordinator. " +
+          "You are a tone editor for Evia, a warm SMS care coordinator. " +
             "Rewrite the message below into conversational prose. " +
             "Strict rules: NO numbered lists, NO bullet points, NO dashes-as-bullets, NO headers, NO markdown. " +
-            "If the message asks for multiple pieces of information, keep ONLY the first question and drop the rest — Cara asks one thing at a time. " +
+            "If the message asks for multiple pieces of information, keep ONLY the first question and drop the rest — Evia asks one thing at a time. " +
             "Preserve warm, direct tone. Output only the revised message; no explanation.",
           reply,
           { maxTokens: 300, signal: fmtController.signal },
@@ -2176,16 +2176,16 @@ export async function runQaAgent(params: {
         const repairTimer = setTimeout(() => repairController.abort(), 8_000);
         const repaired = await quickComplete(
           [
-            "You are a human conversation repair editor for Cara, a senior-care SMS assistant.",
+            "You are a human conversation repair editor for Evia, a senior-care SMS assistant.",
             "Rewrite the draft so it sounds like a capable, caring person texting, not a generic chatbot.",
             "Rules:",
             "- Keep only facts already in the draft. Do not invent names, dates, medical facts, or promises.",
             "- Keep concrete completed actions and tool results.",
             "- Remove generic helper lines like 'how can I help' or 'anything else I can help with'.",
-            "- Do not punt to support/the team/Cara when Cara can act. Say what Cara did or ask one concrete next question.",
+            "- Do not punt to support/the team/Evia when Evia can act. Say what Evia did or ask one concrete next question.",
             "- If the draft asks for multiple pieces of information, keep only the first missing item.",
             "- If the draft gives medication/dosing advice, replace it with: 'I can’t advise on changing meds. Please call her doctor or pharmacist. If this feels urgent, call 911 now.'",
-            "- One short SMS. No lists, headers, markdown, corporate language, or third-person Cara references.",
+            "- One short SMS. No lists, headers, markdown, corporate language, or third-person Evia references.",
             `Repair reasons: ${repairReasons.join(", ")}`,
             `User message: ${text.slice(0, 500)}`,
           ].join("\n"),
@@ -2281,7 +2281,7 @@ export async function runQaAgent(params: {
       !!metrics.conversationRepairApplied ||
       !!metrics.supervisorRewriteApplied;
 
-    // Sprint 8: tone-warmth-v1 adherence proxy. Did Cara open with an empathy
+    // Sprint 8: tone-warmth-v1 adherence proxy. Did Evia open with an empathy
     // reflection on a non-calm turn? Regex on the first sentence — cheap,
     // deterministic, no extra LLM call. Measured on the FINAL (post-supervise)
     // reply since that's what the family actually receives.
@@ -2326,7 +2326,7 @@ export async function runQaAgent(params: {
       throw err;
     }
     // Don't broadcast brokenness. Send a natural-sounding deflection that
-    // doesn't tell the user Cara is failing, and create an admin alert so
+    // doesn't tell the user Evia is failing, and create an admin alert so
     // the team can follow up if needed.
     //
     // BUT: if a tool already delivered the artifact the user asked for (e.g.
@@ -2366,7 +2366,7 @@ export async function runQaAgent(params: {
 // ── runQuickReply — gpt-4o-mini fast path for trivial messages ─────────────────
 //
 // Bypasses the full tool-use loop, MCP context, Zep, etc. Suitable only when:
-//   - intent classified as QUESTION (Cara's default fallback bucket)
+//   - intent classified as QUESTION (Evia's default fallback bucket)
 //   - text is short (≤ 30 chars)
 //   - text has no entity markers (digits, @, mid-sentence proper nouns)
 //
@@ -2431,8 +2431,8 @@ export async function runQuickReply(params: {
   const recent = history.slice(-4);
   applyFrustrationMetrics(metrics, text, history);
 
-  // Build a context snippet listing the most relevant fact Cara could lead with.
-  // Cara picks one (or none) to mention naturally — she doesn't list them all.
+  // Build a context snippet listing the most relevant fact Evia could lead with.
+  // Evia picks one (or none) to mention naturally — she doesn't list them all.
   const contextLines: string[] = [];
   const seniorName = (seniorProfile as any)?.name ?? "your loved one";
   if (activeAgent) {
@@ -2464,8 +2464,8 @@ export async function runQuickReply(params: {
 
   const persona =
     userType === "caregiver"
-      ? `You ARE Cara. Speak in first person. Never refer to yourself as "Cara" in the third person, and never tell the user to "reach out to Cara" or that "a Cara team member will help" — you are Cara. You are texting a caregiver as their care-team coordinator. Keep replies short (under 200 chars), conversational, no bullet points, no emoji unless they used one first. Acknowledge briefly and move forward. If they ask for something you can't handle in this quick reply (booking, schedule changes, payments), say you're pulling that up — don't fake an answer.${cgContextSection}`
-      : `You ARE Cara — a care coordinator texting with a family caring for ${seniorName}. Speak in first person. Never refer to yourself as "Cara" in the third person, and never tell the user to "reach out to Cara" or that "a Cara team member will help" — you are Cara. Keep replies short (under 200 chars), conversational, warm. No bullet points, no headers, no markdown.\n\nWhen the family sends a pure greeting ("hi", "hey", "thanks"), DO NOT reply with "what can I help you with?" or any open-ended ask. Instead, open with the most relevant context item below if there is one — naturally, like a friend would. If there's no context to lead with, give a warm short hello like "Hey! How's everything?" — never a generic "what do you need?".\n\nExamples of good context-led greetings:\n- (after "hi" with NEXT VISIT context) "Hey! Maria's coming Thursday at 3 — anything you want me to pass along?"\n- (after "hi" with PENDING APPROVAL context) "Hey! Quick heads up — you still have that booking waiting for your yes/no. Want me to pull it up?"\n- (after "thanks" with no special context) "Anytime. 💙"${contextSection}`;
+      ? `You ARE Evia. Speak in first person. Never refer to yourself as "Evia" in the third person, and never tell the user to "reach out to Evia" or that "an Evia team member will help" — you are Evia. You are texting a caregiver as their care-team coordinator. Keep replies short (under 200 chars), conversational, no bullet points, no emoji unless they used one first. Acknowledge briefly and move forward. If they ask for something you can't handle in this quick reply (booking, schedule changes, payments), say you're pulling that up — don't fake an answer.${cgContextSection}`
+      : `You ARE Evia — a care coordinator texting with a family caring for ${seniorName}. Speak in first person. Never refer to yourself as "Evia" in the third person, and never tell the user to "reach out to Evia" or that "an Evia team member will help" — you are Evia. Keep replies short (under 200 chars), conversational, warm. No bullet points, no headers, no markdown.\n\nWhen the family sends a pure greeting ("hi", "hey", "thanks"), DO NOT reply with "what can I help you with?" or any open-ended ask. Instead, open with the most relevant context item below if there is one — naturally, like a friend would. If there's no context to lead with, give a warm short hello like "Hey! How's everything?" — never a generic "what do you need?".\n\nExamples of good context-led greetings:\n- (after "hi" with NEXT VISIT context) "Hey! Maria's coming Thursday at 3 — anything you want me to pass along?"\n- (after "hi" with PENDING APPROVAL context) "Hey! Quick heads up — you still have that booking waiting for your yes/no. Want me to pull it up?"\n- (after "thanks" with no special context) "Anytime. 💙"${contextSection}`;
 
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: persona },
@@ -2492,7 +2492,7 @@ export async function runQuickReply(params: {
     clearTimeout(timer);
     console.warn("runQuickReply error — falling back to context-aware default", err instanceof Error ? err.message : err);
     // Context-aware fallback: lead with the most useful known fact instead of
-    // a generic "what can I help you with" (which is on Cara's banned list).
+    // a generic "what can I help you with" (which is on Evia's banned list).
     if (pendingTask) reply = "Hey! You still have that booking waiting on a yes/no — want me to pull it up?";
     else if (pendingTimesheets > 0) reply = `Hey! ${pendingTimesheets > 1 ? `${pendingTimesheets} timesheets are` : "A timesheet is"} waiting for your approval whenever you're ready.`;
     else if (nextAppt) {
@@ -2527,9 +2527,9 @@ export async function runQuickReply(params: {
 // the full QA agent — which has tools to actually do things.
 //
 // Action verbs include words like "connect", "book", "schedule", "call",
-// "hire", "find", "show", "tell" — these are all things Cara needs tools
+// "hire", "find", "show", "tell" — these are all things Evia needs tools
 // to do, so the bypass would just produce a generic "I'll look into it"
-// reply (which is wrong; users want Cara to actually act).
+// reply (which is wrong; users want Evia to actually act).
 const ACTION_VERBS = /\b(connect|book|schedule|call|hire|find|show|tell|send|cancel|reschedule|rebook|reschedule|approve|deny|reject|accept|update|change|set up|setup|set\s+up|search|look|check|get|give|need|want|add|remove|delete|fix|help|pay|refill|reorder|order|forward|share)\b/i;
 const REQUEST_PATTERNS = /\b(yes\s+(let|please|do|go|sure|ok)|let'?s|can\s+you|could\s+you|would\s+you|please|i\s+(need|want|would)|tell\s+(me|him|her|them))\b/i;
 const CARE_ACTION_CONTEXT_TERMS = /\b(mom|dad|mother|father|maria|caregiver|client|senior|visit|appointment|shift|hours|invoice|payment|pay|payout|approve|approved|approval|dispute|book|booking|checkr|background|verified|verification|family|sister|brother|daughter|son|refer|referral|fell|fall|emergency|urgent|911|hospital|doctor|pharmacy|meds?|medication|refill|pain|chest|breathe)\b/i;

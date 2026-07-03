@@ -44,20 +44,20 @@ const popularArticles = [
   { label: 'How do I get paid as a caregiver?', view: 'help-caregivers' as ViewType },
   { label: 'How does AI matching work?', view: 'help-families' as ViewType },
   { label: 'How do I set up my caregiver profile?', view: 'help-caregivers' as ViewType },
-  { label: "What is CareConnex's privacy policy?", view: 'help-general' as ViewType },
+  { label: "What is Evia's privacy policy?", view: 'help-general' as ViewType },
   { label: 'How do I cancel or reschedule a booking?', view: 'help-families' as ViewType },
 ];
 
 export const HelpCenter: React.FC<HelpCenterProps> = ({ onNavigate }) => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-      <SEO title="Help Center | CareConnex" description="Find answers about using CareConnex — for families, caregivers, and general platform questions." keywords="help, support, CareConnex, FAQ" />
+      <SEO title="Help Center | Evia" description="Find answers about using Evia — for families, caregivers, and general platform questions." keywords="help, support, Evia, FAQ" />
       <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-slate-100">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-20">
             <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
               <div className="bg-primary-600 p-2 rounded-xl shadow-lg shadow-primary-200/50"><Activity className="text-white w-6 h-6" /></div>
-              <span className="text-2xl font-bold text-slate-900 tracking-tight">CareConnex</span>
+              <span className="text-2xl font-bold text-slate-900 tracking-tight">Evia</span>
             </div>
             <div className="flex items-center gap-4">
               <button onClick={() => onNavigate('login')} className="text-slate-600 hover:text-primary-600 font-medium">Log In</button>
@@ -70,7 +70,7 @@ export const HelpCenter: React.FC<HelpCenterProps> = ({ onNavigate }) => {
         <section className="bg-gradient-to-br from-primary-700 via-primary-600 to-teal-600 text-white py-20 md:py-28">
           <div className="max-w-3xl mx-auto px-4 text-center">
             <div className="inline-flex items-center gap-2 bg-white/10 border border-white/20 rounded-full px-4 py-1.5 text-sm font-medium mb-6">
-              <LifeBuoy className="w-4 h-4" /> CareConnex Help Center
+              <LifeBuoy className="w-4 h-4" /> Evia Help Center
             </div>
             <h1 className="text-4xl md:text-5xl font-bold mb-6 tracking-tight">How can we help you?</h1>
             <p className="text-lg text-primary-100 mb-8">Browse articles for families, caregivers, and general platform questions.</p>
@@ -117,7 +117,7 @@ export const HelpCenter: React.FC<HelpCenterProps> = ({ onNavigate }) => {
           <div className="max-w-3xl mx-auto px-4 text-center">
             <h2 className="text-3xl font-bold text-slate-900 mb-4">Still need help?</h2>
             <p className="text-slate-600 mb-8">Our support team is available 7 days a week.</p>
-            <Button size="lg" onClick={() => { window.location.href = 'mailto:support@careconnex.com'; }}>Contact Support</Button>
+            <Button size="lg" onClick={() => { window.location.href = 'mailto:support@eviacares.com'; }}>Contact Support</Button>
           </div>
         </section>
       </main>

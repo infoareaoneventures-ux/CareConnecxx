@@ -53,7 +53,7 @@ const isExceptionCase = (item: VerificationQueueItem): boolean => {
   );
 };
 
-/** Cara-onboarded caregivers have random doc ids with no uid — prefer the doc id. */
+/** Evia-onboarded caregivers have random doc ids with no uid — prefer the doc id. */
 const getDocId = (item: VerificationQueueItem): string => (item.id || item.uid)!;
 
 interface CaregiverVerificationDashboardProps {
@@ -87,7 +87,7 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
   }, [filter]);
 
   // Live refresh: when a caregiver's verification status changes (Checkr webhook
-  // or a Cara/admin action), re-pull the queue so the dashboard reflects it
+  // or an Evia/admin action), re-pull the queue so the dashboard reflects it
   // without a manual reload. A doc entering OR leaving these pending states
   // fires the listener, which covers the common "moved to approved" transition.
   useEffect(() => {

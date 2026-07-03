@@ -45,7 +45,7 @@ export const submitGpsCheckin = functions.https.onCall(async (data, context) => 
   // authenticated caller. Previously any authenticated user could pass an
   // arbitrary caregiverId and spoof another caregiver's arrival (skewing the
   // confidence score and deceiving families). Web caregivers are uid-keyed, so
-  // the auth uid is the source of truth; phone-keyed Cara caregivers check in
+  // the auth uid is the source of truth; phone-keyed Evia caregivers check in
   // over SMS, not through this callable.
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "You must be signed in to check in.");
@@ -127,7 +127,7 @@ export const submitGpsCheckin = functions.https.onCall(async (data, context) => 
     const arrivedMsg = withinRadius
       ? await generateCaraMessage({
           audience: "family",
-          context: `Cara is notifying the family that their caregiver ${appt.caregiverName} just arrived for today's visit with their loved one.`,
+          context: `Evia is notifying the family that their caregiver ${appt.caregiverName} just arrived for today's visit with their loved one.`,
           fallback: `${appt.caregiverName} has arrived for today's visit.`,
         })
       : `${appt.caregiverName} has checked in but appears to be ${distStr}. They may be parking.`;

@@ -1,6 +1,6 @@
-// Cara ↔ Web Firestore data contract.
+// Evia ↔ Web Firestore data contract.
 //
-// The launch invariant: **Cara must write where the web reads.** This module is
+// The launch invariant: **Evia must write where the web reads.** This module is
 // the single canonical registry of the collections both sides share, their doc
 // ID schemes, and which side writes/reads them. tests/contractCollections.test.ts
 // statically verifies the codebase stays aligned with this registry — if you
@@ -24,7 +24,7 @@ export interface ContractCollection {
   /** Firestore collection path (template segments in {braces}) */
   path: string;
   docId: DocIdScheme;
-  /** Who writes it in the Cara/functions backend */
+  /** Who writes it in the Evia/functions backend */
   caraWrites: boolean;
   /** Who reads it on the web (services/api.ts, components, hooks) */
   webReads: boolean;
@@ -37,7 +37,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "uid",
     caraWrites: true,
     webReads: true,
-    notes: "Cara writes membership/identity status for clients and the caregiver parity doc at finalization.",
+    notes: "Evia writes membership/identity status for clients and the caregiver parity doc at finalization.",
   },
   caregivers: {
     path: "caregivers",
@@ -51,14 +51,14 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "uid",
     caraWrites: true,
     webReads: true,
-    notes: "Cara onboarding writes clientIntakes/{uid}; matching triggers listen onCreate/onUpdate.",
+    notes: "Evia onboarding writes clientIntakes/{uid}; matching triggers listen onCreate/onUpdate.",
   },
   senior_profiles: {
     path: "senior_profiles",
     docId: "uid",
     caraWrites: true,
     webReads: true,
-    notes: "Web signup creates it; Cara onboarding mirrors senior name/age/needs/diagnoses.",
+    notes: "Web signup creates it; Evia onboarding mirrors senior name/age/needs/diagnoses.",
   },
   care_plans: {
     path: "senior_profiles/{clientUid}/care_plans/default",
@@ -72,7 +72,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "uid",
     caraWrites: true,
     webReads: true,
-    notes: "CarePlan.tsx reads/writes carePlans/{uid}; Cara writes the initial doc at client payment.",
+    notes: "CarePlan.tsx reads/writes carePlans/{uid}; Evia writes the initial doc at client payment.",
   },
   job_postings: {
     path: "job_postings",
@@ -86,7 +86,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "The job board. Written via buildAndSaveJobPost (shared by Cara + web flows).",
+    notes: "The job board. Written via buildAndSaveJobPost (shared by Evia + web flows).",
   },
   appointments: {
     path: "appointments",
@@ -100,7 +100,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: false,
     webReads: true,
-    notes: "Web-originated booking requests; Cara's equivalent is agent_tasks(type=booking_confirmation) + shift_offers.",
+    notes: "Web-originated booking requests; Evia's equivalent is agent_tasks(type=booking_confirmation) + shift_offers.",
   },
   shift_offers: {
     path: "shift_offers",
@@ -128,21 +128,21 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "appointmentId",
     caraWrites: true,
     webReads: true,
-    notes: "Clock-in/out + payroll. Cara writes via clock_in_shift / submit_shift_hours tools.",
+    notes: "Clock-in/out + payroll. Evia writes via clock_in_shift / submit_shift_hours tools.",
   },
   threads: {
     path: "threads/{threadId}/messages",
     docId: "subcollection",
     caraWrites: true,
     webReads: true,
-    notes: "Web chat. Cara conversations are mirrored in (linq/threadMirror.ts, thread ID cara_{uid}).",
+    notes: "Web chat. Evia conversations are mirrored in (linq/threadMirror.ts, thread ID cara_{uid}).",
   },
   support_tickets: {
     path: "support_tickets",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Cara's create_support_ticket tool writes here; admin TicketManager reads.",
+    notes: "Evia's create_support_ticket tool writes here; admin TicketManager reads.",
   },
   admin_alerts: {
     path: "admin_alerts",
@@ -163,7 +163,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Cara-drafted proactive messages awaiting admin review.",
+    notes: "Evia-drafted proactive messages awaiting admin review.",
   },
   cara_turn_metrics: {
     path: "cara_turn_metrics",
@@ -177,7 +177,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Client/caregiver referral lifecycle. Cara writes SMS referrals; web ReferralProgram reads user referral status.",
+    notes: "Client/caregiver referral lifecycle. Evia writes SMS referrals; web ReferralProgram reads user referral status.",
   },
   agent_audit_log: {
     path: "agent_audit_log",
@@ -191,14 +191,14 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Durable status ledger for consequential Cara actions; admin audit surfaces read it.",
+    notes: "Durable status ledger for consequential Evia actions; admin audit surfaces read it.",
   },
   pending_actions: {
     path: "pending_actions",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Runtime confirmation queue for high-risk Cara actions; AdminCaraControlRoom reads stuck and awaiting approvals.",
+    notes: "Runtime confirmation queue for high-risk Evia actions; AdminCaraControlRoom reads stuck and awaiting approvals.",
   },
   agent_tasks: {
     path: "agent_tasks",
@@ -234,7 +234,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "1:1 client↔caregiver messaging (services/chatService.ts). Cara touches via the pushNotifications onCreate trigger. Participant-scoped reads; admin can read all.",
+    notes: "1:1 client↔caregiver messaging (services/chatService.ts). Evia touches via the pushNotifications onCreate trigger. Participant-scoped reads; admin can read all.",
   },
   customers: {
     path: "customers",
@@ -262,7 +262,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Caregiver interview scheduling + fit feedback. Web (api.ts, caregiver dashboards) and Cara (interviewAgent.ts) both write.",
+    notes: "Caregiver interview scheduling + fit feedback. Web (api.ts, caregiver dashboards) and Evia (interviewAgent.ts) both write.",
   },
   interviews: {
     path: "interviews",
@@ -304,53 +304,53 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "User abuse/safety reports. Web users create their own (InboxView.tsx); Cara/mcp may file reports; admins review. Author-scoped create, admin read.",
+    notes: "User abuse/safety reports. Web users create their own (InboxView.tsx); Evia/mcp may file reports; admins review. Author-scoped create, admin read.",
   },
   reviews: {
     path: "reviews",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Client→caregiver post-visit reviews (services/api.ts, ReviewSystem.tsx; Cara via mcp/server.ts submit_review). Public read; author-scoped write.",
+    notes: "Client→caregiver post-visit reviews (services/api.ts, ReviewSystem.tsx; Evia via mcp/server.ts submit_review). Public read; author-scoped write.",
   },
   seniors: {
     path: "seniors",
     docId: "auto",
     caraWrites: false,
     webReads: false,
-    notes: "Cara/QA-agent senior context records keyed by seniorId (functions qaAgent.ts, mcp/server.ts reads). NOT the web senior store — that is senior_profiles. Server-only; no web reader. Distinct from the UI plural label 'seniors'.",
+    notes: "Evia/QA-agent senior context records keyed by seniorId (functions qaAgent.ts, mcp/server.ts reads). NOT the web senior store — that is senior_profiles. Server-only; no web reader. Distinct from the UI plural label 'seniors'.",
   },
   shifts: {
     path: "shifts",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "GPS clock-in/out shift instances generated from recurring bookings (shiftGenerator.ts) and touched by Cara (mcp/server.ts). Caregiver/client/admin participant-scoped.",
+    notes: "GPS clock-in/out shift instances generated from recurring bookings (shiftGenerator.ts) and touched by Evia (mcp/server.ts). Caregiver/client/admin participant-scoped.",
   },
   video_interviews: {
     path: "video_interviews",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Twilio video interview scheduling (services/videoService.ts; Cara via mcp/server.ts). Client/caregiver participant-scoped.",
+    notes: "Twilio video interview scheduling (services/videoService.ts; Evia via mcp/server.ts). Client/caregiver participant-scoped.",
   },
   web_onboarding_sessions: {
     path: "web_onboarding_sessions",
     docId: "phone",
     caraWrites: true,
     webReads: true,
-    notes: "Bridge between web phone verification and SMS inbound (functions/src/linq/webhooks.ts). Carries role + (optional) name typed on /start; the inbound webhook seeds name into agent_sessions.onboardingData (firstName for client, name for caregiver) and routes to the *_confirm_name step so Cara greets by name. Web reads its own doc (hooks/useOnboardingSession.ts); writes server-side only (createWebOnboardingSession callable).",
+    notes: "Bridge between web phone verification and SMS inbound (functions/src/linq/webhooks.ts). Carries role + (optional) name typed on /start; the inbound webhook seeds name into agent_sessions.onboardingData (firstName for client, name for caregiver) and routes to the *_confirm_name step so Evia greets by name. Web reads its own doc (hooks/useOnboardingSession.ts); writes server-side only (createWebOnboardingSession callable).",
   },
   notifications: {
     path: "notifications",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Top-level user notifications (bookings, replies, alerts). Web reads own (userId field); Cara/admin write (admin/adminSupportActions.ts, services/api.ts). Distinct from the users/{uid}/notifications subcollection.",
+    notes: "Top-level user notifications (bookings, replies, alerts). Web reads own (userId field); Evia/admin write (admin/adminSupportActions.ts, services/api.ts). Distinct from the users/{uid}/notifications subcollection.",
   },
 };
 
-/** Collection names (top-level segment only) that Cara writes. */
+/** Collection names (top-level segment only) that Evia writes. */
 export function caraWrittenCollections(): string[] {
   return Object.values(CONTRACT_COLLECTIONS)
     .filter((c) => c.caraWrites)

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * CareConnex E2E Test Suite
+ * Evia E2E Test Suite
  * Tests critical user flows: signup, booking, payment, care journal
  */
 

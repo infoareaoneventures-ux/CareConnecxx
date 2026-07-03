@@ -1,4 +1,4 @@
-// Service area gate — Cara currently serves Santa Clara County, CA ONLY.
+// Service area gate — Evia currently serves Santa Clara County, CA ONLY.
 // Used to decline + waitlist client and caregiver signups outside the county
 // during onboarding (city/zip collection). Keep this as the single source of
 // truth; widen the area by adding cities/zips here, no other code change needed.
@@ -84,7 +84,7 @@ export function extractZip(text: string | undefined | null): string {
 }
 
 /**
- * Is this location in Cara's service area (Santa Clara County)?
+ * Is this location in Evia's service area (Santa Clara County)?
  * ZIP is authoritative when present; otherwise fall back to city name.
  * Returns true only on a positive match — unknown/blank is out of area.
  */

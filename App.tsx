@@ -302,7 +302,7 @@ const AppContent: React.FC = () => {
           <Route path="/caregiver/signup" element={<Navigate to="/start?role=caregiver" replace />} />
           <Route path="/client/apply" element={<Navigate to="/start?role=client" replace />} />
           <Route path="/caregiver/apply-web" element={<Navigate to="/start?role=caregiver" replace />} />
-          {/* Web caregiver signup retired — Cara SMS (/start) is the canonical onboarding. Redirect preserves any existing bookmarks/links. */}
+          {/* Web caregiver signup retired — Evia SMS (/start) is the canonical onboarding. Redirect preserves any existing bookmarks/links. */}
           <Route path="/caregiver/apply" element={<Navigate to="/start?role=caregiver" replace />} />
           <Route path="/caregiver/login" element={<Navigate to="/login" replace />} />
           <Route path="/caregiver/forgot-password" element={<Navigate to="/login" replace />} />

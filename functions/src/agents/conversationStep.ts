@@ -1,7 +1,7 @@
 import { AgentSession } from "../linq/client";
 
 /**
- * conversationStep — the deep module behind Cara's onboarding checklist.
+ * conversationStep — the deep module behind Evia's onboarding checklist.
  *
  * Every linear onboarding question used to be a hand-written handler that
  * re-typed the same six steps (the CLAUDE.md "new handler checklist"):
@@ -91,7 +91,7 @@ export interface ConversationStep {
   retry: (session: AgentSession) => string;
 
   /**
-   * The next thing Cara says after a successful answer. By convention this
+   * The next thing Evia says after a successful answer. By convention this
    * single message both acknowledges what the user just said and asks the next
    * question (mirroring the existing generateCaraMessage calls), so the checklist's
    * "acknowledge before advancing" step is satisfied here.

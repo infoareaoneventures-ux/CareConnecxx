@@ -318,7 +318,7 @@ export function formatCaraOperationalContext(ctx: CaraOperationalContext): strin
   // cap keeps the highest-severity items. Raised from 8 to 16 so a busy account's
   // critical items aren't silently dropped, while still bounding token cost.
   return [
-    "CARA OPERATIONS CONTEXT:",
+    "EVIA OPERATIONS CONTEXT:",
     ...lines.slice(0, 16),
     "Use this silently. If the user asks about one of these items, acknowledge the current status accurately. Never claim a pending, failed, or admin-flagged action succeeded.",
   ].join("\n");

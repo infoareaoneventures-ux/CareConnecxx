@@ -298,7 +298,7 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
  * For caregiver payments: auto-initiate Checkr background check + set verificationStatus submitted
  */
 async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
-  // Cara iMessage onboarding — advance step when client finishes payment setup
+  // Evia iMessage onboarding — advance step when client finishes payment setup
   if (session.metadata?.task === 'client_payment_setup' && session.metadata?.phone) {
     try {
       const phone = session.metadata.phone;
@@ -323,7 +323,7 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     return;
   }
 
-  // Cara iMessage onboarding — caregiver membership payment complete
+  // Evia iMessage onboarding — caregiver membership payment complete
   if (session.metadata?.task === 'caregiver_membership' && session.metadata?.phone) {
     try {
       const phone = session.metadata.phone;
@@ -345,7 +345,7 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     return;
   }
 
-  // Cara SMS — standalone "add MVR later" one-time payment complete. Resolve the
+  // Evia SMS — standalone "add MVR later" one-time payment complete. Resolve the
   // caregiver behind this phone and kick off an MVR-only check (idempotent).
   if (session.metadata?.task === 'mvr_payment' && session.metadata?.phone) {
     const phone = session.metadata.phone;
@@ -600,8 +600,8 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     type: 'membership_payment_succeeded',
     title: isRenewal ? 'Membership Renewed' : 'Membership Activated',
     body: isRenewal
-      ? `Your CareConnex membership has been renewed. $${amountPaid} was charged.`
-      : `Your CareConnex membership is now active. $${amountPaid} was charged.`,
+      ? `Your Evia membership has been renewed. $${amountPaid} was charged.`
+      : `Your Evia membership is now active. $${amountPaid} was charged.`,
     isRead: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
@@ -720,27 +720,28 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
 
   // Escalating dunning communication — tone sharpens with each failed attempt,
   // and the final attempt warns that access is about to end.
-  const billingUrl = "cara.app/billing";
+  // TODO: switch to eviacares.com once the domain is linked to Firebase Hosting
+  const billingUrl = "https://careconnex-d4c8b.web.app/client/membership";
   let dunningMsg: string;
   if (isFinalAttempt) {
     dunningMsg =
-      "We weren't able to process your CareConnex membership payment after several tries, " +
+      "We weren't able to process your Evia membership payment after several tries, " +
       `so your membership is now at risk of being canceled. To keep your access, please update your ` +
       `payment method at ${billingUrl} today. Reply HELP if you need a hand.`;
   } else if (attemptCount <= 1) {
     dunningMsg =
-      "Heads up — we couldn't process your CareConnex membership payment. " +
+      "Heads up — we couldn't process your Evia membership payment. " +
       `No action needed if your card just needs a moment, but you can update billing anytime at ${billingUrl}.` +
       (nextRetryDate ? ` We'll retry on ${nextRetryDate}.` : "");
   } else {
     dunningMsg =
-      "We still haven't been able to process your CareConnex membership payment. " +
+      "We still haven't been able to process your Evia membership payment. " +
       `Please update your payment method at ${billingUrl} to avoid an interruption.` +
       (nextRetryDate ? ` Next retry: ${nextRetryDate}.` : "") +
       " Reply HELP if you need assistance.";
   }
 
-  // Proactively text the client via Cara
+  // Proactively text the client via Evia
   try {
     const sessionSnap = await admin.firestore()
       .collection("agent_sessions")
@@ -883,7 +884,7 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
     userId,
     type: 'membership_cancelled',
     title: 'Membership Cancelled',
-    body: 'Your CareConnex membership has been cancelled.',
+    body: 'Your Evia membership has been cancelled.',
     isRead: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });

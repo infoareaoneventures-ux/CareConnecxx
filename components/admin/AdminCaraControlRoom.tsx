@@ -287,7 +287,7 @@ function makePendingItem(action: PendingActionRecord): QueueItem {
     id: `pending:${action.id}`,
     kind: 'pending_approval',
     category: action.toolName === 'perform_web_action' ? 'healthcare' : 'pending_approvals',
-    title: action.preview ?? action.toolName ?? 'Pending Cara approval',
+    title: action.preview ?? action.toolName ?? 'Pending Evia approval',
     detail: action.executionPreview
       ? truncate(action.executionPreview)
       : isExpired
@@ -326,7 +326,7 @@ function makeDraftItem(draft: DraftRecord): QueueItem {
     id: `draft:${draft.id}`,
     kind: 'draft',
     category: 'drafts',
-    title: failed ? 'Cara draft send failed' : 'Cara draft needs review',
+    title: failed ? 'Evia draft send failed' : 'Evia draft needs review',
     detail: truncate(draft.sendError ?? draft.reason ?? draft.draftText),
     severity: failed ? 'high' : normalizeSeverity(draft.severity),
     status: draft.status ?? 'pending_review',
@@ -388,7 +388,7 @@ function makeQualityMetricItem(metric: TurnMetricRecord): QueueItem {
   const title = metric.conversationRepairApplied
     ? 'Conversation repair applied'
     : metric.errored
-      ? 'Cara turn error'
+      ? 'Evia turn error'
       : 'Conversation quality flag';
   const detailParts = [
     labels.length ? labels.join(', ') : 'Quality signal captured',
@@ -417,7 +417,7 @@ const EmptyState: React.FC = () => (
   <div className="h-full flex items-center justify-center text-center text-slate-500">
     <div>
       <Check className="w-10 h-10 mx-auto mb-3 text-emerald-500" />
-      <p className="font-semibold text-slate-800">No Cara ops items match this filter.</p>
+      <p className="font-semibold text-slate-800">No Evia ops items match this filter.</p>
       <p className="text-sm mt-1">Failed actions, pending confirmations, alerts, quality flags, and support escalations appear here.</p>
     </div>
   </div>
@@ -442,12 +442,12 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
 
   useEffect(() => {
     const unsubscribers = [
-      dbService.subscribeAdminAlerts((rows) => setAlerts(rows as AdminAlertRecord[]), () => onShowToast('Failed to load Cara alerts', 'error')),
-      dbService.subscribeAgentActionLedger((rows) => setLedger(rows as LedgerRecord[]), () => onShowToast('Failed to load Cara action ledger', 'error')),
-      dbService.subscribePendingActions((rows) => setPendingActions(rows as PendingActionRecord[]), () => onShowToast('Failed to load pending Cara actions', 'error')),
+      dbService.subscribeAdminAlerts((rows) => setAlerts(rows as AdminAlertRecord[]), () => onShowToast('Failed to load Evia alerts', 'error')),
+      dbService.subscribeAgentActionLedger((rows) => setLedger(rows as LedgerRecord[]), () => onShowToast('Failed to load Evia action ledger', 'error')),
+      dbService.subscribePendingActions((rows) => setPendingActions(rows as PendingActionRecord[]), () => onShowToast('Failed to load pending Evia actions', 'error')),
       dbService.subscribeToTickets((rows) => setTickets(rows)),
       dbService.subscribeProactiveDrafts([], (rows) => setDrafts(rows as DraftRecord[])),
-      dbService.subscribeCaraTurnMetrics((rows) => setQualityMetrics(rows as TurnMetricRecord[]), () => onShowToast('Failed to load Cara quality metrics', 'error')),
+      dbService.subscribeCaraTurnMetrics((rows) => setQualityMetrics(rows as TurnMetricRecord[]), () => onShowToast('Failed to load Evia quality metrics', 'error')),
     ];
     return () => unsubscribers.forEach((unsub) => unsub());
   }, [onShowToast]);
@@ -529,10 +529,10 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
     setResolvingAlertId(rawId);
     try {
       await dbService.resolveAdminAlert(rawId);
-      onShowToast('Cara alert marked resolved', 'success');
+      onShowToast('Evia alert marked resolved', 'success');
     } catch (err) {
-      console.error('resolve Cara alert failed:', err);
-      onShowToast('Failed to resolve Cara alert', 'error');
+      console.error('resolve Evia alert failed:', err);
+      onShowToast('Failed to resolve Evia alert', 'error');
     } finally {
       setResolvingAlertId(null);
     }
@@ -577,7 +577,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
         onShowToast(`Retry failed: ${res?.error ?? 'see admin alerts'}`, 'error');
       }
     } catch (err) {
-      console.error('execute Cara action retry failed:', err);
+      console.error('execute Evia action retry failed:', err);
       onShowToast(`Retry failed: ${(err as Error)?.message ?? 'backend error'}`, 'error');
     } finally {
       setBusyAction(null);
@@ -616,9 +616,9 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
     setBusyAction(`cancel:${id}`);
     try {
       await dbService.adminCancelPendingAction(id, operatorNote.trim());
-      onShowToast('Pending Cara approval cancelled (tool not executed)', 'success');
+      onShowToast('Pending Evia approval cancelled (tool not executed)', 'success');
     } catch (err) {
-      console.error('cancel pending Cara action failed:', err);
+      console.error('cancel pending Evia action failed:', err);
       onShowToast(`Failed to cancel: ${(err as Error)?.message ?? 'backend error'}`, 'error');
     } finally {
       setBusyAction(null);
@@ -645,7 +645,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
         onShowToast(`Replay failed: ${res?.error ?? 'see admin alerts'}`, 'error');
       }
     } catch (err) {
-      console.error('replay pending Cara action failed:', err);
+      console.error('replay pending Evia action failed:', err);
       onShowToast(`Replay failed: ${(err as Error)?.message ?? 'backend error'}`, 'error');
     } finally {
       setBusyAction(null);
@@ -659,7 +659,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
           <div>
             <div className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-primary-600" />
-              <h2 className="text-lg font-bold text-slate-900">Cara Control Room</h2>
+              <h2 className="text-lg font-bold text-slate-900">Evia Control Room</h2>
             </div>
             <p className="text-sm text-slate-500 mt-1">
               Live queue for failed actions, pending confirmations, Linq delivery issues, support escalations, and draft review.
@@ -985,10 +985,10 @@ function operatorGuidance(item: QueueItem): string {
     return 'Review the tool failure, related alert, and user thread. Retry only when idempotency is clear.';
   }
   if (item.kind === 'support_ticket') return 'Support ticket needs human follow-up. Use the Support tab to respond and update status.';
-  if (item.kind === 'draft') return 'Cara draft requires review or retry. Use Cara Drafts to edit, approve, reject, or send.';
+  if (item.kind === 'draft') return 'Evia draft requires review or retry. Use Evia Drafts to edit, approve, reject, or send.';
   if (item.kind === 'quality_issue') return 'Conversation quality signal. Review recent messages and tool activity, then decide whether a prompt, routing, or operator follow-up fix is needed.';
   if (item.category === 'linq') return 'Delivery issue. Confirm Linq health, retry state, and whether SMS fallback already happened.';
-  if (item.category === 'qa') return 'Cara runtime issue. Review the alert detail, recent messages, and action ledger before marking resolved.';
+  if (item.category === 'qa') return 'Evia runtime issue. Review the alert detail, recent messages, and action ledger before marking resolved.';
   if (item.category === 'recipes') return 'Recipe handoff issue. Confirm the user-visible state, related ledger row, and whether retry would duplicate a message or group add.';
   return 'Review the raw context, resolve the source issue, then mark the alert resolved.';
 }

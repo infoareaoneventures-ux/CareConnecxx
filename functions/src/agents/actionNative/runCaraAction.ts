@@ -22,7 +22,7 @@ export class CaraActionApprovalRequiredError extends Error {
   readonly approvalKey: string;
 
   constructor(approvalKey: string) {
-    super("Cara action requires approval before execution");
+    super("Evia action requires approval before execution");
     this.name = "CaraActionApprovalRequiredError";
     this.approvalKey = approvalKey;
   }

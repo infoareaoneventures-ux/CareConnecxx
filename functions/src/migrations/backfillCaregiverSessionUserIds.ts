@@ -7,7 +7,7 @@ const db = admin.firestore();
  * One-time migration (U3, cara-web-chat plan): caregiver agent_sessions were
  * finalized with `caregiverId` but never `userId`, so the web-thread mirror
  * (threadMirror resolves sessions by userId) silently skipped caregivers —
- * their Cara history never reached threads/cara_{uid}.
+ * their Evia history never reached threads/cara_{uid}.
  *
  * For each caregiver session missing userId, resolve the Firebase Auth user
  * that owns the session's phone number and stamp its uid. Sessions whose phone

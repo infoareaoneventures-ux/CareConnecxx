@@ -37,7 +37,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
 
     // TCPA: first message must request consent — no care data sent until user replies YES
     const optInText =
-      `Hi ${firstName} — I'm Cara, your care coordinator.\n\n` +
+      `Hi ${firstName} — I'm Evia, your care coordinator.\n\n` +
       `Reply YES to receive real-time care updates — visit summaries, wellness alerts, ` +
       `and health signals for your loved one.\n\n` +
       `Reply STOP anytime to opt out. Msg & data rates may apply.`;
@@ -46,7 +46,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
       parts: [{ type: "text", value: optInText }],
     });
 
-    // Register Cara as a named contact so users see "Cara" not a raw number
+    // Register Evia as a named contact so users see "Evia" not a raw number
     await setupCaraContactCard();
     await shareContactCard(chat.chat_id).catch(() => {/* non-critical */});
 

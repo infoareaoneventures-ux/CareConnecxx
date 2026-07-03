@@ -1,8 +1,8 @@
-// Cara launch action-parity registry.
+// Evia launch action-parity registry.
 //
-// The launch promise: **anything a user can do on the web, Cara can do over
+// The launch promise: **anything a user can do on the web, Evia can do over
 // SMS.** This module is the single, machine-checkable map of every
-// launch-critical client / caregiver / admin action to the Cara MCP tool (or
+// launch-critical client / caregiver / admin action to the Evia MCP tool (or
 // handler) that performs it. context/capability-map.md is the human-readable
 // mirror; THIS file is the source of truth.
 //
@@ -31,7 +31,7 @@ export interface LaunchAction {
   webSurface: string;
   /** Primary Firestore collection. "n/a" or a key in CONTRACT_COLLECTIONS. */
   collection: string;
-  /** Cara MCP tool name (or handler). null only when status is "blocker" or "non-goal". */
+  /** Evia MCP tool name (or handler). null only when status is "blocker" or "non-goal". */
   tool: string | null;
   /**
    * Which prompt/tool-filter actor should expose this tool:
@@ -44,7 +44,7 @@ export interface LaunchAction {
   status: "shipped" | "blocker" | "non-goal";
   /**
    * How the action is exposed:
-   *   "mcp"      — a Cara MCP tool in MCP_TOOLS (default when undefined).
+   *   "mcp"      — an Evia MCP tool in MCP_TOOLS (default when undefined).
    *   "callable" — a Firebase https.onCall callable exported from
    *                functions/src/index.ts (admin execution actions, U3). These
    *                are NOT exposed as client/caregiver MCP tools; `tool` names
@@ -176,7 +176,7 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     tool: "get_payment_update_link",
     promptActor: "any",
     status: "shipped",
-    notes: "Raw card details are never captured in chat; Cara only hands off a Stripe-hosted link.",
+    notes: "Raw card details are never captured in chat; Evia only hands off a Stripe-hosted link.",
   },
   {
     id: "client-view-invoices",
@@ -249,7 +249,7 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     tool: "get_upcoming_appointments",
     promptActor: "any",
     status: "shipped",
-    notes: "Used by Cara recipe discovery for next-visit briefing and visit confirmation context.",
+    notes: "Used by Evia recipe discovery for next-visit briefing and visit confirmation context.",
   },
   {
     id: "client-view-care-team",
@@ -260,12 +260,12 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     tool: "get_care_team",
     promptActor: "any",
     status: "shipped",
-    notes: "Used by Cara recipe discovery for next-visit and who-is-coming answers.",
+    notes: "Used by Evia recipe discovery for next-visit and who-is-coming answers.",
   },
   {
     id: "client-review-cara-memory",
     actor: "client",
-    action: "Review what Cara remembers",
+    action: "Review what Evia remembers",
     webSurface: "n/a",
     collection: "n/a",
     tool: "cara_knows",
@@ -276,7 +276,7 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
   {
     id: "client-update-cara-memory",
     actor: "client",
-    action: "Correct or update Cara memory",
+    action: "Correct or update Evia memory",
     webSurface: "n/a",
     collection: "n/a",
     tool: "update_memory_file",
@@ -709,7 +709,7 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     tool: null,
     promptActor: null,
     status: "non-goal",
-    notes: "R7 — Cara avoids medical advice and routes emergencies to 911 guidance.",
+    notes: "R7 — Evia avoids medical advice and routes emergencies to 911 guidance.",
   },
   {
     id: "nongoal-raw-card-capture",

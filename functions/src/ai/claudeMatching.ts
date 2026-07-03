@@ -3,7 +3,7 @@ import { getSharedClient } from "../utils/claudeClient";
 /**
  * Shared Claude-powered scoring engine.
  * Used by both runAiMatching (coordinator-triggered batch)
- * and runMatchingForClient (Cara SMS matching flow).
+ * and runMatchingForClient (Evia SMS matching flow).
  */
 
 const BASE_DOMAIN_KNOWLEDGE = `You are an expert home care coordinator matching caregivers to seniors. Score each candidate on how well they fit the senior's specific needs.

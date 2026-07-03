@@ -5,7 +5,7 @@ import path from "node:path";
 // PRESENT/EMPTY per required key. Never prints values — only presence — so
 // this is safe to run and paste into a chat or CI log.
 //
-// The first six keys are launch-required: Cara's agent-loop and Zep memory
+// The first six keys are launch-required: Evia's agent-loop and Zep memory
 // depend on them, and a silently-empty one is exactly the failure mode this
 // plan is closing (Anthropic credit exhaustion nobody was alerted to).
 // ADMIN_PHONE is the SMS alert destination for U5 — required for loud

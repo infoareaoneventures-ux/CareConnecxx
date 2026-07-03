@@ -15,7 +15,7 @@ export type Capability =
 
 // Tools tagged with the capability buckets they belong to. Tools NOT listed
 // here are "core" — always bound regardless of intent. Core tools are the
-// universal reads Cara needs on virtually every turn (senior profile, search
+// universal reads Evia needs on virtually every turn (senior profile, search
 // memory, suggest care, pending tasks, support tickets, agent resume).
 export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── booking ──────────────────────────────────────────────────────────────
@@ -196,7 +196,7 @@ export const CORE_TOOL_NAMES = new Set<string>([
   // Cross-cutting onboarding helper: "send me my payment / identity / photo /
   // document / background-check / payout link" arrives under many filtered
   // intents (UPDATE_PAYMENT_METHOD, UPDATE_PHOTO, …). It must never be filtered
-  // out, or Cara falls back to deflecting instead of just sending the link.
+  // out, or Evia falls back to deflecting instead of just sending the link.
   "send_onboarding_link",
   // Parity: emergency alert is SAFETY-critical — it must be bound on every turn
   // and never filtered out by intent, so a family reporting an urgent situation
@@ -294,7 +294,7 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
 // instruction (see qaAgent.ts), instead of the soft buildToolResultContent
 // path used for read-only lookups. Curated rather than prefix-derived so
 // adding a tool here is a deliberate decision; genuinely low-stakes writes
-// (journal likes/comments, memory notes Cara already echoes back) are
+// (journal likes/comments, memory notes Evia already echoes back) are
 // intentionally excluded.
 export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // bookings & visits

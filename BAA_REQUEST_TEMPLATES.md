@@ -7,7 +7,7 @@ Use these templates to request Business Associate Agreements from vendors who wi
 ## TEMPLATE 1: GOOGLE CLOUD (FIREBASE)
 
 **To:** Google Cloud Support  
-**Subject:** Business Associate Agreement Request - CareConnex
+**Subject:** Business Associate Agreement Request - Evia
 
 ---
 
@@ -16,7 +16,7 @@ Dear Google Cloud Support,
 I am writing to request a Business Associate Agreement (BAA) for our organization.
 
 **Organization Information:**
-- Company Name: CareConnex Inc.
+- Company Name: Evia Inc.
 - Google Cloud Project ID: [YOUR_FIREBASE_PROJECT_ID]
 - Billing Account ID: [YOUR_BILLING_ID]
 - Primary Contact: [YOUR_NAME]
@@ -44,14 +44,14 @@ Sincerely,
 
 [YOUR_NAME]  
 [YOUR_TITLE]  
-CareConnex Inc.
+Evia Inc.
 
 ---
 
 ## TEMPLATE 2: TWILIO (VIDEO ONLY)
 
 **To:** Twilio Sales/Support  
-**Subject:** HIPAA Business Associate Agreement Request - CareConnex
+**Subject:** HIPAA Business Associate Agreement Request - Evia
 
 ---
 
@@ -60,7 +60,7 @@ Dear Twilio Team,
 We use Twilio Video to host live caregiver interviews on our healthcare platform and require a Business Associate Agreement (BAA) to ensure HIPAA compliance. Twilio Video is the only Twilio service we use — our SMS/iMessage messaging runs on a separate provider (Linq).
 
 **Organization Information:**
-- Company Name: CareConnex Inc.
+- Company Name: Evia Inc.
 - Twilio Account SID: [YOUR_ACCOUNT_SID]
 - Primary Contact: [YOUR_NAME]
 - Email: [YOUR_EMAIL]
@@ -90,14 +90,14 @@ Best regards,
 
 [YOUR_NAME]  
 [YOUR_TITLE]  
-CareConnex Inc.
+Evia Inc.
 
 ---
 
 ## TEMPLATE 2B: LINQ (SMS/iMESSAGE MESSAGING)
 
 **To:** Linq Sales/Support  
-**Subject:** HIPAA Business Associate Agreement Request - CareConnex
+**Subject:** HIPAA Business Associate Agreement Request - Evia
 
 ---
 
@@ -106,7 +106,7 @@ Dear Linq Team,
 We use Linq as our SMS and iMessage messaging provider for our healthcare platform and require a Business Associate Agreement (BAA) to ensure HIPAA compliance.
 
 **Organization Information:**
-- Company Name: CareConnex Inc.
+- Company Name: Evia Inc.
 - Linq Account / Phone Number: [YOUR_LINQ_PHONE_NUMBER]
 - Primary Contact: [YOUR_NAME]
 - Email: [YOUR_EMAIL]
@@ -117,7 +117,7 @@ We use Linq as our SMS and iMessage messaging provider for our healthcare platfo
 
 **Use Case:**
 We use Linq to:
-- Power Cara, our conversational AI assistant, over SMS/iMessage (caregiver onboarding, Q&A, booking assistance)
+- Power Evia, our conversational AI assistant, over SMS/iMessage (caregiver onboarding, Q&A, booking assistance)
 - Send appointment reminders to clients
 - Facilitate communication between clients and caregivers
 - Notify caregivers of new booking requests
@@ -140,14 +140,14 @@ Best regards,
 
 [YOUR_NAME]  
 [YOUR_TITLE]  
-CareConnex Inc.
+Evia Inc.
 
 ---
 
 ## TEMPLATE 3: STRIPE
 
 **To:** Stripe Support  
-**Subject:** Business Associate Agreement Request - CareConnex Healthcare Platform
+**Subject:** Business Associate Agreement Request - Evia Healthcare Platform
 
 ---
 
@@ -156,9 +156,9 @@ Dear Stripe Support,
 We are integrating Stripe for payment processing on our healthcare platform and require a Business Associate Agreement (BAA) for HIPAA compliance.
 
 **Organization Information:**
-- Company Name: CareConnex Inc.
+- Company Name: Evia Inc.
 - Stripe Account Email: [YOUR_STRIPE_EMAIL]
-- Website: www.careconnex.com
+- Website: www.eviacares.com
 - Primary Contact: [YOUR_NAME]
 - Email: [YOUR_EMAIL]
 
@@ -194,7 +194,7 @@ Thank you,
 
 [YOUR_NAME]  
 [YOUR_TITLE]  
-CareConnex Inc.
+Evia Inc.
 
 ---
 
@@ -210,7 +210,7 @@ Dear Support Team,
 We require a Business Associate Agreement (BAA) for our use of your email services in our healthcare platform.
 
 **Organization Information:**
-- Company Name: CareConnex Inc.
+- Company Name: Evia Inc.
 - Account ID: [YOUR_ACCOUNT_ID]
 - Primary Contact: [YOUR_NAME]
 - Email: [YOUR_EMAIL]

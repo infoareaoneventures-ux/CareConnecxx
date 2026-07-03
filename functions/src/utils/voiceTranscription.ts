@@ -10,7 +10,7 @@
  *   2. Resolves a downloadable URL (direct or via attachment lookup).
  *   3. Downloads the audio bytes (falling back to authenticated fetch if the
  *      URL is gated).
- *   4. Transcribes via OpenAI Whisper so the rest of Cara can treat the
+ *   4. Transcribes via OpenAI Whisper so the rest of Evia can treat the
  *      result as if the user had typed it.
  *
  * Whisper handles every format Linq accepts for voice memos (mp3, m4a, aac,

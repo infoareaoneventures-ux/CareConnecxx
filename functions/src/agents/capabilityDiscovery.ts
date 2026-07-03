@@ -1,4 +1,4 @@
-// Role-aware capability discovery for Cara.
+// Role-aware capability discovery for Evia.
 //
 // Discovery should package shipped actions as concrete care workflows, not a
 // generic chatbot feature list. The examples here come from careRecipes.ts, and
@@ -24,13 +24,13 @@ export function buildHelpSmsReply(role: DiscoveryRole, leadWith?: string, lang: 
   // splicing them into a Spanish frame would produce a mixed-language reply.
   if (lang === "es") {
     const intro = role === "caregiver"
-      ? "Soy Cara — escríbeme y me encargo."
-      : "Soy Cara, tu coordinadora de cuidados.";
+      ? "Soy Evia — escríbeme y me encargo."
+      : "Soy Evia, tu coordinadora de cuidados.";
     return `${intro} ${buildCapabilityMenu(role === "caregiver" ? "caregiver" : "client", "es")}`;
   }
 
   if (leadWith && leadWith.trim()) {
-    return `I'm Cara - I'm right here. ${leadWith.trim()} Or just tell me what you need.`;
+    return `I'm Evia - I'm right here. ${leadWith.trim()} Or just tell me what you need.`;
   }
 
   const examples = getCapabilityExamples(role, 3);
@@ -38,12 +38,12 @@ export function buildHelpSmsReply(role: DiscoveryRole, leadWith?: string, lang: 
 
   switch (role) {
     case "caregiver":
-      return `I'm Cara - text me and I'll handle it. I can ${list}. What do you need?`;
+      return `I'm Evia - text me and I'll handle it. I can ${list}. What do you need?`;
     case "family-secondary":
-      return `I'm Cara, here for the family. I can ${list}. Ask me what changed or who needs to be looped in.`;
+      return `I'm Evia, here for the family. I can ${list}. Ask me what changed or who needs to be looped in.`;
     case "client":
     default:
-      return `I'm Cara - your care coordinator. I can ${list}. Just tell me what needs to happen.`;
+      return `I'm Evia - your care coordinator. I can ${list}. Just tell me what needs to happen.`;
   }
 }
 

@@ -30,7 +30,7 @@ async function parseScheduleRequest(userMessage: string): Promise<ParsedSchedule
         "dayOfWeek: 0=Sunday, 1=Monday ... 6=Saturday. Null for non-weekly. " +
         "hour/minute: 24h format. " +
         "label: short user-facing name (e.g. 'mom medications'). " +
-        "message: the full text Cara will send as the reminder. " +
+        "message: the full text Evia will send as the reminder. " +
         "If you cannot parse a schedule, reply with null.",
       userMessage,
       { maxTokens: 120, signal: controller.signal },

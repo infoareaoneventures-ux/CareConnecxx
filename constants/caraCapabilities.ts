@@ -1,4 +1,4 @@
-// Frontend mirror of Cara's user-facing capabilities.
+// Frontend mirror of Evia's user-facing capabilities.
 //
 // The canonical list lives in `functions/src/agents/caraCapabilities.ts` (used by
 // the SMS welcome menu and `/help`). The frontend and Cloud Functions runtimes
@@ -7,7 +7,7 @@
 // id/label/example/featured AND the Spanish labelEs/exampleEs fields match the
 // backend entry-for-entry.
 //
-// Consumed by the in-app Cara surface (components/AiSearchAgent.tsx) for
+// Consumed by the in-app Evia surface (components/AiSearchAgent.tsx) for
 // suggestion chips and the in-app `/help` capability menu.
 
 export type CapabilityRole = "client" | "caregiver";
@@ -68,7 +68,7 @@ export function capabilityExample(e: FrontendCapabilityEntry, locale?: string | 
 
 /**
  * Build the in-app `/help` capability menu (mirrors the backend buildCapabilityMenu).
- * Rendered as a Cara message bubble when the user invokes `/help` in the app.
+ * Rendered as an Evia message bubble when the user invokes `/help` in the app.
  */
 export function buildCapabilityMenu(role: CapabilityRole | string | undefined | null, locale?: string | null): string {
   const es = isSpanish(locale);

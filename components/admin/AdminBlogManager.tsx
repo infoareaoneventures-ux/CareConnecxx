@@ -25,7 +25,7 @@ const emptyPost = (): Omit<BlogPost, 'id' | 'createdAt' | 'updatedAt'> => ({
   ctaHeading: '',
   ctaBody: '',
   heroImageUrl: '',
-  authorName: 'CareConnex Team',
+  authorName: 'Evia Team',
 });
 
 type View = 'list' | 'form';
@@ -529,7 +529,7 @@ const PostForm: React.FC<{
           <input
             value={form.authorName || ''}
             onChange={e => onField('authorName', e.target.value)}
-            placeholder="CareConnex Team"
+            placeholder="Evia Team"
             className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
         </div>

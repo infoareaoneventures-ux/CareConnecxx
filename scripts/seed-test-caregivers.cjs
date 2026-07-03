@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * Test-caregiver seeder for Cara end-to-end testing.
+ * Test-caregiver seeder for Evia end-to-end testing.
  *
  * Why: with zero caregivers in prod, a client signup dead-ends at the no-supply
  * hold — you can't reach matches -> paywall -> booking -> the QA-agent tools.
@@ -22,7 +22,7 @@
  *   node scripts/seed-test-caregivers.cjs list                       # show current seeded docs
  *
  * IMPORTANT: pick a city that matches what you type during the test client
- * signup (Cara matches caregivers by exact city). Default is an uncommon Santa
+ * signup (Evia matches caregivers by exact city). Default is an uncommon Santa
  * Clara County city so seeded fakes don't surface to real Gilroy/San Jose signups.
  */
 

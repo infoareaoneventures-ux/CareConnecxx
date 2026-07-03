@@ -107,7 +107,7 @@ export function PlanSelectModal({ onClose, currentPriceId, caregiverName, caregi
           {/* ── Left panel — plan selection ─────────────────────────── */}
           <div className="flex-1 p-6">
             <p className="text-sm text-slate-500 mb-6">
-              All plans include full access to CareConnex caregivers, plus easy on-demand booking.
+              All plans include full access to Evia caregivers, plus easy on-demand booking.
             </p>
 
             {/* Plan radio cards */}

@@ -24,7 +24,7 @@ export async function isBereavementTrigger(text: string): Promise<boolean> {
   const lower = text.toLowerCase().trim();
   if (OBVIOUS_BEREAVEMENT.some((kw) => lower.includes(kw))) return true;
   // Guard: bare acks like "Yes" / "ok" must not be classified as a death disclosure.
-  // They almost always answer a prior question from Cara, and the YES/NO classifier
+  // They almost always answer a prior question from Evia, and the YES/NO classifier
   // tends to echo the user's "Yes" back as a positive label.
   const stripped = lower.replace(/[.!?]+$/g, "");
   if (TRIVIAL_ACKS.has(stripped)) return false;
@@ -77,7 +77,7 @@ export async function activateBereavementMode(
   // 3. Send compassionate opening message
   const condolenceMsg = await generateCaraMessage({
     audience: "family",
-    context: `Cara just learned that ${seniorName} has passed away. Send heartfelt condolences to the family. The tone should be warm, gentle, and compassionate — not clinical. Cara may use a heart emoji (💙) if appropriate.`,
+    context: `Evia just learned that ${seniorName} has passed away. Send heartfelt condolences to the family. The tone should be warm, gentle, and compassionate — not clinical. Evia may use a heart emoji (💙) if appropriate.`,
     fallback: `I'm so sorry for the loss of ${seniorName}. 💙\n\nPlease take all the time you need. I'm here whenever you're ready.`,
     maxTokens: 100,
   });
@@ -93,7 +93,7 @@ export async function activateBereavementMode(
         // Keepsake generation failed — send a compassionate fallback so family isn't left in silence.
         const keepsakePromiseMsg = await generateCaraMessage({
           audience: "family",
-          context: `Cara is promising to create a care memory keepsake for ${seniorName} — a record of their journey and all the love that surrounded them. The tone should be warm, gentle, and compassionate — not clinical. Cara may use a heart emoji (💙) if appropriate.`,
+          context: `Evia is promising to create a care memory keepsake for ${seniorName} — a record of their journey and all the love that surrounded them. The tone should be warm, gentle, and compassionate — not clinical. Evia may use a heart emoji (💙) if appropriate.`,
           fallback: `I'll put together a care memory for ${seniorName} — a record of their journey and all the love that surrounded them. I'll send it to you shortly. 💙`,
           maxTokens: 100,
         });
@@ -102,7 +102,7 @@ export async function activateBereavementMode(
       }
       const keepsakeDeliveryMsg = await generateCaraMessage({
         audience: "family",
-        context: `Cara is delivering the care memory keepsake for ${seniorName} — a record of their journey and all the love that surrounded them. The tone should be warm, gentle, and compassionate — not clinical. Cara may use a heart emoji (💙) if appropriate.`,
+        context: `Evia is delivering the care memory keepsake for ${seniorName} — a record of their journey and all the love that surrounded them. The tone should be warm, gentle, and compassionate — not clinical. Evia may use a heart emoji (💙) if appropriate.`,
         fallback: `I've put together a care memory for you — a record of ${seniorName}'s journey and all the love that surrounded them. 💙`,
         maxTokens: 100,
       });

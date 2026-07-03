@@ -124,7 +124,7 @@ self.addEventListener('push', (event) => {
     };
 
     event.waitUntil(
-        self.registration.showNotification('CareConnex', options)
+        self.registration.showNotification('Evia', options)
     );
 });
 

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import React from 'react';
 
-// U4 Cara chat tab (docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md):
+// U4 Evia chat tab (docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md):
 // unified-thread rendering, optimistic send + reconcile, designed states.
 
 const hoisted = vi.hoisted(() => ({
@@ -45,7 +45,7 @@ import { CaraChat } from './CaraChat';
 const pushMessages = (msgs: any[]) => act(() => { hoisted.messagesCallback?.(msgs); });
 
 const sendFromComposer = async (text: string) => {
-  fireEvent.change(screen.getByLabelText('Message Cara'), { target: { value: text } });
+  fireEvent.change(screen.getByLabelText('Message Evia'), { target: { value: text } });
   await act(async () => {
     fireEvent.click(screen.getByLabelText('Send message'));
   });
@@ -73,7 +73,7 @@ describe('CaraChat', () => {
       expect.stringContaining('hey! how can I help?'),
       expect.stringContaining('book maria for friday'),
     ]);
-    // Cara bubble sits left (justify-start), user bubbles right (justify-end)
+    // Evia bubble sits left (justify-start), user bubbles right (justify-end)
     expect(bubbles[1].parentElement?.className).toContain('justify-start');
     expect(bubbles[0].parentElement?.className).toContain('justify-end');
   });
@@ -99,7 +99,7 @@ describe('CaraChat', () => {
 
     // No bubble in the conversation log — the text went back to the composer
     expect(screen.getByRole('log').textContent).not.toContain('spam');
-    expect((screen.getByLabelText('Message Cara') as HTMLTextAreaElement).value).toBe('spam');
+    expect((screen.getByLabelText('Message Evia') as HTMLTextAreaElement).value).toBe('spam');
     expect(screen.getByText(/wait a moment/i)).toBeTruthy();
   });
 
@@ -108,9 +108,9 @@ describe('CaraChat', () => {
     render(<CaraChat userType="client" />);
     await sendFromComposer('hello');
 
-    expect(screen.getByText('Meet Cara')).toBeTruthy();
-    expect(screen.queryByLabelText('Message Cara')).toBeNull();
-    fireEvent.click(screen.getByText('Get set up with Cara'));
+    expect(screen.getByText('Meet Evia')).toBeTruthy();
+    expect(screen.queryByLabelText('Message Evia')).toBeNull();
+    fireEvent.click(screen.getByText('Get set up with Evia'));
     expect(hoisted.navigate).toHaveBeenCalledWith('/start');
   });
 
@@ -146,7 +146,7 @@ describe('CaraChat', () => {
     pushMessages([]);
     expect(screen.getByText(/Say hi/)).toBeTruthy();
     fireEvent.click(screen.getByText('Help me find a caregiver'));
-    expect((screen.getByLabelText('Message Cara') as HTMLTextAreaElement).value)
+    expect((screen.getByLabelText('Message Evia') as HTMLTextAreaElement).value)
       .toBe('Help me find a caregiver');
   });
 });

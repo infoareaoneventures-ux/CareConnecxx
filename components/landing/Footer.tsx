@@ -18,7 +18,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                         <div className="col-span-1 md:col-span-2">
                             <div className="flex items-center space-x-2 mb-4">
                                 <Activity className="text-primary-600 w-6 h-6" />
-                                <span className="text-xl font-bold text-slate-900">CareConnex</span>
+                                <span className="text-xl font-bold text-slate-900">Evia</span>
                             </div>
                             <p className="text-slate-500 max-w-xs">
                                 Modernizing senior care with direct connections, instant payments, and AI-powered matching.
@@ -58,7 +58,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                         </div>
                     </div>
                     <div className="border-t border-slate-100 mt-12 pt-8 text-center text-slate-400 text-sm flex flex-col md:flex-row justify-between items-center">
-                        <span>&copy; 2025 CareConnex. All rights reserved.</span>
+                        <span>&copy; 2025 Evia. All rights reserved.</span>
                         <div className="flex gap-6 mt-4 md:mt-0">
                             <button onClick={() => setLegalModal('privacy')} className="cursor-pointer hover:text-slate-600">Privacy Policy</button>
                             <button onClick={() => setLegalModal('terms')} className="cursor-pointer hover:text-slate-600">Terms of Service</button>

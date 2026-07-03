@@ -96,7 +96,7 @@ export const IdentityGateModal: React.FC<IdentityGateModalProps> = ({
             {whyOpen && (
               <div className="mt-3 text-xs text-slate-600 leading-relaxed space-y-2">
                 <p>
-                  CareConnex requires every client to verify their identity before contacting caregivers. This keeps our community safe for vulnerable seniors and the caregivers who serve them.
+                  Evia requires every client to verify their identity before contacting caregivers. This keeps our community safe for vulnerable seniors and the caregivers who serve them.
                 </p>
                 <ul className="list-disc pl-4 space-y-1 text-slate-500">
                   <li>Protects caregivers from fake or fraudulent requests</li>

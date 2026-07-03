@@ -8,7 +8,7 @@ const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"
 
 /**
  * Canonical time blocks — same as the UI grid.
- * Cara always asks caregivers to pick from these explicitly so there
+ * Evia always asks caregivers to pick from these explicitly so there
  * is zero ambiguity and no approximate time-to-block mapping.
  */
 const BLOCKS: Record<string, { start: string; end: string; label: string; hours: string }> = {
@@ -159,7 +159,7 @@ export async function handleAvailabilityUpdate(
 
       const opener = await generateCaraMessage({
         audience: "caregiver",
-        context:  "Cara is about to show the caregiver their updated availability after removing a day. Write a brief 1-sentence intro asking them to confirm.",
+        context:  "Evia is about to show the caregiver their updated availability after removing a day. Write a brief 1-sentence intro asking them to confirm.",
         fallback:  "Here's your updated schedule — does this look right?",
         maxTokens: 60,
       });
@@ -261,7 +261,7 @@ export async function handleAvailabilityUpdate(
 
     const opener = await generateCaraMessage({
       audience: "caregiver",
-      context:  "Cara is about to show the caregiver their updated availability schedule for confirmation. Write a brief 1-sentence intro asking them to confirm it looks right.",
+      context:  "Evia is about to show the caregiver their updated availability schedule for confirmation. Write a brief 1-sentence intro asking them to confirm it looks right.",
       fallback:  "Here's your updated schedule — does this look right?",
       maxTokens: 60,
     });
@@ -310,7 +310,7 @@ export async function handleAvailabilityUpdate(
 
       const saveMsg = await generateCaraMessage({
         audience: "caregiver",
-        context:  "A caregiver just confirmed their updated availability schedule. Cara saved it. Write a warm 1-sentence confirmation.",
+        context:  "A caregiver just confirmed their updated availability schedule. Evia saved it. Write a warm 1-sentence confirmation.",
         fallback:  "Done — your availability has been updated.",
         maxTokens: 60,
       });

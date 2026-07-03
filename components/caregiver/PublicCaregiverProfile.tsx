@@ -43,7 +43,7 @@ export const PublicCaregiverProfile: React.FC = () => {
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 px-4 text-center">
         <p className="text-2xl font-bold text-slate-900 mb-2">Profile not found</p>
         <p className="text-sm text-slate-500 mb-6">This caregiver profile doesn't exist or is no longer available.</p>
-        <Link to="/" className="text-sm font-semibold text-primary-600 hover:text-primary-700">← Back to CareConnex</Link>
+        <Link to="/" className="text-sm font-semibold text-primary-600 hover:text-primary-700">← Back to Evia</Link>
       </div>
     );
   }
@@ -54,7 +54,7 @@ export const PublicCaregiverProfile: React.FC = () => {
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 px-4 text-center">
         <p className="text-2xl font-bold text-slate-900 mb-2">Profile unavailable</p>
         <p className="text-sm text-slate-500 mb-6">This caregiver has hidden their profile.</p>
-        <Link to="/" className="text-sm font-semibold text-primary-600 hover:text-primary-700">← Back to CareConnex</Link>
+        <Link to="/" className="text-sm font-semibold text-primary-600 hover:text-primary-700">← Back to Evia</Link>
       </div>
     );
   }
@@ -68,7 +68,7 @@ export const PublicCaregiverProfile: React.FC = () => {
         <div className="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-white font-bold text-lg shadow-sm">C</div>
-            <span className="font-bold text-slate-900 tracking-tight">CareConnex</span>
+            <span className="font-bold text-slate-900 tracking-tight">Evia</span>
           </Link>
           <Link to="/client/signup" className="text-sm font-semibold text-primary-600 hover:text-primary-700">
             Find a caregiver →
@@ -144,7 +144,7 @@ export const PublicCaregiverProfile: React.FC = () => {
         <div className="bg-primary-50 border border-primary-200 rounded-2xl p-5 mt-6 flex items-center justify-between gap-4">
           <div>
             <p className="font-bold text-slate-900">Want to book {profile.name.split(' ')[0]}?</p>
-            <p className="text-sm text-slate-600">Create a CareConnex account to send a booking request.</p>
+            <p className="text-sm text-slate-600">Create an Evia account to send a booking request.</p>
           </div>
           <Link to="/client/signup" className="px-5 py-2.5 rounded-full bg-primary-500 hover:bg-primary-600 text-white text-sm font-semibold whitespace-nowrap">
             Get started

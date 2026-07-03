@@ -1,4 +1,4 @@
-// Service-area gate side effects — Cara serves Santa Clara County only. When an
+// Service-area gate side effects — Evia serves Santa Clara County only. When an
 // onboarding location is out of area we politely decline, capture a waitlist lead,
 // and park the session so further messages don't keep re-collecting. Applies to
 // BOTH clients and caregivers.
@@ -64,7 +64,7 @@ export async function gateOnboardingLocation(args: {
   const hi = args.name ? ` ${args.name}` : "";
   await sendMessage(
     args.chatId,
-    `Thanks so much${hi} — I want to be upfront: right now Cara only serves Santa Clara County, ` +
+    `Thanks so much${hi} — I want to be upfront: right now Evia only serves Santa Clara County, ` +
     `California, so I'm not able to set up care in ${where} just yet. I've added you to our ` +
     `waitlist and we'll reach out the moment we expand to your area. 💙`,
   );

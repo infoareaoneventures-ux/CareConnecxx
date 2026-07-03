@@ -6,7 +6,7 @@ interface Props {
   tone: 'dark' | 'light';
   /** Body copy above the button. */
   caption: React.ReactNode;
-  /** Big button label — e.g. "Send to Cara" (family) or "Open Messages" (caregiver). */
+  /** Big button label — e.g. "Send to Evia" (family) or "Open Messages" (caregiver). */
   ctaLabel: string;
   /** Optional sub-hint beneath the button. */
   helper?: React.ReactNode;

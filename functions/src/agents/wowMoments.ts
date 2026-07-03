@@ -1,4 +1,4 @@
-// Wow-moment registry — a small catalog of delightful Cara moments that fire
+// Wow-moment registry — a small catalog of delightful Evia moments that fire
 // when conditions match (first booking confirmed, care anniversary, billing
 // streaks, etc). Pure functions only — predicates take a snapshot context and
 // return whether the moment is eligible. No I/O lives here; the caller
@@ -17,11 +17,11 @@ export interface WowSeniorEvent {
 }
 
 export interface WowContext {
-  /** Display name for the family member Cara writes to. */
+  /** Display name for the family member Evia writes to. */
   clientName?:        string;
   /** Display name for the senior being cared for. */
   seniorName?:        string;
-  /** When the client joined CareConnex (ISO). Used for account-anniversary. */
+  /** When the client joined Evia (ISO). Used for account-anniversary. */
   clientJoinedAt?:    string;
   /** When the first completed visit occurred (ISO). Used for care-anniversary. */
   firstVisitAt?:      string;

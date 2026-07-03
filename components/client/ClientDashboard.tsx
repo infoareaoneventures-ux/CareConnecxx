@@ -45,7 +45,7 @@ async function geocodeLocation(query: string): Promise<{ lat: number; lng: numbe
     const timer = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=us`,
-      { headers: { 'Accept-Language': 'en', 'User-Agent': 'CareConnex/1.0' }, signal: controller.signal }
+      { headers: { 'Accept-Language': 'en', 'User-Agent': 'Evia/1.0' }, signal: controller.signal }
     ).finally(() => clearTimeout(timer));
     const arr = await res.json();
     if (Array.isArray(arr) && arr[0]?.lat && arr[0]?.lon) {
@@ -178,7 +178,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     const unsubs: (() => void)[] = [];
 
     // Job posts — all statuses for Care Requests card; open-only meta for interview
-    // modal. Live (U6) so posts Cara creates/edits surface without a refresh.
+    // modal. Live (U6) so posts Evia creates/edits surface without a refresh.
     const jobPostsUnsub = db.collection('job_posts')
       .where('clientId', '==', currentUser.uid)
       .onSnapshot(snap => {
@@ -580,7 +580,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           return <LiveCareFeed clientId={currentUser.uid} />;
         })()}
 
-        {/* Care journal — caregiver visit notes (web + Cara tools); hides itself when empty */}
+        {/* Care journal — caregiver visit notes (web + Evia tools); hides itself when empty */}
         {currentUser?.uid && <CareJournalFeed clientId={currentUser.uid} />}
 
         {reviewingShift && (
@@ -976,7 +976,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
               </div>
             </div>
 
-            {/* Cara Activity — transparency feed of what Cara did (U9) */}
+            {/* Evia Activity — transparency feed of what Evia did (U9) */}
             {currentUser?.uid && <CaraActivityFeed ownerUid={currentUser.uid} />}
 
             {/* Pending care changes — live shift swaps (U7); hidden when none */}

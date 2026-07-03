@@ -77,7 +77,7 @@ Origin: `docs/plans/2026-06-24-001-feat-cara-100-agent-native-plan.md` (Track A)
 
 ### PHI-in-prompt (U4, decided 2026-06-24)
 The **full** client care plan (including diagnoses, medications, and doctor contacts)
-is pre-injected into every client turn's Cara system prompt (`buildClientCoreContext`
+is pre-injected into every client turn's Evia system prompt (`buildClientCoreContext`
 in `functions/src/agents/qaAgent.ts`). This is a product decision trading higher PHI
 exposure in LLM payloads/provider logs for richer default context and fewer tool
 round-trips. **Mitigations:** care-team **phone numbers** are NOT pre-injected (kept
@@ -87,12 +87,12 @@ posture changes.
 
 **Disclosure addendum (decided 2026-07-02, founder — explicit risk acceptance):**
 the proactive conversational automation disclosure ("I'm automated…") was REMOVED
-from Cara's first-contact messages by founder decision, against the standing
+from Evia's first-contact messages by founder decision, against the standing
 recommendation (CA B.O.T. Act exposure in a paid signup flow — validated review
 finding, 2026-07-01). Remaining disclosure surfaces: (a) the web signup subtitle
-"Cara is an automated coordinator backed by our care team" (`OnboardingFlow.tsx`),
+"Evia is an automated coordinator backed by our care team" (`OnboardingFlow.tsx`),
 and (b) the honest-answer-if-asked prompt rules in all three persona prompts —
-Cara never denies being an AI when asked directly. Counsel must review this
+Evia never denies being an AI when asked directly. Counsel must review this
 posture before or shortly after launch; if counsel requires conversational
 disclosure, restore the sentence in `webhooks.ts` coldIntro and `language.ts`
 `otp_greeting` (git history 2026-07-02 has both wordings).

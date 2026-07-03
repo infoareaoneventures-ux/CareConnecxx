@@ -196,7 +196,7 @@ describe("booking tools", () => {
       expect(r.notification.reason).toBe("no_caregiver_phone");
     });
 
-    it("returns notification.sent=false when Linq fails (so Cara tells the family)", async () => {
+    it("returns notification.sent=false when Linq fails (so Evia tells the family)", async () => {
       hoisted.docState.set("appointments/a1", { clientId: "c1", status: "confirmed", caregiverId: "cg1", date: "2026-06-01" });
       hoisted.docState.set("caregivers/cg1", { phone: "+15555550101" });
       trySend.mockResolvedValueOnce({ sent: false, reason: "linq_send_failed", error: "timeout" });
@@ -287,7 +287,7 @@ describe("booking tools", () => {
   });
 
   // ── U9b: read-only booking primitives extracted from request_booking ─────────
-  // These must NEVER write — the whole point is that Cara can look up a rate and
+  // These must NEVER write — the whole point is that Evia can look up a rate and
   // quote a cost without committing. Each test asserts no booking task is created.
   describe("get_caregiver_booking_rate (U9b)", () => {
     it("returns the caregiver's name + hourly rate, writing nothing", async () => {

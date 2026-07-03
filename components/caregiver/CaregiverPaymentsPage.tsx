@@ -1494,7 +1494,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
       if (active && p) setProfile(p as any);
     })();
     // Live-patch the caregiver-doc fields (rate, payout/Stripe status, verification,
-    // background check) so Cara's writes reflect here without a manual refresh.
+    // background check) so Evia's writes reflect here without a manual refresh.
     const unsub = dbService.subscribeCaregiverProfile(uid, (cg) => {
       if (active && cg) setProfile(prev => ({ ...(prev as any), ...cg }));
     });
@@ -2350,7 +2350,7 @@ const MembershipCard: React.FC<MembershipCardProps> = ({
             {badge?.icon}
             {badge?.label ?? status}
           </div>
-          <p className="text-white/70 text-sm mb-0.5">CareConnex Membership</p>
+          <p className="text-white/70 text-sm mb-0.5">Evia Membership</p>
           <p className="text-2xl font-bold">Annual plan · $24.95/yr</p>
           {subscription?.cancelAtPeriodEnd ? (
             <p className="text-sm text-amber-200 mt-2">

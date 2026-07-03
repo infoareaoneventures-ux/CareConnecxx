@@ -2,14 +2,14 @@
  * Delete-by-phone reset script
  *
  * Wipes EVERY record tied to a single phone number so that phone can re-run
- * Cara's onboarding from a clean slate. Targets:
+ * Evia's onboarding from a clean slate. Targets:
  *   - phone-keyed docs:  agent_sessions, agent_conversations (+ messages subcollection),
  *     agent_prefetch, agent_rate, agent_inbound_locks, agent_tasks_active,
  *     linq_phone_health, web_onboarding_sessions
  *   - caregivers docs where `phone` matches
  *   - the Firebase Auth user whose phoneNumber matches
  *
- * Cara stores the phone as the raw Linq handle, which is E.164 (+1XXXXXXXXXX).
+ * Evia stores the phone as the raw Linq handle, which is E.164 (+1XXXXXXXXXX).
  * We try a few format variants so a mismatch can't leave orphans behind.
  *
  * SAFETY: dry-run by default. Nothing is deleted unless you pass --confirm.
@@ -44,7 +44,7 @@ if (!rawArg) {
   process.exit(1);
 }
 
-// Build the format variants we'll look for. Cara uses E.164 (+1...), but we also
+// Build the format variants we'll look for. Evia uses E.164 (+1...), but we also
 // check the bare 10-digit and 11-digit forms in case anything was stored raw.
 const digits = rawArg.replace(/\D/g, '');
 const ten = digits.length > 10 ? digits.slice(-10) : digits;

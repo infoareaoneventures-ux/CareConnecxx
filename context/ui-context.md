@@ -1,4 +1,4 @@
-# CareConnex — UI Context
+# Evia — UI Context
 
 > The real design system. Source of truth for tokens is [`index.css`](../index.css) (`@theme` block). All colors must use these tokens (Tailwind classes like `bg-primary-600`, `text-neutral-900`) — no hardcoded hex in components.
 

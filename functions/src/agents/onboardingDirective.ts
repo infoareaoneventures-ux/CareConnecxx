@@ -1,5 +1,5 @@
 // Onboarding directive (U2) — the system-prompt block injected when the agent
-// loop is running an onboarding turn (U3). It tells Cara the goal (collect these
+// loop is running an onboarding turn (U3). It tells Evia the goal (collect these
 // fields), what she already knows (so she never re-asks), what's still missing
 // (so she leads with the next single thing), the tools to persist with, and the
 // voice rules that keep collection conversational instead of form-like.

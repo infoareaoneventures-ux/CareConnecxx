@@ -17,8 +17,8 @@ const familiesContent = [
     category: 'Getting Started & Finding Care',
     faqs: [
       {
-        q: 'What is CareConnex?',
-        a: 'CareConnex is a premium marketplace connecting families directly with experienced, vetted senior caregivers. Unlike traditional agencies, our platform lets you browse real profiles, read verified reviews, conduct video interviews, and hire — all without costly agency fees.',
+        q: 'What is Evia?',
+        a: 'Evia is a premium marketplace connecting families directly with experienced, vetted senior caregivers. Unlike traditional agencies, our platform lets you browse real profiles, read verified reviews, conduct video interviews, and hire — all without costly agency fees.',
       },
       {
         q: 'How do I find a caregiver for my senior family member?',
@@ -26,11 +26,11 @@ const familiesContent = [
       },
       {
         q: 'What types of senior care services are available?',
-        a: 'Caregivers on CareConnex offer companionship, meal preparation, medication reminders, light housekeeping, transportation, mobility assistance, dementia care, and more. All services are non-medical in nature.',
+        a: 'Caregivers on Evia offer companionship, meal preparation, medication reminders, light housekeeping, transportation, mobility assistance, dementia care, and more. All services are non-medical in nature.',
       },
       {
         q: 'How does AI matching work?',
-        a: "CareConnex's matching engine analyzes your senior's care needs, personality profile, location, and preferred schedule, and cross-references them against each caregiver's verified skills, availability, distance, and past reliability score. The best matches appear at the top of your results.",
+        a: "Evia's matching engine analyzes your senior's care needs, personality profile, location, and preferred schedule, and cross-references them against each caregiver's verified skills, availability, distance, and past reliability score. The best matches appear at the top of your results.",
       },
       {
         q: 'Can I manage care for a family member who lives in another city?',
@@ -43,11 +43,11 @@ const familiesContent = [
     faqs: [
       {
         q: 'Are caregivers background checked?',
-        a: 'Every caregiver on CareConnex must pass a comprehensive annual background check processed by Checkr before their profile becomes visible to families. We also monitor for new records throughout the year.',
+        a: 'Every caregiver on Evia must pass a comprehensive annual background check processed by Checkr before their profile becomes visible to families. We also monitor for new records throughout the year.',
       },
       {
         q: 'How does the review system work?',
-        a: 'Only families who have completed a paid booking through CareConnex can leave a review. This means every star rating and written testimonial reflects a verified, firsthand experience — no fake or unverified reviews.',
+        a: 'Only families who have completed a paid booking through Evia can leave a review. This means every star rating and written testimonial reflects a verified, firsthand experience — no fake or unverified reviews.',
       },
       {
         q: 'What do caregiver badges mean?',
@@ -59,7 +59,7 @@ const familiesContent = [
       },
       {
         q: 'What if I have a safety concern?',
-        a: 'Our Trust & Safety team is available 7 days a week. Use the "Report" button on any profile or booking, or email support@careconnex.com. Urgent safety issues are prioritized and escalated immediately.',
+        a: 'Our Trust & Safety team is available 7 days a week. Use the "Report" button on any profile or booking, or email support@eviacares.com. Urgent safety issues are prioritized and escalated immediately.',
       },
     ],
   },
@@ -96,12 +96,12 @@ const familiesContent = [
         a: 'All payments are processed securely through Stripe. Add a credit card or bank account to your profile and payments are automatically released to the caregiver after shift hours are verified — no cash, checks, or Venmo required.',
       },
       {
-        q: 'Does CareConnex charge a service fee?',
-        a: 'CareConnex charges families a nominal platform service fee on each booking to cover background checks, payment processing, and 7-day support. Caregivers keep 100% of their hourly rate.',
+        q: 'Does Evia charge a service fee?',
+        a: 'Evia charges families a nominal platform service fee on each booking to cover background checks, payment processing, and 7-day support. Caregivers keep 100% of their hourly rate.',
       },
       {
         q: 'Are there membership plans?',
-        a: 'Yes. Our Premium membership reduces per-booking service fees and unlocks priority support and advanced search filters. You can also use CareConnex on a pay-as-you-go basis with no monthly commitment.',
+        a: 'Yes. Our Premium membership reduces per-booking service fees and unlocks priority support and advanced search filters. You can also use Evia on a pay-as-you-go basis with no monthly commitment.',
       },
       {
         q: 'What if I am charged incorrectly?',
@@ -159,7 +159,7 @@ const caregiversContent = [
       },
       {
         q: 'Can families find me without me applying?',
-        a: 'Yes. Families searching CareConnex can discover your profile based on their care needs and location. Keeping your profile complete and your availability up to date increases how often you appear in search results.',
+        a: 'Yes. Families searching Evia can discover your profile based on their care needs and location. Keeping your profile complete and your availability up to date increases how often you appear in search results.',
       },
       {
         q: 'What happens after I apply to a job?',
@@ -180,7 +180,7 @@ const caregiversContent = [
       },
       {
         q: 'How do I clock in and out?',
-        a: 'At the start of your shift, open the CareConnex app and tap "Clock In." At the end, tap "Clock Out." Your hours are logged automatically and shared with the family for review before payment is released.',
+        a: 'At the start of your shift, open the Evia app and tap "Clock In." At the end, tap "Clock Out." Your hours are logged automatically and shared with the family for review before payment is released.',
       },
       {
         q: 'What if I need to cancel a shift?',
@@ -188,7 +188,7 @@ const caregiversContent = [
       },
       {
         q: 'Can I work with multiple families?',
-        a: 'Yes. CareConnex allows you to manage multiple clients simultaneously as long as shifts do not overlap. Your calendar will flag any conflicts before you confirm a new booking.',
+        a: 'Yes. Evia allows you to manage multiple clients simultaneously as long as shifts do not overlap. Your calendar will flag any conflicts before you confirm a new booking.',
       },
     ],
   },
@@ -200,8 +200,8 @@ const caregiversContent = [
         a: 'Once the family approves your submitted hours (or 24 hours pass with no dispute), payment is automatically initiated to your connected bank account via Stripe. Standard transfer times are 2–5 business days.',
       },
       {
-        q: 'Does CareConnex take a cut of my rate?',
-        a: 'No. Caregivers keep 100% of the hourly rate they set. CareConnex charges the family a platform service fee — your earnings are never reduced.',
+        q: 'Does Evia take a cut of my rate?',
+        a: 'No. Caregivers keep 100% of the hourly rate they set. Evia charges the family a platform service fee — your earnings are never reduced.',
       },
       {
         q: 'How do I set or update my hourly rate?',
@@ -220,12 +220,12 @@ const generalContent = [
     category: 'Privacy & Data',
     faqs: [
       {
-        q: 'What personal information does CareConnex collect?',
+        q: 'What personal information does Evia collect?',
         a: 'We collect information you provide during signup (name, email, address, payment details) and information generated by your use of the platform (booking history, messages, Care Journal entries). We never sell your personal data to third parties.',
       },
       {
         q: 'How is my financial information protected?',
-        a: 'All payment data is handled by Stripe, a PCI-DSS Level 1 certified payment processor. CareConnex never stores raw credit card numbers on our servers.',
+        a: 'All payment data is handled by Stripe, a PCI-DSS Level 1 certified payment processor. Evia never stores raw credit card numbers on our servers.',
       },
       {
         q: 'Can I delete my account?',
@@ -237,7 +237,7 @@ const generalContent = [
     category: 'Terms of Service & Community Guidelines',
     faqs: [
       {
-        q: 'What is CareConnex\'s community standard?',
+        q: 'What is Evia\'s community standard?',
         a: 'All members — families and caregivers alike — must treat one another with dignity and respect. Discrimination, harassment, or fraudulent activity of any kind is prohibited and will result in immediate account suspension.',
       },
       {
@@ -245,8 +245,8 @@ const generalContent = [
         a: 'Violations are reviewed by our Trust & Safety team. Depending on severity, consequences range from a warning to permanent account removal and, where applicable, referral to law enforcement.',
       },
       {
-        q: 'Can I use CareConnex to hire caregivers off-platform?',
-        a: 'CareConnex strictly prohibits off-platform arrangements initiated through the platform. Doing so voids background check protections, payment security, and dispute resolution support for both parties.',
+        q: 'Can I use Evia to hire caregivers off-platform?',
+        a: 'Evia strictly prohibits off-platform arrangements initiated through the platform. Doing so voids background check protections, payment security, and dispute resolution support for both parties.',
       },
     ],
   },
@@ -255,19 +255,19 @@ const generalContent = [
     faqs: [
       {
         q: 'The app is not loading. What should I do?',
-        a: 'Try refreshing the page or clearing your browser cache. If using the mobile app, close and reopen it or check for updates in the App Store / Google Play. If the issue persists, contact support@careconnex.com with a description of the problem.',
+        a: 'Try refreshing the page or clearing your browser cache. If using the mobile app, close and reopen it or check for updates in the App Store / Google Play. If the issue persists, contact support@eviacares.com with a description of the problem.',
       },
       {
         q: 'I forgot my password. How do I reset it?',
         a: 'Click "Forgot Password" on the login page and enter your email address. You will receive a reset link within a few minutes. Check your spam folder if it does not arrive.',
       },
       {
-        q: 'Which browsers and devices does CareConnex support?',
-        a: 'CareConnex works on all modern browsers (Chrome, Safari, Firefox, Edge) and is fully responsive on mobile devices. For the best experience, keep your browser updated to the latest version.',
+        q: 'Which browsers and devices does Evia support?',
+        a: 'Evia works on all modern browsers (Chrome, Safari, Firefox, Edge) and is fully responsive on mobile devices. For the best experience, keep your browser updated to the latest version.',
       },
       {
         q: 'How do I report a bug or send product feedback?',
-        a: 'Email feedback@careconnex.com or use the in-app feedback button in your Account Settings. We review every submission and release updates regularly based on user input.',
+        a: 'Email feedback@eviacares.com or use the in-app feedback button in your Account Settings. We review every submission and release updates regularly based on user input.',
       },
     ],
   },
@@ -281,7 +281,7 @@ const NavBar: React.FC<{ onNavigate: (v: ViewType) => void; onLogin: () => void 
       <div className="flex justify-between items-center h-20">
         <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
           <div className="bg-primary-600 p-2 rounded-xl shadow-lg shadow-primary-200/50"><Activity className="text-white w-6 h-6" /></div>
-          <span className="text-2xl font-bold text-slate-900 tracking-tight">CareConnex</span>
+          <span className="text-2xl font-bold text-slate-900 tracking-tight">Evia</span>
         </div>
         <div className="flex items-center gap-4">
           <button onClick={() => onNavigate('help-center')} className="text-slate-500 hover:text-primary-600 text-sm font-medium hidden md:block">Help Center</button>
@@ -320,7 +320,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
       icon: <Users className="w-7 h-7 text-primary-600" />,
       view: 'help-families' as ViewType,
       content: familiesContent,
-      seoTitle: 'Families Help Center | CareConnex',
+      seoTitle: 'Families Help Center | Evia',
     },
     caregivers: {
       title: 'Caregivers Help Center',
@@ -328,7 +328,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
       icon: <Briefcase className="w-7 h-7 text-accent-500" />,
       view: 'help-caregivers' as ViewType,
       content: caregiversContent,
-      seoTitle: 'Caregivers Help Center | CareConnex',
+      seoTitle: 'Caregivers Help Center | Evia',
     },
     general: {
       title: 'General Help Center',
@@ -336,7 +336,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
       icon: <Globe className="w-7 h-7 text-teal-600" />,
       view: 'help-general' as ViewType,
       content: generalContent,
-      seoTitle: 'General Help Center | CareConnex',
+      seoTitle: 'General Help Center | Evia',
     },
   }[section];
 
@@ -348,7 +348,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-      <SEO title={config.seoTitle} description={config.subtitle} keywords={`CareConnex, help, ${section}`} />
+      <SEO title={config.seoTitle} description={config.subtitle} keywords={`Evia, help, ${section}`} />
       <NavBar onNavigate={onNavigate} onLogin={() => onNavigate('login')} />
 
       <main className="flex-grow">
@@ -462,7 +462,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
           <div className="max-w-3xl mx-auto px-4 text-center">
             <h2 className="text-2xl font-bold text-slate-900 mb-3">Still have questions?</h2>
             <p className="text-slate-600 mb-6">Our support team is available 7 days a week.</p>
-            <Button size="lg" onClick={() => { window.location.href = 'mailto:support@careconnex.com'; }}>Contact Support</Button>
+            <Button size="lg" onClick={() => { window.location.href = 'mailto:support@eviacares.com'; }}>Contact Support</Button>
           </div>
         </section>
       </main>

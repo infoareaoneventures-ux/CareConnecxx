@@ -6,7 +6,7 @@ const db = admin.firestore();
 const ALGORITHM  = "aes-256-gcm";
 const IV_LENGTH  = 16;
 
-// Patient portals, pharmacies, and insurance member portals Cara can log into
+// Patient portals, pharmacies, and insurance member portals Evia can log into
 export type PortalService =
   | "mychart"
   | "athenahealth"

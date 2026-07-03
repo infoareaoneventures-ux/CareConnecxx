@@ -158,7 +158,7 @@ export async function handleInstantPayoutConfirm(
         amount: amountCents,
         currency,
         method: "instant",
-        description: "Instant payout requested via Cara SMS",
+        description: "Instant payout requested via Evia SMS",
       },
       { stripeAccount: stripeAccountId },
     );

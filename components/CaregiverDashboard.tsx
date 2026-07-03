@@ -36,7 +36,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
 
    useEffect(() => {
       if (!profile) return;
-      // Cara SMS is the canonical onboarding (caregivers finish at onboardingStatus:'profile_complete').
+      // Evia SMS is the canonical onboarding (caregivers finish at onboardingStatus:'profile_complete').
       // The wizard is now only a recovery tool for legacy/web accounts left at 'incomplete'.
       if (profile?.onboardingStatus === 'incomplete') {
          setShowWizard(true);

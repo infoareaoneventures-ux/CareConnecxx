@@ -145,7 +145,7 @@ export const AdminClientManager: React.FC = () => {
     setSending(true);
     try {
       await dbService.sendNotification(selected.uid, {
-        type: 'admin_message', title: 'Message from CareConnex',
+        type: 'admin_message', title: 'Message from Evia',
         body: notifyMsg, message: notifyMsg, userId: selected.uid, isRead: false,
       });
       setNotifyMsg('');

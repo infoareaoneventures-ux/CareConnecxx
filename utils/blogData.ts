@@ -30,7 +30,7 @@ export const blogArticles: BlogArticle[] = [
       },
       {
         heading: 'Traditional Agencies vs. Direct-Match Platforms',
-        body: `Traditional home care agencies in San Jose charge $38–$55/hr to families — but the caregiver typically receives only $18–$22/hr. The difference (20–35%) goes to the agency's overhead, recruitment, and profit margin.\n\nDirect-match platforms like CareConnex connect families with pre-vetted caregivers directly. Families pay $22–$35/hr directly to caregivers. The platform charges a low monthly membership fee ($29.95/mo) rather than a per-hour markup.\n\nFor a family using 30 hours of care per week, that difference can add up to $700–$1,200 per month in savings — without sacrificing care quality.`
+        body: `Traditional home care agencies in San Jose charge $38–$55/hr to families — but the caregiver typically receives only $18–$22/hr. The difference (20–35%) goes to the agency's overhead, recruitment, and profit margin.\n\nDirect-match platforms like Evia connect families with pre-vetted caregivers directly. Families pay $22–$35/hr directly to caregivers. The platform charges a low monthly membership fee ($29.95/mo) rather than a per-hour markup.\n\nFor a family using 30 hours of care per week, that difference can add up to $700–$1,200 per month in savings — without sacrificing care quality.`
       },
       {
         heading: 'What Affects the Price',
@@ -100,7 +100,7 @@ export const blogArticles: BlogArticle[] = [
       }
     ],
     ctaHeading: 'Find a Caregiver Near You in 24 Hours',
-    ctaBody: "CareConnex matches Bay Area families with verified, background-checked caregivers. AI-powered matching means you see the right candidates — not just whoever's available."
+    ctaBody: "Evia matches Bay Area families with verified, background-checked caregivers. AI-powered matching means you see the right candidates — not just whoever's available."
   },
 
   {
@@ -138,7 +138,7 @@ export const blogArticles: BlogArticle[] = [
       }
     ],
     ctaHeading: 'Interview Caregivers Face-to-Face Before You Hire',
-    ctaBody: 'CareConnex includes built-in video interviews so you can meet candidates from home before committing to a booking. All caregivers are background-checked and verified before their first interview.'
+    ctaBody: 'Evia includes built-in video interviews so you can meet candidates from home before committing to a booking. All caregivers are background-checked and verified before their first interview.'
   },
 
   {
@@ -172,7 +172,7 @@ export const blogArticles: BlogArticle[] = [
       }
     ],
     ctaHeading: 'Find a Dementia-Trained Caregiver Near You',
-    ctaBody: 'CareConnex filters for caregivers with verified dementia care experience. Use AI matching to find someone trained in Alzheimer\'s and memory care specifically — not just general in-home care.'
+    ctaBody: 'Evia filters for caregivers with verified dementia care experience. Use AI matching to find someone trained in Alzheimer\'s and memory care specifically — not just general in-home care.'
   },
 
   {
@@ -190,11 +190,11 @@ export const blogArticles: BlogArticle[] = [
       },
       {
         heading: 'What Does Respite Care Cost in Santa Clara County?',
-        body: `In-home respite care in the South Bay typically costs $25–$35/hr through a direct marketplace, or $38–$55/hr through a traditional agency.\n\nFor a family needing 20 hours of respite care per month:\n- Direct marketplace (e.g., CareConnex): $500–$700/month\n- Traditional agency: $760–$1,100/month\n\nAdult day programs in Santa Clara County typically cost $80–$120/day, with reduced costs available for income-qualifying families through the Older Adults Senior Action Network (OSANA) and other county programs.\n\nAEA (Area Agency on Aging) through the County of Santa Clara administers a limited amount of subsidized respite care for qualifying caregivers. Contact them at 408-350-3200.`
+        body: `In-home respite care in the South Bay typically costs $25–$35/hr through a direct marketplace, or $38–$55/hr through a traditional agency.\n\nFor a family needing 20 hours of respite care per month:\n- Direct marketplace (e.g., Evia): $500–$700/month\n- Traditional agency: $760–$1,100/month\n\nAdult day programs in Santa Clara County typically cost $80–$120/day, with reduced costs available for income-qualifying families through the Older Adults Senior Action Network (OSANA) and other county programs.\n\nAEA (Area Agency on Aging) through the County of Santa Clara administers a limited amount of subsidized respite care for qualifying caregivers. Contact them at 408-350-3200.`
       },
       {
         heading: 'How to Find a Reliable Respite Caregiver',
-        body: `The biggest concern most families have about respite care isn't the cost — it's trust. Leaving your parent with someone new, even for a few hours, requires confidence that they'll be safe and well treated.\n\n**Use a vetted platform.** Platforms like CareConnex background-check and verify every caregiver before they appear in search results. You can read reviews from other families, see the caregiver's specific experience with respite and senior care, and conduct a video interview before the first visit.\n\n**Schedule a trial visit.** Before leaving your parent alone with a new caregiver, have them visit while you're present. Observe how they interact, whether they're attentive and patient, and how your parent responds.\n\n**Provide a detailed care briefing.** Even the most experienced caregiver needs to know your parent's specific routines, preferences, medical needs, behavioral triggers, and emergency contacts. Write this down rather than assuming the caregiver will remember everything from a verbal briefing.`
+        body: `The biggest concern most families have about respite care isn't the cost — it's trust. Leaving your parent with someone new, even for a few hours, requires confidence that they'll be safe and well treated.\n\n**Use a vetted platform.** Platforms like Evia background-check and verify every caregiver before they appear in search results. You can read reviews from other families, see the caregiver's specific experience with respite and senior care, and conduct a video interview before the first visit.\n\n**Schedule a trial visit.** Before leaving your parent alone with a new caregiver, have them visit while you're present. Observe how they interact, whether they're attentive and patient, and how your parent responds.\n\n**Provide a detailed care briefing.** Even the most experienced caregiver needs to know your parent's specific routines, preferences, medical needs, behavioral triggers, and emergency contacts. Write this down rather than assuming the caregiver will remember everything from a verbal briefing.`
       },
       {
         heading: 'Caregiver Burnout: Recognizing It Early',

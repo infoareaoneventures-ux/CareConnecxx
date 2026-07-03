@@ -53,9 +53,9 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
         schema={{
           '@context': 'https://schema.org',
           '@type': 'LocalBusiness',
-          name: `CareConnex — Senior Care in ${cityData.name}`,
+          name: `Evia — Senior Care in ${cityData.name}`,
           description: cityData.metaDescription,
-          url: `https://www.careconnex.com/care/${cityData.slug}`,
+          url: `https://www.eviacares.com/care/${cityData.slug}`,
           areaServed: {
             '@type': 'City',
             name: cityData.name,
@@ -77,7 +77,7 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
             <div className="bg-primary-600 p-1.5 rounded-xl">
               <Activity className="text-white w-5 h-5" />
             </div>
-            <span className="text-xl font-bold text-slate-900">CareConnex</span>
+            <span className="text-xl font-bold text-slate-900">Evia</span>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -158,7 +158,7 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
               What Does In-Home Care Cost in {cityData.name}?
             </h2>
             <p className="text-slate-500 mb-10 max-w-2xl">
-              {cityData.name} caregiver hourly rates through CareConnex typically range from {cityData.avgHourlyRate}/hr — compared to $38–$55/hr through traditional agencies.
+              {cityData.name} caregiver hourly rates through Evia typically range from {cityData.avgHourlyRate}/hr — compared to $38–$55/hr through traditional agencies.
             </p>
 
             <div className="grid md:grid-cols-2 gap-6">
@@ -179,7 +179,7 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
                 <div className="absolute -top-3 left-6">
                   <span className="bg-accent-500 text-white text-xs font-bold px-3 py-1 rounded-full">Best Value</span>
                 </div>
-                <p className="text-xs font-bold text-primary-200 uppercase tracking-widest mb-3">CareConnex</p>
+                <p className="text-xs font-bold text-primary-200 uppercase tracking-widest mb-3">Evia</p>
                 <div className="text-3xl font-black text-white mb-1">{cityData.avgHourlyRate}<span className="text-sm font-normal text-primary-200">/hr</span></div>
                 <p className="text-sm text-primary-200 mb-4">Caregiver earns full rate · $29.95/mo membership</p>
                 <ul className="space-y-2">
@@ -194,10 +194,10 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
           </div>
         </section>
 
-        {/* Why CareConnex wins */}
+        {/* Why Evia wins */}
         <section className="py-16 bg-white">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <h2 className="text-3xl font-bold text-slate-900 mb-3">Why {cityData.name} Families Choose CareConnex</h2>
+            <h2 className="text-3xl font-bold text-slate-900 mb-3">Why {cityData.name} Families Choose Evia</h2>
             <p className="text-slate-500 mb-10">We're not just cheaper — we're built differently.</p>
             <div className="space-y-4">
               {whyBetter.map((item, i) => (

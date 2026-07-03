@@ -1,4 +1,4 @@
-// Per-turn telemetry for Cara's two reply pathways (full QA agent + quick fast path).
+// Per-turn telemetry for Evia's two reply pathways (full QA agent + quick fast path).
 //
 // Every turn emits one structured log line so we can measure the four complaint
 // dimensions from the roadmap: latency, memory recall, voice consistency, and
@@ -88,12 +88,12 @@ export interface TurnMetrics {
   contextIgnoredWhenPresent?: boolean; // live ops context existed but reply stayed generic
   paymentAuthorityLeakDetected?: boolean; // payment approval/payment wording leaked to unauthorized family context
   multiQuestionDataCollection?: boolean; // asks for multiple intake fields in one reply
-  supportDeflectionDetected?:   boolean; // punts to support/team/Cara instead of acting
+  supportDeflectionDetected?:   boolean; // punts to support/team/Evia instead of acting
   genericHelpAskDetected?:      boolean; // "what can I help with" style generic prompt
   medicationInstructionDetected?: boolean; // gives medication/dosing instruction instead of redirecting
-  frustrationDetected?: boolean; // user shows explicit frustration with Cara/system
+  frustrationDetected?: boolean; // user shows explicit frustration with Evia/system
   rephraseLoopDetected?: boolean; // user repeats/rephrases a request from recent history
-  repeatedGreetingDetected?: boolean; // user repeats a greeting because Cara did not move forward
+  repeatedGreetingDetected?: boolean; // user repeats a greeting because Evia did not move forward
 
   // Sprint 8: tone-warmth-v1 adherence proxy. True when the reply opens with an
   // empathy reflection AND the turn was non-calm. Lets us measure whether the

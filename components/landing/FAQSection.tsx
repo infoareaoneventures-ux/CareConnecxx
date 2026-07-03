@@ -15,12 +15,12 @@ export const faqs = [
     },
     {
         question: "What if I don't like the caregiver you match me with?",
-        answer: "No problem. Our AI matching is highly accurate, but if you're not completely satisfied, just text Cara. She will find a new match immediately—no questions asked, no fees. We can even schedule video interviews with up to 3 candidates so you can choose the best fit.",
+        answer: "No problem. Our AI matching is highly accurate, but if you're not completely satisfied, just text Evia. She will find a new match immediately—no questions asked, no fees. We can even schedule video interviews with up to 3 candidates so you can choose the best fit.",
         category: "Matching"
     },
     {
         question: "Is my parent's personal information secure?",
-        answer: "Absolutely. We're HIPAA-compliant and use bank-level encryption (AES-256) for all data. Caregivers only receive the specific information they need for care. Full medical history and sensitive documents stay private and are managed securely by Cara.",
+        answer: "Absolutely. We're HIPAA-compliant and use bank-level encryption (AES-256) for all data. Caregivers only receive the specific information they need for care. Full medical history and sensitive documents stay private and are managed securely by Evia.",
         category: "Privacy"
     },
     {
@@ -30,7 +30,7 @@ export const faqs = [
     },
     {
         question: "How much does it cost compared to traditional agencies?",
-        answer: "In Santa Clara County, traditional agencies typically charge $32-42/hour while paying caregivers only $18-22/hour. With CareConnex, families pay $22-28/hour directly—caregivers earn more (typically $20-26/hour), and families save 30-40%. No agency markup, no hidden fees, no long-term contracts.",
+        answer: "In Santa Clara County, traditional agencies typically charge $32-42/hour while paying caregivers only $18-22/hour. With Evia, families pay $22-28/hour directly—caregivers earn more (typically $20-26/hour), and families save 30-40%. No agency markup, no hidden fees, no long-term contracts.",
         category: "Pricing"
     },
     {
@@ -40,12 +40,12 @@ export const faqs = [
     },
     {
         question: "How quickly can I get a caregiver?",
-        answer: "Most families find a match within 24-48 hours. For urgent needs, Cara can often source pre-approved caregivers to start the same day. Just text her your urgent needs and she'll begin matching immediately.",
+        answer: "Most families find a match within 24-48 hours. For urgent needs, Evia can often source pre-approved caregivers to start the same day. Just text her your urgent needs and she'll begin matching immediately.",
         category: "Timing"
     },
     {
         question: "What happens if a caregiver calls in sick?",
-        answer: "We've got you covered. Cara automatically notifies you via text and instantly suggests backup caregivers from your area who are available. For recurring care, she can even help you maintain a primary and backup caregiver to ensure continuity.",
+        answer: "We've got you covered. Evia automatically notifies you via text and instantly suggests backup caregivers from your area who are available. For recurring care, she can even help you maintain a primary and backup caregiver to ensure continuity.",
         category: "Reliability"
     }
 ];
@@ -71,7 +71,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({ onNavigate }) => {
                         <span className="text-primary-600">We've Got Answers.</span>
                     </h2>
                     <p className="text-xl text-slate-600 max-w-2xl mx-auto">
-                        Everything you need to know about finding and managing care with CareConnex.
+                        Everything you need to know about finding and managing care with Evia.
                     </p>
                 </div>
 
@@ -133,7 +133,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({ onNavigate }) => {
                         <Button 
                             size="lg" 
                             variant="secondary"
-                            onClick={() => window.location.href = 'mailto:support@careconnex.com'}
+                            onClick={() => window.location.href = 'mailto:support@eviacares.com'}
                             className="rounded-2xl"
                         >
                             Contact Support

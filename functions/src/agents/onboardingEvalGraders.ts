@@ -7,7 +7,7 @@
 //   1. completion        — all required fields collected by the end of the run
 //   2. fields-before-handoff — required set was complete at the moment the loop
 //                          signalled complete_collection (no premature handoff)
-//   3. no re-greet       — Cara never re-greets / re-introduces after turn 1
+//   3. no re-greet       — Evia never re-greets / re-introduces after turn 1
 //   4. no double-send    — at most one user-facing message per turn
 
 import { OnboardingRole, missingRequiredFields } from "./onboardingContract";

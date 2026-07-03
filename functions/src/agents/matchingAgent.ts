@@ -391,7 +391,7 @@ export async function runMatchingForClient(
     const appUrl     = getAppUrl();
     const userId     = (session as any)?.userId ?? phone;
 
-    // Surface remembered client preferences so Cara can reference them naturally
+    // Surface remembered client preferences so Evia can reference them naturally
     const learnedFacts = await getRelevantFacts(userId).catch(() => [] as Awaited<ReturnType<typeof getRelevantFacts>>);
     const factsContext = learnedFacts.length > 0
       ? `\n\n🧠 KNOWN PREFERENCES (learned from past conversations):\n${learnedFacts.map(f => `- ${f.fact}`).join("\n")}\nIf the top match aligns with a known preference, mention it naturally (e.g. "You mentioned preferring female caregivers — Maria fits that perfectly.").`
@@ -434,7 +434,7 @@ export async function runMatchingForClient(
         allReasons:   ms.reasoning,
         overallScore: ms.overallScore,
         profileUrl:   `${appUrl}/caregiver/${c.id}`,
-        // Headshot (persisted from web upload OR a photo texted to Cara). Sent as
+        // Headshot (persisted from web upload OR a photo texted to Evia). Sent as
         // an image bubble before each caregiver's profile link so families see a
         // face, not a generic preview card. Null for legacy caregivers w/o a photo.
         photo:        ((c as any).profilePhoto ?? (c as any).photoURL ?? null) as string | null,
@@ -458,7 +458,7 @@ export async function runMatchingForClient(
       .join("\n\n");
 
     const agentSystemPrompt =
-      `You are Cara's matching agent. You found these caregivers for ${seniorName}:\n\n` +
+      `You are Evia's matching agent. You found these caregivers for ${seniorName}:\n\n` +
       `${matchSummary}\n\n` +
       `Care needs: ${needs.join(", ") || "general"}` +
       factsContext +

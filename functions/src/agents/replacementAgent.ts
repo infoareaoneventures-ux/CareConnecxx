@@ -125,7 +125,7 @@ export async function runEmergencyReplacement(params: {
   // A thrown error must NOT be silently swallowed by a fire-and-forget caller, so we
   // catch at the top level and raise an admin alert.
   try {
-  // Mark replacement as in-progress so Cara can tell the family what's happening
+  // Mark replacement as in-progress so Evia can tell the family what's happening
   await db.collection("agent_tasks_active").doc(clientPhone).set({
     type:        "emergency_replacement",
     status:      "searching",
@@ -239,7 +239,7 @@ export async function runEmergencyReplacement(params: {
       error:         String((err as any)?.message ?? err),
       createdAt:     new Date().toISOString(),
     }).catch(() => {});
-    // Best-effort: clear the in-progress marker so Cara doesn't claim it's still searching.
+    // Best-effort: clear the in-progress marker so Evia doesn't claim it's still searching.
     await db.collection("agent_tasks_active").doc(clientPhone).delete().catch(() => {});
     // Do not re-throw: the alert + cleanup above is the full handling. Re-throwing would
     // double-alert (the webhooks caller also catches) and serves no recovery purpose.

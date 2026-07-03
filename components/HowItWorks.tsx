@@ -95,7 +95,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
       },
       {
          q: "How is this different from a traditional agency?",
-         a: "Traditional agencies charge $35-50/hour and keep 40-50% as their markup. With CareConnex, you pay caregivers directly at market rates ($22-35/hour) plus a flat monthly fee. You get more control, better transparency, and caregivers earn more."
+         a: "Traditional agencies charge $35-50/hour and keep 40-50% as their markup. With Evia, you pay caregivers directly at market rates ($22-35/hour) plus a flat monthly fee. You get more control, better transparency, and caregivers earn more."
       },
       {
          q: "Are the caregivers really verified?",
@@ -124,7 +124,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
    return (
       <div id="how-it-works" className="min-h-screen bg-white">
          <SEO
-            title="How CareConnex Works - Simple 4-Step Process"
+            title="How Evia Works - Simple 4-Step Process"
             description="Find verified caregivers in Santa Clara County in 4 simple steps. AI-powered matching and background checks included."
             keywords="how it works, find caregivers, hire caregivers, senior care process, caregiver matching, Santa Clara County"
             canonicalUrl="https://careconnex-d4c8b.web.app/how-it-works"
@@ -138,7 +138,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      <div className="bg-primary-600 p-2 rounded-xl shadow-lg shadow-primary-200/50">
                         <Activity className="text-white w-6 h-6" />
                      </div>
-                     <span className="text-2xl font-bold text-slate-900 tracking-tight">CareConnex</span>
+                     <span className="text-2xl font-bold text-slate-900 tracking-tight">Evia</span>
                   </div>
 
                   <nav className="hidden md:flex items-center space-x-8">
@@ -367,7 +367,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                <div className="max-w-3xl mx-auto px-4">
                   <div className="text-center mb-12">
                      <h2 className="text-3xl font-bold text-slate-900 mb-4">Frequently asked questions</h2>
-                     <p className="text-slate-600">Everything you need to know about CareConnex.</p>
+                     <p className="text-slate-600">Everything you need to know about Evia.</p>
                   </div>
 
                   <div className="space-y-4">
@@ -450,7 +450,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
             <section className="py-20 bg-slate-50">
                <div className="max-w-4xl mx-auto px-4">
                   <div className="text-center mb-12">
-                     <h2 className="text-3xl font-bold text-slate-900 mb-4">Why families choose CareConnex</h2>
+                     <h2 className="text-3xl font-bold text-slate-900 mb-4">Why families choose Evia</h2>
                      <p className="text-slate-600">See how we compare to traditional care agencies</p>
                   </div>
 
@@ -460,7 +460,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                            <thead>
                               <tr className="bg-slate-900 text-white">
                                  <th className="py-4 px-6 text-left font-semibold">Feature</th>
-                                 <th className="py-4 px-6 text-center font-semibold bg-primary-600">CareConnex</th>
+                                 <th className="py-4 px-6 text-center font-semibold bg-primary-600">Evia</th>
                                  <th className="py-4 px-6 text-center font-semibold text-slate-400">Traditional Agency</th>
                               </tr>
                            </thead>
@@ -627,7 +627,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                         <div className="bg-primary-50 rounded-2xl p-6 border border-primary-100">
                            <h4 className="font-semibold text-primary-900 mb-2">Don't see your city?</h4>
                            <p className="text-primary-700 text-sm mb-4">
-                              We're expanding throughout the Bay Area. Email <a href="mailto:hello@careconnex.com" className="font-semibold underline">hello@careconnex.com</a> to check availability in your neighborhood.
+                              We're expanding throughout the Bay Area. Email <a href="mailto:hello@eviacares.com" className="font-semibold underline">hello@eviacares.com</a> to check availability in your neighborhood.
                            </p>
                         </div>
                      </div>
@@ -671,7 +671,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                <div className="max-w-3xl mx-auto px-4 text-center">
                   <h2 className="text-3xl md:text-4xl font-bold mb-6">Ready to find the perfect care?</h2>
                   <p className="text-xl text-primary-100 mb-10">
-                     Join hundreds of families in Santa Clara County who trust CareConnex for their loved ones.
+                     Join hundreds of families in Santa Clara County who trust Evia for their loved ones.
                   </p>
                   <div className="flex flex-col sm:flex-row justify-center gap-4">
                      <Button
@@ -697,7 +697,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      <button onClick={() => setLegalModal('terms')} className="hover:text-slate-600">Terms of Service</button>
                   </div>
                   <p className="mt-8 text-sm text-slate-400">
-                     © 2026 CareConnex. Serving Santa Clara County.
+                     © 2026 Evia. Serving Santa Clara County.
                   </p>
                </div>
             </footer>

@@ -61,8 +61,8 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
     return (
         <>
             <SEO
-                title="Pricing & Subscription Plans - CareConnex"
-                description="CareConnex pricing: $49.99/month for families seeking care, completely free for caregivers. No hidden fees, cancel anytime."
+                title="Pricing & Subscription Plans - Evia"
+                description="Evia pricing: $49.99/month for families seeking care, completely free for caregivers. No hidden fees, cancel anytime."
                 keywords="caregiver pricing, senior care cost, caregiving subscription, affordable care platform, free for caregivers"
                 canonicalUrl="https://careconnex-d4c8b.web.app/pricing"
             />
@@ -76,7 +76,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                                 onClick={() => onNavigate('landing')}
                                 className="text-2xl font-bold bg-gradient-to-r from-primary-600 to-blue-600 bg-clip-text text-transparent hover:scale-105 transition-transform"
                             >
-                                CareConnex
+                                Evia
                             </button>
 
                             {/* Desktop Nav */}
@@ -323,7 +323,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                             Ready to find your perfect caregiver?
                         </h2>
                         <p className="text-xl text-primary-50 mb-10 max-w-2xl mx-auto">
-                            Join thousands of families who've found trusted care through CareConnex. Get started today.
+                            Join thousands of families who've found trusted care through Evia. Get started today.
                         </p>
                         <div className="flex flex-col sm:flex-row gap-4 justify-center">
                             <Button
@@ -353,7 +353,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                 <footer className="bg-slate-900 text-slate-300 py-12">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
                         <p className="text-sm">
-                            © 2024 CareConnex. All rights reserved. • <button onClick={() => onNavigate('landing')} className="hover:text-white transition-colors">Privacy Policy</button> • <button onClick={() => onNavigate('landing')} className="hover:text-white transition-colors">Terms of Service</button>
+                            © 2024 Evia. All rights reserved. • <button onClick={() => onNavigate('landing')} className="hover:text-white transition-colors">Privacy Policy</button> • <button onClick={() => onNavigate('landing')} className="hover:text-white transition-colors">Terms of Service</button>
                         </p>
                     </div>
                 </footer>

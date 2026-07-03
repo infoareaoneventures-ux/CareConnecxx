@@ -37,7 +37,7 @@ export const QRHandoff: React.FC<Props> = ({ linqPhone, tone, caption, helper })
           ? 'mx-auto rounded-3xl bg-white p-5 w-fit shadow-2xl shadow-blue-500/10'
           : 'mx-auto rounded-3xl bg-white p-5 w-fit shadow-xl shadow-slate-200 border border-slate-100'
       }>
-        <a href={href} aria-label={`Open Messages to text Cara: ${SMS_BODY}`} className="block">
+        <a href={href} aria-label={`Open Messages to text Evia: ${SMS_BODY}`} className="block">
           <QRCanvas data={href} size={260} />
         </a>
       </div>

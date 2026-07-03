@@ -51,11 +51,11 @@ export async function maybeRollUpHistory(phone: string): Promise<boolean> {
     if (toFold.length === 0) return false;
 
     const transcript = toFold
-      .map((d) => `${d.data().role === "user" ? "Family" : "Cara"}: ${String(d.data().content ?? "").slice(0, 500)}`)
+      .map((d) => `${d.data().role === "user" ? "Family" : "Evia"}: ${String(d.data().content ?? "").slice(0, 500)}`)
       .join("\n");
 
     const newSummary = await quickComplete(
-      "You maintain a running summary of an ongoing SMS conversation between a family and Cara, a " +
+      "You maintain a running summary of an ongoing SMS conversation between a family and Evia, a " +
         "caregiving assistant. Merge the existing summary with the new messages into ONE concise summary " +
         "(max 200 words). Preserve durable facts, decisions, preferences, and open threads; drop " +
         "pleasantries. Write plain prose in the third person. Output only the summary.",

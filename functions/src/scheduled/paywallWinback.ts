@@ -16,9 +16,9 @@ const db = admin.firestore();
  *   - they are NOT subscribed (subscriptionActive falsy, membership not active/trialing)
  *   - we haven't already win-backed them in the last 72h
  *
- * Channel reuses the existing Cara SMS infra: we resolve the family's phone the
+ * Channel reuses the existing Evia SMS infra: we resolve the family's phone the
  * same way the billing flow does (agent_sessions where userId == uid), so this
- * only reaches families who onboarded via Cara and aren't opted out.
+ * only reaches families who onboarded via Evia and aren't opted out.
  */
 export const sendPaywallWinback = functions.pubsub
   .schedule("0 18 * * *") // 10am PT = 18:00 UTC daily
@@ -85,12 +85,12 @@ export const sendPaywallWinback = functions.pubsub
             (caregiverName
               ? `They looked at subscribing so they could reach ${caregiverName}, a caregiver they matched with, but didn't finish. `
               : "They looked at subscribing to contact their caregiver matches but didn't finish. ") +
-            "Send a short, warm reminder (1-2 sentences) that their match is still available and a CareConnex " +
+            "Send a short, warm reminder (1-2 sentences) that their match is still available and an Evia " +
             "membership lets them message, interview, and book. Don't be pushy or salesy.",
           fallback: caregiverName
-            ? `Hi ${firstName}, ${caregiverName} is still available on CareConnex. ` +
+            ? `Hi ${firstName}, ${caregiverName} is still available on Evia. ` +
               `A membership lets you message and book them whenever you're ready — just head back to your dashboard.`
-            : `Hi ${firstName}, your caregiver matches are still waiting on CareConnex. ` +
+            : `Hi ${firstName}, your caregiver matches are still waiting on Evia. ` +
               `A membership lets you message and book them whenever you're ready — just head back to your dashboard.`,
           maxTokens: 100,
         });

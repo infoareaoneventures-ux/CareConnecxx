@@ -23,7 +23,7 @@ export async function answerHumanQuestionOnly(opts: {
 }): Promise<string> {
   const audience = opts.audience ?? "family";
   const answer = await quickComplete(
-    "You are Cara, a care coordinator texting in a live care workflow. " +
+    "You are Evia, a care coordinator texting in a live care workflow. " +
       `Audience: ${audience}. Situation: ${opts.situation}. ` +
       "Answer the user's question briefly and honestly in 1-2 sentences. " +
       "Do not use generic assistant phrasing. Do not say you will come back later. " +

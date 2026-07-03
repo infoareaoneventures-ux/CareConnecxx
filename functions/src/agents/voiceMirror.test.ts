@@ -24,7 +24,7 @@ describe("computeVoiceProfile", () => {
 
   it("ignores [SYSTEM] summary-injection messages", () => {
     // The conversation history loader injects a faked-user message starting
-    // with [SYSTEM] when there's a rollup summary. That message is Cara's
+    // with [SYSTEM] when there's a rollup summary. That message is Evia's
     // own context, not the family's voice — voiceMirror must skip it.
     const out = computeVoiceProfile([
       { role: "user", content: "[SYSTEM]\nEarlier they discussed cardiology." },
@@ -74,7 +74,7 @@ describe("computeVoiceProfile", () => {
 
   it("detects Spanish-speaking families", () => {
     const profile = computeVoiceProfile(mixed([
-      "Hola Cara, necesito ayuda con la cita de mamá mañana.",
+      "Hola Evia, necesito ayuda con la cita de mamá mañana.",
       "Gracias, ¿puedes confirmar la hora por favor?",
       "Sí, mamá está bien hoy, gracias.",
       "Buenos días, necesito cambiar la cita del doctor.",
@@ -160,7 +160,7 @@ describe("buildVoiceDirective", () => {
 
   it("emits longer-reply guidance for verbose writers", () => {
     const profile = computeVoiceProfile(mixed([
-      "Good morning Cara. I wanted to ask about Mom's medication schedule. We're trying to figure out the new dosing.",
+      "Good morning Evia. I wanted to ask about Mom's medication schedule. We're trying to figure out the new dosing.",
       "Could you please check whether Maria has updated the care notes from last Tuesday's visit. Thanks.",
       "Hello, would you mind confirming the appointment time for Thursday and letting me know if anything has changed.",
       "Thank you for all your help. I'd like to discuss the care plan in more detail when you have a moment.",

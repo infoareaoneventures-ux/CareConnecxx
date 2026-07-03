@@ -2,7 +2,7 @@
 
 ## Status: ✅ CONFIGURED
 
-Your Firebase VAPID key has been integrated into the CareConnex push notification system.
+Your Firebase VAPID key has been integrated into the Evia push notification system.
 
 ---
 

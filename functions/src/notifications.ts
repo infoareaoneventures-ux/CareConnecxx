@@ -324,9 +324,9 @@ export const sendShiftReminders = functions.pubsub
 // ── Admin notification helpers ────────────────────────────────────────────────
 // Each writes to admin_alerts and optionally emails/texts the support line.
 
-const ADMIN_EMAIL   = process.env.ADMIN_EMAIL         || "admin@cara.app";
+const ADMIN_EMAIL   = process.env.ADMIN_EMAIL         || "admin@eviacares.com";
 const SUPPORT_PHONE = process.env.VITE_SUPPORT_PHONE  || process.env.SUPPORT_PHONE || "";
-const RESEND_FROM   = process.env.RESEND_FROM_EMAIL   || "noreply@cara.app";
+const RESEND_FROM   = process.env.RESEND_FROM_EMAIL   || "noreply@eviacares.com";
 
 function getResend(): Resend | null {
     const key = process.env.RESEND_API_KEY;
@@ -367,7 +367,7 @@ export async function notifyAdminNewCaregiverSignup(params: {
     });
     await sendAdminEmail(
         `New caregiver signup: ${params.name}`,
-        `<p>A new caregiver just signed up via Cara iMessage.</p>` +
+        `<p>A new caregiver just signed up via Evia iMessage.</p>` +
         `<p><strong>Name:</strong> ${params.name}<br>` +
         `<strong>Phone:</strong> ${params.phone}<br>` +
         `<strong>City:</strong> ${params.city}</p>`
@@ -390,7 +390,7 @@ export async function notifyAdminNewClientSignup(params: {
     });
     await sendAdminEmail(
         `New client signup: ${params.firstName}`,
-        `<p>A new family just joined via Cara iMessage.</p>` +
+        `<p>A new family just joined via Evia iMessage.</p>` +
         `<p><strong>Name:</strong> ${params.firstName}<br>` +
         `<strong>Senior:</strong> ${params.seniorName}<br>` +
         `<strong>Phone:</strong> ${params.phone}<br>` +
@@ -413,7 +413,7 @@ export async function notifyAdminInterviewScheduled(params: {
     });
     await sendAdminEmail(
         `Interview scheduled: ${params.caregiverName}`,
-        `<p>An interview was scheduled via Cara.</p>` +
+        `<p>An interview was scheduled via Evia.</p>` +
         `<p><strong>Caregiver:</strong> ${params.caregiverName}<br>` +
         `<strong>Time:</strong> ${params.scheduledTime}</p>`
     );
@@ -435,7 +435,7 @@ export async function notifyAdminBookingConfirmed(params: {
     });
     await sendAdminEmail(
         `Booking confirmed: ${params.appointmentCount} appts with ${params.caregiverName}`,
-        `<p>A booking was confirmed via Cara.</p>` +
+        `<p>A booking was confirmed via Evia.</p>` +
         `<p><strong>Caregiver:</strong> ${params.caregiverName}<br>` +
         `<strong>Appointments:</strong> ${params.appointmentCount}<br>` +
         `<strong>Total:</strong> $${params.totalCost.toFixed(2)}</p>`
@@ -460,7 +460,7 @@ export async function notifyAdminHealthFlag(params: {
         `<p><strong>Alert:</strong> ${params.signal}</p>` +
         `<p>Senior: ${params.seniorName} (clientId: ${params.clientId})</p>`
     );
-    await textAdmin(`[Cara] Health alert for ${params.seniorName}: ${params.signal}`);
+    await textAdmin(`[Evia] Health alert for ${params.seniorName}: ${params.signal}`);
 }
 
 export async function notifyAdminCaregiverIssue(params: {
@@ -482,5 +482,5 @@ export async function notifyAdminCaregiverIssue(params: {
         `<p>Caregiver: ${params.caregiverName} (${params.caregiverId})<br>` +
         `Appointment: ${params.appointmentId}</p>`
     );
-    await textAdmin(`[Cara] Issue from caregiver ${params.caregiverName}: ${params.description}`);
+    await textAdmin(`[Evia] Issue from caregiver ${params.caregiverName}: ${params.description}`);
 }

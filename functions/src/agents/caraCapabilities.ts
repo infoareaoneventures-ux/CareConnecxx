@@ -1,4 +1,4 @@
-// Canonical, user-facing list of what Cara can do, in plain language.
+// Canonical, user-facing list of what Evia can do, in plain language.
 //
 // This is the single source of truth for capability discovery (Track A of the
 // agent-native legibility plan). It feeds:

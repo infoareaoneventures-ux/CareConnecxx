@@ -9,7 +9,7 @@
  * member who shares a name all tripped a false alarm.
  *
  * To fix that without a Firestore read on every inbound, we keep a per-session
- * `knownNames` list (lowercased first names of everyone Cara already expects on
+ * `knownNames` list (lowercased first names of everyone Evia already expects on
  * this account — the client, their care recipients, family members, and their
  * connected/discussed caregivers). It's appended at care events (a match shown,
  * a booking confirmed, onboarding completed) and read for free off the session

@@ -39,7 +39,7 @@ async function addTestData() {
     {
       name: "Maria Gonzalez",
       phone: "+14155551001",
-      email: "maria.g@careconnex.com",
+      email: "maria.g@eviacares.com",
       hourlyRate: 28,
       skills: ["dementia", "bathing", "meal prep", "medication reminders"],
       zipCode: "95050",
@@ -55,7 +55,7 @@ async function addTestData() {
     {
       name: "David Kim",
       phone: "+14155551002",
-      email: "david.kim@careconnex.com",
+      email: "david.kim@eviacares.com",
       hourlyRate: 32,
       skills: ["mobility assistance", "physical therapy", "meal prep", "companionship"],
       zipCode: "95050",
@@ -71,7 +71,7 @@ async function addTestData() {
     {
       name: "Jennifer Walsh",
       phone: "+14155551003",
-      email: "jennifer.w@careconnex.com",
+      email: "jennifer.w@eviacares.com",
       hourlyRate: 26,
       skills: ["companionship", "meal prep", "light housekeeping", "transportation"],
       zipCode: "95051",
@@ -95,7 +95,7 @@ async function addTestData() {
   }
 
   console.log('\n✅ All test data added successfully!');
-  console.log('\nNow test Cara by sending "Find a caregiver" to your WhatsApp number.');
+  console.log('\nNow test Evia by sending "Find a caregiver" to your WhatsApp number.');
   process.exit(0);
 }
 

@@ -53,7 +53,7 @@ export async function handleRefundRequest(
     if (apptSnap.empty) {
       const msgR1 = await generateCaraMessage({
         audience: "family",
-        context: "A family member asked Cara for a refund, but Cara doesn't see any recent completed visits to refund. Let them know gently, and mention that if they think it's a mistake, Cara can create a support ticket for them.",
+        context: "A family member asked Evia for a refund, but Evia doesn't see any recent completed visits to refund. Let them know gently, and mention that if they think it's a mistake, Evia can create a support ticket for them.",
         fallback: "I don't see any recent visits to refund. If you think this is a mistake, I can create a support ticket for you.",
         maxTokens: 80,
       });
@@ -83,7 +83,7 @@ export async function handleRefundRequest(
       .join("\n");
     const msgR2opener = await generateCaraMessage({
       audience: "family",
-      context: "A family member wants a refund and Cara found recent visits. Ask them which visit they'd like a refund for.",
+      context: "A family member wants a refund and Evia found recent visits. Ask them which visit they'd like a refund for.",
       fallback: "Which visit would you like a refund for?",
       maxTokens: 80,
     });
@@ -162,7 +162,7 @@ export async function handleRefundRequest(
 
     const msgR4opener = await generateCaraMessage({
       audience: "family",
-      context: `Cara is about to ask a family member to confirm their refund request for the visit "${desc}" with reason: "${reason}". Write a warm one-line intro asking them to confirm the details below.`,
+      context: `Evia is about to ask a family member to confirm their refund request for the visit "${desc}" with reason: "${reason}". Write a warm one-line intro asking them to confirm the details below.`,
       fallback: `To confirm — you'd like a refund for ${desc} because: "${reason}".`,
       maxTokens: 80,
     });
@@ -197,7 +197,7 @@ export async function handleRefundRequest(
     if (norm.toUpperCase() !== "YES") {
       const msgR5 = await generateCaraMessage({
         audience: "family",
-        context: "A family member decided to cancel their refund request. Acknowledge the cancellation warmly and let them know Cara is there if they need anything else.",
+        context: "A family member decided to cancel their refund request. Acknowledge the cancellation warmly and let them know Evia is there if they need anything else.",
         fallback: "No problem - refund request cancelled.",
         maxTokens: 80,
       });
@@ -234,7 +234,7 @@ export async function handleRefundRequest(
 
     const msgR6opener = await generateCaraMessage({
       audience: "family",
-      context: "A family member just submitted a refund request through Cara. Acknowledge the submission warmly and let them know what happens next.",
+      context: "A family member just submitted a refund request through Evia. Acknowledge the submission warmly and let them know what happens next.",
       fallback: "Your refund request has been submitted.",
       maxTokens: 80,
     });

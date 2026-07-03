@@ -358,7 +358,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "update_preferences",
-    description: "Update Cara's notification preferences for the user (DND, active hours, etc.).",
+    description: "Update Evia's notification preferences for the user (DND, active hours, etc.).",
     input_schema: {
       type: "object",
       properties: {
@@ -385,7 +385,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "read_memory_file",
-    description: "Read one of Cara's long-term memory files for a user. Canonical files: profile, health, family, recent_episodes, procedural. May also be an ad-hoc slug returned by another tool (e.g. an offloaded large result like \"tool_get_invoice_history_...\").",
+    description: "Read one of Evia's long-term memory files for a user. Canonical files: profile, health, family, recent_episodes, procedural. May also be an ad-hoc slug returned by another tool (e.g. an offloaded large result like \"tool_get_invoice_history_...\").",
     input_schema: {
       type: "object",
       properties: {
@@ -397,7 +397,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "update_memory_file",
-    description: "Append new information to one of Cara's long-term memory files for a user.",
+    description: "Append new information to one of Evia's long-term memory files for a user.",
     input_schema: {
       type: "object",
       properties: {
@@ -411,7 +411,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "edit_memory_file",
     description:
-      "Surgically correct a stored fact in one of Cara's memory files by find/replace, instead of appending a duplicate. " +
+      "Surgically correct a stored fact in one of Evia's memory files by find/replace, instead of appending a duplicate. " +
       "Use when a previously stored detail changes (e.g. the family says 'Mom is 82, not 78'). Returns how many occurrences were replaced.",
     input_schema: {
       type: "object",
@@ -468,10 +468,10 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "cara_knows",
     description:
-      "Return a clean digest of everything Cara remembers about this family — senior profile, " +
+      "Return a clean digest of everything Evia remembers about this family — senior profile, " +
       "health, family relationships, recent episodes, procedural notes. " +
       "Call when the family asks 'what do you know about Mom?', 'what's on file?', 'remind me what we've told you', " +
-      "'do you remember [topic]?', or any variation that asks Cara to surface her stored memory. " +
+      "'do you remember [topic]?', or any variation that asks Evia to surface her stored memory. " +
       "Returns the raw memory context so you can summarize it warmly in 2–3 sentences (never as a bulleted list).",
     input_schema: {
       type: "object",
@@ -564,7 +564,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "list_user_reminders",
-    description: "List the personal reminders the user has set up through Cara (e.g. 'remind me every Monday about medications').",
+    description: "List the personal reminders the user has set up through Evia (e.g. 'remind me every Monday about medications').",
     input_schema: {
       type: "object",
       properties: {
@@ -576,7 +576,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "create_reminder",
     description:
-      "Create a personal recurring reminder for the user. Use when the family asks Cara to remind them of something on a schedule. " +
+      "Create a personal recurring reminder for the user. Use when the family asks Evia to remind them of something on a schedule. " +
       "Confirm the schedule with the family before calling.",
     input_schema: {
       type: "object",
@@ -588,7 +588,7 @@ export const MCP_TOOLS: McpTool[] = [
         dayOfWeek:  { type: "number", description: "0=Sun … 6=Sat — only for weekly recurrence" },
         hour:       { type: "number", description: "24-hour format, 0–23" },
         minute:     { type: "number", description: "0–59" },
-        message:    { type: "string", description: "The full text Cara will send as the reminder" },
+        message:    { type: "string", description: "The full text Evia will send as the reminder" },
       },
       required: ["phone", "userId", "label", "recurrence", "hour", "minute", "message"],
     },
@@ -648,7 +648,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "list_support_tickets",
-    description: "List the family's support tickets (most recent first) so Cara can give status updates instead of opening duplicates.",
+    description: "List the family's support tickets (most recent first) so Evia can give status updates instead of opening duplicates.",
     input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." } }, required: ["userId"] },
   },
   {
@@ -668,12 +668,12 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "list_proactive_drafts",
-    description: "List Cara's pending proactive message drafts queued for this family that haven't sent yet.",
+    description: "List Evia's pending proactive message drafts queued for this family that haven't sent yet.",
     input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." } }, required: ["userId"] },
   },
   {
     name: "cancel_proactive_draft",
-    description: "Cancel a pending proactive message draft so Cara doesn't send it. Only works on drafts that haven't already sent.",
+    description: "Cancel a pending proactive message draft so Evia doesn't send it. Only works on drafts that haven't already sent.",
     input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." }, draftId: { type: "string" } }, required: ["userId", "draftId"] },
   },
   {
@@ -688,7 +688,7 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         phone:       { type: "string",  description: "The family's phone number" },
         userId:      { type: "string",  description: "The family's user ID" },
-        message:     { type: "string",  description: "The exact text Cara will send as the follow-up" },
+        message:     { type: "string",  description: "The exact text Evia will send as the follow-up" },
         scheduledAt: { type: "string",  description: "ISO 8601 datetime for when to send (e.g. '2026-05-20T09:00:00.000Z')" },
         reason:      { type: "string",  description: "One-sentence reason why this follow-up makes sense (for context at fire time)" },
       },
@@ -782,7 +782,7 @@ export const MCP_TOOLS: McpTool[] = [
       "- 'schedule_appointment': book a doctor appointment on MyChart etc.\n" +
       "- 'pharmacy_refill': request a prescription refill on CVS/Walgreens\n" +
       "- 'insurance_check': check authorization or coverage status\n\n" +
-      "If credentials aren't stored yet, Cara will collect them securely via iMessage before proceeding.",
+      "If credentials aren't stored yet, Evia will collect them securely via iMessage before proceeding.",
     input_schema: {
       type: "object",
       properties: {
@@ -1105,7 +1105,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "cancel_subscription",
     description:
-      "Cancel the family's CareConnex membership. Cancels at end of billing period — scheduled visits are unaffected. " +
+      "Cancel the family's Evia membership. Cancels at end of billing period — scheduled visits are unaffected. " +
       "MANDATORY: tell the family when their subscription ends and confirm before calling.",
     input_schema: {
       type: "object",
@@ -1949,7 +1949,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         userId:               { type: "string", description: "The user's ID" },
-        newsletter:           { type: "boolean", description: "Receive the CareConnex newsletter" },
+        newsletter:           { type: "boolean", description: "Receive the Evia newsletter" },
         newMatchAlerts:       { type: "boolean", description: "Notify when new caregiver matches are found" },
         reviewNotifications:  { type: "boolean", description: "Notify when caregivers receive reviews" },
         privacyShowBookings:  { type: "boolean", description: "Show the family's booking calendar to caregivers" },
@@ -2315,7 +2315,7 @@ export const MCP_RESOURCE_TEMPLATES: McpResource[] = [
   {
     uri: "cara://user/{userId}/memory/{file}",
     name: "Memory File",
-    description: "Cara's long-term memory file: profile, health, family, recent_episodes, or procedural.",
+    description: "Evia's long-term memory file: profile, health, family, recent_episodes, or procedural.",
     mimeType: "application/json",
   },
 ];
@@ -2397,7 +2397,7 @@ export function handlePromptGet(name: string, args: Record<string, string>): str
     case "weekly-care-summary": {
       const { clientName, seniorName, completedCount, journalContext, apptContext } = args;
       return [
-        `You are Cara. Write a Sunday morning text to ${clientName} about ${seniorName}'s week.`,
+        `You are Evia. Write a Sunday morning text to ${clientName} about ${seniorName}'s week.`,
         ``,
         `Write it like you actually know both of them and genuinely care how the week went.`,
         `If it was a good week, let that warmth come through.`,
@@ -2423,7 +2423,7 @@ export function handlePromptGet(name: string, args: Record<string, string>): str
         verifiedNote ? `Background check: ${verifiedNote}` : null,
       ].filter(Boolean).join("\n");
       return [
-        `You are Cara. Write a short, direct morning briefing text for caregiver ${caregiverName}.`,
+        `You are Evia. Write a short, direct morning briefing text for caregiver ${caregiverName}.`,
         ``,
         `They have a visit today with ${seniorName} at ${address}.`,
         extras ? `Additional context:\n${extras}` : null,
@@ -2510,7 +2510,7 @@ function toolFailureReason(result: unknown): string | undefined {
 // Raw exception messages can carry PII or secrets (a failed credential/login
 // web action, a Stripe error echoing a customer email, a provider token in a
 // URL). These reasons are persisted to the ledger / admin alerts AND fed back
-// into Cara's operational context, so redact common sensitive patterns first.
+// into Evia's operational context, so redact common sensitive patterns first.
 function sanitizeErrorReason(reason: string): string {
   return reason
     .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "[email]")
@@ -2957,7 +2957,7 @@ async function executeToolCall(
       }
 
       case "quote_booking": {
-        // U9b: pure cost estimate — lets Cara show the family the price before
+        // U9b: pure cost estimate — lets Evia show the family the price before
         // request_booking commits. No write; safe to call freely.
         const quote = await buildBookingQuote(input);
         if (!quote.ok) return toolError(quote.code, quote.message);
@@ -3037,7 +3037,7 @@ async function executeToolCall(
           source:          "cara",
         });
         await db.collection("admin_alerts").add({
-          type: "emergency_alert", title: "🚨 Emergency alert raised via Cara",
+          type: "emergency_alert", title: "🚨 Emergency alert raised via Evia",
           clientId, alertId: alertRef.id, note: note ?? "", createdAt: nowIso, resolved: false,
         }).catch(() => {});
         logAudit({ eventType: "emergency_alert_raised", userId: clientId as string, data: { source: "mcp:trigger_emergency_alert", alertId: alertRef.id } }).catch(() => {});
@@ -3095,7 +3095,7 @@ async function executeToolCall(
           appointmentId, clientId, amount: appt.amount ?? 0, reason: refundReason, status: "pending", createdAt: nowIso, source: "cara",
         });
         await db.collection("admin_alerts").add({
-          type: "refund_request", title: "Refund request — caregiver callout (via Cara)",
+          type: "refund_request", title: "Refund request — caregiver callout (via Evia)",
           clientId, appointmentId, refundRequestId: refundRef.id, createdAt: nowIso, resolved: false,
         }).catch(() => {});
         logAudit({ eventType: "callout_refund_requested", userId: clientId as string, data: { source: "mcp:request_callout_refund", appointmentId, refundRequestId: refundRef.id } }).catch(() => {});
@@ -3202,7 +3202,7 @@ async function executeToolCall(
 
       case "cara_knows": {
         // Memory transparency surface (Sprint 3 / roadmap §5.3). Returns the
-        // family's full editable memory context — the same blob Cara already
+        // family's full editable memory context — the same blob Evia already
         // sees in-prompt, but surfaced so they can verify or correct it.
         if (!input.userId) return toolError("INVALID_INPUT", "userId is required");
         logHealthDataAccessed(input.userId as string, input.userId as string, "mcp:cara_knows").catch(() => {});
@@ -3213,7 +3213,7 @@ async function executeToolCall(
         return {
           success: true,
           files,
-          context: context || "(no memory files on file yet — Cara is still building her picture of this family)",
+          context: context || "(no memory files on file yet — Evia is still building her picture of this family)",
         };
       }
 
@@ -3241,7 +3241,7 @@ async function executeToolCall(
 
       case "write_todos": {
         // Working-memory checklist (DeepAgents TodoListMiddleware port). Stored on
-        // agent_sessions; injected into Cara's system prompt at the start of each
+        // agent_sessions; injected into Evia's system prompt at the start of each
         // turn so she can see what's outstanding across the conversation.
         const { phone, items } = input as { phone?: string; items?: Array<{ task: string; status: string }> };
         if (!phone || !Array.isArray(items)) {
@@ -3279,7 +3279,7 @@ async function executeToolCall(
           cancelledAt:      nowIso,
           cancelledReason:  reason ?? "client_request",
         });
-        // Notify caregiver — surface success/failure so Cara doesn't claim
+        // Notify caregiver — surface success/failure so Evia doesn't claim
         // the caregiver was reached when the message never went out.
         let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
         if (appt.caregiverId) {
@@ -3942,7 +3942,7 @@ async function executeToolCall(
       const { trySend } = await import("../utils/toolNotify");
       const notification = await trySend(
         memberPhone as string,
-        `Hi - you've been added to ${seniorData.name ?? seniorData.seniorName ?? "your loved one's"} CareConnex care group. I'm Cara, and I'll send care updates here. You can text me questions anytime. Reply STOP to opt out.`,
+        `Hi - you've been added to ${seniorData.name ?? seniorData.seniorName ?? "your loved one's"} Evia care group. I'm Evia, and I'll send care updates here. You can text me questions anytime. Reply STOP to opt out.`,
         "mcp:add_family_member",
       );
       const { logAgentAction } = await import("../observability/actionLedger");
@@ -3985,11 +3985,11 @@ async function executeToolCall(
       const memberObj = existingMembers.find(m => m.phone === targetPhone);
       if (memberObj) await seniorSnap.ref.update({ familyMembers: admin.firestore.FieldValue.arrayRemove(memberObj) });
       // Tell the removed person they were removed — courtesy plus prevents
-      // confusion when their next inbound stops getting Cara replies.
+      // confusion when their next inbound stops getting Evia replies.
       const { trySend } = await import("../utils/toolNotify");
       const notification = await trySend(
         targetPhone as string,
-        "You've been removed from a CareConnex care group. You won't get further updates here. Text STOP anytime to unsubscribe completely.",
+        "You've been removed from an Evia care group. You won't get further updates here. Text STOP anytime to unsubscribe completely.",
         "mcp:remove_family_member",
       );
       logAudit({ eventType: "family_member_removed", userId: clientId as string, data: { source: "mcp:remove_family_member", seniorId, removedPhone: targetPhone, notificationSent: notification.sent } }).catch(() => {});
@@ -5588,7 +5588,7 @@ async function executeToolCall(
       // R-MEM-1/2: durable capture begins here, at name+number — this merge
       // persists every field as it's collected, and the webhook already logs each
       // onboarding message to Zep from first contact. On resume, the onboarding
-      // directive (buildOnboardingDirective) reads this onboardingData so Cara
+      // directive (buildOnboardingDirective) reads this onboardingData so Evia
       // recalls what's known and never re-asks. The rich memory_files bootstrap
       // intentionally stays at completion (initializeMemoryFiles is uid-keyed; the
       // account uid does not exist until payment, so an early phone-keyed bootstrap
@@ -5604,7 +5604,7 @@ async function executeToolCall(
         if (sa === "out") {
           const { parkOutOfArea } = await import("../agents/serviceAreaGate");
           await parkOutOfArea({ phone: phone as string, role, city: (data.city as string) ?? "", zipCode: (data.zipCode as string) ?? "", name: (data.firstName as string) ?? (data.name as string) ?? "", onboardingData: data });
-          return { ok: true, outOfArea: true, complete: false, guidance: "This location is OUTSIDE Cara's service area (Santa Clara County, California only). Warmly tell the user we don't serve their area yet and that you've added them to our waitlist and will reach out when we expand. Do NOT collect any more fields and do NOT call complete_collection." };
+          return { ok: true, outOfArea: true, complete: false, guidance: "This location is OUTSIDE Evia's service area (Santa Clara County, California only). Warmly tell the user we don't serve their area yet and that you've added them to our waitlist and will reach out when we expand. Do NOT collect any more fields and do NOT call complete_collection." };
         }
         if (sa === "need_zip" && fieldName === "city") {
           return { ok: true, fieldName, saved: true, missing: missingRequiredFields(role, data), needZip: true, guidance: "Saved the city, but it isn't recognized — ask the user for their ZIP code to confirm we cover their area before continuing." };
@@ -6355,7 +6355,7 @@ async function executeToolCall(
             source: "mcp_dispatcher",
             toolName: name,
             targetDocId: targetDocIdFromToolInput(input),
-            message: `Cara tool failed: ${name}`,
+            message: `Evia tool failed: ${name}`,
             reason: errorReason,
           });
         }
@@ -6386,7 +6386,7 @@ async function executeToolCall(
         source: "mcp_dispatcher",
         toolName: name,
         targetDocId: targetDocIdFromToolInput(input),
-        message: `Cara tool threw: ${name}`,
+        message: `Evia tool threw: ${name}`,
         reason: errorReason,
       }).catch(() => {});
     }

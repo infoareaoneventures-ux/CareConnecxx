@@ -1,6 +1,6 @@
 // Runtime-enforced confirmation gate for irreversible tool calls.
 //
-// Today Cara is *told* in the system prompt to confirm before
+// Today Evia is *told* in the system prompt to confirm before
 // cancel_appointment, delete_reminder, etc. — but if she forgets or is
 // prompt-injected, the action fires immediately. One bad incident in
 // eldercare is irrecoverable, so we enforce confirmation in the runtime.
@@ -124,7 +124,7 @@ export function buildActionPreview(toolName: string, toolInput: Record<string, u
     case "remove_family_member":
       return `Remove family member ${String(toolInput.memberPhone ?? toolInput.memberId ?? "?")}`;
     case "cancel_subscription":
-      return `Cancel CareConnex subscription`;
+      return `Cancel Evia subscription`;
     case "restore_care_plan_version":
       return `Restore care plan to version ${String(toolInput.versionId ?? "?")}`;
     case "block_user":

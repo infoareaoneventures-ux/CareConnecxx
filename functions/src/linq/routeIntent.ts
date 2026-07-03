@@ -328,7 +328,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     const { intent, degraded: intentDegraded } = await classifyIntentDetailed(text, !!pendingTask);
 
     // ── /help: capability discovery ──────────────────────────────────────────
-    // Static, side-effect-free reply listing what Cara can do for this role.
+    // Static, side-effect-free reply listing what Evia can do for this role.
     // Reached only via the exact-string command bypass in classifyIntentDetailed.
     if (intent === "HELP") {
       const role: DiscoveryRole = session.userType === "caregiver"
@@ -425,7 +425,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() });
         const cancelConfirmMsgA = await generateCaraMessage({
           audience: "family",
-          context: "Visit has been cancelled. Cara is confirming and offering to find a replacement for that day.",
+          context: "Visit has been cancelled. Evia is confirming and offering to find a replacement for that day.",
           fallback: "Cancelled. Want me to find a replacement for that day?",
           maxTokens: 60,
         });
@@ -540,7 +540,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         if (caregiverId) writeInterviewOutcomeSignal(session.userId ?? phone, caregiverId, "hire").catch(() => {});
         const hireMsgA = await generateCaraMessage({
           audience: "family",
-          context: `Family wants to hire caregiver ${pending.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
+          context: `Family wants to hire caregiver ${pending.caregiverName}. Evia is affirming the choice and asking when they'd like care to start.`,
           fallback: `${pending.caregiverName} sounds like a great fit. When would you like care to start?`,
           maxTokens: 80,
         });
@@ -558,7 +558,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       } else {
         const noJobMsg = await generateCaraMessage({
           audience: "caregiver",
-          context: "Caregiver responded to a job offer but there was no pending job in session. Cara acknowledges and lets them know it will reach out when something comes up.",
+          context: "Caregiver responded to a job offer but there was no pending job in session. Evia acknowledges and lets them know it will reach out when something comes up.",
           fallback: "No worries — I'll reach out when something comes up.",
           maxTokens: 60,
         });
@@ -600,7 +600,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         });
         const cancelConfirmMsgB = await generateCaraMessage({
           audience: "family",
-          context: "Visit has been cancelled. Cara is confirming and offering to find a replacement for that day.",
+          context: "Visit has been cancelled. Evia is confirming and offering to find a replacement for that day.",
           fallback: "Cancelled. Want me to find a replacement for that day?",
           maxTokens: 60,
         });
@@ -764,7 +764,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
             }
             const hireMsgB = await generateCaraMessage({
               audience: "family",
-              context: `Family wants to hire caregiver ${pendingOutcome.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
+              context: `Family wants to hire caregiver ${pendingOutcome.caregiverName}. Evia is affirming the choice and asking when they'd like care to start.`,
               fallback: `${pendingOutcome.caregiverName} sounds like a great fit. When would you like care to start?`,
               maxTokens: 80,
             });
@@ -830,7 +830,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         }
         const hireMsgC = await generateCaraMessage({
           audience: "family",
-          context: `Family wants to hire caregiver ${pending.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
+          context: `Family wants to hire caregiver ${pending.caregiverName}. Evia is affirming the choice and asking when they'd like care to start.`,
           fallback: `${pending.caregiverName} sounds like a great fit. When would you like care to start?`,
           maxTokens: 80,
         });
@@ -906,9 +906,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       // — detect criterion changes and re-run matching with the new filters.
       if (isFresh) {
         const { detectMatchRefilter } = await import("../utils/matchRefilterDetector");
-        // Load Cara's last message so the detector can tell a search-criteria
+        // Load Evia's last message so the detector can tell a search-criteria
         // change ("show me cheaper ones") apart from the family simply ANSWERING
-        // a question Cara just asked (e.g. "What date/time works best?" → "Today
+        // a question Evia just asked (e.g. "What date/time works best?" → "Today
         // at 11am"). Without it, a scheduling-time reply was being misread as an
         // availability refilter and triggering a fresh caregiver search.
         const lastAssistantMessage = await db
@@ -1416,7 +1416,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       });
       const rescheduleNlMsg = await generateCaraMessage({
         audience: "caregiver",
-        context: "Caregiver wants to reschedule a visit. Cara is asking them to suggest 2–3 times that work and will relay them to the family.",
+        context: "Caregiver wants to reschedule a visit. Evia is asking them to suggest 2–3 times that work and will relay them to the family.",
         fallback: "No problem — text me 2–3 times that work for you and I'll let the family know right away.",
         maxTokens: 80,
       });

@@ -1,7 +1,7 @@
 /**
- * Shared OpenAI client for Cara's "fast path" Claude-equivalent calls.
+ * Shared OpenAI client for Evia's "fast path" Claude-equivalent calls.
  *
- * Cara is hybrid:
+ * Evia is hybrid:
  *   - Short single-shot Haiku-equivalent calls (intent classification,
  *     YES/NO decisions, parseWithClaude extractions) go through this client
  *     to the configured router model.

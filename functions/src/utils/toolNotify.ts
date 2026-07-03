@@ -3,7 +3,7 @@ import { sendToPhone } from "../linq/client";
 // Structured outcome for downstream sends triggered by an MCP tool. The point
 // of this helper is to stop hiding send failures inside `.catch(() => {})` —
 // tools surface the outcome in their response so the qaAgent system prompt
-// can tell Cara *"action completed but the message didn't go through"* instead
+// can tell Evia *"action completed but the message didn't go through"* instead
 // of *"I let them know."*
 
 export type NotifyOutcome =
@@ -29,7 +29,7 @@ export async function trySend(
       source,
     });
     // Previously a circuit-breaker drop returned void and was reported as
-    // sent — Cara would tell the user "I let them know" about a message that
+    // sent — Evia would tell the user "I let them know" about a message that
     // never went out. Surface the real outcome instead.
     if (outcome === "queued") {
       return { sent: false, reason: "queued_for_retry" };
@@ -49,7 +49,7 @@ export async function trySend(
 }
 
 // Variant that goes through sendViaInteractionAgent (caraAgent voice + DND +
-// supervisor) rather than raw sendToPhone. Useful for tools where Cara should
+// supervisor) rather than raw sendToPhone. Useful for tools where Evia should
 // say it in her own voice rather than relay a verbatim caregiver/client line.
 export async function trySendViaCara(
   phone:   string,

@@ -39,7 +39,7 @@ export const stripeConnectWebhook = functions
 
         try {
             // Exactly-once guard — a duplicate account.updated would otherwise
-            // re-fire advanceOnboardingStep and double-advance Cara's conversation.
+            // re-fire advanceOnboardingStep and double-advance Evia's conversation.
             // (Stripe event ids are unique across webhook endpoints, so the
             // ledger collection is shared with the subscription webhook.)
             if (await claimWebhookEvent(STRIPE_EVENTS_COLLECTION, event.id) === "duplicate") {
@@ -73,7 +73,7 @@ export const stripeConnectWebhook = functions
                     }
                     await snap.docs[0].ref.update(update);
 
-                    // Advance Cara onboarding if caregiver has an iMessage session
+                    // Advance Evia onboarding if caregiver has an iMessage session
                     if (complete) {
                         try {
                             const cgPhone = snap.docs[0].data().phone as string | undefined;

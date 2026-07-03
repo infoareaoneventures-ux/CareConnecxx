@@ -1,12 +1,12 @@
 /**
- * Cara's real-time memory hygiene guidelines — Sprint 2 / roadmap §4.10.
+ * Evia's real-time memory hygiene guidelines — Sprint 2 / roadmap §4.10.
  *
  * Adapted from DeepAgents' MEMORY_SYSTEM_PROMPT
  * (third_party/deepagents/libs/deepagents/deepagents/middleware/memory.py#L104)
  * with eldercare-specific DO / DON'T examples. The original was tuned for
  * coding agents; ours is tuned for family/caregiver contexts.
  *
- * Goal: give Cara explicit guidance on WHEN to call update_memory_file /
+ * Goal: give Evia explicit guidance on WHEN to call update_memory_file /
  * edit_memory_file vs. when to leave memory alone. Nightly consolidation
  * (consolidateMemoryForUser) handles batch extraction, but in-turn writes
  * need this real-time policy so she doesn't over-save trivia or under-save
@@ -43,6 +43,6 @@ export const MEMORY_GUIDELINES = [
   "**HOW TO SAVE WELL:**",
   "• Capture WHY when you can, not just WHAT (\"prefers morning visits because afternoon meds make her drowsy\"). Reasons help future turns make good calls.",
   "• Pick the right file: profile (identity, contact prefs), health (diagnoses/meds/allergies/doctors), family (relationships, group dynamics), recent_episodes (last 30 days of notable events), procedural (rules, do's and don'ts).",
-  "• Acknowledge in plain language that you're remembering it (\"Got it — I'll remember she prefers mornings.\") — the family should feel the memory, not just see Cara silently file it away.",
+  "• Acknowledge in plain language that you're remembering it (\"Got it — I'll remember she prefers mornings.\") — the family should feel the memory, not just see Evia silently file it away.",
   "</memory_guidelines>",
 ].join("\n");

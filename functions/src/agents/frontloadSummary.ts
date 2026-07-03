@@ -2,11 +2,11 @@
  * When a family front-loads several answers in one onboarding message, the
  * absorb+skip logic in onboardingConversation advances past those steps — but
  * each skipped step's acknowledgment ("Lovely to meet you, Sarah", "Got it,
- * Dorothy") is lost, so Cara lands on the next question as if she ignored
+ * Dorothy") is lost, so Evia lands on the next question as if she ignored
  * everything they just said.
  *
  * summarizeFrontload builds a short, human recap of the care facts just
- * captured so Cara can acknowledge them before asking the next question.
+ * captured so Evia can acknowledge them before asking the next question.
  * Returns null when there's nothing worth a standalone acknowledgment — i.e.
  * the user answered a single question normally (the landing handler already
  * acknowledges those), or fewer than two distinct question-groups were

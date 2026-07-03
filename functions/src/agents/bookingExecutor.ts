@@ -115,7 +115,7 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
         rejectedCaregiverIds: admin.firestore.FieldValue.arrayUnion(task.caregiverId),
       }).catch(() => {});
 
-      // Set an active goal so Cara carries booking context through the re-match.
+      // Set an active goal so Evia carries booking context through the re-match.
       // If this fails, reset the task to awaiting_approval so the family can retry.
       const { setActiveGoal } = await import("./qaAgent");
       const goalSet = await setActiveGoal(
@@ -364,7 +364,7 @@ export async function finalizeAcceptedBooking(taskId: string, clientPhone: strin
       await new Promise(r => setTimeout(r, 3000));
       const emergencyAnchorMsg = await generateCaraMessage({
         audience: "family",
-        context:  "A family just had last-minute care coverage sorted out after an emergency replacement situation. Send a brief, heartfelt message acknowledging how stressful last-minute care can be and that this is exactly what Cara is here for.",
+        context:  "A family just had last-minute care coverage sorted out after an emergency replacement situation. Send a brief, heartfelt message acknowledging how stressful last-minute care can be and that this is exactly what Evia is here for.",
         fallback: "Last-minute coverage is one of the hardest parts of care. That's exactly what I'm here for.",
         maxTokens: 80,
       });

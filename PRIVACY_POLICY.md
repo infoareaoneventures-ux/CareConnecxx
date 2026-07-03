@@ -1,6 +1,6 @@
 # PRIVACY POLICY
 
-**CareConnex**  
+**Evia**  
 **Effective Date:** February 7, 2026  
 **Last Updated:** February 7, 2026
 
@@ -8,7 +8,7 @@
 
 ## 1. INTRODUCTION
 
-CareConnex ("we," "us," or "our") is committed to protecting your privacy and maintaining the confidentiality of your personal and health information. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our platform, website, and services (collectively, the "Services").
+Evia ("we," "us," or "our") is committed to protecting your privacy and maintaining the confidentiality of your personal and health information. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our platform, website, and services (collectively, the "Services").
 
 **This Privacy Policy is designed to comply with:**
 - Health Insurance Portability and Accountability Act (HIPAA)
@@ -123,7 +123,7 @@ In the event of a data breach involving PHI, we will:
 ## 5. INFORMATION SHARING AND DISCLOSURE
 
 ### 5.1 We Do NOT Sell Your Information
-CareConnex never sells personal information or PHI to third parties.
+Evia never sells personal information or PHI to third parties.
 
 ### 5.2 Categories of Recipients
 We may share information with:
@@ -173,9 +173,9 @@ California residents have additional rights to:
 
 ### 6.3 How to Exercise Your Rights
 To exercise any of these rights:
-- **Email:** privacy@careconnex.com
+- **Email:** privacy@eviacares.com
 - **Phone:** 1-800-CARE-NOW
-- **Mail:** CareConnex Privacy Office, [Address]
+- **Mail:** Evia Privacy Office, [Address]
 - **Online:** Through your account settings
 
 We will respond to requests within 30 days.
@@ -235,13 +235,13 @@ Your continued use of our services after changes indicates acceptance.
 ## 11. CONTACT US
 
 **Privacy Officer**  
-CareConnex  
-Email: privacy@careconnex.com  
+Evia  
+Email: privacy@eviacares.com  
 Phone: 1-800-CARE-NOW  
 
 **HIPAA Complaints**  
 If you believe your privacy rights have been violated, you may file a complaint with:
-- CareConnex Privacy Officer (above)
+- Evia Privacy Officer (above)
 - U.S. Department of Health and Human Services  
   Office for Civil Rights  
   200 Independence Avenue, S.W.  
@@ -254,7 +254,7 @@ We will not retaliate against you for filing a complaint.
 ## 12. STATE-SPECIFIC PRIVACY RIGHTS
 
 ### Nevada Residents
-You may opt-out of the sale of certain personal information. Contact us at privacy@careconnex.com.
+You may opt-out of the sale of certain personal information. Contact us at privacy@eviacares.com.
 
 ### Virginia Residents
 Under the Virginia Consumer Data Protection Act (VCDPA), you have rights similar to CCPA.
@@ -264,4 +264,4 @@ We comply with all applicable state privacy laws. Contact us for state-specific 
 
 ---
 
-**By using CareConnex services, you acknowledge that you have read and understood this Privacy Policy.**
+**By using Evia services, you acknowledge that you have read and understood this Privacy Policy.**

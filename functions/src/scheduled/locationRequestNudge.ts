@@ -7,7 +7,7 @@ const db = admin.firestore();
 
 // One-nudge follow-up for the native location request.
 //
-// When CARA fires Linq's native "Share Your Location" prompt (1:1 iMessage), it
+// When EVIA fires Linq's native "Share Your Location" prompt (1:1 iMessage), it
 // stores `pendingLocationRequest` on the session. The location comes back
 // asynchronously as an inbound pin; the onboarding handlers clear the marker
 // once a pin OR a typed city/zip arrives. If neither arrives, this job sends
@@ -60,7 +60,7 @@ export const sendLocationRequestNudges = functions.pubsub
           audience: "family",
           language: lang,
           context:
-            `Cara asked the user to share their location a little while ago via the tap-to-share prompt, ` +
+            `Evia asked the user to share their location a little while ago via the tap-to-share prompt, ` +
             `but hasn't received it yet. Send ONE short, friendly nudge. Make clear there are two easy ` +
             `options: tap the location prompt, OR just text their city and zip code (e.g. "Austin, TX 78701"). ` +
             `Warm and brief, not pushy.`,

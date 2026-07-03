@@ -128,7 +128,7 @@ export const CaregiverTopNav: React.FC = () => {
                   { icon: <Settings className="w-4 h-4" />, label: 'Settings', path: '/caregiver/settings' },
                   { icon: <Users className="w-4 h-4" />, label: 'My Families', path: '/caregiver/families' },
                   { icon: <Wallet className="w-4 h-4" />, label: 'Payments', path: '/caregiver/payments' },
-                  { icon: <HelpCircle className="w-4 h-4" />, label: 'Help & Support', path: 'mailto:support@careconnex.com' },
+                  { icon: <HelpCircle className="w-4 h-4" />, label: 'Help & Support', path: 'mailto:support@eviacares.com' },
                 ].map(item => (
                   <button
                     key={item.path}
@@ -198,7 +198,7 @@ const DesktopNav: React.FC<{
     <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
       <Link to="/caregiver/dashboard" className="flex items-center gap-2">
         <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-white font-bold text-lg shadow-sm">C</div>
-        <span className="font-bold text-slate-900 tracking-tight">CareConnex</span>
+        <span className="font-bold text-slate-900 tracking-tight">Evia</span>
       </Link>
 
       {/* Desktop nav — flat centered tabs (tomo-style) */}
@@ -235,10 +235,10 @@ const DesktopNav: React.FC<{
           {helpOpen && (
             <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 p-4 z-50">
               <p className="text-xs font-semibold text-slate-700 mb-3">Need Help?</p>
-              <a href="mailto:support@careconnex.com"
+              <a href="mailto:support@eviacares.com"
                 className="flex items-center gap-2 text-xs text-slate-600 hover:text-primary-600 mb-3">
                 <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                support@careconnex.com
+                support@eviacares.com
               </a>
               <button
                 onClick={async () => {

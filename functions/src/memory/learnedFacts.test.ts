@@ -82,7 +82,7 @@ beforeEach(() => {
 });
 
 describe("detectAndApplyCorrection", () => {
-  it("retracts a learned fact when the user asks Cara to forget it", async () => {
+  it("retracts a learned fact when the user asks Evia to forget it", async () => {
     h.facts.set("fact-1", {
       userId: "u1",
       fact: "Mom is allergic to shellfish",

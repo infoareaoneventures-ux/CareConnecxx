@@ -1,5 +1,5 @@
 /**
- * Simple E2E Smoke Tests for CareConnex
+ * Simple E2E Smoke Tests for Evia
  * Run with: npx playwright test e2e/critical-flows.spec.ts
  */
 
@@ -7,13 +7,13 @@ import { test, expect } from '@playwright/test';
 
 const BASE_URL = process.env.TEST_URL || 'https://careconnex-d4c8b.web.app';
 
-test.describe('CareConnex Smoke Tests', () => {
+test.describe('Evia Smoke Tests', () => {
   
   test('Landing page loads', async ({ page }) => {
     await page.goto(BASE_URL);
     
     // Just check page title loads
-    await expect(page).toHaveTitle(/CareConnex|Senior Care/i, { timeout: 15000 });
+    await expect(page).toHaveTitle(/Evia|Senior Care/i, { timeout: 15000 });
     
     console.log('✅ Landing page loads');
   });

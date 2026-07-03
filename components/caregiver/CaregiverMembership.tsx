@@ -120,7 +120,7 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
           </div>
 
           <h1 className="text-3xl lg:text-4xl font-extrabold leading-tight mb-3">
-            Join CareConnex and find senior care jobs
+            Join Evia and find senior care jobs
           </h1>
           <p className="text-white/80 text-lg mb-10 leading-relaxed">
             Families are searching for caregivers like you right now. Activate your membership and start applying today.

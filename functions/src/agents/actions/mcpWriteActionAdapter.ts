@@ -195,7 +195,7 @@ export async function runMcpWriteCaraAction(
   const role = typeof config.role === "function" ? config.role(input) : config.role;
   const action = defineCaraAction({
     name,
-    description: `Execute the ${name} MCP write through Cara's action contract.`,
+    description: `Execute the ${name} MCP write through Evia's action contract.`,
     inputSchema: config.inputSchema,
     outputSchema: anyObjectOutput,
     readOnly: false,

@@ -77,7 +77,7 @@ describe("getCapabilityExamples", () => {
 describe("buildHelpSmsReply", () => {
   it("client HELP reply is warm, action-oriented, no generic menu framing", () => {
     const reply = buildHelpSmsReply("client");
-    expect(reply.toLowerCase()).toContain("cara");
+    expect(reply.toLowerCase()).toContain("evia");
     expect(reply.toLowerCase()).not.toContain("here is a list");
     expect(reply.toLowerCase()).not.toContain("what can i help you with");
   });
@@ -110,7 +110,7 @@ describe("buildCapabilityHint", () => {
     expect(hint.toLowerCase()).toContain("visit"); // a real client example
   });
 
-  it("tells Cara to LEAD with one action when context exists", () => {
+  it("tells Evia to LEAD with one action when context exists", () => {
     const withCtx = buildCapabilityHint("client", true);
     expect(withCtx.toLowerCase()).toContain("lead with one relevant care recipe");
     const noCtx = buildCapabilityHint("client", false);

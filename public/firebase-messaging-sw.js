@@ -36,7 +36,7 @@ messaging.onBackgroundMessage((payload) => {
 
   if (!notification) return;
 
-  const notificationTitle = notification.title || 'CareConnex';
+  const notificationTitle = notification.title || 'Evia';
   const notificationOptions = {
     body: notification.body,
     icon: notification.icon || '/icon-192.png',
@@ -115,7 +115,7 @@ self.addEventListener('push', (event) => {
     const { title, body, icon, data } = payload;
 
     const options = {
-      body: body || 'New notification from CareConnex',
+      body: body || 'New notification from Evia',
       icon: icon || '/icon-192.png',
       badge: '/icon-192.png',
       tag: data?.tag || 'default',
@@ -124,7 +124,7 @@ self.addEventListener('push', (event) => {
     };
 
     event.waitUntil(
-      self.registration.showNotification(title || 'CareConnex', options)
+      self.registration.showNotification(title || 'Evia', options)
     );
   } catch (error) {
     console.error('[Service Worker] Error handling push:', error);

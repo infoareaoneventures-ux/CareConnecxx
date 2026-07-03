@@ -23,7 +23,7 @@ interface PendingClientShiftConfirm {
 async function classifyReply(text: string): Promise<"CONFIRM" | "CANCEL" | "QUESTION"> {
   try {
     const raw = await quickComplete(
-      "Cara just sent a family member a day-before reminder for a care visit. The user just replied. " +
+      "Evia just sent a family member a day-before reminder for a care visit. The user just replied. " +
       "Classify their intent:\n" +
       "- CONFIRM if they're acknowledging the visit is still on (\"yes\", \"sounds good\", \"we'll be here\", \"confirmed\", thumbs-up)\n" +
       "- CANCEL if they want to cancel the visit (\"cancel\", \"can't make it\", \"need to reschedule\", \"something came up\")\n" +
@@ -89,7 +89,7 @@ export async function handleClientShiftConfirm(
       clientCancelRequestId:   requestRef.id,
     }).catch(() => {});
 
-    // Notify the caregiver via Cara so they know not to show up
+    // Notify the caregiver via Evia so they know not to show up
     const cgSnap = await db.collection("caregivers").doc(info.caregiverId).get();
     const cgPhone = cgSnap.data()?.phone as string | undefined;
     if (cgPhone) {

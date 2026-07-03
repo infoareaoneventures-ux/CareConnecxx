@@ -32,17 +32,17 @@ export const FeaturesSection: React.FC<FeaturesSectionProps> = ({ onNavigate }) 
                         {/* Step 1 */}
                         <div className="flex items-center gap-5 p-5 md:p-6 border-b border-slate-100">
                             <MessageSquare className="w-[22px] h-[22px] text-slate-800 flex-shrink-0" strokeWidth={2.5} />
-                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Text Cara what you need (schedule, health conditions)</p>
+                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Text Evia what you need (schedule, health conditions)</p>
                         </div>
                         {/* Step 2 */}
                         <div className="flex items-center gap-5 p-5 md:p-6 border-b border-slate-100">
                             <Star className="w-[22px] h-[22px] text-slate-800 flex-shrink-0" strokeWidth={2.5} />
-                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Cara sources, filters, and interviews top local caregivers for you</p>
+                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Evia sources, filters, and interviews top local caregivers for you</p>
                         </div>
                         {/* Step 3 */}
                         <div className="flex items-center gap-5 p-5 md:p-6">
                             <Edit className="w-[22px] h-[22px] text-slate-800 flex-shrink-0" strokeWidth={2.5} />
-                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Cara schedules the visits and sends you updates via text</p>
+                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Evia schedules the visits and sends you updates via text</p>
                         </div>
                     </div>
 

@@ -98,7 +98,7 @@ export async function classifyIntentDetailed(
   const trimmed = text.trim().toUpperCase();
 
   if (STOP_WORDS.has(trimmed)) return { intent: "STOP", degraded: false };
-  // Exact-string command (allowed without an LLM per the Cara rules, like STOP).
+  // Exact-string command (allowed without an LLM per the Evia rules, like STOP).
   // Only an exact match triggers it — "help me find a caregiver" still routes to the LLM.
   if (trimmed === "HELP" || trimmed === "/HELP" || trimmed === "CAPABILITIES" || trimmed === "/CAPABILITIES") {
     return { intent: "HELP", degraded: false };
@@ -114,7 +114,7 @@ export async function classifyIntentDetailed(
   const timer = setTimeout(() => controller.abort(), 6_000);
   try {
     const raw = await quickComplete(
-        "You classify a message sent to a care coordinator named Cara. " +
+        "You classify a message sent to a care coordinator named Evia. " +
         "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, APPROVE_TIMESHEET, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, REQUEST_REFUND, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, SWAP_REQUEST, CLIENT_SWAP_REQUEST, CANCEL_SHIFT, UPDATE_RATE, UPDATE_SKILLS, UPDATE_BIO, UPDATE_PHOTO, PAUSE_ACCOUNT, REACTIVATE, INSTANT_PAYOUT, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, UPDATE_ONBOARDING, QUESTION.\n" +
         "STOP = opting out of all messages.\n" +
         "TASK_REPLY = responding to a numbered list (1, 2, or 3).\n" +
@@ -125,14 +125,14 @@ export async function classifyIntentDetailed(
         "PERMISSION_UPDATE = asking to stop/start/change a setting (e.g. 'stop weekly summaries').\n" +
         "REBOOK_REQUEST = asking to rebook a caregiver (e.g. 'book Maria again next week').\n" +
         "CANCEL_REQUEST = asking to cancel an upcoming visit (e.g. 'cancel Wednesday', 'cancel tomorrow\\'s visit').\n" +
-        "MEMORY_QUERY = asking what Cara knows or remembers (e.g. 'what do you know about mom', 'what have you remembered', 'what\\'s in my file').\n" +
+        "MEMORY_QUERY = asking what Evia knows or remembers (e.g. 'what do you know about mom', 'what have you remembered', 'what\\'s in my file').\n" +
         "ADD_FAMILY_MEMBER = asking to add a family member to care updates (e.g. 'add my sister', 'include my brother John', 'add +1234567890 to updates').\n" +
         "REMOVE_FAMILY_MEMBER = asking to remove a family member from care updates (e.g. 'remove my sister', 'take John off the updates', 'remove +1234567890', 'stop sending updates to my brother').\n" +
         "FACT_CORRECTION = correcting a previously stated fact (e.g. 'actually mom is 82 not 78', 'I meant Tuesday not Monday', 'wait, her doctor is Dr. Chen not Dr. Lee').\n" +
         "FIND_CAREGIVER = asking to find, search for, or get a new caregiver (e.g. 'I need a caregiver', 'can you find someone', 'looking for help', 'find me a caregiver', 'we need a new caregiver', 'search for caregivers').\n" +
         "PAUSE_SCHEDULE = asking to pause or temporarily stop a recurring care schedule (e.g. 'pause the schedule', 'hold care for now', 'skip next few weeks', 'pause recurring visits').\n" +
         "CANCEL_SCHEDULE = asking to cancel/end a recurring care schedule permanently (e.g. 'cancel recurring care', 'stop the weekly schedule', 'end recurring visits', 'cancel the standing schedule').\n" +
-        "SCHEDULE_REQUEST = asking Cara to set up a personal reminder (e.g. 'remind me every Monday about mom's medications', 'set a daily reminder at 8am', 'alert me every Friday afternoon').\n" +
+        "SCHEDULE_REQUEST = asking Evia to set up a personal reminder (e.g. 'remind me every Monday about mom's medications', 'set a daily reminder at 8am', 'alert me every Friday afternoon').\n" +
         "TRIGGER_MANAGEMENT = viewing, listing, or cancelling existing personal reminders (e.g. 'show my reminders', 'list my alerts', 'cancel my medication reminder', 'delete the Monday reminder').\n" +
         "CREDENTIAL_MANAGEMENT = asking about stored portal logins (e.g. 'what logins do you have for me', 'remove my CVS login', 'update my MyChart password', 'do you have my Walgreens login', 'delete my insurance login').\n" +
         "POST_JOB = a client wanting to post a new care job (e.g. 'post a new job', 'I need to find a caregiver', 'can you post another listing', 'add a new care request', 'I want to hire someone new').\n" +
@@ -160,8 +160,8 @@ export async function classifyIntentDetailed(
         "REACTIVATE = a caregiver wanting to come back from a pause / vacation mode and start receiving jobs again (e.g. 'I'm back', 'reactivate me', 'unpause my account', 'I want to start taking jobs again').\n" +
         "INSTANT_PAYOUT = a caregiver requesting an instant payout of their available balance (e.g. 'PAYOUT', 'cash out now', 'instant payout', 'send me my money now', 'pay me out today').\n" +
         "FIND_NEARBY_PROVIDER = asking to find or locate a nearby doctor, clinic, hospital, pharmacy, urgent care, dentist, or specialist (e.g. 'find a cardiologist near me', 'closest pharmacy to mom', 'any urgent care nearby', 'find a clinic in Atlanta', 'where can I find a dermatologist close by').\n" +
-        "BOOK_DOCTOR_APPOINTMENT = asking Cara to book or schedule a doctor appointment on their behalf (e.g. 'book an appointment with Dr. Smith', 'schedule a checkup for mom', 'can you make an appointment with my doctor', 'book me in with Dr. Johnson next week', 'I need to see a doctor — can you book it').\n" +
-        "PRESCRIPTION_REFILL = asking Cara to refill or renew an existing prescription at a pharmacy (e.g. 'refill mom's blood pressure medication', 'can you renew my prescription at CVS', 'I need a refill on Lisinopril', 'refill my prescription', 'request a refill at Walgreens', 'renew dad's medication').\n" +
+        "BOOK_DOCTOR_APPOINTMENT = asking Evia to book or schedule a doctor appointment on their behalf (e.g. 'book an appointment with Dr. Smith', 'schedule a checkup for mom', 'can you make an appointment with my doctor', 'book me in with Dr. Johnson next week', 'I need to see a doctor — can you book it').\n" +
+        "PRESCRIPTION_REFILL = asking Evia to refill or renew an existing prescription at a pharmacy (e.g. 'refill mom's blood pressure medication', 'can you renew my prescription at CVS', 'I need a refill on Lisinopril', 'refill my prescription', 'request a refill at Walgreens', 'renew dad's medication').\n" +
         "NEW_PRESCRIPTION = asking for a brand new prescription for a new condition or medication not previously prescribed (e.g. 'I need a prescription for anxiety', 'get me a prescription for something for the pain', 'mom needs a prescription for her new diagnosis', 'can you help me get a new prescription').\n" +
         "UPDATE_ONBOARDING = an already-onboarded family member wants to redo, fix, restart, or update the profile/onboarding info on file (senior name, age, city, care needs, etc.) — NOT a one-field correction (those are FACT_CORRECTION). Use this when the user references the whole setup as wrong, missing, or never finished (e.g. 'can you help me redo my onboarding', 'redo my profile', 'start over with my info', 'the onboarding never happened', 'that never happened, can you help me onboard', 'fix what's on file', 'my info is wrong', 'update what you know about mom', 'walk me through onboarding again', 'I never finished setting up').\n" +
         "QUESTION = anything else.",

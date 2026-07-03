@@ -165,7 +165,7 @@ describe("emitTurnMetrics", () => {
     });
   });
 
-  it("mirrors quality issue turns for Admin Cara Control Room visibility", () => {
+  it("mirrors quality issue turns for Admin Evia Control Room visibility", () => {
     const m = createTurnMetrics({ phone: "+15550002222", userId: "client-1", userType: "client", pathway: "qa" });
     m.supportDeflectionDetected = true;
     m.genericHelpAskDetected = true;

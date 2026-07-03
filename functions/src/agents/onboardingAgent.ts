@@ -1,7 +1,7 @@
 import * as functions from "firebase-functions/v1";
 
 // startSignup callable removed — new users are created in the webhook handler
-// when they text "Hey Cara" first (MO consent). See linq/webhooks.ts handleInbound.
+// when they text "Hey Evia" first (MO consent). See linq/webhooks.ts handleInbound.
 
 export const markTaskComplete = functions.https.onCall(async (data) => {
   const token  = (data?.token  ?? "").toString().trim();

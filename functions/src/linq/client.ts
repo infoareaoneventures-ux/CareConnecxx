@@ -466,7 +466,7 @@ export async function sendMessage(
   // structured callers that already set their own preferred_service, theirs wins.
   const svc = preferredService ? { preferred_service: preferredService } : {};
 
-  // Mirror Cara's outbound message into the web chat inbox (threads/{id}/messages).
+  // Mirror Evia's outbound message into the web chat inbox (threads/{id}/messages).
   // Fire-and-forget — mirroring must never delay or block SMS delivery.
   try {
     const { mirrorToWebThread, extractMirrorText } = await import("./threadMirror");
@@ -668,7 +668,7 @@ export async function stopTyping(chatId: string): Promise<void> {
     .catch(() => {/* non-critical */});
 }
 
-// Signal that Cara is working on something, before a slow operation (Stripe
+// Signal that Evia is working on something, before a slow operation (Stripe
 // checkout/identity/Connect creation, Checkr invitation). iMessage gets the
 // native typing bubble; SMS/RCS have no typing indicator, so they get a short
 // interim line instead of dead silence during the multi-second wait.
@@ -860,7 +860,7 @@ export async function getOrCreateSession(
     // First message is a silent thread-opener; real content comes from the caller.
     // Per best-practices: no links or media in first message.
     const { chat_id } = await createChat(phone, {
-      parts: [{ type: "text", value: "Hi, I'm Cara from CareConnex. I'm here whenever you need me." }],
+      parts: [{ type: "text", value: "Hi, I'm Evia. I'm here whenever you need me." }],
     });
 
     const session: AgentSession = {

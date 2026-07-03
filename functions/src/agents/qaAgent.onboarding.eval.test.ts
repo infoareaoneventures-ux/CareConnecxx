@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 // messy human inputs and grades the result against the four pre-flip gates:
 //   1. completion              — all required fields collected
 //   2. fields-before-handoff   — complete_collection only fired when full
-//   3. no re-greet             — Cara never re-greets / re-introduces after turn 1
+//   3. no re-greet             — Evia never re-greets / re-introduces after turn 1
 //   4. no double-send          — one user-facing reply per turn
 // (see docs/runbooks/onboarding-agent-loop-rollout.md and onboardingEvalGraders.ts)
 //
@@ -314,7 +314,7 @@ describe("onboarding eval graders (pure, no spend)", () => {
     expect(isReGreet("Hi again! What's next?")).toBe(true);
     expect(isReGreet("Hey Sarah, how are you?")).toBe(true);
     expect(isReGreet("Good morning!")).toBe(true);
-    expect(isReGreet("I'm Cara, your AI care assistant.")).toBe(true);
+    expect(isReGreet("I'm Evia, your AI care assistant.")).toBe(true);
     expect(isReGreet("Got it — and how old is she?")).toBe(false);
     expect(isReGreet("So she's alone mornings. What city are you in?")).toBe(false);
     // "Nice to meet you, <name>" after they introduce themselves is good manners,

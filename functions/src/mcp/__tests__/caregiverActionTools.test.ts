@@ -408,7 +408,7 @@ describe("U2 caregiver action tools", () => {
     });
 
     // U11 scenario 6 — a payout that fails at Stripe must be ledgered and raise
-    // an admin_alert so it surfaces in the Cara Control Room (never a silent
+    // an admin_alert so it surfaces in the Evia Control Room (never a silent
     // false success). The Stripe call throwing routes through the MCP
     // dispatcher's catch, which writes admin_alerts via createCaraOpsAlert.
     it("ledgers + admin-alerts a Stripe payout failure (Control Room visibility)", async () => {

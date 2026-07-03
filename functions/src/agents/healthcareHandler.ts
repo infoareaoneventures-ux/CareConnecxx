@@ -321,7 +321,7 @@ Reply as JSON only: {"providerType":"...","specialty":"...","location":"..."}`,
       await setFlowState(phone, "hc_search_location", data);
       const msg = await generateCaraMessage({
         audience: "family",
-        context:  `Cara is helping find a nearby ${specialty || providerType}. Ask for the city or zip code to search near.`,
+        context:  `Evia is helping find a nearby ${specialty || providerType}. Ask for the city or zip code to search near.`,
         fallback: `What city or zip code should I search near?`,
         maxTokens: 60,
       });
@@ -364,7 +364,7 @@ Reply as JSON only: {"doctorName":"...","appointmentType":"...","preferredDate":
       await setFlowState(phone, "hc_appt_doctor", data);
       const msg = await generateCaraMessage({
         audience: "family",
-        context:  "Cara is helping book a doctor appointment. Ask for the doctor's name.",
+        context:  "Evia is helping book a doctor appointment. Ask for the doctor's name.",
         fallback: "Which doctor would you like to book with?",
         maxTokens: 60,
       });
@@ -380,7 +380,7 @@ Reply as JSON only: {"doctorName":"...","appointmentType":"...","preferredDate":
       await setFlowState(phone, "hc_appt_date", data);
       const msg = await generateCaraMessage({
         audience: "family",
-        context:  `Cara is booking a ${appointmentType} with ${doctorName}. Ask what date works best.`,
+        context:  `Evia is booking a ${appointmentType} with ${doctorName}. Ask what date works best.`,
         fallback: "What date works best for you?",
         maxTokens: 60,
       });
@@ -453,7 +453,7 @@ Reply as JSON only: {"pharmacyService":"...","medicationName":"...","rxNumber":"
 
     // If we couldn't pin down a condition from the initial message, ask for it
     // explicitly instead of silently storing "general" and moving on. Avoids the
-    // case where Cara later sends the doctor a vague "needs a new prescription for
+    // case where Evia later sends the doctor a vague "needs a new prescription for
     // general" request.
     const isUnclear = condition === "__parse_error__" || condition.toLowerCase() === "general";
     if (isUnclear) {
@@ -551,7 +551,7 @@ export async function resumeHealthcareFlow(
     await setFlowState(phone, "hc_appt_date", updated);
     const msg = await generateCaraMessage({
       audience: "family",
-      context:  `Cara is booking a ${apptType} with ${updated.doctorName ?? "the doctor"}. Ask what date works best.`,
+      context:  `Evia is booking a ${apptType} with ${updated.doctorName ?? "the doctor"}. Ask what date works best.`,
       fallback: "What date works best for you?",
       maxTokens: 60,
     });
@@ -622,7 +622,7 @@ export async function resumeHealthcareFlow(
   // Reached when the initial intent message didn't carry a clear condition.
   if (step === "hc_newrx_condition") {
     if (await isQuestionOrOther(text)) {
-      const answer = await answerMidFlow(text, "client needs a new prescription and Cara asked what condition it's for");
+      const answer = await answerMidFlow(text, "client needs a new prescription and Evia asked what condition it's for");
       await sendMessage(answer);
       await sendMessage("What condition or symptom is this new prescription for?");
       return;
@@ -642,7 +642,7 @@ export async function resumeHealthcareFlow(
   // ── hc_newrx_hasdoctor: do they have a doctor for this? ───────────────────
   if (step === "hc_newrx_hasdoctor") {
     if (await isQuestionOrOther(text)) {
-      const answer = await answerMidFlow(text, "client needs a new prescription and Cara asked if they have a doctor");
+      const answer = await answerMidFlow(text, "client needs a new prescription and Evia asked if they have a doctor");
       await sendMessage(answer);
       await sendMessage("Do you already have a doctor you'd like to book for this?");
       return;
@@ -698,7 +698,7 @@ export async function resumeHealthcareFlow(
   await clearFlowState(phone);
   const msg = await generateCaraMessage({
     audience: "family",
-    context:  "There was an issue with a healthcare request. Cara is apologizing and offering to help again.",
+    context:  "There was an issue with a healthcare request. Evia is apologizing and offering to help again.",
     fallback: "Something went wrong with that healthcare request. Let's restart with one step: are we finding a provider, booking a visit, or handling a refill?",
     maxTokens: 60,
   });

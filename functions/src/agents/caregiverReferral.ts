@@ -78,9 +78,9 @@ export async function createCaregiverReferralInvite(
   });
 
   const inviteText =
-    `${input.referrerName ?? input.referrerPhone} thought you might be a good fit as a CareConnex caregiver.\n\n` +
+    `${input.referrerName ?? input.referrerPhone} thought you might be a good fit as an Evia caregiver.\n\n` +
     `You can start here: ${inviteUrl}\n\n` +
-    `CareConnex caregivers complete onboarding and Checkr background screening before they can accept visits. Reply STOP to opt out.`;
+    `Evia caregivers complete onboarding and Checkr background screening before they can accept visits. Reply STOP to opt out.`;
 
   try {
     await sendToPhone(referredPhone, inviteText, { preferredService: "SMS" });

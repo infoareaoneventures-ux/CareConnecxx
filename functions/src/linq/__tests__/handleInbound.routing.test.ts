@@ -5,7 +5,7 @@
 // interception, degraded-classifier handling — because that order IS the
 // product behavior. They exist so the planned decomposition of handleInbound
 // can prove, branch by branch, that nothing moved. If one of these fails
-// after a refactor, the refactor changed Cara's behavior.
+// after a refactor, the refactor changed Evia's behavior.
 //
 // Every collaborator module is mocked; assertions are "which handler fired"
 // (and which did NOT), not message wording.
@@ -583,7 +583,7 @@ describe("pending-approval gate and shift-offer interception (order-critical)", 
     expect(classifyIntentDetailed).not.toHaveBeenCalled();
   });
 
-  it("a question during a pending approval falls through so Cara can answer it", async () => {
+  it("a question during a pending approval falls through so Evia can answer it", async () => {
     seedSession();
     getAllPending.mockResolvedValue([{ id: "pa1" }]);
     handlePendingApprovals.mockResolvedValue({ outcome: "fallthrough" });
@@ -660,7 +660,7 @@ describe("QA tail (quick-reply bypass vs full agent)", () => {
 // ── Web-onboarding bridge: name capture from /start (U2/U3) ──────────────────
 // When the user typed their name on /start, the createWebOnboardingSession
 // callable stored it on the web_onboarding_sessions bridge doc. The FIRST inbound
-// "Hey Cara" must seed that name into the new agent_sessions doc, route to the
+// "Hey Evia" must seed that name into the new agent_sessions doc, route to the
 // *_confirm_name step (not *_ask_name), and greet by name. No name → legacy path.
 describe("web-onboarding name bridge", () => {
   // Seed a bridge doc + leave agent_sessions empty so the first-contact branch fires.
@@ -676,7 +676,7 @@ describe("web-onboarding name bridge", () => {
 
   it("client with a name → confirm step, seeded firstName, greeted by name", async () => {
     seedWebSession({ role: "client", name: "Sarah" });
-    await handleInbound(makeEvent("Hey Cara"));
+    await handleInbound(makeEvent("Hey Evia"));
     expect(session()?.onboardingStep).toBe("client_confirm_name");
     expect(session()?.onboardingData?.firstName).toBe("Sarah");
     expect(greeting()).toContain("Sarah");
@@ -684,7 +684,7 @@ describe("web-onboarding name bridge", () => {
 
   it("caregiver with a name → confirm step, seeded name, greeted by name", async () => {
     seedWebSession({ role: "caregiver", name: "Maria" });
-    await handleInbound(makeEvent("Hey Cara"));
+    await handleInbound(makeEvent("Hey Evia"));
     expect(session()?.onboardingStep).toBe("caregiver_confirm_name");
     expect(session()?.onboardingData?.name).toBe("Maria");
     expect(greeting()).toContain("Maria");
@@ -692,7 +692,7 @@ describe("web-onboarding name bridge", () => {
 
   it("no name on the bridge doc → legacy ask-name step, no seeded onboardingData", async () => {
     seedWebSession({ role: "client" });
-    await handleInbound(makeEvent("Hey Cara"));
+    await handleInbound(makeEvent("Hey Evia"));
     expect(session()?.onboardingStep).toBe("client_ask_name");
     expect(session()?.onboardingData).toBeUndefined();
   });

@@ -67,7 +67,7 @@ describe("sendOnboardingLinkAction", () => {
     });
   });
 
-  it("keeps the action visible to Cara but not public", () => {
+  it("keeps the action visible to Evia but not public", () => {
     expect(sendOnboardingLinkCaraAction.modelVisible).toBe(true);
     expect(sendOnboardingLinkCaraAction.publicAllowed).toBe(false);
   });

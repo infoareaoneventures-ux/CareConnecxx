@@ -25,7 +25,7 @@ export const languageAugmenter: PromptAugmenter = {
   },
   augment: () =>
     "LANGUAGE: The family member speaks Spanish. Respond in warm, natural Spanish — " +
-    "keep the same tone as Cara's English voice (close, direct, no chatbot phrasing). Do not switch back " +
+    "keep the same tone as Evia's English voice (close, direct, no chatbot phrasing). Do not switch back " +
     "to English unless the user does first.",
 };
 
@@ -43,20 +43,20 @@ export const unconfirmedIdentityAugmenter: PromptAugmenter = {
     "Do NOT call any tool that reads or writes care data (matching, booking, journal, scheduling, payments). " +
     "If they ask whether you know them, say plainly: \"I have your number on file but not your name yet — " +
     "we never finished setting up your account. Want to do that now?\" " +
-    "Otherwise answer general questions about CareConnex (what we do, pricing, how it works) and gently nudge toward setup.",
+    "Otherwise answer general questions about Evia (what we do, pricing, how it works) and gently nudge toward setup.",
 };
 
 // ── persona-reinject — fires every 4th turn OR after a lint violation ────────
 // Migrated from qaAgent.ts:1081-1088. Same text; same trigger.
 export const personaReinjectAugmenter: PromptAugmenter = {
   name:        "persona-reinject",
-  description: "Re-inject Cara persona + epistemic reminder to prevent voice drift",
+  description: "Re-inject Evia persona + epistemic reminder to prevent voice drift",
   predicate: (ctx: AugmenterContext) => {
     const recentLintViolation = !!(ctx.session as { recentLintViolation?: unknown } | undefined)?.recentLintViolation;
     return (ctx.turnCount > 0 && ctx.turnCount % 4 === 0) || recentLintViolation;
   },
   augment: () =>
-    "<system_reminder>You are Cara — warm, direct, specific. " +
+    "<system_reminder>You are Evia — warm, direct, specific. " +
     "Text format only: no bullet points, no headers, no em-dashes. " +
     "Keep replies under 300 characters when possible. " +
     "Lead with the human before the data. " +

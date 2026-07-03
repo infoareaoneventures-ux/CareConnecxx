@@ -4,7 +4,7 @@
  * Caregivers (and clients) on iMessage/RCS naturally snap a photo of their CNA
  * card or take a headshot and text it straight into the thread — far easier than
  * leaving the conversation for a web upload link. Linq delivers those as non-text
- * parts on the inbound webhook. Until now Cara read ONLY `type:"text"` parts and
+ * parts on the inbound webhook. Until now Evia read ONLY `type:"text"` parts and
  * dropped everything else into a generic "Got your message!" reply, which broke
  * the natural flow at exactly the photo/document onboarding steps.
  *
@@ -16,7 +16,7 @@
  *      fetch, or resolving an attachment_id via the Attachments API).
  *   3. Stores the file in Firebase Storage on the SAME paths the web upload page
  *      uses (`profile_photos/…`, `caregiver_docs/…`) and returns a bounded
- *      signed read URL, so the rest of Cara treats a texted photo identically to a
+ *      signed read URL, so the rest of Evia treats a texted photo identically to a
  *      web-uploaded one.
  *
  * Audio (voice memos), location pins, stickers, and plain text are deliberately

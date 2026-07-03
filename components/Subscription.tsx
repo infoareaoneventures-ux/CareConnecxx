@@ -132,7 +132,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                                     </div>
                                 </div>
 
-                                <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl shadow-primary-500/10 border-2 border-primary-100 p-8 lg:p-10 hover:shadow-primary-500/20 hover:-translate-y-1 transition-all duration-300 h-full">
+                                <div className="bg-white rounded-3xl border-2 border-ink-900 p-8 lg:p-10 transition-all duration-300 h-full">
                                     <div className="flex items-center gap-3 mb-6">
                                         <div className="bg-paper-100 p-3 rounded-2xl">
                                             <Heart className="w-8 h-8 text-ink-900" />
@@ -177,7 +177,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
 
                             {/* Caregiver Pricing Card */}
                             <div className="relative">
-                                <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-xl shadow-accent-500/10 border-2 border-accent-100 p-8 lg:p-10 hover:shadow-accent-500/20 hover:-translate-y-1 transition-all duration-300 h-full">
+                                <div className="bg-white rounded-3xl border hairline p-8 lg:p-10 transition-all duration-300 h-full">
                                     <div className="flex items-center gap-3 mb-6">
                                         <div className="bg-accent-100 p-3 rounded-2xl">
                                             <Shield className="w-8 h-8 text-ink-900" />

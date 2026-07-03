@@ -62,3 +62,4 @@ functions/.env.backup-*
 functions/.env.linqWebhook
 .gstack/
 dist3
+dist4

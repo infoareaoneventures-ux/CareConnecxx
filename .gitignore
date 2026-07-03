@@ -14,7 +14,7 @@ lerna-debug.log*
 
 node_modules
 dist
-dist2
+dist*
 dist-ssr
 *.local
 vite.config.ts.timestamp-*
@@ -61,5 +61,3 @@ functions/live-env.json
 functions/.env.backup-*
 functions/.env.linqWebhook
 .gstack/
-dist3
-dist4

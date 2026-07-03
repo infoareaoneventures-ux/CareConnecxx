@@ -91,7 +91,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
    const faqs = [
       {
          q: "How much does it cost?",
-         a: "Families pay $49.99/month for unlimited access to the platform, plus the caregiver's hourly rate ($22-35/hour). There are no hidden fees, no placement fees, and no long-term contracts. Caregivers join for free and keep 100% of their hourly rate."
+         a: "Families pay $29.95/month for unlimited access to the platform, plus the caregiver's hourly rate ($22-35/hour). There are no hidden fees, no placement fees, and no long-term contracts. Caregivers join for free and keep 100% of their hourly rate."
       },
       {
          q: "How is this different from a traditional agency?",
@@ -291,7 +291,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      </Button>
                      <p className="mt-4 text-sm text-ink-600">
                         {activeTab === 'families' 
-                           ? 'Free to browse. $49.99/month when you hire.' 
+                           ? 'Free to browse. $29.95/month when you hire.' 
                            : 'Free to join. Keep 100% of your rate.'
                         }
                      </p>
@@ -310,7 +310,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      <div className="bg-paper-50 rounded-3xl p-8 border hairline">
                         <div className="text-primary-600 font-semibold mb-2">For Families</div>
                         <div className="flex items-baseline justify-center gap-2 mb-4">
-                           <span className="font-display text-5xl font-semibold tracking-[-0.02em] text-ink-900">$49.99</span>
+                           <span className="font-display text-5xl font-semibold tracking-[-0.02em] text-ink-900">$29.95</span>
                            <span className="text-ink-600">/month</span>
                         </div>
                         <p className="text-ink-600 mb-6">Plus caregiver hourly rate ($22-35/hour)</p>
@@ -504,7 +504,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                               <tr>
                                  <td className="py-4 px-6 font-medium text-ink-900">Platform Fee</td>
                                  <td className="py-4 px-6 text-center bg-primary-50">
-                                    <span className="font-bold text-primary-700">$49.99/month</span>
+                                    <span className="font-bold text-primary-700">$29.95/month</span>
                                  </td>
                                  <td className="py-4 px-6 text-center text-ink-600">Hidden in markup</td>
                               </tr>

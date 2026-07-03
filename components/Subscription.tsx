@@ -62,7 +62,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
         <>
             <SEO
                 title="Pricing & Subscription Plans - Evia"
-                description="Evia pricing: $49.99/month for families seeking care, completely free for caregivers. No hidden fees, cancel anytime."
+                description="Evia pricing: $29.95/month for families seeking care, completely free for caregivers. No hidden fees, cancel anytime."
                 keywords="caregiver pricing, senior care cost, caregiving subscription, affordable care platform, free for caregivers"
                 canonicalUrl="https://careconnex-d4c8b.web.app/pricing"
             />

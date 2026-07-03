@@ -1,6 +1,5 @@
 import React from 'react';
 import { ViewType } from '../../types';
-import { Button } from '../ui/Button';
 
 interface MobileStickyCTAProps {
     onNavigate: (view: ViewType) => void;
@@ -8,17 +7,13 @@ interface MobileStickyCTAProps {
 
 export const MobileStickyCTA: React.FC<MobileStickyCTAProps> = ({ onNavigate }) => {
     return (
-        <div className="md:hidden fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-slate-100 z-50 shadow-lg">
-            <Button 
-                fullWidth 
+        <div className="md:hidden fixed bottom-0 left-0 right-0 p-4 pb-5 z-50">
+            <button
                 onClick={() => onNavigate('client-signup')}
-                className="rounded-xl"
+                className="btn-depth-primary w-full py-4 rounded-full font-semibold text-[15px]"
             >
-                Find Care Now
-            </Button>
-            <p className="text-center text-xs text-slate-400 mt-2">
-                Free to post • No commitment
-            </p>
+                Find a caregiver
+            </button>
         </div>
     );
 };

@@ -48,7 +48,8 @@ export const TrustSafetySection: React.FC<TrustSafetySectionProps> = ({ onNaviga
 
                     {/* Left Column: Text & Features */}
                     <div className="w-full lg:w-1/3 pb-8 lg:pb-16 z-10 relative">
-                        <h2 className="text-4xl md:text-5xl font-extrabold text-slate-900 leading-[1.1] mb-6 tracking-tight">
+                        <p className="section-number mb-4">(1)</p>
+                        <h2 className="font-display text-4xl md:text-[42px] font-semibold text-ink-900 leading-[1.1] mb-6 tracking-[-0.02em]">
                             A proven network of reliable, trustworthy care
                         </h2>
                         <p className="text-slate-600 text-[17px] mb-10 leading-relaxed max-w-md">

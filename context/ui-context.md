@@ -24,6 +24,12 @@ A **warm, friendly, light** consumer healthcare product (not dark mode). The fee
 | Info | `--color-info-50..700` | Blue. |
 | Emerald | `--color-emerald-50..700` | Reserved for high wellness/peace-of-mind scores. |
 | Purple | `--color-purple-500` | Sparingly. |
+| Paper | `--color-paper-50..200` | Warm cream surfaces — landing page only. |
+| Ink | `--color-ink-400/600/900` | Soft ink text (never pure black) — landing page only. |
+
+## Landing page design language (2026-07-02 redesign)
+
+The marketing landing (`components/landing/`, `LandingView.tsx`) uses a calm editorial style distinct from the app: paper cream backgrounds, **Fraunces** display serif for headlines (`.font-display`), hairline dividers (`.hairline`), numbered section markers (`.section-number`), and ONE CTA style — the dark `.btn-depth-primary` pill (`rounded-full`). Secondary actions are quiet text links ("… →"), never a second colored button. Body/UI text stays Plus Jakarta Sans.
 
 Common usage: page bg `bg-neutral-50`, surfaces `bg-white`, primary text `text-neutral-900`, muted `text-neutral-500`, borders `border-neutral-200`.
 

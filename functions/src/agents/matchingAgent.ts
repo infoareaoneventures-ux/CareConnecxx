@@ -21,6 +21,7 @@ import { getReputationBoosts } from "../ai/caregiverReputation";
 import { computeConfidenceScoreFromFields } from "./confidenceScore";
 import { getAppUrl } from "../config/appUrl";
 import { isSeededCaregiver } from "./actions/getCaregiverPreviewAction";
+import { recordCommitment, resolveCommitment } from "./commitmentTracker";
 
 const db = admin.firestore();
 
@@ -149,13 +150,92 @@ function computeRuleSignals(
   return { ruleScore, signals };
 }
 
+/**
+ * Outcome of a matching pass. "matched" and "no_match" both messaged the
+ * family; "failed" means the catch path ran — the family got a promise of
+ * matches "within the hour", backed by a tracked commitment the sweep in
+ * commitmentTracker.ts fulfills or escalates. Existing callers that ignore
+ * the return value are unaffected.
+ */
+export type MatchRunResult = "matched" | "no_match" | "failed";
+
+// This family's OWN match history, as a prompt block for the scorer. Global
+// outcome patterns say what families in general hire; this says what THIS
+// family has already passed on or hired. Names only — the scorer sees each
+// candidate's full signals and can reason about resemblance itself. No
+// orderBy (avoids composite indexes); recency isn't load-bearing here.
+async function buildFamilyMatchHistory(phone: string, userId?: string): Promise<string> {
+  const [reqSnap, outcomeSnap] = await Promise.all([
+    db.collection("interview_requests")
+      .where("clientPhone", "==", phone)
+      .limit(25)
+      .get()
+      .catch(() => null),
+    userId
+      ? db.collection("match_outcomes")
+          .where("clientId", "==", userId)
+          .limit(25)
+          .get()
+          .catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  const passed  = new Set<string>();
+  const met     = new Set<string>();
+  for (const d of reqSnap?.docs ?? []) {
+    const r = d.data();
+    const name = (r.caregiverName as string) || "";
+    if (!name) continue;
+    if (r.status === "client_declined" || r.status === "declined") passed.add(name);
+    else if (r.status === "scheduled") met.add(name);
+  }
+  let hiredCount = 0, passedCount = 0;
+  for (const d of outcomeSnap?.docs ?? []) {
+    const o = d.data();
+    if (o.outcome === "hired") hiredCount++;
+    else passedCount++;
+  }
+
+  if (passed.size === 0 && met.size === 0 && hiredCount === 0 && passedCount === 0) return "";
+
+  const lines: string[] = ["THIS FAMILY'S OWN HISTORY:"];
+  if (passed.size > 0) lines.push(`- Previously passed on: ${[...passed].slice(0, 8).join(", ")}`);
+  if (met.size > 0)    lines.push(`- Interviewed: ${[...met].slice(0, 8).join(", ")}`);
+  if (hiredCount || passedCount) lines.push(`- Web match outcomes: ${hiredCount} hired, ${passedCount} passed`);
+  lines.push(
+    "Weigh what their passes have in common (rate, experience level, specialty mix) " +
+    "and avoid re-offering the same shape of mismatch; if a candidate closely resembles " +
+    "someone they passed on, say so in the reasoning."
+  );
+  return lines.join("\n");
+}
+
 export async function runMatchingForClient(
   phone:   string,
   chatId:  string,
   intake:  Record<string, unknown>,
   session?: Record<string, unknown>
-): Promise<void> {
+): Promise<MatchRunResult> {
   try {
+    // Matching starting = the family is actively trying to hire. Record a
+    // DURABLE goal (7-day horizon, generous turn budget) so Evia carries the
+    // hiring context across days — not the legacy 3-turn/24h decay. Cleared
+    // explicitly when a booking confirms (bookingExecutor). Dynamic import:
+    // a static one would close the mcp/server → matchingAgent → qaAgent cycle.
+    await import("./qaAgent")
+      .then((m) => m.setActiveGoal(
+        phone,
+        "matching",
+        `Find and hire a caregiver for ${(intake.seniorName as string) || "their loved one"}`,
+        {
+          seniorName: (intake.seniorName as string) ?? null,
+          careNeeds:  (intake.careNeeds as string[]) ?? [],
+          zipCode:    (intake.zipCode as string) ?? null,
+        },
+        50,
+        7 * 24 * 60 * 60 * 1000,
+      ))
+      .catch(() => { /* goal is context sugar — never block matching on it */ });
     const zip    = (intake.zipCode ?? "") as string;
     const city   = (intake.city    ?? "") as string;
 
@@ -234,9 +314,17 @@ export async function runMatchingForClient(
       .sort((a, b) => b.ruleScore - a.ruleScore)
       .slice(0, 15);
 
-    // Step 3: Claude Sonnet scores all top candidates holistically
+    // Step 3: Claude Sonnet scores all top candidates holistically.
+    // Platform-wide hire patterns PLUS this family's own history — a family
+    // that has passed on two caregivers is telling us something the global
+    // reputation signal can't; the scorer should weigh what those passes have
+    // in common instead of re-offering the same shape of mismatch.
     const outcomePatterns = await getOutcomePatternSummary(db).catch(() => "");
-    const systemPrompt = buildMatchingSystemPrompt(outcomePatterns);
+    const familyHistory   = await buildFamilyMatchHistory(phone, (session as any)?.userId as string | undefined)
+      .catch(() => "");
+    const systemPrompt = buildMatchingSystemPrompt(
+      familyHistory ? `${outcomePatterns}\n\n${familyHistory}` : outcomePatterns
+    );
 
     const needs = (intake.careNeeds ?? []) as string[];
     const senior = {
@@ -350,7 +438,10 @@ export async function runMatchingForClient(
           "and our team will reach out within 24 hours to find the right match."
         );
       }
-      return;
+      // The family got an honest update (with the team paged via admin_alerts)
+      // — any earlier "I'll pull matches" promise has been answered.
+      await resolveCommitment(phone, "matching", "no_match_handled");
+      return "no_match";
     }
 
     // Successful match — reset the failure counter
@@ -558,10 +649,34 @@ export async function runMatchingForClient(
     // mistakes "send me <caregiver>'s profile" for a different care recipient.
     const { addKnownNames } = await import("../utils/knownNames");
     await addKnownNames(phone, top3.map((c) => c.name));
+
+    // Matches delivered — any open "I'll pull matches" promise is kept.
+    await resolveCommitment(phone, "matching", "matches_sent");
+    return "matched";
   } catch (err) {
     console.error("runMatchingForClient error:", err);
-    await sendMessage(chatId,
-      "I'm searching for caregivers — I'll text you top matches within the hour."
-    );
+    db.collection("admin_alerts").add({
+      type:        "matching_run_failed",
+      clientPhone: phone,
+      error:       err instanceof Error ? err.message : String(err),
+      severity:    "high",
+      createdAt:   new Date().toISOString(),
+      resolved:    false,
+    }).catch(() => {});
+    // Only promise "within the hour" when the commitment sweep is actually
+    // tracking it (it retries the match pass, then escalates to a human).
+    // If even the commitment write fails, be honest instead of promising.
+    const tracked = await recordCommitment({
+      phone, chatId, kind: "matching",
+      promiseText: "I'll text you top matches within the hour.",
+      userId:      (session?.userId as string | undefined),
+      source:      "matchingAgent:catch",
+      dueInMs:     30 * 60_000,
+    });
+    await sendMessage(chatId, tracked
+      ? "I'm searching for caregivers — I'll text you top matches within the hour."
+      : "I'm having trouble pulling up matches right now. I've alerted our care team so a real person follows up with you."
+    ).catch(() => {});
+    return "failed";
   }
 }

@@ -242,6 +242,14 @@ export const runTriggerEngine = functions.pubsub
   .onRun(async () => {
     const now = new Date().toISOString();
 
+    // System-wide degraded mode (provider billing/auth outage): hold generic
+    // proactive sends so users aren't pinged by a system that can't hold a
+    // conversation. Held triggers stay unfired and go out on the first run
+    // after recovery. Health/safety and operational triggers still fire.
+    const degraded = await import("../observability/systemStatus")
+      .then((m) => m.isSystemDegraded())
+      .catch(() => false);
+
     const snap = await db
       .collection("proactive_triggers")
       .where("scheduledAt", "<=", now)
@@ -348,6 +356,10 @@ export const runTriggerEngine = functions.pubsub
             console.error("interview_followup failed:", err)
           );
         } else if (trigger.source === "claude" && trigger.intent) {
+          // Held while degraded — regenerating + sending a chatty follow-up
+          // during a provider outage produces broken conversations. Trigger
+          // stays unfired and goes out after recovery.
+          if (degraded) continue;
           // Claude-scheduled follow-up: check context before firing, then regenerate message
 
           // Load last 5 conversation turns for suppression check
@@ -383,6 +395,9 @@ export const runTriggerEngine = functions.pubsub
           });
         } else {
           const isHealthTrigger = ["health_alert", "health_check", "medication_reminder", "fall_risk", "wellness_check"].includes(trigger.type ?? "");
+          // Health triggers fire even while degraded; generic check-ins hold
+          // (stay unfired) until the system recovers.
+          if (degraded && !isHealthTrigger) continue;
           await sendViaInteractionAgent(trigger.phone, {
             content:     trigger.message,
             urgency:     isHealthTrigger ? "immediate" : "standard",
@@ -449,6 +464,16 @@ export const runTriggerEngine = functions.pubsub
     await clearExpiredSessionStates().catch((err) =>
       console.error("clearExpiredSessionStates error:", err)
     );
+
+    // Honor Evia's follow-up promises — re-answer or escalate any overdue
+    // commitment so a promised follow-up never goes silent. Then convert any
+    // dropped turns (inbound with no outbound reply) into tracked commitments.
+    await import("../agents/commitmentTracker")
+      .then(async (m) => {
+        await m.sweepOverdueCommitments();
+        await m.sweepDroppedTurns();
+      })
+      .catch((err) => console.error("commitment sweeps error:", err));
   });
 
 export { runTriggerEngine as triggerEngineScheduled };
@@ -728,7 +753,8 @@ async function autoBookBestReplacement(taskId: string, task: any): Promise<void>
 
 async function clearExpiredSessionStates(): Promise<void> {
   const now = new Date().toISOString();
-  const { STATE_MACHINE_FLAGS, clearAllStateFlags } = await import("../utils/sessionState");
+  const { STATE_MACHINE_FLAGS, clearAllStateFlags, describeInterruptedFlow } =
+    await import("../utils/sessionState");
 
   const snap = await db.collection("agent_sessions")
     .where("stateExpiresAt", "<=", now)
@@ -741,8 +767,24 @@ async function clearExpiredSessionStates(): Promise<void> {
     const hasFlag = STATE_MACHINE_FLAGS.some(f => session[f] !== undefined && session[f] !== false);
     if (!hasFlag) continue;
     try {
+      // Capture what was in flight BEFORE wiping it — an interrupted booking/
+      // dispute/swap used to vanish silently here. If the flow is one worth
+      // resuming, tell the user instead of going quiet.
+      const interrupted = describeInterruptedFlow(session);
       await clearAllStateFlags(doc.id, db);
-      console.log(`[clearExpiredSessionStates] Cleared flags for ${doc.id}`);
+      console.log(`[clearExpiredSessionStates] Cleared flags for ${doc.id}`, { interrupted });
+      if (interrupted && !session.optedOut) {
+        await sendViaInteractionAgent(doc.id, {
+          content:
+            `Looks like we got interrupted while we were ${interrupted} — ` +
+            `nothing was lost. Want to pick it back up? Just reply here.`,
+          urgency:     "standard",
+          sourceAgent: "state_expiry_nudge",
+          canDrop:     true,
+        }).catch((err) =>
+          console.error(`[clearExpiredSessionStates] nudge failed for ${doc.id}:`, err)
+        );
+      }
     } catch (err) {
       console.error(`[clearExpiredSessionStates] Failed for ${doc.id}:`, err);
     }

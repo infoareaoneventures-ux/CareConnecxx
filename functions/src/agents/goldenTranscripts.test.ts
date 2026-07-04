@@ -206,6 +206,7 @@ vi.mock("./ephemeralSubAgents", () => ({ runEphemeralSubAgent: vi.fn(async () =>
 vi.mock("../mcp/server", () => ({
   MCP_TOOLS:        [],
   CAREGIVER_TOOLS:  [],
+  CLIENT_TOOLS:     [],
   handleToolCall:   vi.fn(async (name: string, _input: Record<string, unknown>) => {
     STATE.toolCalls.push(name);
     const mock = STATE.toolMocks.get(name);

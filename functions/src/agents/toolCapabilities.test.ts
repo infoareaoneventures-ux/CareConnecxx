@@ -196,6 +196,7 @@ describe("LAUNCH_ACTION_PARITY", () => {
     "get_senior_profile",
     "list_household_seniors",
     "get_pending_tasks",
+    "get_work_in_progress",
     "suggest_upcoming_care",
     "get_care_team",
     "create_support_ticket",

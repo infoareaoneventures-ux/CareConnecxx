@@ -30,6 +30,15 @@ Origin: `docs/plans/2026-06-24-001-feat-cara-100-agent-native-plan.md` (Track A)
 | Shift-hours / timesheets hard-delete | CRUD | Payroll/audit integrity; status transitions only, never deletion. |
 | Audit logs (`agent_audit_log`, `agent_action_ledger`) mutate/delete | CRUD, Shared Workspace | Observability integrity; append-only, admin-read-only. |
 | `care_journal` hard-delete | CRUD | Append-only care audit (firestore.rules: "never client-deletable"). Agent uses **soft-delete** (`delete_care_journal_entry` sets `status: hidden`) — the record is retained (U7). |
+| Chat message edit/delete (`agent_conversations/{phone}/messages`, `threads/{threadId}/messages`) | CRUD | Chat immutability by design: the conversation IS the audit trail of what Evia and the user actually said (safety incidents, confirmations, disputes). No `edit_message`/`delete_message` tool ships; corrections are made by sending a new message, and memory corrections go through `edit_memory_file`/`delete_memory_file` instead (2026-07-03). |
+| Care plan delete (`carePlans`, `senior_profiles/{uid}/care_plans`) | CRUD | Care-record retention: a care plan is clinical-adjacent history, never deleted. The full lifecycle is covered without deletion — `update_care_plan` (versioned), `get_care_plan_history`, and `restore_care_plan_version` (rollback). No `delete_care_plan` tool by design (2026-07-03). |
+| `senior_profiles` hard-delete | CRUD | Care-record retention: when care ends the profile is **archived, not deleted** — `archive_senior_profile` sets `status:'archived'` and the record (diagnoses, care history back-references) is retained for compliance/continuity. No hard-delete tool ships for any actor (2026-07-03). |
+
+## Action Parity — delivery channels by design
+
+| Item | Principle(s) | Rationale |
+|------|--------------|-----------|
+| Referrals have no in-app surface (`referrals`, `send_referral` / `get_referral_status` / `create_caregiver_referral`) | Action Parity | Referral invites are delivered over SMS/email **by design** — the invitee is by definition not yet a user, so an in-app surface for them cannot exist. The sender's side IS agent-native (send + status tools); only the invite delivery channel is external. Not a parity gap (2026-07-03). |
 
 ## Shared Workspace — internal infrastructure (never user-visible)
 

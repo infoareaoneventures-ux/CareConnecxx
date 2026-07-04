@@ -348,6 +348,110 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: true,
     notes: "Top-level user notifications (bookings, replies, alerts). Web reads own (userId field); Evia/admin write (admin/adminSupportActions.ts, services/api.ts). Distinct from the users/{uid}/notifications subcollection.",
   },
+
+  // ── Agent-memory + signal collections (agent-native audit 2026-07) ─────────
+  // Server/agent-only access class: Evia writes them, the web never reads them
+  // (webReads: false, so no firestore.rules block is required — default-deny is
+  // correct). Registered so the contract test governs their lifecycle instead of
+  // leaving them on the runtime-only allowlist.
+  learned_facts: {
+    path: "learned_facts",
+    docId: "uid",
+    caraWrites: true,
+    webReads: false,
+    notes: "Per-user learned-fact store (memory/learnedFacts.ts). Parent doc keyed by userId; facts live in the facts subcollection. Server/agent-only.",
+  },
+  facts: {
+    path: "learned_facts/{userId}/facts",
+    docId: "subcollection",
+    caraWrites: true,
+    webReads: false,
+    notes: "Individual learned facts under learned_facts/{userId}. Written/read by memory/learnedFacts.ts only. Server/agent-only.",
+  },
+  memory_embeddings: {
+    path: "memory_embeddings",
+    docId: "uid",
+    caraWrites: true,
+    webReads: false,
+    notes: "Semantic-search index for memory files (memory/memoryFiles.ts). Parent doc keyed by userId; vectors live in the blocks subcollection. Server/agent-only.",
+  },
+  blocks: {
+    path: "memory_embeddings/{userId}/blocks",
+    docId: "subcollection",
+    caraWrites: true,
+    webReads: false,
+    notes: "Embedded memory-file blocks under memory_embeddings/{userId}. Reindexed on every memory-file write and purged on delete_memory_file. Server/agent-only.",
+  },
+  agent_conversations: {
+    path: "agent_conversations",
+    docId: "phone",
+    caraWrites: true,
+    webReads: false,
+    notes: "Evia SMS conversation history (messages subcollection), keyed by E.164 phone. Consolidated into memory files nightly. Append-only by design — message edit/delete is an intentional exclusion (AGENT_NATIVE_EXCLUSIONS.md). Server/agent-only.",
+  },
+  user_preferences: {
+    path: "user_preferences",
+    docId: "uid",
+    caraWrites: true,
+    webReads: false,
+    notes: "Notification/DND/timezone preferences (memory/preferences.ts; mcp update_preferences). Server/agent-only; web preference surfaces read the users doc, not this.",
+  },
+  health_signals: {
+    path: "health_signals",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes: "Health concern flags from journal analysis and family reports (mcp log_health_flag / get_health_signals). PHI-bearing; server/agent-only.",
+  },
+  proactive_triggers: {
+    path: "proactive_triggers",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes: "Scheduled proactive check-ins/follow-ups (triggers/triggerEngine.ts). Server/agent-only agent scheduling state.",
+  },
+  pending_commitments: {
+    path: "pending_commitments",
+    docId: "composite",
+    caraWrites: true,
+    webReads: false,
+    notes: "Follow-up promises Evia made to a user ('I'll get back to you'), keyed {phone}_{kind}. Swept by triggerEngine via agents/commitmentTracker.ts — fulfilled or escalated to admin_alerts; never dropped. Server/agent-only.",
+  },
+  turn_watch: {
+    path: "turn_watch",
+    docId: "composite",
+    caraWrites: true,
+    webReads: false,
+    notes: "Dropped-turn watchdog markers keyed by chatId: stamped on every inbound (linq/webhooks.ts), deleted on any outbound send (linq/client.ts); survivors past dueAt become pending_commitments. Server/agent-only.",
+  },
+  system_status: {
+    path: "system_status",
+    docId: "composite",
+    caraWrites: true,
+    webReads: false,
+    notes: "Single 'current' doc: system-wide degraded-mode flag (observability/systemStatus.ts). Set on critical provider failures / budget exhaustion, cleared by the next successful turn. Server/agent-only.",
+  },
+  ops_counters: {
+    path: "ops_counters",
+    docId: "composite",
+    caraWrites: true,
+    webReads: false,
+    notes: "Daily ops counters (e.g. llm_fallback_{date}) for fallback-rate and spend observability. Server/agent-only.",
+  },
+  user_triggers: {
+    path: "user_triggers",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes: "User-requested reminders (triggers/userTriggerManager.ts; mcp create/update/delete_reminder). Server/agent-only.",
+  },
+  shift_swap_requests: {
+    path: "shift_swap_requests",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes: "Caregiver shift-swap state machine (mcp request/accept/cancel/list_shift_swaps). Server/agent-only; the web reads the resulting appointments doc, not the swap record.",
+  },
 };
 
 /** Collection names (top-level segment only) that Evia writes. */

@@ -70,3 +70,17 @@ export function resolveCaraModelConfig(
 export function shouldFallbackAgentToAnthropic(env: EnvLike = process.env): boolean {
   return clean(env.CARA_AGENT_ANTHROPIC_FALLBACK)?.toLowerCase() !== "false";
 }
+
+// Tier-3 agent fallback: Gemini via its OpenAI-compatible endpoint. Fires only
+// after both GPT-5.4 and the Anthropic fallback have failed, so the agent loop
+// survives a dual-provider outage (e.g. the 2026-07-03 tool-cap 400 + Anthropic
+// credit exhaustion). Requires GEMINI_API_KEY (already set for embeddings);
+// disable explicitly with CARA_AGENT_GEMINI_FALLBACK=false.
+export function shouldFallbackAgentToGemini(env: EnvLike = process.env): boolean {
+  if (clean(env.CARA_AGENT_GEMINI_FALLBACK)?.toLowerCase() === "false") return false;
+  return !!(clean(env.GEMINI_API_KEY) ?? clean(env.VITE_GEMINI_API_KEY));
+}
+
+export function resolveGeminiAgentModel(env: EnvLike = process.env): string {
+  return clean(env.CARA_AGENT_GEMINI_MODEL) ?? "gemini-2.5-flash";
+}

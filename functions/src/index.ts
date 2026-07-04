@@ -152,6 +152,11 @@ export { sendClientThirtyMinReminders } from './scheduled/clientThirtyMinReminde
 export { sendThirtyMinShiftReminders } from './scheduled/thirtyMinShiftReminder';
 export { processDndQueue } from './scheduled/dndQueueProcessor';
 export { drainLinqOutboundQueue } from './scheduled/outboundQueueDrain';
+// Agentic-reliability wave (2026-07): alert aging digest, hourly failure-spike
+// pager, and learned quiet-hours inference.
+export { adminAlertAgingDaily } from './scheduled/adminAlertAging';
+export { opsAnomalyWatchHourly } from './scheduled/opsAnomalyWatch';
+export { inferActiveHoursWeekly } from './scheduled/inferActiveHours';
 export { expirePostVisitFeedback } from './scheduled/feedbackExpiry';
 export { expirePendingShiftOffers } from './scheduled/shiftOfferExpiry';
 export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';

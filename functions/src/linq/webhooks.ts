@@ -19,12 +19,14 @@ import {
   continueAfterClientCollection,
   absorbClientFields,
 } from "../agents/onboardingConversation";
+import { absorbCaregiverFields } from "../agents/caregiverFieldAbsorber";
 import { runQaAgent } from "../agents/qaAgent";
 import {
   shouldRouteOnboardingToLoop,
   missingRequiredFields,
   firstGateStep,
-  CLIENT_COLLECTION_STEPS,
+  collectionStepsForRole,
+  type OnboardingRole,
 } from "../agents/onboardingContract";
 import {
   handleClientPermissionsReply,
@@ -1710,12 +1712,15 @@ const handleInboundInner = traceable(
       await handleCaregiverPermissionsReply(phone, chatId, text, session, caregiverId);
       return;
     }
-    // U4: agent-native onboarding collapse (client-first). For a client in the
-    // conversational collection phase, run the turn inside the qaAgent loop
-    // instead of the scripted step runner — Evia leads collection as one agent
-    // (no re-greet, no double-send). Gated OFF by default. Only plain-text turns
-    // route here; media/location stay on the legacy handlers, and transactional /
-    // gate steps (not in CLIENT_STEP_ORDER) are never affected.
+    // U4: agent-native onboarding collapse (per-role: client shipped first,
+    // caregiver added behind the same flag). For a user in the conversational
+    // collection phase, run the turn inside the qaAgent loop instead of the
+    // scripted step runner — Evia leads collection as one agent (no re-greet,
+    // no double-send). Gated OFF by default; a role routes ONLY when named in
+    // ONBOARDING_AGENT_LOOP (e.g. "client" or "client,caregiver"). Only
+    // plain-text turns route here; media/location stay on the legacy handlers,
+    // and transactional / gate steps (not in that role's collection list) are
+    // never affected.
     // Shared structured-Zep push (knowledge-graph capture of names/conditions/
     // care needs). Called by BOTH the agent-loop path and the scripted runner so
     // the graph stays populated regardless of which handled the turn.
@@ -1742,6 +1747,11 @@ const handleInboundInner = traceable(
       }).catch((err) => console.error("onboarding Zep push error:", err));
     };
 
+    // Which role's loop this turn belongs to. Only meaningful inside the routed
+    // branch below (shouldRouteOnboardingToLoop already verified the role is
+    // "client" or "caregiver" AND that role is named in ONBOARDING_AGENT_LOOP).
+    const loopRole: OnboardingRole = session.userType === "caregiver" ? "caregiver" : "client";
+
     if (shouldRouteOnboardingToLoop({
       role:        session.userType,
       step,
@@ -1763,11 +1773,11 @@ const handleInboundInner = traceable(
           chatId,
           userId:      (session as any).userId ?? "",
           seniorId:    (session as any).seniorId ?? "",
-          userType:    "client",
+          userType:    loopRole,
           zepThreadId: onboardingZepThreadId,
           session:     session as unknown as Record<string, unknown>,
           onboardingMode: true,
-          onboardingRole: "client",
+          onboardingRole: loopRole,
           intent:      null,
         });
         loopReplied = true;
@@ -1788,11 +1798,14 @@ const handleInboundInner = traceable(
         // something they already answered). Run the deterministic extractor —
         // the same parser the scripted runner trusts — whenever required fields
         // are STILL missing after the turn, not only when the model saved zero
-        // keys. absorbClientFields only ever returns fields not already in
-        // curData, so a field the model DID save can never be double-written or
-        // overwritten by the net.
-        if (missingRequiredFields("client", curData).length > 0 && text.trim() !== "") {
-          const absorbed = await absorbClientFields(text, curData).catch(() => ({}));
+        // keys. The absorbers only ever return fields not already in curData,
+        // so a field the model DID save can never be double-written or
+        // overwritten by the net. Role-matched: caregiver turns use the
+        // caregiver extractor.
+        if (missingRequiredFields(loopRole, curData).length > 0 && text.trim() !== "") {
+          const absorbed: Record<string, unknown> = loopRole === "caregiver"
+            ? await absorbCaregiverFields(text, curData).catch(() => ({}))
+            : await absorbClientFields(text, curData).catch(() => ({}));
           if (Object.keys(absorbed).length > 0) {
             await db.collection("agent_sessions").doc(phone)
               .set({ onboardingData: absorbed }, { merge: true });
@@ -1807,7 +1820,7 @@ const handleInboundInner = traceable(
               const sa = evaluateServiceArea({ city: curData.city as string, zip: (curData.zipCode as string) || (curData.city as string) });
               if (sa === "out") {
                 const { parkOutOfArea } = await import("../agents/serviceAreaGate");
-                await parkOutOfArea({ phone, role: "client", city: (curData.city as string) ?? "", zipCode: (curData.zipCode as string) ?? "", name: (curData.firstName as string) ?? "", onboardingData: curData });
+                await parkOutOfArea({ phone, role: loopRole, city: (curData.city as string) ?? "", zipCode: (curData.zipCode as string) ?? "", name: ((curData.firstName ?? curData.name) as string) ?? "", onboardingData: curData });
                 await sendMessage(chatId, "I'm so sorry — we're not in your area just yet. I've added you to our waitlist and I'll reach out the moment we expand there. 💙");
                 await pushOnboardingStepToZep(step);
                 return;
@@ -1827,19 +1840,33 @@ const handleInboundInner = traceable(
           }
         }
 
-        if (CLIENT_COLLECTION_STEPS.includes(curStep) && missingRequiredFields("client", curData).length === 0) {
-          await db.collection("agent_sessions").doc(phone).update({ onboardingStep: firstGateStep("client") });
-          curStep = firstGateStep("client");
+        if (collectionStepsForRole(loopRole).includes(curStep) && missingRequiredFields(loopRole, curData).length === 0) {
+          await db.collection("agent_sessions").doc(phone).update({ onboardingStep: firstGateStep(loopRole) });
+          curStep = firstGateStep(loopRole);
           console.info("webhooks: stuck-signup net advanced cursor to gate", { phone, from: step });
         }
         // Proactive post-collection handoff: collection just finished this turn
         // (cursor sits at the first gate step). The loop already sent its closing
-        // line, but the matches → paywall (or no-supply hold) phase is webhook-
-        // passive and would otherwise wait for an inbound that never comes. Drive
-        // it now so Evia doesn't go silent right after "that's everything I need".
-        if (curStep === firstGateStep("client")) {
+        // line, but the next phase is webhook-passive and would otherwise wait
+        // for an inbound that never comes. Drive it now so Evia doesn't go
+        // silent right after "that's everything I need".
+        //   client    → matches → paywall (or the honest no-supply hold)
+        //   caregiver → the scripted photo-upload gate (caregiver_send_photo),
+        //               driven through the legacy runner with the "__RESUME__"
+        //               sentinel (the established no-user-text drive; the send
+        //               handler ignores inbound text)
+        if (curStep === firstGateStep(loopRole)) {
           try {
-            await continueAfterClientCollection(phone, chatId);
+            if (loopRole === "caregiver") {
+              await handleOnboardingStep(phone, chatId, "__RESUME__", {
+                ...(after as unknown as AgentSession),
+                onboardingStep: curStep,
+                onboardingData: curData,
+                chatId,
+              } as AgentSession);
+            } else {
+              await continueAfterClientCollection(phone, chatId);
+            }
           } catch (err) {
             console.error(
               "webhooks: post-collection handoff failed",
@@ -2049,6 +2076,57 @@ const handleInboundInner = traceable(
     }
   }
 
+  // Dropped-turn watchdog: this inbound now owes the user a reply. Every
+  // outbound send to this chat clears the marker (linq/client.ts sendMessage);
+  // if it survives past dueAt, the commitment sweep converts it into a tracked
+  // qa_answer commitment — re-answered or honestly escalated, never silence.
+  db.collection("turn_watch").doc(chatId).set({
+    phone,
+    chatId,
+    text:      text.slice(0, 500),
+    userId:    (session.userId as string | undefined) ?? null,
+    userType:  session.userType === "caregiver" ? "caregiver" : "client",
+    inboundAt: new Date().toISOString(),
+    dueAt:     new Date(Date.now() + 10 * 60_000).toISOString(),
+  }).catch(() => {/* non-critical */});
+
+  // ── LLM spend guardrails ────────────────────────────────────────────────────
+  // Per-user daily turn cap + global daily kill-switch. Placed AFTER the
+  // crisis fast-path (safety messages always get through) and both fail open.
+  try {
+    const { checkDailyTurnCap, checkGlobalDailyTurnBudget } = await import("../rateLimit");
+    const [userCap, globalCap] = await Promise.all([
+      checkDailyTurnCap(phone),
+      checkGlobalDailyTurnBudget(),
+    ]);
+    if (!globalCap.allowed) {
+      // Platform-wide budget exhausted: flip degraded mode (clears on the
+      // first successful turn after the counter resets at midnight) and give
+      // each user one honest notice per hour instead of silence.
+      const { setSystemDegraded, degradedFailureNotice } = await import("../observability/systemStatus");
+      if (globalCap.justBreached) {
+        await setSystemDegraded("global daily LLM turn budget exhausted").catch(() => {});
+      }
+      const notice = await degradedFailureNotice(
+        phone, session as unknown as Record<string, unknown>,
+        "I've hit my processing limit for today — I'll pick this back up as soon as I'm running normally, and our team has been alerted.",
+      ).catch(() => null);
+      if (notice) await sendMessage(chatId, notice).catch(() => {});
+      return;
+    }
+    if (!userCap.allowed) {
+      if (userCap.justBreached) {
+        await sendMessage(chatId,
+          "We've traded a lot of messages today and I've hit my daily limit for this conversation — " +
+          "I'll pick things back up tomorrow morning. Anything safety-related still gets through right away."
+        ).catch(() => {});
+      }
+      return;
+    }
+  } catch (capErr) {
+    console.error("handleInbound: spend guardrail check failed (fail-open):", capErr);
+  }
+
   // ── Caregiver keyword handling ──────────────────────────────────────────────
   if (session.userType === "caregiver") {
     if (await routeCaregiverMessage({ phone, chatId, text, norm, session }) === "handled") return;
@@ -2086,6 +2164,23 @@ const handleInboundInner = traceable(
     }).catch(() => {});
     // Acknowledge only after the failure is actually recorded.
     await sendMessage(chatId, "I hit a snag on that, and I flagged it so it does not get lost.").catch(() => {});
+    // Back the "does not get lost" promise: the commitment sweep re-answers
+    // the turn or escalates to a human — the user always hears back.
+    try {
+      const { recordCommitment } = await import("../agents/commitmentTracker");
+      await recordCommitment({
+        phone, chatId, kind: "qa_answer",
+        promiseText: "I hit a snag on that, and I flagged it so it does not get lost.",
+        question:    text.slice(0, 500),
+        userId:      (session.userId as string | undefined),
+        seniorId:    (session.seniorId as string | undefined),
+        userType:    session.userType === "caregiver" ? "caregiver" : "client",
+        source:      "webhooks:handleInbound_catch",
+        dueInMs:     10 * 60_000,
+      });
+    } catch (commitErr) {
+      console.error("handleInbound: recordCommitment failed:", commitErr);
+    }
   } finally {
     await stopTyping(chatId).catch(() => {});
   }

@@ -13,6 +13,9 @@
 //     them to keep augmenters pure.
 
 import type { PromptAugmenter, AugmenterContext } from "./promptAugmenters";
+// Type-only import: preferences.ts touches Firestore at module load, and the
+// erased type keeps this module pure (and its tests admin-free).
+import type { CaraPreferences } from "../memory/preferences";
 
 // ── language — replies in user's preferred language when set on session ──────
 // Migrated from qaAgent.ts:1022 (es-only). Same text; same trigger condition.
@@ -64,6 +67,121 @@ export const personaReinjectAugmenter: PromptAugmenter = {
     "Tools available — use them for fresh data and to take real actions.</system_reminder>",
 };
 
+// ── frustration-recovery — user just showed frustration; change register ─────
+// Closes the write-only frustration loop: detectFrustrationSignals used to set
+// a metrics flag nobody read back. Now the CURRENT turn (via extras, computed
+// pre-prompt in qaAgent) and the NEXT turn (via session.recentFrustration,
+// persisted end-of-turn beside recentLintViolation) both get a behavior
+// directive instead of just a dashboard datapoint.
+export const frustrationRecoveryAugmenter: PromptAugmenter = {
+  name:        "frustration-recovery",
+  description: "After detected user frustration, drop filler and lead with concrete recovery",
+  predicate: (ctx) =>
+    !!(ctx.extras as { frustrationThisTurn?: unknown } | undefined)?.frustrationThisTurn ||
+    !!(ctx.session as { recentFrustration?: unknown } | undefined)?.recentFrustration,
+  augment: () =>
+    "FRUSTRATION RECOVERY: This user recently expressed frustration or had to repeat themselves. " +
+    "Do not open with warmth boilerplate or apology padding. Own the miss in a few plain words at most, " +
+    "then give the single most concrete next step or answer. No hedging, no 'I understand your frustration', " +
+    "no re-asking for information they already gave — reread the conversation and use what is already there.",
+};
+
+// ── communication-preferences — DND window + channel prefs for timing reasoning ──
+// New block (not a migration). The delivery layer (shouldSend / isInDND) already
+// ENFORCES quiet hours; this surfaces them to the model so Evia can reason about
+// timing out loud ("I'll hold this until morning") instead of silently colliding
+// with the gate. Data arrives pure via ctx.extras.preferences (populated in
+// qaAgent from the getPreferences call the DND gate already makes - no new read).
+export const communicationPreferencesAugmenter: PromptAugmenter = {
+  name:        "communication-preferences",
+  description: "Surface DND window and channel preferences so Evia can reason about send timing",
+  predicate: (ctx) => !!(ctx.extras as { preferences?: unknown } | undefined)?.preferences,
+  augment: (ctx) => {
+    const p = (ctx.extras as { preferences?: Partial<CaraPreferences> }).preferences ?? {};
+    const lines: string[] = [];
+    if (p.dndEnabled && p.dndStart && p.dndEnd) {
+      lines.push(`- Quiet hours (do not disturb): ${p.dndStart}-${p.dndEnd}${p.timezone ? ` ${p.timezone}` : ""}. Messages are held during this window.`);
+    } else {
+      lines.push("- Quiet hours: not enabled.");
+    }
+    if (p.activeHours?.start && p.activeHours?.end) {
+      lines.push(`- Preferred active hours for outreach: ${p.activeHours.start}-${p.activeHours.end}.`);
+    }
+    if (p.preferredSummaryTime) {
+      lines.push(`- Preferred daily summary time: ${p.preferredSummaryTime}.`);
+    }
+    if (p.preferSMS) {
+      lines.push("- Prefers SMS over other channels.");
+    }
+    return (
+      "COMMUNICATION PREFERENCES (delivery timing is enforced downstream - use these to REASON about timing, not to gate your reply to this message):\n" +
+      lines.join("\n") + "\n" +
+      "When a reminder, follow-up, or proactive message would land inside quiet hours, say you'll hold it until the window ends " +
+      "(e.g. \"I'll hold this until morning\") and schedule it for after. Never promise delivery inside the quiet-hours window. " +
+      "Use update_communication_preferences when the user asks to change any of these."
+    );
+  },
+};
+
+// ── current-time block — built for the DYNAMIC (post-cache-breakpoint) side ──
+// Deliberately NOT registered in DEFAULT_AUGMENTERS: runAugmenters appends into
+// the system-prompt text that qaAgent places BEHIND the ephemeral prompt-cache
+// breakpoint, and a minute-granularity timestamp inside that block would
+// invalidate the cached prefix on every turn. qaAgent instead appends this as a
+// separate, uncached system text block AFTER the breakpoint, so the stable
+// prefix (tools + system) still hits cache across turns while the tool-loop
+// iterations within a turn reuse the same computed bytes. Kept in this file so
+// it stays a pure, unit-tested prompt builder alongside the other directives.
+//
+// Formatting convention matches the single-shot handlers' "Today is {iso}"
+// (schedulingHandler.ts / caregiverProfileHandler.ts), extended with
+// day-of-week, local time, and timezone for scheduling-grade reasoning.
+export function buildCurrentTimeBlock(timezone?: string, now: Date = new Date()): string {
+  const FALLBACK_TZ = "America/Los_Angeles";
+  let tz = (timezone ?? "").trim();
+  let assumed = false;
+  if (tz) {
+    try {
+      // Validate the IANA name the same way preferences.ts does.
+      new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(now);
+    } catch {
+      tz = "";
+    }
+  }
+  if (!tz) {
+    tz = FALLBACK_TZ;
+    assumed = true;
+  }
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year:     "numeric",
+    month:    "2-digit",
+    day:      "2-digit",
+    weekday:  "long",
+    hour:     "numeric",
+    minute:   "2-digit",
+    hour12:   true,
+    timeZoneName: "short",
+  }).formatToParts(now);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+
+  const iso     = `${get("year")}-${get("month")}-${get("day")}`;
+  const weekday = get("weekday");
+  const time    = `${get("hour")}:${get("minute")} ${get("dayPeriod")}`;
+  const tzAbbr  = get("timeZoneName");
+
+  const assumption = assumed
+    ? " No timezone is on file for this user - this assumes " + FALLBACK_TZ + " (Evia's service area is Santa Clara County)."
+    : "";
+
+  return (
+    `CURRENT TIME: Today is ${iso} (${weekday}). Local time: ${time} ${tzAbbr} (${tz}).${assumption} ` +
+    "Resolve every relative date or time the user mentions (\"today\", \"tomorrow\", \"Thursday\", \"next week\", \"this morning\") against this, " +
+    "and use it when reasoning about visit times, reminders, and quiet hours."
+  );
+}
+
 // Convenience array — the order here is the order they'll be appended to the
 // system prompt. Keep it stable; downstream consumers (turn metrics, tests)
 // rely on the ordering.
@@ -71,4 +189,6 @@ export const DEFAULT_AUGMENTERS: readonly PromptAugmenter[] = [
   languageAugmenter,
   unconfirmedIdentityAugmenter,
   personaReinjectAugmenter,
+  frustrationRecoveryAugmenter,
+  communicationPreferencesAugmenter,
 ];

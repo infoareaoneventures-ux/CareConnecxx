@@ -21,7 +21,7 @@ vi.mock("../../memory/memoryFiles", () => ({ readMemoryFile: vi.fn().mockResolve
 vi.mock("../../memory/preferences", () => ({ getPreferences: vi.fn().mockResolvedValue(null) }));
 vi.mock("../../agents/matchingAgent", () => ({ runMatchingForClient: vi.fn().mockResolvedValue(undefined) }));
 
-import { MCP_TOOLS, CAREGIVER_TOOLS } from "../server";
+import { MCP_TOOLS, CAREGIVER_TOOLS, CLIENT_TOOLS } from "../server";
 
 /**
  * Action-parity guard (U3).
@@ -67,6 +67,29 @@ describe("action parity (U3)", () => {
       const wordRe = new RegExp(`\\b${name}\\b`);
       expect(wordRe.test(qaSource), `${name} not documented in qaAgent.ts system prompt`).toBe(true);
     }
+  });
+
+  it("keeps both role tool surfaces under OpenAI's 128-tool hard cap", () => {
+    // OpenAI rejects >128 tools (400 "array too long"); capToolsForOpenAi then
+    // drops an arbitrary tail. Role surfaces must fit so nothing is ever trimmed.
+    const OPENAI_MAX_TOOLS = 128;
+    expect(CLIENT_TOOLS.length, `CLIENT_TOOLS ${CLIENT_TOOLS.length} > ${OPENAI_MAX_TOOLS}`).toBeLessThanOrEqual(OPENAI_MAX_TOOLS);
+    expect(CAREGIVER_TOOLS.length, `CAREGIVER_TOOLS ${CAREGIVER_TOOLS.length} > ${OPENAI_MAX_TOOLS}`).toBeLessThanOrEqual(OPENAI_MAX_TOOLS);
+  });
+
+  it("keeps every client-prompt-documented tool in the client surface", () => {
+    // Extract tool names referenced in the client system prompt catalog and
+    // assert each resolves to a tool the client loop actually passes to the
+    // model — a prompt that advertises a tool the filter excludes would make
+    // Evia promise actions she cannot take.
+    const clientNames = new Set(CLIENT_TOOLS.map(t => t.name));
+    const allNames = new Set(MCP_TOOLS.map(t => t.name));
+    const clientPromptStart = qaSource.indexOf("buildClientSystemPrompt");
+    const clientPromptEnd = qaSource.indexOf("buildCaregiverSystemPrompt");
+    const clientPromptSrc = qaSource.slice(clientPromptStart, clientPromptEnd);
+    const referenced = [...allNames].filter(n => new RegExp(`\\b${n}\\b`).test(clientPromptSrc));
+    const missing = referenced.filter(n => !clientNames.has(n) && !PROMPT_EXEMPT.has(n));
+    expect(missing, `client prompt names tools missing from CLIENT_TOOLS: ${missing.join(", ")}`).toEqual([]);
   });
 
   it("reports any tools not documented in the system prompt (soft guard)", () => {

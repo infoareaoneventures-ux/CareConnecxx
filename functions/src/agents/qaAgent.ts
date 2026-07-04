@@ -26,7 +26,7 @@ import {
 import { sanitizePromptContext } from "./promptContext";
 import { buildCapabilityHint, DiscoveryRole } from "./capabilityDiscovery";
 import { findAdvertisedRecipeWithoutBacking, hasPaymentAuthorityLeak, type CareRecipeRole } from "./careRecipes";
-import { MCP_TOOLS, CAREGIVER_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
+import { MCP_TOOLS, CAREGIVER_TOOLS, CLIENT_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
 import { resolveCaraModelConfig } from "../config/caraModels";
 import { runAgentModelTurn } from "./agentModelTurn";
 import { raiseProviderFailureAlert } from "../observability/providerFailureAlert";
@@ -38,6 +38,8 @@ import { isOnboardingTool } from "./onboardingContract";
 import { isReGreet } from "./onboardingEvalGraders";
 import { withToolsCacheControl } from "./toolCache";
 import { getLatestPending } from "./pendingActions";
+import { recordCommitment, resolveIfMatchingQuestion, SNAG_ANSWER_COPY, CHECKING_COPY } from "./commitmentTracker";
+import { clearSystemDegradedIfSet, degradedFailureNotice } from "../observability/systemStatus";
 import { resolveLoopBudget, MAX_TOOL_CALLS_PER_TURN } from "./loopBudget";
 import type { Intent } from "./intentClassifier";
 import { MEMORY_GUIDELINES } from "./memoryGuidelines";
@@ -51,7 +53,7 @@ import { pickSkill } from "./skillPicker";
 import { findSkill, buildSkillDirective } from "./skills";
 import { runAugmenters, type PromptAugmenter, type AugmenterContext } from "./promptAugmenters";
 import { experimentsAugmenter } from "./promptExperiments";
-import { DEFAULT_AUGMENTERS } from "./defaultPromptAugmenters";
+import { DEFAULT_AUGMENTERS, buildCurrentTimeBlock } from "./defaultPromptAugmenters";
 import "./experimentRegistry"; // side-effect: registers active experiments
 import { loadCheckpoint, writeCheckpoint, clearCheckpoint, hashText } from "./turnCheckpoint";
 import {
@@ -329,6 +331,77 @@ async function buildClientCoreContext(
   return parts.length ? parts.join("\n") : "";
 }
 
+// Compact one-line summary of a caregiver's weekly availability. Firestore has
+// carried three shapes over time (free-text string from early onboarding, a
+// block-name array, and the canonical Record<day, {start,end}[]> the web grid
+// and availabilityHandler write), so this is defensive across all three.
+function summarizeWeeklyAvailability(availability: unknown): string {
+  if (!availability) return "";
+  if (typeof availability === "string") return availability;
+  if (Array.isArray(availability)) return availability.map(String).filter(Boolean).join(", ");
+  if (typeof availability === "object") {
+    const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+    const byDay = availability as Record<string, unknown>;
+    const lines = DAYS
+      .filter((day) => Array.isArray(byDay[day]) && (byDay[day] as unknown[]).length > 0)
+      .map((day) => {
+        const slots = (byDay[day] as Array<{ start?: string; end?: string }>)
+          .map((s) => (s?.start && s?.end ? `${s.start}-${s.end}` : ""))
+          .filter(Boolean)
+          .join(", ");
+        const label = day.charAt(0).toUpperCase() + day.slice(1, 3);
+        return slots ? `${label} ${slots}` : label;
+      });
+    return lines.join("; ");
+  }
+  return "";
+}
+
+// Caregiver mirror of buildClientCoreContext (U4): pre-injected standing
+// context (skills, service area, availability, verification/account status) so
+// Evia doesn't burn tool round-trips rediscovering the caregiver's own profile
+// every turn. Pure over the already-loaded caregivers doc - zero extra reads,
+// so it's free within KTD-8's latency budget. Exported for unit tests.
+export function buildCaregiverCoreContext(caregiver: any): string {
+  if (!caregiver) return "";
+  const parts: string[] = [];
+
+  const area = [caregiver.city, caregiver.zipCode].filter(Boolean).join(", ");
+  if (area) parts.push(`SERVICE AREA: ${area}.`);
+
+  const skillsBits: string[] = [];
+  if (Array.isArray(caregiver.specialties) && caregiver.specialties.length) {
+    skillsBits.push(`specialties: ${caregiver.specialties.join(", ")}`);
+  }
+  if (Array.isArray(caregiver.certifications) && caregiver.certifications.length) {
+    skillsBits.push(`certifications: ${caregiver.certifications.join(", ")}`);
+  }
+  if (caregiver.yearsExperience) skillsBits.push(`${caregiver.yearsExperience} years experience`);
+  if (Array.isArray(caregiver.languages) && caregiver.languages.length) {
+    skillsBits.push(`languages: ${caregiver.languages.join(", ")}`);
+  }
+  if (caregiver.canDrive === true) skillsBits.push("can drive");
+  if (skillsBits.length) parts.push(`SKILLS AND EXPERIENCE: ${skillsBits.join("; ")}.`);
+
+  const availability = summarizeWeeklyAvailability(caregiver.availability);
+  if (availability) {
+    parts.push(
+      `WEEKLY AVAILABILITY (on file - a snapshot, so verify with get_caregiver_info before asserting; ` +
+      `use update_caregiver_availability to change it): ${availability}.`,
+    );
+  }
+
+  const accountBits: string[] = [];
+  if (caregiver.status) accountBits.push(`account ${caregiver.status}`);
+  if (caregiver.verificationStatus) accountBits.push(`verification ${caregiver.verificationStatus}`);
+  const bgStatus = caregiver.backgroundCheckData?.status;
+  if (bgStatus) accountBits.push(`background check ${bgStatus}`);
+  if (caregiver.onboardingStatus) accountBits.push(`onboarding ${caregiver.onboardingStatus}`);
+  if (accountBits.length) parts.push(`ACCOUNT STATUS: ${accountBits.join(", ")}.`);
+
+  return parts.length ? parts.join("\n") : "";
+}
+
 export function buildClientSystemPrompt(
   senior: any,
   journal: any[],
@@ -502,7 +575,13 @@ export function buildClientSystemPrompt(
     `  · like_journal_entry — like a care journal post when the family expresses appreciation ("loved that photo of Mom").`,
     `  · unlike_journal_entry — undo a like.`,
     `  · comment_on_journal_entry — leave a comment on a journal entry. Use when the family says "tell Maria thanks for the visit notes" — comment + the tool also notifies the caregiver.`,
-    `For irreversible actions (cancel_appointment, delete_reminder, remove_family_member, cancel_subscription, manage_recurring_schedule with action 'cancel', restore_care_plan_version, block_user, report_user), always confirm with the family before calling. For everything else, act and report.`,
+    `  · archive_senior_profile — archive a senior's profile when care ends (soft-delete — the care record is retained). MANDATORY: read back whose profile you're archiving and wait for explicit YES.`,
+    `  · update_family_member — edit a care-group member's name, role, relationship, or notification setting. Confirm the specific change first; use remove_family_member to remove someone entirely.`,
+    `  · list_interviews — list the family's scheduled/pending interviews. Use for "when is my interview?" or before cancelling one.`,
+    `  · cancel_interview — cancel a scheduled interview; the caregiver is notified automatically. Confirm first.`,
+    `  · delete_memory_file — permanently delete one of your memory files for this family (content + search index). MANDATORY: read back which file and wait for explicit YES. To fix a single fact use edit_memory_file instead.`,
+    `  · list_blocked_users — show who the family has blocked. Use before block_user/unblock_user or when they ask "who have I blocked?".`,
+    `For irreversible actions (cancel_appointment, delete_reminder, remove_family_member, cancel_subscription, manage_recurring_schedule with action 'cancel', restore_care_plan_version, block_user, report_user, archive_senior_profile, cancel_interview, delete_memory_file), always confirm with the family before calling. For everything else, act and report.`,
     ``,
     `NOTIFICATION DELIVERY (non-negotiable): When a tool result includes a "notification" field with sent:false, the action completed but the downstream message to the caregiver/family-member did NOT go through yet. Never claim someone was notified if notification.sent === false. If reason is "queued_for_retry", the message is queued and WILL be delivered automatically within minutes — say so ("the text is delayed but will go out shortly") and do NOT offer a manual retry. For any other reason, tell the user honestly: "I cancelled the visit, but my note to the caregiver didn't go through — want me to retry?"`,
     ``,
@@ -586,6 +665,7 @@ function buildCaregiverSystemPrompt(
   todayAppt: any | null,
   zepContext?: string,
   contextFlags?: { pendingPayoutNotificationAck?: string; pendingBgCheckAck?: string },
+  coreContext?: string,
 ): string {
   const name = caregiver?.name ?? "there";
   const rate = caregiver?.hourlyRate ?? 22;
@@ -629,6 +709,7 @@ function buildCaregiverSystemPrompt(
     `You act; you don't describe what you could do. When you can do something, do it and report back.`,
     ``,
     apptLine,
+    coreContext ? `\n${coreContext}\n` : "",
     zepSection,
     contextSection,
     `The caregiver earns $${rate}/hr. Payments are processed automatically after each visit.`,
@@ -652,7 +733,10 @@ function buildCaregiverSystemPrompt(
     `- browse_job_board: see open jobs available to apply to`,
     `- get_my_applications: check the status of your submitted applications`,
     `- respond_to_interview_request: accept or decline an interview; include proposedDate/Time to counter-offer`,
+    `- list_interviews: see your scheduled interviews (date, time, status)`,
+    `- cancel_interview: cancel an interview you can't make — the family is notified; to propose a new time use respond_to_interview_request instead`,
     `- submit_shift_hours: submit your clock-in/out times after a visit for client approval`,
+    `- confirm_cash_received: confirm you received a cash payment for an approved shift — marks it paid`,
     `- request_instant_payout: request immediate payment of your earned balance (1.5% fee)`,
     `- get_payout_history: see your recent payout records from Stripe`,
     `- get_caregiver_earnings: see how much you've earned in the last 30 days`,
@@ -662,6 +746,7 @@ function buildCaregiverSystemPrompt(
     `- get_background_check_status: check the status of your background check`,
     `- get_job_recommendations: get jobs matched to your skills, rate, and location`,
     `- request_shift_swap / accept_shift_swap / cancel_shift_swap: request coverage for a shift you can't make, accept a peer's open swap, or cancel a swap you requested`,
+    `- list_shift_swaps: see your open coverage requests and open swap offers from peers you could pick up`,
     `- submit_gps_checkin: record a GPS check-in at the start of a visit`,
     `- get_tax_summary: see your 1099 / earnings tax summary`,
     `- send_onboarding_link: (re)send yourself a setup link — membership payment, profile photo, documents, background check, or payout setup. Picks linkType caregiver_membership / caregiver_photo / caregiver_documents / caregiver_background_check / caregiver_payouts. The tool sends the link itself; just briefly confirm after.`,
@@ -727,8 +812,10 @@ async function getPrefetchedContext(phone: string): Promise<{
 }
 
 // ── Message splitter (≤300 chars per chunk, 1s delay) ────────────────────────
+// Exported so the commitment sweep (commitmentTracker.ts) can deliver a
+// skipSend re-run's reply through the same chunking path.
 
-async function sendSplit(chatId: string, text: string): Promise<void> {
+export async function sendSplit(chatId: string, text: string): Promise<void> {
   const chunks: string[] = [];
   let remaining = text;
   while (remaining.length > 300) {
@@ -775,14 +862,14 @@ export function detectConfidenceClaim(reply: string): boolean {
   return CONFIDENCE_CLAIM_PATTERNS.some((r) => r.test(reply));
 }
 
-// Sprint 8: promise-without-tool-call detector. The system prompt bans
-// phrases like "let me check" unless a tool was actually called the same
-// turn, but the prompt rule isn't enforced. This flag lets us measure how
-// often Evia violates the rule, without changing reply text.
-// Match either "let me check/look/..." OR "I'll check/look/..." with up to two
-// intervening words between the verb's particle (e.g. "look ... up"). The
-// adverb/object slot covers "look that up", "look it up for you", etc.
-const PROMISE_PATTERNS = /\b(let me\s+(?:check|look|pull|find|see|grab|get)|I'?ll\s+(?:check|look|pull|find|grab|get|come back))\b/i;
+// Promise-without-tool-call detector (R8). The system prompt bans phrases
+// like "let me check" unless a tool was actually called the same turn.
+// Originally log-only; now ENFORCED — a detected promise with zero tool calls
+// records a pending commitment so the sweep re-answers or escalates if
+// nothing real follows (see the post-send block in runQaAgent). A false
+// positive costs one silent sweep check, a false negative costs a broken
+// promise — so the pattern set errs wide.
+const PROMISE_PATTERNS = /\b(let me\s+(?:check|look|pull|find|see|grab|get)|I'?ll\s+(?:check|look|pull|find|grab|get|come back|start|text|send|handle|follow|dig|reach|update|let you know|get back)|I'?m on it|on it now|working on (?:it|that))\b/i;
 
 export function detectPromiseWithoutToolCall(reply: string, toolCalls: number): boolean {
   if (toolCalls > 0) return false;
@@ -916,6 +1003,9 @@ export interface ActiveGoal {
   startedAt:      string;
   turnsRemaining: number;
   context:        Record<string, unknown>;
+  /** Optional absolute expiry (ISO). Durable multi-day goals ("hire a
+   *  caregiver") set this; when absent the legacy 24h default applies. */
+  expiresAt?:     string;
 }
 
 export async function setActiveGoal(
@@ -923,7 +1013,8 @@ export async function setActiveGoal(
   type:        ActiveGoal["type"],
   description: string,
   context:     Record<string, unknown>,
-  turns = 3
+  turns = 3,
+  horizonMs?:  number
 ): Promise<void> {
   await db.collection("agent_sessions").doc(phone).update({
     activeGoal: {
@@ -932,6 +1023,7 @@ export async function setActiveGoal(
       startedAt:      new Date().toISOString(),
       turnsRemaining: turns,
       context,
+      ...(horizonMs ? { expiresAt: new Date(Date.now() + horizonMs).toISOString() } : {}),
     } as ActiveGoal,
   });
 }
@@ -950,11 +1042,16 @@ async function resumeActiveGoal(
 
   if (!goal) return { goalContext: "" };
 
-  // Auto-expire goals older than 24 hours — prevents stale booking context from resurfacing days later.
+  // Auto-expire stale goals — prevents old booking context from resurfacing
+  // days later. Durable goals carry their own expiresAt (e.g. "hire a
+  // caregiver" runs for days); legacy goals default to the 24h window.
   const goalAge = goal.startedAt
     ? Date.now() - new Date(goal.startedAt).getTime()
     : Infinity;
-  const isStale = goal.turnsRemaining <= 0 || goalAge > 24 * 60 * 60 * 1000;
+  const pastHorizon = goal.expiresAt
+    ? goal.expiresAt < new Date().toISOString()
+    : goalAge > 24 * 60 * 60 * 1000;
+  const isStale = goal.turnsRemaining <= 0 || pastHorizon;
 
   if (isStale) {
     await db.collection("agent_sessions").doc(phone)
@@ -1185,7 +1282,12 @@ export async function runQaAgent(params: {
       pendingPayoutNotificationAck: (session as any).pendingPayoutNotificationAck as string | undefined,
       pendingBgCheckAck:            (session as any).pendingBgCheckAck            as string | undefined,
     } : undefined;
-    systemPrompt = buildCaregiverSystemPrompt(caregiver, todayAppt, cgZepContext || undefined, contextFlags);
+    // Caregiver core context - mirrors the client's pre-injected core context
+    // (U4). Pure over the caregiver doc already fetched above; no extra reads.
+    const cgCoreContext = buildCaregiverCoreContext(caregiver);
+    systemPrompt = buildCaregiverSystemPrompt(
+      caregiver, todayAppt, cgZepContext || undefined, contextFlags, cgCoreContext || undefined,
+    );
     if (cgSnapshot) systemPrompt += `\n\n${cgSnapshot}`;
     if (cgZepContext === ZEP_UNAVAILABLE_MARKER) metrics.zepUnavailable = true;
     if (zepThreadId && cgZepContext === "") metrics.zepContextEmpty = true;
@@ -1452,6 +1554,17 @@ export async function runQaAgent(params: {
     session,
     turnCount: Math.floor(history.length / 2),
     metrics,
+    // Communication preferences ride in via extras so the augmenter stays pure
+    // (migration policy). Reuses the getPreferences read the DND gate already
+    // made at the top of this function - no extra Firestore round-trip.
+    // frustrationThisTurn feeds the frustration-recovery augmenter from the
+    // detection applyFrustrationMetrics already ran on this inbound.
+    extras: {
+      ...(prefs ? { preferences: prefs } : {}),
+      ...(metrics.frustrationDetected || metrics.rephraseLoopDetected
+        ? { frustrationThisTurn: true }
+        : {}),
+    },
   };
   const PIPELINE: PromptAugmenter[] = [
     experimentsAugmenter,
@@ -1652,7 +1765,7 @@ export async function runQaAgent(params: {
     // loop stays focused (and fast) on collection — never the full 88-tool set.
     const baseTools = onboardingMode
       ? MCP_TOOLS.filter(t => isOnboardingTool(t.name))
-      : userType === "caregiver" ? CAREGIVER_TOOLS : MCP_TOOLS;
+      : userType === "caregiver" ? CAREGIVER_TOOLS : CLIENT_TOOLS;
     const activeTools = (onboardingMode || userType === "caregiver")
       ? baseTools
       : selectToolsForIntent(baseTools, intent ?? null);
@@ -1668,10 +1781,21 @@ export async function runQaAgent(params: {
       { role: "user", content: taggedText },
     ]);
 
+    // CURRENT TIME - computed once per turn, in the user's stored timezone
+    // (getPreferences defaults to America/Los_Angeles, the service area).
+    // Injected BELOW as a separate system block on the far side of the cache
+    // breakpoint: a minute-granularity timestamp inside the cached block would
+    // invalidate the cached prefix on every turn.
+    const currentTimeBlock = buildCurrentTimeBlock(prefs?.timezone);
+
     // Cache the system prompt — it's large, stable within a session, and called up to 8x per turn.
     // Prompt caching cuts latency and cost on every tool-use iteration after the first.
     const cachedSystem: Anthropic.TextBlockParam[] = [
       { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } } as any,
+      // Post-breakpoint (uncached) block: highly dynamic content only. The
+      // OpenAI provider path joins system blocks with "\n\n" (systemToText in
+      // openaiToolLoop.ts), so both providers see the same final prompt.
+      { type: "text", text: currentTimeBlock } as any,
     ];
 
     // Cache the tools block too. With ~88 tool schemas cycled up to 5x per turn,
@@ -2050,10 +2174,23 @@ export async function runQaAgent(params: {
           cancelledAt: null,
           createdAt:   new Date().toISOString(),
         }).catch(() => {});
-        reply = "I'm checking that now and will text you here with the answer.";
+        // Back the promise: if the 30s retry dies, is cancelled by a new
+        // inbound, or fails silently, the commitment sweep (triggerEngine)
+        // re-answers or escalates to a human — never silence.
+        await recordCommitment({
+          phone, chatId, kind: "qa_answer",
+          promiseText: CHECKING_COPY,
+          question:    text.slice(0, 500),
+          userId, seniorId, userType, caregiverId, zepThreadId,
+          source:      "qaAgent:loop_exhausted",
+          dueInMs:     10 * 60_000,
+        });
+        reply = CHECKING_COPY;
       } else {
         // Retry also exhausted — escalate to admin silently. User-facing
-        // message is natural and warm, not "broken".
+        // message is natural and warm, not "broken". The copy promises the
+        // question "does not get lost", so record the commitment that makes
+        // that true: the sweep re-answers or hands off to a human.
         db.collection("admin_alerts").add({
           type:      "qa_loop_exhausted",
           userId,
@@ -2063,7 +2200,15 @@ export async function runQaAgent(params: {
           createdAt: new Date().toISOString(),
           resolved:  false,
         }).catch(() => {});
-        reply = "I hit a snag answering that, and I flagged it so it does not get lost.";
+        await recordCommitment({
+          phone, chatId, kind: "qa_answer",
+          promiseText: SNAG_ANSWER_COPY,
+          question:    text.slice(0, 500),
+          userId, seniorId, userType, caregiverId, zepThreadId,
+          source:      "qaAgent:retry_exhausted",
+          dueInMs:     10 * 60_000,
+        });
+        reply = SNAG_ANSWER_COPY;
       }
     }
 
@@ -2290,10 +2435,12 @@ export async function runQaAgent(params: {
       metrics.warmthReflectionIncluded = WARMTH_REFLECTION_OPENERS.test(firstSentence);
     }
 
-    // Persist the lint-violation signal for the NEXT turn's persona re-inject
-    // decision. Written unconditionally (true/false) so the flag doesn't go stale.
+    // Persist the lint-violation and frustration signals for the NEXT turn's
+    // augmenter decisions (persona re-inject / frustration-recovery). Written
+    // unconditionally (true/false) so the flags don't go stale.
     db.collection("agent_sessions").doc(phone).update({
       recentLintViolation: metrics.postProcessModified,
+      recentFrustration:   !!(metrics.frustrationDetected || metrics.rephraseLoopDetected),
     }).catch(() => { /* non-critical telemetry */ });
 
     // Onboarding canary signal: flag a mid-conversation re-greet on the final
@@ -2306,6 +2453,37 @@ export async function runQaAgent(params: {
 
     await saveConversationTurn(phone, text, reply);
     if (!skipSend) await sendSplit(chatId, reply);
+
+    // A real answer went out — clear any open "I'll get back to you"
+    // commitment for this same question (the qa_retry trigger re-enters with
+    // identical text, so a successful retry resolves its own commitment).
+    // A successful turn is also the recovery signal for system-wide degraded
+    // mode (cheap no-op unless the cached flag is set).
+    if (loopProducedReply || deliveredToUser) {
+      resolveIfMatchingQuestion(phone, text).catch(() => {});
+      clearSystemDegradedIfSet().catch(() => {});
+    }
+
+    // R8 enforcement: the FINAL reply promises action ("I'll pull matches",
+    // "I'm on it") but zero tools ran this turn — exactly the reply class
+    // that goes silent. Track it so the sweep re-answers or escalates if
+    // nothing real follows. Runs AFTER the resolve above so it can't clear
+    // itself; re-checks the post-supervise reply (the promise may have been
+    // rewritten away). False positives resolve silently via the sweep's
+    // still-owed check. Skipped in shadow/onboarding modes.
+    if (
+      !shadowMode && !onboardingMode &&
+      detectPromiseWithoutToolCall(reply, metrics.toolCalls ?? 0)
+    ) {
+      await recordCommitment({
+        phone, chatId, kind: "qa_answer",
+        promiseText: reply.slice(0, 300),
+        question:    text.slice(0, 500),
+        userId, seniorId, userType, caregiverId, zepThreadId,
+        source:      "qaAgent:llm_promise",
+        dueInMs:     10 * 60_000,
+      });
+    }
 
     // Sprint 8: turn finished cleanly — clear any checkpoint so a later inbound
     // never resumes this (now-delivered) reply. No-op if the flag is off or no
@@ -2334,10 +2512,29 @@ export async function runQaAgent(params: {
     // happened afterward — while generating the confirming sentence — a
     // "give me a few minutes" deflection contradicts the link that's sitting
     // right above it. Confirm the delivery instead.
-    const errMsg = deliveredToUser
+    // Degraded-aware failure copy: during a system-wide provider outage the
+    // user gets ONE honest "it's me, not you" notice per hour instead of a
+    // snag message on every attempt (null = notice already sent this hour —
+    // stay quiet; the commitment below still owes them the answer).
+    const failureCopy = deliveredToUser
       ? "There you go — tap the link I just sent to finish up."
-      : "I hit a snag answering that, and I flagged it so it does not get lost.";
-    await sendMessage(chatId, errMsg).catch(() => {});
+      : await degradedFailureNotice(phone, session, SNAG_ANSWER_COPY).catch(() => SNAG_ANSWER_COPY);
+    if (failureCopy) {
+      await sendMessage(chatId, failureCopy).catch(() => {});
+    }
+    const errMsg = failureCopy ?? SNAG_ANSWER_COPY;
+    // The snag copy promises the question is flagged and won't get lost —
+    // record the commitment that makes it true (sweep re-answers or escalates).
+    if (!deliveredToUser) {
+      await recordCommitment({
+        phone, chatId, kind: "qa_answer",
+        promiseText: SNAG_ANSWER_COPY,
+        question:    text.slice(0, 500),
+        userId, seniorId, userType, caregiverId, zepThreadId,
+        source:      "qaAgent:catch",
+        dueInMs:     10 * 60_000,
+      });
+    }
     db.collection("admin_alerts").add({
       type:      "qa_agent_failure",
       phone,

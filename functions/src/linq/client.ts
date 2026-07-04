@@ -379,6 +379,9 @@ async function sendOneMessage(
   }
   const traceId = res.headers["x-trace-id"] as string | undefined;
   if (traceId) console.info("Linq sendMessage trace_id:", traceId, "chatId:", chatId);
+  // A reply reached this chat — clear the dropped-turn watchdog marker set by
+  // the inbound webhook (turn_watch; swept by commitmentTracker.ts).
+  db.collection("turn_watch").doc(chatId).delete().catch(() => {/* non-critical */});
   return { message_id: res.data.id ?? res.data.message_id ?? "" };
 }
 
@@ -457,6 +460,43 @@ async function queueOrDrop(
 }
 
 export async function sendMessage(
+  chatId: string,
+  textOrMessage: string | LinqMessage,
+  opts: SendOptions = {}
+): Promise<{ message_id: string }> {
+  try {
+    return await sendMessageDeliver(chatId, textOrMessage, opts);
+  } catch (err) {
+    // Hard transport failure after withRetry's in-call retries. Previously the
+    // message was LOST here for every caller that didn't catch and recover
+    // (proactive sends, scheduled jobs, direct sendToPhone-less paths) — an
+    // admin alert fired but the user never got the message. Dead-letter it
+    // into the durable queue instead; the every-minute drain redelivers with
+    // backoff and pages ops if it exhausts. Known tradeoff: a partial multi-
+    // bubble send (text ok, link failed) redelivers the whole message — a
+    // rare duplicate beats a silent loss. Drain-originated sends (_noQueue)
+    // still throw so the queue's own attempt accounting stays correct.
+    if (opts._noQueue) throw err;
+    try {
+      const { enqueueOutbound } = await import("./outboundQueue");
+      const queued = await enqueueOutbound({
+        target: { kind: "chat", chatId },
+        ...(typeof textOrMessage === "string" ? { text: textOrMessage } : { message: textOrMessage }),
+        ...(opts.preferredService ? { preferredService: opts.preferredService } : {}),
+        reason: "send_failed",
+        source: opts.source ?? "sendMessage:transport_failure",
+        ttlMs:  opts.queueTtlMs ?? 60 * 60 * 1000,
+      });
+      if (queued) {
+        console.warn("sendMessage: transport failure — dead-lettered for redelivery", { chatId });
+        return { message_id: "" };
+      }
+    } catch { /* enqueue itself failed — fall through to rethrow */ }
+    throw err;
+  }
+}
+
+async function sendMessageDeliver(
   chatId: string,
   textOrMessage: string | LinqMessage,
   opts: SendOptions = {}

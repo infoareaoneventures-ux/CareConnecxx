@@ -20,25 +20,24 @@ export const FamilyManager: React.FC<FamilyManagerProps> = ({ onShowToast }) => 
   useEffect(() => {
     const user = authService.getCurrentUser();
     if (!user) return;
-    dbService.getFamilyMembers(user.uid)
-      .then((fetched: FamilyMember[]) => {
-        // Always show the current user as admin at the top
-        const self: FamilyMember = {
-          id: user.uid,
-          name: user.displayName || 'You',
-          email: user.email || '',
-          role: 'admin',
-          status: 'active'
-        };
-        const others = fetched.filter(m => m.id !== user.uid && m.email !== user.email);
-        setMembers([self, ...others]);
-      })
-      .catch(() => {
-        const user2 = authService.getCurrentUser();
-        if (user2) {
-          setMembers([{ id: user2.uid, name: user2.displayName || 'You', email: user2.email || '', role: 'admin', status: 'active' }]);
-        }
-      });
+    // Always show the current user as admin at the top
+    const self: FamilyMember = {
+      id: user.uid,
+      name: user.displayName || 'You',
+      email: user.email || '',
+      role: 'admin',
+      status: 'active'
+    };
+    setMembers([self]);
+    // Live subscription (merges senior_profiles.familyMembers with the agent's
+    // family_group_members index) so Evia-made add/remove shows without refresh.
+    const unsubscribe = dbService.subscribeToFamilyMembers(user.uid, (fetched: FamilyMember[]) => {
+      const others = fetched.filter(m =>
+        m.id !== user.uid && !(m.email && m.email === user.email)
+      );
+      setMembers([self, ...others]);
+    });
+    return unsubscribe;
   }, []);
 
   const handleInvite = async (e: React.FormEvent) => {
@@ -125,7 +124,7 @@ export const FamilyManager: React.FC<FamilyManagerProps> = ({ onShowToast }) => 
                             <Mail className="w-4 h-4 text-slate-400" />
                         </div>
                         <div>
-                          <p className="font-bold text-sm text-slate-800">{m.email}</p>
+                          <p className="font-bold text-sm text-slate-800">{m.email || m.name}</p>
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-slate-500 capitalize">{m.role}</span>
                             {m.phone && (

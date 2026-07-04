@@ -11,10 +11,12 @@ import {
   requiredFieldsForRole,
   missingRequiredFields,
 } from "./onboardingContract";
+import { buildCaregiverOnboardingDirective } from "./caregiverOnboardingDirective";
 
-// Human-readable label for each field, used in the known/missing checklist.
+// Human-readable label for each CLIENT field, used in the known/missing
+// checklist. Caregiver labels live in caregiverOnboardingDirective.ts — the
+// caregiver role delegates to that module below.
 const FIELD_LABEL: Record<string, string> = {
-  // client
   firstName:   "the family member's first name (who you're talking to)",
   seniorName:  "who they're caring for — the senior's name and the relationship",
   age:         "the senior's age",
@@ -26,15 +28,6 @@ const FIELD_LABEL: Record<string, string> = {
   hoursPerDay: "how many hours per day",
   relationship:"the family member's relationship to the senior",
   conditions:  "any diagnoses or conditions the senior has",
-  // caregiver
-  name:           "the caregiver's name",
-  yearsExperience:"years of caregiving experience",
-  specialties:    "the types of care they specialize in",
-  availability:   "the days and hours they can work",
-  jobType:        "occasional / part-time / full-time",
-  hourlyRate:     "their hourly rate",
-  email:          "their email address",
-  bio:            "a short bio in their own words",
 };
 
 function labelFor(field: string): string {
@@ -51,6 +44,10 @@ export function buildOnboardingDirective(
   role: OnboardingRole,
   onboardingData: Record<string, unknown> | undefined,
 ): string {
+  // Caregiver collection has its own directive (same structure + tone contract,
+  // caregiver field checklist, plus the deterministic gate-handoff block).
+  if (role === "caregiver") return buildCaregiverOnboardingDirective(onboardingData);
+
   const data    = onboardingData ?? {};
   const missing = missingRequiredFields(role, data);
   const required = requiredFieldsForRole(role);
@@ -64,7 +61,8 @@ export function buildOnboardingDirective(
     ? missing.map((f) => `  • ${labelFor(f)}`).join("\n")
     : "  (all required fields collected)";
 
-  const audience = role === "caregiver" ? "caregiver" : "family member";
+  // Only the client reaches this point (caregiver delegated above).
+  const audience = "family member";
 
   const action = missing.length
     ? `Ask for the SINGLE most natural next missing item — usually the first one listed. ` +
@@ -74,7 +72,7 @@ export function buildOnboardingDirective(
       `turn — do not ask another question first.`
     : `Everything required is collected. Call complete_collection RIGHT NOW, before anything ` +
       `else this turn, then send ONE short warm line acknowledging you've got what you need to ` +
-      `find ${role === "caregiver" ? "them work" : "their match"} — keep it brief, do NOT promise ` +
+      `find their match — keep it brief, do NOT promise ` +
       `a specific timeframe or that options are coming "shortly" (the next message handles what's ` +
       `actually available), do NOT list fields back like a form, and do NOT ask for more details.`;
 

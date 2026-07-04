@@ -11,12 +11,16 @@
 //   - isFieldFilled           ↔ isFieldFilled in onboardingConversation.ts
 //   - CAREGIVER_REQUIRED_FIELDS ↔ caregiver step parse targets in onboardingSteps.caregiver.ts
 //
-// NOTE (caregiver interleaving): the caregiver flow interleaves transactional
-// gates (photo/docs/membership/bgcheck/stripe) BETWEEN these conversational
-// fields — unlike the client flow which collects everything, then gates. So a
-// single "collect all, then hand to one gate" model fits the client cleanly but
-// the caregiver needs segmented loop ↔ gate ↔ loop handling (tracked for the
-// U3/U4 wiring). complete_collection's caregiver branch is therefore provisional.
+// NOTE (caregiver sequencing, resolved): the scripted caregiver flow is in fact
+// collect-then-gate, like the client's — every conversational field (name,
+// location, story, experience, specialties, profile, availability, job type,
+// rate, email, bio) is collected BEFORE the first transactional gate
+// (caregiver_send_photo). The gates then run strictly scripted: photo → documents
+// (SKIP allowed) → MVR consent → membership checkout → background check (Checkr)
+// → Stripe Connect. So the caregiver loop uses the same "collect all, then hand
+// to the first gate" model as the client: the loop owns only the steps in
+// CAREGIVER_COLLECTION_STEPS, and complete_collection hands off to
+// CAREGIVER_FIRST_GATE_STEP. Gate/awaiting steps are never routed to the loop.
 
 import { isOnboardingAgentLoopEnabled, isPhoneInOnboardingCohort } from "../config/featureFlags";
 
@@ -30,6 +34,25 @@ export const CLIENT_COLLECTION_STEPS: readonly string[] = [
   "client_ask_name", "client_ask_senior", "client_ask_needs",
   "client_ask_location", "client_ask_schedule",
 ];
+
+// The conversational caregiver collection steps the agent loop owns, in the
+// scripted flow's order (mirror of the caregiver_ask_* sequence in
+// onboardingConversation.ts / onboardingSteps.caregiver.ts). Deliberately
+// EXCLUDED, mirroring the client list:
+//   - caregiver_confirm_name — owns its own yes/correction parsing (like
+//     client_confirm_name).
+//   - every gate/awaiting step (photo, documents, MVR, membership, bgcheck,
+//     Stripe Connect) — deterministic side effects stay on the legacy handlers.
+export const CAREGIVER_COLLECTION_STEPS: readonly string[] = [
+  "caregiver_ask_name", "caregiver_ask_location", "caregiver_ask_story",
+  "caregiver_ask_experience", "caregiver_ask_specialties", "caregiver_ask_profile",
+  "caregiver_ask_availability", "caregiver_ask_job_type", "caregiver_ask_rate",
+  "caregiver_ask_email", "caregiver_ask_bio",
+];
+
+export function collectionStepsForRole(role: OnboardingRole): readonly string[] {
+  return role === "caregiver" ? CAREGIVER_COLLECTION_STEPS : CLIENT_COLLECTION_STEPS;
+}
 
 // Mirror of isFieldFilled in onboardingConversation.ts.
 export function isFieldFilled(value: unknown): boolean {
@@ -67,13 +90,18 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
 
 export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   ...CAREGIVER_REQUIRED_FIELDS,
-  "certifications",
+  // Optional/derived fields the scripted caregiver flow also captures:
+  //   certifications + skills — story/experience extraction targets
+  //   zipCode — the service-area gate in save_onboarding_field asks for a ZIP
+  //     when the city isn't recognized; the loop must be able to save it
+  //   gender / languages / canDrive — the caregiver_ask_profile step's fields
+  "certifications", "skills", "zipCode", "gender", "languages", "canDrive",
 ]);
 
 // The step the flow advances to once conversational collection completes and the
 // agent loop hands back to the deterministic gate machine. Client → the legacy
-// post-collection step. Caregiver → the first upload gate (provisional; see the
-// interleaving note above).
+// post-collection step. Caregiver → the first upload gate (matches the scripted
+// handoff: handleCaregiverAskBio sets caregiver_send_photo).
 export const CLIENT_POST_COLLECTION_STEP = "client_ask_start";
 export const CAREGIVER_FIRST_GATE_STEP = "caregiver_send_photo";
 
@@ -114,10 +142,11 @@ export function isOnboardingTool(name: string): boolean {
 }
 
 // U4: whether this inbound onboarding turn should run inside the qaAgent loop
-// (agent-native collection) instead of the scripted step runner. Client-first,
-// flag-gated OFF by default, plain-text collection steps only — transactional
-// gates (steps not in CLIENT_COLLECTION_STEPS) and media/location turns stay on
-// the legacy handlers.
+// (agent-native collection) instead of the scripted step runner. Per-role and
+// flag-gated OFF by default (ONBOARDING_AGENT_LOOP must name the role — e.g.
+// "client" or "client,caregiver"), plain-text collection steps only —
+// transactional gates (steps not in that role's collection list) and
+// media/location turns stay on the legacy handlers.
 export function shouldRouteOnboardingToLoop(args: {
   role: string | undefined;
   step: string;
@@ -129,9 +158,9 @@ export function shouldRouteOnboardingToLoop(args: {
   phone?: string;
 }): boolean {
   const { role, step, hasText, hasMedia, hasLocation, phone } = args;
-  if (role !== "client") return false;
-  if (!isOnboardingAgentLoopEnabled("client")) return false;
-  if (!CLIENT_COLLECTION_STEPS.includes(step)) return false;
+  if (role !== "client" && role !== "caregiver") return false;
+  if (!isOnboardingAgentLoopEnabled(role)) return false;
+  if (!collectionStepsForRole(role).includes(step)) return false;
   if (!hasText || hasMedia || hasLocation) return false;
   // Canary cohort: a narrowed rollout (a % or an allowlist) only routes the phones
   // in-cohort; default (no narrowing) routes everyone in the enabled role.

@@ -139,6 +139,43 @@ export async function editMemoryFile(
   return count;
 }
 
+// Remove a memory file entirely — the storage object AND its block embeddings.
+// Complements read/update/edit: used when a family asks Evia to forget a whole
+// file or when an ad-hoc offloaded tool-result file is no longer needed.
+// Returns true when a file existed and was deleted, false when nothing was there
+// (idempotent — a second call is a safe no-op).
+export async function deleteMemoryFile(userId: string, file: MemoryFile): Promise<boolean> {
+  const slug   = sanitizeFileName(file);
+  const bucket = storage.bucket();
+  const ref    = bucket.file(filePath(userId, file));
+
+  let existed = false;
+  try {
+    const [exists] = await ref.exists();
+    existed = exists;
+    if (exists) await ref.delete();
+  } catch (err) {
+    console.warn("[memoryFiles] delete failed:", err instanceof Error ? err.message : err);
+    return false;
+  }
+
+  // Drop this file's embeddings so semantic search can't resurface deleted
+  // content. Failure is non-fatal — orphaned embeddings only affect recall.
+  try {
+    const col   = db.collection("memory_embeddings").doc(userId).collection("blocks");
+    const prior = await col.where("file", "==", slug).get();
+    if (!prior.empty) {
+      const batch = db.batch();
+      prior.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+  } catch (err) {
+    console.warn("[memoryFiles] embedding cleanup on delete failed:", err instanceof Error ? err.message : err);
+  }
+
+  return existed;
+}
+
 export interface MemorySearchHit {
   file:    string;
   section: string; // the matching block (paragraph or heading section)

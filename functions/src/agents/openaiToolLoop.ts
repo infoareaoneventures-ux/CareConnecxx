@@ -1,8 +1,33 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { openAiTokenLimitParam } from "../utils/openaiClient";
+import { CORE_TOOL_NAMES } from "./toolCapabilities";
 
 type AnthropicTool = Anthropic.Tool & { cache_control?: unknown };
+
+// OpenAI rejects requests with more than 128 tools (400 "array too long").
+// Anthropic has no such cap, so the shared tool surface can legally exceed
+// this — the OpenAI adapter must enforce it or every unfiltered turn fails.
+const OPENAI_MAX_TOOLS = 128;
+
+/**
+ * Trim the tool list to OpenAI's 128-tool cap. Core tools (always-bound
+ * universal reads plus safety-critical tools like trigger_emergency_alert)
+ * are kept unconditionally; the remainder keep their original order and the
+ * tail is dropped. Deterministic for a given input so OpenAI's automatic
+ * prompt caching still gets a stable prefix across iterations.
+ */
+function capToolsForOpenAi(tools: AnthropicTool[]): AnthropicTool[] {
+  if (tools.length <= OPENAI_MAX_TOOLS) return tools;
+  const core = tools.filter((t) => CORE_TOOL_NAMES.has(t.name));
+  const rest = tools.filter((t) => !CORE_TOOL_NAMES.has(t.name));
+  const ordered = [...core, ...rest];
+  const dropped = ordered.slice(OPENAI_MAX_TOOLS).map((t) => t.name);
+  console.warn(
+    `openaiToolLoop: ${tools.length} tools exceeds OpenAI's ${OPENAI_MAX_TOOLS}-tool cap — dropped ${dropped.length}: ${dropped.join(", ")}`,
+  );
+  return ordered.slice(0, OPENAI_MAX_TOOLS);
+}
 
 export interface OpenAiAgentTurnResult {
   content: Anthropic.ContentBlock[];
@@ -121,7 +146,7 @@ export async function callOpenAiAgentTurn(params: {
   messages: Anthropic.MessageParam[];
   signal?: AbortSignal;
 }): Promise<OpenAiAgentTurnResult> {
-  const tools = convertTools(params.tools);
+  const tools = convertTools(capToolsForOpenAi(params.tools));
   const res = await params.client.chat.completions.create(
     {
       model: params.model,
@@ -160,4 +185,6 @@ export async function callOpenAiAgentTurn(params: {
 export const __test__ = {
   convertAnthropicMessages,
   convertTools,
+  capToolsForOpenAi,
+  OPENAI_MAX_TOOLS,
 };

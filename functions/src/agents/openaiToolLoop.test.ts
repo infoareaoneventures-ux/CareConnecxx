@@ -114,6 +114,33 @@ describe("openaiToolLoop", () => {
     expect(create.mock.calls[0][0]).not.toHaveProperty("max_tokens");
   });
 
+  it("caps the tool array at OpenAI's 128-tool limit, keeping core tools", () => {
+    const makeTool = (name: string) => ({
+      name,
+      description: `d-${name}`,
+      input_schema: { type: "object", properties: {} },
+    }) as any;
+    // 150 filler tools with trigger_emergency_alert (core) buried at the END —
+    // naive truncation would drop it.
+    const tools = [
+      ...Array.from({ length: 149 }, (_, i) => makeTool(`filler_tool_${i}`)),
+      makeTool("trigger_emergency_alert"),
+    ];
+
+    const capped = __test__.capToolsForOpenAi(tools);
+    expect(capped.length).toBe(__test__.OPENAI_MAX_TOOLS);
+    expect(capped.map((t: any) => t.name)).toContain("trigger_emergency_alert");
+  });
+
+  it("leaves tool arrays at or under the cap untouched", () => {
+    const tools = Array.from({ length: 128 }, (_, i) => ({
+      name: `t${i}`,
+      description: "d",
+      input_schema: { type: "object", properties: {} },
+    })) as any[];
+    expect(__test__.capToolsForOpenAi(tools)).toBe(tools);
+  });
+
   it("omits OpenAI tools fields when no active tools are available", async () => {
     const create = vi.fn(async () => ({
       choices: [{

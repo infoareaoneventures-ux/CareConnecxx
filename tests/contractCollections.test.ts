@@ -62,7 +62,8 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // activity-feed streams Evia writes (not part of the web read contract).
     'consent_audit_log', 'emergency_alerts', 'routing_shadow', 'user_activity_feed',
     // Agent session / runtime state
-    'agent_sessions', 'agent_conversations', 'agent_turn_checkpoints',
+    // (agent_conversations moved to CONTRACT_COLLECTIONS — agent-native audit 2026-07)
+    'agent_sessions', 'agent_turn_checkpoints',
     'agent_prefetch', 'agent_dnd_queue', 'agent_permissions', 'agent_reactions',
     'agent_read_receipts', 'agent_group_events', 'agent_imessage_retry',
     // Observability / log streams (admin dashboards read some via direct
@@ -83,25 +84,27 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // server-written, not part of the web read contract.
     'waitlist',
     // Matching / scheduling internals (web reads the user-facing mirrors, not these)
+    // (memory_embeddings/facts/learned_facts, proactive_triggers/user_triggers,
+    // health_signals, and user_preferences moved to CONTRACT_COLLECTIONS as
+    // server/agent-only entries — agent-native audit 2026-07)
     'caregiver_booked_slots', 'replacement_candidates', 'recurring_schedules',
     'booking_patterns', 'day_patterns', 'match_history', 'match_outcomes',
-    'clientMatches', 'match_assignments', 'memory_embeddings',
-    // Memory / facts (Zep + Firestore; web does not read these directly)
-    'facts', 'learned_facts',
+    'clientMatches', 'match_assignments',
     // Triggers / engagement internals
-    'proactive_triggers', 'trigger_engagement', 'user_triggers',
+    'trigger_engagement',
     // Health / wellbeing analytics streams
-    'health_signals', 'health_trends', 'health_summaries', 'wellbeing_checkins',
+    'health_trends', 'health_summaries', 'wellbeing_checkins',
     'post_visit_feedback',
     // Billing / payment internals written server-side (web reads invoices/payments,
     // not these intermediate/event records)
     'billing_events', 'visit_billing', 'visit_payments', 'dispute_flags',
     // Misc internal config / metrics
     'system_config', 'experiment_scorecards', 'weekly_digests',
-    'user_preferences', 'wow_fires', '_meta',
+    'wow_fires', '_meta',
     // Server-only request/workflow records the web does not read directly
-    'blocks', 'comments', 'client_cancel_requests', 'email_change_requests',
-    'emergency_events', 'instant_payouts', 'refundRequests', 'shift_swap_requests',
+    // ('blocks' + 'shift_swap_requests' moved to CONTRACT_COLLECTIONS — agent-native audit 2026-07)
+    'comments', 'client_cancel_requests', 'email_change_requests',
+    'emergency_events', 'instant_payouts', 'refundRequests',
     // Subcollection leaf names that appear as bare collection("name") segments.
     // Their parent docs are governed by the contract entry for the parent path.
     'messages',          // threads/{id}/messages — covered by 'threads' entry

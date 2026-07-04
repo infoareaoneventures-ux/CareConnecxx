@@ -41,6 +41,13 @@
 | client | Read the client's care team | components/client/CareTeam.tsx | caregivers | `get_care_team` | any | shipped | Used by Evia recipe discovery for next-visit and who-is-coming answers. |
 | client | Review what Evia remembers | n/a | n/a | `cara_knows` | any | shipped | Memory is derived from scoped memory files, Zep context, learned facts, and live tool data; hidden prompt context is not exposed. |
 | client | Correct or update Evia memory | n/a | n/a | `update_memory_file` | any | shipped | Fresh corrections outrank stale memory and learned facts. |
+| client | See everything Evia has in flight (open promises, tasks, matches, to-dos) | n/a | n/a | `get_work_in_progress` | any | shipped | Unified WIP view over pending_commitments, agent_tasks(_active), and session todos/pendingMatches — agentic-reliability wave 2026-07. |
+| client | Archive (soft-delete) a senior profile when care ends | n/a | senior_profiles | `archive_senior_profile` | client | shipped | Soft status flag only (status:'archived'); the care record is retained. Hard delete is an intentional exclusion (AGENT_NATIVE_EXCLUSIONS.md). |
+| client | Edit a family group member's name/role/relationship/notifications | components/client/CareTeam.tsx | family_group_members | `update_family_member` | client | shipped | Ownership scoped by the userId+memberPhone query — only the caller's own membership docs are reachable. |
+| client | List scheduled/pending interviews | n/a | video_interviews | `list_interviews` | any | shipped | Caller-scoped read (clientId OR caregiverId); exposed to both actors. |
+| client | Cancel a scheduled interview | n/a | video_interviews | `cancel_interview` | any | shipped | Either participant can cancel their own interview; the counterpart is notified (trySend for caregivers, Linq session for clients). |
+| client | Delete an Evia memory file (content + search index) | n/a | n/a | `delete_memory_file` | any | shipped | Memory files live in Storage (memory/{userId}/), not a Firestore contract collection; block embeddings are purged with the file. |
+| client | List blocked users | components/InboxView.tsx | users | `list_blocked_users` | client | shipped | Read primitive over users.{uid}.blockedUsers (the array block_user/unblock_user maintain). |
 
 ## Caregiver
 
@@ -68,6 +75,8 @@
 | caregiver | Refer another caregiver | components/shared/ReferralProgram.tsx | referrals | `create_caregiver_referral` | caregiver | shipped | Writes non-bookable caregiver referrals, sends the SMS invite, and keeps bookability gated on onboardingStatus='profile_complete', verificationStatus='approved', and Checkr clear. |
 | caregiver | Open a support ticket | components/shared/SupportWidget.tsx | support_tickets | `create_support_ticket` | any | shipped |  |
 | caregiver | Check background check status | components/caregiver/OnboardingChecklist.tsx | caregivers | `get_background_check_status` | caregiver | shipped |  |
+| caregiver | List active shift swap requests and open peer offers | components/caregiver/CaregiverBookingsPage.tsx | shift_swap_requests | `list_shift_swaps` | caregiver | shipped | Read primitive over the collection request_shift_swap/accept_shift_swap write: the caller's own requests plus unexpired open offers from peers. |
+| caregiver | Confirm cash payment received for an approved shift | components/caregiver/CaregiverPaymentsPage.tsx | shiftHours | `confirm_cash_received` | caregiver | shipped | Mirror of services/api.ts confirmCashReceived: caregiver-owned cash shift, approved/auto_approved -> paid (paidMethod:'cash'). Idempotent on retry (already-paid returns no-op success). |
 
 ## Family (Secondary Members)
 

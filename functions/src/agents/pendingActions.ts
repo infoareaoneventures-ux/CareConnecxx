@@ -69,6 +69,10 @@ const ALWAYS_CONFIRM = new Set<string>([
   // family-visible and not casually reversible, so require explicit confirmation.
   "delete_review",
   "delete_care_journal_entry",
+  // CRUD-completeness tools (2026-07-03): archiving a senior ends active care
+  // visibility, and deleting a memory file destroys content + its search index.
+  "archive_senior_profile",
+  "delete_memory_file",
 ]);
 
 // Care-plan fields that are harmless note-like additions — free-text context

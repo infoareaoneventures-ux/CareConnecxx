@@ -92,6 +92,7 @@ vi.mock("../mcp/server", () => ({
     { name: "find_caregivers",       description: "noise", input_schema: { type: "object", properties: {} } },
   ],
   CAREGIVER_TOOLS: [],
+  CLIENT_TOOLS: [],
   handleToolCall: vi.fn(),
   handleToolCallForCaregiver: vi.fn(),
 }));

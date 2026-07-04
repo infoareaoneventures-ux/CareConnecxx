@@ -54,6 +54,8 @@ const hoisted = vi.hoisted(() => {
     releaseMock: vi.fn(async (..._args: any[]) => {}),
     mirrorMock: vi.fn(async (..._args: any[]) => {}),
     qaMock: vi.fn(async (..._args: any[]) => "Here's what I found!"),
+    helpMock: vi.fn((role: string) => `capability help for ${role}`),
+    sendLinqMock: vi.fn(async (..._args: any[]) => {}),
     reset() {
       docs.clear();
       queryItems.clear();
@@ -84,6 +86,18 @@ vi.mock("./threadMirror", () => ({
 
 vi.mock("../agents/qaAgent", () => ({
   runQaAgent: hoisted.qaMock,
+}));
+
+// /help command path: capability reply + optional ops lead + Linq send.
+vi.mock("../agents/capabilityDiscovery", () => ({
+  buildHelpSmsReply: hoisted.helpMock,
+}));
+vi.mock("../agents/operationalContext", () => ({
+  loadCaraOperationalContext: vi.fn(async () => null),
+  buildOperationalRecipeLead: vi.fn(() => undefined),
+}));
+vi.mock("./client", () => ({
+  sendMessage: hoisted.sendLinqMock,
 }));
 
 import { handleWebChatTurn, AgentUnavailableError } from "./webChat";
@@ -285,5 +299,74 @@ describe("handleWebChatTurn", () => {
     const inbound = hoisted.mirrorMock.mock.calls.filter(([p]: any[]) => p.direction === "inbound");
     expect(inbound).toHaveLength(0);
     expect(hoisted.qaMock).toHaveBeenCalledOnce();
+  });
+
+  // ── /help: exact-string capability commands (web parity with routeIntent) ──
+  describe("HELP / CAPABILITIES commands", () => {
+    it("HELP answers with the capability reply and never runs the agent (Linq branch sends via sendMessage)", async () => {
+      seedUser();
+      seedSession();
+
+      const res = await handleWebChatTurn({ uid: UID, message: "HELP" });
+
+      expect(res.status).toBe("ok");
+      expect(res.reply).toBe("capability help for client");
+      expect(res.showMatches).toBe(false);
+      expect(hoisted.qaMock).not.toHaveBeenCalled();
+      // Linq branch: sendMessage delivers + auto-mirrors; no manual outbound mirror.
+      expect(hoisted.sendLinqMock).toHaveBeenCalledWith("chat-1", "capability help for client");
+      const outbound = hoisted.mirrorMock.mock.calls.filter(([p]: any[]) => p.direction === "outbound");
+      expect(outbound).toHaveLength(0);
+      // Inbound was still mirrored before the reply.
+      const inbound = hoisted.mirrorMock.mock.calls.filter(([p]: any[]) => p.direction === "inbound");
+      expect(inbound).toHaveLength(1);
+    });
+
+    it("matches case-insensitively with surrounding whitespace and slash variants", async () => {
+      seedUser();
+      seedSession({ chatId: undefined });
+
+      const res = await handleWebChatTurn({ uid: UID, message: "  /capabilities  " });
+
+      expect(res.status).toBe("ok");
+      expect(res.reply).toBe("capability help for client");
+      expect(hoisted.qaMock).not.toHaveBeenCalled();
+      // No Linq chat: the reply is mirrored manually exactly once.
+      expect(hoisted.sendLinqMock).not.toHaveBeenCalled();
+      const outbound = hoisted.mirrorMock.mock.calls.filter(([p]: any[]) => p.direction === "outbound");
+      expect(outbound).toHaveLength(1);
+      expect(outbound[0][0]).toMatchObject({ userId: UID, text: "capability help for client", source: "cara_web" });
+    });
+
+    it("is role-aware: caregiver sessions get the caregiver reply", async () => {
+      seedUser();
+      seedSession({ userType: "caregiver", caregiverId: "cg-9" });
+
+      const res = await handleWebChatTurn({ uid: UID, message: "help" });
+
+      expect(res.reply).toBe("capability help for caregiver");
+      expect(hoisted.helpMock).toHaveBeenCalledWith("caregiver", undefined, "en");
+    });
+
+    it("is role-aware: secondary family members get the family-secondary reply", async () => {
+      seedUser();
+      seedSession({ isSecondaryMember: true });
+
+      const res = await handleWebChatTurn({ uid: UID, message: "CAPABILITIES" });
+
+      expect(res.reply).toBe("capability help for family-secondary");
+      expect(hoisted.helpMock).toHaveBeenCalledWith("family-secondary", undefined, "en");
+    });
+
+    it("only an exact command triggers - 'help me find a caregiver' still goes to the agent", async () => {
+      seedUser();
+      seedSession();
+
+      const res = await handleWebChatTurn({ uid: UID, message: "help me find a caregiver" });
+
+      expect(res.reply).toBe("Here's what I found!");
+      expect(hoisted.qaMock).toHaveBeenCalledOnce();
+      expect(hoisted.helpMock).not.toHaveBeenCalled();
+    });
   });
 });

@@ -21,7 +21,7 @@ vi.mock("../utils/openaiClient",   () => ({ quickComplete: vi.fn(), getOpenAICli
 vi.mock("../utils/claudeRetry",    () => ({ callClaudeWithRetry: vi.fn() }));
 vi.mock("../safety/supervisor",    () => ({ supervise: (msg: string) => Promise.resolve(msg) }));
 vi.mock("../safety/linter",        () => ({ lintMessage: (msg: string) => msg }));
-vi.mock("../mcp/server",           () => ({ MCP_TOOLS: [], CAREGIVER_TOOLS: [], handleToolCall: vi.fn(), handleToolCallForCaregiver: vi.fn() }));
+vi.mock("../mcp/server",           () => ({ MCP_TOOLS: [], CAREGIVER_TOOLS: [], CLIENT_TOOLS: [], handleToolCall: vi.fn(), handleToolCallForCaregiver: vi.fn() }));
 vi.mock("../memory/zepClient",     () => ({ getZepContext: vi.fn(), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
 vi.mock("../memory/memoryFiles",   () => ({ getMemoryContext: vi.fn() }));
 vi.mock("../memory/learnedFacts",  () => ({ getRelevantFacts: vi.fn(), detectAndApplyCorrection: vi.fn() }));
@@ -40,6 +40,7 @@ import {
   detectMultiQuestionDataCollection,
   detectSupportDeflection,
   buildClientSystemPrompt,
+  buildCaregiverCoreContext,
   isTrivialQuickReply,
   MEMORY_SOURCE_PRIORITY_POLICY,
   WARMTH_REFLECTION_OPENERS,
@@ -304,5 +305,72 @@ describe("sanitizeAnthropicMessages — keeps the history window API-valid", () 
       { role: "user", content: blocks },
     ];
     expect(sanitizeAnthropicMessages(msgs as any)).toEqual(msgs);
+  });
+});
+
+// Caregiver mirror of the client core context (U4) - pure over the caregivers
+// doc, so it's testable without any Firestore fixture.
+describe("buildCaregiverCoreContext", () => {
+  const fullDoc = {
+    name:            "Maria Lopez",
+    city:            "San Jose",
+    zipCode:         "95112",
+    specialties:     ["dementia care", "mobility support"],
+    certifications:  ["CNA", "CPR"],
+    yearsExperience: 6,
+    languages:       ["English", "Spanish"],
+    canDrive:        true,
+    availability: {
+      monday: [{ start: "06:00", end: "12:00" }],
+      friday: [{ start: "12:00", end: "18:00" }, { start: "18:00", end: "23:00" }],
+    },
+    status:              "active",
+    verificationStatus:  "approved",
+    onboardingStatus:    "profile_complete",
+    backgroundCheckData: { status: "clear" },
+  };
+
+  it("returns empty string for a missing caregiver doc", () => {
+    expect(buildCaregiverCoreContext(null)).toBe("");
+    expect(buildCaregiverCoreContext(undefined)).toBe("");
+  });
+
+  it("returns empty string when the doc has none of the surfaced fields", () => {
+    expect(buildCaregiverCoreContext({ hourlyRate: 25 })).toBe("");
+  });
+
+  it("surfaces service area, skills, availability, and verification/account status", () => {
+    const out = buildCaregiverCoreContext(fullDoc);
+    expect(out).toContain("SERVICE AREA: San Jose, 95112.");
+    expect(out).toContain("specialties: dementia care, mobility support");
+    expect(out).toContain("certifications: CNA, CPR");
+    expect(out).toContain("6 years experience");
+    expect(out).toContain("languages: English, Spanish");
+    expect(out).toContain("can drive");
+    expect(out).toContain("WEEKLY AVAILABILITY");
+    expect(out).toContain("Mon 06:00-12:00");
+    expect(out).toContain("Fri 12:00-18:00, 18:00-23:00");
+    expect(out).toContain("ACCOUNT STATUS: account active, verification approved, background check clear, onboarding profile_complete.");
+  });
+
+  it("tells Evia the availability snapshot may be stale and which tools to use", () => {
+    const out = buildCaregiverCoreContext(fullDoc);
+    expect(out).toContain("get_caregiver_info");
+    expect(out).toContain("update_caregiver_availability");
+  });
+
+  it("handles legacy availability shapes (free-text string and block array)", () => {
+    const asString = buildCaregiverCoreContext({ ...fullDoc, availability: "weekday mornings" });
+    expect(asString).toContain("weekday mornings");
+    const asArray = buildCaregiverCoreContext({ ...fullDoc, availability: ["Morning", "Evening"] });
+    expect(asArray).toContain("Morning, Evening");
+  });
+
+  it("omits sections whose inputs are missing instead of emitting empty labels", () => {
+    const out = buildCaregiverCoreContext({ city: "Gilroy", status: "paused" });
+    expect(out).toContain("SERVICE AREA: Gilroy.");
+    expect(out).toContain("ACCOUNT STATUS: account paused.");
+    expect(out).not.toContain("SKILLS AND EXPERIENCE");
+    expect(out).not.toContain("WEEKLY AVAILABILITY");
   });
 });

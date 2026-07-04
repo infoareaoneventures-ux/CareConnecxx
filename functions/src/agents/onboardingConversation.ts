@@ -13,6 +13,7 @@ import {
   StoredEmotionalContext,
 } from "./emotionalContext";
 import { generateToken } from "./tokenService";
+import { getCapabilityExamples } from "./capabilityDiscovery";
 import { summarizeFrontload } from "./frontloadSummary";
 import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../notifications";
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
@@ -3112,22 +3113,38 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         },
       }).catch((err) => console.error("addBusinessDataToZep caregiver error:", err));
 
-      // Warm "you're approved" milestone message before handing off to permissions
+      // Warm "you're approved" milestone message before handing off to permissions.
+      // Capability tour (R13): close onboarding with 2-3 concrete care recipes
+      // drawn from the shipped-parity registry (capabilityDiscovery/careRecipes)
+      // instead of a generic welcome, so the caregiver's first impression of
+      // Evia is what they can actually text her for - woven into prose, never a
+      // feature list or menu (voice contract).
       const firstName = ((d.name ?? "") as string).split(" ")[0] || "you";
       const specialties = Array.isArray(d.specialties) ? (d.specialties as string[]).join(", ") : "";
+      // Drop dual-role phrases written from the family's point of view ("ask
+      // the caregiver...") - they read wrong addressed TO a caregiver.
+      const recipePhrases = getCapabilityExamples("caregiver", 4)
+        .filter((phrase) => !phrase.toLowerCase().includes("the caregiver"))
+        .slice(0, 3);
+      const recipeList = recipePhrases.length > 1
+        ? `${recipePhrases.slice(0, -1).join(", ")}, or ${recipePhrases[recipePhrases.length - 1]}`
+        : recipePhrases[0] ?? "handle your schedule, visit notes, and pay";
       const activationMsg = await generateCaraMessage({
         audience: "caregiver",
         context:
           `Caregiver first name: ${firstName}. ` +
           `Their background check came back clear and they just finished setting up payouts — they're now fully approved and active. ` +
           `${specialties ? `Their specialties: ${specialties}. ` : ""}` +
-          `Write a warm 2-3 sentence "you're approved" celebration message. Reassure them their profile is live, ` +
+          `Write a warm 3-4 sentence "you're approved" celebration message. Reassure them their profile is live, ` +
           `mention they'll start getting matched with families soon, and that I'll text them as new jobs come in. ` +
+          `Then, in one natural closing sentence (plain prose - no list, no menu, no numbering), let them know ` +
+          `they can text me anytime to ${recipeList}. ` +
           `Sound genuinely happy for them.`,
         fallback:
           `🎉 You're approved, ${firstName}! Your profile is live and I'll start matching you with families that need help. ` +
-          `Watch for job alerts here — reply YES to any that interest you. Welcome to Evia!`,
-        maxTokens: 180,
+          `Watch for job alerts here — reply YES to any that interest you. ` +
+          `And I'm your coordinator from here on: text me anytime to ${recipeList}. Welcome to Evia!`,
+        maxTokens: 220,
       });
       await sendMessage(chatId, activationMsg);
 

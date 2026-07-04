@@ -928,8 +928,12 @@ service cloud.firestore {
     }
 
     // Family group member index — server-maintained membership lookup.
+    // Owner-scoped read: the primary client (stamped as userId by the
+    // add_family_member MCP tool and the /join callable) can read their own
+    // group members so the FamilyManager roster updates live. Writes stay
+    // server-only (Admin SDK).
     match /family_group_members/{memberId} {
-      allow read: if isAdmin();
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
       allow write: if false;
     }
 

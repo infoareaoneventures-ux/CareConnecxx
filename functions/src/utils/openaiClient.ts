@@ -28,6 +28,7 @@ import { resolveCaraModelConfig } from "../config/caraModels";
 const FALLBACK_MODEL = "claude-haiku-4-5-20251001";
 
 let _sharedClient: OpenAI | null = null;
+let _geminiClient: OpenAI | null = null;
 
 export function openAiTokenLimitParam(model: string, maxTokens: number): { max_tokens?: number; max_completion_tokens?: number } {
   // Newer GPT-5-family chat models reject max_tokens and require
@@ -51,6 +52,29 @@ export function getOpenAIClient(): OpenAI {
 }
 
 /**
+ * Gemini through Google's OpenAI-compatible endpoint — used as the agent
+ * loop's tier-3 fallback (see agentModelTurn.ts). Speaking the OpenAI wire
+ * format lets it reuse callOpenAiAgentTurn (message conversion, 128-tool cap)
+ * with zero Gemini-specific translation code. Reuses the GEMINI_API_KEY
+ * already configured for embeddings.
+ */
+export function getGeminiOpenAIClient(): OpenAI {
+  if (!_geminiClient) {
+    const apiKey = process.env.GEMINI_API_KEY ?? process.env.VITE_GEMINI_API_KEY ?? "";
+    if (!apiKey) {
+      console.warn("openaiClient: GEMINI_API_KEY is not set — Gemini agent fallback will fail");
+    }
+    _geminiClient = new OpenAI({
+      apiKey,
+      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+      timeout: 15_000,
+      maxRetries: 0,
+    });
+  }
+  return _geminiClient;
+}
+
+/**
  * Convenience helper for short single-shot system+user prompts that mirrors
  * the shape Anthropic's `messages.create({ system, messages: [{ role: "user", content }] })`
  * was being used for. Returns the trimmed assistant text.
@@ -58,6 +82,10 @@ export function getOpenAIClient(): OpenAI {
  * Use this for any new fast-path call site instead of constructing the
  * OpenAI request shape inline.
  */
+// Throttle for the fallback-activation provider alert — one alert per warm
+// instance per 10 minutes, not one per failed quick-call during an outage.
+let _lastFallbackAlertAt = 0;
+
 export async function quickComplete(
   systemPrompt: string,
   userText: string,
@@ -106,6 +134,29 @@ async function anthropicFallback(
     "cara.llm.fallback: OpenAI fast path failed, falling back to Anthropic Haiku —",
     (openaiErr as Error)?.message ?? openaiErr
   );
+  // The console.warn above is invisible in practice — "quietly running on the
+  // paid fallback for days" was a real audit finding. Raise the typed provider
+  // alert (billing/auth classes page the founder), throttled per instance so
+  // an outage doesn't write an alert per quick-call, and bump a daily fallback
+  // counter (every activation) so the fallback RATE is queryable. All
+  // fire-and-forget: alerting must never add latency to the fallback itself.
+  void (async () => {
+    try {
+      if (Date.now() - _lastFallbackAlertAt > 10 * 60_000) {
+        _lastFallbackAlertAt = Date.now();
+        const { raiseProviderFailureAlert } = await import("../observability/providerFailureAlert");
+        await raiseProviderFailureAlert({ provider: "openai", model: "fast-path", error: openaiErr });
+      }
+      const adminMod = await import("firebase-admin");
+      await adminMod.firestore()
+        .collection("ops_counters")
+        .doc(`llm_fallback_${new Date().toISOString().slice(0, 10)}`)
+        .set(
+          { count: adminMod.firestore.FieldValue.increment(1), updatedAt: new Date().toISOString() },
+          { merge: true }
+        );
+    } catch { /* non-critical */ }
+  })();
   const msg = await callClaudeWithRetry(
     null,
     {

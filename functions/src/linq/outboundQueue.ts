@@ -27,7 +27,7 @@ export const RATE_LIMIT_WINDOW_MS   = 60_000;              // mirrors client.ts 
 const STALE_SENDING_MS  = 10 * 60 * 1000;                  // crashed mid-send → reclaim
 const DOC_RETENTION_MS  = 7 * 24 * 60 * 60 * 1000;         // TTL cleanup after settle
 
-export type QueueDropReason = "circuit_open" | "rate_limited";
+export type QueueDropReason = "circuit_open" | "rate_limited" | "send_failed";
 
 export type QueueTarget =
   | { kind: "chat";  chatId: string }
@@ -61,10 +61,13 @@ export async function enqueueOutbound(params: EnqueueParams): Promise<boolean> {
   const now = Date.now();
   const ttlMs = params.ttlMs ?? DEFAULT_QUEUE_TTL_MS;
   // Rate-limited sends are eligible as soon as the next 60s window opens;
-  // circuit-open sends wait a couple of minutes before the first recheck.
+  // hard transport failures (send_failed) get a quick first recheck; circuit-
+  // open sends wait a couple of minutes.
   const notBefore = params.reason === "rate_limited"
     ? (Math.floor(now / RATE_LIMIT_WINDOW_MS) + 1) * RATE_LIMIT_WINDOW_MS
-    : now + CIRCUIT_RETRY_DELAY_MS;
+    : params.reason === "send_failed"
+      ? now + 60_000
+      : now + CIRCUIT_RETRY_DELAY_MS;
   try {
     await db.collection(OUTBOUND_QUEUE_COLLECTION).add({
       target:           params.target,
@@ -216,6 +219,13 @@ export async function drainOutboundQueue(): Promise<DrainResult> {
           outcome = await safeSend(d.target.chatId, payload, d.superviseContext, opts);
         } else if (d.target.kind === "phone") {
           outcome = await sendToPhone(d.target.phone, payload, opts);
+        } else if (d.target.kind === "chat" && d.reason === "send_failed") {
+          // Transport-failure redelivery: this content already went through
+          // the full lint/redact/supervise pipeline at its original send —
+          // resend directly. opts._noQueue prevents a re-enqueue loop.
+          const { sendMessage } = await import("./client");
+          await sendMessage(d.target.chatId, payload, opts);
+          outcome = "sent";
         } else {
           // chat target with no supervise context — sent unsupervised is not
           // acceptable for a chat-path message; treat as failed config.

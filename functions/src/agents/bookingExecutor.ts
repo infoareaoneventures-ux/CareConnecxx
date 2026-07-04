@@ -322,6 +322,12 @@ export async function finalizeAcceptedBooking(taskId: string, clientPhone: strin
       `Any questions? Just text me.`
     );
 
+    // The hire/booking goal is complete — close it explicitly so a durable
+    // "find a caregiver" goal doesn't linger and resurface stale context.
+    await import("./qaAgent")
+      .then((m) => m.clearActiveGoal(clientPhone))
+      .catch(() => {});
+
     // Ask about recurring care — only for single-visit (one-time) bookings
     if (task.appointments.length === 1) {
       const firstAppt = task.appointments[0];

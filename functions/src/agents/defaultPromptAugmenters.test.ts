@@ -3,6 +3,9 @@ import {
   languageAugmenter,
   unconfirmedIdentityAugmenter,
   personaReinjectAugmenter,
+  communicationPreferencesAugmenter,
+  buildCurrentTimeBlock,
+  DEFAULT_AUGMENTERS,
 } from "./defaultPromptAugmenters";
 import type { AugmenterContext } from "./promptAugmenters";
 import { createTurnMetrics } from "./turnMetrics";
@@ -77,5 +80,102 @@ describe("personaReinjectAugmenter", () => {
     expect(out).toMatch(/^<system_reminder>/);
     expect(out).toContain("warm, direct, specific");
     expect(out).toContain("Lead with the human before the data");
+  });
+});
+
+describe("communicationPreferencesAugmenter", () => {
+  const prefs = {
+    dndEnabled:           true,
+    dndStart:             "22:00",
+    dndEnd:               "08:00",
+    activeHours:          { start: "08:00", end: "21:00" },
+    preferredSummaryTime: "18:00",
+    preferSMS:            true,
+    timezone:             "America/Los_Angeles",
+  };
+
+  it("skips when no preferences are on ctx.extras", () => {
+    expect(communicationPreferencesAugmenter.predicate!(baseCtx())).toBe(false);
+    expect(communicationPreferencesAugmenter.predicate!(baseCtx({ extras: {} }))).toBe(false);
+  });
+
+  it("fires when preferences ride in via ctx.extras", () => {
+    const ctx = baseCtx({ extras: { preferences: prefs } });
+    expect(communicationPreferencesAugmenter.predicate!(ctx)).toBe(true);
+  });
+
+  it("surfaces the DND window, channel preference, and hold-until-morning guidance", () => {
+    const out = communicationPreferencesAugmenter.augment(baseCtx({ extras: { preferences: prefs } })) as string;
+    expect(out).toMatch(/^COMMUNICATION PREFERENCES/);
+    expect(out).toContain("22:00-08:00");
+    expect(out).toContain("America/Los_Angeles");
+    expect(out).toContain("Prefers SMS");
+    expect(out).toContain("I'll hold this until morning");
+    expect(out).toContain("update_communication_preferences");
+  });
+
+  it("says quiet hours are not enabled when DND is off", () => {
+    const out = communicationPreferencesAugmenter.augment(
+      baseCtx({ extras: { preferences: { ...prefs, dndEnabled: false, preferSMS: false } } }),
+    ) as string;
+    expect(out).toContain("Quiet hours: not enabled");
+    expect(out).not.toContain("22:00-08:00");
+    expect(out).not.toContain("Prefers SMS");
+  });
+
+  it("is registered in DEFAULT_AUGMENTERS (after the migrated trio)", () => {
+    expect(DEFAULT_AUGMENTERS.map((a) => a.name)).toEqual([
+      "language",
+      "unconfirmed-identity",
+      "persona-reinject",
+      "frustration-recovery",
+      "communication-preferences",
+    ]);
+  });
+});
+
+describe("buildCurrentTimeBlock", () => {
+  // 2026-07-03T21:00:00Z = Friday 2026-07-03, 2:00 PM PDT.
+  const fixedNow = new Date("2026-07-03T21:00:00Z");
+
+  it("states ISO date, day-of-week, local time, and timezone for a stored tz", () => {
+    const out = buildCurrentTimeBlock("America/Los_Angeles", fixedNow);
+    expect(out).toMatch(/^CURRENT TIME: Today is 2026-07-03 \(Friday\)\./);
+    expect(out).toContain("2:00 PM PDT");
+    expect(out).toContain("(America/Los_Angeles)");
+    expect(out).not.toContain("No timezone is on file");
+  });
+
+  it("respects a non-default stored timezone", () => {
+    const out = buildCurrentTimeBlock("America/New_York", fixedNow);
+    expect(out).toContain("5:00 PM EDT");
+    expect(out).toContain("(America/New_York)");
+    expect(out).not.toContain("No timezone is on file");
+  });
+
+  it("falls back to America/Los_Angeles and states the assumption when no tz is provided", () => {
+    const out = buildCurrentTimeBlock(undefined, fixedNow);
+    expect(out).toContain("(America/Los_Angeles)");
+    expect(out).toContain("No timezone is on file");
+    expect(out).toContain("Santa Clara County");
+  });
+
+  it("falls back safely on an invalid IANA name", () => {
+    const out = buildCurrentTimeBlock("Not/AZone", fixedNow);
+    expect(out).toContain("(America/Los_Angeles)");
+    expect(out).toContain("No timezone is on file");
+  });
+
+  it("tells the model to resolve relative dates against the block", () => {
+    const out = buildCurrentTimeBlock("America/Los_Angeles", fixedNow);
+    expect(out).toContain("Resolve every relative date");
+    expect(out).toContain("quiet hours");
+  });
+
+  it("crosses the date line correctly relative to UTC", () => {
+    // 2026-07-04T05:30:00Z is still Friday 2026-07-03 in LA (10:30 PM PDT).
+    const out = buildCurrentTimeBlock("America/Los_Angeles", new Date("2026-07-04T05:30:00Z"));
+    expect(out).toContain("2026-07-03 (Friday)");
+    expect(out).toContain("10:30 PM PDT");
   });
 });

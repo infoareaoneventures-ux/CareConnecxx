@@ -107,6 +107,13 @@ export async function raiseProviderFailureAlert(params: RaiseProviderFailureAler
 
     if (providerErrorClass === "billing" || providerErrorClass === "auth") {
       await smsAdmin().catch(() => {});
+      // Billing/auth means EVERY turn is failing, not just this one — flip
+      // system-wide degraded mode so users get one honest notice instead of
+      // per-turn snag spam, and proactive sends hold until recovery (the next
+      // successful turn clears the flag).
+      await import("./systemStatus")
+        .then((m) => m.setSystemDegraded(`provider ${providerErrorClass}: ${errorText.slice(0, 120)}`))
+        .catch(() => {});
     }
   } catch {
     // Alerting must never break the user turn.

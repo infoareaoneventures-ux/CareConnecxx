@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Send, MessageCircle, AlertCircle, RotateCcw } from 'lucide-react';
+import { Send, MessageCircle, AlertCircle, RotateCcw, HelpCircle } from 'lucide-react';
 import { dbService, authService } from '../../services/api';
+import { featuredCapabilities, capabilityExample, buildCapabilityMenu } from '../../constants/caraCapabilities';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { ClientNavigation } from '../client/ClientNavigation';
 import { CaregiverTopNav } from '../caregiver/CaregiverTopNav';
@@ -24,17 +25,6 @@ interface PendingMessage {
 
 type ChatMode = 'chat' | 'notSetUp' | 'finishSetup';
 
-const CLIENT_SUGGESTIONS = [
-  'Help me find a caregiver',
-  "What's on the schedule this week?",
-  'How does booking work?',
-];
-const CAREGIVER_SUGGESTIONS = [
-  'Any shifts near me?',
-  "What's on my schedule this week?",
-  'How do payouts work?',
-];
-
 const newClientMessageId = () =>
   `web_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 
@@ -50,6 +40,9 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
   const [notice, setNotice] = useState<string | null>(null);
   const [optedOut, setOptedOut] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // Client-side-only capability menu bubble ("What can Evia do?" header button).
+  // Rendered locally from constants/caraCapabilities.ts, never sent to the backend.
+  const [capabilityMenu, setCapabilityMenu] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -83,7 +76,7 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView?.({ behavior: 'smooth' });
-  }, [messages.length, pending.length, caraTyping]);
+  }, [messages.length, pending.length, caraTyping, capabilityMenu]);
 
   const send = async (text: string, existingId?: string) => {
     const body = text.trim();
@@ -140,7 +133,9 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
     }
   };
 
-  const suggestions = userType === 'caregiver' ? CAREGIVER_SUGGESTIONS : CLIENT_SUGGESTIONS;
+  // Suggestion chips come from the CI-synced capability mirror
+  // (constants/caraCapabilities.ts) so they always match what Evia can do.
+  const suggestions = featuredCapabilities(userType).map((e) => capabilityExample(e));
   const isEmpty = loaded && messages.length === 0 && pending.length === 0;
 
   if (mode === 'notSetUp') {
@@ -173,12 +168,19 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
         <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center flex-shrink-0">
           <span className="text-white font-bold">C</span>
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h1 className="text-base font-bold text-neutral-900 leading-tight">Evia</h1>
           <p className="text-xs text-neutral-500 truncate">
             Texts and web chat — one conversation
           </p>
         </div>
+        <button
+          onClick={() => setCapabilityMenu(buildCapabilityMenu(userType))}
+          className="min-h-[44px] px-3 rounded-full border border-neutral-200 bg-white text-xs font-semibold text-neutral-600 hover:border-primary-300 hover:text-primary-700 transition-colors flex items-center gap-1.5 flex-shrink-0"
+        >
+          <HelpCircle className="w-3.5 h-3.5" />
+          What can Evia do?
+        </button>
       </div>
 
       {/* Banners */}
@@ -256,6 +258,15 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
           </div>
         ))}
 
+        {/* Local capability menu bubble (client-side only, not part of the thread) */}
+        {capabilityMenu && (
+          <div className="flex justify-start">
+            <div className="max-w-[80%] px-4 py-2.5 rounded-2xl rounded-bl-md text-sm whitespace-pre-wrap break-words bg-white border border-neutral-200 text-neutral-900">
+              {capabilityMenu}
+            </div>
+          </div>
+        )}
+
         {caraTyping && (
           <div className="flex justify-start">
             <div className="px-4 py-3 rounded-2xl rounded-bl-md bg-white border border-neutral-200">
@@ -293,7 +304,7 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
                 }
               }}
               rows={1}
-              placeholder="Message Evia…"
+              placeholder="Message Evia… (try /help)"
               aria-label="Message Evia"
               disabled={caraTyping}
               className="flex-1 resize-none px-4 py-3 bg-neutral-100 rounded-2xl text-neutral-900 placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary-200 disabled:opacity-60"

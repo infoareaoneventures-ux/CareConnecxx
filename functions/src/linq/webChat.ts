@@ -166,6 +166,52 @@ export async function handleWebChatTurn(args: {
 
     const deliverViaLinq = Boolean(chatId) && !optedOut;
 
+    // ── /help: capability discovery (web parity with routeIntent.ts) ────────
+    // The SMS path answers the exact-string commands via the classifier's
+    // command bypass (intentClassifier.ts) -> routeIntent's HELP branch; the
+    // web callable skips the classifier entirely and used to fall through to
+    // the full agent loop. Answer the same way here: a static, side-effect-free,
+    // role-aware capability reply. Only an exact match (trimmed, any case)
+    // triggers it - "help me find a caregiver" still goes to the agent.
+    const HELP_COMMANDS = new Set(["HELP", "/HELP", "CAPABILITIES", "/CAPABILITIES"]);
+    if (HELP_COMMANDS.has(message.trim().toUpperCase())) {
+      const { buildHelpSmsReply } = await import("../agents/capabilityDiscovery");
+      const { loadCaraOperationalContext, buildOperationalRecipeLead } =
+        await import("../agents/operationalContext");
+      const role = session.userType === "caregiver"
+        ? ("caregiver" as const)
+        : session.isSecondaryMember
+          ? ("family-secondary" as const)
+          : ("client" as const);
+      const ops = await loadCaraOperationalContext({
+        phone,
+        userId:      session.userId as string | undefined,
+        caregiverId: session.caregiverId as string | undefined,
+      }).catch(() => null);
+      const helpReply = buildHelpSmsReply(
+        role,
+        ops ? buildOperationalRecipeLead(ops, role) : undefined,
+        session.preferredLanguage === "es" ? "es" : "en",
+      );
+      if (deliverViaLinq) {
+        // sendMessage auto-mirrors the outbound into threads/cara_{uid} - same
+        // one-thread invariant as the agent branch. Manual mirror is forbidden here.
+        const { sendMessage } = await import("./client");
+        await sendMessage(chatId, helpReply);
+      } else {
+        await mirrorToWebThread({ userId: uid, direction: "outbound", text: helpReply, source: "cara_web" });
+      }
+      return {
+        available:   true,
+        status:      "ok",
+        reply:       helpReply,
+        showMatches: false,
+        toolsCalled,
+        ...(optedOut ? { optedOut: true } : {}),
+        ...withId,
+      };
+    }
+
     const { runQaAgent } = await import("../agents/qaAgent");
     let reply: string;
     try {

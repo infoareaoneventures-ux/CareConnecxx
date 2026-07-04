@@ -1,7 +1,12 @@
 import { getSharedClient } from "../utils/claudeClient";
-import { getOpenAIClient } from "../utils/openaiClient";
+import { getGeminiOpenAIClient, getOpenAIClient } from "../utils/openaiClient";
 import { callClaudeWithRetry } from "../utils/claudeRetry";
-import { resolveCaraModelConfig, shouldFallbackAgentToAnthropic } from "../config/caraModels";
+import {
+  resolveCaraModelConfig,
+  resolveGeminiAgentModel,
+  shouldFallbackAgentToAnthropic,
+  shouldFallbackAgentToGemini,
+} from "../config/caraModels";
 import { callOpenAiAgentTurn } from "./openaiToolLoop";
 import { raiseProviderFailureAlert } from "../observability/providerFailureAlert";
 
@@ -60,6 +65,27 @@ export async function runAgentModelTurn(params: RunAgentModelTurnParams): Promis
     return anthropicTurn(model);
   }
 
+  // Tier-2 fallback (founder decision 2026-07-03): Gemini through its
+  // OpenAI-compatible endpoint. Anthropic Sonnet is tier 3 — it stays in the
+  // chain so the agent survives a simultaneous OpenAI + Gemini failure, but
+  // Gemini is tried first (the Anthropic account ran out of credits on
+  // 2026-07-03, which took the old tier-2 down with it).
+  const geminiTurn = () => {
+    const geminiModel = resolveGeminiAgentModel();
+    metrics.modelProvider = "gemini";
+    metrics.modelUsed = geminiModel;
+    metrics.modelFallbackUsed = true;
+    return callOpenAiAgentTurn({
+      client:     getGeminiOpenAIClient(),
+      model:      geminiModel,
+      maxTokens,
+      system:     system as any,
+      tools:      tools as any,
+      toolChoice: forceTextReply ? "none" : "auto",
+      messages:   messages as any,
+    });
+  };
+
   return callOpenAiAgentTurn({
     client:     getOpenAIClient(),
     model:      agentModel.model,
@@ -69,23 +95,53 @@ export async function runAgentModelTurn(params: RunAgentModelTurnParams): Promis
     toolChoice: forceTextReply ? "none" : "auto",
     messages:   messages as any,
   }).catch(async (err: unknown) => {
-    if (!shouldFallbackAgentToAnthropic()) throw err;
-    console.warn(
-      "qaAgent: OpenAI agent loop failed; falling back to Anthropic",
-      err instanceof Error ? err.message : err,
-    );
     // A successful fallback still hides a failing primary provider (e.g.
     // OpenAI credit exhaustion) from ops — raise the alert here, before
-    // returning the Anthropic result, so nobody has to notice the deflection
+    // returning the fallback result, so nobody has to notice the deflection
     // pattern in the wild to find out.
     raiseProviderFailureAlert({
       provider: "openai",
       model: agentModel.model,
       error: err,
     }).catch(() => {});
-    metrics.modelProvider = "anthropic";
-    metrics.modelUsed = ANTHROPIC_AGENT_MODEL;
-    metrics.modelFallbackUsed = true;
-    return anthropicTurn(ANTHROPIC_AGENT_MODEL);
+
+    const anthropicFallback = () => {
+      metrics.modelProvider = "anthropic";
+      metrics.modelUsed = ANTHROPIC_AGENT_MODEL;
+      metrics.modelFallbackUsed = true;
+      return anthropicTurn(ANTHROPIC_AGENT_MODEL);
+    };
+
+    if (shouldFallbackAgentToGemini()) {
+      console.warn(
+        "qaAgent: OpenAI agent loop failed; falling back to Gemini",
+        err instanceof Error ? err.message : err,
+      );
+      try {
+        return await geminiTurn();
+      } catch (geminiErr: unknown) {
+        if (!shouldFallbackAgentToAnthropic()) throw geminiErr;
+        raiseProviderFailureAlert({
+          provider: "gemini",
+          model: resolveGeminiAgentModel(),
+          error: geminiErr,
+        }).catch(() => {});
+        console.warn(
+          "qaAgent: Gemini fallback also failed; falling back to Anthropic",
+          geminiErr instanceof Error ? geminiErr.message : geminiErr,
+        );
+        return anthropicFallback();
+      }
+    }
+
+    if (shouldFallbackAgentToAnthropic()) {
+      console.warn(
+        "qaAgent: OpenAI agent loop failed; falling back to Anthropic (Gemini fallback disabled)",
+        err instanceof Error ? err.message : err,
+      );
+      return anthropicFallback();
+    }
+
+    throw err;
   });
 }

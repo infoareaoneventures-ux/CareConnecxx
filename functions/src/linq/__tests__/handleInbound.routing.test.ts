@@ -172,6 +172,11 @@ vi.mock("../../agents/onboardingConversation", () => ({
   absorbClientFields:     (...a: any[]) => absorbClientFields(...a),
 }));
 
+const absorbCaregiverFields = vi.fn(async (..._a: any[]) => ({}));
+vi.mock("../../agents/caregiverFieldAbsorber", () => ({
+  absorbCaregiverFields: (...a: any[]) => absorbCaregiverFields(...a),
+}));
+
 const detectCrisis      = vi.fn((..._a: any[]): string | null => null);
 const isLikelyRealCrisis = vi.fn(async (..._a: any[]) => true);
 const classifyCrisisMultilingual = vi.fn(async (..._a: any[]): Promise<string | null> => null);
@@ -829,6 +834,113 @@ describe("onboarding agent-loop flag routing", () => {
     seedSession({ onboardingStep: "client_ask_name" });
     await handleInbound(makeEvent("Sarah"));
     expect(runQaAgent).not.toHaveBeenCalled();
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Caregiver onboarding agent-loop routing (dark: flag-gated off) ──────────
+// The caregiver mirror of the block above. DEFAULT MUST NOT CHANGE: with
+// ONBOARDING_AGENT_LOOP unset (or naming only "client"), a caregiver mid-
+// signup always runs the scripted runner. Only "caregiver" in the role list
+// routes caregiver collection turns to the loop.
+describe("caregiver onboarding agent-loop flag routing", () => {
+  const FULL_CAREGIVER_DATA = {
+    name: "Maria", city: "San Jose", yearsExperience: 6, specialties: ["dementia"],
+    availability: { days: ["Monday"], hours: "9am-5pm" }, jobType: "part_time",
+    hourlyRate: 25, email: "maria@example.com", bio: "I treat every client like family.",
+  };
+
+  afterEach(() => { delete process.env.ONBOARDING_AGENT_LOOP; });
+
+  it("DEFAULT (flag unset): caregiver collection step routes to the scripted runner, never the loop", async () => {
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience" });
+    await handleInbound(makeEvent("6 years, CNA"));
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("ONBOARDING_AGENT_LOOP=client (client-only): caregiver still routes to the scripted runner", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience" });
+    await handleInbound(makeEvent("6 years, CNA"));
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("ONBOARDING_AGENT_LOOP=client,caregiver: caregiver collection step routes to the loop as role caregiver", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience", onboardingData: { name: "Maria" } });
+    await handleInbound(makeEvent("6 years, mostly dementia"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(runQaAgent.mock.calls[0][0]).toMatchObject({
+      onboardingMode: true,
+      onboardingRole: "caregiver",
+      userType: "caregiver",
+    });
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  it("flag on: a caregiver GATE step (awaiting photo) never routes to the loop", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_awaiting_photo" });
+    await handleInbound(makeEvent("did you get my photo?"));
+    expect(runQaAgent).not.toHaveBeenCalled();
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+  });
+
+  it("caregiver persistence net: loop saves nothing → the CAREGIVER absorber captures the answer", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience", onboardingData: { name: "Maria" } });
+    absorbCaregiverFields.mockResolvedValueOnce({ yearsExperience: 6, specialties: ["dementia"] });
+    await handleInbound(makeEvent("6 years, mostly dementia"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(absorbCaregiverFields).toHaveBeenCalled();
+    expect(absorbClientFields).not.toHaveBeenCalled();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData)
+      .toMatchObject({ yearsExperience: 6, specialties: ["dementia"] });
+  });
+
+  it("collection completes → drives the photo gate via the scripted runner's __RESUME__ sentinel", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_bio", onboardingData: { ...FULL_CAREGIVER_DATA, bio: "" } });
+    // Simulate the model saving the bio and complete_collection advancing the
+    // cursor to the first gate step (what mcp/server.ts does on complete:true).
+    runQaAgent.mockImplementationOnce(async (..._a: any[]) => {
+      hoisted.docState.set(`agent_sessions/${PHONE}`, {
+        ...hoisted.docState.get(`agent_sessions/${PHONE}`),
+        onboardingStep: "caregiver_send_photo",
+        onboardingData: FULL_CAREGIVER_DATA,
+      });
+      return "qa reply";
+    });
+    await handleInbound(makeEvent("I treat every client like family."));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    // The proactive handoff drives the send-photo step exactly once, with the
+    // no-user-text resume sentinel — and the client handoff never fires.
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
+    expect(handleOnboardingStep.mock.calls[0][3]).toMatchObject({ onboardingStep: "caregiver_send_photo" });
+    expect(continueAfterClientCollection).not.toHaveBeenCalled();
+  });
+
+  it("stuck-signup net: all caregiver fields present but the model never called complete_collection → cursor advances to the photo gate", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_bio", onboardingData: FULL_CAREGIVER_DATA });
+    // Loop replies but writes nothing; data is already complete.
+    await handleInbound(makeEvent("anything else you need?"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingStep).toBe("caregiver_send_photo");
+    // And the gate is driven in the same turn (no dead-end silence).
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
+  });
+
+  it("loop throws before replying: caregiver falls through to the scripted runner (never wedged)", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_name" });
+    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout"));
+    await handleInbound(makeEvent("Maria"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
     expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
   });
 });

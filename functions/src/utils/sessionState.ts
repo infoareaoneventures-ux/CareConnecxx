@@ -131,6 +131,49 @@ export function staleConfirmFlags(
   return stale;
 }
 
+// ── Interrupted-flow descriptions ────────────────────────────────────────────
+// When the expiry sweep clears a mid-flow state machine, the user used to be
+// dropped silently — they'd started a booking/dispute/swap and never heard
+// another word about it. This map names the flows worth a resume nudge, in
+// user language. Passive ack/confirmation flags (pendingShiftConfirmation,
+// awaitingTaskAck, pendingBgCheckAck, …) are deliberately absent: they have
+// their own reminder flows or are too low-stakes to re-ping.
+export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
+  ["hireMode",                "booking care"],
+  ["pendingTimeSelection",    "picking a time for your visit"],
+  ["pendingRebook",           "rebooking your visit"],
+  ["jobPostingStep",          "posting your care job"],
+  ["modifyScheduleStep",      "updating your recurring schedule"],
+  ["healthcareFlowStep",      "that healthcare request"],
+  ["timesheetStep",           "reviewing the timesheet"],
+  ["pendingDisputeDetail",    "the hours you flagged"],
+  ["awaitingIssueDescription", "the issue you started telling me about"],
+  ["refundStep",              "your refund request"],
+  ["cancelStep",              "cancelling that shift"],
+  ["swapStep",                "finding coverage for your shift"],
+  ["clientSwapStep",          "changing your caregiver"],
+  ["availabilityStep",        "updating your availability"],
+  ["profileUpdateStep",       "updating your profile"],
+  ["collectingCredential",    "your credential upload"],
+  ["pendingAddFamilyMember",  "adding your family member"],
+];
+
+/**
+ * If the session has an interrupted flow worth resuming, return its
+ * user-facing description; else null. Pure — used by the expiry sweep to
+ * decide whether clearing state deserves a nudge instead of silence.
+ */
+export function describeInterruptedFlow(
+  session: Record<string, unknown> | undefined | null,
+): string | null {
+  if (!session) return null;
+  for (const [flag, description] of RESUMABLE_FLOW_DESCRIPTIONS) {
+    const v = session[flag];
+    if (v !== undefined && v !== null && v !== false && v !== "") return description;
+  }
+  return null;
+}
+
 export async function clearAllStateFlags(
   phone: string,
   db: admin.firestore.Firestore

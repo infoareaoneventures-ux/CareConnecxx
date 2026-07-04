@@ -170,6 +170,86 @@ export const checkRateLimitHttp = functions.https.onCall(async (data, context) =
     return result;
 });
 
+// ── LLM spend guardrails ─────────────────────────────────────────────────────
+// The agent loop is bounded per-turn (MAX_TOOL_CALLS_PER_TURN) but nothing
+// bounded per-DAY spend: a runaway user, an injection loop, or a webhook storm
+// could burn unbounded LLM budget. Two daily counters close that:
+//   • checkDailyTurnCap    — per-phone agent turns per day (CARA_DAILY_TURN_CAP)
+//   • checkGlobalDailyTurnBudget — global kill-switch (CARA_GLOBAL_DAILY_TURN_CAP)
+// Both FAIL OPEN — for a care product, availability beats enforcement; a
+// Firestore hiccup must never drop everyone's messages. (Deliberately unlike
+// checkRateLimit's fail-closed posture for auth/payment endpoints.)
+
+function envInt(name: string, dflt: number): number {
+    const v = parseInt(process.env[name] ?? "", 10);
+    return Number.isFinite(v) && v > 0 ? v : dflt;
+}
+
+export interface SpendCheckResult {
+    allowed: boolean;
+    count: number;
+    /** True exactly once — the increment that crossed the cap. Callers key
+     *  their one-time user message / alert off this. */
+    justBreached: boolean;
+}
+
+async function bumpDailyCounter(docId: string, cap: number): Promise<SpendCheckResult> {
+    const ref = db.collection('rate_limits').doc(docId);
+    const count = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const c = ((snap.data()?.count as number | undefined) ?? 0) + 1;
+        tx.set(ref, { count: c, updatedAt: Date.now() }, { merge: true });
+        return c;
+    });
+    return { allowed: count <= cap, count, justBreached: count === cap + 1 };
+}
+
+export async function checkDailyTurnCap(
+    phone: string,
+    cap = envInt('CARA_DAILY_TURN_CAP', 150)
+): Promise<SpendCheckResult> {
+    const day = new Date().toISOString().slice(0, 10);
+    try {
+        const result = await bumpDailyCounter(`rl:turns:${phone}:${day}`, cap);
+        if (result.justBreached) {
+            db.collection('admin_alerts').add({
+                type: 'daily_turn_cap_hit',
+                phone,
+                cap,
+                severity: 'medium',
+                createdAt: new Date().toISOString(),
+                resolved: false,
+            }).catch(() => {});
+        }
+        return result;
+    } catch (err) {
+        console.error('checkDailyTurnCap failed (fail-open):', err);
+        return { allowed: true, count: 0, justBreached: false };
+    }
+}
+
+export async function checkGlobalDailyTurnBudget(
+    cap = envInt('CARA_GLOBAL_DAILY_TURN_CAP', 20000)
+): Promise<SpendCheckResult> {
+    const day = new Date().toISOString().slice(0, 10);
+    try {
+        const result = await bumpDailyCounter(`rl:global_turns:${day}`, cap);
+        if (result.justBreached) {
+            db.collection('admin_alerts').add({
+                type: 'global_llm_budget_exhausted',
+                cap,
+                severity: 'critical',
+                createdAt: new Date().toISOString(),
+                resolved: false,
+            }).catch(() => {});
+        }
+        return result;
+    } catch (err) {
+        console.error('checkGlobalDailyTurnBudget failed (fail-open):', err);
+        return { allowed: true, count: 0, justBreached: false };
+    }
+}
+
 /**
  * Cleanup old rate limit entries (run periodically)
  */

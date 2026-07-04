@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Activity, ChevronDown, ChevronUp, ChevronRight, Users, Briefcase, Globe, LifeBuoy } from 'lucide-react';
+import { Activity, ChevronDown, ChevronUp, ChevronRight, Users, Briefcase, Globe, LifeBuoy, MessageCircle } from 'lucide-react';
+import { CARA_CAPABILITIES, CapabilityRole, capabilityLabel, capabilityExample } from '../constants/caraCapabilities';
 import { ViewType } from '../types';
 import { Footer } from './landing/Footer';
 import { Button } from './ui/Button';
@@ -307,6 +308,46 @@ const Accordion: React.FC<{ q: string; a: string; id: string; open: boolean; onT
   </div>
 );
 
+// ─── WHAT YOU CAN ASK EVIA ──────────────────────────────────────────────────
+// Sourced from constants/caraCapabilities.ts (the CI-synced mirror of the
+// backend capability list) so the help docs never drift from what Evia can do.
+
+const capabilityRoleTitles: Record<CapabilityRole, string> = {
+  client: 'For families',
+  caregiver: 'For caregivers',
+};
+
+const AskEviaSection: React.FC<{ roles: CapabilityRole[] }> = ({ roles }) => (
+  <section className="max-w-6xl mx-auto px-4 pt-12">
+    <div className="bg-white rounded-2xl border hairline shadow-sm p-6 md:p-8">
+      <div className="flex items-center gap-3 mb-2">
+        <MessageCircle className="w-6 h-6 text-ink-900" />
+        <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">What you can ask Evia</h2>
+      </div>
+      <p className="text-ink-600 text-sm mb-6">
+        Evia is your care assistant — text her, or use the in-app chat. Tell her what you need in one sentence, for example:
+      </p>
+      <div className={`grid gap-8 ${roles.length > 1 ? 'md:grid-cols-2' : ''}`}>
+        {roles.map(role => (
+          <div key={role}>
+            {roles.length > 1 && (
+              <h3 className="text-xs font-bold tracking-widest uppercase text-ink-400 mb-3">{capabilityRoleTitles[role]}</h3>
+            )}
+            <ul className="space-y-3">
+              {CARA_CAPABILITIES[role].map(entry => (
+                <li key={entry.id} className="flex flex-col">
+                  <span className="text-sm font-semibold text-ink-900">{capabilityLabel(entry)}</span>
+                  <span className="text-sm text-ink-600">"{capabilityExample(entry)}"</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+);
+
 // ─── MAIN COMPONENT ─────────────────────────────────────────────────────────
 
 export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
@@ -390,6 +431,11 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
             </div>
           </div>
         </div>
+
+        {/* What you can ask Evia (role-aware; both roles on the general page) */}
+        <AskEviaSection
+          roles={section === 'families' ? ['client'] : section === 'caregivers' ? ['caregiver'] : ['client', 'caregiver']}
+        />
 
         {/* Content */}
         <section className="max-w-6xl mx-auto px-4 py-12 md:py-16">

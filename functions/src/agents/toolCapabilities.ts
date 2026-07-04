@@ -143,10 +143,20 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   report_user:                      ["messaging"],
   get_support_tickets:              ["messaging"],
 
+  // ── CRUD/parity gap closures (agent-native audit 2026-07) ───────────────
+  archive_senior_profile: ["care_plan"],
+  update_family_member:   ["messaging"],
+  list_interviews:        ["booking"],
+  cancel_interview:       ["booking"],
+  list_blocked_users:     ["messaging"],
+  list_shift_swaps:       ["booking", "scheduling", "messaging"],
+  confirm_cash_received:  ["billing"],
+
   // ── memory_search (memory files, web actions, credentials) ──────────────
   read_memory_file:   ["memory_search"],
   update_memory_file: ["memory_search"],
   edit_memory_file:   ["memory_search"],
+  delete_memory_file: ["memory_search"],
   search_memory:      ["memory_search"],
   search_web:         ["memory_search"],
   perform_web_action: ["memory_search"],
@@ -169,6 +179,9 @@ export const CORE_TOOL_NAMES = new Set<string>([
   "get_senior_profile",
   "list_household_seniors",
   "get_pending_tasks",
+  // Unified WIP view — like get_pending_tasks, an orientation read the agent
+  // may need under any intent ("what are you working on for me?").
+  "get_work_in_progress",
   "suggest_upcoming_care",
   "get_care_team",
   "create_support_ticket",
@@ -322,6 +335,11 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "create_reminder", "delete_reminder", "schedule_followup", "cancel_followup",
   // message relays (family/caregiver believe a message was delivered)
   "send_caregiver_message", "send_client_message",
+  // CRUD/parity gap closures (agent-native audit 2026-07) — falsely reporting
+  // an archive, member edit, interview cancel, memory delete, or cash
+  // confirmation as done would be believed and acted on.
+  "archive_senior_profile", "update_family_member", "cancel_interview",
+  "delete_memory_file", "confirm_cash_received",
 ]);
 
 /** True when a failed call to this tool must NOT be reported to the user as success. */

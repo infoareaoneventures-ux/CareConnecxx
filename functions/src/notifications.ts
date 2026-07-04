@@ -139,9 +139,22 @@ export const onMessageSent = functions.firestore
         const threadId = context.params.threadId;
 
         try {
+            // Evia threads are mirrors of an SMS/iMessage conversation the user
+            // already received on their phone — texting "New message from Evia.
+            // Open the app to reply." on top of Evia's own reply double-messages
+            // them, and the web-inbox unread badge is already maintained by the
+            // mirror (threadMirror.ts). Skip these threads entirely.
+            if (message.senderId === 'cara' || threadId.startsWith('cara_')) {
+                return;
+            }
+
             // Get thread to find participants
             const threadDoc = await db.collection('threads').doc(threadId).get();
             const thread = threadDoc.data();
+
+            if (thread && thread.isCaraThread) {
+                return;
+            }
 
             if (thread && thread.participants && Array.isArray(thread.participants)) {
                 // Find the recipient (not the sender)

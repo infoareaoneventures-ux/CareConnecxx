@@ -150,7 +150,7 @@ function dedupePromise<T>(key: string, factory: () => Promise<T>): Promise<T> {
     pendingPromises.set(key, promise);
     return promise;
 }
-import { Caregiver, Appointment, Review, Thread, DirectMessage, Senior, CarePlan, SupportTicket, AppNotification, BackgroundCheckData, AdminUser, MatchFeedback, EmergencyAlert, FamilyMember, JobPost } from '../types';
+import { Caregiver, Appointment, Review, Thread, DirectMessage, Senior, CarePlan, SupportTicket, AppNotification, BackgroundCheckData, AdminUser, MatchFeedback, EmergencyAlert, FamilyMember, Invoice, JobPost } from '../types';
 import { errorHandler } from './errorHandler';
 import { validators, isFirebaseError, getSafeErrorMessage, normalizePhoneNumber, sanitizeString } from '../utils/validation';
 import { sanitizeMessage, sanitizeName, sanitizeBio, sanitizePlainText } from '../utils/sanitize';
@@ -1784,6 +1784,25 @@ export const dbService = {
         return true;
     },
 
+    // Live in-app surface for emergency_alerts. Both the EmergencySOS UI
+    // (triggerEmergencyAlert above) and the agent's trigger_emergency_alert
+    // MCP tool write this collection; without a listener the alert only
+    // reaches users via push/SMS (server fan-out in
+    // functions/src/familyEmergency.ts). Equality-only query - no composite
+    // index needed; rules scope reads to the initiator.
+    subscribeToEmergencyAlerts: (userId: string, onUpdate: (alerts: EmergencyAlert[]) => void): (() => void) => {
+        if (!isConfigured || !db) { onUpdate([]); return () => {}; }
+        return db.collection('emergency_alerts')
+            .where('initiatorId', '==', userId)
+            .where('status', '==', 'active')
+            .onSnapshot(snap => {
+                const alerts = snap.docs
+                    .map(d => ({ ...(d.data() as EmergencyAlert), id: d.id }))
+                    .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+                onUpdate(alerts);
+            }, (error) => { if (error.code === 'permission-denied') onUpdate([]); });
+    },
+
 
 
 
@@ -1814,6 +1833,63 @@ export const dbService = {
             }
         }
         return [];
+    },
+
+    // Live family roster. There are TWO sources of truth: the web invite flow
+    // (inviteFamilyMember above) writes senior_profiles.familyMembers, while the
+    // agent's add_family_member / remove_family_member MCP tools and the /join
+    // page also maintain the family_group_members index. Listening to both and
+    // merging (deduped by phone, then email) means agent-made changes show up
+    // in FamilyManager without a refresh. Profile entries are listed first so
+    // the richer web-invite record (email/role) wins on a phone collision.
+    subscribeToFamilyMembers: (seniorId: string, onUpdate: (members: FamilyMember[]) => void): (() => void) => {
+        if (!isConfigured || !db) { onUpdate([]); return () => {}; }
+
+        let profileMembers: FamilyMember[] = [];
+        let groupMembers: FamilyMember[] = [];
+        const dedupeKey = (m: FamilyMember): string => {
+            const phoneDigits = (m.phone || '').replace(/\D/g, '');
+            if (phoneDigits) return `p:${phoneDigits}`;
+            if (m.email) return `e:${m.email.toLowerCase()}`;
+            return `i:${m.id}`;
+        };
+        const emit = () => {
+            const seen = new Set<string>();
+            const merged: FamilyMember[] = [];
+            for (const m of [...profileMembers, ...groupMembers]) {
+                const key = dedupeKey(m);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                merged.push(m);
+            }
+            onUpdate(merged);
+        };
+
+        const unsubProfile = db.collection('senior_profiles').doc(seniorId)
+            .onSnapshot(doc => {
+                profileMembers = (doc.exists ? (doc.data()?.familyMembers as FamilyMember[]) : []) || [];
+                emit();
+            }, (error) => { if (error.code === 'permission-denied') { profileMembers = []; emit(); } });
+
+        const unsubGroup = db.collection('family_group_members')
+            .where('userId', '==', seniorId)
+            .onSnapshot(snap => {
+                groupMembers = snap.docs.map(d => {
+                    const data = d.data();
+                    return {
+                        id: d.id,
+                        name: (data.memberName as string) || 'Family member',
+                        email: '',
+                        ...(data.memberPhone ? { phone: data.memberPhone as string } : {}),
+                        role: 'viewer',
+                        // joinedAt is stamped when the member first texts in
+                        status: data.joinedAt ? 'active' : 'pending',
+                    } as FamilyMember;
+                });
+                emit();
+            }, (error) => { if (error.code === 'permission-denied') { groupMembers = []; emit(); } });
+
+        return () => { unsubProfile(); unsubGroup(); };
     },
 
     // --- NOTIFICATION API ENDPOINTS ---
@@ -3144,28 +3220,6 @@ export const dbService = {
         }
     },
 
-    givePeerRecognition: async (data: {
-        caregiverId: string;
-        category: string;
-        message: string;
-    }) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        const user = auth?.currentUser;
-        if (!user) throw new Error("Not authenticated");
-        
-        const recognition = {
-            fromCaregiverId: user.uid,
-            fromName: user.displayName || 'Anonymous',
-            toCaregiverId: data.caregiverId,
-            category: data.category,
-            message: data.message,
-            createdAt: new Date().toISOString()
-        };
-        
-        await db.collection('peer_recognitions').add(recognition);
-    },
-
     /**
      * Check if an email is already registered in the system
      * Returns true if email exists, false otherwise
@@ -3185,6 +3239,20 @@ export const dbService = {
             // Return false to allow signup to proceed and fail naturally if email exists
             return false;
         }
+    },
+
+    // Live admin invoice list (InvoicingTab). Invoices are created/updated
+    // server-side only (createInvoice / processClientApproval, Admin SDK), so
+    // the admin table needs a listener to reflect those writes without a refresh.
+    subscribeToInvoices: (onUpdate: (invoices: Invoice[]) => void): (() => void) => {
+        if (!isConfigured || !db) { onUpdate([]); return () => {}; }
+        return db.collection('invoices')
+            .orderBy('createdAt', 'desc')
+            .onSnapshot(snapshot => {
+                onUpdate(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Invoice[]);
+            }, error => {
+                console.error('Invoices subscription error:', error);
+            });
     },
 
     // --- INTAKE LEADS MANAGEMENT ---

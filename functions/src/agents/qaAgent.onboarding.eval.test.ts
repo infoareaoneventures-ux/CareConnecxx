@@ -223,7 +223,12 @@ vi.mock("../mcp/server", () => {
     return { ok: true };
   });
 
-  return { MCP_TOOLS, CAREGIVER_TOOLS: [], CLIENT_TOOLS: [], handleToolCall, handleToolCallForCaregiver: vi.fn() };
+  // Caregiver turns dispatch through handleToolCallForCaregiver (qaAgent.ts:1983) —
+  // delegate to the same in-memory engine so caregiver eval cases exercise real
+  // save/complete semantics instead of crashing on an undefined (non-promise) return.
+  const handleToolCallForCaregiver = vi.fn(async (name: string, input: Record<string, unknown>, _shadowMode?: boolean) =>
+    handleToolCall(name, input));
+  return { MCP_TOOLS, CAREGIVER_TOOLS: [], CLIENT_TOOLS: [], handleToolCall, handleToolCallForCaregiver };
 });
 
 // claudeClient: return a REAL Anthropic client so the loop makes genuine live API

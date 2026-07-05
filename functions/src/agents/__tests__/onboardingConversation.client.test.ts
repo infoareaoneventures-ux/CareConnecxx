@@ -73,9 +73,19 @@ const hoisted = vi.hoisted(() => {
 
 vi.mock("firebase-admin", () => {
   const firestore = Object.assign(() => ({ collection: hoisted.collectionMock }), {
-    FieldValue: { delete: () => ({ __delete: true }) },
+    FieldValue: {
+      delete:          () => ({ __delete: true }),
+      serverTimestamp: () => ({ __serverTimestamp: true }),
+      arrayUnion:      (...v: unknown[]) => ({ __arrayUnion: v }),
+    },
   });
-  const auth = () => ({ createUser: vi.fn() });
+  // createUser resolves a uid — intake confirmation now provisions the webapp
+  // Auth account (ensureWebAccount), and a failing mock here would read as an
+  // account-creation outage (admin_alerts) in every downstream assertion.
+  const auth = () => ({
+    createUser:           vi.fn(async () => ({ uid: "test-auth-uid" })),
+    getUserByPhoneNumber: vi.fn(async () => ({ uid: "test-auth-uid" })),
+  });
   const storage = () => ({ bucket: () => ({ file: () => ({ save: vi.fn(), exists: vi.fn(async () => [false]) }) }) });
   return {
     __esModule: true,

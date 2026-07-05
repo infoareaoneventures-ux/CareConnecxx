@@ -22,7 +22,7 @@ export function summarizeFrontload(
     senior:   "seniorName" in absorbed || "relationship" in absorbed,
     needs:    "age" in absorbed || "careNeeds" in absorbed || "conditions" in absorbed,
     location: "city" in absorbed || "zipCode" in absorbed,
-    schedule: "schedule" in absorbed,
+    schedule: "schedule" in absorbed || "daysPerWeek" in absorbed || "timeOfDay" in absorbed,
   };
   const groupCount = Object.values(groups).filter(Boolean).length;
   // Only worth a standalone recap when they front-loaded across 2+ questions.
@@ -43,8 +43,15 @@ export function summarizeFrontload(
   if (groups.location && typeof data.city === "string" && data.city) {
     bits.push(`in ${data.city}`);
   }
-  if (groups.schedule && typeof data.schedule === "string" && data.schedule) {
-    bits.push(`${data.schedule}`);
+  if (groups.schedule) {
+    if (typeof data.schedule === "string" && data.schedule) {
+      bits.push(`${data.schedule}`);
+    } else {
+      const dpw = typeof data.daysPerWeek === "number" && data.daysPerWeek > 0 ? `${data.daysPerWeek} days/week` : "";
+      const tod = typeof data.timeOfDay === "string" ? data.timeOfDay : "";
+      const sched = [dpw, tod].filter(Boolean).join(", ");
+      if (sched) bits.push(sched);
+    }
   }
   // Need at least one concrete care fact to recap (the family member's own
   // first name is used as a direct address by the caller, not recapped here).

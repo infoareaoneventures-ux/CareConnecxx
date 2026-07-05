@@ -86,6 +86,13 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   ...CLIENT_REQUIRED_FIELDS,
   "relationship", "conditions", "zipCode", "hoursPerDay",
   "startDate", "preferences", "budget",
+  // Multi-recipient household ("both mom and dad"): every care recipient after
+  // the first — [{name, relationship, age?}]. Finalization fans these out into
+  // recipientPlans, household senior_profiles docs, and job_postings.
+  "additionalRecipients",
+  // Free-text schedule phrase the absorber may capture alongside the
+  // structured daysPerWeek/timeOfDay (kept for intake display).
+  "schedule",
 ]);
 
 export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([

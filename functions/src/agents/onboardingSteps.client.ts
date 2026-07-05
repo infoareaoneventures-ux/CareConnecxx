@@ -92,20 +92,36 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
         'Extract the senior\'s first name and the user\'s relationship to them from this message. ' +
         'If the message says the care is for the SENDER THEMSELVES ("me", "myself", "it\'s for me", "I need the care"), ' +
         'reply exactly: {"seniorName":"SELF","relationship":"self"}. ' +
+        'If care is for MORE THAN ONE person (e.g. "my mom and dad", "both my parents", "mom Dorothy and dad Frank"), ' +
+        'put the first person in seniorName/relationship and EVERY other person in additionalRecipients: ' +
+        '{"seniorName":"...","relationship":"...","additionalRecipients":[{"name":"...","relationship":"..."}]}. ' +
+        'Use the relationship words even when names are missing (e.g. "mom and dad" → seniorName "Mom", additional name "Dad"). ' +
         'Otherwise reply in JSON format: {"seniorName":"...","relationship":"..."}',
       parse(raw, session) {
         let seniorName = "your loved one", relationship = "family member";
+        let additional: Array<{ name?: string; relationship?: string }> = [];
         try {
           const parsed = JSON.parse(raw);
           seniorName   = parsed.seniorName   || seniorName;
           relationship = parsed.relationship || relationship;
+          if (Array.isArray(parsed.additionalRecipients)) additional = parsed.additionalRecipients;
         } catch { /* keep defaults */ }
         // "It's for me" — the sender is the care recipient.
         if (seniorName === "SELF" || relationship === "self") {
           const own = (session.onboardingData?.firstName as string) || "you";
           return { seniorName: own, relationship: "self" };
         }
-        return { seniorName, relationship };
+        const extras = additional
+          .map((r) => ({
+            name:         String(r?.name ?? "").trim(),
+            relationship: String(r?.relationship ?? "").trim(),
+          }))
+          .filter((r) => r.name && r.name.toLowerCase() !== seniorName.toLowerCase());
+        return {
+          seniorName,
+          relationship,
+          ...(extras.length ? { additionalRecipients: extras } : {}),
+        };
       },
       nextStep: "client_ask_needs",
       reask: () => "Now, who are you looking for care for? (Their name and your relationship — or just say it's for you)",
@@ -121,6 +137,19 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
             maxTokens: 80,
           });
         }
+        const extraRecipients = Array.isArray(session.onboardingData?.additionalRecipients)
+          ? (session.onboardingData!.additionalRecipients as Array<{ name?: string }>)
+              .map((r) => r?.name).filter(Boolean)
+          : [];
+        if (extraRecipients.length) {
+          const everyone = [seniorName, ...extraRecipients].join(" and ");
+          return generateCaraMessage({
+            audience: "family",
+            context: `Evia is onboarding a family caring for MULTIPLE loved ones: ${everyone}. Acknowledge warmly that you'll set things up for both/all of them, then ask how old each of them is and what kind of help each needs these days.`,
+            fallback: `Got it — care for ${everyone}. How old is each of them, and what does each need help with these days?`,
+            maxTokens: 90,
+          });
+        }
         return generateCaraMessage({
           audience: "family",
           context: `Evia is onboarding a family. They just said they're looking for care for ${seniorName} (their ${relationship}). Ask how old ${seniorName} is and what kind of help they need these days.`,
@@ -134,17 +163,49 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
     client_ask_needs: {
       id: "client_ask_needs",
       parsePrompt:
-        'Extract age (as number), careNeeds (array of strings), and conditions (array of strings) from this message. Reply in JSON: {"age":0,"careNeeds":[],"conditions":[]}',
-      parse(raw) {
+        'Extract age (as number), careNeeds (array of strings), and conditions (array of strings) from this message. ' +
+        'If ages for MULTIPLE people are given (e.g. "mom is 82 and dad is 85"), also include ' +
+        '"recipientAges":[{"name":"...","age":0}] with one entry per named person. ' +
+        'Reply in JSON: {"age":0,"careNeeds":[],"conditions":[]}',
+      parse(raw, session) {
         let age = 0;
         let careNeeds: string[] = [];
         let conditions: string[] = [];
+        let recipientAges: Array<{ name?: string; age?: number }> = [];
         try {
           const parsed = JSON.parse(raw);
           age        = parsed.age        ?? 0;
           careNeeds  = parsed.careNeeds  ?? [];
           conditions = parsed.conditions ?? [];
+          if (Array.isArray(parsed.recipientAges)) recipientAges = parsed.recipientAges;
         } catch { /* keep defaults */ }
+
+        // Multi-recipient household: route each named age to the right person —
+        // primary keeps top-level `age`, everyone else's lands on their entry in
+        // additionalRecipients (finalization writes one senior profile per person).
+        const existingExtras = Array.isArray(session.onboardingData?.additionalRecipients)
+          ? (session.onboardingData!.additionalRecipients as Array<{ name?: string; relationship?: string; age?: number }>)
+          : [];
+        if (existingExtras.length && recipientAges.length) {
+          const primaryName = String(session.onboardingData?.seniorName ?? "").toLowerCase();
+          const patched = existingExtras.map((r) => {
+            const match = recipientAges.find(
+              (a) => String(a?.name ?? "").toLowerCase() === String(r?.name ?? "").toLowerCase(),
+            );
+            const matchedAge = Number(match?.age);
+            return Number.isFinite(matchedAge) && matchedAge > 0 ? { ...r, age: matchedAge } : r;
+          });
+          const primaryMatch = recipientAges.find(
+            (a) => String(a?.name ?? "").toLowerCase() === primaryName,
+          );
+          const primaryAge = Number(primaryMatch?.age);
+          return {
+            age: Number.isFinite(primaryAge) && primaryAge > 0 ? primaryAge : age,
+            careNeeds,
+            conditions,
+            additionalRecipients: patched,
+          };
+        }
         return { age, careNeeds, conditions };
       },
       nextStep: "client_ask_location",
@@ -186,14 +247,22 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
         'Extract daysPerWeek (number), timeOfDay (morning/afternoon/evening/all-day), and hoursPerDay (number) from this message. Reply in JSON: {"daysPerWeek":0,"timeOfDay":"","hoursPerDay":0}',
       parse(raw) {
         if (raw === "__parse_error__") return null; // re-ask: "didn't catch that"
-        let daysPerWeek = 3, timeOfDay = "mornings", hoursPerDay = 4;
+        let daysPerWeek = 0, timeOfDay = "", hoursPerDay = 0;
         try {
           const parsed = JSON.parse(raw);
-          daysPerWeek = parsed.daysPerWeek ?? daysPerWeek;
-          timeOfDay   = parsed.timeOfDay   ?? timeOfDay;
-          hoursPerDay = parsed.hoursPerDay ?? hoursPerDay;
-        } catch { /* keep defaults */ }
-        return { daysPerWeek, timeOfDay, hoursPerDay };
+          daysPerWeek = Number(parsed.daysPerWeek) || 0;
+          timeOfDay   = (parsed.timeOfDay ?? "") as string;
+          hoursPerDay = Number(parsed.hoursPerDay) || 0;
+        } catch { return null; }
+        // Nothing schedule-shaped in the message (happens when the auto-skip
+        // loop lands here off an unrelated front-loaded answer) — re-ask
+        // instead of fabricating a default schedule.
+        if (!daysPerWeek && !timeOfDay) return null;
+        return {
+          daysPerWeek: daysPerWeek || 3,
+          timeOfDay:   timeOfDay   || "mornings",
+          hoursPerDay: hoursPerDay || 4,
+        };
       },
       nextStep: "client_ask_start",
       reask(session) {

@@ -28,6 +28,7 @@ const FIELD_LABEL: Record<string, string> = {
   hoursPerDay: "how many hours per day",
   relationship:"the family member's relationship to the senior",
   conditions:  "any diagnoses or conditions the senior has",
+  additionalRecipients: "every OTHER person needing care when it's more than one (e.g. both mom and dad) — [{name, relationship, age}]",
 };
 
 function labelFor(field: string): string {
@@ -98,6 +99,7 @@ export function buildOnboardingDirective(
     `  - Don't loop. If you've asked for the same item once and still don't have it, ask ONE more time in a different way, then move to the next needed item — never ask the same question more than twice.`,
     `  - Figure out WHO is who: the first name you collect is the ${audience} you're texting. If they first tell you who NEEDS care (e.g. "my mom", "her name is Jane") before giving their own name, that name is the senior's — save it as the senior, not as the ${audience}.`,
     `  - SELF-CARE: if they're looking for care for THEMSELVES (they say "for me"/"for myself", or relationship is already "self"), the senior IS the person texting. Save relationship as "self" and seniorName the same as their own name, NEVER ask who they're caring for, and speak to them directly — "you", never "your loved one" and never their name in the third person.`,
+    `  - MULTIPLE LOVED ONES: if care is for more than one person ("both my parents", "mom and dad"), save the FIRST person as seniorName/relationship/age and EVERYONE else with save_onboarding_field("additionalRecipients", [{name, relationship, age}]). Collect each person's name and age; acknowledge you'll set things up for all of them. The account stays under the family member texting you.`,
     `  - Don't get stuck on the ${audience}'s OWN name. If they haven't given it, collect the other items first and ask for their name near the end — never re-ask it every turn, and never treat an answer to a different question (a city, an age, a need) as their name.`,
     `  - No chatbot phrasing. Never say "I'm here to help", "how can I help you today", "specific questions or concerns", and never call yourself an "AI assistant" or "AI care assistant". Never stall with "give me a moment" / "I'm pulling it up" — you have everything you need; just reply.`,
     `  - Voice memos work here: they can tap-and-hold to send one instead of typing. Offer this ONCE per conversation, warmly and in your own words (e.g. "if typing it all out is a pain, just send me a voice memo — I'll listen") — the first time you ask an open-ended question (who they're caring for, what help is needed), or sooner if their replies look effortful (very short fragments, heavy typos). Check the conversation: if you've already offered it, never repeat it.`,

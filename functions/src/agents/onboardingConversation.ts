@@ -34,6 +34,8 @@ import { buildCaregiverSteps } from "./onboardingSteps.caregiver";
 import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboardingDryRun";
 import { isOnboardingDispatchEnabled, isDispatchableClientStep, resolveClientStep } from "./onboardingDispatcher";
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
+import { deriveWeeklyAvailability } from "./caregiverAvailability";
+import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients } from "./careRecipients";
 
 /** iMessage/RCS can share a location pin; plain SMS cannot. */
 function isRichService(service?: string): boolean {
@@ -244,6 +246,56 @@ async function createFirebaseAuthAccount(phone: string, displayName: string): Pr
   }
 }
 
+// Ensures the webapp account exists the moment a signup becomes real (client:
+// intake confirmed; caregiver: collection complete) instead of waiting for the
+// payment/bg-check webhooks: creates/finds the phone-keyed Auth user, seeds the
+// users/{uid} doc the web reads (uid + userType drive services/api.ts getUser
+// role resolution), and stamps session.userId so every later gate reuses the
+// same uid. Failures page ops via admin_alerts — a silent miss here is exactly
+// the "finished onboarding but no webapp account" bug.
+async function ensureWebAccount(
+  phone: string,
+  role: "client" | "caregiver",
+  displayName: string,
+): Promise<string | null> {
+  if (isOnboardingDryRun()) {
+    recordSideEffect("ensureWebAccount", { phone, role });
+    return "dryrun-uid";
+  }
+  try {
+    const uid = await createFirebaseAuthAccount(phone, displayName);
+    if (!uid) throw new Error("no auth uid resolvable for phone");
+    const ref  = db.collection("users").doc(uid);
+    const snap = await ref.get();
+    await ref.set({
+      uid,
+      phone,
+      // Seed the role only when absent — never flip an existing userType
+      // (an admin's phone must not become a client account).
+      ...(snap.data()?.userType ? {} : { userType: role }),
+      ...(displayName
+        ? (role === "client" ? { firstName: displayName } : { name: displayName })
+        : {}),
+      ...(snap.exists ? {} : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    await updateSession(phone, { userId: uid });
+    return uid;
+  } catch (err) {
+    console.error(`[ensureWebAccount] failed for ${phone} (${role}):`, err);
+    await db.collection("admin_alerts").add({
+      type:      "auth_account_create_failed",
+      severity:  "high",
+      phone,
+      role,
+      error:     String((err as Error)?.message ?? err),
+      createdAt: new Date().toISOString(),
+      resolved:  false,
+    }).catch((alertErr) => console.error("[ensureWebAccount] alert write failed:", alertErr));
+    return null;
+  }
+}
+
 // ── Main dispatcher ───────────────────────────────────────────────────────────
 
 // Ordered step flow for client onboarding — used by the auto-skip logic so
@@ -271,7 +323,11 @@ export const CLIENT_STEP_FIELD: Record<string, string> = {
   client_ask_senior:   "seniorName",
   client_ask_needs:    "age",
   client_ask_location: "city",
-  client_ask_schedule: "schedule",
+  // Keyed on daysPerWeek (a REQUIRED intake field), not the free-text
+  // `schedule` string: skipping this step on `schedule` alone left
+  // daysPerWeek/timeOfDay unset — matching frequency degraded to
+  // "occasional" and job posts shipped with daysPerWeek 0.
+  client_ask_schedule: "daysPerWeek",
 };
 
 // The step the client flow continues to once every absorbable field is
@@ -323,13 +379,18 @@ export async function absorbClientFields(text: string, existing: Record<string, 
       "Return JSON only with the fields you can confidently extract. Omit fields not present. " +
       "Schema: " +
       `{"firstName":"family member first name (the person texting, not the senior)",` +
-      `"seniorName":"senior's first name",` +
+      `"seniorName":"senior's first name (the FIRST care recipient if more than one)",` +
       `"relationship":"family relationship to senior (mother, father, etc.)",` +
-      `"age":number,` +
+      `"additionalRecipients":[{"name":"...","relationship":"...","age":number}] — ` +
+      `ONLY when care is for MORE THAN ONE person (e.g. "both mom and dad"); every person after the first goes here,` +
+      `"age":number (the FIRST care recipient's age),` +
       `"careNeeds":["short need phrase"],` +
       `"conditions":["short condition phrase"],` +
       `"city":"city name",` +
       `"zipCode":"5-digit US zip code",` +
+      `"daysPerWeek":number of days per week care is needed,` +
+      `"timeOfDay":"morning/afternoon/evening/all-day",` +
+      `"hoursPerDay":number of hours per day,` +
       `"schedule":"plain-English schedule like '3 mornings a week'"}. ` +
       "Be conservative — only include a field if it is unambiguously stated. Reply with raw JSON, no markdown.",
     text,
@@ -1209,7 +1270,16 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
     : "";
 
   const pieces: string[] = [];
-  pieces.push(`care for ${seniorName}${age || conditions ? ` (${[age, conditions].filter(Boolean).join(", ")})` : ""}`);
+  // Multi-recipient household: name everyone so the family can catch a missed
+  // person at the confirmation gate.
+  const extraRecipients = normalizeAdditionalRecipients(d.additionalRecipients);
+  const recipientLabel = extraRecipients.length
+    ? [
+        `${seniorName}${age ? ` (${age})` : ""}`,
+        ...extraRecipients.map((r) => (r.age ? `${r.name} (${r.age})` : r.name)),
+      ].join(" and ")
+    : `${seniorName}${age || conditions ? ` (${[age, conditions].filter(Boolean).join(", ")})` : ""}`;
+  pieces.push(`care for ${recipientLabel}${extraRecipients.length && conditions ? ` — ${conditions}` : ""}`);
   if (loc) pieces.push(`in ${loc}`);
   if (sched) pieces.push(sched);
   if (start) pieces.push(`starting ${start}`);
@@ -1296,6 +1366,14 @@ async function handleClientShowCaregivers(
   const city       = (d.city       as string) ?? "";
   const seniorName = (d.seniorName as string) ?? "your loved one";
   const careNeeds: string[] = Array.isArray(d.careNeeds) ? d.careNeeds : [];
+
+  // Intake is confirmed — this family is a real lead. Create their webapp
+  // account NOW (Auth user + users/{uid} seed), not at the payment webhook, so
+  // even a paywall drop-off can log into the web app with phone OTP.
+  if (!session.userId) {
+    const uid = await ensureWebAccount(phone, "client", (d.firstName as string) ?? "");
+    if (uid) (session as any).userId = uid;
+  }
 
   let preview: Awaited<ReturnType<typeof runGetCaregiverPreviewAction>>;
   try {
@@ -2142,6 +2220,14 @@ async function handleCaregiverResendMvr(phone: string, chatId: string, session: 
 }
 
 async function handleCaregiverSendPhoto(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  // Collection is complete — create the caregiver's webapp account NOW (Auth
+  // user + users/{uid} seed) instead of waiting for the bg-check/Stripe gates,
+  // so a caregiver who stalls at uploads can still log into the web app.
+  if (!session.userId) {
+    const uid = await ensureWebAccount(phone, "caregiver", ((session.onboardingData ?? {}).name as string) ?? "");
+    if (uid) (session as any).userId = uid;
+  }
+
   const token   = generateToken({ phone, task: "photo_upload" });
   const photoUrl = `${APP_URL}/upload/photo?t=${token}`;
 
@@ -2691,6 +2777,9 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       // Write subscription status to users/{uid} so web app shows membership as active
       if (uid) {
         await db.collection("users").doc(uid).set({
+          // uid must live IN the doc too — services/api.ts getUser gates the
+          // client role resolution on data.uid being present.
+          uid,
           membershipStatus:   "active",
           subscriptionActive: true,
           ...(taskData ? { stripeSubscriptionId: taskData } : {}),
@@ -2705,7 +2794,6 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
 
         // Write initial carePlans/{uid} with what we know so far
         const seniorName   = (d.seniorName   ?? "") as string;
-        const firstName    = seniorName.split(" ")[0] || seniorName;
         const relationship = (d.relationship ?? "") as string;
         const city         = (d.city         ?? "") as string;
         const zipCode      = (d.zipCode      ?? "") as string;
@@ -2713,40 +2801,90 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         const careNeeds    = (d.careNeeds    ?? []) as string[];
         const seniorAge    = d.age as number | undefined;
 
-        const recipientKey = `recipient_${firstName.toLowerCase().replace(/[^a-z0-9]/g, "_") || "primary"}`;
+        // One plan entry per care recipient (primary + any additional — "both
+        // mom and dad"). Keys MUST use the web CarePlan.tsx getKey format
+        // (recipientPlanKey) or the web tabs can't find Evia's plan data.
+        // Care needs/conditions are shared across recipients at signup — same
+        // behavior as the web PostJob flow; per-person details are edited later
+        // in the CarePlan tabs.
+        const recipients = allCareRecipients(d);
+        const recipientPlans: Record<string, unknown> = {};
+        for (const r of recipients) {
+          recipientPlans[recipientPlanKey(r.name.split(" ")[0] || r.name)] = {
+            name:         r.name,
+            age:          r.age ?? (recipientPlanKey(r.name) === recipientPlanKey(seniorName) ? seniorAge : undefined),
+            relationship: r.relationship ?? "",
+            careNeeds,
+            conditions,
+            updatedAt:    new Date().toISOString(),
+          };
+        }
         await db.collection("carePlans").doc(uid).set({
           clientId: uid,
           phone,
-          recipientPlans: {
-            [recipientKey]: {
-              name:        seniorName,
-              age:         seniorAge,
-              relationship,
-              careNeeds,
-              conditions,
-              updatedAt:   new Date().toISOString(),
-            },
-          },
+          recipientPlans,
           locationPool: [{ city, zipCode, primary: true, ...(hasCoords ? { lat, lng } : {}) }],
           updatedAt: new Date().toISOString(),
         }, { merge: true });
 
-        // senior_profiles/{uid} parity write — CarePlan, matching, and the
-        // family dashboard read this doc (web signup creates it; Evia must too).
+        // senior_profiles/{uid} parity write for the PRIMARY recipient —
+        // CarePlan, matching, and the family dashboard read this doc (web
+        // signup creates it; Evia must too). The account holder's identity
+        // stays on users/{uid}; this doc is the care recipient's.
         await db.collection("senior_profiles").doc(uid).set({
           userId:    uid,
+          clientId:  uid,
           name:      seniorName,
           ...(seniorAge !== undefined ? { age: seniorAge } : {}),
+          ...(relationship ? { relationship } : {}),
           needs:     careNeeds,
           diagnoses: conditions,
+          // Web Senior type requires location (city string); preference fields
+          // feed the matching engine and the family dashboard.
+          location:  city || "",
           zipCode:   zipCode || null,
+          genderPreference:   (d.genderPreference   ?? "") as string,
+          languagePreference: (d.languagePreference ?? "") as string,
           updatedAt: new Date().toISOString(),
         }, { merge: true }).catch((err) => console.error("senior_profiles parity write error:", err));
+
+        // Additional recipients get their own household senior_profiles docs
+        // (deterministic IDs — webhook retries must not mint duplicates) plus
+        // users/{uid}.seniorIds back-refs, so the MCP list_household_seniors
+        // tool and household-aware readers see every person Evia cares for.
+        const extraRecipients = normalizeAdditionalRecipients(d.additionalRecipients);
+        for (const r of extraRecipients) {
+          const seniorDocId = householdSeniorDocId(uid, r.name);
+          await db.collection("senior_profiles").doc(seniorDocId).set({
+            userId:    uid,
+            clientId:  uid,
+            name:      r.name,
+            ...(r.age !== undefined ? { age: r.age } : {}),
+            ...(r.relationship ? { relationship: r.relationship } : {}),
+            needs:     careNeeds,
+            diagnoses: conditions,
+            location:  city || "",
+            zipCode:   zipCode || null,
+            updatedAt: new Date().toISOString(),
+          }, { merge: true }).catch((err) => console.error("household senior_profiles write error:", err));
+          await db.collection("users").doc(uid).set({
+            seniorIds: admin.firestore.FieldValue.arrayUnion(seniorDocId),
+          }, { merge: true }).catch((err) => console.error("users.seniorIds write error:", err));
+        }
       }
 
       // Write intake — uid-keyed so the web app (ClientIntakeFlowV2, matching
       // hooks) reads the same doc Evia writes. Random-ID fallback only when no
       // auth uid could be resolved.
+      // Human-readable schedule string — the web ClientIntakeData contract and
+      // the matching prompt both read intake.schedule; built from the structured
+      // fields (or the absorbed free-text schedule when that's all we have).
+      const scheduleText = [
+        d.daysPerWeek ? `${d.daysPerWeek} days/week` : "",
+        (d.timeOfDay as string) ?? "",
+        d.hoursPerDay ? `${d.hoursPerDay} hrs/day` : "",
+      ].filter(Boolean).join(", ") || ((d.schedule as string) ?? "");
+
       const intakeData = {
         phone,
         userId:      uid ?? null,
@@ -2762,6 +2900,28 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         daysPerWeek: d.daysPerWeek,
         timeOfDay:   d.timeOfDay,
         hoursPerDay: d.hoursPerDay,
+        // Web-contract aliases (types.ts ClientIntakeData) — the client profile
+        // dashboard reads recipientName/careTypes/contactName/schedule and shows
+        // blanks without them.
+        recipientName:      (d.seniorName ?? "") as string,
+        recipientFirstName: (((d.seniorName ?? "") as string).split(" ")[0]) || (d.seniorName ?? ""),
+        careTypes:          d.careNeeds ?? [],
+        contactName:        (d.firstName ?? "") as string,
+        schedule:           scheduleText,
+        // Collected during intake but previously dropped at finalization:
+        startDate:          (d.startDate ?? null) as string | null,
+        budgetMin:          (d.budgetMin ?? null) as number | null,
+        budgetMax:          (d.budgetMax ?? null) as number | null,
+        caregiverPreferences: d.caregiverPreferences ?? {},
+        genderPreference:     (d.genderPreference   ?? "") as string,
+        languagePreference:   (d.languagePreference ?? "") as string,
+        needsDriving:         d.needsDriving === true,
+        otherPreference:      (d.otherPreference ?? "") as string,
+        // Multi-recipient household ("both mom and dad"): everyone after the
+        // primary, plus the count the web PostJob flow also records.
+        additionalRecipients: normalizeAdditionalRecipients(d.additionalRecipients)
+          .map((r) => ({ firstName: r.name, lastName: "", name: r.name, relationship: r.relationship ?? "", ...(r.age !== undefined ? { age: String(r.age) } : {}) })),
+        recipientsCount:      1 + normalizeAdditionalRecipients(d.additionalRecipients).length,
         status:      "pending",
         createdAt:   new Date().toISOString(),
       };
@@ -2780,9 +2940,13 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         city:       (d.city ?? "") as string,
       }).catch((err) => console.error("notifyAdminNewClientSignup error:", err));
 
-      // Seed the known-names registry with the client + care recipient so the
-      // persona-shift detector recognizes both from day one.
-      await addKnownNames(phone, [d.firstName as string, d.seniorName as string]);
+      // Seed the known-names registry with the client + every care recipient so
+      // the persona-shift detector recognizes the whole household from day one.
+      await addKnownNames(phone, [
+        d.firstName as string,
+        d.seniorName as string,
+        ...normalizeAdditionalRecipients(d.additionalRecipients).map((r) => r.name),
+      ]);
 
       // Initialize memory files with onboarding data. Loud on failure with phone
       // context — this is the completion-time bootstrap; a silent miss here means
@@ -2790,7 +2954,12 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       // qaAgent turn falls through to the lazy re-bootstrap (or worse, stays empty
       // if that also fails), with nobody paged either time.
       initializeMemoryFiles(uid ?? phone, {
-        seniorName:   d.seniorName   as string | undefined,
+        // Household signups: name every care recipient so Evia's memory knows
+        // who the care is for from day one (account holder stays clientName).
+        seniorName:   [
+          d.seniorName as string | undefined,
+          ...normalizeAdditionalRecipients(d.additionalRecipients).map((r) => r.name),
+        ].filter(Boolean).join(" and ") || undefined,
         seniorAge:    d.age          as string | undefined,
         conditions:   d.conditions   as string | string[] | undefined,
         careNeeds:    d.careNeeds    as string | string[] | undefined,
@@ -2928,6 +3097,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         // Write identityCheckStatus to the web app's users doc
         if (uid) {
           await db.collection("users").doc(uid).set({
+            uid,
             identityCheckStatus:  "verified",
             identityVerifiedAt:   admin.firestore.FieldValue.serverTimestamp(),
             phone,
@@ -2959,6 +3129,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       const cgLat = typeof d.lat === "number" ? d.lat as number : undefined;
       const cgLng = typeof d.lng === "number" ? d.lng as number : undefined;
       const cgHasCoords = cgLat !== undefined && cgLng !== undefined;
+      const cgWeekly = deriveWeeklyAvailability(d.availability);
       const profileData = {
         phone,
         name:            d.name,
@@ -2969,9 +3140,21 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         ...(d.profilePhoto ? { profilePhoto: d.profilePhoto, photoURL: d.profilePhoto } : {}),
         ...(Array.isArray(d.documents) && d.documents.length ? { documents: d.documents } : {}),
         yearsExperience: d.yearsExperience,
+        // Web parity aliases — the client-facing cards/modal and aiMatching read
+        // these exact names (types.ts Caregiver): experience, hasTransportation,
+        // skills. Without them Evia-onboarded caregivers render with blank
+        // experience/skills and no transportation badge.
+        experience:      d.yearsExperience ?? null,
         certifications:  d.certifications,
         specialties:     d.specialties,
+        skills:          Array.from(new Set([
+          ...(Array.isArray(d.skills)      ? d.skills      as string[] : []),
+          ...(Array.isArray(d.specialties) ? d.specialties as string[] : []),
+        ])),
         availability:    d.availability,
+        // Structured map read by ai/scoring.ts availabilityOverlap and the web
+        // profile modal. Missing map scores as 0% available — derive it.
+        ...(cgWeekly ? { weeklyAvailability: cgWeekly } : {}),
         hourlyRate:      d.hourlyRate,
         stripeAccountId: d.stripeAccountId,
         email:           d.email   ?? null,
@@ -2980,6 +3163,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         gender:          d.gender    ?? null,
         languages:       Array.isArray(d.languages) ? d.languages : [],
         canDrive:        d.canDrive ?? null,
+        hasTransportation: d.canDrive ?? null,
         membershipSubscriptionId: (session as any).caregiverSubscriptionId ?? null,
         status:          "active",
         // Visibility gate: families' FindCaregivers query only loads caregivers
@@ -3189,6 +3373,9 @@ function deriveJobDataFromIntake(d: Record<string, unknown>): Record<string, unk
     jobStartDate:     (d.startDate as string) || "ASAP",
     jobFrequency:     frequency,
     jobDays:          [],
+    // Intake collects a days-per-week COUNT, not named days — jobDays stays
+    // empty, so pass the count through or job_posts ships daysPerWeek: 0.
+    jobDaysPerWeek:   daysPerWeek,
     jobTimeOfDay:     mapTimeOfDayToSlots((d.timeOfDay as string) ?? ""),
     jobCareNeeds:     careNeeds.length ? careNeeds : conditions,
     jobCareLevel:     careLevel,

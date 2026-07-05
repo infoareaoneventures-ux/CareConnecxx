@@ -232,6 +232,10 @@ export { send1099Notifications } from './scheduled/taxReminder';
 export * from './migrations/migrateSeniorsToHousehold';
 export * from './migrations/backfillCaregiverSessionUserIds';
 export * from './migrations/linkPhoneProviders';
+// Field-parity backfill for pre-2026-07-05 Evia signups (experience/skills/
+// hasTransportation/weeklyAvailability on caregivers; recipientName/careTypes/
+// schedule on clientIntakes; users.uid) — dry-run first: ?dryRun=1
+export * from './migrations/backfillEviaProfileFields';
 
 // fixAcceptedCounterPay migration already executed — not exported
 

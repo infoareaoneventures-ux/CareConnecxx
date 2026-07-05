@@ -61,6 +61,11 @@ const hoisted = vi.hoisted(() => {
     ref.where = () => ref;
     ref.limit = () => ref;
     ref.get   = vi.fn(async () => ({ docs: [] }));
+    ref.add   = vi.fn(async (data: any) => {
+      const doc = makeDocRef(`${path}/auto-${Math.random().toString(36).slice(2, 8)}`);
+      docState.set(doc.path, data);
+      return doc;
+    });
     return ref;
   };
 
@@ -73,9 +78,19 @@ const hoisted = vi.hoisted(() => {
 
 vi.mock("firebase-admin", () => {
   const firestore = Object.assign(() => ({ collection: hoisted.collectionMock }), {
-    FieldValue: { delete: () => ({ __delete: true }) },
+    FieldValue: {
+      delete:          () => ({ __delete: true }),
+      serverTimestamp: () => ({ __serverTimestamp: true }),
+      arrayUnion:      (...v: unknown[]) => ({ __arrayUnion: v }),
+    },
   });
-  const auth = () => ({ createUser: vi.fn() });
+  // createUser resolves a uid — collection completion now provisions the webapp
+  // Auth account (ensureWebAccount); an undefined return here reads as an
+  // account-creation outage and pollutes assertions with admin_alerts writes.
+  const auth = () => ({
+    createUser:           vi.fn(async () => ({ uid: "test-auth-uid" })),
+    getUserByPhoneNumber: vi.fn(async () => ({ uid: "test-auth-uid" })),
+  });
   const storage = () => ({ bucket: () => ({ file: () => ({ save: vi.fn(), exists: vi.fn(async () => [false]) }) }) });
   return {
     __esModule: true,

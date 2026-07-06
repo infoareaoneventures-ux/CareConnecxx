@@ -505,17 +505,36 @@ service cloud.firestore {
         isAdmin()
       );
       
-      // Client can create
-      allow create: if isAuthenticated() && 
-        request.resource.data.clientId == request.auth.uid;
-      
-      // Both parties can update
-      allow update: if isAuthenticated() && (
-        resource.data.clientId == request.auth.uid ||
-        resource.data.caregiverId == request.auth.uid ||
-        isAdmin()
+      // Client can create — but never with server-owned link fields. callUrl,
+      // icsUrl, linkDelivery, linkWork, remindersScheduledAt, and
+      // requestNotifiedAt are written exclusively by Cloud Functions (the
+      // Admin SDK bypasses rules). A client-forged callUrl would render as a
+      // "Join video call" button on the other party's dashboard.
+      allow create: if isAuthenticated() &&
+        request.resource.data.clientId == request.auth.uid &&
+        !request.resource.data.keys().hasAny(['callUrl', 'icsUrl', 'linkDelivery', 'linkWork', 'remindersScheduledAt', 'requestNotifiedAt']);
+
+      // Both parties can update — restricted to legitimately client-mutable
+      // fields. Identity (clientId/caregiverId) and server-owned link fields
+      // are immutable from the client SDK (deleting callUrl would make the
+      // link trigger regenerate + re-text both parties — an SMS pump).
+      // Only the caregiver may move status to accepted/declined/confirmed.
+      allow update: if isAdmin() || (
+        isAuthenticated() && (
+          resource.data.clientId == request.auth.uid ||
+          resource.data.caregiverId == request.auth.uid
+        ) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'notes', 'updatedAt', 'acceptedAt', 'declinedBy', 'declinedAt',
+          'cancelledBy', 'cancelledAt', 'cancelReason', 'completedAt', 'startedAt', 'endedAt'
+        ]) &&
+        (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+          !(request.resource.data.status in ['accepted', 'declined', 'confirmed']) ||
+          resource.data.caregiverId == request.auth.uid
+        )
       );
-      
+
       allow delete: if isAdmin();
     }
     
@@ -1171,8 +1190,8 @@ service cloud.firestore {
 
     // ==========================================
     // INTERVIEWS — scheduled interview records (functions/agents/interviewAgent.ts)
-    // Written server-side (Admin SDK). The client reads their own pending
-    // interviews (components/InterviewConfirmation.tsx).
+    // Written server-side (Admin SDK), including the Google Meet link + ICS
+    // (agents/interviewLinks.ts). Participants read their own interviews.
     // ==========================================
     match /interviews/{interviewId} {
       allow read: if isAuthenticated() && (

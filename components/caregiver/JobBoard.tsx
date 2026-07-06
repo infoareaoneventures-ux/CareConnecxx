@@ -40,6 +40,7 @@ interface InterviewItem {
     jobTitle?: string;
     jobId?: string;
     interviewType?: string;
+    callUrl?: string;
     source: 'request' | 'video';
 }
 
@@ -262,7 +263,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                     const d = doc.data();
                     const rawStatus = d.status || 'pending';
                     const status = rawStatus === 'requested' || rawStatus === 'scheduled' ? 'pending' : rawStatus;
-                    return { id: doc.id, clientId: d.clientId || '', clientName: d.clientName || 'Client', scheduledAt: normalizeDate(d.scheduledTime || d.scheduledAt || d.scheduledDateTime), createdAt: normalizeDate(d.createdAt), status, notes: d.notes, jobTitle: d.jobTitle, jobId: d.jobId, interviewType: d.interviewType || 'video', source: 'video' as const };
+                    return { id: doc.id, clientId: d.clientId || '', clientName: d.clientName || 'Client', scheduledAt: normalizeDate(d.scheduledTime || d.scheduledAt || d.scheduledDateTime), createdAt: normalizeDate(d.createdAt), status, notes: d.notes, jobTitle: d.jobTitle, jobId: d.jobId, interviewType: d.interviewType || 'video', callUrl: d.callUrl, source: 'video' as const };
                 });
                 merge();
             }, () => merge());
@@ -1068,6 +1069,12 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                             <div className="flex items-center gap-2">
                                                 {typeIcon}{typeLabel}
                                             </div>
+                                            {iv.callUrl?.startsWith('https://meet.google.com/') && (iv.status === 'accepted' || iv.status === 'confirmed' || iv.status === 'pending') && (
+                                                <button onClick={() => window.open(iv.callUrl, '_blank', 'noopener')}
+                                                    className="flex items-center gap-2 text-sm font-semibold text-primary-600 hover:underline">
+                                                    <Video className="w-4 h-4" /> Join video call
+                                                </button>
+                                            )}
                                         </div>
 
                                         {/* Notes */}

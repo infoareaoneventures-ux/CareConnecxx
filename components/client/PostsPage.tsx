@@ -44,6 +44,7 @@ interface Interview {
   createdAt?: string;
   type: 'video' | 'phone' | 'in-person';
   status: 'pending' | 'accepted' | 'declined' | 'completed' | 'no-response' | 'cancelled';
+  callUrl?: string;
   notes?: string;
   jobId?: string;
   jobTitle?: string;
@@ -283,7 +284,12 @@ export const PostsPage: React.FC = () => {
             time: localTimeStr,
             createdAt,
             type: (d.interviewType || d.type) as Interview['type'] || 'video',
-            status: d.status === 'requested' ? 'pending' : (d.status as Interview['status']),
+            // Normalize MCP vocabulary at ingestion: scheduled = awaiting
+            // caregiver confirm (pending), confirmed = mutually agreed (accepted)
+            status: d.status === 'requested' || d.status === 'scheduled' ? 'pending'
+              : d.status === 'confirmed' ? 'accepted'
+              : (d.status as Interview['status']),
+            callUrl: d.callUrl || undefined,
             notes: d.notes || undefined,
             jobId: d.jobId || undefined,
             jobTitle: d.jobTitle || undefined,
@@ -1234,6 +1240,15 @@ export const PostsPage: React.FC = () => {
                           if (!showBar) return null;
                           return (
                             <div className="flex items-center gap-2 mt-3 pt-2 border-t border-slate-100 flex-wrap">
+                              {interview.callUrl?.startsWith('https://meet.google.com/') &&
+                                (interview.status === 'pending' || interview.status === 'accepted') && (
+                                <button
+                                  onClick={() => window.open(interview.callUrl, '_blank', 'noopener')}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-xs font-semibold hover:bg-purple-700"
+                                >
+                                  <Video className="w-3.5 h-3.5" /> Join video call
+                                </button>
+                              )}
                               {(interview.status === 'pending' || interview.status === 'accepted') && (
                                 <button
                                   onClick={() => gate('message', interview.caregiverName, () => navigate(`/client/inbox?caregiver=${interview.caregiverId}`))}

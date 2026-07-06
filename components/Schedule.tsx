@@ -42,8 +42,9 @@ interface InterviewEvent {
   caregiverName: string;
   clientId: string;
   scheduledTime: string;
-  status: 'requested' | 'accepted' | 'in-progress' | 'completed' | 'cancelled' | 'declined';
+  status: 'requested' | 'accepted' | 'scheduled' | 'confirmed' | 'in-progress' | 'completed' | 'cancelled' | 'declined';
   interviewType: 'video' | 'phone' | 'in-person';
+  callUrl?: string;
   notes?: string;
   jobId?: string;
   jobTitle?: string;
@@ -364,7 +365,7 @@ export default function Schedule() {
       const list: InterviewEvent[] = [];
       snap.forEach(doc => {
         const data = doc.data();
-        if (data.status === 'requested' || data.status === 'accepted' || data.status === 'in-progress' || data.status === 'completed') {
+        if (['requested', 'accepted', 'scheduled', 'confirmed', 'in-progress', 'completed'].includes(data.status)) {
           list.push(parseInterview(doc.id, data));
         }
       });
@@ -890,11 +891,12 @@ export default function Schedule() {
 
         {/* Actions */}
         <div className="mt-4 flex flex-col gap-2">
-          {/* Join Call for video + accepted/in-progress */}
-          {interview.interviewType === 'video' && (interview.status === 'accepted' || interview.status === 'in-progress') && (
-            <button onClick={() => navigate('/client/video')}
+          {/* Join the Google Meet link (server-generated; meet.google.com only) */}
+          {interview.callUrl?.startsWith('https://meet.google.com/') &&
+            ['accepted', 'scheduled', 'confirmed', 'in-progress'].includes(interview.status) && (
+            <button onClick={() => window.open(interview.callUrl, '_blank', 'noopener')}
               className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
-              <Video className="w-4 h-4" /> Join Call
+              <Video className="w-4 h-4" /> Join video call
             </button>
           )}
           <div className="flex gap-2">
@@ -902,7 +904,7 @@ export default function Schedule() {
               className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm flex items-center justify-center gap-1.5">
               <MessageSquare className="w-4 h-4" /> Message
             </button>
-            {(interview.status === 'requested' || interview.status === 'accepted') && (
+            {['requested', 'accepted', 'scheduled', 'confirmed'].includes(interview.status) && (
               <button onClick={handleCancel} disabled={cancelling}
                 className="px-3 py-2 border border-red-200 rounded-xl hover:bg-red-50 text-red-500 text-sm flex items-center justify-center gap-1.5">
                 {cancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />} Cancel

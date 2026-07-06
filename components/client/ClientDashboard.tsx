@@ -682,7 +682,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 {/* Interviews tab */}
                 {careRequestTab === 'interviews' && (() => {
                   const iPending = allInterviews.filter(iv => ['requested', 'pending'].includes(iv.status));
-                  const iAccepted = allInterviews.filter(iv => iv.status === 'accepted');
+                  const iAccepted = allInterviews.filter(iv => ['accepted', 'scheduled', 'confirmed'].includes(iv.status));
                   const bookingMap: Record<string, any> = {};
                   allBookingRequests.forEach((b: any) => {
                     const key = `${b.caregiverId}_${b.jobId || b.interviewId || ''}`;
@@ -757,6 +757,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                     {isVideo ? <Video className="w-3 h-3 flex-shrink-0" /> : <Phone className="w-3 h-3 flex-shrink-0" />}
                                     <span>{isVideo ? 'Video' : 'Phone'}</span>
                                   </div>
+                                )}
+                                {iv.callUrl?.startsWith('https://meet.google.com/') && ['accepted', 'scheduled', 'confirmed'].includes(iv.status) && (
+                                  <a href={iv.callUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-600 hover:underline">
+                                    <Video className="w-3 h-3 flex-shrink-0" />
+                                    Join video call
+                                  </a>
                                 )}
                               </div>
                             </div>
@@ -1563,7 +1569,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
                   {careRequestTab === 'interviews' && (() => {
                     const iPending = allInterviews.filter(iv => ['requested', 'pending'].includes(iv.status));
-                    const iAccepted = allInterviews.filter(iv => iv.status === 'accepted');
+                    const iAccepted = allInterviews.filter(iv => ['accepted', 'scheduled', 'confirmed'].includes(iv.status));
                     const bookingMap: Record<string, any> = {};
                     allBookingRequests.forEach((b: any) => {
                       const key = `${b.caregiverId}_${b.jobId || b.interviewId || ''}`;

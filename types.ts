@@ -730,7 +730,12 @@ export interface EmergencyAlert {
 }
 
 // --- VIDEO INTERVIEW TYPES ---
-export type VideoInterviewStatus = 'requested' | 'accepted' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | 'missed';
+// 'confirmed'/'declined' are written by the MCP respond_to_interview_request tool
+export type VideoInterviewStatus = 'requested' | 'accepted' | 'scheduled' | 'confirmed' | 'declined' | 'in-progress' | 'completed' | 'cancelled' | 'missed';
+
+// Statuses where the interview is mutually agreed and upcoming — the set web
+// surfaces filter on and where a Join link is rendered when callUrl exists
+export const AGREED_INTERVIEW_STATUSES: VideoInterviewStatus[] = ['accepted', 'scheduled', 'confirmed'];
 
 export interface VideoInterview {
   id: string;
@@ -741,8 +746,8 @@ export interface VideoInterview {
   scheduledTime: string; // ISO timestamp
   duration?: number; // in minutes
   status: VideoInterviewStatus;
-  roomSid?: string; // Twilio room SID
-  roomName?: string;
+  callUrl?: string;  // Google Meet link (server-generated; join from any phone browser)
+  icsUrl?: string;   // signed calendar-invite URL (expires after the interview)
   recordingUrl?: string;
   createdAt: string;
   startedAt?: string;

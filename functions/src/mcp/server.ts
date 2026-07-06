@@ -5123,31 +5123,102 @@ async function executeToolCall(
     if (name === "schedule_interview") {
       const { clientId, caregiverId, applicationId, preferredDate, preferredTime, interviewType } = input as Record<string, unknown>;
       if (!clientId || !caregiverId || !preferredDate || !preferredTime) return toolError("INVALID_INPUT", "clientId, caregiverId, preferredDate, and preferredTime are required");
-      const scheduledTime = `${preferredDate}T${preferredTime}:00`;
-      const ivRef = await db.collection("video_interviews").add({
+
+      // preferredDate/preferredTime are the client's wall-clock time — store a
+      // timezone-aware instant (naive strings parse as UTC on GCF and shift
+      // reminders ~8h for Pacific users)
+      const { parseScheduledTimeMs, formatInterviewTime } = await import("../utils/scheduledTime");
+      const startMs = parseScheduledTimeMs(`${preferredDate}T${preferredTime}:00`);
+      if (Number.isNaN(startMs)) return toolError("INVALID_INPUT", "preferredDate/preferredTime could not be parsed");
+      const scheduledTime = new Date(startMs).toISOString();
+
+      const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
+      const cgData = cgSnap.data() ?? {};
+      const cgPhone = cgData.phone as string | undefined;
+      const caregiverName = ((cgData.name as string) ?? `${cgData.firstName ?? ""} ${cgData.lastName ?? ""}`.trim()) || "Caregiver";
+      const clientSnap = await db.collection("users").doc(clientId as string).get();
+      const clientName = (clientSnap.data()?.name as string) ?? "A family";
+
+      // Pre-mint the doc id so the Meet link + .ics land in the create payload —
+      // the link trigger sees a fully-linked doc and no-ops instead of racing us.
+      const ivRef = db.collection("video_interviews").doc();
+      let callUrl = "";
+      let icsUrl  = "";
+      try {
+        const { createInterviewCallAssets } = await import("../agents/interviewLinks");
+        ({ callUrl, icsUrl } = await createInterviewCallAssets({
+          title:            `Care Interview — ${caregiverName}`,
+          startTime:        scheduledTime,
+          durationMinutes:  30,
+          interviewId:      ivRef.id,
+          icsStoragePrefix: "video_interviews",
+        }));
+      } catch {
+        // Ops alert already raised inside the helper. Create the doc link-less;
+        // the trigger retries generation on this create event and later writes.
+      }
+
+      await ivRef.set({
         clientId,
         caregiverId,
         applicationId: applicationId ?? null,
+        clientName,
+        caregiverName,
         scheduledTime,
         interviewType:  interviewType ?? "video",
         status:        "scheduled",
         createdAt:      nowIso,
         feedbackSubmitted: false,
+        ...(callUrl ? {
+          callUrl,
+          ...(icsUrl ? { icsUrl } : {}),
+          // The client receives the link in this chat turn via the tool result
+          linkDelivery: { client: { status: "delivered_in_chat", at: nowIso } },
+          // Hold the trigger's work window while we notify the caregiver below
+          linkWork: { claimedAt: nowIso },
+        } : {}),
       });
       if (applicationId) {
         await db.collection("job_applications").doc(applicationId as string).update({ status: "interview_scheduled", interviewId: ivRef.id }).catch(() => {});
       }
-      const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-      const cgPhone = cgSnap.data()?.phone as string | undefined;
+
+      const formatted = formatInterviewTime(startMs);
       let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
       if (cgPhone) {
-        const clientSnap = await db.collection("users").doc(clientId as string).get();
-        const clientName = clientSnap.data()?.name ?? "A family";
         const { trySend } = await import("../utils/toolNotify");
-        notification = await trySend(cgPhone, `Interview scheduled! ${clientName} wants to meet ${preferredDate} at ${preferredTime}. Reply to confirm.`, "mcp:schedule_interview");
+        notification = await trySend(
+          cgPhone,
+          `Interview scheduled! ${clientName} wants to meet ${formatted}.` +
+          (callUrl ? `\n\nJoin from your phone: ${callUrl}` : "") +
+          `\n\nReply to confirm.`,
+          "mcp:schedule_interview"
+        );
+      }
+      if (callUrl) {
+        const cgOutcome =
+          notification.sent ? "sent"
+          : notification.reason === "queued_for_retry"    ? "queued"
+          : notification.reason === "recipient_opted_out" ? "skipped_opt_out"
+          : notification.reason === "no_caregiver_phone"  ? "missing_phone"
+          : null; // hard send failure — leave unset so the trigger retries
+        await ivRef.update({
+          ...(cgOutcome ? { "linkDelivery.caregiver": { status: cgOutcome, at: new Date().toISOString() } } : {}),
+          "linkWork.claimedAt": admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
       }
       logAudit({ eventType: "interview_scheduled", userId: clientId as string, data: { source: "mcp:schedule_interview", interviewId: ivRef.id, caregiverId, scheduledTime, notificationSent: notification.sent } }).catch(() => {});
-      return { success: true, interviewId: ivRef.id, scheduledTime, interviewType: interviewType ?? "video", notification };
+      return {
+        success: true,
+        interviewId: ivRef.id,
+        scheduledTime,
+        interviewType: interviewType ?? "video",
+        callUrl: callUrl || null,
+        icsUrl:  icsUrl || null,
+        notification,
+        note: callUrl
+          ? "Share the Google Meet link with the client in your reply — it is how they join, from any phone browser, no account needed."
+          : "Link generation failed and has been flagged to ops; the link will be sent to both parties automatically once available.",
+      };
     }
 
     // ── respond_to_interview_request ────────────────────────────────────────
@@ -5160,8 +5231,12 @@ async function executeToolCall(
       if (iv.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Interview does not belong to this caregiver");
       const newStatus = decision === "accept" ? "confirmed" : "declined";
       const upd: Record<string, unknown> = { status: newStatus, respondedAt: nowIso };
+      const { parseScheduledTimeMs: parseIvMs, formatInterviewTime: formatIvTime } = await import("../utils/scheduledTime");
+      let proposedIso: string | null = null;
       if (proposedDate && proposedTime) {
-        upd.proposedTime = `${proposedDate}T${proposedTime}:00`;
+        const proposedMs = parseIvMs(`${proposedDate}T${proposedTime}:00`);
+        proposedIso = Number.isNaN(proposedMs) ? `${proposedDate}T${proposedTime}:00` : new Date(proposedMs).toISOString();
+        upd.proposedTime = proposedIso;
       }
       await ivSnap.ref.update(upd);
       const clientSess = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
@@ -5169,15 +5244,18 @@ async function executeToolCall(
         const cgData = (await db.collection("caregivers").doc(caregiverId as string).get()).data();
         const cgName = cgData?.name ?? "The caregiver";
         const { sendToPhone } = await import("../linq/client");
+        const schedMs = parseIvMs(iv.scheduledTime ?? "");
+        const whenText = Number.isNaN(schedMs) ? "the scheduled time" : formatIvTime(schedMs);
         const notifyMsg = decision === "accept"
-          ? `${cgName} confirmed the interview for ${iv.scheduledTime?.slice(0, 10) ?? "the scheduled time"}.`
+          ? `${cgName} confirmed the interview for ${whenText}.` +
+            (iv.callUrl ? `\n\nJoin from your phone: ${iv.callUrl}` : "")
           : proposedDate
             ? `${cgName} can't make the original time but is free ${proposedDate} at ${proposedTime ?? ""}.`
             : `${cgName} isn't available for the interview. ${(ivMsg as string) ?? ""}`.trim();
         await sendToPhone(clientSess.docs[0].id, notifyMsg).catch(() => {});
       }
       logAudit({ eventType: "interview_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_interview_request", interviewId, decision } }).catch(() => {});
-      return { success: true, decision, interviewId, proposedTime: proposedDate ? `${proposedDate}T${proposedTime}:00` : null };
+      return { success: true, decision, interviewId, callUrl: (iv.callUrl as string | undefined) ?? null, proposedTime: proposedIso };
     }
 
     // ── get_care_team ───────────────────────────────────────────────────────

@@ -72,6 +72,11 @@ export * from './triggers/jobApplicationTriggers';
 // Notification triggers (server-side, replaces client-side notification writes)
 export * from './triggers/notificationTriggers';
 
+// Interview call-link enforcement: any video_interviews doc reaching an agreed
+// status gets a Meet link generated, delivered, and reminded (covers the web
+// scheduling path, which writes Firestore directly)
+export * from './triggers/interviewLinkTrigger';
+
 // Export per-shift hours submission / review / payment
 export * from './shiftHours';
 

@@ -462,7 +462,7 @@ export async function handleInterviewConfirm(
       message:
         `Your interview with ${pending.caregiverName} is in an hour — ` +
         (callUrl ? callUrl : "make sure you have the link ready."),
-    }).catch((err) => console.error("scheduleTrigger (family reminder) error:", err));
+    }, { bypassCalibration: true }).catch((err) => console.error("scheduleTrigger (family reminder) error:", err));
 
     // 1h-before reminder to the caregiver
     if (cgPhone) {
@@ -477,7 +477,7 @@ export async function handleInterviewConfirm(
           `Interview in an hour with a family. ` +
           (callUrl ? callUrl : "Check your calendar.") +
           ` Reply if you need to reschedule.`,
-      }).catch((err) => console.error("scheduleTrigger (caregiver reminder) error:", err));
+      }, { bypassCalibration: true }).catch((err) => console.error("scheduleTrigger (caregiver reminder) error:", err));
     }
   }
 
@@ -489,7 +489,7 @@ export async function handleInterviewConfirm(
     type:        "custom",
     scheduledAt: followUpAt,
     message:     `interview_followup:${interviewRef.id}`,
-  }).catch((err) => console.error("scheduleTrigger (followup) error:", err));
+  }, { bypassCalibration: true }).catch((err) => console.error("scheduleTrigger (followup) error:", err));
 }
 
 // ── Write interview outcome feedback signal ───────────────────────────────────

@@ -31,16 +31,23 @@ function isInCalibrationPeriod(sessionCreatedAt: string): boolean {
   return Date.now() - createdMs < thirtyDaysMs;
 }
 
-// Schedule a proactive trigger — no-op during calibration period
+// Schedule a proactive trigger — no-op during calibration period.
+// Transactional triggers (e.g. interview reminders for an interview the user
+// just booked) pass bypassCalibration: the 30-day gate exists to suppress
+// unsolicited proactive outreach, not confirmations of actions the user took —
+// and interviews cluster in a user's first weeks, exactly inside the window.
 export async function scheduleTrigger(
-  trigger: Omit<ProactiveTrigger, "id" | "createdAt">
+  trigger: Omit<ProactiveTrigger, "id" | "createdAt">,
+  opts: { bypassCalibration?: boolean } = {}
 ): Promise<string> {
   // Check calibration
-  const sessionSnap = await db.collection("agent_sessions").doc(trigger.phone).get();
-  if (sessionSnap.exists) {
-    const session = sessionSnap.data()!;
-    if (session.createdAt && isInCalibrationPeriod(session.createdAt as string)) {
-      return ""; // Silently skip during calibration
+  if (!opts.bypassCalibration) {
+    const sessionSnap = await db.collection("agent_sessions").doc(trigger.phone).get();
+    if (sessionSnap.exists) {
+      const session = sessionSnap.data()!;
+      if (session.createdAt && isInCalibrationPeriod(session.createdAt as string)) {
+        return ""; // Silently skip during calibration
+      }
     }
   }
 

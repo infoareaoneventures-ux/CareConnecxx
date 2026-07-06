@@ -1,5 +1,5 @@
 // Bounded fetch for external HTTP calls. Cloud Functions have a hard execution
-// deadline; an upstream that hangs (Checkr, Apple FaceTime, etc.) would
+// deadline; an upstream that hangs (Checkr, Google Meet API, etc.) would
 // otherwise tie up the invocation until that deadline — and, for webhook
 // handlers, hold the event's ledger claim open. AbortController caps the wait
 // so a slow upstream fails fast and the handler can degrade or retry.

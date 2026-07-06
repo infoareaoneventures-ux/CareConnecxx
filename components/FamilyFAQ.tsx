@@ -74,7 +74,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          {
             id: 'bk-1',
             q: 'How do I interview a caregiver?',
-            a: 'We strongly encourage interviews before hiring. You can schedule and conduct secure video interviews directly through the Evia platform, making it easy to meet candidates without sharing personal phone numbers or Zoom links.'
+            a: 'We strongly encourage interviews before hiring. Schedule an interview from any caregiver profile, or just text Evia to set up a time. Both you and the caregiver receive a Google Meet link by text — it opens in any phone browser with no account or app needed — and a "Join video call" button appears on your interview card. Personal phone numbers are never shared between you and the caregiver; Evia coordinates everything.'
          },
          {
             id: 'bk-2',

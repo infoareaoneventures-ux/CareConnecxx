@@ -5,7 +5,7 @@
 
 ## Overview
 
-Evia is a SaaS platform that connects families with vetted caregivers for in-home senior care. Families subscribe, describe the care they need, get AI/ML-matched to caregivers, interview, book, and pay — all in one place. Caregivers onboard conversationally through **Evia** (an AI SMS assistant), get background-checked, and receive payouts via Stripe Connect. It is a React + TypeScript SPA on Firebase, with Stripe (payments), Checkr (background checks), Twilio Video (interviews), and a hybrid Claude/OpenAI agent layer.
+Evia is a SaaS platform that connects families with vetted caregivers for in-home senior care. Families subscribe, describe the care they need, get AI/ML-matched to caregivers, interview, book, and pay — all in one place. Caregivers onboard conversationally through **Evia** (an AI SMS assistant), get background-checked, and receive payouts via Stripe Connect. It is a React + TypeScript SPA on Firebase, with Stripe (payments), Checkr (background checks), Google Meet links for interviews (generated server-side, texted to both parties by Evia), and a hybrid Claude/OpenAI agent layer.
 
 ## Goals
 
@@ -20,7 +20,7 @@ Evia is a SaaS platform that connects families with vetted caregivers for in-hom
 1. Sign up → $29.95/mo Stripe subscription (`VITE_STRIPE_PRICE_ID`).
 2. Describe care need (job request, parsed by Evia/LLM).
 3. Get matched (AI + ML scoring) → browse caregivers in `FindCaregivers`.
-4. Interview (Twilio Video) → book → pay.
+4. Interview (Google Meet link coordinated by Evia) → book → pay.
 5. Ongoing: shift notes, care team, messaging, disputes.
 
 **Caregiver**
@@ -35,7 +35,7 @@ Evia is a SaaS platform that connects families with vetted caregivers for in-hom
 - Two roles (client, caregiver) on one Firebase Auth.
 - Evia AI agent for onboarding + Q&A + booking assistance over SMS/iMessage (LINQ).
 - AI + ML caregiver matching.
-- Stripe subscriptions + Stripe Connect payouts; Checkr background checks; Twilio Video interviews.
+- Stripe subscriptions + Stripe Connect payouts; Checkr background checks; Google Meet link interviews coordinated by Evia.
 
 ### Out of scope (today)
 - Native mobile apps (the product is a responsive SPA + SMS).

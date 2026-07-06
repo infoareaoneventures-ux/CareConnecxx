@@ -269,7 +269,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Scheduled interview record with meeting link/ICS (functions/src/agents/interviewAgent.ts). Client reads pending interviews (InterviewConfirmation.tsx); writes server-side only.",
+    notes: "Scheduled interview record with Google Meet link + ICS (callUrl/icsUrl/clientId/caregiverId; written by functions/src/agents/interviewAgent.ts, links via agents/interviewLinks.ts, enforced by triggers/interviewLinkTrigger.ts). Client reads pending interviews; writes server-side only.",
   },
   job_applications: {
     path: "job_applications",
@@ -332,7 +332,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Twilio video interview scheduling (services/videoService.ts; Evia via mcp/server.ts). Client/caregiver participant-scoped.",
+    notes: "Google Meet interview scheduling (web modal; Evia via mcp/server.ts schedule_interview). Link fields callUrl/icsUrl/linkDelivery/linkWork/remindersScheduledAt/requestNotifiedAt set via agents/interviewLinks.ts, enforced by triggers/interviewLinkTrigger.ts. Client/caregiver participant-scoped.",
   },
   web_onboarding_sessions: {
     path: "web_onboarding_sessions",

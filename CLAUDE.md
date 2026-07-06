@@ -14,7 +14,7 @@ CLAUDE.md is the canonical guide for *how* the code works (stack, conventions, E
 
 ## Project Overview
 
-Evia is a SaaS platform connecting families with caregivers. It's a React + TypeScript SPA backed by Firebase, with Stripe for payments, AI/ML-powered caregiver matching, Twilio Video for interviews, and Checkr for background checks.
+Evia is a SaaS platform connecting families with caregivers. It's a React + TypeScript SPA backed by Firebase, with Stripe for payments, AI/ML-powered caregiver matching, Google Meet links for interviews (generated server-side, texted to both parties by Evia), and Checkr for background checks.
 
 ### Naming (Evia rebrand, 2026-07-02)
 
@@ -54,6 +54,7 @@ npm --prefix functions ci && npm --prefix functions run build
   - Claude Sonnet (`claude-sonnet-4-6`): conversationalBooking, searchCaregivers, weekly digest, dispute analysis
 - **ML**: TensorFlow.js (`services/mlModel.ts`) — currently exercised only by tests; the in-app scoring service was removed in the 2026-07-02 cleanup
 - **SMS/voice**: Twilio server-side in `functions/` (the frontend `twilio-video` interview room was removed 2026-07-02)
+- **Interviews**: Google Meet links generated via the Meet REST API (`functions/src/agents/interviewLinks.ts`) and delivered over SMS by Evia to both family and caregiver — no in-app video room
 - **Background checks**: Checkr via Cloud Functions webhooks
 - **Error tracking**: Sentry (dsn via `VITE_SENTRY_DSN`)
 - **Validation**: Hand-rolled runtime validators in `utils/validation.ts` (`ValidationError` + format/normalization helpers; not Zod). Zod is used only server-side in `functions/`.

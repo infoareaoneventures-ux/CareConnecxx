@@ -133,7 +133,7 @@ We may share information with:
 **Payment Processors:** Stripe for payment processing
 **Background Check Services:** For caregiver verification
 **Cloud Service Providers:** Google Cloud (Firebase) for data storage
-**SMS/Communication Services:** Linq for SMS/iMessage messaging and notifications; Twilio for video interviews
+**SMS/Communication Services:** Linq for SMS/iMessage messaging and notifications; Google (Google Meet) for video interview links
 **Legal Authorities:** When required by law or court order
 
 ### 5.3 Business Associate Agreements

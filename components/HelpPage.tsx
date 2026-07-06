@@ -19,11 +19,11 @@ const familiesContent = [
     faqs: [
       {
         q: 'What is Evia?',
-        a: 'Evia is a premium marketplace connecting families directly with experienced, vetted senior caregivers. Unlike traditional agencies, our platform lets you browse real profiles, read verified reviews, conduct video interviews, and hire — all without costly agency fees.',
+        a: 'Evia is a premium marketplace connecting families directly with experienced, vetted senior caregivers. Unlike traditional agencies, our platform lets you browse real profiles, read verified reviews, interview caregivers over a video call, and hire — all without costly agency fees.',
       },
       {
         q: 'How do I find a caregiver for my senior family member?',
-        a: 'Create a free family account and complete our short care-needs intake. Our AI engine instantly surfaces caregivers matched to your location, schedule, and specific care requirements — whether that is companionship, dementia support, or driving assistance. You can then browse profiles, read reviews, and send a message or schedule a video interview directly.',
+        a: 'Create a free family account and complete our short care-needs intake. Our AI engine instantly surfaces caregivers matched to your location, schedule, and specific care requirements — whether that is companionship, dementia support, or driving assistance. You can then browse profiles, read reviews, and send a message — or schedule a video interview from a caregiver profile or simply by texting Evia. Once a time is set, both you and the caregiver receive a Google Meet link by text.',
       },
       {
         q: 'What types of senior care services are available?',
@@ -69,7 +69,7 @@ const familiesContent = [
     faqs: [
       {
         q: 'How do I interview a caregiver before hiring?',
-        a: 'Click "Schedule Interview" on any caregiver profile to book a secure, built-in video interview — no Zoom link or phone number exchange required. After the call, you can hire directly from the same screen.',
+        a: 'Click "Schedule Interview" on any caregiver profile, or simply text Evia to set up a time. Once the interview is booked, both you and the caregiver receive a Google Meet link by text — it opens in any phone browser, no Google account or app install needed — plus a calendar invite with a reminder. A "Join video call" button also appears on your interview card. Personal phone numbers are never exchanged; Evia coordinates everything. After the call, you can hire directly from the same screen.',
       },
       {
         q: 'What is a Micro-Visit?',
@@ -164,7 +164,7 @@ const caregiversContent = [
       },
       {
         q: 'What happens after I apply to a job?',
-        a: 'The family will receive your profile and can message you or schedule a video interview directly through the platform. If hired, both parties confirm the booking and it appears on your calendar.',
+        a: 'The family will receive your profile and can message you or schedule a video interview. When an interview is booked, Evia texts both you and the family a Google Meet link that opens in any phone browser — no phone numbers are exchanged. If hired, both parties confirm the booking and it appears on your calendar.',
       },
       {
         q: 'Can I decline a job offer?',

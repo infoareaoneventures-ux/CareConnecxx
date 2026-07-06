@@ -1477,7 +1477,9 @@ export const MCP_TOOLS: McpTool[] = [
     name: "schedule_interview",
     description:
       "Schedule a video interview between a client and a caregiver applicant. " +
-      "Notifies the caregiver and creates the interview record. Confirm date/time with client before calling.",
+      "Creates the interview record, generates the Google Meet link (joinable from any phone browser, no account needed), " +
+      "and texts the caregiver the link automatically. Returns callUrl — share it with the client in your reply. " +
+      "Confirm date/time with client before calling.",
     input_schema: {
       type: "object",
       properties: {
@@ -3659,18 +3661,15 @@ async function executeToolCall(
       case "get_pending_tasks": {
         if (!input.clientId) return toolError("INVALID_INPUT", "clientId is required");
         logAudit({ eventType: "health_data_accessed", userId: input.clientId as string, data: { source: "mcp:get_pending_tasks" } }).catch(() => {});
-        const [taskSnap, interviewSnap] = await Promise.all([
-          db.collection("agent_tasks")
-            .where("clientId", "==", input.clientId)
-            .where("status",   "in", ["awaiting_approval", "pending"])
-            .limit(5)
-            .get(),
-          db.collection("interviews")
-            .where("clientId", "==", input.clientId)
-            .where("status",   "==", "awaiting_hire_decision")
-            .limit(5)
-            .get(),
-        ]);
+        // Note: an earlier version also queried `interviews` for status
+        // "awaiting_hire_decision" — that status is written nowhere (the
+        // awaiting-decision state lives in agent_sessions.pendingInterviewOutcome),
+        // so the branch always returned empty and was removed.
+        const taskSnap = await db.collection("agent_tasks")
+          .where("clientId", "==", input.clientId)
+          .where("status",   "in", ["awaiting_approval", "pending"])
+          .limit(5)
+          .get();
         // Oldest first with age surfaced — a 3-day-old approval should lead
         // the reply, not sit wherever Firestore returned it.
         const withAge = (d: FirebaseFirestore.QueryDocumentSnapshot) => {
@@ -3683,14 +3682,13 @@ async function executeToolCall(
         };
         const byOldest = (a: { ageHours: number | null }, b: { ageHours: number | null }) =>
           (b.ageHours ?? -1) - (a.ageHours ?? -1);
-        const tasks      = taskSnap.docs.map(withAge).sort(byOldest);
-        const interviews = interviewSnap.docs.map(withAge).sort(byOldest);
-        const total      = tasks.length + interviews.length;
+        const tasks = taskSnap.docs.map(withAge).sort(byOldest);
+        const total = tasks.length;
         return {
           success: true,
           total,
           tasks,
-          interviews,
+          interviews: [], // kept for response-shape compatibility (see note above)
           summary: total === 0 ? "Nothing pending" : `${total} item(s) need your attention`,
         };
       }
@@ -6784,21 +6782,47 @@ async function executeToolCall(
       let q = db.collection("video_interviews").where(field, "==", id);
       if (liStatus) q = q.where("status", "==", liStatus);
       const liSnap = await q.limit(25).get();
-      const interviews = liSnap.docs
-        .map(d => {
+      // SMS-scheduled interviews live in the separate `interviews` collection
+      // (interviewAgent). Newer docs carry clientId/caregiverId, so the same
+      // scoped query works; legacy docs without those fields simply don't
+      // match — they predate the unified read and stay SMS-flow-only.
+      let sq = db.collection("interviews").where(field, "==", id);
+      if (liStatus) sq = sq.where("status", "==", liStatus);
+      const smsSnap = await sq.limit(25).get().catch(() => ({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] }));
+      const interviews = [
+        ...liSnap.docs.map(d => {
           const iv = d.data();
           return {
             interviewId:   d.id,
+            source:        "video_interviews",
             clientId:      iv.clientId ?? null,
             caregiverId:   iv.caregiverId ?? null,
+            caregiverName: iv.caregiverName ?? null,
             scheduledTime: iv.scheduledTime ?? null,
             interviewType: iv.interviewType ?? "video",
             status:        iv.status ?? "scheduled",
+            callUrl:       iv.callUrl ?? null,
             proposedTime:  iv.proposedTime ?? null,
             applicationId: iv.applicationId ?? null,
           };
-        })
-        .sort((a, b) => String(a.scheduledTime ?? "").localeCompare(String(b.scheduledTime ?? "")));
+        }),
+        ...smsSnap.docs.map(d => {
+          const iv = d.data();
+          return {
+            interviewId:   d.id,
+            source:        "interviews",
+            clientId:      iv.clientId ?? null,
+            caregiverId:   iv.caregiverId ?? null,
+            caregiverName: iv.caregiverName ?? null,
+            scheduledTime: iv.scheduledTime ?? null,
+            interviewType: "video",
+            status:        iv.status ?? "scheduled",
+            callUrl:       iv.callUrl ?? null,
+            proposedTime:  null,
+            applicationId: null,
+          };
+        }),
+      ].sort((a, b) => String(a.scheduledTime ?? "").localeCompare(String(b.scheduledTime ?? "")));
       return { success: true, interviews, count: interviews.length };
     }
 
@@ -6809,7 +6833,13 @@ async function executeToolCall(
       const ciCaregiverId = input.caregiverId as string | undefined;
       const ciReason      = input.reason as string | undefined;
       if (!ciInterviewId) return toolError("INVALID_INPUT", "interviewId is required");
-      const ivSnap = await db.collection("video_interviews").doc(ciInterviewId).get();
+      // Interviews live in two collections: video_interviews (web/MCP) and
+      // interviews (SMS flow). list_interviews returns both, so cancel must
+      // route to whichever holds the doc.
+      let ivSnap = await db.collection("video_interviews").doc(ciInterviewId).get();
+      if (!ivSnap.exists) {
+        ivSnap = await db.collection("interviews").doc(ciInterviewId).get();
+      }
       if (!ivSnap.exists) return toolError("NOT_FOUND", "Interview not found");
       const iv = ivSnap.data()!;
       // Either participant may cancel their own interview — nobody else's.
@@ -6840,11 +6870,14 @@ async function executeToolCall(
         }
       } else {
         const clientSess = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
-        if (!clientSess.empty) {
-          const cgData = (await db.collection("caregivers").doc(iv.caregiverId as string).get()).data();
-          const cgName = cgData?.name ?? "The caregiver";
+        // SMS-flow `interviews` docs carry clientPhone directly — use it when
+        // no uid-keyed session matches (legacy docs without clientId).
+        const clientPhone = !clientSess.empty ? clientSess.docs[0].id : (iv.clientPhone as string | undefined);
+        if (clientPhone) {
+          const cgData = iv.caregiverId ? (await db.collection("caregivers").doc(iv.caregiverId as string).get()).data() : undefined;
+          const cgName = cgData?.name ?? iv.caregiverName ?? "The caregiver";
           const { sendToPhone } = await import("../linq/client");
-          const sent = await sendToPhone(clientSess.docs[0].id, `${cgName} cancelled the interview scheduled for ${when}.${ciReason ? ` Reason: ${ciReason}` : ""} Want me to find another time?`)
+          const sent = await sendToPhone(clientPhone, `${cgName} cancelled the interview scheduled for ${when}.${ciReason ? ` Reason: ${ciReason}` : ""} Want me to find another time?`)
             .then(() => true)
             .catch(() => false);
           notification = sent ? { sent: true } : { sent: false, reason: "linq_send_failed" };

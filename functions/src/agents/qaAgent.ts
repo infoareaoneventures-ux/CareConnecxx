@@ -532,7 +532,7 @@ export function buildClientSystemPrompt(
     `  · complete_task — when you've finished the request (or are blocked), call this with a status (done/blocked/needs_user) and your reply message instead of a plain text reply. Never mark 'done' while an action is still awaiting the family's YES/NO confirmation.`,
     `  · respond_to_job_application — accept or reject a caregiver's application. Confirm accept before calling.`,
     `  · submit_interview_feedback — record fit level (strong/maybe/no) after a caregiver interview. If strong, a hire request is automatically created.`,
-    `  · schedule_interview — schedule a video/phone interview with a caregiver. Ask the family for their preferred date and time, then call. Notifies the caregiver automatically.`,
+    `  · schedule_interview — schedule a video interview with a caregiver. Ask the family for their preferred date and time, then call. Texts the caregiver the Google Meet link automatically and returns callUrl — ALWAYS include that link in your reply so the family can join from their phone (no app or account needed).`,
     `  · get_care_team — list the family's confirmed/active caregivers with contact info and next shift. Call when they ask "who's on my team", "my caregivers", or "who do I have".`,
     `  · get_upcoming_appointments — list ${seniorName}'s upcoming scheduled visits (dates, times, caregiver). Call when they ask "what's coming up", "who's visiting this week", or "what's on the calendar".`,
     `  · list_household_seniors — list everyone being cared for in this household. Use when a family manages care for more than one person and you need to know who's on file.`,

@@ -6,7 +6,7 @@ import { generateCaraMessage } from "../utils/caraMessage";
 
 import { getPermissions } from "./permissionsConversation";
 import { notifyAdminInterviewScheduled } from "../notifications";
-import { generateCallLink, generateICSFile, uploadICSToStorage } from "./interviewLinks";
+import { createInterviewCallAssets } from "./interviewLinks";
 import { scheduleTrigger } from "../triggers/triggerEngine";
 
 const db = admin.firestore();
@@ -350,50 +350,41 @@ export async function handleInterviewConfirm(
     return;
   }
 
+  // Resolve identity up front so the interview record is queryable by
+  // list_interviews (clientId/caregiverId) regardless of scheduling path
+  const requestSnap  = await db.collection("interview_requests").doc(pending.docId).get();
+  const caregiverId  = requestSnap.data()?.caregiverId as string | undefined;
+  const familySession = await db.collection("agent_sessions").doc(phone).get();
+  const clientId      = familySession.data()?.userId as string | undefined;
+
   // Create confirmed interview in Firestore
   const interviewRef = await db.collection("interviews").add({
     clientPhone:   phone,
     caregiverName: pending.caregiverName,
+    ...(caregiverId ? { caregiverId } : {}),
+    ...(clientId ? { clientId } : {}),
     scheduledTime: pending.mutualTime,
     status:        "scheduled",
     followUpSent:  false,
     createdAt:     new Date().toISOString(),
   });
 
-  // Get family session to determine iMessage vs other
-  const familySession = await db.collection("agent_sessions").doc(phone).get();
-  const isIMessage = (familySession.data()?.service ?? "") === "iMessage";
-
-  // Generate call link (FaceTime for iMessage, Google Meet otherwise)
+  // Generate Google Meet link + .ics via the shared builder (ops alert on failure)
   let callUrl = "";
+  let icsUrl  = "";
   try {
-    callUrl = await generateCallLink({
-      isIMessage,
+    const assets = await createInterviewCallAssets({
+      title:           `Care Interview — ${pending.caregiverName}`,
       startTime:       pending.mutualTime,
       durationMinutes: 30,
-      title:           `Care Interview — ${pending.caregiverName}`,
+      interviewId:     interviewRef.id,
     });
-    await interviewRef.update({ callUrl });
-  } catch (err) {
-    console.error("Call link generation error:", err);
-  }
-
-  // Generate and upload .ics calendar invite
-  let icsUrl = "";
-  if (callUrl) {
-    try {
-      const icsContent = generateICSFile({
-        title:           `Care Interview — ${pending.caregiverName}`,
-        startTime:       pending.mutualTime,
-        durationMinutes: 30,
-        description:     `${isIMessage ? "FaceTime" : "Google Meet"} interview with ${pending.caregiverName}`,
-        callUrl,
-        uid:             `cara-${interviewRef.id}@cara.com`,
-      });
-      icsUrl = await uploadICSToStorage(icsContent, `interviews/${interviewRef.id}.ics`);
-    } catch (err) {
-      console.error("ICS upload error:", err);
-    }
+    callUrl = assets.callUrl;
+    icsUrl  = assets.icsUrl;
+    await interviewRef.update({ callUrl, ...(icsUrl ? { icsUrl } : {}) });
+  } catch {
+    // Alert already raised inside createInterviewCallAssets; never log the URL
+    console.error(`Call link generation error for interview ${interviewRef.id}`);
   }
 
   // Update request doc
@@ -424,22 +415,19 @@ export async function handleInterviewConfirm(
   }
   const interviewConfirmFamilyMsg = await generateCaraMessage({
     audience: "family",
-    context:  `The interview with ${pending.caregiverName} is now officially scheduled for ${pending.formatted}. Tell the family to tap the ${isIMessage ? "FaceTime" : "Google Meet"} link above to join, and let them know a calendar invite was included with a 30-minute reminder.`,
-    fallback: `Interview set for ${pending.formatted}.\n\nTap the ${isIMessage ? "FaceTime" : "Meet"} link above to join. Calendar invite included, with a 30-minute reminder.`,
+    context:  `The interview with ${pending.caregiverName} is now officially scheduled for ${pending.formatted}. Tell the family to tap the Google Meet link above to join, and let them know a calendar invite was included with a 30-minute reminder.`,
+    fallback: `Interview set for ${pending.formatted}.\n\nTap the Meet link above to join. Calendar invite included, with a 30-minute reminder.`,
     maxTokens: 80,
   });
   await sendMessage(chatId, interviewConfirmFamilyMsg);
 
   // Text the caregiver
-  const reqSnap = await db.collection("interview_requests").doc(pending.docId).get();
-  const caregiverId = reqSnap.data()?.caregiverId as string | undefined;
   let cgPhone: string | undefined;
   if (caregiverId) {
     const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
     cgPhone = cgSnap.data()?.phone as string | undefined;
     if (cgPhone) {
-      const cgSession  = await getOrCreateSession(cgPhone);
-      const cgIsIMessa = (cgSession as any).service === "iMessage";
+      const cgSession = await getOrCreateSession(cgPhone);
       if (callUrl) {
         await sendMessage(cgSession.chatId, { parts: [{ type: "link", value: callUrl }] } as any);
       }
@@ -448,8 +436,8 @@ export async function handleInterviewConfirm(
       }
       const interviewConfirmCaregiverMsg = await generateCaraMessage({
         audience: "caregiver",
-        context:  `The interview has been confirmed for ${pending.formatted}. Tell them the ${cgIsIMessa ? "FaceTime" : "Google Meet"} link is above, a calendar invite was included with a 30-minute reminder, and to reply RESCHEDULE if they need to change the time.`,
-        fallback: `Interview confirmed. ${pending.formatted}.\n\n${cgIsIMessa ? "FaceTime" : "Meet"} link above. Calendar invite included, with a 30-minute reminder.\n\nReply RESCHEDULE if you need to change the time.`,
+        context:  `The interview has been confirmed for ${pending.formatted}. Tell them the Google Meet link is above, a calendar invite was included with a 30-minute reminder, and to reply RESCHEDULE if they need to change the time.`,
+        fallback: `Interview confirmed. ${pending.formatted}.\n\nMeet link above. Calendar invite included, with a 30-minute reminder.\n\nReply RESCHEDULE if you need to change the time.`,
         maxTokens: 80,
       });
       await sendMessage(cgSession.chatId, interviewConfirmCaregiverMsg);

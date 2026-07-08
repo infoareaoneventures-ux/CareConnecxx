@@ -122,6 +122,17 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).toContain("never send a numbered list");
   });
 
+  it("asks the optional profile-parity extras once, combined, without holding up signup (2g)", () => {
+    const d = buildCaregiverOnboardingDirective({}).toLowerCase();
+    expect(d).toContain("profile extras");
+    expect(d).toContain("gender");
+    expect(d).toContain("languages");
+    expect(d).toContain("drive");
+    expect(d).toContain("optional");
+    // one combined question, never a form
+    expect(d).toContain("one short, casual question");
+  });
+
   it("user-facing brand is Evia (never Cara) in the directive prose", () => {
     const d = buildCaregiverOnboardingDirective({});
     expect(d).not.toMatch(/\bCara\b/);

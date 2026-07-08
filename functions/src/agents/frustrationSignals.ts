@@ -60,6 +60,24 @@ const SELF_REPEAT_THRESHOLD = 0.8; // stricter than the user-side 0.72: Evia
 // "-" in the real "Got it - I have context…" summary line).
 const SYNTHETIC_SUMMARY_PREFIX = "got it i have context";
 
+// Sentence-level repeated-QUESTION detection (2026-07-08). A verbatim-repeated
+// question sentence can hide behind a different intro sentence ("Got it. <same
+// question>") and stay under the whole-message Jaccard threshold. Compare
+// question sentences directly, near-verbatim.
+const SELF_REPEAT_SENTENCE_THRESHOLD = 0.9;
+const MIN_QUESTION_CHARS = 12; // normalized; drops trivial "ok?" fragments
+
+// Pull the QUESTION sentences out of a raw assistant message (normalized for
+// comparison). Split on the RAW text first — normalize() strips "?", so the
+// split must happen before normalizing to know which sentences are questions.
+function extractQuestionSentences(raw: string): string[] {
+  const sentences = raw.match(/[^.!?]*[.!?]+/g) ?? [];
+  return sentences
+    .filter(s => s.includes("?"))
+    .map(s => normalize(s))
+    .filter(s => s.length >= MIN_QUESTION_CHARS);
+}
+
 export function detectAgentSelfRepeat(
   candidate: string,
   recentHistory?: Array<{ role: "user" | "assistant"; content: string }>,
@@ -80,6 +98,24 @@ export function detectAgentSelfRepeat(
       return { repeated: true, matchedPrior: prev.raw, score };
     }
   }
+
+  // Sentence-level question repeat: catch "Got it. <same question already asked>"
+  // where the whole-message similarity is diluted by a different intro sentence.
+  const candidateQuestions = extractQuestionSentences(candidate);
+  if (candidateQuestions.length > 0) {
+    for (const prev of recentAssistant) {
+      const priorQuestions = extractQuestionSentences(prev.raw);
+      for (const cq of candidateQuestions) {
+        for (const pq of priorQuestions) {
+          const s = pq === cq ? 1 : similarity(pq, cq);
+          if (s >= SELF_REPEAT_SENTENCE_THRESHOLD) {
+            return { repeated: true, matchedPrior: prev.raw, score: s };
+          }
+        }
+      }
+    }
+  }
+
   return { repeated: false };
 }
 

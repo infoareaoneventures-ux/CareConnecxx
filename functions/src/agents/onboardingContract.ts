@@ -124,6 +124,37 @@ export function isAllowedField(role: OnboardingRole, fieldName: string): boolean
   return allowedFieldsForRole(role).has(fieldName);
 }
 
+// The canonical jobType enum the downstream world (caregiver doc, matching,
+// deriveJobDataFromIntake) expects. Mirrors JOB_TYPES in caregiverFieldAbsorber.ts
+// and the scripted parser's clamp in onboardingSteps.caregiver.ts.
+export const CAREGIVER_JOB_TYPES: ReadonlySet<string> = new Set([
+  "occasional", "part_time", "full_time",
+]);
+
+// Free-form spellings the model may hand to save_onboarding_field (it saves the
+// raw string it extracted — "Full time", "FT", "part-time"). Keyed on the
+// space-normalized, lowercased form.
+const JOB_TYPE_CANON: Record<string, string> = {
+  "full time": "full_time", "fulltime": "full_time", "ft": "full_time",
+  "part time": "part_time", "parttime": "part_time", "pt": "part_time",
+  "occasional": "occasional", "occasionally": "occasional",
+  "as needed": "occasional", "prn": "occasional", "per diem": "occasional",
+};
+
+// Canonicalize an already-extracted enum-ish field value before it is persisted
+// ("Full time" → "full_time"). NOT intent parsing of free-form user text — it
+// canonicalizes a constrained value the model already resolved into a field, the
+// same class as the absorber's JOB_TYPES validation and email-format regex (both
+// allowed by the LLM-parsing rule). Unknown non-empty values pass through
+// unchanged so downstream data is never silently dropped; the caller logs them.
+export function normalizeOnboardingFieldValue(fieldName: string, value: unknown): unknown {
+  if (fieldName === "jobType" && typeof value === "string") {
+    const key = value.trim().toLowerCase().replace(/[\s_-]+/g, " ").trim();
+    return JOB_TYPE_CANON[key] ?? value;
+  }
+  return value;
+}
+
 // Required fields still missing from the collected data, in flow order.
 export function missingRequiredFields(
   role: OnboardingRole,

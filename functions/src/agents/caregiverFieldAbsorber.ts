@@ -51,7 +51,10 @@ export async function absorbCaregiverFields(
       `"availability":{"days":["Monday"],"hours":"9am-5pm"},` +
       `"jobType":"occasional | part_time | full_time",` +
       `"hourlyRate":number,` +
-      `"email":"email address"}. ` +
+      `"email":"email address",` +
+      `"gender":"how the caregiver identifies, only if they state it (e.g. female, male, non-binary)",` +
+      `"languages":["language they speak, e.g. 'Spanish'"],` +
+      `"canDrive":true or false — only if they clearly say whether they drive}. ` +
       "Be conservative — only include a field if it is unambiguously stated. Reply with raw JSON, no markdown.",
     text,
   ).catch(() => "{}");
@@ -89,6 +92,14 @@ export async function absorbCaregiverFields(
   if (typeof parsed.email === "string" && EMAIL_RE.test(parsed.email.trim().toLowerCase())) {
     candidates.email = parsed.email.trim().toLowerCase();
   }
+  // Optional profile-parity extras (2g). Never required — captured only when the
+  // caregiver clearly volunteers them so families can filter.
+  if (typeof parsed.gender === "string" && parsed.gender.trim()) {
+    candidates.gender = parsed.gender.trim();
+  }
+  const languages = cleanStringArray(parsed.languages);
+  if (languages.length) candidates.languages = languages;
+  if (typeof parsed.canDrive === "boolean") candidates.canDrive = parsed.canDrive;
 
   // Only return fields that are actually new (never touch a model-saved value).
   const out: Record<string, unknown> = {};

@@ -65,4 +65,24 @@ describe("absorbCaregiverFields", () => {
     const out = await absorbCaregiverFields("msg", {});
     expect(out).toEqual({ name: "Maria" });
   });
+
+  it("captures the optional profile-parity extras when volunteered (2g)", async () => {
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({
+      gender: "female", languages: ["English", "Spanish"], canDrive: true,
+    }));
+    const out = await absorbCaregiverFields("I'm a woman, I speak English and Spanish, and yes I drive", {});
+    expect(out).toEqual({ gender: "female", languages: ["English", "Spanish"], canDrive: true });
+  });
+
+  it("captures canDrive:false (a definite 'no', not a skip)", async () => {
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ canDrive: false }));
+    const out = await absorbCaregiverFields("no, I don't drive", {});
+    expect(out).toEqual({ canDrive: false });
+  });
+
+  it("omits profile extras that aren't clearly stated", async () => {
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ gender: "  ", languages: [], canDrive: "maybe" }));
+    const out = await absorbCaregiverFields("msg", {});
+    expect(out).toEqual({});
+  });
 });

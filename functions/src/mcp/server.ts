@@ -6211,14 +6211,21 @@ async function executeToolCall(
       if (typeof fieldName !== "string" || !fieldName.trim()) {
         return toolError("INVALID_INPUT", "fieldName is required");
       }
-      const { isAllowedField, missingRequiredFields } = await import("../agents/onboardingContract");
+      const { isAllowedField, missingRequiredFields, normalizeOnboardingFieldValue, CAREGIVER_JOB_TYPES } = await import("../agents/onboardingContract");
       if (!isAllowedField(role, fieldName)) {
         return toolError("INVALID_INPUT", `'${fieldName}' is not a collectable onboarding field for a ${role}.`);
       }
       if (fieldValue === undefined || fieldValue === null || (fieldValue === "" && !(role === "caregiver" && fieldName === "bio"))) {
         return toolError("INVALID_INPUT", "fieldValue is required");
       }
-      let onboardingDataPatch: Record<string, unknown> = { [fieldName]: fieldValue };
+      // Canonicalize enum-ish values the model may save in free-form casing
+      // ("Full time" → "full_time"); otherwise the raw string is copied onto the
+      // caregiver doc where matching expects occasional|part_time|full_time.
+      const normalizedValue = normalizeOnboardingFieldValue(fieldName, fieldValue);
+      if (fieldName === "jobType" && typeof normalizedValue === "string" && !CAREGIVER_JOB_TYPES.has(normalizedValue)) {
+        console.info("save_onboarding_field: jobType value not canonical after normalization — keeping raw", { phone, raw: fieldValue });
+      }
+      let onboardingDataPatch: Record<string, unknown> = { [fieldName]: normalizedValue };
       if (role === "caregiver" && fieldName === "bio" && typeof fieldValue === "string") {
         try {
           const { quickComplete } = await import("../utils/openaiClient");

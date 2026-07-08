@@ -12,6 +12,8 @@ import {
   firstGateStep,
   isOnboardingTool,
   ONBOARDING_TOOL_NAMES,
+  normalizeOnboardingFieldValue,
+  CAREGIVER_JOB_TYPES,
 } from "../onboardingContract";
 
 describe("onboardingContract", () => {
@@ -98,6 +100,33 @@ describe("onboardingContract", () => {
       expect(isOnboardingTool("complete_task")).toBe(true);
       expect(isOnboardingTool("cancel_appointment")).toBe(false);
       expect(isOnboardingTool("get_care_plan")).toBe(false);
+    });
+  });
+
+  describe("normalizeOnboardingFieldValue (Fix 3 — enum canonicalization)", () => {
+    it("canonicalizes free-form jobType spellings to the enum", () => {
+      expect(normalizeOnboardingFieldValue("jobType", "Full time")).toBe("full_time");
+      expect(normalizeOnboardingFieldValue("jobType", "full-time")).toBe("full_time");
+      expect(normalizeOnboardingFieldValue("jobType", "FT")).toBe("full_time");
+      expect(normalizeOnboardingFieldValue("jobType", "Part Time")).toBe("part_time");
+      expect(normalizeOnboardingFieldValue("jobType", "part-time")).toBe("part_time");
+      expect(normalizeOnboardingFieldValue("jobType", "occasional")).toBe("occasional");
+      expect(normalizeOnboardingFieldValue("jobType", "as needed")).toBe("occasional");
+    });
+
+    it("passes already-canonical values through unchanged", () => {
+      for (const v of CAREGIVER_JOB_TYPES) {
+        expect(normalizeOnboardingFieldValue("jobType", v)).toBe(v);
+      }
+    });
+
+    it("keeps an unrecognized jobType value raw (never silently dropped)", () => {
+      expect(normalizeOnboardingFieldValue("jobType", "weekends only")).toBe("weekends only");
+    });
+
+    it("leaves non-jobType fields and non-string values untouched", () => {
+      expect(normalizeOnboardingFieldValue("city", "Full time")).toBe("Full time");
+      expect(normalizeOnboardingFieldValue("jobType", 40)).toBe(40);
     });
   });
 

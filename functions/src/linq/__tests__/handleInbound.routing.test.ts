@@ -307,9 +307,11 @@ vi.mock("../../utils/voiceTranscription", () => ({
   extractVoiceMemoPart: vi.fn(() => null),
   transcribeVoiceMemo:  vi.fn(async () => ""),
 }));
+const extractLocationPart = vi.fn((..._a: any[]): any => null);
+const reverseGeocode      = vi.fn(async (..._a: any[]): Promise<any> => null);
 vi.mock("../../utils/locationShare", () => ({
-  extractLocationPart: vi.fn(() => null),
-  reverseGeocode:      vi.fn(async () => null),
+  extractLocationPart: (...a: any[]) => extractLocationPart(...a),
+  reverseGeocode:      (...a: any[]) => reverseGeocode(...a),
 }));
 vi.mock("../../utils/mediaIntake", () => ({
   extractMediaPart:  vi.fn(() => null),
@@ -371,6 +373,8 @@ beforeEach(() => {
   parseWithClaude.mockResolvedValue("none");
   handleToolCall.mockResolvedValue({ success: true, notification: { sent: true } });
   sendMessage.mockResolvedValue({ message_id: "m1" });
+  extractLocationPart.mockReturnValue(null);
+  reverseGeocode.mockResolvedValue(null);
 });
 
 describe("pre-checks", () => {
@@ -775,17 +779,22 @@ describe("onboarding agent-loop flag routing", () => {
   // never touched/double-written by the net.
   it("persistence net: model saves ONE of three fields present in the text → net persists the rest, none re-asked next turn", async () => {
     process.env.ONBOARDING_AGENT_LOOP = "client";
-    // Simulate: session started empty, model called save_onboarding_field for
-    // firstName only during runQaAgent, so the post-turn read already has it.
+    // Front-loaded "I'm Sarah, my mom Dorothy is 82". With Fix 1 the PRE-turn
+    // absorber recovers the two fields the model skips (seniorName/age) and merges
+    // them BEFORE the model turn; the model then saves firstName via
+    // save_onboarding_field (a MERGE write — the mock must merge onboardingData,
+    // not overwrite it, or it would clobber the pre-turn recovery). Either way the
+    // final data has all three and nothing is re-asked next turn.
     seedSession({ onboardingStep: "client_ask_name", onboardingData: {} });
     runQaAgent.mockImplementationOnce(async (..._a: any[]) => {
+      const prev = hoisted.docState.get(`agent_sessions/${PHONE}`);
       hoisted.docState.set(`agent_sessions/${PHONE}`, {
-        ...hoisted.docState.get(`agent_sessions/${PHONE}`),
-        onboardingData: { firstName: "Sarah" },
+        ...prev,
+        onboardingData: { ...(prev?.onboardingData ?? {}), firstName: "Sarah" },
       });
       return "qa reply";
     });
-    // The net's absorbClientFields call fills in the two fields the model skipped.
+    // The absorber (pre-turn Fix 1) fills in the two fields the model skipped.
     absorbClientFields.mockResolvedValueOnce({ seniorName: "Dorothy", age: 82 });
 
     await handleInbound(makeEvent("I'm Sarah, my mom Dorothy is 82"));
@@ -793,7 +802,7 @@ describe("onboarding agent-loop flag routing", () => {
     expect(runQaAgent).toHaveBeenCalledTimes(1);
     expect(absorbClientFields).toHaveBeenCalled();
     const finalData = hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData;
-    // The model-saved field is untouched AND the net-recovered fields are present.
+    // The model-saved field is untouched AND the recovered fields are present.
     expect(finalData).toMatchObject({ firstName: "Sarah", seniorName: "Dorothy", age: 82 });
   });
 
@@ -841,6 +850,36 @@ describe("onboarding agent-loop flag routing", () => {
     await handleInbound(makeEvent("Sarah"));
     expect(runQaAgent).not.toHaveBeenCalled();
     expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+  });
+
+  // 2a: a location PIN at a collection step is reverse-geocoded to text and fed to
+  // the loop as a normal text turn (works at ANY collection step). The scripted
+  // location handler is not involved.
+  it("location pin at a collection step is converted to text and routed to the loop", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_needs", onboardingData: { firstName: "Sarah" } });
+    extractLocationPart.mockReturnValue({ lat: 37.33, lng: -121.88 });
+    reverseGeocode.mockResolvedValue({ city: "San Jose", zipCode: "95112", region: "CA" });
+
+    await handleInbound(makeEvent("", { parts: [{ type: "location", lat: 37.33, lng: -121.88 }] }));
+
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(String(runQaAgent.mock.calls[0][0].text)).toContain("San Jose");
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  // 2c: a truly empty turn (no text, no parts) at a collection step gets a
+  // deterministic "type it out" nudge — the loop never runs on nothing and the
+  // scripted runner is not called.
+  it("empty turn at a collection step gets a type-it-out nudge, not the loop", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_needs", onboardingData: { firstName: "Sarah" } });
+
+    await handleInbound(makeEvent("", { parts: [] }));
+
+    expect(runQaAgent).not.toHaveBeenCalled();
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("couldn't read that"));
   });
 });
 

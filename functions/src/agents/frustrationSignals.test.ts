@@ -103,4 +103,24 @@ describe("detectAgentSelfRepeat (ch10 broken-record)", () => {
   it("does not flag very short replies (below the min-length floor)", () => {
     expect(detectAgentSelfRepeat("Sounds good!", [{ role: "assistant", content: "Sounds good!" }]).repeated).toBe(false);
   });
+
+  // Regression: the caregiver job-type double-ask (founder test, 2026-07-08). The
+  // repeated QUESTION sentence is identical, but a different intro sentence dilutes
+  // the whole-message Jaccard below 0.8 — the sentence-level check must catch it.
+  it("catches an identical question sentence hidden behind a different intro (job-type double-ask)", () => {
+    const prior = "Morning weekday availability is great. Are you looking for occasional, part-time, or full-time work?";
+    const candidate = "Got it. Are you looking for occasional, part-time, or full-time work?";
+    const r = detectAgentSelfRepeat(candidate, [
+      { role: "user", content: "Full time" },
+      { role: "assistant", content: prior },
+    ]);
+    expect(r.repeated).toBe(true);
+    expect(r.matchedPrior).toBe(prior);
+  });
+
+  it("does not flag two DIFFERENT question sentences that share an intro word", () => {
+    const prior = "Got it. What's your city or ZIP so I can check we cover your area?";
+    const candidate = "Got it. What hourly rate are you hoping for?";
+    expect(detectAgentSelfRepeat(candidate, [{ role: "assistant", content: prior }]).repeated).toBe(false);
+  });
 });

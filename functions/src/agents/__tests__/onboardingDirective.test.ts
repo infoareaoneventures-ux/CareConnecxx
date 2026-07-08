@@ -57,6 +57,13 @@ describe("buildOnboardingDirective", () => {
     expect(d).toContain("never ask who they're caring for");
   });
 
+  it("handles multi-recipient households: first person as senior, everyone else in additionalRecipients", () => {
+    const d = buildOnboardingDirective("client", {}).toLowerCase();
+    expect(d).toContain("multiple loved ones");
+    expect(d).toContain("additionalrecipients");
+    expect(d).toContain("more than one");
+  });
+
   it("contains no chatbot phrasing except inside a 'never say' prohibition", () => {
     const lines = buildOnboardingDirective("client", {}).toLowerCase().split("\n");
     for (const phrase of BANNED) {

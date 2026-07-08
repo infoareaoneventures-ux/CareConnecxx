@@ -1810,6 +1810,43 @@ const handleInboundInner = traceable(
     // "client" or "caregiver" AND that role is named in ONBOARDING_AGENT_LOOP).
     const loopRole: OnboardingRole = session.userType === "caregiver" ? "caregiver" : "client";
 
+    // 2a (loop-only): a location PIN at a collection step is handled by the loop,
+    // not the bespoke scripted location handler. Reverse-geocode it to a text line
+    // ("San Jose, 95112") BEFORE the routing predicate and treat the turn as text,
+    // so the pre-turn service-area gate + absorber consume it — this works at ANY
+    // collection step, not just the location step, so it's strictly better than
+    // the scripted path. Only convert when the turn would actually route to the
+    // loop (role enabled, in cohort, collection step); otherwise the scripted
+    // fallback handlers still need the raw pin, so it is left untouched.
+    if (inboundLocation && text.trim() === "" && shouldRouteOnboardingToLoop({
+      role: session.userType, step, hasText: true, hasMedia: false, hasLocation: false, phone,
+    })) {
+      const { lat, lng } = inboundLocation;
+      const rev = await reverseGeocode(lat, lng).catch(() => null);
+      text = rev && (rev.city || rev.zipCode)
+        ? [rev.city, rev.zipCode].filter(Boolean).join(", ")
+        : `[The user shared their location: ${lat}, ${lng}]`;
+      inboundLocation = null; // now a text turn — hasLocation is false below
+      console.info("webhooks: converted onboarding location pin to text for loop", { phone, step });
+    }
+
+    // 2c (loop-only): a truly empty turn at a collection step — no text, no media,
+    // no location pin, no inbound parts. Stickers and failed voice transcriptions
+    // are already caught by the isMediaOnly nudge above (they carry parts) and
+    // voice memos are transcribed to text pre-routing, so this only covers the
+    // residual empty-webhook case. There is no field to extract; nudge to type it.
+    // After Phase 4 removes the scripted collection handlers this is the sole
+    // handler for the case (mirrored by handleOnboardingStep's defensive default).
+    // Gated to the loop-routable case so media/location turns and the scripted
+    // fallback stay untouched.
+    if (text.trim() === "" && !inboundMedia && !inboundLocation && shouldRouteOnboardingToLoop({
+      role: session.userType, step, hasText: true, hasMedia: false, hasLocation: false, phone,
+    })) {
+      await stopTyping(chatId).catch(() => {});
+      await sendMessage(chatId, "Sorry — I couldn't read that. Mind typing it out for me?");
+      return;
+    }
+
     if (shouldRouteOnboardingToLoop({
       role:        session.userType,
       step,
@@ -1823,25 +1860,44 @@ const handleInboundInner = traceable(
       // (persistence net, cursor update, Zep push) must NEVER fall through to
       // handleOnboardingStep, which would send a second, stale-context reply
       // on top of the one the loop already sent.
-      // ── Pre-turn service-area gate (bug-audit §0.2) ─────────────────────────
-      // When the current step is the location step, evaluate the service area
-      // BEFORE the model turn. Otherwise the model freely composes "Great, San
-      // Francisco works — next question…" and sends it, and only the post-turn
-      // persistence-net gate below fires the decline — the caregiver sees a
+      // ── Pre-turn field absorption (Fix 1, 2026-07-08) ───────────────────────
+      // Run the role-matched deterministic extractor ONCE per turn, BEFORE the
+      // model turn, and merge what it finds into session.onboardingData. The
+      // onboarding directive is built from that in-memory object
+      // (qaAgent.ts:1730-1733), so even when the model never calls
+      // save_onboarding_field the just-answered field already shows as
+      // "✓ already have it" and the reply advances to the NEXT item instead of
+      // re-asking it (the job-type double-ask). This is the same pre-turn
+      // technique the service-area gate below already relied on — now a single
+      // absorber run feeds both the gate and the session merge.
+      //
+      // Safe by construction: the absorbers return {} unless a field is
+      // unambiguous and only ever return not-already-filled fields, so a mid-flow
+      // question produces no spurious save and a model-saved field is never
+      // double-written. The post-turn persistence net (below) stays as the
+      // backstop for anything this pass missed (incl. step-scoped bio capture).
+      const preData = (session.onboardingData ?? {}) as Record<string, unknown>;
+      const preAbsorbed: Record<string, unknown> = text.trim() !== ""
+        ? (loopRole === "caregiver"
+            ? await absorbCaregiverFields(text, preData).catch(() => ({}))
+            : await absorbClientFields(text, preData).catch(() => ({})))
+        : {};
+
+      // Pre-turn service-area gate (bug-audit §0.2): on the location step,
+      // evaluate the service area BEFORE the model turn. Otherwise the model
+      // freely composes "Great, San Francisco works — next question…" and sends
+      // it, and only the post-turn gate fires the decline — the user sees a
       // contradictory pair ("SF works" then "we're not in your area"). Gating
-      // first means the model never acknowledges an out-of-area location.
+      // first means the model never acknowledges an out-of-area location. Reuses
+      // the single absorber run above.
       if ((step === "caregiver_ask_location" || step === "client_ask_location") && text.trim() !== "") {
-        const preData = (session.onboardingData ?? {}) as Record<string, unknown>;
-        const locAbsorbed: Record<string, unknown> = loopRole === "caregiver"
-          ? await absorbCaregiverFields(text, preData).catch(() => ({}))
-          : await absorbClientFields(text, preData).catch(() => ({}));
-        const gateCity = (locAbsorbed.city ?? preData.city) as string | undefined;
-        const gateZip  = (locAbsorbed.zipCode ?? preData.zipCode) as string | undefined;
+        const gateCity = (preAbsorbed.city ?? preData.city) as string | undefined;
+        const gateZip  = (preAbsorbed.zipCode ?? preData.zipCode) as string | undefined;
         if (gateCity || gateZip) {
           const { evaluateServiceArea } = await import("../config/serviceArea");
           const sa = evaluateServiceArea({ city: gateCity as string, zip: (gateZip as string) || (gateCity as string) });
           if (sa === "out") {
-            const mergedData = { ...preData, ...locAbsorbed };
+            const mergedData = { ...preData, ...preAbsorbed };
             const { parkOutOfArea } = await import("../agents/serviceAreaGate");
             await parkOutOfArea({
               phone, role: loopRole,
@@ -1853,9 +1909,9 @@ const handleInboundInner = traceable(
             await pushOnboardingStepToZep(step);
             return;
           }
-          if (sa === "need_zip" && locAbsorbed.city && !gateZip) {
+          if (sa === "need_zip" && preAbsorbed.city && !gateZip) {
             // Persist the city so the follow-up ZIP reply (same step) has context.
-            await db.collection("agent_sessions").doc(phone).set({ onboardingData: locAbsorbed }, { merge: true });
+            await db.collection("agent_sessions").doc(phone).set({ onboardingData: preAbsorbed }, { merge: true });
             const { askForZipMessage } = await import("../agents/serviceAreaGate");
             await sendMessage(chatId, askForZipMessage());
             await pushOnboardingStepToZep(step);
@@ -1863,6 +1919,17 @@ const handleInboundInner = traceable(
           }
           // sa === "in": fall through to the normal loop turn.
         }
+      }
+
+      // Persist the pre-turn absorption so the directive sees just-answered
+      // fields. Merge to Firestore AND mutate the in-memory session (the directive
+      // reads session.onboardingData). Skipped when nothing new was extracted so a
+      // pure question-turn writes nothing.
+      if (Object.keys(preAbsorbed).length > 0) {
+        await db.collection("agent_sessions").doc(phone)
+          .set({ onboardingData: preAbsorbed }, { merge: true });
+        (session as any).onboardingData = { ...preData, ...preAbsorbed };
+        console.info("webhooks: pre-turn absorber captured fields before loop", { phone, fields: Object.keys(preAbsorbed) });
       }
 
       let loopReplied = false;

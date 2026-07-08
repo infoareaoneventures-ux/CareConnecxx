@@ -2095,11 +2095,19 @@ async function handleCaregiverSendPhoto(phone: string, chatId: string, session: 
 
   await updateSession(phone, { onboardingStep: "caregiver_awaiting_photo" });
   const d = session.onboardingData ?? {};
-  await sendMessage(chatId,
+  // Send the upload URL INLINE as plain text (one structured text part), NOT as a
+  // standalone `link` part. A link part renders as a rich preview CARD that needs
+  // fetchable OG metadata; the token-gated /upload/photo page has none (unlike the
+  // /p/ profile links, which got a dedicated OG rewrite, and Stripe checkout URLs,
+  // which carry their own), so the card arrived BLANK — "message arrives but no
+  // link". A plain-text https URL is tappable on both iMessage and SMS regardless
+  // of OG, and a structured text part bypasses sendMessage's URL→link-card splitter
+  // (only plain-string sends are split). The JWT token is base64url with dots, so
+  // redactPii (SSN/card/email formats) never mangles it.
+  await sendMessage(chatId, { parts: [{ type: "text", value:
     `Almost there${d.name ? `, ${d.name}` : ""}. One more thing — families want to see who they're trusting.\n\n` +
-    `Tap to add your profile photo:`
-  );
-  await sendMessage(chatId, { parts: [{ type: "link", value: photoUrl }] });
+    `Tap to add your profile photo:\n${photoUrl}`,
+  }] });
 }
 
 async function handleCaregiverSendDocuments(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -2107,8 +2115,12 @@ async function handleCaregiverSendDocuments(phone: string, chatId: string, sessi
   const docUrl = `${APP_URL}/upload/document?t=${token}`;
 
   await updateSession(phone, { onboardingStep: "caregiver_awaiting_documents" });
-  await sendMessage(chatId, "Do you have certifications to upload? (CNA license, CPR card, etc.)\n\nTap to upload, or reply SKIP:");
-  await sendMessage(chatId, { parts: [{ type: "link", value: docUrl }] });
+  // Inline URL as text, same reason as the photo gate: the token-gated
+  // /upload/document page has no OG metadata, so a link-part card renders blank.
+  await sendMessage(chatId, { parts: [{ type: "text", value:
+    "Do you have certifications to upload? (CNA license, CPR card, etc.)\n\n" +
+    `Tap to upload, or reply SKIP:\n${docUrl}`,
+  }] });
 }
 
 // ── Inbound media during onboarding (texted photo / document) ─────────────────
@@ -2665,7 +2677,17 @@ export async function sendOnboardingLink(
       throw new Error(`sendOnboardingLink: unknown linkType ${linkType as string}`);
   }
 
-  await sendMessage(chatId, { parts: [{ type: "link", value: url }] });
+  // Token-gated /upload pages have no OG metadata, so a `link` part renders as a
+  // BLANK preview card (the "message arrives but no link" bug). Send those inline
+  // as plain text — tappable on iMessage and SMS regardless of OG. External
+  // provider URLs (Stripe checkout/Connect, Checkr) carry their own OG and render
+  // as proper cards, so they stay `link` parts.
+  const inlineAsText = linkType === "caregiver_photo" || linkType === "caregiver_documents";
+  if (inlineAsText) {
+    await sendMessage(chatId, { parts: [{ type: "text", value: `Tap to upload:\n${url}` }] });
+  } else {
+    await sendMessage(chatId, { parts: [{ type: "link", value: url }] });
+  }
   // A link just landed in the chat — any open "I'll text you the link" promise
   // is now fulfilled (recorded by sendOnboardingLinkFailureMessage / the
   // link-promise net). Harmless no-op when none is open.

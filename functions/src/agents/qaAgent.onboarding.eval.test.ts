@@ -262,8 +262,43 @@ vi.mock("../utils/claudeClient", async () => {
   };
 });
 
-// ── everything else heavy: inert (claudeRetry stays LIVE → real model calls) ──
-vi.mock("../utils/openaiClient", () => ({ quickComplete: vi.fn(), getOpenAIClient: () => ({}) }));
+// openaiClient: return a REAL OpenAI client so the eval exercises PROD's actual
+// agent model (CARA_AGENT_PROVIDER=openai, gpt-5.4) — not the Anthropic fallback.
+// Same two vitest-only quirks as the claudeClient mock above (SSR strips the SDK
+// constructor → load via createRequire; jsdom looks like a browser →
+// dangerouslyAllowBrowser). wrapOpenAI (LangSmith) is skipped, as in prod-off.
+// quickComplete mirrors the real single-shot helper (router-tier model, same
+// token-limit param) so quick-tier calls inside the loop also hit the real model.
+vi.mock("../utils/openaiClient", async () => {
+  const { createRequire } = await import("node:module");
+  const req = createRequire(import.meta.url);
+  const mod: any = req("openai");
+  const OpenAI = typeof mod === "function" ? mod : (mod.OpenAI ?? mod.default);
+  const { resolveCaraModelConfig } = await import("../config/caraModels");
+  let openaiClient: any = null;
+  let geminiClient: any = null;
+  const openAiTokenLimitParam = (model: string, maxTokens: number) =>
+    /^gpt-5(?:[.-]|$)/i.test(model) ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+  const getOpenAIClient = () => {
+    if (!openaiClient) openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "", timeout: 30_000, maxRetries: 0, dangerouslyAllowBrowser: true });
+    return openaiClient;
+  };
+  const getGeminiOpenAIClient = () => {
+    if (!geminiClient) geminiClient = new OpenAI({ apiKey: process.env.GEMINI_API_KEY ?? "", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", timeout: 15_000, maxRetries: 0, dangerouslyAllowBrowser: true });
+    return geminiClient;
+  };
+  const quickComplete = async (systemPrompt: string, userText: string, opts?: { maxTokens?: number; model?: string; signal?: AbortSignal }) => {
+    const maxTokens = opts?.maxTokens ?? 200;
+    const model = opts?.model ?? resolveCaraModelConfig("router").model;
+    const res = await getOpenAIClient().chat.completions.create({
+      model,
+      ...openAiTokenLimitParam(model, maxTokens),
+      messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userText }],
+    }, { signal: opts?.signal });
+    return (res.choices[0]?.message?.content ?? "").trim();
+  };
+  return { getOpenAIClient, getGeminiOpenAIClient, quickComplete, openAiTokenLimitParam };
+});
 vi.mock("../safety/supervisor", () => ({ supervise: (msg: string) => Promise.resolve(msg) }));
 vi.mock("../safety/linter", () => ({ lintMessage: (msg: string) => msg }));
 vi.mock("../memory/zepClient", () => ({ getZepContext: vi.fn(() => Promise.resolve("")), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));

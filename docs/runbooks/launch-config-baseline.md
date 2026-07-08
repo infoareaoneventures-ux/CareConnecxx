@@ -31,7 +31,8 @@ on the keys that have values). Values are never recorded here; only names and st
 
 - Model: flip `CARA_AGENT_PROVIDER` between `openai`/`anthropic` in `functions/.env`, redeploy `v1-linqWebhook` (fallback stays configured either way).
 - Onboarding (Deploy A, pre-deletion): clearing `ONBOARDING_AGENT_LOOP` returned to the scripted path. **No longer valid after Deploy B** — the scripted collection path is deleted and the flag is gone. Deploy B rollback = `git checkout pre-deletion` (the Deploy A tag) + redeploy `v1-linqWebhook`.
-- Onboarding real-model eval (U8 gate): `npm run eval:onboarding` with `CARA_EVAL_LIVE` — MUST pass before Deploy A deploys and again is the gate before Deploy B. Record results here.
+- Onboarding real-model eval (U8 gate): `CARA_ONBOARDING_EVAL_LIVE=true npm run eval:onboarding` (the flag is `CARA_ONBOARDING_EVAL_LIVE`, NOT `CARA_EVAL_LIVE`; also needs the real keys — load `functions/.env` into the shell first). The runner reads `process.env` and does NOT auto-load `.env`.
+  - **Recorded 2026-07-08 (Opus 4.8, after Deploy A was live):** first run silently ran on the Anthropic fallback (the eval stubbed the OpenAI client) → 5/8, invalid. Harness fixed (commit cd1d448) to hit the real OpenAI gpt-5.4 path; **re-run on the prod model = 7/8 live cases pass, 0 fallbacks.** The one miss (`cg_terse`: caregiver terse answers didn't save availability+jobType) is a raw model save-discipline gap that the webhook pre-turn absorber + persistence net backstops in prod — the eval bypasses that net by calling `runQaAgent` directly. Founder call: acceptable for the U8 gate, or tighten the caregiver terse path. Live E2E matrix on fresh numbers remains the higher-fidelity gate before Deploy B.
 
 ## Deploy discipline (standing rules)
 

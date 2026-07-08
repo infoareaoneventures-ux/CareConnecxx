@@ -5,6 +5,7 @@ import { supervise, SuperviseContext } from "../safety/supervisor";
 import { lintPreservingLayout } from "../safety/linter";
 import { redactPii } from "../safety/redactPii";
 import { logMessageSent } from "../observability/auditLog";
+import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
 
@@ -223,6 +224,57 @@ export async function requestLocation(chatId: string): Promise<LocationRequestRe
 // is safe even if a caller copies the old pattern.
 const HTTP_URL_RE = /^https?:\/\//i;
 
+// ── Card-safe URL policy (link-audit 2026-07-08) ─────────────────────────────
+// A `link` part renders as a rich preview CARD, which requires the URL to serve
+// fetchable OG metadata. URLs that don't — app-hosted SPA routes other than the
+// /p/** profile rewrite, and raw storage files (.ics invites, .md keepsakes) —
+// arrive as a BLANK or generic-marketing card: the live "message arrives but no
+// link" bug. Enforced HERE, at the one chokepoint every send crosses, so no
+// individual send site can reintroduce it:
+//   - external provider URLs (Stripe, Checkr, Meet, …) → card (they own OG);
+//   - app-hosted /p/** → card (v1-caregiverProfileMeta OG rewrite);
+//   - every other app-hosted route + raw-file storage hosts → NO card; the URL
+//     is delivered inline as tappable plain text instead (works on SMS too).
+const NO_OG_HOSTS = new Set([
+  "firebasestorage.googleapis.com", // raw files (ics/md/media) — no HTML at all
+  "storage.googleapis.com",
+]);
+const LEGACY_APP_HOSTS = new Set([
+  "careconnex-d4c8b.web.app", "careconnex-d4c8b.firebaseapp.com",
+]);
+
+function isCardSafeUrl(url: string): boolean {
+  try {
+    const u = new URL(HTTP_URL_RE.test(url) ? url : `https://${url}`);
+    const host = u.hostname.toLowerCase();
+    if (NO_OG_HOSTS.has(host)) return false;
+    let appHost = "";
+    try { appHost = new URL(getAppUrl()).hostname.toLowerCase(); } catch { /* fall through */ }
+    const bare = (h: string) => h.replace(/^www\./, "");
+    const isAppHost = LEGACY_APP_HOSTS.has(host) || (!!appHost && bare(host) === bare(appHost));
+    if (!isAppHost) return true; // external provider — real OG (Stripe/Meet/Checkr)
+    return u.pathname === "/p" || u.pathname.startsWith("/p/");
+  } catch {
+    return false; // unparseable — never risk a blank card
+  }
+}
+
+// Lint/redact a text part WITHOUT touching any URL inside it. The voice linter
+// replaces banned substrings (e.g. \bbot\b → "Evia") and base64url tokens use
+// "-"/"." as word boundaries, so an unlucky token containing "-bot-" would be
+// corrupted — and a corrupted token bricks the upload/checkout page it gates.
+// Mask URLs before linting, restore them verbatim after.
+function lintTextPreservingUrls(value: string): string {
+  const urls: string[] = [];
+  const masked = value.replace(FULL_URL_RE, (m) => {
+    urls.push(m);
+    return `⟦${urls.length - 1}⟧`;
+  });
+  const cleaned = redactPii(lintPreservingLayout(masked)).text;
+  const restored = cleaned.replace(/⟦(\d+)⟧/g, (_, i) => urls[Number(i)] ?? "");
+  return restored;
+}
+
 function normalizeParts(parts: LinqMessagePart[]): LinqMessagePart[] {
   if (!Array.isArray(parts)) return parts;
   return parts.map((p) => {
@@ -238,8 +290,9 @@ function normalizeParts(parts: LinqMessagePart[]): LinqMessagePart[] {
       // Voice cleanup AND PII redaction at the one chokepoint every send
       // crosses (U10), so scripted sends and sendToPhone-initiated chats are
       // scrubbed of SSNs / card numbers / cross-user emails too — not just the
-      // runQuickReply path the old outboundGuard covered. Fail open.
-      const cleaned = redactPii(lintPreservingLayout(p.value)).text;
+      // runQuickReply path the old outboundGuard covered. Fail open. URLs are
+      // masked during the pass so tokens can't be mangled by phrase bans.
+      const cleaned = lintTextPreservingUrls(p.value);
       return { ...p, value: cleaned || p.value };
     }
     if (p.type !== "link") return p;
@@ -247,6 +300,12 @@ function normalizeParts(parts: LinqMessagePart[]): LinqMessagePart[] {
       p.url && HTTP_URL_RE.test(p.url)     ? p.url   :
       p.value && HTTP_URL_RE.test(p.value) ? p.value :
       p.url ?? p.value;
+    // Card-safety: a no-OG URL sent as a card arrives blank — downgrade it to
+    // a plain text part so the user gets a tappable URL instead of an empty
+    // bubble. Card-safe URLs keep the rich preview.
+    if (typeof url === "string" && !isCardSafeUrl(url)) {
+      return { type: "text", value: url };
+    }
     return { type: "link", value: url };
   });
 }
@@ -315,6 +374,11 @@ function splitTextAndUrls(text: string): UrlSplit {
       if (trim) url = url.slice(0, url.length - trim[0].length);
       if (!url) return "";
       const normalized = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+      // Card-safety (link-audit 2026-07-08): only card-safe URLs are promoted
+      // to dedicated link-part preview cards. App-hosted routes without OG and
+      // raw storage files stay INLINE in the text bubble — a tappable plain URL
+      // beats the blank card Linq renders when there's nothing to crawl.
+      if (!isCardSafeUrl(normalized)) return raw;
       urls.push(normalized);
       // Preserve trailing sentence punctuation that was attached to the URL.
       return trim ? trim[0] : "";

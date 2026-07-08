@@ -1760,7 +1760,20 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
         });
     checkoutUrl = stripeSession.url ?? checkoutUrl;
   } catch (err) {
+    // Stripe checkout failed — the app-URL fallback below still goes out (the
+    // transport delivers it inline as text, not a blank card), but a failure
+    // at the PAYMENT step is a conversion-killer: page ops instead of only
+    // console-logging into the void.
     console.error("handleClientSendPayment stripe error:", err);
+    await db.collection("admin_alerts").add({
+      type:      "stripe_checkout_create_failed",
+      phone,
+      task:      "client_payment_setup",
+      error:     err instanceof Error ? err.message : String(err),
+      severity:  "high",
+      resolved:  false,
+      createdAt: new Date().toISOString(),
+    }).catch(() => {});
   }
 
   await updateSession(phone, { onboardingStep: "client_awaiting_payment" });
@@ -1971,7 +1984,19 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
       checkoutUrl = stripeSession.url ?? checkoutUrl;
     }
   } catch (err) {
+    // Same class as handleClientSendPayment: the fallback URL still goes out
+    // (inline text via the transport's card-safety rule), but ops must know a
+    // membership checkout failed to build.
     console.error("handleCaregiverSendMembership stripe error:", err);
+    await db.collection("admin_alerts").add({
+      type:      "stripe_checkout_create_failed",
+      phone,
+      task:      "caregiver_membership",
+      error:     err instanceof Error ? err.message : String(err),
+      severity:  "high",
+      resolved:  false,
+      createdAt: new Date().toISOString(),
+    }).catch(() => {});
   }
 
   const mvrLine = mvrCharged
@@ -2053,6 +2078,15 @@ async function handleCaregiverSendMvr(phone: string, chatId: string, session: Ag
     checkoutUrl = stripeSession.url ?? checkoutUrl;
   } catch (err) {
     console.error("handleCaregiverSendMvr stripe error:", err);
+    await db.collection("admin_alerts").add({
+      type:      "stripe_checkout_create_failed",
+      phone,
+      task:      "mvr_payment",
+      error:     err instanceof Error ? err.message : String(err),
+      severity:  "high",
+      resolved:  false,
+      createdAt: new Date().toISOString(),
+    }).catch(() => {});
   }
 
   // Save the prior step — an already-onboarded caregiver returns to it after payment.

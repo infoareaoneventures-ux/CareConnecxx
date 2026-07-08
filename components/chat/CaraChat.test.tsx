@@ -145,8 +145,8 @@ describe('CaraChat', () => {
     render(<CaraChat userType="client" />);
     pushMessages([]);
     expect(screen.getByText(/Say hi/)).toBeTruthy();
-    fireEvent.click(screen.getByText('Help me find a caregiver'));
+    fireEvent.click(screen.getByText('Find me a caregiver for weekday mornings'));
     expect((screen.getByLabelText('Message Evia') as HTMLTextAreaElement).value)
-      .toBe('Help me find a caregiver');
+      .toBe('Find me a caregiver for weekday mornings');
   });
 });

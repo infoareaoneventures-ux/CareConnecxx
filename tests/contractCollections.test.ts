@@ -109,6 +109,7 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // Their parent docs are governed by the contract entry for the parent path.
     'messages',          // threads/{id}/messages — covered by 'threads' entry
     'care_keepsakes', 'care_plans', 'appointment_care_plans', 'carePlanVersions',
+    'versions',      // care_plans/{id}/versions — caregiver history, server-only
     'shift_checkins', 'shift_hours', 'tax_summaries',
     'responses',         // support_tickets/{id}/responses — covered by 'support_tickets' entry
     'subscriptions',     // customers/{uid}/subscriptions — covered by 'customers' entry

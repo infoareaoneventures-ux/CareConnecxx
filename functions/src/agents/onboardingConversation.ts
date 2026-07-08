@@ -15,7 +15,6 @@ import {
 } from "./emotionalContext";
 import { generateToken } from "./tokenService";
 import { getCapabilityExamples } from "./capabilityDiscovery";
-import { summarizeFrontload } from "./frontloadSummary";
 import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../notifications";
 import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from "../utils/webhookLedger";
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
@@ -25,18 +24,22 @@ import { paymentMethodLabel } from "../billing/paymentMethods";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { generateOtp, verifyOtp, formatOtpForDisplay, OtpState } from "../utils/phoneVerification";
 import { languageFromSession, t as tr } from "../utils/language";
-import { reverseGeocode, SharedLocation } from "../utils/locationShare";
-import { gateOnboardingLocation, askForZipMessage, WAITLISTED_STEP } from "./serviceAreaGate";
+import { SharedLocation } from "../utils/locationShare";
+import { WAITLISTED_STEP } from "./serviceAreaGate";
 import { downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/mediaIntake";
 import { addKnownNames } from "../utils/knownNames";
 import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
 import { getAppUrl } from "../config/appUrl";
+// conversationStep + onboardingSteps.client are KEPT: the loop-only cut deleted
+// the scripted CONVERSATIONAL collection handlers, but the post-collection intake
+// steps (client_ask_start/preferences/budget/confirm_intake) still run on this
+// table-driven runner. (onboardingSteps.caregiver + onboardingDispatcher were
+// deleted — caregiver has no runStep-based kept steps and the dispatcher only
+// ever sequenced scripted client collection.)
 import { runStep, RunStepContext, StepDeps } from "./conversationStep";
 import { isQuestionOrOther as stepIsQuestionOrOther } from "./stepHandler";
 import { buildClientSteps } from "./onboardingSteps.client";
-import { buildCaregiverSteps } from "./onboardingSteps.caregiver";
 import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboardingDryRun";
-import { isOnboardingDispatchEnabled, isDispatchableClientStep, resolveClientStep } from "./onboardingDispatcher";
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
 import { deriveWeeklyAvailability } from "./caregiverAvailability";
 import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients } from "./careRecipients";
@@ -162,13 +165,8 @@ async function sendOnboardingLinkFailureMessage(
   }));
 }
 
-async function isExplicitBioSkip(text: string): Promise<boolean> {
-  const raw = await parseWithClaude(
-    'Classify whether this caregiver is explicitly choosing to skip writing a public profile bio. Reply exactly SKIP or BIO. SKIP only for clear skip/no bio/not now intent. Otherwise BIO.',
-    text,
-  );
-  return raw.trim().toUpperCase() === "SKIP";
-}
+// (isExplicitBioSkip removed with the scripted caregiver_ask_bio handler — the
+// bio-skip classification now lives in save_onboarding_field's bio branch.)
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -324,11 +322,6 @@ export interface PendingLocationRequest {
   reason?:   string;
 }
 
-/** Clear the pending-location marker once the location step resolves. */
-function clearPendingLocation(): Record<string, unknown> {
-  return { pendingLocationRequest: admin.firestore.FieldValue.delete() };
-}
-
 // Local single-shot parser used by onboarding step handlers. Powered by
 // gpt-4o-mini under the hood for speed and lower rate-limit pressure.
 // Strips markdown code fences from the response so JSON.parse callers don't
@@ -481,67 +474,11 @@ async function ensureWebAccount(
 
 // ── Main dispatcher ───────────────────────────────────────────────────────────
 
-// Ordered step flow for client onboarding — used by the auto-skip logic so
-// any step whose target field is already in onboardingData is silently
-// advanced past instead of re-asking the user. Stops at client_ask_schedule
-// because what follows is identity verification + plan selection — those have
-// side effects (Stripe identity session, plan display) that can't be skipped
-// based on cached fields. Caregiver flow has document uploads + payment
-// redirects that can't be skipped, so we don't auto-skip caregiver steps either.
-// Exported (U12) so the prompt-driven dispatcher derives sequencing from the
-// SAME field-schema contract the legacy absorption uses — no drift between the
-// two paths.
-export const CLIENT_STEP_ORDER = [
-  "client_ask_name",
-  "client_ask_senior",
-  "client_ask_needs",
-  "client_ask_location",
-  "client_ask_schedule",
-];
-
-// Maps a client step to the onboardingData field(s) it collects. If the
-// field is already present and non-empty, the step is skipped.
-export const CLIENT_STEP_FIELD: Record<string, string> = {
-  client_ask_name:     "firstName",
-  client_ask_senior:   "seniorName",
-  // Keyed on careNeeds (a REQUIRED intake field), not age: skipping this step
-  // when only `age` was front-loaded (e.g. "my mom Dorothy, 82") left careNeeds
-  // and conditions uncollected, shipping empty to senior_profiles.needs,
-  // clientIntakes.careTypes, and the matching prompt. Same fix already applied
-  // to client_ask_schedule below.
-  client_ask_needs:    "careNeeds",
-  client_ask_location: "city",
-  // Keyed on daysPerWeek (a REQUIRED intake field), not the free-text
-  // `schedule` string: skipping this step on `schedule` alone left
-  // daysPerWeek/timeOfDay unset — matching frequency degraded to
-  // "occasional" and job posts shipped with daysPerWeek 0.
-  client_ask_schedule: "daysPerWeek",
-};
-
-// The step the client flow continues to once every absorbable field is
-// collected (the first non-absorbable step the legacy machine routes to).
+// The step the client flow continues to once conversational collection completes
+// and the agent loop hands back to the deterministic gate machine. Kept (read by
+// finalization + the post-collection handoff); mirrors onboardingContract's
+// CLIENT_POST_COLLECTION_STEP.
 export const CLIENT_POST_COLLECTION_STEP = "client_ask_start";
-
-// Ordered caregiver steps the story step (idea #5) can auto-skip once its
-// narrative has satisfied them. Story extraction fills experience/specialties
-// in one turn; the story handler walks this order and lands on the first step
-// whose field is still empty (or `caregiver_ask_profile` if the story covered
-// both). Only these two are absorbable — everything after profile has prompts
-// (availability, rate, email) or side effects (uploads, payment) that the story
-// can't supply, so they are not in this list.
-const CAREGIVER_STORY_STEP_ORDER = [
-  "caregiver_ask_experience",
-  "caregiver_ask_specialties",
-  "caregiver_ask_profile",
-];
-
-// Maps an absorbable caregiver step to the onboardingData field it collects.
-// `caregiver_ask_profile` is intentionally absent — it's only the landing step
-// once both absorbable fields are filled, never itself skipped by the story.
-const CAREGIVER_STORY_STEP_FIELD: Record<string, string> = {
-  caregiver_ask_experience:  "yearsExperience",
-  caregiver_ask_specialties: "specialties",
-};
 
 export function isFieldFilled(value: unknown): boolean {
   if (value === undefined || value === null) return false;
@@ -615,8 +552,10 @@ async function isGreetingOnly(text: string): Promise<boolean> {
 function currentStepQuestion(step: string, session: AgentSession): string {
   if (step === "ask_role") return "are you looking for care for a loved one, or are you a caregiver looking for work?";
   if (step === "client_confirm_name" || step === "caregiver_confirm_name") return "confirming the name I should call you";
-  const c = CLIENT_STEPS[step];    if (c?.reask) return c.reask(session);
-  const g = CAREGIVER_STEPS[step]; if (g?.reask) return g.reask(session);
+  // Post-collection client steps (start/preferences/budget/confirm_intake) still
+  // run on CLIENT_STEPS. Conversational collection steps are owned by the agent
+  // loop and never reach this scripted helper.
+  const c = CLIENT_STEPS[step]; if (c?.reask) return c.reask(session);
   const awaiting: Record<string, string> = {
     client_send_payment:           "finishing your payment setup with the link I sent",
     client_awaiting_payment:       "finishing your payment setup with the link I sent",
@@ -682,31 +621,20 @@ export async function handleOnboardingStep(
     }
   }
 
-  // U12 (DARK behind CONVERGENCE_FLIPPED="onboarding"): prompt-driven sequencing.
-  // For a client in the conversational field-collection phase, derive the step
-  // from which required fields are still missing rather than the stored cursor.
-  // Gate/awaiting/job steps and all handlers are untouched; flag OFF ⇒ no change.
-  if (isOnboardingDispatchEnabled() && session.userType === "client" && isDispatchableClientStep(step)) {
-    step = resolveClientStep(session.onboardingData as Record<string, unknown> | undefined);
-    if (step !== session.onboardingStep) session.onboardingStep = step;
-  }
-
-  // ── Self-heal a desynced cursor parked at ask_role ──────────────────────────
-  // If the cursor is at ask_role but the role is ALREADY decided, never re-ask the
-  // role (or a name we already have) — jump to the first still-unanswered step for
-  // that role. This is the "Evia forgot me" bug: a stuck ask_role cursor with
-  // userType + firstName on file would otherwise loop role/name questions forever.
-  if (step === "ask_role" && session.userType) {
-    if (session.userType === "client") {
-      step = resolveClientStep(session.onboardingData as Record<string, unknown> | undefined);
-    } else if (session.userType === "caregiver") {
-      const d = (session.onboardingData ?? {}) as Record<string, unknown>;
-      step = isFieldFilled(d.name) ? "caregiver_ask_location" : "caregiver_ask_name";
-    }
-    if (step !== session.onboardingStep) {
-      await updateSession(phone, { onboardingStep: step });
-      session.onboardingStep = step;
-    }
+  // ── Self-heal a desynced cursor parked at ask_role (loop-only) ──────────────
+  // Cursor stuck at ask_role but the role is ALREADY decided → the "Evia forgot
+  // me" bug (it would re-ask role/name forever). The agent loop owns collection
+  // now, so set the cursor to the role's first collection step and hand THIS turn
+  // to the loop (its directive figures out the first missing field and never
+  // re-asks a known one). START OVER / RESTART are handled just below, so let
+  // those through untouched; a bare media turn falls to the media guard.
+  if (step === "ask_role" && session.userType && norm !== "START OVER" && norm !== "RESTART"
+      && !(inboundMedia && text === "")) {
+    const role = session.userType === "caregiver" ? "caregiver" : "client";
+    const firstStep = role === "caregiver" ? "caregiver_ask_name" : "client_ask_name";
+    await updateSession(phone, { onboardingStep: firstStep });
+    session.onboardingStep = firstStep;
+    return dispatchOnboardingToLoop(phone, chatId, text, session, role);
   }
 
   // ── Inbound image / document (vision-gated) ─────────────────────────────────
@@ -783,69 +711,11 @@ export async function handleOnboardingStep(
     }
   }
 
-  // ── Multi-field absorption (client flow only) ───────────────────────────────
-  // For any client step, scan the user's message for ALL fields present, save
-  // them, and auto-skip any subsequent steps whose target field is already
-  // collected. Lets users front-load their answers without being re-asked.
-  // Skipped fields are filled in onboardingData; the dispatcher lands on the
-  // first still-unfilled step.
-  const isClientStep = step === "ask_role" || step.startsWith("client_ask_");
-  if (isClientStep && step !== "ask_role" && session.userType !== "caregiver") {
-    const originalStep = step;
-    const existing = (session.onboardingData ?? {}) as Record<string, unknown>;
-    const absorbed = await absorbClientFields(text, existing).catch(() => ({}));
-    if (Object.keys(absorbed).length > 0) {
-      await mergeOnboardingData(phone, absorbed);
-      session.onboardingData = { ...existing, ...absorbed };
-    }
-
-    // Auto-advance past any client step whose target field is now filled.
-    while (CLIENT_STEP_FIELD[step]) {
-      const field = CLIENT_STEP_FIELD[step];
-      const value = (session.onboardingData as Record<string, unknown> | undefined)?.[field];
-      if (!isFieldFilled(value)) break;
-      const idx = CLIENT_STEP_ORDER.indexOf(step);
-      const nextStep = idx >= 0 && idx < CLIENT_STEP_ORDER.length - 1
-        ? CLIENT_STEP_ORDER[idx + 1]
-        : null;
-      if (!nextStep) break;
-      step = nextStep;
-    }
-
-    if (step !== session.onboardingStep) {
-      await updateSession(phone, { onboardingStep: step });
-      session.onboardingStep = step;
-    }
-
-    // If the family front-loaded several answers at once and we skipped ahead,
-    // acknowledge what we captured before the landing handler asks the next
-    // question — otherwise it reads as if Evia ignored everything they said.
-    // Gated to genuine multi-question front-loads (summarizeFrontload returns
-    // null otherwise) and only when the landing step still needs an answer, so
-    // normal one-answer-at-a-time turns are untouched.
-    const data = (session.onboardingData ?? {}) as Record<string, unknown>;
-    const recap = summarizeFrontload(absorbed, data);
-    const landingField = CLIENT_STEP_FIELD[step];
-    if (
-      recap &&
-      step !== originalStep &&
-      landingField &&
-      !isFieldFilled(data[landingField])
-    ) {
-      const firstName = typeof data.firstName === "string" ? data.firstName : "";
-      const ack = await generateCaraMessage({
-        audience: "family",
-        context:
-          `The family just shared several things in one message${firstName ? ` (you're talking to ${firstName})` : ""}. ` +
-          `Here's what you now have: ${recap}. In ONE short, warm sentence, let them know you've got it — ` +
-          `naturally, by name if you can, not as a checklist. Do NOT ask a question; the next question comes right after.`,
-        fallback: `Got it${firstName ? `, ${firstName}` : ""} — ${recap}.`,
-        maxTokens: 80,
-        emotionalDirective: (session as any)._emotionalDirective,
-      });
-      await sendMessage(chatId, ack);
-    }
-  }
+  // NOTE (loop-only): the client multi-field absorption + auto-skip preamble that
+  // used to live here is gone — the agent loop owns conversational collection and
+  // runs its own pre-turn absorber (webhooks Fix 1). handleOnboardingStep now only
+  // ever sees KEPT steps (ask_role, gates/awaiting, confirm-name, post-collection,
+  // job_*), so there is no client_ask_* collection step to front-load into.
 
   // Mid-flow role switch: "wait I'm actually a caregiver" / "no I need care, not a job".
   // Previously the only escape hatch was START OVER which wiped all progress.
@@ -938,11 +808,10 @@ export async function handleOnboardingStep(
     case "verify_phone":          return handleVerifyPhone(phone, chatId, text, session);
     case "ask_role":              return handleAskRole(phone, chatId, text, session);
     case "client_confirm_name":   return handleClientConfirmName(phone, chatId, text, session);
-    case "client_ask_name":       return handleClientAskName(phone, chatId, text, session);
-    case "client_ask_senior":     return handleClientAskSenior(phone, chatId, text, session);
-    case "client_ask_needs":      return handleClientAskNeeds(phone, chatId, text, session, service);
-    case "client_ask_location":   return handleClientAskLocation(phone, chatId, text, session, opts);
-    case "client_ask_schedule":   return handleClientAskSchedule(phone, chatId, text, session);
+    // client_ask_name/senior/needs/location/schedule: deleted (loop-only) — the
+    // agent loop owns client collection. A collection-step cursor never reaches
+    // this switch (webhook routes it to the loop); the defensive default below
+    // covers any stray cursor.
     case "client_ask_start":        return handleClientAskStart(phone, chatId, text, session);
     case "client_ask_preferences":  return handleClientAskPreferences(phone, chatId, text, session);
     case "client_ask_budget":       return handleClientAskBudget(phone, chatId, text, session);
@@ -981,17 +850,10 @@ export async function handleOnboardingStep(
     case "job_ask_description":  return handleJobAskDescription(phone, chatId, text, session);
     case "job_confirm_post":     return handleJobConfirmPost(phone, chatId, text, session);
     case "caregiver_confirm_name":    return handleCaregiverConfirmName(phone, chatId, text, session, service);
-    case "caregiver_ask_name":        return handleCaregiverAskName(phone, chatId, text, session, service);
-    case "caregiver_ask_location":    return handleCaregiverAskLocation(phone, chatId, text, session, opts);
-    case "caregiver_ask_story":       return handleCaregiverAskStory(phone, chatId, text, session);
-    case "caregiver_ask_experience":  return handleCaregiverAskExperience(phone, chatId, text, session);
-    case "caregiver_ask_specialties": return handleCaregiverAskSpecialties(phone, chatId, text, session);
-    case "caregiver_ask_profile":      return handleCaregiverAskProfile(phone, chatId, text, session);
-    case "caregiver_ask_availability": return handleCaregiverAskAvailability(phone, chatId, text, session);
-    case "caregiver_ask_job_type":     return handleCaregiverAskJobType(phone, chatId, text, session);
-    case "caregiver_ask_rate":         return handleCaregiverAskRate(phone, chatId, text, session);
-    case "caregiver_ask_email":        return handleCaregiverAskEmail(phone, chatId, text, session);
-    case "caregiver_ask_bio":          return handleCaregiverAskBio(phone, chatId, text, session);
+    // caregiver_ask_name … caregiver_ask_bio: deleted (loop-only) — the agent loop
+    // owns caregiver collection. These cursors never reach this switch (webhook
+    // routes them to the loop); the defensive default below covers strays. The
+    // gate steps below (send_photo onward) are KEPT — the loop hands off to them.
     case "caregiver_send_photo":       return handleCaregiverSendPhoto(phone, chatId, session);
     case "caregiver_awaiting_photo":
       await sendMessage(chatId, await generateCaraMessage({
@@ -1047,6 +909,22 @@ export async function handleOnboardingStep(
       }));
       return;
     default:
+      // Loop-only defensive default (2c): a conversational collection-step cursor
+      // (*_ask_* other than the KEPT client_ask_start/preferences/budget and
+      // caregiver_ask_mvr, which have explicit cases above) should never reach the
+      // scripted runner — the webhook routes those turns to the agent loop. If one
+      // strays in, nudge gently and LEAVE the cursor so the next inbound routes to
+      // the loop; never wipe their progress with a START OVER.
+      if (step.includes("_ask_")) {
+        await sendMessage(chatId, await generateCaraMessage({
+          audience: session.userType === "caregiver" ? "caregiver" : "family",
+          language: session.preferredLanguage === "es" ? "es" : "en",
+          context: "You're mid-signup with this person and just need them to keep going. In ONE short, warm line, ask them to send that again or type it out — do NOT restart and do NOT ask them to start over.",
+          fallback: "Sorry, I lost that for a second — mind sending it again?",
+          maxTokens: 60,
+        }));
+        return;
+      }
       await sendMessage(chatId, await generateCaraMessage({
         audience: session.userType === "caregiver" ? "caregiver" : "family",
         language: session.preferredLanguage === "es" ? "es" : "en",
@@ -1242,6 +1120,45 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
   );
 }
 
+// ── Loop-only re-dispatch (2e / 2f) ───────────────────────────────────────────
+// The agent loop now owns ALL conversational collection. When a KEPT scripted
+// handler (confirm-name; the resume path) finds the user jumped ahead with
+// substantive info, it must NOT call a (deleted) collection handler — it hands
+// the SAME turn to the loop. Absorb whatever the message contained first (mirrors
+// the webhook's pre-turn net) so nothing is lost, then run one onboarding loop
+// turn. Dynamic imports avoid a static import cycle with qaAgent /
+// caregiverFieldAbsorber.
+async function dispatchOnboardingToLoop(
+  phone:   string,
+  chatId:  string,
+  text:    string,
+  session: AgentSession,
+  role:    "client" | "caregiver",
+): Promise<void> {
+  const existing = (session.onboardingData ?? {}) as Record<string, unknown>;
+  const absorbed = role === "caregiver"
+    ? await (await import("./caregiverFieldAbsorber")).absorbCaregiverFields(text, existing).catch(() => ({}))
+    : await absorbClientFields(text, existing).catch(() => ({}));
+  if (Object.keys(absorbed).length > 0) {
+    await mergeOnboardingData(phone, absorbed);
+    session.onboardingData = { ...existing, ...absorbed };
+  }
+  const { runQaAgent } = await import("./qaAgent");
+  await runQaAgent({
+    text,
+    phone,
+    chatId,
+    userId:      (session as any).userId ?? "",
+    seniorId:    (session as any).seniorId ?? "",
+    userType:    role,
+    zepThreadId: (session as any).zepThreadId as string | undefined,
+    session:     session as unknown as Record<string, unknown>,
+    onboardingMode: true,
+    onboardingRole: role,
+    intent:      null,
+  });
+}
+
 // ── CLIENT FLOW ───────────────────────────────────────────────────────────────
 
 // Web-onboarding entry point: the client already typed their name on /start, so it's
@@ -1317,10 +1234,11 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
     return;
   }
   // Substantive non-name message (e.g. they jumped ahead and described who
-  // needs care). Accept the seeded name and hand their text to the next step
-  // so nothing they typed is lost or re-asked.
+  // needs care). Accept the seeded name and hand this turn to the agent loop —
+  // it owns collection now — so nothing they typed is lost or re-asked (2e).
   await updateSession(phone, { onboardingStep: "client_ask_senior" });
-  return handleClientAskSenior(phone, chatId, text, { ...session, onboardingStep: "client_ask_senior" } as AgentSession);
+  return dispatchOnboardingToLoop(phone, chatId, text,
+    { ...session, onboardingStep: "client_ask_senior" } as AgentSession, "client");
 }
 
 // Shared confirm-name classifier for both roles. Parses the user's reply to
@@ -1363,11 +1281,6 @@ const CLIENT_STEPS = buildClientSteps({
   buildIntakeSummary,
 });
 
-const CAREGIVER_STEPS = buildCaregiverSteps({
-  generateCaraMessage,
-  locationPrompt,
-});
-
 // Production side effects for `runStep`: the real mid-flow helpers plus an
 // ATOMIC merge+advance — one Firestore `.update()` using dotted field paths, so
 // a failure can't leave a user half-advanced (the old code did two writes).
@@ -1388,105 +1301,6 @@ const stepDeps: StepDeps = {
 
 function clientStepCtx(phone: string, chatId: string, text: string, session: AgentSession): RunStepContext {
   return { phone, chatId, text, session };
-}
-
-async function handleClientAskName(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  return runStep(CLIENT_STEPS.client_ask_name, clientStepCtx(phone, chatId, text, session), stepDeps);
-}
-
-async function handleClientAskSenior(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  return runStep(CLIENT_STEPS.client_ask_senior, clientStepCtx(phone, chatId, text, session), stepDeps);
-}
-
-async function handleClientAskNeeds(phone: string, chatId: string, text: string, session: AgentSession, _service?: string): Promise<void> {
-  // `_service` retained for call-site compatibility; the step's nextQuestion now
-  // reads session.service for the location prompt (same iMessage/RCS/SMS value).
-  return runStep(CLIENT_STEPS.client_ask_needs, clientStepCtx(phone, chatId, text, session), stepDeps);
-}
-
-async function handleClientAskLocation(phone: string, chatId: string, text: string, session: AgentSession, opts: OnboardingStepOptions = {}): Promise<void> {
-  const { service, inboundLocation } = opts;
-
-  // One-tap location pin (iMessage/RCS): use the coords directly, reverse-geocode
-  // to backfill city/zip for the rest of the city-centric flow, and store raw
-  // lat/lng for true haversine matching. No parseWithClaude needed.
-  if (inboundLocation) {
-    const rev = await reverseGeocode(inboundLocation.lat, inboundLocation.lng);
-    const city = rev?.city ?? "", zipCode = rev?.zipCode ?? "";
-    // Service-area gate (Santa Clara County only). A pin gives city/zip; if it's
-    // clearly out of area, decline + waitlist and stop here.
-    const d0 = session.onboardingData ?? {};
-    if (await gateOnboardingLocation({
-      phone, chatId, role: "client", city, zipCode,
-      name: (d0.firstName as string) ?? "", onboardingData: { ...d0, city, zipCode },
-    }) === "out") return;
-    await mergeOnboardingData(phone, { city, zipCode, lat: inboundLocation.lat, lng: inboundLocation.lng });
-    await updateSession(phone, { onboardingStep: "client_ask_schedule", ...clearPendingLocation() });
-    const d = session.onboardingData ?? {};
-    const ack = city
-      ? `Got it — pinned you to ${city}${zipCode ? ` ${zipCode}` : ""}. `
-      : "Got your location, thanks! ";
-    const msgPin = await generateCaraMessage({
-      audience: "family",
-      context: `Evia just received the family's shared location${city ? ` (${city})` : ""}. Acknowledge it warmly in one short line, then ask how often ${d.seniorName ?? "their loved one"} needs a caregiver and what times of day work best.`,
-      fallback: `${ack}How often does ${d.seniorName ?? "they"} need someone, and what times of day work best?`,
-      maxTokens: 90,
-    });
-    await sendMessage(chatId, msgPin);
-    return;
-  }
-
-  if (await isQuestionOrOther(text, "What city and zip code are you in?")) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, locationPrompt("What city and zip code are you in? (e.g. \"San Jose, CA 95125\")", service));
-    return;
-  }
-  const raw = await parseWithClaude(
-    'Extract city and zipCode from this address text. Reply in JSON: {"city":"...","zipCode":"..."}',
-    text
-  );
-  let city = "", zipCode = "";
-  try {
-    if (raw !== "__parse_error__") {
-      const parsed = JSON.parse(raw);
-      city    = parsed.city    ?? "";
-      zipCode = parsed.zipCode ?? "";
-    }
-  } catch { /* keep defaults */ }
-
-  if (!city && !zipCode) {
-    await sendMessage(chatId, locationPrompt("Hmm, I didn't catch that. Could you share your city and zip code? (e.g. \"San Jose, CA 95125\")", service));
-    return;
-  }
-
-  // Service-area gate (Santa Clara County only).
-  const dLoc = session.onboardingData ?? {};
-  const verdict = await gateOnboardingLocation({
-    phone, chatId, role: "client", city, zipCode,
-    name: (dLoc.firstName as string) ?? "", onboardingData: { ...dLoc, city, zipCode },
-  });
-  if (verdict === "out") return;               // declined + waitlisted
-  if (verdict === "need_zip") {                // city not recognized, no zip — confirm
-    await mergeOnboardingData(phone, { city });
-    await sendMessage(chatId, askForZipMessage());
-    return;                                     // stay on client_ask_location
-  }
-
-  await mergeOnboardingData(phone, { city, zipCode });
-  await updateSession(phone, { onboardingStep: "client_ask_schedule", ...clearPendingLocation() });
-  const d = session.onboardingData ?? {};
-  const msg6 = await generateCaraMessage({
-    audience: "family",
-    context: `Evia is onboarding a family. They just gave the location where ${d.seniorName ?? "their loved one"} lives. Ask how often ${d.seniorName ?? "they"} needs a caregiver and what times of day work best.`,
-    fallback: `How often does ${d.seniorName ?? "they"} need someone, and what times of day work best?`,
-    maxTokens: 80,
-  });
-  await sendMessage(chatId, msg6);
-}
-
-async function handleClientAskSchedule(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  return runStep(CLIENT_STEPS.client_ask_schedule, clientStepCtx(phone, chatId, text, session), stepDeps);
 }
 
 // ── New intake steps: start date → preferences → budget → playback confirm ─────
@@ -1969,21 +1783,11 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
     return;
   }
   // Substantive non-name message (e.g. they jumped ahead with the work they
-  // want or the areas they cover). Accept the seeded name and hand their text
-  // to the location step so nothing they typed is lost or re-asked.
+  // want or the areas they cover). Accept the seeded name and hand this turn to
+  // the agent loop — it owns collection now — so nothing is lost or re-asked (2e).
   await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
-  return handleCaregiverAskLocation(phone, chatId, text,
-    { ...sess, onboardingStep: "caregiver_ask_location" } as AgentSession,
-    { service });
-}
-
-async function handleCaregiverAskName(phone: string, chatId: string, text: string, session?: AgentSession, service?: string): Promise<void> {
-  // session is always supplied by the dispatcher; synthesize a minimal one for
-  // the vestigial optional. Carry the explicit `service` param onto the session
-  // so the step's location-prompt affordance matches the original handler.
-  const s = session ?? ({ onboardingData: {} } as AgentSession);
-  if (service !== undefined) s.service = service as AgentSession["service"];
-  return runStep(CAREGIVER_STEPS.caregiver_ask_name, clientStepCtx(phone, chatId, text, s), stepDeps);
+  return dispatchOnboardingToLoop(phone, chatId, text,
+    { ...sess, onboardingStep: "caregiver_ask_location" } as AgentSession, "caregiver");
 }
 
 /**
@@ -2015,299 +1819,6 @@ async function getLocalJobTeaser(city: string): Promise<{ count: number; lines: 
     console.error("[getLocalJobTeaser] failed:", err);
     return { count: 0, lines: "" };
   }
-}
-
-async function handleCaregiverAskLocation(phone: string, chatId: string, text: string, session: AgentSession, opts: OnboardingStepOptions = {}): Promise<void> {
-  const { service, inboundLocation } = opts;
-  let city = "", zipCode = "";
-  let coords: { lat: number; lng: number } | undefined;
-
-  if (inboundLocation) {
-    // One-tap location pin: reverse-geocode to backfill city/zip (keeps the
-    // city-keyed local-job teaser working) and keep raw coords for matching.
-    const rev = await reverseGeocode(inboundLocation.lat, inboundLocation.lng);
-    city = rev?.city ?? ""; zipCode = rev?.zipCode ?? "";
-    coords = { lat: inboundLocation.lat, lng: inboundLocation.lng };
-  } else {
-    if (await isQuestionOrOther(text, "What city and zip code do you work in?")) {
-      const answer = await answerQuestionMidFlow(text, session);
-      await sendMessage(chatId, answer);
-      await sendMessage(chatId, locationPrompt("What city and zip code do you work in?", service));
-      return;
-    }
-    const raw = await parseWithClaude(
-      'Extract city and zipCode from this message. Reply in JSON: {"city":"...","zipCode":"..."}',
-      text
-    );
-    try { const p = JSON.parse(raw); city = p.city ?? ""; zipCode = p.zipCode ?? ""; } catch { /* keep defaults */ }
-  }
-
-  // Service-area gate (Santa Clara County only) — caregivers must be in-county too.
-  const dCg = session.onboardingData ?? {};
-  const cgVerdict = await gateOnboardingLocation({
-    phone, chatId, role: "caregiver", city, zipCode,
-    name: (dCg.name as string) ?? "", onboardingData: { ...dCg, city, zipCode },
-  });
-  if (cgVerdict === "out") return;             // declined + waitlisted
-  if (cgVerdict === "need_zip") {              // city not recognized, no zip — confirm
-    await mergeOnboardingData(phone, { city });
-    await sendMessage(chatId, askForZipMessage());
-    return;                                     // stay on caregiver_ask_location
-  }
-
-  await mergeOnboardingData(phone, { city, zipCode, ...(coords ? { lat: coords.lat, lng: coords.lng } : {}) });
-
-  // Value hook (founder direction): the moment a caregiver shares their location,
-  // show REAL local demand so the platform proves it's legit before we ask for
-  // anything. Honest empty state when nothing is open yet — no fabricated jobs.
-  if (city) {
-    const { count, lines } = await getLocalJobTeaser(city);
-    if (count > 0) {
-      await sendMessage(chatId,
-        `Good news — there ${count === 1 ? "is" : "are"} ${count} open care ` +
-        `${count === 1 ? "job" : "jobs"} near ${city} right now:\n\n${lines}\n\n` +
-        `Finish your quick profile and you'll be able to apply.`
-      );
-    } else {
-      await sendMessage(chatId,
-        `I don't have open jobs in ${city} this minute — new ones post daily and I'll text you ` +
-        `the moment one matches your skills. Let's finish your profile so you're ready to apply.`
-      );
-    }
-  }
-
-  await updateSession(phone, { onboardingStep: "caregiver_ask_story", ...clearPendingLocation() });
-  const d = session.onboardingData ?? {};
-  const msgStoryIntro = await generateCaraMessage({
-    audience: "caregiver",
-    context: `Evia is onboarding caregiver ${d.name ?? ""}. They just shared their city and zip code. Instead of asking separate checkbox questions, invite them to tell their caregiving story in their own words — how long they've been doing it, the kinds of clients and conditions they've cared for, any certifications, and what they're good at. Keep it warm and encouraging.`,
-    fallback: `Great, ${d.name ?? ""}! Tell me a bit about your caregiving experience in your own words — how long you've been doing it, the kinds of clients you've worked with, any certifications, and what you're best at.`,
-    maxTokens: 100,
-  });
-  await sendMessage(chatId,
-    `${msgStoryIntro}\n\nFor example: "I've cared for seniors for about 6 years, mostly dementia clients. I'm a CNA and CPR-certified and I'm great with mobility assistance."`
-  );
-}
-
-/**
- * Story-based caregiver onboarding (idea #5). Instead of separate checkbox-style
- * questions for experience, certifications, and specialties, the caregiver tells
- * their story once and a single multi-field extraction pulls out everything we'd
- * otherwise ask for across several steps. Mirrors the client flow's
- * `absorbClientFields` technique.
- *
- * After extracting, we store the fields and auto-advance past any of the
- * downstream experience/specialties steps the story already satisfied — landing
- * on the first still-unfilled step (or the profile step if the story covered
- * everything). Conservative: a missing field is left empty and its step still
- * gets asked rather than fabricated.
- */
-async function handleCaregiverAskStory(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  // 1. Mid-flow question guard — answer, then re-ask the story prompt; never store.
-  if (await isQuestionOrOther(text, "Tell me a bit about your caregiving experience in your own words.")) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId,
-      "Tell me a bit about your caregiving experience in your own words — how long you've been doing it, " +
-      "the kinds of clients you've worked with, any certifications, and what you're best at."
-    );
-    return;
-  }
-
-  // 2. One multi-field extraction from the narrative. Conservative: omit anything
-  //    not clearly stated so we never invent a certification or a year count.
-  const raw = await parseWithClaude(
-    "A caregiver just described their caregiving experience in one free-form message. " +
-      "Extract structured fields from their story. Reply with raw JSON only, no markdown. " +
-      "Schema: " +
-      `{"yearsExperience":number,` +
-      `"specialties":["short care specialty like 'dementia' or 'mobility assistance'"],` +
-      `"certifications":["certification name like 'CNA' or 'CPR'"],` +
-      `"skills":["short skill phrase"]}. ` +
-      "Only include a field if it is clearly stated. Use 0 for yearsExperience if no duration is mentioned, " +
-      "and empty arrays for anything not mentioned. Do NOT guess or fabricate.",
-    text,
-  );
-
-  // 3. Validate / default — malformed output yields safe empties, never a crash.
-  let yearsExperience = 0;
-  let specialties: string[] = [];
-  let certifications: string[] = [];
-  let skills: string[] = [];
-  try {
-    const p = JSON.parse(raw);
-    yearsExperience = typeof p.yearsExperience === "number" && p.yearsExperience > 0 ? p.yearsExperience : 0;
-    specialties     = Array.isArray(p.specialties) ? p.specialties.filter((s: unknown) => typeof s === "string" && s.trim()) : [];
-    certifications  = Array.isArray(p.certifications) ? p.certifications.filter((s: unknown) => typeof s === "string" && s.trim()) : [];
-    skills          = Array.isArray(p.skills) ? p.skills.filter((s: unknown) => typeof s === "string" && s.trim()) : [];
-  } catch { /* keep safe defaults; downstream steps will ask explicitly */ }
-
-  // Persist whatever we confidently extracted.
-  const extracted: Record<string, unknown> = {};
-  if (yearsExperience > 0)        extracted.yearsExperience = yearsExperience;
-  if (specialties.length)         extracted.specialties = specialties;
-  if (certifications.length)      extracted.certifications = certifications;
-  if (skills.length)              extracted.skills = skills;
-  if (Object.keys(extracted).length > 0) {
-    await mergeOnboardingData(phone, extracted);
-  }
-  // Keep the in-memory session in sync so the auto-advance below sees the writes.
-  const merged = { ...(session.onboardingData ?? {}), ...extracted } as Record<string, unknown>;
-  session.onboardingData = merged;
-
-  // 4. Conversational acknowledgment of what they shared.
-  const ackBits: string[] = [];
-  if (yearsExperience > 0)   ackBits.push(`${yearsExperience} year${yearsExperience === 1 ? "" : "s"} of experience`);
-  if (specialties.length)    ackBits.push(`specializing in ${specialties.join(", ")}`);
-  if (certifications.length) ackBits.push(`certified in ${certifications.join(", ")}`);
-  const ack = await generateCaraMessage({
-    audience: "caregiver",
-    context:
-      `Evia is onboarding a caregiver who just told her their caregiving story` +
-      `${ackBits.length ? ` (${ackBits.join("; ")})` : ""}. ` +
-      `Acknowledge what they shared warmly in one short, genuine line (not flattery clichés).`,
-    fallback: "Thank you for sharing that — it really helps me match you well.",
-    maxTokens: 80,
-  });
-
-  // 5. Auto-advance past any experience/specialties step the story already
-  //    satisfied. CAREGIVER_STORY_STEP_FIELD maps each absorbable step to the
-  //    field it would otherwise collect; we stop on the first unfilled one and
-  //    ask only that. If the story covered both, we land on the profile step.
-  let nextStep = "caregiver_ask_experience";
-  while (CAREGIVER_STORY_STEP_FIELD[nextStep]) {
-    const field = CAREGIVER_STORY_STEP_FIELD[nextStep];
-    if (!isFieldFilled(merged[field])) break;
-    const idx = CAREGIVER_STORY_STEP_ORDER.indexOf(nextStep);
-    const after = idx >= 0 && idx < CAREGIVER_STORY_STEP_ORDER.length - 1
-      ? CAREGIVER_STORY_STEP_ORDER[idx + 1]
-      : null;
-    if (!after) break;
-    nextStep = after;
-  }
-
-  await updateSession(phone, { onboardingStep: nextStep });
-  session.onboardingStep = nextStep;
-
-  // Ask the landed step's question (mirrors each step's own outbound prompt),
-  // prefixed with the acknowledgment so the caregiver always gets a warm reply.
-  if (nextStep === "caregiver_ask_experience") {
-    await sendMessage(chatId,
-      `${ack}\n\nHow many years of caregiving experience do you have, and do you hold any certifications?\n\n` +
-      `For example: "5 years, CNA and CPR" or "2 years, no certifications".`
-    );
-  } else if (nextStep === "caregiver_ask_specialties") {
-    await sendMessage(chatId,
-      `${ack}\n\nWhat types of care do you specialize in?\n\n` +
-      `For example: dementia, Alzheimer's, mobility assistance, post-surgery, companionship, medication management...`
-    );
-  } else {
-    // Both experience and specialties satisfied — go straight to the profile step.
-    const msgProfile = await generateCaraMessage({
-      audience: "caregiver",
-      context:
-        `Evia just heard a caregiver's full story and has their experience and specialties. ` +
-        `In one short line, ask three quick profile details families use when matching: ` +
-        `whether they're male or female (some families have a preference), what languages they speak, and whether they can ` +
-        `drive clients to appointments. Keep it light and quick.`,
-      fallback: "A few quick details families use to match — are you male or female, what languages do you speak, and can you drive clients to appointments?",
-      maxTokens: 100,
-    });
-    await sendMessage(chatId, `${ack}\n\n${msgProfile}`);
-  }
-}
-
-async function handleCaregiverAskExperience(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  return runStep(CAREGIVER_STEPS.caregiver_ask_experience, clientStepCtx(phone, chatId, text, session), stepDeps);
-}
-
-async function handleCaregiverAskSpecialties(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  return runStep(CAREGIVER_STEPS.caregiver_ask_specialties, clientStepCtx(phone, chatId, text, session), stepDeps);
-}
-
-async function handleCaregiverAskProfile(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text, "Are you male or female, what languages do you speak, and can you drive clients to appointments?")) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "Are you male or female, what languages do you speak, and can you drive clients to appointments?");
-    return;
-  }
-  const raw = await parseWithClaude(
-    "Extract the caregiver's gender, the languages they speak, and whether they can drive clients. " +
-    "Reply in JSON: {\"gender\":\"\",\"languages\":[],\"canDrive\":false}. " +
-    "gender: \"female\"/\"male\"/\"other\" or \"\" if not stated. languages: array of language names; if they're writing " +
-    "in English and didn't specify, include \"English\". canDrive: true if they say they can drive / have a car or " +
-    "license, false otherwise.",
-    text
-  );
-  let gender = "";
-  let languages: string[] = [];
-  let canDrive = false;
-  try {
-    const p = JSON.parse(raw);
-    gender    = p.gender ?? "";
-    languages = Array.isArray(p.languages) ? p.languages : [];
-    canDrive  = p.canDrive === true;
-  } catch { /* none */ }
-  await mergeOnboardingData(phone, { gender, languages, canDrive });
-  await updateSession(phone, { onboardingStep: "caregiver_ask_availability" });
-  const msg12 = await generateCaraMessage({
-    audience: "caregiver",
-    context: "Evia is onboarding a caregiver who just shared a couple profile details. Acknowledge briefly, then ask what days and hours they're generally available to work.",
-    fallback: "What days and hours are you generally available to work?",
-    maxTokens: 80,
-  });
-  await sendMessage(chatId, msg12);
-}
-
-async function handleCaregiverAskAvailability(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  return runStep(CAREGIVER_STEPS.caregiver_ask_availability, clientStepCtx(phone, chatId, text, session), stepDeps);
-}
-
-async function handleCaregiverAskRate(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  return runStep(CAREGIVER_STEPS.caregiver_ask_rate, clientStepCtx(phone, chatId, text, session), stepDeps);
-}
-
-async function handleCaregiverAskJobType(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  return runStep(CAREGIVER_STEPS.caregiver_ask_job_type, clientStepCtx(phone, chatId, text, session), stepDeps);
-}
-
-async function handleCaregiverAskEmail(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  // For email, only treat as question if it doesn't even look like an email attempt —
-  // skip the isQuestionOrOther LLM hop when there's a "@" in the trimmed text.
-  const email = text.trim().toLowerCase();
-  if (!email.includes("@") && await isQuestionOrOther(text, "What's your email address?")) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "What's your email address?");
-    return;
-  }
-  if (!/\S+@\S+\.\S+/.test(email)) {
-    await sendMessage(chatId, "That doesn't look like a valid email. Could you double-check? (e.g. name@example.com)");
-    return;
-  }
-  await mergeOnboardingData(phone, { email });
-  await updateSession(phone, { onboardingStep: "caregiver_ask_bio" });
-  await sendMessage(chatId,
-    "Got it, thank you. Last question before your photo — tell me about your approach to care in a sentence or two. Families will see this on your profile."
-  );
-}
-
-async function handleCaregiverAskBio(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  const trimmedBio = text.trim();
-  const explicitBioSkip = await isExplicitBioSkip(trimmedBio);
-  // Only treat as question if the message is short (< 60 chars) - a bio that's
-  // also a question is unlikely at this stage.
-  if (trimmedBio.length < 60 && !explicitBioSkip && await isQuestionOrOther(text, "Tell me about your approach to care in a sentence or two - or reply SKIP.")) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "Tell me about your approach to care in a sentence or two - or reply SKIP.");
-    return;
-  }
-  const bio = explicitBioSkip ? "" : trimmedBio;
-  await mergeOnboardingData(phone, { bio });
-  await updateSession(phone, { onboardingStep: "caregiver_send_photo" });
-  await handleCaregiverSendPhoto(phone, chatId, session);
 }
 
 // Called immediately after doc upload — ask before building the checkout so MVR can be bundled

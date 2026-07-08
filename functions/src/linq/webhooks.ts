@@ -1260,8 +1260,29 @@ const handleInboundInner = traceable(
           stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         });
         const resumedSession = { ...session, onboardingStep: checkpoint.step, onboardingData: checkpoint.onboardingData } as AgentSession;
-        await sendMessage(chatId, "Picking up where we left off!");
-        await handleOnboardingStep(phone, chatId, "__RESUME__", resumedSession);
+        // 2f (loop-only): the agent loop owns conversational collection, so for a
+        // collection-step checkpoint do NOT call the scripted runner (its
+        // collection cases are gone) — compose a short "here's what's left" nudge
+        // from the contract and leave the cursor on the collection step so the
+        // next inbound routes to the loop. Gate/awaiting checkpoints (e.g. the
+        // caregiver_send_photo gate) still resume through the scripted runner.
+        const cpRole: OnboardingRole = resumedSession.userType === "caregiver" ? "caregiver" : "client";
+        if (collectionStepsForRole(cpRole).includes(checkpoint.step)) {
+          const missing = missingRequiredFields(cpRole, checkpoint.onboardingData);
+          const nudge = await generateCaraMessage({
+            audience: cpRole === "caregiver" ? "caregiver" : "family",
+            context: "You're picking a signup back up with someone who paused midway; you already have some of their details. " +
+              (missing.length
+                ? `You still need: ${missing.join(", ")}. In ONE short, warm line, welcome them back and ask for the FIRST missing item only — no list, no re-introduction.`
+                : "You already have everything you need. In ONE short, warm line, welcome them back and say you'll take it from here."),
+            fallback: "Welcome back! Let's pick up right where we left off.",
+            maxTokens: 90,
+          });
+          await sendMessage(chatId, nudge);
+        } else {
+          await sendMessage(chatId, "Picking up where we left off!");
+          await handleOnboardingStep(phone, chatId, "__RESUME__", resumedSession);
+        }
       }
       return;
     }
@@ -1819,7 +1840,7 @@ const handleInboundInner = traceable(
     // loop (role enabled, in cohort, collection step); otherwise the scripted
     // fallback handlers still need the raw pin, so it is left untouched.
     if (inboundLocation && text.trim() === "" && shouldRouteOnboardingToLoop({
-      role: session.userType, step, hasText: true, hasMedia: false, hasLocation: false, phone,
+      role: session.userType, step, hasText: true, hasMedia: false,
     })) {
       const { lat, lng } = inboundLocation;
       const rev = await reverseGeocode(lat, lng).catch(() => null);
@@ -1840,7 +1861,7 @@ const handleInboundInner = traceable(
     // Gated to the loop-routable case so media/location turns and the scripted
     // fallback stay untouched.
     if (text.trim() === "" && !inboundMedia && !inboundLocation && shouldRouteOnboardingToLoop({
-      role: session.userType, step, hasText: true, hasMedia: false, hasLocation: false, phone,
+      role: session.userType, step, hasText: true, hasMedia: false,
     })) {
       await stopTyping(chatId).catch(() => {});
       await sendMessage(chatId, "Sorry — I couldn't read that. Mind typing it out for me?");
@@ -1852,8 +1873,6 @@ const handleInboundInner = traceable(
       step,
       hasText:     text.trim() !== "",
       hasMedia:    !!inboundMedia,
-      hasLocation: !!inboundLocation,
-      phone,
     })) {
       // U9: runQaAgent sends its own reply internally. Once that resolves, the
       // turn has already replied — any failure in the post-send writes below
@@ -2095,14 +2114,51 @@ const handleInboundInner = traceable(
           }).catch(() => {});
           return;
         }
-        // RLB-001/005: the loop is Sonnet on the signup happy path. If it throws
-        // (API outage/timeout/Firestore) BEFORE replying, do NOT wedge the user —
-        // fall through to the deterministic scripted runner so collection still
-        // advances.
+        // 2d (loop-only): the loop is the SOLE collection path — there is no
+        // scripted collection handler left to fall back to. It threw BEFORE
+        // replying (API outage/timeout/Firestore). Retry ONCE; if that also
+        // throws, send a short apology and page ops. Never leave the turn silent,
+        // and never fall through to handleOnboardingStep (its collection cases
+        // are gone — that would hit the defensive default, not real collection).
         console.error(
-          "webhooks: onboarding agent-loop failed — falling back to scripted runner",
+          "webhooks: onboarding agent-loop threw before replying — retrying once",
           err instanceof Error ? err.message : err,
         );
+        try {
+          await runQaAgent({
+            text, phone, chatId,
+            userId:      (session as any).userId ?? "",
+            seniorId:    (session as any).seniorId ?? "",
+            userType:    loopRole,
+            zepThreadId: onboardingZepThreadId,
+            session:     session as unknown as Record<string, unknown>,
+            onboardingMode: true,
+            onboardingRole: loopRole,
+            intent:      null,
+            isRetry:     true,
+          });
+          await pushOnboardingStepToZep(step);
+          return;
+        } catch (retryErr) {
+          console.error(
+            "webhooks: onboarding agent-loop retry also threw — apologizing + paging ops",
+            retryErr instanceof Error ? retryErr.message : retryErr,
+          );
+          await sendMessage(chatId,
+            "Sorry — I hit a snag on my end just now. Mind sending that again in a moment? I've saved everything so far.",
+          ).catch(() => {});
+          await db.collection("admin_alerts").add({
+            type:       "onboarding_loop_failed_after_retry",
+            phone,
+            step,
+            error:      retryErr instanceof Error ? retryErr.message : String(retryErr),
+            errorClass: retryErr instanceof Error ? retryErr.name : "unknown",
+            severity:   "high",
+            createdAt:  new Date().toISOString(),
+            resolved:   false,
+          }).catch(() => {});
+          return;
+        }
       }
     }
 

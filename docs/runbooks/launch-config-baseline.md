@@ -9,7 +9,7 @@ on the keys that have values). Values are never recorded here; only names and st
 
 | Question | Deployed reality | Notes |
 |---|---|---|
-| Agent-loop onboarding | `ONBOARDING_AGENT_LOOP` and `ONBOARDING_AGENT_LOOP_COHORT_PCT` both set — **agent-loop onboarding live at full rollout for clients** | Runbook headers and 10%-canary records are stale; update them from this row |
+| Agent-loop onboarding | **LOOP-ONLY as of Deploy B (2026-07-08): the `ONBOARDING_AGENT_LOOP*` flags were REMOVED and the scripted collection path DELETED.** Conversational collection (both roles) runs in the qaAgent loop unconditionally | Deploy B lands after Deploy A validates (live eval + E2E). Env-var count drops from 69 (66 user + 3 platform) to **66** (63 user + 3 platform) — the 3 removed keys are `ONBOARDING_AGENT_LOOP`, `_COHORT_PCT`, `_PHONES`. Verify 66 post-Deploy-B, not 69 |
 | Agent model | `CARA_AGENT_PROVIDER` and `CARA_AGENT_MODEL` set (OpenAI primary, current-generation model), `CARA_ESCALATION_MODEL` set, `CARA_AGENT_ANTHROPIC_FALLBACK` enabled | The env-var model IS active (the older code default is not in effect). PHI flows to OpenAI **today** → R18 decision required before launch |
 | Checkpoint resume | `CARA_CHECKPOINT_RESUME` empty — **dark** | Stays dark through launch (plan KTD) |
 | Zep memory | `ZEP_API_KEY` present | Long-term memory configured; U3 adds empty-context telemetry |
@@ -30,7 +30,8 @@ on the keys that have values). Values are never recorded here; only names and st
 ## Rollback lines
 
 - Model: flip `CARA_AGENT_PROVIDER` between `openai`/`anthropic` in `functions/.env`, redeploy `v1-linqWebhook` (fallback stays configured either way).
-- Onboarding: clear `ONBOARDING_AGENT_LOOP` to return to the scripted path (no data migration; `onboardingData` identical on both paths).
+- Onboarding (Deploy A, pre-deletion): clearing `ONBOARDING_AGENT_LOOP` returned to the scripted path. **No longer valid after Deploy B** — the scripted collection path is deleted and the flag is gone. Deploy B rollback = `git checkout pre-deletion` (the Deploy A tag) + redeploy `v1-linqWebhook`.
+- Onboarding real-model eval (U8 gate): `npm run eval:onboarding` with `CARA_EVAL_LIVE` — MUST pass before Deploy A deploys and again is the gate before Deploy B. Record results here.
 
 ## Deploy discipline (standing rules)
 

@@ -22,8 +22,6 @@
 // CAREGIVER_COLLECTION_STEPS, and complete_collection hands off to
 // CAREGIVER_FIRST_GATE_STEP. Gate/awaiting steps are never routed to the loop.
 
-import { isOnboardingAgentLoopEnabled, isPhoneInOnboardingCohort } from "../config/featureFlags";
-
 export type OnboardingRole = "client" | "caregiver";
 
 // Mirror of CLIENT_STEP_ORDER in onboardingConversation.ts — the conversational
@@ -182,29 +180,26 @@ export function isOnboardingTool(name: string): boolean {
   return ONBOARDING_TOOL_NAMES.has(name);
 }
 
-// U4: whether this inbound onboarding turn should run inside the qaAgent loop
-// (agent-native collection) instead of the scripted step runner. Per-role and
-// flag-gated OFF by default (ONBOARDING_AGENT_LOOP must name the role — e.g.
-// "client" or "client,caregiver"), plain-text collection steps only —
-// transactional gates (steps not in that role's collection list) and
-// media/location turns stay on the legacy handlers.
+// Whether this inbound onboarding turn runs inside the qaAgent loop. The loop is
+// the SOLE conversational-collection path (loop-only, 2026-07-08): any text turn
+// at a collection step routes here. Only two things stay on the scripted runner:
+//   - transactional GATE steps (not in the role's collection list) — payment,
+//     Checkr, Stripe, uploads, OTP, ask_role, confirm-name;
+//   - MEDIA turns (photo/document), which fall to handleOnboardingStep →
+//     handleInboundMedia (the upload gates).
+// Location pins are converted to text BEFORE this predicate (webhooks 2a) and
+// empty-text turns get a deterministic nudge (2c), so the loop only needs
+// hasText && !hasMedia. There is no feature flag anymore — loop-only must not be
+// revertable-by-config to a scripted path that no longer exists.
 export function shouldRouteOnboardingToLoop(args: {
   role: string | undefined;
   step: string;
   hasText: boolean;
   hasMedia: boolean;
-  hasLocation: boolean;
-  // The inbound phone — used for canary cohort scoping. Optional: when omitted,
-  // cohort membership is decided as if no narrowing is active (default 100%).
-  phone?: string;
 }): boolean {
-  const { role, step, hasText, hasMedia, hasLocation, phone } = args;
+  const { role, step, hasText, hasMedia } = args;
   if (role !== "client" && role !== "caregiver") return false;
-  if (!isOnboardingAgentLoopEnabled(role)) return false;
   if (!collectionStepsForRole(role).includes(step)) return false;
-  if (!hasText || hasMedia || hasLocation) return false;
-  // Canary cohort: a narrowed rollout (a % or an allowlist) only routes the phones
-  // in-cohort; default (no narrowing) routes everyone in the enabled role.
-  if (!isPhoneInOnboardingCohort(phone)) return false;
+  if (!hasText || hasMedia) return false;
   return true;
 }

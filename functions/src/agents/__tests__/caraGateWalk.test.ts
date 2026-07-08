@@ -228,46 +228,13 @@ beforeEach(() => {
   axiosPost.mockClear();
 });
 
-// ── 1. Continuous SMS walk: data accumulates across steps ──────────────────────
-describe("caregiver continuous walk — fields accumulate without clobbering", () => {
-  // Walk experience → bio in one run on the same (real, in-memory) session, so a
-  // later step overwriting an earlier field would be caught. Name/location/story
-  // are covered by the characterization test and seeded here.
-  it("collects every field and lands on the photo gate", async () => {
-    seed("caregiver_ask_experience", { name: "Maria Lopez", city: "San Jose", zipCode: "95110" });
-
-    const turns: Array<[string, string]> = [
-      ['{"yearsExperience":5,"certifications":["CNA","CPR"]}', "5 years, CNA and CPR"],
-      ['{"specialties":["dementia","mobility"]}',              "dementia and mobility"],
-      ['{"gender":"female","languages":["English"],"canDrive":true}', "female, English, I drive"],
-      ['{"days":["Monday","Tuesday"],"hours":"9am-5pm"}',      "Mon and Tue, 9 to 5"],
-      ["part_time",                                            "part time"],
-      ["22",                                                   "$22"],
-    ];
-    for (const [answer, text] of turns) {
-      stepAnswer = answer;
-      await handleOnboardingStep(PHONE, CHAT, text, { ...stored() }, { service: "SMS" });
-    }
-    // email + bio (no parse routing — email is regex-validated, bio is free text)
-    await handleOnboardingStep(PHONE, CHAT, "Maria@Example.com", { ...stored() }, { service: "SMS" });
-    await handleOnboardingStep(PHONE, CHAT, "I treat every client like family.", { ...stored() }, { service: "SMS" });
-
-    const d = stored().onboardingData;
-    expect(d.name).toBe("Maria Lopez");          // survived every later step
-    expect(d.city).toBe("San Jose");
-    expect(d.yearsExperience).toBe(5);
-    expect(d.certifications).toEqual(["CNA", "CPR"]);
-    expect(d.specialties).toEqual(["dementia", "mobility"]);
-    expect(d.gender).toBe("female");
-    expect(d.availability).toEqual({ days: ["Monday", "Tuesday"], hours: "9am-5pm" });
-    expect(d.jobType).toBe("part_time");
-    expect(d.hourlyRate).toBe(22);
-    expect(d.email).toBe("maria@example.com");
-    expect(d.bio).toContain("family");
-    // Bio hands off to the bespoke photo handler.
-    expect(stored().onboardingStep).toBe("caregiver_awaiting_photo");
-  });
-});
+// ── 1. Collection is now the agent loop's job (loop-only, 2026-07-08) ──────────
+// The former "continuous SMS walk" of the scripted caregiver_ask_* steps was
+// removed with those handlers. Conversational-collection accumulation is now
+// covered by the loop-path tests (qaAgent.onboarding.test.ts + the webhook
+// pre-turn absorber / persistence-net tests in handleInbound.routing.test.ts).
+// This suite now starts at the FIRST GATE (caregiver_awaiting_membership onward),
+// which the loop hands off to and which still runs on the KEPT gate machinery.
 
 // ── 2. Gate webhook injection: membership → bgcheck → connect → active doc ──────
 describe("caregiver gate webhooks — end-to-end to an active caregiver doc", () => {

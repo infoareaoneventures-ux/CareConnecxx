@@ -724,15 +724,9 @@ describe("onboarding agent-loop flag routing", () => {
     delete process.env.CONVERGENCE_FLIPPED;
   });
 
-  it("flag OFF: client collection step routes to the scripted runner, never the loop", async () => {
-    seedSession({ onboardingStep: "client_ask_name" });
-    await handleInbound(makeEvent("Sarah"));
-    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
-  it("ONBOARDING_AGENT_LOOP=client: client collection step routes to the loop, scripted runner NOT called", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client";
+  // Loop-only (2026-07-08): there is no flag and no scripted collection runner —
+  // a client collection step ALWAYS routes to the loop.
+  it("loop-only: client collection step routes to the loop, scripted runner NOT called", async () => {
     seedSession({ onboardingStep: "client_ask_name" });
     await handleInbound(makeEvent("Sarah"));
     expect(runQaAgent).toHaveBeenCalledTimes(1);
@@ -835,21 +829,27 @@ describe("onboarding agent-loop flag routing", () => {
     expect(handleOnboardingStep).not.toHaveBeenCalled();
   });
 
-  it("loop throws: falls through to the scripted runner so the user is never wedged", async () => {
+  // 2d (loop-only): the scripted collection runner no longer exists, so a loop
+  // that throws before replying is RETRIED once. On retry success the turn is
+  // handled entirely by the loop — the scripted runner is never called.
+  it("loop throws before replying → retries the loop once, no scripted fallback", async () => {
     process.env.ONBOARDING_AGENT_LOOP = "client";
     seedSession({ onboardingStep: "client_ask_name" });
-    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout"));
+    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout")); // first attempt throws; retry succeeds
     await handleInbound(makeEvent("Sarah"));
-    expect(runQaAgent).toHaveBeenCalledTimes(1);
-    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(runQaAgent).toHaveBeenCalledTimes(2);
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
   });
 
-  it("flag set to caregiver only: a client collection step still uses the scripted runner", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "caregiver";
+  it("loop throws BOTH times → apology sent + admin_alert paged, never silent, never scripted", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
     seedSession({ onboardingStep: "client_ask_name" });
+    runQaAgent.mockRejectedValue(new Error("sonnet down")); // both attempts throw
     await handleInbound(makeEvent("Sarah"));
-    expect(runQaAgent).not.toHaveBeenCalled();
-    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(runQaAgent).toHaveBeenCalledTimes(2);
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("snag"));
+    expect(hoisted.docState.get("admin_alerts/auto-add")?.type).toBe("onboarding_loop_failed_after_retry");
   });
 
   // 2a: a location PIN at a collection step is reverse-geocoded to text and fed to
@@ -897,23 +897,9 @@ describe("caregiver onboarding agent-loop flag routing", () => {
 
   afterEach(() => { delete process.env.ONBOARDING_AGENT_LOOP; });
 
-  it("DEFAULT (flag unset): caregiver collection step routes to the scripted runner, never the loop", async () => {
-    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience" });
-    await handleInbound(makeEvent("6 years, CNA"));
-    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
-  it("ONBOARDING_AGENT_LOOP=client (client-only): caregiver still routes to the scripted runner", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client";
-    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience" });
-    await handleInbound(makeEvent("6 years, CNA"));
-    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
-  it("ONBOARDING_AGENT_LOOP=client,caregiver: caregiver collection step routes to the loop as role caregiver", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+  // Loop-only: a caregiver collection step ALWAYS routes to the loop as role
+  // caregiver (no flag; scripted collection deleted).
+  it("caregiver collection step routes to the loop as role caregiver", async () => {
     seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience", onboardingData: { name: "Maria" } });
     await handleInbound(makeEvent("6 years, mostly dementia"));
     expect(runQaAgent).toHaveBeenCalledTimes(1);
@@ -980,13 +966,13 @@ describe("caregiver onboarding agent-loop flag routing", () => {
     expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
   });
 
-  it("loop throws before replying: caregiver falls through to the scripted runner (never wedged)", async () => {
+  it("loop throws before replying: caregiver loop is retried once (no scripted fallback)", async () => {
     process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
     seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_name" });
-    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout"));
+    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout")); // retry succeeds
     await handleInbound(makeEvent("Maria"));
-    expect(runQaAgent).toHaveBeenCalledTimes(1);
-    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(runQaAgent).toHaveBeenCalledTimes(2);
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
   });
 });
 
@@ -1276,15 +1262,15 @@ describe("onboarding agent-loop double-send guard (U9)", () => {
     });
   });
 
-  it("agent loop throws before replying → handleOnboardingStep IS called (existing recovery preserved)", async () => {
+  it("agent loop throws before replying → loop is retried, handleOnboardingStep is NOT called (2d)", async () => {
     process.env.ONBOARDING_AGENT_LOOP = "client";
     seedSession({ onboardingStep: "client_ask_name" });
-    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout"));
+    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout")); // retry succeeds
 
     await handleInbound(makeEvent("Sarah"));
 
-    expect(runQaAgent).toHaveBeenCalledTimes(1);
-    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(runQaAgent).toHaveBeenCalledTimes(2);
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
   });
 });
 
